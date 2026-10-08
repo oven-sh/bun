@@ -320,11 +320,28 @@ fn format(
             return finish(done, out, "Handlebars");
         }
         Some(Kind::Html(parser)) => {
-            let done = bun_format::html::format_with_cursor(
+            let plain = Resolved::default();
+            let parse = |path: &[u8],
+                         code: &[u8],
+                         is_script: bool,
+                         then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
+                let how = How {
+                    path,
+                    is_script,
+                    is_flow: false,
+                    resolved: &plain,
+                    verifies: false,
+                    atoms,
+                    memory,
+                };
+                with_file(&how, code, |file, _, _| then(file));
+            };
+            let done = bun_format::html::format_with(
                 name,
                 text,
                 parser,
                 options,
+                Some(&parse),
                 &mut scratch.html,
                 &mut out,
             );

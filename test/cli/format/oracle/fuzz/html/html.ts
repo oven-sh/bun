@@ -22,7 +22,7 @@ for (const it of args.filter(it => it.startsWith("--"))) {
 }
 
 let seed = +flag("seed", "1");
-const random = (below: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >>> 8) % below;
+const random = (below: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8) % below;
 const pick = <T>(from: T[]) => from[random(from.length)];
 
 const inputs: string[] = [];
@@ -180,7 +180,7 @@ async function format(): Promise<string | undefined> {
 let [same, total, shown] = [0, 0, 0];
 try {
   for (let i = 0; i < count; i++) {
-    const text = (make === "soup" ? soup() : make === "tree" ? forest() : mutate()).replaceAll("\r", "");
+    const text = (make === "soup" ? soup() : make === "tree" ? forest() : mutate()).replaceAll("\r", "").toWellFormed();
     let expected: string | undefined;
     try {
       expected = await prettier.format(text, { parser, filepath: file, ...options });

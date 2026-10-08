@@ -668,7 +668,7 @@ pub(crate) fn parse<'a>(
         tokens: &tokens,
         index: 0,
         end,
-        eof: tokens.last().copied().unwrap_or(Token {
+        eof: tokens.last().copied().unwrap_or_else(|| Token {
             kind: TokenType::Eof,
             span: Span::new(text.len() as u32, text.len() as u32),
             parts: Parts::None,

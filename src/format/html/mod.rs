@@ -33,6 +33,8 @@ use crate::css::{normalize_end_of_line, text};
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;
+use crate::options::JavaScriptParser;
+use crate::range::{Offsets, normalized_len, trim_end, write_with_line_ending};
 use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 use cursor::Cursor;
@@ -142,20 +144,30 @@ fn without_front_matter(text: &[u8]) -> (Cow<'_, [u8]>, Option<usize>) {
 }
 
 /// What is formatted of `text`: without the byte order mark, with `\n` for every line break, and with the pragma that is
-/// to be inserted. `None`: because of a pragma, it stays as it is.
-fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<Cow<'t, [u8]>> {
-    let text = normalize_end_of_line(text.strip_prefix(BOM).unwrap_or(text));
+/// to be inserted. And whether only a part of it is to be formatted. `None`: because of a pragma, or because that part is
+/// empty, it stays as it is.
+fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<(Cow<'t, [u8]>, bool)> {
+    let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
+    let Offsets { start, end, .. } = Offsets::new(text, first, options);
+    let [start, end] =
+        [start, end].map(|offset| normalized_len(text.get(first..offset).unwrap_or_default()));
+    let text = normalize_end_of_line(&text[first..]);
     let has_format_pragma = (options.require_pragma || options.insert_pragma)
         && has_pragma(&text, [b"format", b"prettier"]);
-    if (options.require_pragma && !has_format_pragma)
+    if (start >= end && !text.is_empty())
+        || (options.require_pragma && !has_format_pragma)
         || (options.check_ignore_pragma && has_pragma(&text, [b"noformat", b"noprettier"]))
     {
         return None;
     }
+    let is_range = start > 0 || end < text.len();
     Some(
-        match options.insert_pragma && !options.require_pragma && !has_format_pragma {
-            true => Cow::Owned([b"<!-- @format -->\n\n", &text[..]].concat()),
-            false => text,
+        match !is_range && options.insert_pragma && !options.require_pragma && !has_format_pragma {
+            true => (
+                Cow::Owned([b"<!-- @format -->\n\n", &text[..]].concat()),
+                false,
+            ),
+            false => (text, is_range),
         },
     )
 }
@@ -169,7 +181,7 @@ pub fn has_same_content(
     options: &FormatOptions,
 ) -> bool {
     let after = normalize_end_of_line(after.strip_prefix(BOM).unwrap_or(after));
-    prepared_text(before, options).is_none_or(|before| {
+    prepared_text(before, options).is_none_or(|(before, _)| {
         text::trim(&before).is_empty() || verify::has_same_content(&before, &after, parser)
     })
 }
@@ -293,9 +305,22 @@ pub fn format_with_cursor(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<Option<u32>, FormatError> {
+    format_with(path, text, parser, options, None, scratch, out)
+}
+
+/// The same. `parse_javascript`: in the place of `options.parse_javascript`.
+pub fn format_with(
+    path: &[u8],
+    text: &[u8],
+    parser: Parser,
+    options: &FormatOptions,
+    parse_javascript: Option<JavaScriptParser<'_>>,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<Option<u32>, FormatError> {
     let original = text;
     let has_bom = text.starts_with(BOM);
-    let Some(text) = prepared_text(text, options) else {
+    let Some((text, is_range)) = prepared_text(text, options) else {
         out.extend_from_slice(original);
         return Ok(options.cursor_offset);
     };
@@ -304,6 +329,20 @@ pub fn format_with_cursor(
     }
     if text::trim(&text).is_empty() {
         return Ok(None);
+    }
+    // Prettier's `isSourceElement`: nothing can be formatted on its own, except that in Vue everything can. It does not
+    // find what is in the root, so that is all of the text.
+    if is_range && parser != Parser::Vue {
+        if !can_be_parsed(&text, parser) {
+            out.truncate(out.len() - if has_bom { BOM.len() } else { 0 });
+            return Err(FormatError::SyntaxError);
+        }
+        let from = out.len();
+        write_with_line_ending(&text, options.line_ending.resolve(original).as_bytes(), out);
+        return Ok(
+            crate::cursor::cursor_in_formatted_text(&text, options, &out[from..])
+                .map(|cursor| cursor + u32::from(has_bom)),
+        );
     }
     // In `text`, which has one byte for every line break and no byte order mark.
     let cursor_offset = crate::cursor::cursor_offset_in_bytes(original, options).map(|offset| {
@@ -315,11 +354,13 @@ pub fn format_with_cursor(
     let start = out.len() - if has_bom { BOM.len() } else { 0 };
     let options = FormatOptions {
         line_ending: options.line_ending.resolve(original),
+        is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
         ..options.clone()
     };
     let path = Some(path).filter(|path| !path.is_empty());
     let mut result = Ok(None);
-    let context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    let mut context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    context.parse_javascript = parse_javascript;
     let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
         result = write_document_with_cursor(
             &text,
@@ -341,6 +382,10 @@ pub fn format_with_cursor(
                 .map(|()| region)
         })
         .inspect_err(|_| out.truncate(start))?;
+    // `formatRange` leaves out the line break at the end.
+    if is_range {
+        out.truncate(printed_from + trim_end(&out[printed_from..]).len());
+    }
     let (Some(offset), Some(region)) = (cursor_offset, region) else {
         return Ok(None);
     };

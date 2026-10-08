@@ -87,10 +87,11 @@ fn is_plain_microsyntax_key(name: &[u8]) -> bool {
         return false;
     };
     let word_len = rest.iter().take_while(|byte| is_part(**byte)).count();
-    let mut groups = rest[word_len..].chunks_exact(3);
+    let (groups, remainder) = rest[word_len..].as_chunks::<3>();
     is_start(first)
-        && groups.remainder().is_empty()
+        && remainder.is_empty()
         && groups
+            .iter()
             .all(|group| matches!(*group, [b'-', start, part] if is_start(start) && is_part(part)))
 }
 

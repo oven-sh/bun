@@ -75,6 +75,8 @@ pub struct FormatOptions {
     pub embedded_html: bool,
     /// In how many templates of JavaScript that are written as HTML the text is.
     pub html_template_depth: u32,
+    /// The text is in a file whose name ends with `.html` or `.htm`, in which the doctype of HTML5 is written in lower case.
+    pub is_in_html_file: bool,
     /// Formats the JavaScript and TypeScript in blocks of code in Markdown. Without it they stay as they are.
     pub format_javascript: Option<FormatJavaScript>,
     /// Parses the JavaScript and TypeScript in HTML. Without it they stay as they are.
@@ -100,6 +102,10 @@ pub type FormatJavaScript = fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bo
 /// of them it is, the code, whether that is a script, and what to call with the file, errors or not.
 pub type ParseJavaScript =
     fn(&[u8], &[u8], bool, &mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>));
+
+/// The same for a caller that keeps what it parses with: a text can have many pieces of code in it.
+pub type JavaScriptParser<'p> =
+    &'p dyn Fn(&[u8], &[u8], bool, &mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>));
 
 /// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
 /// what is less than a program.

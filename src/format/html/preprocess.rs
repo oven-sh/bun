@@ -323,7 +323,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             let Some(mut rest) = span.of(self.options.original_text).strip_prefix(b"<") else {
                 return false;
             };
-            for expected in [b'/', b'/', b'>'] {
+            for expected in *b"//>" {
                 match crate::css::text::trim_start(rest).split_first() {
                     Some((&first, after)) if first == expected => rest = after,
                     _ => return false,

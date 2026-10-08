@@ -7,7 +7,7 @@ use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::FormatStatements;
-use crate::options::{HtmlRoot, InHtml};
+use crate::options::{HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript};
 use crate::prelude::*;
 use crate::{format_args, write};
 use bun_core::strings;
@@ -43,10 +43,7 @@ fn is_probably_jsx(text: &[u8]) -> bool {
     let mut from = 0;
     while let Some(at) = strings::index_of(&text[from..], b"</").map(|at| from + at) {
         let before = &text[..at];
-        match before
-            .iter()
-            .rposition(|byte| matches!(byte, b'"' | b'\'' | b'`'))
-        {
+        match strings::last_index_of_any(before, b"\"'`") {
             None => return true,
             Some(quote) if strings::contains_char(&before[quote..], b'\n') => return true,
             Some(_) => from = at + 2,
@@ -89,6 +86,36 @@ pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> Forma
     }
 }
 
+/// What parses code.
+#[derive(Copy, Clone)]
+enum Parse<'p> {
+    Function(ParseJavaScript),
+    Closure(JavaScriptParser<'p>),
+}
+
+impl<'p> Parse<'p> {
+    /// For the code in the HTML that `f` writes.
+    fn of(f: &Formatter<'p>) -> Option<Parse<'p>> {
+        match f.context().parse_javascript {
+            Some(parse) => Some(Parse::Closure(parse)),
+            None => f.options().parse_javascript.map(Parse::Function),
+        }
+    }
+
+    fn call(
+        self,
+        path: &[u8],
+        code: &[u8],
+        is_script: bool,
+        then: &mut dyn for<'b> FnMut(&'b File<'b>),
+    ) {
+        match self {
+            Parse::Function(parse) => parse(path, code, is_script, then),
+            Parse::Closure(parse) => parse(path, code, is_script, then),
+        }
+    }
+}
+
 type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
 
 /// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
@@ -102,7 +129,7 @@ fn with_file(
     in_html: InHtml,
     write: Write<'_>,
 ) -> bool {
-    let Some(parse) = f.options().parse_javascript else {
+    let Some(parse) = Parse::of(f) else {
         return false;
     };
     let options = options_in_html(f.options(), in_html);
@@ -114,7 +141,7 @@ fn with_file(
     for path in paths {
         for &is_script in kinds {
             let mut result = None;
-            parse(path, code, is_script, &mut |file| {
+            parse.call(path, code, is_script, &mut |file| {
                 if file.has_parse_errors()
                     || refused_by_prettier_with(file, TypesInJavaScript::Refused)
                 {
@@ -126,6 +153,11 @@ fn with_file(
                     comments
                 });
                 let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
+                // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
+                let is_html_like = |comment: &Comment| matches!(file.text().get(comment.span.start as usize), Some(b'<' | b'-'));
+                if source_type != SourceType::Script && comments.iter().any(is_html_like) {
+                    return;
+                }
                 let context = JsFormatContext::new(file, options.clone(), comments);
                 result = Some(f.write_embedded(context, file.text(), |f| write(file, f)));
             });
@@ -245,6 +277,107 @@ fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
     (e.span().start > 0 && outer.start == 0 && outer.end as usize == file.text().len()).then_some(e)
 }
 
+/// What no name can be, or can be only in some places.
+fn is_reserved_word(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"arguments"
+            | b"async"
+            | b"await"
+            | b"break"
+            | b"case"
+            | b"catch"
+            | b"class"
+            | b"const"
+            | b"continue"
+            | b"debugger"
+            | b"default"
+            | b"delete"
+            | b"do"
+            | b"else"
+            | b"enum"
+            | b"eval"
+            | b"export"
+            | b"extends"
+            | b"false"
+            | b"finally"
+            | b"for"
+            | b"function"
+            | b"if"
+            | b"implements"
+            | b"import"
+            | b"in"
+            | b"instanceof"
+            | b"interface"
+            | b"let"
+            | b"new"
+            | b"null"
+            | b"package"
+            | b"private"
+            | b"protected"
+            | b"public"
+            | b"return"
+            | b"static"
+            | b"super"
+            | b"switch"
+            | b"this"
+            | b"throw"
+            | b"true"
+            | b"try"
+            | b"typeof"
+            | b"var"
+            | b"void"
+            | b"while"
+            | b"with"
+            | b"yield"
+    )
+}
+
+/// Most expressions in templates are `a`, `a.b.c` or `!a`. Those are written here, as `printMemberExpression` has them,
+/// without being parsed. Returns whether `code` is one.
+fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
+    let code = code.trim_ascii();
+    let path = &code[code.iter().take_while(|byte| **byte == b'!').count()..];
+    let is_name = |name: &[u8]| {
+        matches!(name, [b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$', ..])
+            && name
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+    };
+    let mut names = strings::split(path, b".");
+    let Some(first) = names
+        .next()
+        .filter(|first| is_name(first) && (!is_reserved_word(first) || *first == b"this"))
+    else {
+        return false;
+    };
+    if !names.clone().all(is_name) {
+        return false;
+    }
+    let count = names.clone().count();
+    let content = format_with(|f| {
+        // Up to the end of the first name.
+        let mut end = code.len() - path.len() + first.len();
+        write!(f, text(&code[..end]));
+        for name in names.clone() {
+            let lookup = text(&code[end..end + 1 + name.len()]);
+            end += 1 + name.len();
+            write!(f, line_suffix_boundary());
+            match count == 1 && first != b"this" {
+                true => write!(f, lookup),
+                false => write!(f, group(&indent(&format_args!(soft_line_break(), lookup)))),
+            }
+        }
+    });
+    let should_hug = match hug {
+        Hug::Always => Some(true),
+        Hug::Never | Hug::Expression => Some(false),
+        Hug::Bare => None,
+    };
+    write_hugged(should_hug, &content, f);
+    true
+}
+
 /// `formatAttributeValue(code, textToDoc, { parser })` for the parsers that take an expression. Returns whether it has
 /// been written.
 pub(crate) fn write_expression(
@@ -254,6 +387,9 @@ pub(crate) fn write_expression(
     in_html: InHtml,
     hug: Hug,
 ) -> bool {
+    if write_path(f, code, hug) {
+        return true;
+    }
     let wrapped = [b"(", code, b"\n)"].concat();
     let path = if is_typescript {
         EXPRESSION_TS
@@ -318,12 +454,12 @@ pub(crate) fn write_angular_expression(
     hug: Hug,
     write_rest: &dyn for<'b> Fn(&mut Formatter<'b>),
 ) -> bool {
-    let Some(parse) = f.options().parse_javascript else {
+    let Some(parse) = Parse::of(f) else {
         return false;
     };
     let options = options_in_html(f.options(), in_html);
     let mut is_written = false;
-    parse(EXPRESSION_TS, expression.code, false, &mut |file| {
+    parse.call(EXPRESSION_TS, expression.code, false, &mut |file| {
         let Some(e) = expression_of(file).filter(|_| !file.has_parse_errors()) else {
             return;
         };
@@ -438,11 +574,14 @@ pub(crate) fn write_binding(
                     write_hugged(Some(false), &content, f);
                 }
                 (Binding::Parameters | Binding::ForLeft, StmtKind::Fn(func)) => {
-                    let params = func.params();
+                    // Only TypeScript has it.
+                    if func.this_param().is_some() && !is_typescript {
+                        return false;
+                    }
                     let list = format_with(|f| {
-                        f.join_with(&separator).entries(params.iter());
+                        f.join_with(&separator).entries(func.params_with_this());
                     });
-                    match binding == Binding::ForLeft && params.len() != 1 {
+                    match binding == Binding::ForLeft && func.params_with_this().count() != 1 {
                         true => write!(
                             f,
                             group(&format_args!(

@@ -283,6 +283,8 @@ fn format_text_with_cursor(
     };
     if let Some(parser) = html_parser {
         let mut out = Vec::new();
+        // A snippet has no name.
+        let name = options.filepath.as_deref().unwrap_or(path.as_bytes());
         return bun_format::html::format_with_cursor(
             name,
             code,

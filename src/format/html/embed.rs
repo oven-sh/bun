@@ -272,6 +272,16 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             b"graphql" => self.write_printed_text(|options, out| {
                 crate::graphql::format(code, options, &mut Default::default(), out)
             }),
+            // A template of which Prettier loses something stays as it is.
+            b"glimmer" => self.write_printed_text(|options, out| {
+                let mut scratch = crate::handlebars::Scratch::default();
+                let result = crate::handlebars::format(code, options, &mut scratch, out);
+                if scratch.is_damaged() {
+                    Err(FormatError::SyntaxError)
+                } else {
+                    result
+                }
+            }),
             _ => false,
         }
     }

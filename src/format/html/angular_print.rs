@@ -133,7 +133,8 @@ impl Printer<'_, '_, '_, '_, '_> {
     pub(crate) fn print_angular_icu_expression(&mut self, id: Id) {
         let (tags, node) = (self.tags(), &self.tree[id]);
         self.out.built_text(|out| tags.opening_tag_start(id, out));
-        self.out.start_group();
+        let group_id = self.out.new_group_id();
+        self.out.start_group_with(false, Some(group_id));
         self.out.string(text::trim(&node.value));
         self.out.token(", ");
         self.out.string(&node.name);
@@ -155,6 +156,7 @@ impl Printer<'_, '_, '_, '_, '_> {
         }
         self.out.softline();
         self.out.end_group();
+        self.out.note_line_at_end_of_group(group_id);
         self.out.built_text(|out| tags.closing_tag_end(id, out));
     }
 

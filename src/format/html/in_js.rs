@@ -296,8 +296,10 @@ pub(crate) fn write_template<'a>(
     let slot = f.start_capture();
     // The code in the text is written with the options of the formatter.
     let context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    // Of the name of the file, no more than this is asked.
+    let path = options.is_in_html_file.then_some(&b".html"[..]);
     let written = f.write_embedded(context, &text, |f| {
-        super::write_document(&text, parser, None, &options, true, Some(indent_level), f)
+        super::write_document(&text, parser, path, &options, true, Some(indent_level), f)
     });
     let document = f.end_capture(slot);
     let Ok(top_level_count) = written else {

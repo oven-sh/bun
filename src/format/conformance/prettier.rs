@@ -125,6 +125,8 @@ struct Case {
     parsers: Vec<Vec<u8>>,
     input: Vec<u8>,
     expected: Expected,
+    /// The parsers that reject an input of which there is an output.
+    rejected_by: Vec<Vec<u8>>,
 }
 
 /// What `` ` `` quotes in a snapshot file.
@@ -230,9 +232,12 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
                 parsers: Vec::new(),
                 input: Vec::new(),
                 expected: Expected::Error(Vec::new()),
+                rejected_by: Vec::new(),
             });
-            if let (Expected::Error(parsers), false) = (&mut case.expected, parser.is_empty()) {
-                parsers.push(parser.to_vec());
+            match &mut case.expected {
+                _ if parser.is_empty() => {}
+                Expected::Error(parsers) => parsers.push(parser.to_vec()),
+                Expected::Output(_) => case.rejected_by.push(parser.to_vec()),
             }
             continue;
         };
@@ -242,6 +247,10 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
             parsers: Vec::new(),
             input,
             expected: Expected::Output(output),
+            rejected_by: match cases.remove(&key) {
+                Some(Case { expected: Expected::Error(parsers), .. }) => parsers,
+                _ => Vec::new(),
+            },
         };
         for line in &option_lines {
             let Some((name, value)) = strings::split_once(trim_bytes(line, b" |"), b": ") else {
@@ -386,6 +395,11 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let mut options = FormatOptions::default();
                 if let Some(parser) = named_parser {
                     let _ = options.set(b"parser", parser);
+                } else if !case.parsers.is_empty() && (case.rejected_by.iter().any(|it| it == ours) || !case.parsers.iter().any(|it| it == ours)) {
+                    // The output is that of another parser, which takes what `babel` does not: types in a `.js` file.
+                    if let Some(other) = case.parsers.iter().find(|it| !case.rejected_by.contains(it)) {
+                        let _ = options.set(b"parser", other);
+                    }
                 }
                 let mut described = Vec::new();
                 for (name, value) in case.options.iter().filter(|it| it.0 != b"printWidth" || it.1 != b"80") {

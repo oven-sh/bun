@@ -6,12 +6,18 @@ use crate::options::TrailingSeparator;
 use crate::prelude::*;
 use crate::write;
 
+/// oxfmt sees no empty line in `a: 1\n\n, b: 2`.
+fn comma_ends_the_search_for_line_breaks(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 impl<'a> Formatter<'a> {
     /// The number of line breaks before the node at `span`, or before the comments that lead up
     /// to it.
     #[inline]
     pub(crate) fn lines_before(&self, span: Span) -> usize {
-        self.source_text().get_lines_before(span, self.comments().first_unprinted_span())
+        let looks_past_comma = !comma_ends_the_search_for_line_breaks(self);
+        self.source_text().get_lines_before(span, self.comments().first_unprinted_span(), looks_past_comma)
     }
 
     /// Whether nothing has been written since the start of a group but what the group starts a

@@ -179,7 +179,9 @@ impl<'a> SourceText<'a> {
     /// The number of line breaks between the previous token and `span`, or the comments that lead
     /// up to it, the first of which is `first_unprinted_comment`. Parentheses around `span` are
     /// looked through.
-    pub(crate) fn get_lines_before(self, span: Span, first_unprinted_comment: Option<Span>) -> usize {
+    ///
+    /// `looks_past_comma`: in `a: 1\n\n, b: 2` the comma is on the line of what follows it, and the line breaks before it count.
+    pub(crate) fn get_lines_before(self, span: Span, first_unprinted_comment: Option<Span>, looks_past_comma: bool) -> usize {
         let mut start = span.start;
         if let Some(comment) = first_unprinted_comment
             && comment.end <= start
@@ -191,6 +193,7 @@ impl<'a> SourceText<'a> {
         }
 
         let mut count = 0;
+        let mut is_after_comma = !looks_past_comma;
         let mut following = self.from(span.end);
         let mut before = self.to(start);
         loop {
@@ -221,6 +224,11 @@ impl<'a> SourceText<'a> {
             }
             match line_terminator_len_back(before) {
                 0 if before.is_empty() => return 0,
+                0 if count == 0 && !is_after_comma && before.ends_with(b",") => {
+                    before = &before[..before.len() - 1];
+                    is_after_comma = true;
+                    continue;
+                }
                 0 => return count,
                 _ if before.ends_with(b"\r\n") => before = &before[..before.len() - 2],
                 len => before = &before[..before.len() - len],

@@ -68,7 +68,8 @@ impl<'a> ObjectPatternLike<'a> {
             }
             Self::ObjectAssignmentTarget(_, props) => props.iter().any(|property| {
                 property.kind() == PropKind::Init
-                    && property.value().is_some_and(|it| matches!(it.kind(), ExprKind::Object(_) | ExprKind::Array(_)))
+                    && (property.value())
+                        .is_some_and(|it| matches!(it.kind(), ExprKind::Object(_) | ExprKind::Array(_)) && is_assignment_target(it))
             }),
         }
     }

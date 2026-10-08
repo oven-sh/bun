@@ -120,13 +120,10 @@ impl<'w, 'f> Writer<'w, 'f> {
             self.f
                 .write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
-        } else if mode == LineMode::Hard && count > written_by_mode + 1 {
-            let extra = (count - written_by_mode - 1) as usize;
-            self.f.write_text(
-                &b"\n".repeat(extra + written_by_mode as usize),
-                Some(TextWidth::multiline(0)),
-            );
-            self.f.write_element(FormatElement::Line(LineMode::Empty));
+        } else if mode == LineMode::Hard && count > 2 {
+            // The first ends the line, with the blanks at its end.
+            self.f.write_element(FormatElement::Line(LineMode::Hard));
+            self.write_lines(mode, count - 1, true);
         } else {
             let with_empty_line = count > written_by_mode;
             self.f

@@ -4,13 +4,14 @@
 //!
 //! - The elements, comments, blocks and declarations are the same, in the same order and in each other the same way, and the
 //!   elements have the same attributes in the same order. Upper and lower case do not count.
-//! - All that is text has the same letters as often, whatever becomes of white space, punctuation, digits and upper and
+//! - All that is text has the same letters as often, whatever becomes of white space, punctuation, numbers and upper and
 //!   lower case: text, comments, scripts, style sheets, the values of attributes, expressions. So nothing with a letter in
 //!   it is lost or there twice, in whatever language it is. That letters have changed places is not noticed.
 
 use super::Parser;
 use super::ast::{Id, Kind, Tree};
 use super::parse;
+use crate::range::white_space_len;
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 
@@ -30,13 +31,26 @@ struct Reader {
 
 impl Reader {
     fn count(&mut self, text: &[u8]) {
-        for &byte in text {
+        let (mut at, mut previous) = (0, 0);
+        while let Some(&byte) = text.get(at) {
             match byte {
+                // The exponent of a number, which goes if it is zero.
+                b'e' | b'E' if previous == b'.' || previous.is_ascii_digit() => {}
                 b'a'..=b'z' => self.letters[usize::from(byte - b'a')] += 1,
                 b'A'..=b'Z' => self.letters[usize::from(byte - b'A')] += 1,
-                0x80.. => self.letters[26 + usize::from(byte - 0x80)] += 1,
+                // In lower case, U+0130 is an `i` and U+0307.
+                0xC4 if text.get(at + 1) == Some(&0xB0) => {
+                    self.count(b"i\xCC\x87");
+                    at += 1;
+                }
+                0x80.. => match white_space_len(&text[at..]) {
+                    0 => self.letters[26 + usize::from(byte - 0x80)] += 1,
+                    len => at += len - 1,
+                },
                 _ => {}
             }
+            previous = byte;
+            at += 1;
         }
     }
 

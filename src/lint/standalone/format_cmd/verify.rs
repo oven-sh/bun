@@ -158,7 +158,23 @@ pub(super) fn verify_pairs(args: &Args) {
         {
             return;
         }
-        let _ = match compare(name, &before, &after, &args.options, &mut scratch) {
+        let html_parser = match &args.options.parser {
+            Some(parser) => bun_format::html::Parser::from_name(parser),
+            None => bun_format::html::parser_for_path(name.as_bytes()),
+        };
+        let html = html_parser.map(|parser| {
+            bun_format::html::has_same_content(&before, &after, parser, &args.options)
+        });
+        let _ = match html.map_or_else(
+            || compare(name, &before, &after, &args.options, &mut scratch),
+            |is_same| {
+                Some(
+                    is_same
+                        .then_some(())
+                        .ok_or_else(|| "what is in the file".into()),
+                )
+            },
+        ) {
             Some(Ok(())) => writeln!(stdout, "same"),
             Some(Err(difference)) => writeln!(stdout, "different ({difference})"),
             None => writeln!(stdout, "not compared"),

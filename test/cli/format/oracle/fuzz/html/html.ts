@@ -142,7 +142,7 @@ const file = join(
     parser
   ]!,
 );
-const flags = [`--parser=${parser}`, ...Object.entries(options).map(([key, value]) => `--${key}=${value}`)];
+const flags = [`--parser=${parser}`, "--embeddedHtml=true", ...Object.entries(options).map(([key, value]) => `--${key}=${value}`)];
 function serve() {
   const server = Bun.spawn({
     cmd: [bin, "format", "serve", ...flags],

@@ -40,9 +40,22 @@ fn check_regex<'a>(
     else {
         return;
     };
-    let is_in_character_class = |index: u32| {
-        let mut nodes = ast.root().descendants();
-        nodes.any(|it| it.ty() == NodeType::CharacterClass && it.start() <= index && index < it.end())
+    // Where the character classes start, each with the greatest end of those up to it.
+    let mut character_classes: Option<Vec<(u32, u32)>> = None;
+    let mut is_in_character_class = |index: u32| {
+        let classes = character_classes.get_or_insert_with(|| {
+            let nodes = ast.root().descendants().filter(|it| it.ty() == NodeType::CharacterClass);
+            let mut classes: Vec<(u32, u32)> = nodes.map(|it| (it.start(), it.end())).collect();
+            classes.sort_unstable();
+            let mut end = 0;
+            for class in &mut classes {
+                end = end.max(class.1);
+                class.1 = end;
+            }
+            classes
+        });
+        let before = classes.partition_point(|it| it.0 <= index);
+        before.checked_sub(1).and_then(|it| classes.get(it)).is_some_and(|it| index < it.1)
     };
     let mut from = 0;
     while let Some((index, length, end)) = next_spaces(pattern, from) {

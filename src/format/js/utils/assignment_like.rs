@@ -7,9 +7,11 @@ use super::object::{FormatKey, format_computed_or_property_key, write_member_nam
 use super::operators::assign_op_text;
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
+use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
 use crate::js::print::decorators::FormatDecorators;
+use crate::js::print::expressions::unary_argument_has_comments;
 use crate::js::print::patterns::FormatBindingPropertyValue;
 use crate::js::print::sequence_expression::write_comments_before_closing_parenthesis;
 use crate::js::print::type_parameters::type_arguments;
@@ -75,22 +77,116 @@ fn should_print_as_leading(e: Expr<'_>) -> bool {
 /// operator would gain next to nothing.
 const MIN_OVERLAP_FOR_BREAK: u8 = 3;
 
-/// Whether all that is written for the computed `key` is one piece of text. Only such a key can be
-/// short.
-fn is_plain_computed_key(key: Key<'_>) -> bool {
-    match key.kind() {
-        KeyKind::Computed(e) => matches!(
-            e.kind(),
-            ExprKind::Ident(_)
-                | ExprKind::This
-                | ExprKind::Null
-                | ExprKind::True
-                | ExprKind::False
-                | ExprKind::BigInt(_)
-                | ExprKind::Regex(_)
-        ),
-        _ => true,
+/// The width of what is written for the computed `key`, with its brackets, if that is one piece of
+/// text: there is no group in it and nothing that can break. Only such a key can be short. Prettier
+/// asks whether `cleanDoc(keyDoc)` is a string.
+fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
+    if let KeyKind::Computed(e) = key.kind() {
+        return Some(plain_expression_width(e, f)? + 2);
     }
+    let span = key.span(f.file());
+    // A template is written with a `lineSuffixBoundary`.
+    let is_template = f.source_text().text_for(&span).get(1..).is_some_and(|it| it.trim_ascii_start().starts_with(b"`"));
+    (!is_template).then(|| f.source_text().span_width(span))
+}
+
+/// See [`computed_key_width`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `a as T`,
+/// `a<T>`. Not `a.b`, `a()`, `` `a` ``, `[]`.
+fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
+    let mut width = 0;
+    let mut current = e;
+    loop {
+        if current != e && expression_needs_parentheses(current, f) {
+            width += 2;
+        }
+        current = match current.kind() {
+            ExprKind::Ident(_)
+            | ExprKind::This
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex(_) => return Some(width + f.source_text().span_width(current.span())),
+            ExprKind::ImportMeta => return Some(width + "import.meta".len()),
+            ExprKind::NewTarget => return Some(width + "new.target".len()),
+            // An operand with comments is in a group.
+            ExprKind::Unary { operand, .. } if unary_argument_has_comments(current, operand, f) => return None,
+            ExprKind::Unary { op, operand } => {
+                width += op.as_str().len() + usize::from(op.is_keyword());
+                operand
+            }
+            ExprKind::NonNull(inner) => {
+                width += current.non_null_count();
+                inner
+            }
+            ExprKind::Await(argument) => {
+                width += "await ".len();
+                argument
+            }
+            ExprKind::As { .. } | ExprKind::AsConst(_) if current.is_angle_bracket_assertion() => return None,
+            ExprKind::AsConst(inner) => {
+                width += " as const".len();
+                inner
+            }
+            ExprKind::As { expr, ty } => {
+                width += " as ".len() + plain_type_width(ty, f)?;
+                expr
+            }
+            ExprKind::Satisfies { expr, ty } => {
+                width += " satisfies ".len() + plain_type_width(ty, f)?;
+                expr
+            }
+            ExprKind::Instantiation { expr, type_args } => {
+                width += plain_type_arguments_width(type_args, f)?;
+                expr
+            }
+            _ => return None,
+        };
+    }
+}
+
+/// See [`computed_key_width`]: `any`, `"a"`, `A.B`, `A<B>`, `A[]`, `A[B]`, `keyof A`, `typeof a`. Not
+/// `A | B`, `[A]`, `{}`, `` `a` ``. The width is that of the type as it is written.
+fn plain_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
+    let mut rest: SmallVec<[TypeNode<'a>; 4]> = SmallVec::new();
+    rest.push(ty);
+    while let Some(current) = rest.pop() {
+        match current.kind() {
+            TypeKind::Array(inner) | TypeKind::Keyof(inner) | TypeKind::Readonly(inner) => rest.push(inner),
+            TypeKind::IndexedAccess { obj, index } => rest.extend([obj, index]),
+            TypeKind::UniqueSymbol => {}
+            TypeKind::Ref { args, .. } | TypeKind::Typeof { args, .. } | TypeKind::Import { args, .. }
+                if !args.is_empty() =>
+            {
+                plain_type_arguments_width(args, f)?;
+            }
+            TypeKind::Typeof { .. } | TypeKind::Import { .. } => {}
+            _ => {
+                name_or_literal_type_width(current, f)?;
+            }
+        }
+    }
+    Some(f.source_text().span_width(ty.span()))
+}
+
+/// `<A>`: one type argument that is a name, a keyword or a literal is written without a group.
+fn plain_type_arguments_width<'a>(arguments: List<'a, TypeNode<'a>>, f: &Formatter<'a>) -> Option<usize> {
+    match (arguments.len(), arguments.first()) {
+        (1, Some(only)) => Some(name_or_literal_type_width(only, f)? + 2),
+        _ => None,
+    }
+}
+
+fn name_or_literal_type_width<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> Option<usize> {
+    let is_name_or_literal = match ty.kind() {
+        TypeKind::Keyword(_) | TypeKind::NumberLit(_) | TypeKind::BigIntLit { .. } | TypeKind::BoolLit(_) => true,
+        TypeKind::StringLit(_) => !f.source_text().text_for(&ty.span()).starts_with(b"`"),
+        TypeKind::Ref { args, .. } => args.is_empty(),
+        _ => false,
+    };
+    is_name_or_literal.then(|| f.source_text().span_width(ty.span()))
 }
 
 /// The decorators, the modifiers, the name, `?`, `!` and the type of a property of a class.
@@ -222,7 +318,7 @@ impl<'a> AssignmentLike<'a> {
                 }
                 Some(key) if key.is_computed() => {
                     write!(f, ["[", FormatKey::new(key, property.as_ast_nodes()), "]"]);
-                    is_plain_computed_key(key) && f.source_text().span_width(key.span(f.file())) < text_width_for_break
+                    computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
                 }
                 Some(key) => write_member_name(key, || property.as_ast_nodes(), f) < text_width_for_break,
                 None => false,
@@ -236,7 +332,7 @@ impl<'a> AssignmentLike<'a> {
                     }
                     Some(key) if key.is_computed() => {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
-                        is_plain_computed_key(key) && f.source_text().span_width(key.span(f.file())) < text_width_for_break
+                        computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
                     }
                     Some(key) => write_member_name(key, || node, f) < text_width_for_break,
                     None => false,

@@ -16,7 +16,7 @@
 
 use super::estree_compat::{
     estree_parent, estree_span, get_node_by_range_index, is_assignment_target, is_chain_root,
-    is_expression_statement,
+    is_expression_statement, is_in_type_query,
     type_annotation_span,
 };
 use super::text;
@@ -575,10 +575,14 @@ pub fn is_literal(e: Expr<'_>) -> bool {
     )
 }
 
-/// `node.type === "MemberExpression"`
-#[inline]
+/// `node.type === "MemberExpression"`: an `ExprKind::Dot` or an `ExprKind::Index`, but not the `a.b`
+/// of `<a.b />`, a `JSXMemberExpression`, nor that of the type `typeof a.b`, a `TSQualifiedName`.
 pub fn is_member_expression(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+    match e.kind() {
+        ExprKind::Index { .. } => true,
+        ExprKind::Dot { .. } => !e.is_jsx_tag_name() && !is_in_type_query(e),
+        _ => false,
+    }
 }
 
 /// ESLint's `isNullLiteral`.

@@ -8,6 +8,7 @@
 //! | `ChainExpression` | [`is_chain_root`], [`chain_root`], [`is_in_optional_chain`] |
 //! | `SequenceExpression.expressions` | [`sequence_expressions`], [`is_sequence_root`], [`sequence_root`] |
 //! | `ExpressionStatement`, as opposed to the `init` of a `for` | [`is_expression_statement`], [`is_for_init`] |
+//! | `TSQualifiedName` in `typeof a.b` | [`is_in_type_query`] |
 //! | a pattern in an assignment | [`is_assignment_target`] |
 //! | any pattern, in a declaration or in an assignment | [`Target`] |
 //! | `TSTypeAnnotation.range` | [`type_annotation_span`] |
@@ -15,69 +16,41 @@
 //! | `CatchClause.range` | [`catch_clause_span`] |
 
 use crate::ast::{
-    BinOp, Chain, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name,
+    BinOp, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name,
     Node, Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp, VarDecl,
 };
 use crate::span::{Span, Spanned};
-use crate::tokens::{skip_trivia, skip_trivia_back};
 use smallvec::SmallVec;
 
 // ───────────────────────────── optional chains ─────────────────────────────
 
-/// Whether `parent` goes on with the optional chain that `e`, its object or its callee, is part
-/// of.
-fn continues_chain<'a>(parent: Expr<'a>, e: Expr<'a>) -> bool {
-    if e.is_parenthesized() || parent.chain() == Chain::No {
-        return false;
-    }
-    match parent.kind() {
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == e,
-        ExprKind::Call(call) => call.callee() == e,
-        _ => false,
-    }
-}
-
-/// The next link of the optional chain that `e` is a link of: the member access or the call whose
-/// object or callee it is, or the `!` after it.
-fn next_in_chain(e: Expr<'_>) -> Option<Expr<'_>> {
-    let parent = e.parent().as_expr()?;
-    match parent.kind() {
-        ExprKind::NonNull(_) => (!e.is_parenthesized()).then_some(parent),
-        _ => continues_chain(parent, e).then_some(parent),
-    }
-}
-
-/// Whether `e` is a member access, a call or a `!` in an optional chain, after its first `?.`.
-fn is_chain_link(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::NonNull(inner) => !inner.is_parenthesized() && is_chain_link(inner),
-        _ => e.chain() != Chain::No,
-    }
-}
-
-/// Whether ESTree has a `ChainExpression` around `e`: it is the whole of `a?.b.c()`, not a part of
-/// it. In `a?.b!`, that is the `ExprKind::NonNull`.
+/// [`Expr::is_chain_root`]: ESTree has a `ChainExpression` around `e`. It is the whole of
+/// `a?.b.c()`, not a part of it. In `a?.b!`, that is the `ExprKind::NonNull`.
+#[inline]
 pub fn is_chain_root(e: Expr<'_>) -> bool {
-    is_chain_link(e) && next_in_chain(e).is_none()
+    e.is_chain_root()
 }
 
 /// The whole optional chain that `e` is a link of: what ESTree has a `ChainExpression` around.
 /// `None` if `e` is not in a chain, or is before its first `?.`: the `a` of `a?.b`.
 pub fn chain_root(e: Expr<'_>) -> Option<Expr<'_>> {
-    if !is_chain_link(e) {
+    if !e.is_in_optional_chain() {
         return None;
     }
     let mut root = e;
-    while let Some(next) = next_in_chain(root) {
-        root = next;
+    while !root.is_chain_root()
+        && let Some(parent) = root.parent().as_expr()
+    {
+        root = parent;
     }
     Some(root)
 }
 
-/// Whether evaluating `e` can be cut short by a `?.` in it or before it in the same chain.
+/// [`Expr::is_in_optional_chain`]: evaluating `e` can be cut short by a `?.` in it or before it in
+/// the same chain.
 #[inline]
 pub fn is_in_optional_chain(e: Expr<'_>) -> bool {
-    is_chain_link(e)
+    e.is_in_optional_chain()
 }
 
 // ───────────────────────────── the comma operator ─────────────────────────────
@@ -113,24 +86,12 @@ pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
-/// ESTree's `SequenceExpression.expressions`: the `a`, `b` and `c` of `a, b, c`. An operand in
-/// parentheses is one expression. What is not a comma expression is its own only element.
+/// [`Expr::sequence`]: ESTree's `SequenceExpression.expressions`, the `a`, `b` and `c` of `a, b, c`.
+/// An operand in parentheses is one expression. What is not a comma expression is its own only
+/// element.
+#[inline]
 pub fn sequence_expressions(e: Expr<'_>) -> SmallVec<[Expr<'_>; 4]> {
-    let mut all = SmallVec::new();
-    let mut at = e;
-    while let ExprKind::Binary {
-        op: BinOp::Comma,
-        left,
-        right,
-    } = at.kind()
-        && (at == e || !at.is_parenthesized())
-    {
-        all.push(right);
-        at = left;
-    }
-    all.push(at);
-    all.reverse();
-    all
+    e.sequence()
 }
 
 /// ESTree's `SequenceExpression.expressions.at(-1)`.
@@ -162,7 +123,7 @@ pub fn is_for_init(statement: Stmt<'_>) -> bool {
 /// head of a `for`.
 #[inline]
 pub fn is_expression_statement(statement: Stmt<'_>) -> bool {
-    matches!(statement.kind(), StmtKind::Expr(_)) && !is_for_init(statement)
+    matches!(statement.kind(), StmtKind::Expr(_)) && !statement.is_wrapper()
 }
 
 // ───────────────────────────── patterns ─────────────────────────────
@@ -397,16 +358,16 @@ impl<'a> Target<'a> {
 
 // ───────────────────────────── node.type ─────────────────────────────
 
-/// Whether `e` is the name of a JSX element or a part of it.
-fn is_in_jsx_name(e: Expr<'_>) -> bool {
+/// Whether `e` is the `a.b.c` of the type `typeof a.b.c`, or the `a` or the `a.b` in it. ESTree has
+/// an `Identifier` or a `TSQualifiedName` there, not a `MemberExpression`.
+pub fn is_in_type_query(e: Expr<'_>) -> bool {
     let mut at = e;
     loop {
-        let Some(parent) = at.parent().as_expr() else {
-            return false;
-        };
-        match parent.kind() {
-            ExprKind::Dot { obj, .. } if obj == at => at = parent,
-            ExprKind::Jsx(jsx) => return jsx.tag() == Some(at) || jsx.close_tag() == Some(at),
+        match at.parent() {
+            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == at) => {
+                at = parent;
+            }
+            Node::Type(ty) => return matches!(ty.kind(), TypeKind::Typeof { .. }),
             _ => return false,
         }
     }
@@ -451,18 +412,18 @@ fn type_name_of_class(class: Class<'_>) -> &'static str {
 fn type_name_of_expr(e: Expr<'_>) -> &'static str {
     match e.kind() {
         ExprKind::Missing => "JSXEmptyExpression",
-        ExprKind::Ident(_) | ExprKind::This if is_in_jsx_name(e) => "JSXIdentifier",
+        ExprKind::Ident(_) | ExprKind::This if e.is_jsx_tag_name() => "JSXIdentifier",
         ExprKind::Ident(_) => "Identifier",
         ExprKind::PrivateIdentifier(_) => "PrivateIdentifier",
         ExprKind::This => "ThisExpression",
         ExprKind::Super => "Super",
-        ExprKind::String(name) if is_jsx_child(e) && e.jsx_container_span().is_none() => {
-            match is_in_jsx_name(e) {
-                true if bun_core::strings::contains_char(name.bytes(), b':') => "JSXNamespacedName",
-                true => "JSXIdentifier",
-                false => "JSXText",
+        ExprKind::String(name) if e.is_jsx_tag_name() => {
+            match bun_core::strings::contains_char(name.bytes(), b':') {
+                true => "JSXNamespacedName",
+                false => "JSXIdentifier",
             }
         }
+        ExprKind::String(_) if e.is_jsx_text() => "JSXText",
         ExprKind::Null
         | ExprKind::True
         | ExprKind::False
@@ -478,7 +439,8 @@ fn type_name_of_expr(e: Expr<'_>) -> &'static str {
         ExprKind::Object(_) => "ObjectExpression",
         ExprKind::Fn(func) => type_name_of_func(func),
         ExprKind::Class(_) => "ClassExpression",
-        ExprKind::Dot { .. } if is_in_jsx_name(e) => "JSXMemberExpression",
+        ExprKind::Dot { .. } if e.is_jsx_tag_name() => "JSXMemberExpression",
+        ExprKind::Dot { .. } if is_in_type_query(e) => "TSQualifiedName",
         ExprKind::Dot { .. } | ExprKind::Index { .. } => "MemberExpression",
         ExprKind::Call(_) => "CallExpression",
         ExprKind::New(_) => "NewExpression",
@@ -705,23 +667,12 @@ fn is_catch_param(declaration: VarDecl<'_>) -> bool {
     matches!(declaration.parent(), Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Try { .. }))
 }
 
-/// The range of a pattern as typescript-estree has it: with the `?` and the type annotation that
-/// follow it.
-fn span_with_annotation(pat: Pat<'_>, ty: Option<TypeNode<'_>>, is_optional: bool) -> Span {
-    let span = pat.span();
-    match ty {
-        Some(ty) => Span::new(span.start, type_annotation_span(ty).end),
-        None if is_optional => Span::new(span.start, skip_trivia(pat.file().text(), span.end) + 1),
-        None => span,
-    }
-}
-
 fn span_of_pat(pat: Pat<'_>) -> Span {
     match pat.parent() {
         // The annotation belongs to the `RestElement`.
         Node::Param(param) if param.is_rest() => pat.span(),
-        Node::Param(param) => span_with_annotation(pat, param.ty(), param.is_optional()),
-        Node::VarDecl(declaration) => span_with_annotation(pat, declaration.ty(), false),
+        Node::Param(param) => param.binding_span(),
+        Node::VarDecl(declaration) => declaration.binding_span(),
         _ => pat.span(),
     }
 }
@@ -743,64 +694,28 @@ pub fn estree_span(node: Node<'_>) -> Span {
             _ => statement.span_without_export(),
         },
         Node::VarDecl(declaration) if is_catch_param(declaration) => span_of_pat(declaration.pat()),
-        Node::Func(func) => match (func.kind(), func.owner()) {
-            (_, Node::Stmt(statement)) => statement.span_without_export(),
-            (FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor, owner) => {
-                match owner {
-                    Node::Member(member) if !matches!(member.parent(), Node::Class(_)) => member.span(),
-                    _ => func.span_from_params(),
-                }
-            }
-            (_, Node::Member(member)) => member.span(),
-            (_, Node::Type(ty)) => ty.span(),
-            (_, Node::Expr(e)) => e.span(),
-            _ => func.span(),
-        },
-        Node::Class(class) => match class.owner() {
-            Node::Stmt(statement) => statement.span_without_export(),
-            _ => class.span(),
-        },
+        Node::Func(func) => func.estree_span(),
+        Node::Class(class) => class.estree_span(),
         Node::Pat(pat) => span_of_pat(pat),
-        Node::Param(param) => match param.default() {
-            _ if param.is_parameter_property() || param.is_rest() => param.span(),
-            Some(default) => Span::new(param.pat().span().start, default.outer_span().end),
-            None => span_with_annotation(param.pat(), param.ty(), param.is_optional()),
-        },
+        Node::Param(param) if param.is_parameter_property() => param.span(),
+        Node::Param(param) => param.span_without_modifiers(),
         _ => node.span(),
     }
 }
 
-/// typescript-estree's range of the `TSTypeAnnotation` around `ty`: from the `:`, or from the `=>`
-/// of a function type, to the end of the type with the parentheses around it.
+/// [`TypeNode::annotation_span`]: typescript-estree's range of the `TSTypeAnnotation` around `ty`,
+/// from the `:`, or from the `=>` of a function type, to the end of the type with the parentheses
+/// around it.
+#[inline]
 pub fn type_annotation_span(ty: TypeNode<'_>) -> Span {
-    let text = ty.file().text();
-    let Span { mut start, mut end } = ty.span();
-    loop {
-        let before = skip_trivia_back(text, start);
-        let after = skip_trivia(text, end);
-        let previous = before.checked_sub(1).and_then(|at| text.get(at as usize));
-        match previous {
-            Some(b'(') if text.get(after as usize) == Some(&b')') => {
-                start = before - 1;
-                end = after + 1;
-            }
-            Some(b':') => return Span::new(before - 1, end),
-            Some(b'>') if before >= 2 && text.get(before as usize - 2) == Some(&b'=') => {
-                return Span::new(before - 2, end);
-            }
-            _ => return Span::new(start, end),
-        }
-    }
+    ty.annotation_span()
 }
 
-/// ESTree's range of the `CatchClause` of a `try` statement: from `catch` to the end of the
-/// handler.
+/// [`Stmt::catch_clause_span`]: ESTree's range of the `CatchClause` of a `try` statement, from
+/// `catch` to the end of the handler.
+#[inline]
 pub fn catch_clause_span(statement: Stmt<'_>) -> Option<Span> {
-    let StmtKind::Try { block, handler, .. } = statement.kind() else {
-        return None;
-    };
-    let start = skip_trivia(statement.file().text(), block.span().end);
-    Some(Span::new(start, handler?.span().end))
+    statement.catch_clause_span()
 }
 
 // ───────────────────────────── node.parent ─────────────────────────────

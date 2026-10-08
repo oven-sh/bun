@@ -29,6 +29,7 @@ pub struct Known<'a> {
     at: AncestorMemo<'a, bool>,
     /// The same directly in a function that is not a method.
     in_function: FxHashMap<Func<'a>, bool>,
+    bindings: ast_utils::ThisBindingMemo<'a>,
 }
 
 /// Whether the `this` that is `e` is something else than `undefined`.
@@ -38,14 +39,14 @@ fn is_valid<'a>(
     is_valid_in_keys_of_fields: bool,
     known: &mut Known<'a>,
 ) -> bool {
-    let Known { at, in_function } = known;
+    let Known { at, in_function, bindings } = known;
     let is_valid = at.find(Node::Expr(e), |child, ancestor| match ancestor {
         Node::Func(func) if !func.is_arrow() && func.has_body() => Some(
             // A method is never called with the default `this`.
             matches!(func.owner(), Node::Member(_))
                 || *in_function.entry(func).or_insert_with(|| {
                     is_value_of_accessor(func)
-                        || !ast_utils::is_default_this_binding(func, cap_is_constructor)
+                        || !ast_utils::is_default_this_binding_with(func, cap_is_constructor, bindings)
                         || !func.scope().is_some_and(Scope::is_strict)
                 }),
         ),

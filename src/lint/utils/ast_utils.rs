@@ -14,6 +14,7 @@
 //!   `take_while` and `skip_while` give: `file.tokens_after(node).find(is_comma_token)`.
 //! - A location is a [`Span`], which is what `cx.report` takes.
 
+use super::ancestor_memo::AncestorMemo;
 use super::estree_compat::{
     estree_parent, estree_span, get_node_by_range_index, is_assignment_target, is_chain_root,
     is_expression_statement, is_in_type_query, type_annotation_span,
@@ -1934,9 +1935,12 @@ fn jsx_container_of(node: Node<'_>) -> Option<Span> {
 }
 
 /// ESLint's `getJSDocComment`, for a function or a class: the `/** .. */` comment that documents
-/// it.
-pub fn get_jsdoc_comment<'a>(node: impl Into<Node<'a>>) -> Option<Token<'a>> {
-    let node = super::estree_compat::normalize(node.into());
+/// it. `documented_at`: that of a [`ThisBindingMemo`].
+fn get_jsdoc_comment<'a>(
+    node: Node<'a>,
+    documented_at: &mut AncestorMemo<'a, Option<u32>>,
+) -> Option<Token<'a>> {
+    let node = super::estree_compat::normalize(node);
     let file = node.file();
     match node {
         Node::Class(class) => match class.owner() {
@@ -1949,50 +1953,50 @@ pub fn get_jsdoc_comment<'a>(node: impl Into<Node<'a>>) -> Option<Token<'a>> {
             .has_body()
             .then(|| find_jsdoc_comment(file, func.owner().span().start))?,
         Node::Func(func) if is_function_with_body(func) => {
-            let mut parent = estree_parent(node);
             let is_argument = matches!(
-                parent.as_expr().map(Expr::kind),
+                estree_parent(node).as_expr().map(Expr::kind),
                 Some(ExprKind::Call(_) | ExprKind::New(_))
             );
-            if !is_argument {
-                let mut child = node;
-                loop {
-                    if let Some(braces) = jsx_container_of(child)
-                        && file.comments_before(braces).next().is_some()
-                    {
-                        return find_jsdoc_comment(file, braces.start);
-                    }
-                    match parent {
-                        Node::File(_) => break,
-                        Node::Func(outer) if outer.kind() == FnKind::Decl => break,
-                        Node::Func(outer) if outer.kind() != FnKind::StaticBlock => {
-                            return find_jsdoc_comment(file, estree_span(parent).start);
-                        }
-                        Node::Member(member)
-                            if !matches!(
-                                member.kind(),
-                                MemberKind::Property | MemberKind::StaticBlock
-                            ) =>
-                        {
-                            return find_jsdoc_comment(file, member.span().start);
-                        }
-                        // A `SpreadElement` and a `JSXAttribute` are no `Property`.
-                        Node::Prop(prop)
-                            if prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() =>
-                        {
-                            return find_jsdoc_comment(file, parent.span().start);
-                        }
-                        Node::PatProp(_) => {
-                            return find_jsdoc_comment(file, parent.span().start);
-                        }
-                        _ if file.comments_before(parent).next().is_some() => {
-                            return find_jsdoc_comment(file, parent.span().start);
-                        }
-                        _ => (child, parent) = (parent, estree_parent(parent)),
-                    }
+            let of_ancestor = |child: Node<'a>, parent: Node<'a>| {
+                if let Some(braces) = jsx_container_of(child)
+                    && file.comments_before(braces).next().is_some()
+                {
+                    return Some(Some(braces.start));
                 }
-            }
-            find_jsdoc_comment(file, estree_span(node).start)
+                match parent {
+                    Node::File(_) => Some(None),
+                    Node::Func(outer) if outer.kind() == FnKind::Decl => Some(None),
+                    Node::Func(outer) if outer.kind() != FnKind::StaticBlock => {
+                        Some(Some(estree_span(parent).start))
+                    }
+                    Node::Member(member)
+                        if !matches!(
+                            member.kind(),
+                            MemberKind::Property | MemberKind::StaticBlock
+                        ) =>
+                    {
+                        Some(Some(member.span().start))
+                    }
+                    // A `SpreadElement` and a `JSXAttribute` are no `Property`.
+                    Node::Prop(prop)
+                        if prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() =>
+                    {
+                        Some(Some(parent.span().start))
+                    }
+                    Node::PatProp(_) => Some(Some(parent.span().start)),
+                    _ if file.comments_before(parent).next().is_some() => {
+                        Some(Some(parent.span().start))
+                    }
+                    _ => None,
+                }
+            };
+            let start = match is_argument {
+                true => None,
+                false => documented_at
+                    .find_with(node, estree_parent, of_ancestor)
+                    .flatten(),
+            };
+            find_jsdoc_comment(file, start.unwrap_or_else(|| estree_span(node).start))
         }
         _ => None,
     }
@@ -2000,8 +2004,12 @@ pub fn get_jsdoc_comment<'a>(node: impl Into<Node<'a>>) -> Option<Token<'a>> {
 
 /// ESLint's `hasJSDocThisTag`: the JSDoc comment of the function, or a comment directly before it,
 /// has `@this`.
-pub fn has_jsdoc_this_tag(func: Func<'_>) -> bool {
-    get_jsdoc_comment(func).is_some_and(|comment| has_this_tag(comment.comment_value()))
+fn has_jsdoc_this_tag<'a>(
+    func: Func<'a>,
+    documented_at: &mut AncestorMemo<'a, Option<u32>>,
+) -> bool {
+    get_jsdoc_comment(Node::Func(func), documented_at)
+        .is_some_and(|comment| has_this_tag(comment.comment_value()))
         || (func.file())
             .comments_before(estree_span(Node::Func(func)))
             .any(|comment| has_this_tag(comment.comment_value()))
@@ -2015,6 +2023,27 @@ pub fn has_jsdoc_this_tag(func: Func<'_>) -> bool {
 /// `cap_is_constructor`: a function whose name starts with a capital letter is a constructor.
 /// Upstream's default is `true`.
 pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool {
+    is_default_this_binding_with(func, cap_is_constructor, &mut ThisBindingMemo::default())
+}
+
+/// What [`is_default_this_binding`] passes on its ways up from a function. The functions that are operands of one chain of
+/// operators, or are returned in one chain of `else if`, all go up that chain.
+#[derive(Default)]
+pub struct ThisBindingMemo<'a> {
+    /// Where the JSDoc comment of a function expression is looked for, if that is before something around it.
+    documented_at: AncestorMemo<'a, Option<u32>>,
+    /// The outermost of the `||`, `&&`, `??` and `?:` that an expression is an operand of, or the expression itself.
+    outermost_operand: AncestorMemo<'a, Expr<'a>>,
+    /// [`get_upper_function`]
+    upper_function: AncestorMemo<'a, Func<'a>>,
+}
+
+/// [`is_default_this_binding`] for a rule that asks about many functions of a file, with one `memo` for all of them.
+pub fn is_default_this_binding_with<'a>(
+    func: Func<'a>,
+    cap_is_constructor: bool,
+    memo: &mut ThisBindingMemo<'a>,
+) -> bool {
     let is_capitalized = |name: Option<Name<'_>>| {
         cap_is_constructor
             && func.name().is_none()
@@ -2034,7 +2063,8 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
         // The value of a `MethodDefinition`.
         Node::Member(_) => return false,
         _ => {
-            return !((cap_is_constructor && is_es5_constructor(func)) || has_jsdoc_this_tag(func));
+            return !((cap_is_constructor && is_es5_constructor(func))
+                || has_jsdoc_this_tag(func, &mut memo.documented_at));
         }
     };
     let is_value_of = |member: Member<'_>, value: Expr<'_>| {
@@ -2044,7 +2074,9 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
     if matches!(current.parent(), Node::Member(member) if is_value_of(member, current)) {
         return false;
     }
-    if (cap_is_constructor && is_es5_constructor(func)) || has_jsdoc_this_tag(func) {
+    if (cap_is_constructor && is_es5_constructor(func))
+        || has_jsdoc_this_tag(func, &mut memo.documented_at)
+    {
         return false;
     }
     /// The call whose callee is the function `inner`: `(function() { return current; })()`.
@@ -2054,14 +2086,23 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
             _ => None,
         }
     }
-    loop {
-        match current.parent() {
-            Node::Expr(parent) => match parent.kind() {
+    let outermost_operand =
+        |child: Node<'a>, parent: Node<'a>| match parent.as_expr().map(Expr::kind) {
+            Some(
                 ExprKind::Binary {
                     op: BinOp::And | BinOp::Or | BinOp::Nullish,
                     ..
                 }
-                | ExprKind::Cond { .. } => current = parent,
+                | ExprKind::Cond { .. },
+            ) => None,
+            _ => child.as_expr(),
+        };
+    loop {
+        current = (memo.outermost_operand)
+            .find(Node::Expr(current), outermost_operand)
+            .unwrap_or(current);
+        match current.parent() {
+            Node::Expr(parent) => match parent.kind() {
                 ExprKind::Assign { target, .. } => {
                     return !is_member_expression(target) && !is_capitalized(target.as_ident());
                 }
@@ -2097,7 +2138,9 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
                 _ => return true,
             },
             Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Return(_)) => {
-                match get_upper_function(statement).and_then(call_of) {
+                let upper_function = (memo.upper_function)
+                    .find(Node::Stmt(statement), |_, parent| as_function(parent));
+                match upper_function.and_then(call_of) {
                     Some(call) => current = call,
                     None => return true,
                 }

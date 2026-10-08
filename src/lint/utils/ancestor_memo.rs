@@ -32,6 +32,17 @@ impl<'a, T: Copy> AncestorMemo<'a, T> {
     pub fn find(
         &mut self,
         node: Node<'a>,
+        decide: impl FnMut(Node<'a>, Node<'a>) -> Option<T>,
+    ) -> Option<T> {
+        self.find_with(node, Node::parent, decide)
+    }
+
+    /// [`AncestorMemo::find`] for a walk on which `up` says what the parent of a node is, such as
+    /// [`estree_parent`](super::estree_parent). It has to be the same for every call.
+    pub fn find_with(
+        &mut self,
+        node: Node<'a>,
+        up: impl Fn(Node<'a>) -> Node<'a>,
         mut decide: impl FnMut(Node<'a>, Node<'a>) -> Option<T>,
     ) -> Option<T> {
         let mut child = node;
@@ -45,7 +56,7 @@ impl<'a, T: Copy> AncestorMemo<'a, T> {
             {
                 break known;
             }
-            let parent = child.parent();
+            let parent = up(child);
             let answer = decide(child, parent);
             if answer.is_some() {
                 break answer;
@@ -59,7 +70,7 @@ impl<'a, T: Copy> AncestorMemo<'a, T> {
                 if step >= PLAIN_STEPS {
                     self.known.insert(passed, answer);
                 }
-                passed = passed.parent();
+                passed = up(passed);
             }
         }
         answer

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use rustc_hash::FxHashMap;
 
 /// Disallow the use of `eval()`.
 pub struct NoEval {
@@ -7,6 +8,16 @@ pub struct NoEval {
 }
 
 const UNEXPECTED: Message = Message::new("unexpected", "`eval` can be harmful.");
+
+/// What is known about the `this` of a file.
+#[derive(Default)]
+pub struct Known<'a> {
+    /// Whether a `this` at a node, in a function or in a field of a class, is the global object.
+    at: AncestorMemo<'a, bool>,
+    /// The same directly in a function.
+    in_function: FxHashMap<Func<'a>, bool>,
+    bindings: ast_utils::ThisBindingMemo<'a>,
+}
 
 /// `e` is a member access of the property `name`.
 fn is_member(e: Expr<'_>, name: &str) -> bool {
@@ -88,10 +99,12 @@ impl NoEval {
         if !is_member(member, "eval") {
             return;
         }
-        let is_global_object = cx.state.find(Node::Expr(e), |child, ancestor| match ancestor {
-            Node::Func(func) if !func.is_arrow() => Some(
-                !func.scope().is_none_or(Scope::is_strict) && ast_utils::is_default_this_binding(func, true),
-            ),
+        let Known { at, in_function, bindings } = &mut cx.state;
+        let is_global_object = at.find(Node::Expr(e), |child, ancestor| match ancestor {
+            Node::Func(func) if !func.is_arrow() => Some(*in_function.entry(func).or_insert_with(|| {
+                !func.scope().is_none_or(Scope::is_strict)
+                    && ast_utils::is_default_this_binding_with(func, true, bindings)
+            })),
             // In the initializer of a field it is the instance or the class.
             Node::Member(field)
                 if field.kind() == MemberKind::Property
@@ -122,8 +135,7 @@ impl NoEval {
 
 impl Rule for NoEval {
     const META: Meta = Meta::eslint("no-eval", Kind::Suggestion);
-    /// Whether a `this` at a node, in a function or in a field of a class, is the global object.
-    type State<'a> = AncestorMemo<'a, bool>;
+    type State<'a> = Known<'a>;
 
     fn new(options: &Options) -> Self {
         NoEval {
@@ -133,13 +145,13 @@ impl Rule for NoEval {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         if !file.mentions("eval") {
-            return AncestorMemo::default();
+            return Known::default();
         }
         on.exprs([ExprTag::Call], Self::check_call);
         if !self.allows_indirect {
             on.exprs([ExprTag::Ident], Self::check_identifier);
             on.exprs([ExprTag::This], Self::check_this);
         }
-        AncestorMemo::default()
+        Known::default()
     }
 }

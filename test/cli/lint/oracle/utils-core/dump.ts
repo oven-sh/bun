@@ -90,6 +90,37 @@ const rule = {
           add("sameReferenceStrict", () => astUtils.isSameReference(node.left, node.right, true));
           add("equalTokens", () => astUtils.equalTokens(node.left, node.right, sourceCode));
         }
+        if (node.type === "ArrayPattern" || node.type === "ObjectPattern") {
+          add("pattern", () => {
+            const start = (it: any) => (it ? toByte[it.range[0]] : -1);
+            const leaves = (it: any): number[] =>
+              !it
+                ? []
+                : it.type === "ArrayPattern"
+                  ? it.elements.flatMap(leaves)
+                  : it.type === "ObjectPattern"
+                    ? it.properties.flatMap(leaves)
+                    : it.type === "Property"
+                      ? leaves(it.value)
+                      : it.type === "RestElement"
+                        ? leaves(it.argument)
+                        : it.type === "AssignmentPattern"
+                          ? leaves(it.left)
+                          : [start(it)];
+            const elements = (node.elements ?? node.properties).map((it: any) => {
+              const isRest = it?.type === "RestElement";
+              const isProperty = it?.type === "Property";
+              const inner = isRest ? it.argument : isProperty ? it.value : it;
+              const hasDefault = inner?.type === "AssignmentPattern";
+              const key = isProperty ? text(astUtils.getStaticPropertyName(it)) : "null";
+              const target = hasDefault ? inner.left : inner;
+              return `${key} ${start(target)} ${start(hasDefault ? inner.right : null)} ${isRest} ${isProperty && it.shorthand},`;
+            });
+            return `${elements.join("")} leaves${leaves(node)
+              .map(it => " " + it)
+              .join("")}`;
+          });
+        }
         if (node.type === "Identifier") add("globalReference", () => sourceCode.isGlobalReference(node));
         if (node.type === "SequenceExpression") add("sequence", () => node.expressions.map((e: any) => range(e) + ",").join(""));
         if (it.parent.type === "ExpressionStatement") add("needsSemicolon", () => astUtils.needsPrecedingSemicolon(sourceCode, it));

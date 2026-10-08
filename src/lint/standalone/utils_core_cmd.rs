@@ -13,7 +13,7 @@ use bun_lint::ast::{Expr, ExprKind, File, Node, Stmt, StmtKind};
 use bun_lint::language::{LanguageOptions, SourceType};
 use bun_lint::options::{Json, Object};
 use bun_lint::span::Span;
-use bun_lint::utils::{self, ast_utils};
+use bun_lint::utils::{self, Target, TargetKind, ast_utils};
 use std::fmt::Write;
 
 struct Facts<'a> {
@@ -39,8 +39,34 @@ impl<'a> Facts<'a> {
         span.map_or("null".to_owned(), |it| format!("{}-{}", it.start, it.end))
     }
 
+    /// The elements of a pattern, and all that it assigns to.
+    fn pattern(&mut self, target: Target<'a>) {
+        if !matches!(target.kind(), TargetKind::Array | TargetKind::Object) {
+            return;
+        }
+        let start = |span: Option<Span>| span.map_or(-1, |it| i64::from(it.start));
+        let mut value = String::new();
+        for it in target.elements() {
+            _ = write!(
+                value,
+                "{} {} {} {} {},",
+                Self::text(it.key.and_then(ast_utils::get_static_key_name)),
+                start(it.target.map(Target::span)),
+                start(it.default.map(Expr::span)),
+                it.is_rest,
+                it.is_shorthand,
+            );
+        }
+        value.push_str(" leaves");
+        target.for_each_leaf(&mut |leaf| _ = write!(value, " {}", leaf.span().start));
+        self.add("pattern", target.into(), value);
+    }
+
     fn expr(&mut self, e: Expr<'a>) {
         let node = Node::Expr(e);
+        if utils::is_assignment_target(e) {
+            self.pattern(Target::Expr(e));
+        }
         // What ESTree has no node for.
         if e.is_missing() || (matches!(e.kind(), ExprKind::Binary { .. }) && utils::sequence_root(e) != e) {
             return;
@@ -163,6 +189,10 @@ impl<'a> Facts<'a> {
                 self.add("node", node, "");
                 let colon = ast_utils::get_switch_case_colon_token(case);
                 self.add("colon", node, Self::span(colon.map(|it| it.span())));
+            }
+            Node::Pat(pat) => {
+                self.add("node", node, "");
+                self.pattern(Target::Pat(pat));
             }
             Node::PatElem(element) if element.pat().is_none() => {}
             Node::TypeParam(param) if matches!(param.parent(), Node::Type(_)) => {}

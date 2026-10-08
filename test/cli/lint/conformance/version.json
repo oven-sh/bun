@@ -1,0 +1,48 @@
+{
+  "eslint": {
+    "version": "10.12.0",
+    "commit": "87bd2cef7b2309739c29598fb2be335f4bed71a3"
+  },
+  "typescript-eslint": {
+    "version": "8.71.1",
+    "commit": "bb699d6c96670b34a9c9819edb257416b881577f"
+  },
+  "eslint-plugin-react-hooks": {
+    "version": "7.0.0",
+    "commit": "b618bbb4422693bbb8d387180687b3f510300f42"
+  },
+  "eslint-plugin-import": {
+    "version": "2.32.0",
+    "commit": "a60d71548b0d12b750f7a7040285774fed25975a"
+  },
+  "eslint-plugin-import-x": {
+    "version": "4.17.1",
+    "commit": "d6808bd4c83d281d748626a1b6aed587f2623040"
+  },
+  "eslint-plugin-n": {
+    "version": "18.4.1",
+    "commit": "f1d47aff402b9e009578f4b3155b84f7d8beef9b"
+  },
+  "oxc": {
+    "version": "1.70.0",
+    "commit": "a4212152daf9908a93c9b1c433e68f8d79a19a1e"
+  },
+  "@types/node": {
+    "version": "24.19.0"
+  },
+  "undici-types": {
+    "version": "7.24.6"
+  },
+  "@types/react": {
+    "version": "18.3.31"
+  },
+  "@types/prop-types": {
+    "version": "15.7.15"
+  },
+  "csstype": {
+    "version": "3.2.3"
+  },
+  "@typescript-eslint/types": {
+    "version": "8.71.1"
+  }
+}

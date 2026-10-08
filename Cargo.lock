@@ -1013,6 +1013,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lint_conformance"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_format_conformance",
+ "bun_lint",
+ "bun_sys",
+]
+
+[[package]]
 name = "bun_lint_driver"
 version = "0.0.0"
 dependencies = [
@@ -1079,6 +1090,7 @@ dependencies = [
  "bun_format_conformance",
  "bun_js_parser",
  "bun_lint",
+ "bun_lint_conformance",
  "bun_lint_driver",
  "bun_lint_eslint",
  "bun_lint_graph",

@@ -12,6 +12,7 @@
 
 pub mod css;
 pub mod cursor;
+pub mod graphql;
 mod ir;
 mod js;
 pub mod json;

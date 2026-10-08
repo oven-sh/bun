@@ -6,6 +6,8 @@
 //! - `n`: https://github.com/eslint-community/eslint-plugin-n (Copyright Toru Nagashima, MIT License)
 //! - `oxc`: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 
+#![forbid(unsafe_code)]
+
 mod n;
 mod oxlint;
 

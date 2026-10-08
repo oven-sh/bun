@@ -9,6 +9,8 @@
 //! A case passes if the messages are the same (rule, id, text, place, fix, and for each suggestion
 //! id, text, fix and the code after it) and the code after one pass of fixes is.
 
+#![forbid(unsafe_code)]
+
 mod compare;
 mod test_only_rules;
 

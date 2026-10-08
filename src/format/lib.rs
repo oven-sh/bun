@@ -10,6 +10,8 @@
 //! [Prettier](https://github.com/prettier/prettier), also under the MIT license, which is the
 //! specification wherever they differ from it.
 
+#![forbid(unsafe_code)]
+
 pub mod css;
 pub mod cursor;
 pub mod graphql;

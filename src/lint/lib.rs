@@ -11,6 +11,8 @@
 //!
 //! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript` and `bun_lint_plugins`.
 
+#![forbid(unsafe_code)]
+
 pub mod ast;
 pub mod code_path;
 pub mod context;

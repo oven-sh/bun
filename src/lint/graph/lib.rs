@@ -15,6 +15,8 @@
 //! Specifiers are resolved as `bun check` resolves them, with the `tsconfig.json` that is closest to the file: `paths`, `./a.js`
 //! for `./a.ts`, `exports` and `imports` of `package.json`, symbolic links. Directories are listed once.
 
+#![forbid(unsafe_code)]
+
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};

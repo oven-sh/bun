@@ -2,6 +2,8 @@
 //! https://github.com/typescript-eslint/typescript-eslint (Copyright typescript-eslint and other
 //! contributors, MIT License): the same options, the same messages, at the same places.
 
+#![forbid(unsafe_code)]
+
 bun_lint::rules! {
     adjacent_overload_signatures::AdjacentOverloadSignatures,
     array_type::ArrayType,

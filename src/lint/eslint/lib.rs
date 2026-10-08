@@ -2,6 +2,8 @@
 //! https://github.com/eslint/eslint (Copyright OpenJS Foundation and other contributors, MIT
 //! License): the same options, the same messages, at the same places.
 
+#![forbid(unsafe_code)]
+
 bun_lint::rules! {
     accessor_pairs::AccessorPairs,
     array_bracket_newline::ArrayBracketNewline,

@@ -6,6 +6,8 @@
 //! - [`run`]: `bun lint`, given the flags and an [`Environment`].
 //! - [`fmt`]: the same for `bun format`.
 
+#![forbid(unsafe_code)]
+
 mod args;
 pub mod cli;
 mod configs;

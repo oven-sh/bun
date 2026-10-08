@@ -9,6 +9,7 @@
 //! vouch for is refused ([`Refusal`]), and the caller hands that text to the parser that recovers
 //! from errors as TypeScript does.
 
+#![forbid(unsafe_code)]
 #![feature(portable_simd)]
 
 mod lexer;

@@ -4,6 +4,8 @@
 //! It is compiled into debug and canary builds of Bun (`bun format --run-prettier-tests`,
 //! `--run-oxfmt-tests`, for `test/cli/format/conformance.test.ts`) and into `bun-lint`.
 
+#![forbid(unsafe_code)]
+
 mod oxfmt;
 mod prettier;
 

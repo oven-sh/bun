@@ -708,6 +708,10 @@ fn format_statement<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Fo
         if is_before_another && no_comment_trails_what_is_before_another(f) {
             return;
         }
+        // What the statement is in ends here, and the next comment is behind that.
+        if f.source_text().next_non_whitespace_byte_is(span.end, b'}') {
+            return;
+        }
         // The comments between the last statement and the end of a block trail that statement.
         return write_trailing_comments_in(span, || statement.ast_parent(), f);
     }
@@ -892,7 +896,24 @@ impl<'a> Format<'a> for TypeNode<'a> {
 
 #[inline]
 fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
-    let needs_parentheses = parentheses::ts_type::needs_parentheses(ty, f);
+    let tag = ty.tag();
+    if matches!(tag, TypeTag::Keyword | TypeTag::BoolLit) {
+        return write!(f, source_text(ty.span()));
+    }
+    // No other kind of type ever needs parentheses.
+    let needs_parentheses = matches!(
+        tag,
+        TypeTag::Fn
+            | TypeTag::Infer
+            | TypeTag::Union
+            | TypeTag::Intersection
+            | TypeTag::Cond
+            | TypeTag::Keyof
+            | TypeTag::Readonly
+            | TypeTag::UniqueSymbol
+            | TypeTag::Typeof
+            | TypeTag::Import
+    ) && parentheses::ts_type::needs_parentheses(ty, f);
     if needs_parentheses {
         "(".fmt(f);
     }

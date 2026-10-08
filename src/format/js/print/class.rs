@@ -67,17 +67,19 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     let Some(value) = member.func() else {
         return;
     };
-    write!(f, FormatDecorators::of_member(member));
-    for (flag, keyword) in [
-        (Flags::PUBLIC, "public"),
-        (Flags::PROTECTED, "protected"),
-        (Flags::PRIVATE, "private"),
-        (Flags::STATIC, "static"),
-        (Flags::ABSTRACT, "abstract"),
-        (Flags::OVERRIDE, "override"),
-    ] {
-        if has_modifier(member, flag) {
-            write!(f, [keyword, space()]);
+    if !member.modifiers().is_empty() {
+        write!(f, FormatDecorators::of_member(member));
+        for (flag, keyword) in [
+            (Flags::PUBLIC, "public"),
+            (Flags::PROTECTED, "protected"),
+            (Flags::PRIVATE, "private"),
+            (Flags::STATIC, "static"),
+            (Flags::ABSTRACT, "abstract"),
+            (Flags::OVERRIDE, "override"),
+        ] {
+            if has_modifier(member, flag) {
+                write!(f, [keyword, space()]);
+            }
         }
     }
     match member.kind() {

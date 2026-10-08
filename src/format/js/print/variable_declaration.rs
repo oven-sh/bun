@@ -60,6 +60,9 @@ struct FormatVariableDeclarators<'a> {
 impl<'a> Format<'a> for FormatVariableDeclarators<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let length = self.declarations.len();
+        if length == 1 && f.is_quiet() {
+            return write!(f, self.declarations.first());
+        }
         let has_any_initializer = self.declarations.iter().any(|declarator| declarator.init().is_some());
         let format_separator = match !self.is_parent_for_loop && has_any_initializer {
             true => hard_line_break(),

@@ -242,10 +242,9 @@ impl Run<'_> {
             b"The --suppress-rule option and the --prune-suppressions option cannot be used together."
         } else if options.stdin && (options.suppress_all || options.suppress_rule.is_some() || options.prune_suppressions) {
             b"The --suppress-all, --suppress-rule, and --prune-suppressions options cannot be used with piped-in code."
-        } else if let Some(flag) = options.without_effect.iter().find(|flag| **flag != b"cache") {
-            return Some([b"bun lint does not support --", *flag, b"."].concat());
         } else {
-            return None;
+            let flag = options.without_effect.iter().find(|flag| **flag != b"cache")?;
+            return Some([b"bun lint does not support --", *flag, b"."].concat());
         };
         Some(text.to_vec())
     }

@@ -198,7 +198,7 @@ pub(crate) fn lint(
             let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| context.should_fix(message));
             result.messages = fixed.remaining;
             if !fixed.is_fixed {
-                let text = state.current.take().or_else(|| Some(fixed.output));
+                let text = state.current.take().or(Some(fixed.output));
                 finish(result, text, state.is_fixed);
                 continue;
             }

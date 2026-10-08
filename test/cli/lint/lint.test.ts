@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -385,7 +385,8 @@ describe.concurrent("bun lint", () => {
       expect(plain.exitCode).toBe(1);
       expect(fixed.files).toEqual({ "a.js": "debugger;\nbar();\n" });
       expect(fixed.exitCode).toBe(0);
-    });
+      // A debug build takes seconds to start the engine that the rules run in.
+    }, isDebug || isASAN ? 120_000 : undefined);
 
     test("--rule, --global, --no-config-lookup", async () => {
       const { stdout } = await lint(

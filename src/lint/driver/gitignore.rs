@@ -114,7 +114,7 @@ impl Pattern {
         let has_slash = |text: &[u8]| strings::contains_char(text, b'/');
         let from_here = name.strip_prefix(b"/").unwrap_or(name);
         // Without `**/` in front and `/**` behind.
-        let (is_anywhere, middle) = from_here.strip_prefix(b"**/").map_or((!has_slash(name), from_here), |rest| (true, rest));
+        let (is_anywhere, middle) = from_here.strip_prefix(b"**/").map_or_else(|| (!has_slash(name), from_here), |rest| (true, rest));
         let (is_inside, middle) = middle.strip_suffix(b"/**").map_or((false, middle), |rest| (true, rest));
         let matcher = match (is_anywhere, is_inside, middle) {
             (true, false, middle) if is_literal(middle) && !has_slash(middle) => Matcher::Name(middle.to_vec()),
@@ -217,7 +217,7 @@ pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
     let is_root = |directory: &&[u8]| [&b".git"[..], b".jj"].iter().any(|name| bun_sys::exists(&paths::join(directory, name)));
     let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
     // Outside of a repository, all the way up.
-    if let Some(root) = directories.iter().position(|it| is_root(it)) {
+    if let Some(root) = directories.iter().position(is_root) {
         directories.truncate(root + 1);
     }
     let mut chain = None;

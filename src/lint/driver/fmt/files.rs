@@ -10,7 +10,6 @@ use bun_core::strings;
 use bun_lint::linter::Glob;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
-use std::cmp::Ordering;
 use std::sync::Arc;
 
 /// A file to format.
@@ -91,33 +90,35 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
     }
 }
 
-/// `a.localeCompare(b)` for what is ASCII: punctuation, then digits, then letters, and `a` before
-/// `A` only if nothing else differs.
-fn collate(a: &[u8], b: &[u8]) -> Ordering {
+/// What each byte weighs in `a.localeCompare(b)`, for what is ASCII: punctuation, then digits, then
+/// letters, whether capital or not. Above zero.
+const WEIGHTS: [u16; 256] = {
     const ORDER: &[u8] = b"\t\n\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789";
-    let primary = |byte: u8| match strings::index_of_char_usize(ORDER, byte) {
-        Some(at) => at as u16,
-        None if byte.is_ascii_alphabetic() => 100 + u16::from(byte.to_ascii_lowercase()),
-        None => 300 + u16::from(byte),
-    };
-    let by_letter = a.iter().map(|it| primary(*it)).cmp(b.iter().map(|it| primary(*it)));
-    by_letter.then_with(|| b.cmp(a))
-}
-
-/// A path, in the order of [`collate`].
-#[derive(PartialEq, Eq)]
-struct Collated(Vec<u8>);
-
-impl Ord for Collated {
-    fn cmp(&self, other: &Collated) -> Ordering {
-        collate(&self.0, &other.0)
+    let mut weights = [0; 256];
+    let mut byte = 0;
+    while byte < 256 {
+        weights[byte] = match byte as u8 {
+            letter @ (b'a'..=b'z' | b'A'..=b'Z') => 100 + letter.to_ascii_lowercase() as u16,
+            _ => 300 + byte as u16,
+        };
+        byte += 1;
     }
-}
-
-impl PartialOrd for Collated {
-    fn partial_cmp(&self, other: &Collated) -> Option<Ordering> {
-        Some(self.cmp(other))
+    let mut at = 0;
+    while at < ORDER.len() {
+        weights[ORDER[at] as usize] = 1 + at as u16;
+        at += 1;
     }
+    weights
+};
+
+/// What sorts as bytes the way the paths sort with `a.localeCompare(b)`: the weights, and then, for
+/// `a` before `A` if nothing else differs, the bytes the other way around.
+fn collation_key(path: &[u8]) -> Vec<u8> {
+    let mut key = Vec::with_capacity(path.len() * 3 + 2);
+    key.extend(path.iter().flat_map(|byte| WEIGHTS[usize::from(*byte)].to_be_bytes()));
+    key.extend_from_slice(&[0, 0]);
+    key.extend(path.iter().map(|byte| !byte));
+    key
 }
 
 /// Which files are left out.
@@ -384,7 +385,7 @@ pub(crate) fn expand(
             b"" => paths::relative(&written_base.1, &target.path),
             written => paths::join(written, &paths::relative(&written_base.1, &target.path)),
         };
-        found.sort_by_cached_key(|target| Collated(key(target)));
+        found.sort_by_cached_key(|target| collation_key(&key(target)));
         for target in found {
             if seen.insert(target.path.clone()) {
                 expanded.push(Expanded::File(target));
@@ -432,7 +433,7 @@ pub(crate) fn expand_as_oxfmt(
     ignored.files.extend(gitignore::with_text(None, &cwd, &excluded.join(&b'\n'), true).map(Some));
     let ignored = &*ignored;
     if !globs.is_empty() || targets.is_empty() {
-        targets.push(cwd.clone());
+        targets.push(cwd);
     }
     targets.sort_unstable();
     targets.dedup();

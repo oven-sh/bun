@@ -54,6 +54,8 @@ pub struct State<'a> {
     /// among `checked_nodes`.
     pending: Vec<Expr<'a>>,
     types: TypeCache<'a>,
+    /// [`describe_enum_types`] of one type.
+    descriptions: FxHashMap<Type<'a>, Vec<u8>>,
 }
 
 fn get_constraint_type(ty: Type<'_>) -> Type<'_> {
@@ -207,6 +209,7 @@ impl<'a> TypeCache<'a> {
 /// `[Fruit, Set<Vegetable>]` is `'Fruit', 'Vegetable'`.
 fn describe_enum_types(types: &[Type]) -> Vec<u8> {
     let mut enum_names: Vec<Vec<u8>> = Vec::new();
+    let mut enum_types = FxHashSet::default();
     let mut visited = FxHashSet::default();
     let mut pending = types.to_vec();
     while let Some(ty) = pending.pop() {
@@ -214,7 +217,9 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
         if visited.len() >= MAXIMUM_DESCRIBED_TYPES || !visited.insert(constrained_type) {
             continue;
         }
-        enum_names.extend(get_enum_types(constrained_type).iter().map(|enum_type| enum_type.to_text()));
+        // One for each member of an enum.
+        let new_enum_types = get_enum_types(constrained_type).into_iter().filter(|&enum_type| enum_types.insert(enum_type));
+        enum_names.extend(new_enum_types.map(|enum_type| enum_type.to_text()));
         pending.extend(constrained_type.get_type_arguments());
         pending.extend(constrained_type.get_number_index_type());
         pending.extend(constrained_type.get_properties().iter().map(|property| property.get_type()));
@@ -233,8 +238,12 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
     description
 }
 
-fn report<'a>(cx: &Context<'a>, node: Span, message: Message, receiver_types: &[Type<'a>]) {
-    cx.report(node, message).data("enumNames", describe_enum_types(receiver_types));
+fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types: &[Type<'a>]) {
+    let enum_names = match receiver_types {
+        &[only] => cx.state.descriptions.entry(only).or_insert_with(|| describe_enum_types(receiver_types)).clone(),
+        _ => describe_enum_types(receiver_types),
+    };
+    cx.report(node, message).data("enumNames", enum_names);
 }
 
 /// Object and array literals are reported per property and element.
@@ -427,7 +436,7 @@ fn check_class_member<'a>(cx: &mut Context<'a>, member: Member<'a>) {
     check_assignment(cx, || Some(member.type_at_location()), value, member.span(), UNSAFE_ENUM_ASSIGNMENT);
 }
 
-fn check_mutation<'a>(cx: &Context<'a>, target_node: Expr<'a>, reporting_node: Expr<'a>) {
+fn check_mutation<'a>(cx: &mut Context<'a>, target_node: Expr<'a>, reporting_node: Expr<'a>) {
     let target_type = target_node.ty();
     if !get_enum_types(get_constraint_type(target_type)).is_empty() {
         report(cx, reporting_node.span(), UNSAFE_ENUM_MUTATION, &[target_type]);

@@ -19,16 +19,57 @@ mod sort_imports;
 
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
-use bun_lint::language::{LanguageOptions, SourceType};
+use bun_lint::language::{LanguageOptions, Parser};
+use bun_sema::atom::Interner;
+use bun_sema::bind::{BindOptions, bind};
+use bun_sema::resolve::Dialect;
+use bun_sema::session::Session;
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
 
+/// Parses `code` the way Prettier's parsers do, as a module or as a script, and calls `then` with
+/// the file.
+fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+    // What typescript-estree refuses while it converts the tree, Prettier refuses too.
+    let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
+    let language = LanguageOptions {
+        parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
+        ..LanguageOptions::default()
+    };
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let arena = session.arena();
+    let how = language.parse_options(path.as_bytes());
+    let mut hir = bun_js_parser::sema::summarize_as(
+        Dialect::babel(is_script),
+        arena,
+        path.as_bytes(),
+        how.script_kind,
+        code,
+        &atoms,
+        how.experimental_decorators,
+        how.every_file_is_a_module,
+    )
+    .0;
+    hir.text = std::borrow::Cow::Borrowed(code);
+    let bind_options = BindOptions {
+        emit_standard_class_fields: true,
+        before_es2020: false,
+        before_es2017: false,
+    };
+    let bound = bind(&hir, bind_options, &atoms, arena);
+    then(&File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None))
+}
+
 fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
-    fn format<'a>(file: &'a File<'a>, language: &LanguageOptions, options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
+    fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
+        if file.language().parser == Parser::TypeScript && bun_lint::linter::parse_error(file).is_some() {
+            return Err(FormatError::SyntaxError);
+        }
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
         let path = crate::text(file.path());
-        let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| crate::with_file(&path, slice, language, |file| then(file));
+        let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file_as(is_script, &path, slice, |file| then(file));
         bun_format::range::format(file, options, &mut scratch, &mut out, parse).map(|()| out)
     }
     let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path.as_bytes());
@@ -52,22 +93,21 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
         bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok(code.to_vec()),
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
-    let format_as = |source_type: SourceType| {
-        let language = LanguageOptions { source_type, ..LanguageOptions::default() };
-        crate::with_file(path, &code, &language, |file| {
+    let format_as = |is_script: bool| {
+        with_file_as(is_script, path, &code, |file| {
             // A file whose imports move is parsed again.
             let how = options.sort_imports.as_deref();
             match how.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-                Some(sorted) => crate::with_file(path, &sorted, &language, |file| format(file, &language, options)),
-                None => format(file, &language, options),
+                Some(sorted) => with_file_as(is_script, path, &sorted, |file| format(file, is_script, options)),
+                None => format(file, is_script, options),
             }
         })
     };
-    // Like Prettier with Babel: what is not a module may be a script.
+    // What is not a module may be a script.
     match name.rsplit(|&byte| byte == b'.').next() {
-        Some(b"cjs" | b"cts") => format_as(SourceType::Script),
-        Some(b"js" | b"jsx") => format_as(SourceType::Module).or_else(|_| format_as(SourceType::Script)),
-        _ => format_as(SourceType::Module),
+        Some(b"cjs" | b"cts") => format_as(true),
+        Some(b"mjs" | b"mts") => format_as(false),
+        _ => format_as(false).or_else(|_| format_as(true)),
     }
 }
 

@@ -29,6 +29,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("js/do/", PROPOSAL),
     ("jsx/do/", PROPOSAL),
     ("js/export-default/export-default-from", PROPOSAL),
+    ("js/export-default/escaped", PROPOSAL),
     ("js/module-blocks", PROPOSAL),
     ("valid-module-block-top-level", PROPOSAL),
     ("js/no-semi-babylon-extensions", PROPOSAL),

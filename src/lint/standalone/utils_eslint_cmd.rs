@@ -4,12 +4,15 @@
 //! A case is `{ id, filename, code, sourceType, ecmaVersion, jsx, names }`. A line of the output is
 //! `{ "id": .., "facts": ["name|type|start|end|value", ..] }`, or `{ "id": .., "error": true }` if
 //! the code does not parse.
+//!
+//! `bun-lint utils-eslint pattern <cases.jsonl>`: what a `PatternMatcher` finds, to compare with
+//! `test/cli/lint/oracle/utils-eslint/pattern.ts`.
 
 use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind};
 use bun_lint::language::{Global, LanguageOptions, SourceType};
 use bun_lint::options::{Json, Object};
 use bun_lint::utils::eslint_utils::{
-    HasSideEffectOptions, IteratorKind, Mode, PropertyKey, ReferenceKind, ReferenceTracker, StaticSymbol, StaticValue,
+    HasSideEffectOptions, IteratorKind, Mode, PatternMatcher, PropertyKey, ReferenceKind, ReferenceTracker, StaticSymbol, StaticValue,
     TraceMap, TrackedReference, get_function_head_location, get_function_name_with_kind, get_property_name,
     get_static_value, get_string_if_constant, has_side_effect, is_parenthesized_times,
 };
@@ -318,9 +321,29 @@ fn dump(case: Object<'_>) -> String {
     })
 }
 
+/// What a `PatternMatcher` finds: `{ pattern, flags, escaped, text, replacement }`.
+fn pattern(case: Object<'_>) -> String {
+    let text = |key: &str| case.get(key).and_then(Json::as_str).unwrap_or_default();
+    let (pattern, flags) = (case.str("pattern").unwrap_or_default(), case.str("flags").unwrap_or_default());
+    let Ok(matcher) = PatternMatcher::new(pattern, flags, case.bool_or("escaped", false)) else {
+        return "error".to_owned();
+    };
+    let mut out = String::new();
+    for found in matcher.exec_all(text("text")) {
+        _ = write!(out, "{}:", found.start());
+        for group in 0..found.len() {
+            out.push_str(&quoted(found.get(group).map(|it| it.as_bytes())));
+        }
+        out.push(' ');
+    }
+    _ = write!(out, "{} ", matcher.test(text("text")));
+    quote(&matcher.replace(text("text"), text("replacement")), &mut out);
+    out
+}
+
 pub(crate) fn run(args: &[String]) {
-    let (Some("dump"), Some(path)) = (args.first().map(String::as_str), args.get(1)) else {
-        println!("usage: bun-lint utils-eslint dump <cases.jsonl>");
+    let (Some(mode @ ("dump" | "pattern")), Some(path)) = (args.first().map(String::as_str), args.get(1)) else {
+        println!("usage: bun-lint utils-eslint dump <cases.jsonl> | pattern <cases.jsonl>");
         return;
     };
     let Ok(input) = std::fs::read(path) else {
@@ -329,7 +352,8 @@ pub(crate) fn run(args: &[String]) {
     };
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         if let Some(json) = bun_lint::json::parse(line) {
-            println!("{}", dump(Object::of(Some(&json))));
+            let case = Object::of(Some(&json));
+            println!("{}", if mode == "dump" { dump(case) } else { pattern(case) });
         }
     }
 }

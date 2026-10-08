@@ -643,7 +643,8 @@ impl File<'_> {
         let Some(&bun_sema::bind::Parent::Prop(prop)) = self.bound.expr_parent.get(id.idx()) else {
             return false;
         };
-        self.hir.props.get(prop.idx()).is_some_and(|it| it.name_kind == hir::NameKind::Jsx)
+        let is_attribute = |it: &hir::Prop| it.name_kind == hir::NameKind::Jsx && it.kind != hir::PropKind::Spread;
+        self.hir.props.get(prop.idx()).is_some_and(is_attribute)
             && self.hir.jsx_expressions.binary_search_by_key(&id.0, |it| it.0.0).is_err()
     }
 

@@ -31,7 +31,10 @@ impl<'a> FormatArguments<'a> {
     pub(crate) fn of_call(e: Expr<'a>, call: Call<'a>) -> Self {
         FormatArguments {
             args: call.args(),
-            parent: e.as_chain_element(),
+            parent: match e.tag() {
+                ExprTag::Call => AstNodes::CallExpression(e),
+                _ => e.as_chain_element(),
+            },
         }
     }
 
@@ -186,7 +189,8 @@ fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>) -> bool {
                 return true;
             }
             has_seen_function_like = true;
-        } else if let ExprKind::Call(call) = strip_chain_element_wrappers(arg).kind()
+        } else if matches!(arg.tag(), ExprTag::Call | ExprTag::NonNull)
+            && let ExprKind::Call(call) = strip_chain_element_wrappers(arg).kind()
             && call.args().iter().any(is_function_like)
         {
             return true;

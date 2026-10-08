@@ -20,22 +20,24 @@ use smallvec::SmallVec;
 
 type Members<'a> = SmallVec<[ChainMember<'a>; 8]>;
 
-struct MemberChain<'a> {
+struct MemberChain<'a, 'b> {
     root: Expr<'a>,
     /// The links, from the first to the last.
-    members: Members<'a>,
+    members: &'b [ChainMember<'a>],
     /// Where each group ends in `members`. The first group is the head, the others are the tail.
     group_ends: SmallVec<[u32; 8]>,
 }
 
 /// Writes the call `call_expression`, whose callee is a member access.
 pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatter<'a>) {
-    let (members, has_inner_call) = chain_members(call_expression, f);
+    let mut members = Members::new();
+    let has_inner_call = push_chain_members(call_expression, &mut members, f);
     if !is_one_group_after_the_head(has_inner_call, f) {
-        return MemberChain::new(call_expression, members, f).fmt(f);
+        members.reverse();
+        return MemberChain::new(call_expression, &members, f).fmt(f);
     }
     let content = format_with(|f| {
-        for member in &members {
+        for member in members.iter().rev() {
             write!(f, member);
         }
     });
@@ -51,13 +53,13 @@ fn is_one_group_after_the_head(has_inner_call: bool, f: &Formatter<'_>) -> bool 
     !has_inner_call && f.is_quiet()
 }
 
-impl<'a> MemberChain<'a> {
-    /// `members`: the [`chain_members`] of the call `root`.
-    fn new(root: Expr<'a>, members: Members<'a>, f: &Formatter<'a>) -> Self {
-        let head_end = get_split_index_of_head_and_tail_groups(&members, f);
+impl<'a, 'b> MemberChain<'a, 'b> {
+    /// `members`: the links of the chain that ends with the call `root`, from the first to the last.
+    fn new(root: Expr<'a>, members: &'b [ChainMember<'a>], f: &Formatter<'a>) -> Self {
+        let head_end = get_split_index_of_head_and_tail_groups(members, f);
         let mut group_ends = SmallVec::new();
         group_ends.push(head_end as u32);
-        push_ends_of_remaining_groups(&members, head_end, &mut group_ends, f);
+        push_ends_of_remaining_groups(members, head_end, &mut group_ends, f);
 
         let mut member_chain = Self {
             root,
@@ -211,7 +213,7 @@ impl<'a> MemberChain<'a> {
     }
 }
 
-impl<'a> Format<'a> for MemberChain<'a> {
+impl<'a> Format<'a> for MemberChain<'a, '_> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let has_comment = self.has_comment(f);
         let (needs_empty_line, has_empty_line_after_call) = self.find_empty_lines(f);
@@ -392,18 +394,18 @@ fn is_factory(name: &[u8]) -> bool {
 /// Whether the call `expression` is written as a member chain that can break before each group: it
 /// has more than one group after the head, or a comment between its links.
 pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let (members, has_inner_call) = chain_members(expression, f);
-    if is_one_group_after_the_head(has_inner_call, f) {
+    let mut members = Members::new();
+    if is_one_group_after_the_head(push_chain_members(expression, &mut members, f), f) {
         return false;
     }
-    let chain = MemberChain::new(expression, members, f);
+    members.reverse();
+    let chain = MemberChain::new(expression, &members, f);
     chain.tail_len() > 1 || chain.has_comment(f)
 }
 
-/// The links of the chain that ends with the call `root`, from the first to the last, and whether
-/// there is another call among them. The chain starts where something needs parentheses.
-fn chain_members<'a>(root: Expr<'a>, f: &Formatter<'a>) -> (Members<'a>, bool) {
-    let mut members = Members::new();
+/// Appends the links of the chain that ends with the call `root`, from the last to the first. Returns
+/// whether there is another call among them. The chain starts where something needs parentheses.
+fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatter<'a>) -> bool {
     members.push(ChainMember::CallExpression {
         expression: root,
         position: CallExpressionPosition::End,
@@ -452,6 +454,5 @@ fn chain_members<'a>(root: Expr<'a>, f: &Formatter<'a>) -> (Members<'a>, bool) {
             _ => ChainMember::Node(expression),
         });
     }
-    members.reverse();
-    (members, has_inner_call)
+    has_inner_call
 }

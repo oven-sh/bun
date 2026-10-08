@@ -5,9 +5,9 @@ pub(crate) mod arguments;
 use self::arguments::FormatArguments;
 use super::arrow_function_expression::is_multiline_template_starting_on_same_line;
 use super::type_parameters::type_arguments;
-use crate::js::parentheses::expression::expression_needs_parentheses;
+use crate::js::parentheses::expression::chain_expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    callee_trailing_comments, is_call_expression, is_member_expression, is_test_call_expression_in_flavor,
+    callee_trailing_comments, is_call_expression, is_test_call_expression_in_flavor,
     type_arguments_trailing_comments,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -28,7 +28,11 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);
     }
 
-    if is_member_expression(callee, f) && !expression_needs_parentheses(callee, f) {
+    // A member access needs no parentheses as a callee, unless an optional chain ends with it. Then
+    // it is a member access only in JavaScript: see `is_member_expression`.
+    if matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
+        && (!is_chain_root(callee) || (f.file().is_javascript() && !chain_expression_needs_parentheses(callee, f)))
+    {
         return write_member_chain(e, f);
     }
 

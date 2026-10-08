@@ -667,7 +667,15 @@ impl<'a> Key<'a> {
 /// `\\`: what `token_len` says, without looking for anything else that a token can be.
 #[inline]
 fn ascii_name_len(text: &[u8]) -> Option<usize> {
-    let is_part = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$');
+    static IS_PART: [bool; 256] = {
+        let (mut table, mut b) = ([false; 256], 0usize);
+        while b < 128 {
+            table[b] = (b as u8).is_ascii_alphanumeric() || b as u8 == b'_' || b as u8 == b'$';
+            b += 1;
+        }
+        table
+    };
+    let is_part = |b: &u8| IS_PART[*b as usize];
     if !text.first().is_some_and(|b| is_part(b) && !b.is_ascii_digit()) {
         return None;
     }

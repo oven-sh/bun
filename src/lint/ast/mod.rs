@@ -178,8 +178,8 @@ pub(crate) struct Lazy {
     pub(crate) tokens: OnceCell<crate::tokens::TokenStore>,
     pub(crate) parents: OnceCell<node::Parents>,
     has_types_that_are_errors: OnceCell<bool>,
-    /// The text has a `\u`.
-    has_unicode_escapes: OnceCell<bool>,
+    /// Where the text has a `\u`, in order.
+    unicode_escapes: OnceCell<Box<[u32]>>,
     /// A bit for each expression: it is in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
     pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
@@ -342,17 +342,22 @@ impl<'a> File<'a> {
         self.hir.text.starts_with(b"\xEF\xBB\xBF")
     }
 
-    /// It is known that the text has no `\u`: every identifier ends where the HIR says.
+    /// It is known that the text has no `\u` from `pos` to `end`: an identifier there ends where the
+    /// HIR says. Most files have none at all, and most of the others have a few in strings.
     #[inline]
-    pub(crate) fn has_no_unicode_escapes(&self) -> bool {
-        self.lazy.has_unicode_escapes.get() == Some(&false)
+    pub(crate) fn has_no_unicode_escape_in(&self, pos: u32, end: u32) -> bool {
+        match self.lazy.unicode_escapes.get().map(|all| (all.first(), all.last())) {
+            Some((Some(&first), Some(&last))) => end <= first || last < pos,
+            Some(_) => true,
+            None => false,
+        }
     }
 
     /// Where the identifier at `pos` ends. The HIR says `end`, which for some identifiers that are
-    /// written with an escape is `pos` and the length of the name.
+    /// written with an escape is `pos` and the length of the name. That is past the first escape.
     #[inline]
     pub(crate) fn end_of_identifier(&self, pos: u32, end: u32) -> u32 {
-        match self.has_no_unicode_escapes() {
+        match self.has_no_unicode_escape_in(pos, end) {
             true => end,
             false => self.end_of_identifier_that_may_have_escapes(pos, end),
         }
@@ -360,14 +365,20 @@ impl<'a> File<'a> {
 
     #[inline(never)]
     fn end_of_identifier_that_may_have_escapes(&self, pos: u32, end: u32) -> u32 {
-        let has_escapes = self.lazy.has_unicode_escapes.get_or_init(|| bun_core::strings::contains(self.hir.text, b"\\u"));
-        if !*has_escapes {
-            return end;
-        }
-        let written = self.hir.text.get(pos as usize..).unwrap_or_default();
-        match bun_core::strings::contains_char(written.get(..(end - pos.min(end)) as usize).unwrap_or_default(), b'\\') {
-            true => end.max(pos + crate::tokens::token_len(written) as u32),
-            false => end,
+        let text = self.hir.text;
+        let escapes = self.lazy.unicode_escapes.get_or_init(|| {
+            let (mut all, mut from) = (Vec::new(), 0);
+            while let Some(at) = text.get(from..).and_then(|rest| bun_core::strings::index_of(rest, b"\\u")) {
+                all.push((from + at) as u32);
+                from += at + 2;
+            }
+            all.into_boxed_slice()
+        });
+        match escapes.get(escapes.partition_point(|&at| at < pos)) {
+            Some(&at) if at < end => {
+                end.max(pos + crate::tokens::token_len(text.get(pos as usize..).unwrap_or_default()) as u32)
+            }
+            _ => end,
         }
     }
 

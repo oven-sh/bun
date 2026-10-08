@@ -314,7 +314,8 @@ impl<'a> Expr<'a> {
             return Span::default();
         };
         let is_as_in_the_hir = match raw.kind {
-            hir::ExprKind::Ident(_) | hir::ExprKind::Dot { .. } => file.has_no_unicode_escapes(),
+            hir::ExprKind::Ident(_) => file.has_no_unicode_escape_in(raw.pos, raw.end),
+            hir::ExprKind::Dot { name_pos, .. } => file.has_no_unicode_escape_in(name_pos, raw.end),
             hir::ExprKind::Spread(_) | hir::ExprKind::String(_) => file.hir.jsx.is_empty(),
             hir::ExprKind::Class(_) | hir::ExprKind::Fn(_) => false,
             _ => true,

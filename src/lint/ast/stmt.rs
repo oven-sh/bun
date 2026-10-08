@@ -462,7 +462,13 @@ impl<'a> Stmt<'a> {
             _ => return None,
         };
         let rest = text.get(start as usize..)?;
-        matches!(rest.first(), Some(b'"' | b'\'')).then(|| Span::new(start, start + crate::tokens::token_len(rest) as u32))
+        let (&quote, inside) = rest.split_first().filter(|it| matches!(it.0, b'"' | b'\''))?;
+        // Nearly all are a path without an escape, on one line.
+        let len = match bun_core::strings::index_of_any(inside, &[quote, b'\\', b'\n', b'\r']) {
+            Some(at) if inside[at] == quote => at + 2,
+            _ => crate::tokens::token_len(rest),
+        };
+        Some(Span::new(start, start + len as u32))
     }
 
     /// `with { type: "json" }` of an `Import`, an `ExportNamed` or an `ExportStar`.

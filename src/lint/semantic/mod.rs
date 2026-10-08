@@ -134,6 +134,40 @@ impl<S: hir::Storage> Binding for bind::BoundIn<S> {
         Some((if symbol.export_symbol.is_some() { symbol.export_symbol } else { id }, is_special))
     }
     fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, SymFlags, Decl)>) {
+        let declares_a_name = |decl: Decl| {
+            matches!(
+                decl,
+                Decl::Var(_)
+                    | Decl::Param(_)
+                    | Decl::Require(_)
+                    | Decl::Fn(_)
+                    | Decl::Class(_)
+                    | Decl::Interface(_)
+                    | Decl::Alias(_)
+                    | Decl::Enum(_)
+                    | Decl::EnumMember(_)
+                    | Decl::Module(_)
+                    | Decl::TypeParam(_)
+                    | Decl::ImportDefault(_)
+                    | Decl::ImportNamespace(_)
+                    | Decl::ImportSpec(_)
+                    | Decl::ImportEquals(_)
+            )
+        };
+        // The binder has listed them, if it has worked for a linter.
+        if self.scope_node.len() == self.scopes.len() {
+            into.reserve(self.declared.len());
+            for &(id, decl, _) in self.declared.iter().filter(|it| declares_a_name(it.1)) {
+                let Some(symbol) = self.symbols.get(id.idx()) else {
+                    continue;
+                };
+                into.push(match self.symbols.get(symbol.export_symbol.idx()) {
+                    Some(exported) => (symbol.export_symbol, exported.flags, decl),
+                    None => (id, symbol.flags, decl),
+                });
+            }
+            return;
+        }
         for (i, symbol) in self.symbols.iter().enumerate() {
             let (id, flags) = match self.symbols.get(symbol.export_symbol.idx()) {
                 // The two symbols of what is exported have the same declarations, unless not all
@@ -142,28 +176,8 @@ impl<S: hir::Storage> Binding for bind::BoundIn<S> {
                 Some(exported) => (symbol.export_symbol, exported.flags),
                 None => (SymbolId(i as u32), symbol.flags),
             };
-            for &decl in symbol.decls.as_slice() {
-                if matches!(
-                    decl,
-                    Decl::Var(_)
-                        | Decl::Param(_)
-                        | Decl::Require(_)
-                        | Decl::Fn(_)
-                        | Decl::Class(_)
-                        | Decl::Interface(_)
-                        | Decl::Alias(_)
-                        | Decl::Enum(_)
-                        | Decl::EnumMember(_)
-                        | Decl::Module(_)
-                        | Decl::TypeParam(_)
-                        | Decl::ImportDefault(_)
-                        | Decl::ImportNamespace(_)
-                        | Decl::ImportSpec(_)
-                        | Decl::ImportEquals(_)
-                ) {
-                    into.push((id, flags, decl));
-                }
-            }
+            let declarations = symbol.decls.as_slice().iter();
+            into.extend(declarations.filter(|it| declares_a_name(**it)).map(|&decl| (id, flags, decl)));
         }
     }
     fn refused_declarations(&self, into: &mut Vec<Decl>) {

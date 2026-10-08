@@ -488,6 +488,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(self.string_literal(prop.name, false));
             }
             PropSource::Intersected(_, parts) => return self.key_type_of_props(owner, parts),
+            PropSource::Mapped(of, ..) => return self.name_type_of_mapped_prop(*of, prop),
             // It has the `ValueDeclaration` of the first, and uses the syntax of the name there.
             PropSource::Copy(_, parts, true) => return self.key_type_of_prop(owner, &parts[0]),
             _ => return self.key_type_of_name(prop.name),
@@ -509,6 +510,41 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(ty);
         }
         self.key_type_of_name(prop.name)
+    }
+
+    /// `nameType` of `prop`, a property of the mapped type `of`: `propNameType` of
+    /// `addMemberForKeyTypeWorker`, for all the keys that map to its name. A member of an enum is
+    /// not the string that it spells.
+    fn name_type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop) -> Option<TypeId> {
+        let TypeData::Anon {
+            origin: Origin::Mapped(file, node),
+            ..
+        } = *self.data(of)
+        else {
+            return self.key_type_of_name(prop.name);
+        };
+        let mapped = self.mapped_decl(file, node);
+        let param = self.type_param(file, mapped.param);
+        let Some(key) = self.types().map(prop.mapper, param) else {
+            return self.key_type_of_name(prop.name);
+        };
+        let names = if mapped.name_ty.is_some() {
+            let declared = self.declared_name_type_of_mapped(file, node);
+            self.instantiate(declared, prop.mapper)
+        } else {
+            key
+        };
+        let mut spelling_it: SmallVec<[TypeId; 2]> = SmallVec::new();
+        for &name in self.parts(names) {
+            if self.property_name_of_type(name) == Some(prop.name) {
+                spelling_it.push(name);
+            }
+        }
+        match spelling_it[..] {
+            [] => self.key_type_of_name(prop.name),
+            [one] => Some(one),
+            _ => Some(self.union(&spelling_it)),
+        }
     }
 
     /// `GetNonAssignedNameOfDeclaration` of the assignment or the call `e`, which declares a

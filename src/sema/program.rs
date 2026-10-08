@@ -6523,7 +6523,9 @@ impl<'s> Files<'s> {
             return None;
         }
         let module = self.module_of_specifier_as(file, spec, mode)?;
-        let type_symbol = self.canonical(self.module_export(module, name)?);
+        // `getExportOfModule` ends in `resolveSymbol`: `namespace N { export { I as name } }`.
+        let type_symbol = self.resolve_symbol(self.module_export(module, name)?)?;
+        let type_symbol = self.canonical(type_symbol);
         let is_type = !self.flags(type_symbol).intersects(SymFlags::VALUE);
         is_type.then_some(type_symbol)
     }

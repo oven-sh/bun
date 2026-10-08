@@ -121,26 +121,22 @@ function emitWarning(type, message) {
   console.warn("[bun] Warning:", message);
 }
 
-// TODO: add private method on WebSocket to avoid these allocations
-function normalizeData(data, opts) {
-  const isBinary = opts?.binary;
+// Native send() with the frame type from the caller. undefined: `data` is not a string, bytes or a Blob.
+const sendClientFrame = $newCppFunction("JSWebSocket.cpp", "jsWebSocketSendFrame", 3);
+const sendServerFrame = $newRustFunction("ServerWebSocket.rs", "jsSendFrame", 4);
 
-  if (typeof data === "number") {
-    data = data.toString();
-  }
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 
-  if (isBinary === true && typeof data === "string") {
-    data = Buffer.from(data);
-  } else if (isBinary === false && $isTypedArrayView(data)) {
-    data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
-  }
-
-  return data;
-}
-
-// ServerWebSocket.send() returns 0 for a dropped message and for a sent empty one. Only a drop leaves bytes buffered.
-function wasDropped(ws, written) {
-  return written === 0 && ws.getBufferedAmount() !== 0;
+// https://github.com/websockets/ws/blob/8.18.3/lib/websocket.js#L465-L471
+function isBinaryFrame(data, opts) {
+  // npm ws: `{ binary: typeof data !== "string", ...options }.binary`
+  const byType = typeof data !== "string";
+  if (!$isObject(opts) || !("binary" in opts)) return byType;
+  const binary = $getByIdDirect(opts, "binary");
+  // Unlike the spread, an own `binary` that is not enumerable counts: that check is a call for each text echo.
+  if (binary !== undefined) return !!binary;
+  // An own `binary: undefined`, or a `binary` that `opts` only inherits.
+  return byType && !propertyIsEnumerable.$call(opts, "binary");
 }
 
 function payloadByteLength(data) {
@@ -513,8 +509,11 @@ class BunWebSocket extends EventEmitter {
       opts = undefined;
     }
 
+    if (typeof data === "number") data = data.toString();
     try {
-      this.#ws.send(normalizeData(data, opts), opts?.compress);
+      const ws = this.#ws;
+      // Any other value goes out as the text of String(data), as with the public send().
+      if (sendClientFrame(ws, data, isBinaryFrame(data, opts)) === undefined) sendClientFrame(ws, `${data}`, false);
     } catch (error) {
       // Node.js APIs expect callback arguments to be called after the current stack pops
       if (typeof cb === "function") process.nextTick(cb, error);
@@ -1086,9 +1085,9 @@ class BunWebSocketMocked extends EventEmitter {
   #drain(ws) {
     let chunk;
     while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
-      const [data, compress, cb, byteLength] = chunk;
-      // Dropped again: wait for the next drain event. -1 is not a drop, uws buffered the message.
-      if (wasDropped(ws, ws.send(data, compress))) return;
+      const [data, compress, cb, byteLength, binary] = chunk;
+      // Dropped again: wait for the next drain event.
+      if (!sendServerFrame(ws, data, binary, compress)) return;
 
       this.#bufferedAmount -= byteLength;
       this.#enquedMessages.shift();
@@ -1097,9 +1096,9 @@ class BunWebSocketMocked extends EventEmitter {
     }
   }
 
-  #enqueue(data, compress, cb) {
+  #enqueue(data, compress, cb, binary) {
     const byteLength = payloadByteLength(data);
-    this.#enquedMessages.push([data, compress, cb, byteLength]);
+    this.#enquedMessages.push([data, compress, cb, byteLength, binary]);
     this.#bufferedAmount += byteLength;
   }
 
@@ -1157,21 +1156,27 @@ class BunWebSocketMocked extends EventEmitter {
       opts = undefined;
     }
 
-    if (this.#state === ReadyState_OPEN) {
-      const compress = opts?.compress;
-      data = normalizeData(data, opts);
-      const ws = this.#ws;
-      // uws can flush its buffer without a drain event, so a direct send could overtake the queue.
-      if (this.#enquedMessages.length !== 0 || wasDropped(ws, ws.send(data, compress))) {
-        this.#enqueue(data, compress, cb);
-        return;
-      }
+    if (typeof data === "number") data = data.toString();
+    this.#frame(data, isBinaryFrame(data, opts), opts?.compress, cb);
+  }
 
-      if (typeof cb === "function") process.nextTick(cb);
-    } else if (this.#state === ReadyState_CONNECTING) {
-      // not connected yet
-      this.#enqueue(normalizeData(data, opts), opts?.compress, cb);
+  #frame(data, binary, compress, cb) {
+    const state = this.#state;
+    if (state !== ReadyState_OPEN && state !== ReadyState_CONNECTING) return;
+
+    // Behind a queue the entry gets no socket and only checks `data` and `compress`: uws can flush with no drain event.
+    const ws = this.#enquedMessages.length !== 0 ? null : this.#ws;
+    const taken = sendServerFrame(ws, data, binary, compress);
+    if (taken === undefined) {
+      if (data == null) throw new Error("send requires a non-empty message");
+      // As the public send(): the text of String(data). That can close the socket, so the state is read again.
+      return this.#frame(`${data}`, false, compress, cb);
     }
+    if (taken) {
+      if (typeof cb === "function") process.nextTick(cb);
+      return;
+    }
+    this.#enqueue(data, compress, cb, binary);
   }
 
   close(code, reason) {

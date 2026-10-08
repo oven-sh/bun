@@ -93,4 +93,7 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
 
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
 
+// (socket, data, binary): the frame entry of the built-in `ws` module, bound there with $newCppFunction.
+JSC_DECLARE_HOST_FUNCTION(jsWebSocketSendFrame);
+
 } // namespace WebCore

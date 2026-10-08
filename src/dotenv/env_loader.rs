@@ -556,8 +556,7 @@ impl Loader {
         })
     }
 
-    /// An empty loader for a `Worker` that is given its environment: the caller fills the
-    /// map, and every env source counts as loaded so nothing overlays it later.
+    /// An empty `Worker` loader for the caller to fill; no env source is read over it later.
     pub fn for_worker_env(&self, capacity: usize) -> Result<Loader, AllocError> {
         let mut map = Map::init();
         map.ensure_unused_capacity(capacity)?;

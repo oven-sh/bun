@@ -581,8 +581,8 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
 // `process.env` object that is a thin write-through view over the tree's
 // SharedEnvStore (lock-guarded, strings isolatedCopy()'d both ways).
 //
-// Only the JS-visible `process.env` is shared; the worker's native env map (Bun.spawn's
-// default env, fetch proxy resolution) is a snapshot of the store taken when it starts.
+// Only the JS-visible `process.env` is shared; Bun's Zig-side env map (Bun.env,
+// fetch proxy resolution) is still snapshotted per worker.
 
 // The store for the tree this global belongs to, or null if it's in none. The
 // context can be gone during teardown, when a surviving process.env is read.

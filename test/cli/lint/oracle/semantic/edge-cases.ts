@@ -95,6 +95,9 @@ export const typescript = [
   "declare module 'x' { export as namespace a; } declare module 'y' { const b: 1; export as namespace b; } namespace N { export as namespace c; } export as namespace d;",
   "try {} catch (e: A) {} try {} catch (e: typeof b) {} try {} catch ({a = b}: A) {}",
   "var a, a, b, a; function f(c, c, d) {} import { g, h } from 'x';",
+  "import { value } from './a'; export { value }; export var value = 1;",
+  "import { f } from './a'; export { f }; export function f() {} import { I } from './b'; export { I }; export interface I {}",
+  "with (obj) const c5 = 0; with (obj) { const c6 = 0; c6; }",
 ];
 
 export const tsx = [

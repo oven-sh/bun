@@ -500,7 +500,8 @@ impl Variables {
             let scope = &tree.scopes[it.scope as usize];
             Extent {
                 first_scope: it.scope,
-                last_scope: scope.last,
+                // `WithScope#__close` leaves every reference to the scope around it.
+                last_scope: if scope.kind == ScopeKind::With { 0 } else { scope.last },
                 body_start: scope.body_start,
             }
         };
@@ -603,8 +604,11 @@ impl Variables {
             let it = &self.list[index as usize];
             // ESLint's `FunctionScope#isValidResolution`: "References in default parameters isn't
             // resolved to variables which are in their function body."
-            let body_start = tree.scopes[it.scope as usize].body_start;
-            (it.flags & wants != 0) && !(pos < body_start && (it.first_pos >= body_start || Self::is_implicit(it)))
+            let scope = &tree.scopes[it.scope as usize];
+            let body_start = scope.body_start;
+            (it.flags & wants != 0)
+                && !(pos < body_start && (it.first_pos >= body_start || Self::is_implicit(it)))
+                && scope.kind != ScopeKind::With
         };
         // The innermost scope has the highest number.
         let end = self.range_of_scope(from).end;

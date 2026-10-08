@@ -134,7 +134,7 @@ impl Binding for bind::Bound<'_> {
             let (id, flags) = match self.symbols.get(symbol.export_symbol.idx()) {
                 // The two symbols of what is exported have the same declarations, unless not all
                 // of them are exported.
-                Some(exported) if exported.decls.len() == symbol.decls.len() => continue,
+                Some(exported) if exported.decls.as_slice() == symbol.decls.as_slice() => continue,
                 Some(exported) => (symbol.export_symbol, exported.flags),
                 None => (SymbolId(i as u32), symbol.flags),
             };

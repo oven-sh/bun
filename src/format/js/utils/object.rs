@@ -212,6 +212,11 @@ pub(crate) fn format_computed_or_property_key<'a>(key: Key<'a>, parent: AstNodes
     }
 }
 
+/// Prettier's `printKey` for a key that is not computed.
+pub(crate) fn format_property_key<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &mut Formatter<'a>) {
+    write!(f, FormatKey::new(key, parent));
+}
+
 /// Writes a key that is not computed. Returns the number of columns that it takes.
 pub(crate) fn write_member_name<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &mut Formatter<'a>) -> usize {
     FormatKey::new(key, parent).write(f)

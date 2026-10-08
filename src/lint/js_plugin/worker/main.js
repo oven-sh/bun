@@ -243,7 +243,8 @@ const fileContext = Object.freeze({
 function configure(id, position) {
   const [index, options] = askForJson(CONFIGURED, String(position));
   const { rule, id: ruleId } = rules[index];
-  const entry = { rule, ruleId, context: null, position: 0 };
+  // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
+  const entry = { rule, ruleId, context: null, position: 0, once: null };
   const meta = rule.meta;
   entry.context = fileContext.extend({
     id: ruleId,
@@ -496,7 +497,7 @@ function traverse() {
 
 function reset() {
   text = "";
-  lineStarts = lines = null;
+  lineStarts = lines = inlineConfigNodes = disableDirectives = null;
   tree = null;
   nodes = [];
   descendants = matches = null;
@@ -531,14 +532,50 @@ function lint() {
     const entry = configured.get(ids[position]) ?? configure(ids[position], position);
     entry.position = position;
     currentRule = entry;
-    const listeners = entry.rule.create(entry.context);
+    const listeners = typeof entry.rule.createOnce === "function" ? listenersOfOnce(entry) : entry.rule.create(entry.context);
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }
     addListeners(entry, listeners);
   }
-  if (hasListeners) traverse();
+  try {
+    if (hasListeners) traverse();
+  } finally {
+    runAfterHooks();
+  }
   return null;
+}
+
+// The rules whose `after` has to be called when the file is done.
+let afterHooks = [];
+
+// oxlint's alternative to `create`: the listeners are made once, `before` is called with each file and can refuse it, `after`
+// when the file is done.
+function listenersOfOnce(entry) {
+  if (entry.once === null) {
+    const { before, after, ...listeners } = entry.rule.createOnce(entry.context);
+    entry.once = { before, after, listeners };
+  }
+  const { before, after, listeners } = entry.once;
+  if (typeof before === "function" && before() === false) return {};
+  if (typeof after === "function") afterHooks.push(entry);
+  return listeners;
+}
+
+// All of them, whatever one of them throws.
+function runAfterHooks() {
+  const hooks = afterHooks;
+  afterHooks = [];
+  let thrown = null;
+  for (const entry of hooks) {
+    try {
+      currentRule = entry;
+      entry.once.after();
+    } catch (error) {
+      thrown ??= { error };
+    }
+  }
+  if (thrown !== null) throw thrown.error;
 }
 
 let hasStarted = false;

@@ -1,7 +1,9 @@
 // What real ESLint reports for each case with the rules of a plugin, in the format of `bun-lint js_plugin batch`.
 //
 //   ESLINT_DIR=<eslint checkout> TYPESCRIPT_ESLINT_DIR=<typescript-eslint checkout, built> \
-//     bun run-eslint.ts --plugin=<file> [--rules=<{ "rule": [options] }>] cases.jsonl > expected.jsonl
+//     bun run-eslint.ts --plugin=<file or package> [--alias=<prefix>] [--rules=<{ "rule": [options] }>] cases.jsonl > expected.jsonl
+//
+// With `--list-rules` instead of cases: prints the rules of the plugin that run without types, as a value for `--rules`.
 
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
@@ -15,12 +17,32 @@ const { Linter } = fromEslint(eslintDir);
 const typescriptParser = fromEslint(join(typescriptEslintDir, "packages/parser/dist/index.js"));
 
 const flag = (name: string) => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
-const module = await import(resolve(flag("plugin")!));
+const specifier = flag("plugin")!;
+const module = await import(
+  /^[./]/.test(specifier) ? resolve(specifier) : createRequire(join(process.cwd(), "noop.js")).resolve(specifier),
+);
 const plugin = module.default ?? module;
 const name = flag("alias") ?? plugin.meta.name.replace(/^eslint-plugin-/, "");
 const forAll = flag("rules") ? JSON.parse(flag("rules")!) : Object.fromEntries(Object.keys(plugin.rules).map(it => [it, []]));
 const casesPath = process.argv.slice(2).find(it => !it.startsWith("--"))!;
 const linter = new Linter({ configType: "flat", cwd: process.cwd() });
+
+if (process.argv.includes("--list-rules")) {
+  const runs = (rule: string) => {
+    try {
+      for (const [filename, parser] of [["a.js", undefined], ["a.ts", typescriptParser]] as const) {
+        const config = { files: ["**"], plugins: { [name]: plugin }, languageOptions: parser ? { parser } : {}, rules: { [`${name}/${rule}`]: "error" } };
+        const code = "import a from 'a'; export function f(b) { return a(b?.c, `d${b}`, /e/u, class {}); }";
+        if (linter.verify(code, [config], { filename: join(process.cwd(), filename) }).some((it: any) => it.fatal)) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  console.log(JSON.stringify(Object.fromEntries(Object.keys(plugin.rules).filter(runs).map(it => [it, []]))));
+  process.exit(0);
+}
 
 for (const line of readFileSync(casesPath, "utf8").split("\n")) {
   if (!line) continue;

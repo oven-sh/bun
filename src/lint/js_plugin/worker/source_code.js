@@ -9,6 +9,8 @@ let hasBOM = false;
 // Where each line starts. `null`: not computed yet.
 let lineStarts = null;
 let lines = null;
+let inlineConfigNodes = null;
+let disableDirectives = null;
 
 const lineBreak = /\r\n|[\r\n\u2028\u2029]/gu;
 
@@ -37,6 +39,22 @@ function requireNode(node) {
 }
 
 const scopeCache = new WeakMap();
+
+// What a comment says to ESLint: `{ label, value, justification }`, or undefined if it does not start with a word.
+function parseDirective(value) {
+  const dashes = /\s-{2,}\s/u.exec(value);
+  const directive = (dashes ? value.slice(0, dashes.index) : value).trim();
+  const match = /^([a-z]+(?:-[a-z]+)*)(?:\s|$)/u.exec(directive);
+  if (!match) return undefined;
+  return {
+    label: match[1],
+    value: directive.slice(match[1].length).trim(),
+    justification: dashes ? value.slice(dashes.index + dashes[0].length).trim() : "",
+  };
+}
+
+const directiveLabel = /^(eslint(?:-env|-enable|-disable(?:(?:-next)?-line)?)?|exported|globals?)(?:\s|$)/u;
+const lineDirectiveLabel = /^eslint-disable-(?:next-)?line$/u;
 
 class SourceCode extends TokenStore {
   get text() {
@@ -85,6 +103,30 @@ class SourceCode extends TokenStore {
 
   getAllComments() {
     return comments();
+  }
+
+  getInlineConfigNodes() {
+    return (inlineConfigNodes ??= comments().filter(comment => {
+      if (comment.type === "Shebang") return false;
+      const directive = parseDirective(comment.value);
+      if (!directive || !directiveLabel.test(directive.label)) return false;
+      return comment.type !== "Line" || lineDirectiveLabel.test(directive.label);
+    }));
+  }
+
+  getDisableDirectives() {
+    if (disableDirectives !== null) return disableDirectives;
+    const problems = [];
+    const directives = [];
+    for (const node of this.getInlineConfigNodes()) {
+      const { label, value, justification } = parseDirective(node.value);
+      if (label === "eslint-disable-line" && node.loc.start.line !== node.loc.end.line) {
+        problems.push({ ruleId: null, message: `${label} comment should not span multiple lines.`, loc: node.loc });
+      } else if (/^eslint-(?:enable|disable(?:(?:-next)?-line)?)$/u.test(label)) {
+        directives.push({ type: label.slice("eslint-".length), node, value, justification });
+      }
+    }
+    return (disableDirectives = { problems, directives });
   }
 
   getNodeByRangeIndex(index) {

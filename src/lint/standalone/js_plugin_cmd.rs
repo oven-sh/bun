@@ -8,7 +8,7 @@
 
 mod processes;
 
-use bun_lint::js_plugin::{Configured, FileSettings, Host, Plugin, Report};
+use bun_lint::js_plugin::{Configured, FileSettings, Host, Plugin, Report, Rule};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
 use processes::{BOOTSTRAP, Channel, Processes};
@@ -141,13 +141,20 @@ fn lint(args: &[String]) {
     }
 }
 
+/// With the options that the linter gives the rule: those of its `meta.defaultOptions` and the defaults of its schema filled in.
+fn configured(rule: &Arc<Rule>, options: &[Json]) -> Arc<Configured> {
+    let options = bun_lint::linter::testing::validate_js(rule, options)
+        .unwrap_or_else(|why| panic!("the options of {}: {}", text(&rule.id), text(&why)));
+    Configured::new(Arc::clone(rule), &options)
+}
+
 fn enabled_by(plugin: &Plugin, rules: Option<&Json>) -> Vec<Arc<Configured>> {
     match rules {
-        None | Some(Json::Null) => plugin.rules.iter().map(|it| Configured::new(Arc::clone(it), &it.default_options)).collect(),
+        None | Some(Json::Null) => plugin.rules.iter().map(|it| configured(it, &[])).collect(),
         Some(rules) => (rules.as_object().unwrap_or_default().iter())
             .map(|(name, options)| {
                 let rule = plugin.rule(name).unwrap_or_else(|| panic!("no rule {}", text(name)));
-                Configured::new(Arc::clone(rule), options.as_array().unwrap_or_default())
+                configured(rule, options.as_array().unwrap_or_default())
             })
             .collect(),
     }

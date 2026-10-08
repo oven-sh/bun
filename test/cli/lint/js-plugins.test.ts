@@ -271,6 +271,50 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     expect(stdout).not.toContain("'a' is assigned");
   }, timeout);
 
+  test("createOnce, before and after of oxlint's API", async () => {
+    const plugin = `
+      let created = 0;
+      export default {
+        meta: { name: "once" },
+        rules: {
+          count: {
+            createOnce(context) {
+              created++;
+              let identifiers;
+              return {
+                before() {
+                  identifiers = 0;
+                  return !context.filename.endsWith("skipped.js");
+                },
+                Identifier() {
+                  identifiers++;
+                },
+                after() {
+                  context.report({ loc: { line: 1, column: 0 }, message: identifiers + " identifiers, created " + created + " time" });
+                },
+              };
+            },
+          },
+        },
+      };`;
+    const { stdout } = await lint(
+      {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "once/count": "error" } }),
+        "plugin.mjs": plugin,
+        "a.js": "a;\n",
+        "b.js": "a + b;\n",
+        "skipped.js": "a + b + c;\n",
+      },
+      ["-f", "unix", "--threads", "1"],
+    );
+    expect(stdout).toMatchInlineSnapshot(`
+      "<dir>/a.js:1:1: 1 identifiers, created 1 time [Error/once/count]
+      <dir>/b.js:1:1: 2 identifiers, created 1 time [Error/once/count]
+
+      2 problems"
+    `);
+  }, timeout);
+
   test("a plugin in TypeScript, one from a package, one with an alias", async () => {
     const rule = (message: string) =>
       `{ create(context) { return { Program(node) { context.report({ node, message: ${JSON.stringify(message)} }); } }; } }`;

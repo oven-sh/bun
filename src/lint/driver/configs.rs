@@ -589,7 +589,7 @@ impl<'l> Loader<'l> {
         }
         let file = self.options.ignore_path.as_deref().map_or_else(|| b".eslintignore".to_vec(), paths::from_native);
         let file = paths::resolve(self.cwd(), &file);
-        gitignore::is_ignored(&gitignore::with_file(None, paths::dirname(&file), &file), path, false)
+        gitignore::is_ignored(&gitignore::with_file(None, paths::dirname(&file), &file, true), path, false)
     }
 
     /// The ignore files that count in `directory`, where a search starts.
@@ -599,7 +599,7 @@ impl<'l> Loader<'l> {
         }
         let chain = gitignore::above_and_in(directory, self.ignore_file_names());
         match self.options.ignore_path.as_ref().filter(|_| self.options.ignore) {
-            Some(path) => gitignore::with_file(chain, self.cwd(), &paths::resolve(self.cwd(), &paths::from_native(path))),
+            Some(path) => gitignore::with_file(chain, self.cwd(), &paths::resolve(self.cwd(), &paths::from_native(path)), true),
             None => chain,
         }
     }

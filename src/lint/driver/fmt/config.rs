@@ -125,6 +125,25 @@ pub(crate) struct Scope {
 
 /// oxc's `GlobSet::new`: a pattern without a slash is for a name in any directory.
 pub(crate) fn glob_of_oxc(pattern: &[u8]) -> Glob {
+    // `{a}` is `a` there.
+    let mut without_single_braces = Vec::with_capacity(pattern.len());
+    let mut rest = pattern;
+    while let Some(open) = strings::index_of_char_usize(rest, b'{') {
+        let close = strings::index_of_char_usize(&rest[open..], b'}').map(|it| open + it);
+        match close.filter(|&close| strings::index_of_any(&rest[open + 1..close], b",{").is_none()) {
+            Some(close) => {
+                without_single_braces.extend_from_slice(&rest[..open]);
+                without_single_braces.extend_from_slice(&rest[open + 1..close]);
+                rest = &rest[close + 1..];
+            }
+            None => {
+                without_single_braces.extend_from_slice(&rest[..=open]);
+                rest = &rest[open + 1..];
+            }
+        }
+    }
+    without_single_braces.extend_from_slice(rest);
+    let pattern = &without_single_braces[..];
     match pattern.strip_prefix(b"./") {
         Some(rest) => Glob::new(rest),
         None if strings::contains_char(pattern, b'/') => Glob::new(pattern),
@@ -145,6 +164,20 @@ fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
     all.iter().map(pattern).collect()
 }
 
+/// The object `before` with the keys of the object `after`, both as JSON. `after` if one is no object.
+fn merged_objects(before: &[u8], after: &[u8]) -> Vec<u8> {
+    let (Some(Json::Object(mut entries)), Some(Json::Object(added))) = (bun_lint::json::parse(before), bun_lint::json::parse(after)) else {
+        return after.to_vec();
+    };
+    for (name, value) in added {
+        entries.retain(|it| it.0 != name);
+        entries.push((name, value));
+    }
+    let mut text = Vec::new();
+    write_json(&mut text, &Json::Object(entries));
+    text
+}
+
 fn settings(json: &Json) -> Settings {
     let mut settings = Vec::new();
     for (name, value) in json.as_object().unwrap_or_default() {
@@ -160,7 +193,8 @@ fn settings(json: &Json) -> Settings {
                 write_json(&mut text, value);
                 text
             }
-            Json::Object(_) if name == b"sortPackageJson" => {
+            Json::Object(_) if name == b"sortPackageJson" || name == b"experimentalSortPackageJson" => {
+                let name = &b"sortPackageJson".to_vec();
                 let sorts_scripts = value.get(b"sortScripts").and_then(Json::as_bool) == Some(true);
                 settings.push((name.clone(), b"true".to_vec()));
                 settings.push((b"sortPackageJson.sortScripts".to_vec(), if sorts_scripts { b"true".to_vec() } else { b"false".to_vec() }));
@@ -192,6 +226,14 @@ impl Override {
     }
 }
 
+/// oxfmt's limits.
+fn check_print_width(value: &[u8]) -> Result<(), Fatal> {
+    match bun_core::fmt::parse_decimal::<u32>(value) {
+        Some(1..=320) => Ok(()),
+        _ => Err(Fatal(b"Invalid printWidth: The line width should be between 1 and 320".to_vec())),
+    }
+}
+
 fn is_name_of_oxfmt(name: &[u8]) -> bool {
     name.starts_with(b".oxfmtrc") || name.starts_with(b"oxfmt.")
 }
@@ -214,7 +256,7 @@ impl Config {
                 })
                 .collect(),
             is_oxfmt,
-            ignores: gitignore::with_text(None, paths::dirname(path), &ignored.join(&b'\n')),
+            ignores: gitignore::with_text(None, paths::dirname(path), &ignored.join(&b'\n'), true),
         }
     }
 }
@@ -292,8 +334,13 @@ impl<'c> Configs<'c> {
             editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
         };
-        let nearest = configs.for_directory(&environment.cwd).ok().and_then(|it| it.config.clone());
-        let mut is_oxfmt = nearest.is_some_and(|it| it.is_oxfmt);
+        let mut is_oxfmt = match configs.for_directory(&environment.cwd) {
+            Ok(scope) => scope.config.as_ref().is_some_and(|it| it.is_oxfmt),
+            // The name of the one that cannot be used tells.
+            Err(_) => paths::ancestors(&environment.cwd)
+                .find_map(|directory| NAMES.iter().position(|name| fs::is_file(&paths::join(directory, name))))
+                .is_some_and(|at| at < NAMES_OF_OXFMT),
+        };
         if let Some(path) = &options.config {
             let path = paths::resolve(&environment.cwd, &paths::from_native(path));
             // A name that does not tell is of the tool that the project uses.
@@ -314,6 +361,21 @@ impl<'c> Configs<'c> {
             }
         }
         configs
+    }
+
+    /// What is wrong with the configuration that the run starts with. oxfmt stops there.
+    pub(crate) fn check(&self) -> Result<(), Fatal> {
+        if let Some(Err(error)) = &self.named {
+            return Err(Fatal(error.0.clone()));
+        }
+        if self.flavor == Flavor::Oxfmt {
+            let scope = self.for_directory(&self.environment.cwd)?;
+            let widths = self.config_of(&scope)?.into_iter().flat_map(|it| &it.settings).filter(|it| it.0 == b"printWidth");
+            for (_, width) in widths {
+                check_print_width(width)?;
+            }
+        }
+        Ok(())
     }
 
     fn warn(&self, parts: &[&[u8]]) {
@@ -382,6 +444,11 @@ impl<'c> Configs<'c> {
         if self.named.is_none() && self.options.config_lookup {
             // One after the other: a `package.json` need not have a configuration.
             candidates.sort_unstable();
+            if let [first, second, ..] = candidates[..]
+                && second < NAMES_OF_OXFMT
+            {
+                return Err(Fatal([b"Both '", NAMES[first], b"' and '", NAMES[second], b"' found in ", directory, b"."].concat()));
+            }
             for at in candidates {
                 if let Some(found) = self.load(&paths::join(directory, NAMES[at]), at < NAMES_OF_OXFMT)? {
                     config = Some(found);
@@ -407,11 +474,11 @@ impl<'c> Configs<'c> {
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
         let directory = if self.options.disable_nested_config { &self.environment.cwd[..] } else { directory };
         let mut missing: Vec<&[u8]> = Vec::new();
-        let mut above: Option<Arc<Scope>> = None;
+        let mut above: Option<Found> = None;
         for ancestor in paths::ancestors(directory) {
             match self.by_directory.lock().get(ancestor) {
                 Some(known) => {
-                    above = Some(known.clone()?);
+                    above = Some(known.clone());
                     break;
                 }
                 None => missing.push(ancestor),
@@ -419,11 +486,20 @@ impl<'c> Configs<'c> {
         }
         for directory in missing.into_iter().rev() {
             let entries = fs::list(directory).map_or_else(Vec::new, |it| it.entries);
-            let found = self.scope(directory, entries.iter().map(|it| &it.name[..]), above.as_deref());
+            let names = entries.iter().map(|it| &it.name[..]);
+            let found = match &above {
+                Some(Ok(above)) => self.scope(directory, names, Some(above)),
+                None => self.scope(directory, names, None),
+                // A configuration file that cannot be used does not matter below a nearer one.
+                Some(Err(error)) => self.scope(directory, names, None).and_then(|scope| match scope.config {
+                    Some(_) => Ok(scope),
+                    None => Err(error.clone()),
+                }),
+            };
             self.by_directory.lock().insert(directory.to_vec(), found.clone());
-            above = Some(found?);
+            above = Some(found);
         }
-        above.ok_or_else(|| Fatal(b"The path of a directory is empty.".to_vec()))
+        above.unwrap_or_else(|| Err(Fatal(b"The path of a directory is empty.".to_vec())))
     }
 
     /// The same for a directory whose entries are `names`, and whose parent has `above`.
@@ -439,6 +515,11 @@ impl<'c> Configs<'c> {
         let found = self.scope(directory, names, Some(above));
         self.by_directory.lock().insert(directory.to_vec(), found.clone());
         found
+    }
+
+    /// `ignorePatterns` of the configuration file for what has `scope`.
+    pub(crate) fn ignores_of<'s>(&'s self, scope: &'s Scope) -> &'s Chain {
+        self.config_of(scope).ok().flatten().map_or(&None, |it| &it.ignores)
     }
 
     /// The configuration file for what has `scope`.
@@ -499,13 +580,26 @@ impl<'c> Configs<'c> {
         }
         // `prettier-plugin-organize-imports` asks TypeScript, which asks the `tsconfig.json`.
         let mut organizes_imports = false;
+        let mut sort_imports: Option<Vec<u8>> = None;
         for (name, value) in all {
             organizes_imports |= name.starts_with(b"organizeImports") || (name == b"plugins" && strings::contains(value, b"prettier-plugin-organize-imports"));
             match name {
+                // An override of oxfmt changes the keys that it has.
+                name if self.flavor == Flavor::Oxfmt && name.ends_with(b"ortImports") => {
+                    let merged = sort_imports.as_deref().map_or_else(|| value.to_vec(), |before| merged_objects(before, value));
+                    sort.set(name, &merged);
+                    sort_imports = Some(merged);
+                }
                 name if sort.set(name, value) => {}
                 b"insertFinalNewline" if self.flavor == Flavor::Oxfmt => resolved.omits_final_newline = value == b"false",
                 b"sortPackageJson" | b"sortPackageJson.sortScripts" if self.flavor == Flavor::Oxfmt => {
                     let _ = resolved.options.set(name, value);
+                }
+                b"experimentalSortPackageJson" if self.flavor == Flavor::Oxfmt => {
+                    let _ = resolved.options.set(b"sortPackageJson", value);
+                }
+                b"printWidth" if self.flavor == Flavor::Oxfmt && check_print_width(value).is_err() => {
+                    check_print_width(value)?;
                 }
                 b"sortTailwindcss" | b"experimentalTailwindcss" | b"jsdoc" if value != b"false" => {
                     self.warn(&[name, b" is not supported yet, and has no effect."]);

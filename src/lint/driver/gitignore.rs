@@ -164,12 +164,34 @@ pub(crate) struct Ignores {
 
 pub(crate) type Chain = Option<Arc<Ignores>>;
 
-pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8]) -> Chain {
+/// Adds `pattern` with each `{a,b}` in it replaced by one of `a` and `b`, in all ways.
+fn expand_braces(pattern: &[u8], into: &mut Vec<Vec<u8>>) {
+    let open = strings::index_of_char_usize(pattern, b'{').filter(|&at| at == 0 || pattern[at - 1] != b'\\');
+    let close = open.and_then(|open| Some(open + strings::index_of_char_usize(&pattern[open..], b'}')?));
+    let (Some(open), Some(close), true) = (open, close, into.len() < 256) else {
+        into.push(pattern.to_vec());
+        return;
+    };
+    for alternative in strings::split(&pattern[open + 1..close], b",") {
+        expand_braces(&[&pattern[..open], alternative, &pattern[close + 1..]].concat(), into);
+    }
+}
+
+/// `chain` and the patterns in `text`, which are relative to `directory`. `expands_braces`: `{a,b}`
+/// is `a` or `b`, as for oxlint and oxfmt. Git and Prettier take the braces as they are.
+pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], expands_braces: bool) -> Chain {
     let lines = strings::split(text, b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
-    let patterns: Vec<Pattern> = lines
-        .filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#"))
-        .map(Pattern::new)
-        .collect();
+    let mut patterns: Vec<Pattern> = Vec::new();
+    for line in lines.filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#")) {
+        // The last pattern that matches decides, so one after the other is one or the other.
+        if expands_braces && strings::contains_char(line, b'{') {
+            let mut expanded = Vec::new();
+            expand_braces(line, &mut expanded);
+            patterns.extend(expanded.iter().map(|it| Pattern::new(it)));
+        } else {
+            patterns.push(Pattern::new(line));
+        }
+    }
     if patterns.is_empty() {
         return chain;
     }
@@ -181,9 +203,9 @@ pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8]) -> Chain {
 }
 
 /// `chain` and the file at `path`, whose patterns are relative to `directory`.
-pub(crate) fn with_file(chain: Chain, directory: &[u8], path: &[u8]) -> Chain {
+pub(crate) fn with_file(chain: Chain, directory: &[u8], path: &[u8], expands_braces: bool) -> Chain {
     match fs::read(path) {
-        Ok(text) => with_text(chain, directory, &text),
+        Ok(text) => with_text(chain, directory, &text, expands_braces),
         Err(_) => chain,
     }
 }
@@ -200,11 +222,11 @@ pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
     }
     let mut chain = None;
     if let Some(root) = directories.last() {
-        chain = with_file(chain, root, &paths::join(root, b".git/info/exclude"));
+        chain = with_file(chain, root, &paths::join(root, b".git/info/exclude"), true);
     }
     for directory in directories.iter().rev() {
         for name in names {
-            chain = with_file(chain, directory, &paths::join(directory, name));
+            chain = with_file(chain, directory, &paths::join(directory, name), true);
         }
     }
     chain

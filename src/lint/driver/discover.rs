@@ -191,7 +191,7 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                 ignores = loader.ignore_files_at(&directory.path, &own);
             } else if reads_ignore_files && !directory.relative.is_empty() {
                 for name in loader.ignore_file_names().iter().filter(|name| entries.iter().any(|it| it.name == **name)) {
-                    ignores = gitignore::with_file(ignores, &directory.path, &paths::join(&directory.path, name));
+                    ignores = gitignore::with_file(ignores, &directory.path, &paths::join(&directory.path, name), true);
                 }
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());

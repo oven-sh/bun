@@ -148,7 +148,7 @@ impl Ignored {
             if flavor == Flavor::Oxfmt && options.ignore_path.is_some() && !fs::is_file(&file) {
                 return Err(Fatal([&file[..], b": File not found"].concat()));
             }
-            files.extend(gitignore::with_file(None, paths::dirname(&file), &file).map(Some));
+            files.extend(gitignore::with_file(None, paths::dirname(&file), &file, flavor == Flavor::Oxfmt).map(Some));
         }
         Ok(Ignored {
             directories,
@@ -171,10 +171,10 @@ impl Ignored {
     }
 
     /// For what is come to by way of its directories, none of which is ignored.
-    fn ignores_entry(&self, path: &[u8], name: &[u8], is_directory: bool, config: &Chain) -> bool {
+    fn ignores_entry(&self, path: &[u8], name: &[u8], is_directory: bool) -> bool {
         (is_directory && self.directories.contains(&name))
             || self.is_negated(path)
-            || self.files.iter().chain([config]).any(|chain| gitignore::is_ignored(chain, path, is_directory))
+            || self.files.iter().any(|chain| gitignore::is_ignored(chain, path, is_directory))
     }
 
     /// Prettier's `isIgnored`, for any file.
@@ -190,6 +190,9 @@ struct Directory {
     is_first: bool,
     /// The `.gitignore` files above it or, for the one that is searched, in it too.
     git: Chain,
+    /// `ignorePatterns` of the configuration above it have it. It is looked at all the same: a
+    /// configuration file in it starts over.
+    is_ignored_by_configuration: bool,
 }
 
 /// The files in `base` that `matches` says yes to, given the path from the working directory.
@@ -203,11 +206,13 @@ fn search(
     reads_gitignore: bool,
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
+    let above = configs.for_directory(base)?;
     let mut level = vec![Directory {
         path: base.to_vec(),
-        above: configs.for_directory(base)?,
         is_first: true,
         git: if reads_gitignore { gitignore::above_and_in(base, &[b".gitignore"]) } else { None },
+        is_ignored_by_configuration: gitignore::is_file_ignored_anywhere(configs.ignores_of(&above), &paths::join(base, b".")),
+        above,
     }];
     while !level.is_empty() && failure.lock().is_none() {
         let mut next = Guarded::new(Vec::new());
@@ -228,20 +233,21 @@ fn search(
                     return;
                 }
             };
-            let of_config = scope.config.as_ref().map_or(&None, |it| &it.ignores);
+            let of_config = configs.ignores_of(&scope);
+            let starts_over = !directory.is_first && !std::ptr::eq(configs.ignores_of(&directory.above), of_config);
+            let is_ignored_by_configuration = directory.is_ignored_by_configuration && !starts_over;
             let mut git = directory.git.clone();
             if reads_gitignore && !directory.is_first && entries.iter().any(|it| it.name == b".gitignore") {
-                git = gitignore::with_file(git, &directory.path, &paths::join(&directory.path, b".gitignore"));
+                git = gitignore::with_file(git, &directory.path, &paths::join(&directory.path, b".gitignore"), true);
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
             // Links are not followed, and not formatted.
             for entry in entries.iter().filter(|it| !it.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
-                if ignored.ignores_entry(&path, &entry.name, entry.is_directory, of_config)
-                    || gitignore::is_ignored(&git, &path, entry.is_directory)
-                {
+                if ignored.ignores_entry(&path, &entry.name, entry.is_directory) || gitignore::is_ignored(&git, &path, entry.is_directory) {
                     continue;
                 }
+                let is_ignored_by_configuration = is_ignored_by_configuration || gitignore::is_ignored(of_config, &path, entry.is_directory);
                 let relative = paths::relative(&ignored.cwd, &path);
                 if entry.is_directory {
                     if enters(&relative) {
@@ -250,9 +256,10 @@ fn search(
                             above: Arc::clone(&scope),
                             is_first: false,
                             git: git.clone(),
+                            is_ignored_by_configuration,
                         });
                     }
-                } else if matches(&relative) {
+                } else if !is_ignored_by_configuration && matches(&relative) {
                     files.push(Target {
                         path,
                         size: listing.size_of(&entry.name),
@@ -410,7 +417,7 @@ pub(crate) fn expand_as_oxfmt(
         }
     }
     // In the format of `.gitignore`, unlike Prettier's.
-    ignored.files.extend(gitignore::with_text(None, &cwd, &excluded.join(&b'\n')).map(Some));
+    ignored.files.extend(gitignore::with_text(None, &cwd, &excluded.join(&b'\n'), true).map(Some));
     let ignored = &*ignored;
     if !globs.is_empty() || targets.is_empty() {
         targets.push(cwd.clone());
@@ -437,7 +444,7 @@ pub(crate) fn expand_as_oxfmt(
             continue;
         }
         let scope = configs.for_directory(paths::dirname(&path))?;
-        if !scope.config.as_ref().is_some_and(|it| is_ignored(&it.ignores)) {
+        if !is_ignored(configs.ignores_of(&scope)) {
             found.push(Target {
                 path,
                 size,

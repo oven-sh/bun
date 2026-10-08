@@ -406,6 +406,44 @@ describe.concurrent("bun format", () => {
       });
     });
 
+    test("prettier-plugin-organize-imports: whether an unused import React stays is up to the nearest tsconfig.json", async () => {
+      const jsx = `import React from "react";\nexport const a = <div />;\n`;
+      const tsconfig = (compilerOptions: object) => JSON.stringify({ compilerOptions });
+      const names = ["classic", "native", "extended", "automatic", "preserve", "none", "factory", "namespace"];
+      const { files } = await format(
+        {
+          ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }`,
+          "base.json": tsconfig({ jsx: "react" }),
+          ...Object.fromEntries(names.map(name => [`${name}/a.tsx`, jsx])),
+          "classic/tsconfig.json": tsconfig({ jsx: "react" }),
+          "classic/b.ts": `import React from "react";\nexport const a = 1;\n`,
+          "native/tsconfig.json": tsconfig({ jsx: "react-native" }),
+          "extended/tsconfig.json": `{ "extends": "../base.json" }`,
+          "automatic/tsconfig.json": tsconfig({ jsx: "react-jsx" }),
+          "preserve/tsconfig.json": tsconfig({ jsx: "preserve" }),
+          "factory/tsconfig.json": tsconfig({ jsx: "react", jsxFactory: "h", jsxFragmentFactory: "Fragment" }),
+          "factory/a.tsx": `import { h, Fragment, other } from "preact";\nimport React from "react";\nexport const a = <></>;\n`,
+          "namespace/tsconfig.json": tsconfig({ jsx: "react", reactNamespace: "Preact" }),
+          "namespace/a.tsx": `import Preact from "preact";\nimport React from "react";\nexport const a = <div />;\n`,
+        },
+        [],
+        { reads: [...names.map(name => `${name}/a.tsx`), "classic/b.ts"] },
+      );
+      // What Prettier 3 prints with the plugin and TypeScript 5.
+      const without = "export const a = <div />;\n";
+      expect(files).toEqual({
+        "classic/a.tsx": jsx,
+        "native/a.tsx": jsx,
+        "extended/a.tsx": jsx,
+        "automatic/a.tsx": without,
+        "preserve/a.tsx": without,
+        "none/a.tsx": without,
+        "factory/a.tsx": `import { Fragment, h } from "preact";\nexport const a = <></>;\n`,
+        "namespace/a.tsx": `import Preact from "preact";\nexport const a = <div />;\n`,
+        "classic/b.ts": "export const a = 1;\n",
+      });
+    });
+
     test(".editorconfig", async () => {
       const files = {
         ".editorconfig": "root = true\n[*]\nindent_style = space\nindent_size = 4\n[*.ts]\nindent_style = tab\n",

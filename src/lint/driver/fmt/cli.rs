@@ -101,6 +101,9 @@ pub struct Options {
     /// Files, directories and patterns.
     pub patterns: Vec<Vec<u8>>,
     pub check: bool,
+    /// What follows `-c`, which is `--check` for Prettier and `--config <path>` for oxfmt, and
+    /// whether `--check` is there too.
+    after_short_c: Option<(Vec<u8>, bool)>,
     pub list_different: bool,
     pub write: bool,
     pub stdin_filepath: Option<Vec<u8>>,
@@ -142,6 +145,7 @@ impl Default for Options {
         Options {
             patterns: Vec::new(),
             check: false,
+            after_short_c: None,
             list_different: false,
             write: false,
             stdin_filepath: None,
@@ -277,6 +281,16 @@ impl Options {
     }
 
     /// `args`: what follows `format` on the command line.
+    /// The same command line as oxfmt reads it, if that is another way.
+    pub(crate) fn as_oxfmt_reads_it(&self) -> Option<Options> {
+        let (path, checks) = self.after_short_c.as_ref()?;
+        let mut options = self.clone();
+        let at = options.patterns.iter().position(|it| it == path)?;
+        options.config = Some(options.patterns.remove(at));
+        options.check = *checks;
+        Some(options)
+    }
+
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = Options::default();
         // The one flag that takes a value and has an opposite.
@@ -294,6 +308,11 @@ impl Options {
             })
             .collect();
         let args: Vec<&[u8]> = rewritten.iter().map(Vec::as_slice).collect();
+        if let Some(at) = args.iter().position(|arg| *arg == b"-c")
+            && let Some(next) = args.get(at + 1).filter(|next| !next.starts_with(b"-"))
+        {
+            options.after_short_c = Some((next.to_vec(), args.contains(&&b"--check"[..])));
+        }
         crate::args::parse(PARAMS, &args, &mut |argument| match argument {
             Argument::Flag { name, value, is_on } => options.set(name, value, is_on),
             Argument::Positional(pattern) => {

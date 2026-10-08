@@ -18,6 +18,10 @@ let config;
 if (basename(path) === "package.json") config = (await importDefault(path)).prettier;
 else if (basename(path) === "package.yaml") config = Bun.YAML.parse(read(path))?.prettier;
 else config = await (loaders[extname(path)] ?? importDefault)(path);
+if (basename(path).startsWith("oxfmt.")) {
+  if (config === undefined) throw new Error("Configuration file has no default export.");
+  if (config === null || typeof config !== "object") throw new Error("Configuration file must have a default export that is an object.");
+}
 // `"prettier": "my-prettier-config-package-or-file"`
 if (typeof config === "string") config = await importDefault(Bun.resolveSync(config, dirname(path)));
 if (config !== undefined && config !== null && typeof config !== "object") {

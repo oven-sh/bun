@@ -297,6 +297,15 @@ impl Run<'_> {
         self.out
     }
 
+    /// The configuration, or what says which files to ignore, cannot be used.
+    fn fail_to_start(self, flavor: Flavor, text: &[u8]) -> Outcome {
+        let mut out = self.fail(text);
+        if flavor == Flavor::Oxfmt {
+            out.exit_code = 1;
+        }
+        out
+    }
+
     fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
         match failure {
             Failure::Syntax(error) => [shown, b": ", &error].concat(),
@@ -312,7 +321,7 @@ impl Run<'_> {
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
         let found = configs.for_directory(paths::dirname(&path)).and_then(|scope| {
-            let of_config = scope.config.as_ref().map_or(&None, |it| &it.ignores);
+            let of_config = configs.ignores_of(&scope);
             let options = configs.options_for(&scope, &path)?;
             let is_another_language = files::language_of(&path) == Language::Other && options.options.parser.is_none();
             Ok((!ignored.ignores_file(&path, of_config) && !is_another_language).then_some(options))
@@ -323,10 +332,10 @@ impl Run<'_> {
                 self.out.stdout = text;
                 return self.out;
             }
-            Err(Fatal(error)) => return self.fail(&error),
+            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
         if files::language_of(&path) == Language::Unknown && options.options.parser.is_none() {
-            return self.fail(&[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
+            return self.fail_to_start(configs.flavor, &[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
         }
         let names = Session::new();
         match format(&path, &text, &options, &Interner::new_in(&names), &mut Scratches::default(), self.options.verify) {
@@ -366,14 +375,14 @@ impl Run<'_> {
         };
         let expanded = match expand(configs, &pool, ignored, patterns, options.error_on_unmatched_pattern) {
             Ok(expanded) => expanded,
-            Err(Fatal(error)) => return self.fail(&error),
+            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
         let finding = started.elapsed();
 
         // What is not to be formatted after all.
         let mut others: Vec<(&[u8], usize)> = Vec::new();
         let is_wanted = |target: &Target| {
-            let of_config = target.scope.config.as_ref().map_or(&None, |it| &it.ignores);
+            let of_config = configs.ignores_of(&target.scope);
             !target.is_named || !ignored.ignores_file(&target.path, of_config)
         };
         let mut work: Vec<(usize, &Target)> = Vec::new();
@@ -543,9 +552,12 @@ impl Run<'_> {
                 }
             };
         }
+        if let Err(Fatal(error)) = configs.check() {
+            return self.fail_to_start(configs.flavor, &error);
+        }
         let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
             Ok(ignored) => ignored,
-            Err(Fatal(error)) => return self.fail(&error),
+            Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
         match &options.stdin_filepath {
             Some(name) => self.format_stdin(&configs, &ignored, name),
@@ -556,6 +568,8 @@ impl Run<'_> {
 
 /// Does what `bun format` does. `options.help` and `options.cwd` are for the caller to see to.
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
+    let as_oxfmt = options.as_oxfmt_reads_it().filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
+    let options = as_oxfmt.as_ref().unwrap_or(options);
     let run = Run {
         options,
         environment,

@@ -31,6 +31,8 @@
 //! | `isClosingBraceToken`, `isNotClosingBraceToken` | [`is_closing_brace_token`], [`is_not_closing_brace_token`] |
 //! | `isCommentToken`, `isNotCommentToken` | [`is_comment_token`], [`is_not_comment_token`] |
 //!
+//! What `getStaticValue` needs of JavaScript's numbers is of use on its own: [`js_number`].
+//!
 //! No function takes a `sourceCode`: every handle knows its file.
 //!
 //! The token predicates take `&Token`, which is what `Iterator::find` and `Iterator::filter` pass:
@@ -46,7 +48,7 @@ mod get_static_value;
 mod get_string_if_constant;
 mod has_side_effect;
 mod is_parenthesized;
-mod js_number;
+pub mod js_number;
 mod js_string;
 mod operators;
 mod pattern_matcher;

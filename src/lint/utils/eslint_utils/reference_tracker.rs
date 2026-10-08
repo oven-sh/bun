@@ -2,8 +2,7 @@
 
 use super::get_property_name::{get_property_name, property_name_of_key};
 use super::get_string_if_constant::get_string_if_constant;
-use crate::utils::ast_utils::is_configured_global;
-use crate::ast::{BinOp, Call, Expr, ExprKind, File, Name, Node, StmtKind};
+use crate::ast::{BinOp, Call, Expr, ExprKind, File, Name, Node, StmtKind, TypeKind};
 use crate::semantic::{Reference, Symbol};
 use crate::span::Span;
 use crate::utils::estree_compat::{Target, TargetKind, is_sequence_root};
@@ -186,7 +185,7 @@ impl<'m, T: Copy> View<'m, T> {
 }
 
 /// ESLint's `Variable`.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 enum Variable<'a> {
     Symbol(Symbol<'a>),
     /// One that the file does not declare.
@@ -402,6 +401,23 @@ fn pass_through_parent(e: Expr<'_>) -> Option<Expr<'_>> {
     passes.then_some(parent)
 }
 
+/// Whether `member`, a `Dot` or an `Index`, is a `MemberExpression` of ESTree: not the
+/// `JSXMemberExpression` of `<a.b />`, nor the `TSQualifiedName` of `typeof a.b` in a type.
+fn is_member_expression(member: Expr<'_>) -> bool {
+    let mut whole = member;
+    loop {
+        match whole.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Dot { .. } => whole = parent,
+                ExprKind::Jsx(jsx) => return jsx.tag() != Some(whole) && jsx.close_tag() != Some(whole),
+                _ => return true,
+            },
+            Node::Type(ty) => return !matches!(ty.kind(), TypeKind::Typeof { .. }),
+            _ => return true,
+        }
+    }
+}
+
 impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
     fn report_at(&mut self, node: Node<'a>, span: Span, path: &Path<'m>, read: Option<T>) {
         if let Some(info) = read {
@@ -434,7 +450,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
         let mut references = self.file.unresolved_references_to(name);
         let first = references.next()?;
         let is_modified = first.is_write() || references.any(Reference::is_write);
-        (!is_modified && is_configured_global(self.file, name)).then(|| Variable::Global(first.name()))
+        (!is_modified && self.file.global(name).is_some()).then(|| Variable::Global(first.name()))
     }
 
     /// Upstream's `_iterateVariableReferences`.
@@ -466,7 +482,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
         }
         match node.parent() {
             Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == node => {
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == node && is_member_expression(parent) => {
                     let Some((name, next)) = get_property_name(parent, None).and_then(|key| map.get(&key)) else {
                         return;
                     };
@@ -509,7 +525,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
                 };
                 let variable = match symbol {
                     Some(symbol) => Variable::Symbol(symbol),
-                    None if is_configured_global(self.file, name.bytes()) => Variable::Global(name),
+                    None if self.file.global(name.bytes()).is_some() => Variable::Global(name),
                     None => return,
                 };
                 self.variable_references(variable, path, map, false);

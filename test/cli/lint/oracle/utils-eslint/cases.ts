@@ -2,6 +2,7 @@
 //
 //   bun cases.ts --fixtures <test/cli/lint/conformance/fixtures> > cases.jsonl     the `code` of every conformance case
 //   bun cases.ts --upstream <eslint-utils checkout>/test > cases.jsonl             the `code` of upstream's own tests
+//   bun cases.ts --files <directory> > cases.jsonl                                 source files
 //   bun cases.ts --lines <file> > cases.jsonl                                      each line of a file is a case
 //
 // A case is `{ id, filename, code, sourceType, ecmaVersion, jsx, names }`. `names` are the words of the code: they are the
@@ -65,6 +66,10 @@ if (mode === "--fixtures") {
       for (const sourceType of ["module", "script"]) emit({ filename: "file.js", code, sourceType });
       emit({ filename: "file.ts", code, sourceType: "module" });
     }
+  }
+} else if (mode === "--files") {
+  for (const file of walk(path)) {
+    if (/\.[cm]?[jt]sx?$/.test(file)) emit({ filename: file.replace(/^.*\//, ""), code: readFileSync(file, "utf8"), sourceType: "module" });
   }
 } else {
   for (const code of readFileSync(path, "utf8").split("\n")) {

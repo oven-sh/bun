@@ -1,14 +1,25 @@
 //! The conversions between numbers and strings that ECMAScript defines.
+//!
+//! | JavaScript | here |
+//! | --- | --- |
+//! | `Number(text)`, `+text` | [`string_to_number`] |
+//! | `parseInt(text, radix)`, `parseFloat(text)` | [`parse_int`], [`parse_float`] |
+//! | `n.toFixed(digits)` | [`to_fixed`] |
+//! | `n.toExponential(digits)` | [`to_exponential`] |
+//! | `n.toPrecision(precision)` | [`to_precision`] |
+//! | `n.toString(radix)` | [`to_radix_string`] |
+//! | `n \| 0`, `n >>> 0` | [`to_int32`], [`to_uint32`] |
+//! | `String(n)` | [`number_to_string`](crate::utils::text::number_to_string) |
 
 use crate::utils::text::{number_to_string, trim, trim_start};
 
 /// `ToInt32`
-pub(super) fn to_int32(n: f64) -> i32 {
+pub fn to_int32(n: f64) -> i32 {
     to_uint32(n) as i32
 }
 
 /// `ToUint32`
-pub(super) fn to_uint32(n: f64) -> u32 {
+pub fn to_uint32(n: f64) -> u32 {
     if !n.is_finite() {
         return 0;
     }
@@ -68,7 +79,7 @@ fn split_sign(text: &[u8]) -> (f64, &[u8]) {
 }
 
 /// `StringToNumber`: `Number(text)`. `None` if the result cannot be computed here.
-pub(super) fn string_to_number(text: &[u8]) -> Option<f64> {
+pub fn string_to_number(text: &[u8]) -> Option<f64> {
     let text = trim(text);
     if text.is_empty() {
         return Some(0.0);
@@ -97,7 +108,7 @@ pub(super) fn string_to_number(text: &[u8]) -> Option<f64> {
 }
 
 /// `parseFloat(text)`
-pub(super) fn parse_float(text: &[u8]) -> f64 {
+pub fn parse_float(text: &[u8]) -> f64 {
     let (sign, unsigned) = split_sign(trim_start(text));
     if unsigned.starts_with(b"Infinity") {
         return sign * f64::INFINITY;
@@ -110,7 +121,7 @@ pub(super) fn parse_float(text: &[u8]) -> f64 {
 
 /// `parseInt(text, radix)`, where `radix` has gone through `ToInt32`. `None` if the result cannot
 /// be computed here.
-pub(super) fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
+pub fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
     let (sign, mut digits) = split_sign(trim_start(text));
     let mut radix = radix;
     if radix != 0 && !(2..=36).contains(&radix) {
@@ -168,7 +179,7 @@ fn with_sign(n: f64, unsigned: Vec<u8>) -> Vec<u8> {
 }
 
 /// `n.toFixed(digits)` for `digits` in `0..=100`.
-pub(super) fn to_fixed(n: f64, fraction_digits: usize) -> Vec<u8> {
+pub fn to_fixed(n: f64, fraction_digits: usize) -> Vec<u8> {
     if !n.is_finite() || n.abs() >= 1e21 {
         return number_to_string(n);
     }
@@ -206,7 +217,7 @@ fn exponential(digits: &[u8], exponent: i32) -> Vec<u8> {
 }
 
 /// `n.toExponential(digits)` for `digits` in `0..=100`, or `undefined`: as many as necessary.
-pub(super) fn to_exponential(n: f64, fraction_digits: Option<usize>) -> Vec<u8> {
+pub fn to_exponential(n: f64, fraction_digits: Option<usize>) -> Vec<u8> {
     if !n.is_finite() {
         return number_to_string(n);
     }
@@ -231,7 +242,7 @@ pub(super) fn to_exponential(n: f64, fraction_digits: Option<usize>) -> Vec<u8> 
 }
 
 /// `n.toPrecision(precision)` for `precision` in `1..=100`.
-pub(super) fn to_precision(n: f64, precision: usize) -> Vec<u8> {
+pub fn to_precision(n: f64, precision: usize) -> Vec<u8> {
     if !n.is_finite() {
         return number_to_string(n);
     }
@@ -254,7 +265,7 @@ pub(super) fn to_precision(n: f64, precision: usize) -> Vec<u8> {
 
 /// `n.toString(radix)` for `radix` in `2..=36`. The specification leaves the digits open for a
 /// radix other than 10: this is the algorithm of V8.
-pub(super) fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
+pub fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
     const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     if radix == 10 || !n.is_finite() {
         return number_to_string(n);

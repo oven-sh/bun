@@ -2,7 +2,6 @@
 
 use super::builtins::{Member, get_member, global_value, set_property};
 use super::calls::{assign, call, construct, iterate, sorted_flags, string_raw};
-use crate::utils::ast_utils::is_configured_global;
 use super::js_string;
 use super::operators::{binary, unary};
 use super::static_value::{Eval, MAX_LEN, PropertyKey, StaticValue, Stop, parse_bigint_digits};
@@ -190,8 +189,11 @@ impl<'a> Evaluator<'a> {
         let is_declared = |symbol: &Symbol<'a>| symbol.declarations().any(|it| !matches!(it, Declaration::Other));
         let Some(symbol) = e.symbol().filter(is_declared) else {
             let name = e.as_ident().map_or(&b""[..], |name| name.bytes());
+            // Upstream looks the name up, and finds a type of that name as well.
             return match global_value(name) {
-                Some(value) if is_configured_global(e.file(), name) => Ok(value),
+                Some(value) if e.file().global(name).is_some() && Node::Expr(e).scope().resolve_bytes(name).is_none() => {
+                    Ok(value)
+                }
                 _ => Err(Stop::NotStatic),
             };
         };

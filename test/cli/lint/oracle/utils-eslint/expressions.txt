@@ -446,3 +446,4 @@ const a = new String("b"); const o = { b: 1 }; o[a]
 ({ __proto__: [] })
 ({ __proto__: Math })
 ({ ...{ __proto__: 1 } })
+[({ [Object(Symbol.iterator)]: 1 }), ({ a: 1 })[Object("a")], [5][Object(0)]]

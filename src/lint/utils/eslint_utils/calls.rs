@@ -170,11 +170,8 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
         "Array.of" => Ok(StaticValue::Array(args.to_vec())),
         "BigInt" => to_bigint(first),
         "Boolean" => boolean(first.is_truthy()),
-        "Number" => match first.to_primitive()? {
-            _ if args.is_empty() => number(0.0),
-            StaticValue::BigInt(n) => number(n as f64),
-            primitive => number(primitive.to_number()?),
-        },
+        "Number" if args.is_empty() => number(0.0),
+        "Number" => number(first.to_js_number().ok_or(Stop::Abort)?),
         "Number.isFinite" => boolean(first.as_number().is_some_and(f64::is_finite)),
         "Number.isNaN" => boolean(first.as_number().is_some_and(f64::is_nan)),
         "Object" => construct(function, args),
@@ -670,7 +667,7 @@ fn array_method<'a>(name: &[u8], items: &[StaticValue<'a>], args: Args<'_, 'a>) 
                     from => from.min(len as f64 - 1.0),
                 },
             };
-            for (i, item) in present().collect::<Vec<_>>().into_iter().rev() {
+            for (i, item) in present().rev() {
                 if i as f64 <= from && item.strict_equals(first)? {
                     return number(i as f64);
                 }
@@ -742,7 +739,7 @@ fn round_to_half_precision(x: f64) -> f64 {
     if !x.is_finite() || x == 0.0 {
         return x;
     }
-    let exponent = ((x.to_bits() >> 52 & 0x7FF) as i32 - 1023).max(-14);
+    let exponent = (((x.to_bits() >> 52) & 0x7FF) as i32 - 1023).max(-14);
     let unit = 2f64.powi(exponent - 10);
     let rounded = (x / unit).round_ties_even() * unit;
     if rounded.abs() > 65504.0 { f64::INFINITY.copysign(x) } else { rounded }
@@ -851,7 +848,7 @@ fn encode_uri<'a>(text: &[u8], unescaped: &[u8]) -> Eval<StaticValue<'a>> {
 }
 
 fn hex_value(digits: &[u16]) -> Option<u32> {
-    digits.iter().try_fold(0u32, |value, &digit| Some(value << 4 | char::from_u32(u32::from(digit))?.to_digit(16)?))
+    digits.iter().try_fold(0u32, |value, &digit| Some((value << 4) | char::from_u32(u32::from(digit))?.to_digit(16)?))
 }
 
 /// `Decode`: `decodeURI` and `decodeURIComponent`. The escapes of the characters in `preserved`

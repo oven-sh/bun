@@ -63,7 +63,7 @@ fn bigint_operation(op: BinOp, a: i128, b: i128) -> Option<i128> {
     // `a << b` for `b >= 0`
     let shift_left = |a: i128, b: i128| {
         let shifted = a.checked_shl(u32::try_from(b).ok()?)?;
-        (shifted >> b == a).then_some(shifted)
+        ((shifted >> b) == a).then_some(shifted)
     };
     let shift_right = |a: i128, b: i128| Some(a >> b.min(127));
     match op {

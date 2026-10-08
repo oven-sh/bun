@@ -24,16 +24,16 @@ fn quote(text: &[u8], out: &mut String) {
         let next = |i: usize| text.get(at + i).map_or(0, |&byte| u32::from(byte & 0x3F));
         let (c, len) = match first {
             0..0x80 => (u32::from(first), 1),
-            0x80..0xE0 => (u32::from(first & 0x1F) << 6 | next(1), 2),
-            0xE0..0xF0 => (u32::from(first & 0x0F) << 12 | next(1) << 6 | next(2), 3),
-            _ => (u32::from(first & 0x07) << 18 | next(1) << 12 | next(2) << 6 | next(3), 4),
+            0x80..0xE0 => ((u32::from(first & 0x1F) << 6) | next(1), 2),
+            0xE0..0xF0 => ((u32::from(first & 0x0F) << 12) | (next(1) << 6) | next(2), 3),
+            _ => ((u32::from(first & 0x07) << 18) | (next(1) << 12) | (next(2) << 6) | next(3), 4),
         };
         at += len;
         match c {
             0x20 | 0x21 | 0x23..=0x5B | 0x5D..=0x7E => out.push(c as u8 as char),
             0x10000.. => {
                 let c = c - 0x10000;
-                _ = write!(out, "\\u{:04x}\\u{:04x}", 0xD800 | c >> 10, 0xDC00 | c & 0x3FF);
+                _ = write!(out, "\\u{:04x}\\u{:04x}", 0xD800 | (c >> 10), 0xDC00 | (c & 0x3FF));
             }
             _ => _ = write!(out, "\\u{c:04x}"),
         }
@@ -243,7 +243,7 @@ impl<'a> Facts<'a> {
                 ReferenceKind::Construct => "construct",
             };
             let is_import = matches!(reference.node.as_stmt().map(|it| it.kind()), Some(StmtKind::Import(_)));
-            let (ty, span) = match reference.span != reference.node.span() {
+            let (ty, span) = match reference.span != reference.node.span() || matches!(reference.node, Node::Type(_)) {
                 true if is_import => ("ImportDefaultSpecifier", reference.span),
                 true => ("Identifier", reference.span),
                 false => (utils::estree_type_name(reference.node), utils::estree_span(reference.node)),
@@ -327,7 +327,7 @@ pub(crate) fn run(args: &[String]) {
         println!("cannot read {path}");
         return;
     };
-    for line in input.split(|&c| c == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         if let Some(json) = bun_lint::json::parse(line) {
             println!("{}", dump(Object::of(Some(&json))));
         }

@@ -226,6 +226,20 @@ impl<'a> StaticValue<'a> {
         }
     }
 
+    /// `Number(value)`. `None` if that throws.
+    pub fn to_js_number(&self) -> Option<f64> {
+        match self.to_primitive().ok()? {
+            StaticValue::BigInt(n) => Some(n as f64),
+            primitive => primitive.to_number().ok(),
+        }
+    }
+
+    /// The name of the property `object[value]`: the symbol, or `String(value)`. `None` if the
+    /// conversion throws.
+    pub fn to_js_property_key(&self) -> Option<PropertyKey<'a>> {
+        self.to_property_key().ok()
+    }
+
     /// `ToPrimitive`. The objects here have no `valueOf` that returns a primitive value, so the
     /// hint makes no difference.
     pub(super) fn to_primitive(&self) -> Eval<StaticValue<'a>> {
@@ -304,9 +318,9 @@ impl<'a> StaticValue<'a> {
 
     /// `ToPropertyKey`
     pub(super) fn to_property_key(&self) -> Eval<PropertyKey<'a>> {
-        match self {
-            StaticValue::Symbol(symbol) => Ok(PropertyKey::Symbol(symbol.clone())),
-            _ => Ok(PropertyKey::String(self.to_string()?)),
+        match self.to_primitive()? {
+            StaticValue::Symbol(symbol) => Ok(PropertyKey::Symbol(symbol)),
+            primitive => Ok(PropertyKey::String(primitive.to_string()?)),
         }
     }
 

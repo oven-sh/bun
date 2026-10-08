@@ -1,7 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 // Both ways of naming an editor (EDITOR in the environment, the `editor`
 // option) end in a PATH lookup of the editor's binary name. The fake editors
@@ -151,4 +151,137 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
   });
 
   await Promise.all(runs);
+});
+
+// Windows runs a .cmd or .bat file through cmd.exe, and cmd.exe reads the
+// arguments a second time: `%NAME%` becomes the value of the environment
+// variable NAME, and `&`, `|`, `<` and `>` start another command or a
+// redirect. Each test below runs one Bun.openInEditor call in a child process
+// that has CMD_PROBE=read-by-cmd in its environment. A fake editor writes the
+// arguments it was started with to out.txt, and the child prints the error the
+// call threw, or else what the editor wrote.
+const openInEditorFixture = `
+  import { readFileSync } from "node:fs";
+
+  const { path, options } = JSON.parse(process.env.OPEN_IN_EDITOR_CALL);
+  let error;
+  try {
+    Bun.openInEditor(path, options);
+  } catch (e) {
+    error = e;
+  }
+
+  if (error) {
+    console.log("threw " + error.code + ": " + error.message);
+  } else {
+    // The editor runs on a detached thread, so poll for the file it writes.
+    let written = "nothing";
+    for (const deadline = Date.now() + 30_000; Date.now() < deadline; await Bun.sleep(5)) {
+      try {
+        const text = readFileSync("out.txt", "utf8");
+        if (text.endsWith("\\n")) {
+          written = text.trim();
+          break;
+        }
+      } catch {}
+    }
+    console.log("editor got " + written);
+  }
+`;
+
+async function openInEditor(dir: string, path: string, options: object, env = bunEnv) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js"],
+    env: { ...env, CMD_PROBE: "read-by-cmd", OPEN_IN_EDITOR_CALL: JSON.stringify({ path, options }) },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+describe.concurrent.if(isWindows)("Bun.openInEditor with a .cmd or .bat editor", () => {
+  const batchEditor = '@echo off\r\n> "%~dp0out.txt" echo arg=%*\r\n';
+  const refusal = (name: string, value: string) =>
+    `threw ERR_INVALID_ARG_VALUE: The ${name} contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received ${JSON.stringify(value)}\n`;
+
+  test.each([
+    ["fake-editor.cmd", "%CMD_PROBE%.js"],
+    ["fake-editor.bat", "%CMD_PROBE%.js"],
+    ["fake-editor.cmd", "a&b.js"],
+    ["fake-editor.cmd", "a|b.js"],
+    ["fake-editor.cmd", "a<b.js"],
+    ["fake-editor.cmd", "a>b.js"],
+    ["fake-editor.cmd", "a^b.js"],
+    ["fake-editor.cmd", 'a"b.js'],
+    ["fake-editor.cmd", "a\nb.js"],
+    ["fake-editor.cmd", "a\rb.js"],
+    // A special character inside quotes, and a `%` that starts no variable name.
+    ["fake-editor.cmd", "a & b.js"],
+    ["fake-editor.cmd", "100%.js"],
+  ])("%s refuses the path %j", async (name, path) => {
+    using dir = tempDir("open-in-editor-batch", { [name]: batchEditor, "run.js": openInEditorFixture });
+    expect(await openInEditor(String(dir), path, { editor: join(String(dir), name) })).toEqual({
+      stdout: refusal("argument 'path'", path),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // VS Code puts code.cmd on PATH and takes the position as `--goto file:line:column`.
+  const codeOnPath = (dir: string) => ({ ...bunEnv, PATH: `${dir}${delimiter}${process.env.PATH}` });
+
+  test.each(["line", "column"])("code.cmd refuses the %s option", async option => {
+    using dir = tempDir("open-in-editor-batch", { "code.cmd": batchEditor, "run.js": openInEditorFixture });
+    const options = { editor: "code", line: 3, column: 7, [option]: "%CMD_PROBE%" };
+    expect(await openInEditor(String(dir), "hello.js", options, codeOnPath(String(dir)))).toEqual({
+      stdout: refusal(`property 'options.${option}'`, "%CMD_PROBE%"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("code.cmd gets a path and a position that have no special character", async () => {
+    using dir = tempDir("open-in-editor-batch", { "code.cmd": batchEditor, "run.js": openInEditorFixture });
+    const options = { editor: "code", line: 3, column: 7 };
+    expect(await openInEditor(String(dir), "hello world.js", options, codeOnPath(String(dir)))).toEqual({
+      stdout: 'editor got arg=--goto "hello world.js:3:7"\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The editor is bun itself, which runs the path as a script. Windows starts an
+  // .exe directly, so the path arrives as written.
+  test("an .exe editor gets a path that has a special character", async () => {
+    const script = `require("node:fs").writeFileSync("out.txt", "arg=" + require("node:path").basename(process.argv[1]) + "\\n");`;
+    using dir = tempDir("open-in-editor-exe", {
+      "%CMD_PROBE%.js": script,
+      "read-by-cmd.js": script,
+      "run.js": openInEditorFixture,
+    });
+    expect(await openInEditor(String(dir), "%CMD_PROBE%.js", { editor: bunExe() })).toEqual({
+      stdout: "editor got arg=%CMD_PROBE%.js\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// On POSIX a file named .cmd is an ordinary program, and nothing reads its
+// arguments a second time.
+test.skipIf(isWindows)("Bun.openInEditor passes a cmd.exe special character to a .cmd editor on POSIX", async () => {
+  using dir = tempDir("open-in-editor-posix-cmd", {
+    "fake-editor.cmd": '#!/bin/sh\necho "arg=$*" > "$(dirname "$0")/out.txt"\n',
+    "run.js": openInEditorFixture,
+  });
+  const editor = join(String(dir), "fake-editor.cmd");
+  chmodSync(editor, 0o755);
+
+  expect(await openInEditor(String(dir), "%CMD_PROBE%.js", { editor })).toEqual({
+    stdout: "editor got arg=%CMD_PROBE%.js\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

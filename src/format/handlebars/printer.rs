@@ -1,6 +1,7 @@
 //! Prettier's `language-handlebars/printer-glimmer.js`. It writes the parts of the document one after the other.
 
 use super::ast::{self, Call, Head, Kind, NOTHING, Node, NodeId, Range, Tree};
+use super::lexer::id_len;
 use super::positions::Positions;
 use super::tokenizer::is_void_tag;
 use crate::FormatOptions;
@@ -13,6 +14,10 @@ const HTML_WHITE_SPACE: &[u8] = b"\t\n\x0C\r ";
 
 fn is_html_white_space(byte: u8) -> bool {
     matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' ')
+}
+
+fn has_html_white_space(text: &[u8]) -> bool {
+    strings::index_of_any(text, HTML_WHITE_SPACE).is_some()
 }
 
 /// `htmlWhitespace.trimStart(text)`
@@ -47,6 +52,20 @@ fn starts_with_upper_case(tag: &[u8]) -> bool {
     !tag.first().is_some_and(u8::is_ascii_lowercase)
 }
 
+/// Whether there is a blank before and behind words.
+#[derive(Copy, Clone, Default)]
+struct Blanks {
+    before: bool,
+    behind: bool,
+}
+
+/// What a text is next to in a `ConcatStatement`.
+#[derive(Copy, Clone, Default)]
+struct Neighbors {
+    follows_mustache: bool,
+    precedes_mustache: bool,
+}
+
 /// What a text is in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Parent {
@@ -68,6 +87,10 @@ pub(crate) struct Printer<'a> {
     pub(crate) is_white_space_sensitive: bool,
     pub(crate) single_quote: bool,
     pub(crate) out: &'a mut Elements,
+    /// What is printed is not what the tree says, or white space that counts is not kept.
+    pub(crate) is_damaged: bool,
+    /// How many `<pre>` are around what is being printed.
+    pub(crate) pre_depth: usize,
 }
 
 impl<'a> Printer<'a> {
@@ -147,8 +170,8 @@ impl<'a> Printer<'a> {
         self.out.text(text);
     }
 
-    /// `fill(getTextValueParts(text))`, where `text` is `words` with a blank before and behind it, if so.
-    fn fill(&mut self, has_blank_before: bool, words: &[u8], has_blank_behind: bool) {
+    /// `fill(getTextValueParts(text))`, where `text` is `words` with `blanks` around it.
+    fn fill(&mut self, words: &[u8], blanks: Blanks) {
         self.out.start_fill();
         let separator = |out: &mut Elements| {
             out.start_item();
@@ -159,7 +182,7 @@ impl<'a> Printer<'a> {
             out.start_item();
             out.end_item();
         };
-        if has_blank_before {
+        if blanks.before {
             empty(self.out);
             separator(self.out);
         }
@@ -176,7 +199,7 @@ impl<'a> Printer<'a> {
             separator(self.out);
             rest = trim_start(rest);
         }
-        if has_blank_behind {
+        if blanks.behind {
             separator(self.out);
             empty(self.out);
         }
@@ -234,14 +257,36 @@ impl<'a> Printer<'a> {
     fn children(&mut self, nodes: &'a [NodeId], parent: Parent, outer: Option<(Call, u8)>) {
         for (index, &id) in nodes.iter().enumerate() {
             let node = self.tree.node(id);
+            // Whether a backslash at the end of a text would escape what follows it. Before a mustache, Prettier doubles it.
+            let tree = self.tree;
+            let precedes_tag =
+                |is_doubled: bool| match nodes.get(index + 1).map(|next| tree.kind(*next)) {
+                    Some(Kind::Mustache { .. }) => !is_doubled,
+                    Some(Kind::BlockStatement { .. } | Kind::MustacheComment { .. }) => true,
+                    Some(_) => false,
+                    None => parent == Parent::Block,
+                };
             if self.is_prettier_ignore(id)
                 || (index >= 2 && self.is_prettier_ignore(nodes[index - 2]))
             {
+                // The backslash that escapes a mustache is in no text.
+                if let Kind::Text { .. } = node.kind {
+                    let raw = self
+                        .source
+                        .get(node.start as usize..node.end as usize)
+                        .unwrap_or_default();
+                    self.is_damaged |= strings::contains(raw, b"{{")
+                        || (raw.ends_with(b"\\") && precedes_tag(false));
+                }
                 self.ignored(node);
                 continue;
             }
             match node.kind {
-                Kind::Text { chars } => self.text_node(self.text(chars), nodes, index, parent),
+                Kind::Text { chars } => {
+                    let chars = self.text(chars);
+                    self.is_damaged |= chars.ends_with(b"\\") && precedes_tag(true);
+                    self.text_node(chars, nodes, index, parent);
+                }
                 Kind::Element { .. } => {
                     let follows_element = index > 0
                         && matches!(self.tree.kind(nodes[index - 1]), Kind::Element { .. });
@@ -278,6 +323,9 @@ impl<'a> Printer<'a> {
         } else {
             ""
         };
+        // It is read as a comment that ends at `--}}`, or as one that strips what follows it.
+        self.is_damaged |= dashes.is_empty()
+            && (value.starts_with(b"--") || (value.ends_with(b"~") && !strips_right));
         self.token(if strips_left { "{{~!" } else { "{{!" });
         self.token(dashes);
         self.verbatim(value);
@@ -306,6 +354,11 @@ impl<'a> Printer<'a> {
             };
             Some((language, value))
         });
+        // The mark of a document that is indented ends the front matter once it is not.
+        self.is_damaged |= formatted.is_some()
+            && strings::split(raw, b"\n")
+                .skip(1)
+                .any(|line| line.starts_with(b" ") && text::trim_start(line).starts_with(b"---"));
         let Some((language, value)) = formatted else {
             return self.verbatim(raw);
         };
@@ -371,6 +424,8 @@ impl<'a> Printer<'a> {
         let (tag, attributes, children) =
             (self.text(tag), self.list(attributes), self.list(children));
         let is_void = self.is_void_element(tag, children, is_self_closing);
+        // `<imG>` counts as `<img>`, whatever is in it.
+        self.is_damaged |= is_void && !self.are_white_space(children);
 
         if !self.is_white_space_sensitive && follows_element {
             self.out.line(Line::Soft);
@@ -406,6 +461,11 @@ impl<'a> Printer<'a> {
         }
 
         let is_style = tag == b"style";
+        // Their text is wrapped like any other.
+        self.is_damaged |= (tag.eq_ignore_ascii_case(b"script")
+            || tag.eq_ignore_ascii_case(b"textarea"))
+            && !self.are_white_space(children);
+        self.pre_depth += usize::from(tag.eq_ignore_ascii_case(b"pre"));
         let is_empty = children.is_empty()
             || ((!self.is_white_space_sensitive || is_style) && self.are_white_space(children));
         if is_empty {
@@ -417,7 +477,10 @@ impl<'a> Printer<'a> {
                 .then(|| self.embedded_style_sheet(attributes, children))
                 .flatten()
             {
-                Some(style_sheet) => self.out.document(&style_sheet),
+                Some(style_sheet) => {
+                    self.is_damaged |= children.iter().any(|child| matches!(self.tree.kind(*child), Kind::Text { chars } if strings::contains(self.text(chars), b"{{")));
+                    self.out.document(&style_sheet);
+                }
                 None => self.children(
                     children,
                     if is_style {
@@ -437,6 +500,7 @@ impl<'a> Printer<'a> {
             self.out.end_group();
             self.out.end_indent();
         }
+        self.pre_depth -= usize::from(tag.eq_ignore_ascii_case(b"pre"));
         self.token("</");
         self.out.text(tag);
         self.token(">");
@@ -469,7 +533,7 @@ impl<'a> Printer<'a> {
     }
 
     /// `getPreferredQuote`, for the texts in `nodes`.
-    fn preferred_quote_of(&self, nodes: &[NodeId]) -> &'static str {
+    fn preferred_quote_of(&mut self, nodes: &[NodeId]) -> &'static str {
         let (mut double, mut single) = (0, 0);
         for node in nodes {
             if let Kind::Text { chars } = self.tree.kind(*node) {
@@ -477,6 +541,8 @@ impl<'a> Printer<'a> {
                 single += strings::count_char(self.text(chars), b'\'');
             }
         }
+        // Whichever it is, it is in the text.
+        self.is_damaged |= double > 0 && single > 0;
         preferred_quote(double, single, self.single_quote)
     }
 
@@ -502,7 +568,7 @@ impl<'a> Printer<'a> {
         }
         match node.kind {
             Kind::Text { chars } => {
-                self.text_in_attribute(self.text(chars), is_class, false, false)
+                self.text_in_attribute(self.text(chars), is_class, Neighbors::default())
             }
             Kind::Concat { parts } => {
                 let parts = self.list(parts);
@@ -515,11 +581,11 @@ impl<'a> Printer<'a> {
                 for (index, part) in parts.iter().enumerate() {
                     match self.tree.kind(*part) {
                         Kind::Text { chars } => {
-                            let (follows, precedes) = (
-                                is_mustache(index.checked_sub(1)),
-                                is_mustache(Some(index + 1)),
-                            );
-                            self.text_in_attribute(self.text(chars), is_class, follows, precedes);
+                            let neighbors = Neighbors {
+                                follows_mustache: is_mustache(index.checked_sub(1)),
+                                precedes_mustache: is_mustache(Some(index + 1)),
+                            };
+                            self.text_in_attribute(self.text(chars), is_class, neighbors);
                         }
                         Kind::Mustache {
                             call,
@@ -544,14 +610,13 @@ impl<'a> Printer<'a> {
         self.token(quote);
     }
 
-    /// `follows_mustache`, `precedes_mustache`: in a `ConcatStatement`.
-    fn text_in_attribute(
-        &mut self,
-        chars: &[u8],
-        is_class: bool,
-        follows_mustache: bool,
-        precedes_mustache: bool,
-    ) {
+    fn text_in_attribute(&mut self, chars: &[u8], is_class: bool, neighbors: Neighbors) {
+        let Neighbors {
+            follows_mustache,
+            precedes_mustache,
+        } = neighbors;
+        // The backslash escapes the mustache.
+        self.is_damaged |= precedes_mustache && chars.ends_with(b"\\");
         if !is_class {
             return self.with_literal_lines(chars, true);
         }
@@ -581,10 +646,19 @@ impl<'a> Printer<'a> {
 
     fn text_node(&mut self, chars: &[u8], siblings: &[NodeId], index: usize, parent: Parent) {
         match parent {
+            // An escaped mustache is printed without its backslash.
+            Parent::Pre | Parent::Style if strings::contains(chars, b"{{") => {
+                self.is_damaged = true
+            }
+            _ => {}
+        }
+        match parent {
             Parent::Pre => return self.with_literal_lines(chars, false),
             Parent::Style => return self.text_in_style(chars),
             Parent::Template | Parent::Block | Parent::Element => {}
         }
+        // Only what is right in a `<pre>` is kept as it is.
+        self.is_damaged |= self.pre_depth > 0 && has_html_white_space(chars);
         let is_white_space_only = trim_start(chars).is_empty();
         let (is_first, is_last) = (index == 0, index + 1 == siblings.len());
 
@@ -604,7 +678,7 @@ impl<'a> Printer<'a> {
             if !leading.is_empty() {
                 self.breaks(leading, false);
             }
-            self.fill(false, words, false);
+            self.fill(words, Blanks::default());
             if !trailing.is_empty() && !trims_trailing {
                 self.breaks(trailing, is_last);
             }
@@ -653,14 +727,23 @@ impl<'a> Printer<'a> {
         self.hard_lines(leading_line_breaks);
         if words.is_empty() {
             // The blank before it is taken for one behind it.
-            self.fill(leading_space && trailing_space, b"", false);
+            let before = leading_space && trailing_space;
+            self.fill(
+                b"",
+                Blanks {
+                    before,
+                    behind: false,
+                },
+            );
         } else {
             let has_leading = chars.first().is_some_and(|byte| is_html_white_space(*byte));
             let has_trailing = chars.last().is_some_and(|byte| is_html_white_space(*byte));
             self.fill(
-                has_leading && leading_space,
                 words,
-                has_trailing && trailing_space,
+                Blanks {
+                    before: has_leading && leading_space,
+                    behind: has_trailing && trailing_space,
+                },
             );
         }
         self.hard_lines(trailing_line_breaks);
@@ -763,6 +846,11 @@ impl<'a> Printer<'a> {
         match else_if_of {
             // `printElseIfBlock`
             Some(outer) => {
+                // The rest of the name is not printed. Of `{{else}}{{#if a}}..{{/if}}`, neither is what the inner tags strip.
+                let has_tail = matches!(self.tree.kind(call.path), Kind::Path { tail, .. } if !tail.is_empty());
+                let strips = (strip & !ast::INVERSE_OPEN & !ast::INVERSE_CLOSE)
+                    | (outer & (ast::INVERSE_CLOSE | ast::CLOSE_OPEN));
+                self.is_damaged |= has_tail || (strip & ast::CHAINED == 0 && strips != 0);
                 self.open_mustache(outer & ast::INVERSE_OPEN != 0, "else ");
                 self.verbatim(self.head_name(call).unwrap_or_default());
                 self.start_indent();
@@ -862,6 +950,8 @@ impl<'a> Printer<'a> {
 
     /// `is_in_quotes`: it is a part of the value of an attribute, which is in quotes.
     fn mustache(&mut self, call: Call, is_trusting: bool, strip: u8, is_in_quotes: bool) {
+        // `{{{~a~}}}` cannot be read.
+        self.is_damaged |= is_trusting && strip != 0;
         self.start_group();
         self.token(if is_trusting { "{{{" } else { "{{" });
         if strip & ast::OPEN_OPEN != 0 {
@@ -902,7 +992,10 @@ impl<'a> Printer<'a> {
                 self.out.line(Line::Space);
             }
             if let Kind::HashPair { key, value } = self.tree.kind(*pair) {
-                self.verbatim(self.text(key));
+                // It is printed without the brackets that it may need.
+                let key = self.text(key);
+                self.is_damaged |= key.is_empty() || id_len(key) != key.len();
+                self.verbatim(key);
                 self.token("=");
                 self.expression(value, false);
             }
@@ -930,14 +1023,19 @@ impl<'a> Printer<'a> {
                 self.token(")");
                 self.out.end_group();
             }
-            Kind::Path { head, name, tail } => self.path(
-                if head == Head::This {
-                    &b"this"[..]
-                } else {
-                    self.text(name)
-                },
-                tail,
-            ),
+            Kind::Path { head, name, tail } => {
+                // It is read as `this`, or as an argument.
+                self.is_damaged |= head == Head::Var
+                    && (self.text(name) == b"this" || self.text(name).starts_with(b"@"));
+                self.path(
+                    if head == Head::This {
+                        &b"this"[..]
+                    } else {
+                        self.text(name)
+                    },
+                    tail,
+                );
+            }
             Kind::String { value } => {
                 let mut value = self.text(value);
                 let (double, single) = (
@@ -946,6 +1044,8 @@ impl<'a> Printer<'a> {
                 );
                 let quote =
                     preferred_quote(double, single, self.single_quote != needs_opposite_quote);
+                // The backslash escapes the quote.
+                self.is_damaged |= value.ends_with(b"\\");
                 self.token(quote);
                 while let Some(at) = strings::index_of_char_usize(value, quote.as_bytes()[0]) {
                     self.verbatim(&value[..at]);
@@ -976,15 +1076,28 @@ impl<'a> Printer<'a> {
             .ok()
             .and_then(|it| it.parse::<f64>().ok())
             .unwrap_or(f64::NAN);
-        self.out.text(&bun_sema::atom::number_to_string(value));
+        let printed = bun_sema::atom::number_to_string(value);
+        // The lexer knows neither exponents nor `Infinity`.
+        self.is_damaged |= !printed
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'-' | b'.'));
+        self.out.text(&printed);
     }
 
     /// `printPathExpression`
     fn path(&mut self, head: &[u8], tail: Range) {
         let tail = self.tree.names(tail);
         if tail.is_empty() && strings::contains_char(head, b'/') {
+            let names = head.strip_prefix(b"@").unwrap_or(head);
+            self.is_damaged |= strings::split(names, b"/")
+                .any(|name| name.is_empty() || id_len(name) != name.len() || name == b"this");
             return self.verbatim(head);
         }
+        // It is read as a literal, or as `{{else}}`.
+        self.is_damaged |= matches!(head, b"else")
+            || (tail.is_empty()
+                && (matches!(head, b"true" | b"false" | b"null" | b"undefined")
+                    || is_negative_number(head)));
         self.path_part(head, true);
         for part in tail {
             self.token(".");
@@ -999,6 +1112,20 @@ impl<'a> Printer<'a> {
                 || part.first().is_some_and(u8::is_ascii_digit)
                 || strings::index_of_any(part, b"!\"#%&'()*+,./;<=>@[\\]^`{|}~").is_some()
                 || has_white_space(part));
+        // Whether it is read as it is printed.
+        self.is_damaged |= match needs_brackets {
+            true => {
+                strings::index_of_any(part, b"]\\\n\r").is_some()
+                    || strings::contains(part, b"\xE2\x80\xA8")
+                    || strings::contains(part, b"\xE2\x80\xA9")
+            }
+            false if is_first => {
+                part.strip_prefix(b"@")
+                    .is_some_and(|name| name.is_empty() || id_len(name) != name.len())
+                    || part.is_empty()
+            }
+            false => part.is_empty() || part == b"this" || is_negative_number(part),
+        };
         if needs_brackets {
             self.token("[");
         }
@@ -1007,6 +1134,11 @@ impl<'a> Printer<'a> {
             self.token("]");
         }
     }
+}
+
+/// `-1`, which is a name only in brackets.
+fn is_negative_number(name: &[u8]) -> bool {
+    matches!(name, [b'-', digits @ ..] if !digits.is_empty() && digits.iter().all(u8::is_ascii_digit))
 }
 
 /// `getPreferredQuote`, for a text that has so many quotes.

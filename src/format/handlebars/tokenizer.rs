@@ -82,11 +82,11 @@ pub(crate) fn is_void_tag(name: &[u8]) -> bool {
 }
 
 /// The first six UTF-16 code units of `text`, in upper case, are `keyword`.
-fn starts_with_keyword(text: &[u8], keyword: &[u8; 6]) -> bool {
+fn starts_with_keyword(text: &[u8], keyword: [u8; 6]) -> bool {
     if let Some(start) = text.get(..6)
         && start.is_ascii()
     {
-        return start.eq_ignore_ascii_case(keyword);
+        return start.eq_ignore_ascii_case(&keyword);
     }
     let start = &text[..text.len().min(24)];
     let start = match std::str::from_utf8(start) {
@@ -602,6 +602,8 @@ impl Builder<'_> {
                     self.state = State::TagName;
                     self.begin_tag(false);
                     self.append_to_tag_name();
+                } else {
+                    self.tree.is_damaged = true;
                 }
             }
             State::MarkupDeclarationOpen => {
@@ -616,6 +618,9 @@ impl Builder<'_> {
                 {
                     self.index += 6;
                     self.state = State::Doctype;
+                    self.tree.is_damaged = true;
+                } else {
+                    self.tree.is_damaged = true;
                 }
             }
             State::Doctype => {
@@ -634,8 +639,8 @@ impl Builder<'_> {
                 self.doctype(|next| is_space(next).then_some(State::AfterDoctypeName))
             }
             State::AfterDoctypeName => {
-                let is_public = starts_with_keyword(self.rest(), b"PUBLIC");
-                let is_system = starts_with_keyword(self.rest(), b"SYSTEM");
+                let is_public = starts_with_keyword(self.rest(), *b"PUBLIC");
+                let is_system = starts_with_keyword(self.rest(), *b"SYSTEM");
                 self.index += 1;
                 if character == b'>' {
                     self.state = State::BeforeData;
@@ -714,6 +719,7 @@ impl Builder<'_> {
                     self.state = State::BeforeData;
                 } else {
                     // The character is dropped: a UTF-16 code unit.
+                    self.tree.is_damaged = true;
                     self.append_to_comment(self.dashes[0], self.dashes[0] + 1);
                     if character >= 0xF0 {
                         self.index = (self.index + 4).min(self.end);
@@ -911,6 +917,8 @@ impl Builder<'_> {
                     self.state = State::EndTagName;
                     self.begin_tag(true);
                     self.append_to_tag_name();
+                } else {
+                    self.tree.is_damaged = true;
                 }
             }
         }
@@ -920,6 +928,16 @@ impl Builder<'_> {
     /// `ContentStatement`: `tokenizePart` and `flushData`.
     fn content(&mut self, start: usize, end: usize) -> Result<(), Error> {
         (self.index, self.end) = (start, end);
+        // Only in a text and in the value of an attribute, an escaped mustache is printed with its backslash.
+        self.tree.is_damaged |= self.source[start..end].starts_with(b"{{")
+            && !matches!(
+                self.state,
+                State::BeforeData
+                    | State::BeforeAttributeValue
+                    | State::AttributeValueDoubleQuoted
+                    | State::AttributeValueSingleQuoted
+                    | State::AttributeValueUnquoted
+            );
         // It counts from where the parser takes the piece to start. The next line is counted from its start.
         self.shift = self.positions.deficit_at(start);
         let has_read_too_far = std::mem::take(&mut self.has_read_too_far);
@@ -951,9 +969,15 @@ impl Builder<'_> {
     // ───────────────────────────── HandlebarsNodeVisitors ─────────────────────────────
 
     fn add_element_modifier(&mut self, mustache: NodeId) -> Result<(), Error> {
-        let Kind::Mustache { call, .. } = self.tree.kind(mustache) else {
+        let Kind::Mustache {
+            call,
+            is_trusting,
+            strip,
+        } = self.tree.kind(mustache)
+        else {
             return Err(Error::Syntax);
         };
+        self.tree.is_damaged |= is_trusting || strip != 0;
         if self.tag.is_end
             || !matches!(
                 self.tree.kind(call.path),
@@ -993,7 +1017,11 @@ impl Builder<'_> {
             | State::AttributeValueUnquoted => {
                 self.append_dynamic_attribute_value_part(mustache);
             }
-            _ => self.children.push(mustache),
+            // Where a comment starts or ends, it gets out of it.
+            _ => {
+                self.tree.is_damaged |= !matches!(self.state, State::BeforeData | State::Data);
+                self.children.push(mustache);
+            }
         }
         Ok(())
     }
@@ -1024,10 +1052,15 @@ impl Builder<'_> {
                     _ => return Err(Error::Syntax),
                 }
             }
-            StatementKind::Mustache { node, is_valid } => {
+            StatementKind::Mustache {
+                node,
+                is_valid,
+                is_damaged,
+            } => {
                 if !is_valid {
                     return Err(Error::Syntax);
                 }
+                self.tree.is_damaged |= is_damaged;
                 if let Some(mustache) = self.tree.nodes.get_mut(node as usize) {
                     (mustache.start, mustache.end) = (start as u32, end as u32);
                 }
@@ -1039,11 +1072,13 @@ impl Builder<'_> {
                 has_second,
                 is_inverted,
                 is_valid,
+                is_damaged,
                 block_params,
             } => {
                 if !matches!(self.state, State::Data | State::BeforeData) || !is_valid {
                     return Err(Error::Syntax);
                 }
+                self.tree.is_damaged |= is_damaged;
                 let first = (index + 1, first_end as usize);
                 let second = (first_end as usize, statement.next as usize);
                 let (default_block, else_block) = match is_inverted {
@@ -1093,6 +1128,8 @@ impl Builder<'_> {
             self.statement(index, statement)?;
             index = statement.next as usize;
         }
+        // What is left of a tag or a comment goes on behind the block, or is lost.
+        self.tree.is_damaged |= self.state != State::BeforeData;
         // An element that is open stays so.
         match self.stack.pop() {
             Some(frame) if self.stack.len() == depth => Ok(self.take_children(frame.base)),

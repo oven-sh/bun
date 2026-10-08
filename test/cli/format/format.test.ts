@@ -121,6 +121,104 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(2);
   });
 
+  test("Handlebars", async () => {
+    const result = await format({ "a.hbs": '<div   class="a  b">{{foo   bar}}</div>\n', "b.handlebars": "{{a}}" }, [], {
+      reads: ["a.hbs", "b.handlebars"],
+    });
+    expect(result.files).toEqual({ "a.hbs": '<div class="a b">{{foo bar}}</div>', "b.handlebars": "{{a}}" });
+    expect(result.stdout).toBe("a.hbs");
+    expect(result.exitCode).toBe(0);
+  });
+
+  describe("a template that Prettier damages is left as it is", () => {
+    // What Prettier 3.9.9 prints for each of these says something else, or cannot be parsed any more.
+    const damaged = {
+      "doctype": "<!DOCTYPE html>\n<p   ></p>\n",
+      "character-behind-less-than": "a <3 b   ></b>\n",
+      "start-of-a-comment": "<!---a--><p   ></p>\n",
+      "mustache-where-a-comment-starts": "<!--{{a}}--><p   ></p>\n",
+      "open-tag-at-the-end": "<p   ></p><a",
+      "escaped-mustache-in-a-comment": "<!-- \\{{a}} --><p   ></p>\n",
+      "escaped-mustache-in-a-name": "<a   \\{{b}}></a>\n",
+      "escaped-mustache-in-pre": "<pre   >\\{{a}}</pre>\n",
+      "escaped-mustache-in-style": '<style   >a{b:"\\{{c}}"}</style>\n',
+      "escaped-mustache-that-is-ignored": "{{! prettier-ignore }}a\\{{b}}<p   ></p>\n",
+      "backslash-before-a-mustache-in-a-value": '<a   b="c\\\\{{d}}"></a>\n',
+      "backslash-before-a-comment": "a\\\\{{!   b }}\n",
+      "backslash-before-the-end-of-a-block": "{{#a   }}b\\\\{{/a}}\n",
+      "both-quotes-in-a-value": `<a   b=c"d'e></a>\n`,
+      "lines-of-a-script": "<script   >\n  // a\n  b()\n</script>\n",
+      "lines-of-a-textarea": "<textarea   >\n  a\n    b\n</textarea>\n",
+      "white-space-further-down-in-pre": "<pre   ><b>a\n  b</b></pre>\n",
+      "children-of-what-counts-as-void": "<imG   >a</imG>\n",
+      "this-and-a-slash": "{{this/a   }}\n",
+      "this-behind-an-at": "{{@this.a   }}\n",
+      "this-in-brackets": "{{[this]   }}\n",
+      "empty-brackets": "{{[].a   }}\n",
+      "arguments-of-a-literal": '{{"a"   b}}\n',
+      "hash-that-is-called": "{{(a=b)   c}}\n",
+      "raw-block": "{{{{a}}}}   {{b}} {{{{/a}}}}\n",
+      "inverted-block": "{{^a   }}b{{else}}c{{/a}}\n",
+      "key-in-brackets": "{{a   [b c]=d}}\n",
+      "literal-in-brackets": "{{a   [true]}}\n",
+      "number-in-brackets": "{{a   [-1]}}\n",
+      "else-in-brackets": "{{[else]   }}\n",
+      "argument-in-brackets": "{{a   [@b]}}\n",
+      "bracket-in-brackets": "{{a   [b\\]]}}\n",
+      "line-break-in-brackets": "{{a   [b\nc]}}\n",
+      "block-parameter-in-brackets": "{{#a   as |[b] c|}}{{/a}}\n",
+      "private-name": "{{a.#b   }}\n",
+      "number-with-an-exponent": "{{a   1000000000000000000000}}\n",
+      "backslash-at-the-end-of-a-string": '{{a   "b\\"}}\n',
+      "tilde-in-three-braces": "{{{a   }~}}\n",
+      "three-braces-around-a-modifier": "<a   {{{b}}}></a>\n",
+      "tilde-at-the-end-of-a-comment": "{{!--   a ~--}}\n",
+      "dashes-at-the-start-of-a-comment": "{{!----   a --}}\n",
+      "rest-of-the-name-behind-else": "{{#a   }}{{else if.b c}}{{/a}}\n",
+      "tilde-of-an-if-that-is-all-that-follows-else": "{{#a   }}{{else}}{{~#if b}}c{{/if}}{{/a}}\n",
+      "line-separator-behind-a-line-break": "a\n\u2028{{b   }}\n",
+      "indented-mark-of-a-document-in-front-matter": "---\n ---\na: b\n---\n<p   ></p>\n",
+    };
+    const files = Object.fromEntries(Object.entries(damaged).map(([name, text]) => [`${name}.hbs`, text]));
+    const errors = Object.keys(files)
+      .map(
+        name => `[error] ${name}: formatting it the way Prettier does would change what it means. It is left as it is.`,
+      )
+      .sort();
+    const errorsIn = (stderr: string) =>
+      stderr
+        .split("\n")
+        .filter(line => line.startsWith("[error] "))
+        .sort();
+
+    test.each([[[] as string[]], [["--check"]], [["-l"]]])("%j", async args => {
+      const result = await format({ ...files, "fine.hbs": "{{a   }}" }, args, {
+        reads: [...Object.keys(files), "fine.hbs"],
+      });
+      expect(result.files).toEqual({ ...files, "fine.hbs": args.length > 0 ? "{{a   }}" : "{{a}}" });
+      expect(errorsIn(result.stderr)).toEqual(errors);
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("standard input", async () => {
+      const result = await format({}, ["--stdin-filepath", "a.hbs"], { stdin: damaged.doctype });
+      expect(result.raw).toBe("");
+      expect(errorsIn(result.stderr)).toEqual([
+        "[error] a.hbs: formatting it the way Prettier does would change what it means. It is left as it is.",
+      ]);
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("in Markdown, only the block of code is", async () => {
+      const text = "#   a\n\n```hbs\n<!DOCTYPE html>\n<p   ></p>\n```\n\n```hbs\n<p   ></p>\n```\n";
+      const result = await format({ "a.md": text }, [], { reads: ["a.md"] });
+      expect(result.files).toEqual({
+        "a.md": "# a\n\n```hbs\n<!DOCTYPE html>\n<p   ></p>\n```\n\n```hbs\n<p></p>\n```\n",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
   test("other languages are left alone, with a warning", async () => {
     const result = await format(
       { "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": ugly },

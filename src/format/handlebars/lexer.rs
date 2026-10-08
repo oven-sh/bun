@@ -66,7 +66,7 @@ const fn is_id_byte(byte: u8) -> bool {
 }
 
 /// How many bytes at the start of `text` can be in an `ID`.
-fn id_len(text: &[u8]) -> usize {
+pub(crate) fn id_len(text: &[u8]) -> usize {
     let mut at = 0;
     while let Some(&byte) = text.get(at) {
         let is_in_id = if byte < 0x80 {

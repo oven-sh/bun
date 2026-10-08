@@ -49,6 +49,15 @@ pub struct Scratch {
     statements: Vec<parser::Statement>,
     tree: ast::Tree,
     elements: Elements,
+    is_damaged: bool,
+}
+
+impl Scratch {
+    /// Whether what `format` has printed last says something else than the template. The parsers drop and change things,
+    /// and so does Prettier's printer: a doctype, the first part of `{{this/a}}`, the line breaks in a `<script>`.
+    pub fn is_damaged(&self) -> bool {
+        self.is_damaged
+    }
 }
 
 /// Prettier's `parse`, of a text without `\r` that has blanks in the place of its front matter, which ends at
@@ -88,6 +97,7 @@ pub fn format(
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
     const BOM: &[u8] = "\u{FEFF}".as_bytes();
+    scratch.is_damaged = false;
     let original = text;
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
     let Offsets { start, end, .. } = Offsets::new(original, first, options);
@@ -131,7 +141,7 @@ pub fn format(
         return Ok(());
     }
     scratch.elements.clear();
-    printer::Printer {
+    let mut printer = printer::Printer {
         tree: &scratch.tree,
         source: &content,
         front_matter: &text[..front_matter_end],
@@ -143,8 +153,13 @@ pub fn format(
         ),
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         out: &mut scratch.elements,
-    }
-    .template(template);
+        is_damaged: false,
+        pre_depth: 0,
+    };
+    printer.template(template);
+    scratch.is_damaged = printer.is_damaged
+        || scratch.tree.is_damaged
+        || positions::Positions::can_be_wrong(&content);
     doc::Printer::new(options, original, out).print(&scratch.elements, 0, 0);
     Ok(())
 }

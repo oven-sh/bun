@@ -81,6 +81,8 @@ pub(crate) const INVERSE_OPEN: u8 = 1 << 2;
 pub(crate) const INVERSE_CLOSE: u8 = 1 << 3;
 pub(crate) const CLOSE_OPEN: u8 = 1 << 4;
 pub(crate) const CLOSE_CLOSE: u8 = 1 << 5;
+/// Of a block: it is written `{{else a}}`.
+pub(crate) const CHAINED: u8 = 1 << 6;
 
 #[derive(Copy, Clone)]
 pub(crate) enum Kind {
@@ -171,6 +173,8 @@ pub(crate) struct Tree {
     /// The tails of paths, and block parameters.
     names: Vec<Text>,
     owned: Vec<u8>,
+    /// It is not all that the template says: the parsers have dropped or changed something.
+    pub(crate) is_damaged: bool,
 }
 
 impl Default for Tree {
@@ -180,6 +184,7 @@ impl Default for Tree {
             lists: Vec::new(),
             names: Vec::new(),
             owned: Vec::new(),
+            is_damaged: false,
         };
         tree.clear();
         tree
@@ -197,6 +202,7 @@ impl Tree {
         self.lists.clear();
         self.names.clear();
         self.owned.clear();
+        self.is_damaged = false;
     }
 
     pub(crate) fn add(&mut self, kind: Kind, start: usize, end: usize) -> NodeId {

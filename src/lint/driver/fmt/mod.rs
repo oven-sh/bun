@@ -46,6 +46,8 @@ enum Failure {
     Syntax(Vec<u8>),
     /// A bug in the formatter.
     Bug(&'static str),
+    /// What Prettier prints does not say what the file says.
+    Loss(&'static str),
 }
 
 /// What the file at `path` is parsed as, one after the other until there is no error: whether as
@@ -328,6 +330,11 @@ fn format(
         Some(Kind::Handlebars) => {
             let done =
                 bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
+            if verifies && done.is_ok() && scratch.handlebars.is_damaged() {
+                return Err(Failure::Loss(
+                    "formatting it the way Prettier does would change what it means",
+                ));
+            }
             return finish(done, out, "Handlebars");
         }
         Some(Kind::Html(parser)) => {
@@ -602,6 +609,9 @@ impl Run<'_> {
                 b". It is left as it is. This is a bug in Bun.",
             ]
             .concat(),
+            Failure::Loss(what) => {
+                [shown, b": ", what.as_bytes(), b". It is left as it is."].concat()
+            }
         }
     }
 
@@ -792,13 +802,18 @@ impl Run<'_> {
                     ]
                     .concat()
                 })?;
+                // What a template would lose is known without a second look.
+                let is_free = || {
+                    Kind::of(&target.path, options.options.parser.as_deref())
+                        == Some(Kind::Handlebars)
+                };
                 let (formatted, _) = format(
                     &target.path,
                     &text,
                     &options,
                     (&atoms, &memory),
                     &mut scratch,
-                    self.options.verify && !only_looks,
+                    self.options.verify && (!only_looks || is_free()),
                 )
                 .map_err(|failure| Self::describe(&shown, failure))?;
                 if formatted == text {

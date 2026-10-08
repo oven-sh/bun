@@ -59,12 +59,12 @@ pub struct Scratch {
     tree: ast::Tree,
 }
 
-/// The syntax tree of `text`, for debugging.
-pub fn dump_ast(text: &[u8], out: &mut Vec<u8>) {
+/// The syntax tree of `original`, for debugging.
+pub fn dump_ast(original: &[u8], out: &mut Vec<u8>) {
     let mut tree = ast::Tree::default();
-    let blanked = block::blank_front_matter(text);
-    let content = blanked.as_deref().unwrap_or(text);
-    if let Some(root) = block::parse(content, text, block::Syntax::Markdown, &mut tree) {
+    let blanked = block::blank_front_matter(original);
+    let content = blanked.as_deref().unwrap_or(original);
+    if let Some(root) = block::parse(content, original, block::Syntax::Markdown, &mut tree) {
         ast::dump(content, &tree, root, out);
     }
 }
@@ -111,6 +111,7 @@ pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
         }
         b"graphql" | b"gql" | b"graphqls" => b"graphql",
         b"handlebars" | b"hbs" | b"htmlbars" => b"glimmer",
+        b"mdx" => b"mdx",
         b"html" | b"hta" | b"htm" | b"html.hl" | b"inc" | b"xht" => b"html",
         // `xhtml` is another name for two languages, of which this is the first.
         b"angular" | b"xhtml" | b"component.html" => b"angular",
@@ -204,7 +205,9 @@ fn format_embedded(
                 crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok()
             }
             b"glimmer" => {
-                crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok()
+                let mut scratch = crate::handlebars::Scratch::default();
+                crate::handlebars::format(code, &options, &mut scratch, &mut out).is_ok()
+                    && !scratch.is_damaged()
             }
             b"yaml" => {
                 crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok()

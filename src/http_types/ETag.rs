@@ -134,6 +134,19 @@ pub fn if_match(
     false
 }
 
+/// RFC 9110 §13.1.5 strong comparison: a weak tag on either side never matches.
+pub fn if_range(
+    // Stored `ETag` header, `None` when the representation has none.
+    etag: Option<&[u8]>,
+    // `If-Range` header
+    if_range: &[u8],
+) -> bool {
+    let Some(etag) = etag else { return false };
+    let ours = parse(etag);
+    let theirs = parse(if_range);
+    !ours.is_weak && !theirs.is_weak && ours.tag == theirs.tag
+}
+
 pub fn if_none_match(
     // "ETag" header
     etag: &[u8],
@@ -242,12 +255,17 @@ impl Headers {
     }
 
     pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
+        self.get_pointer(name).map(|value| self.as_str(value))
+    }
+
+    /// [`get`](Self::get), as the value's position in `buf`.
+    pub fn get_pointer(&self, name: &[u8]) -> Option<StringPointer> {
         let entries = self.entries.slice();
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         for (i, name_ptr) in names.iter().enumerate() {
             if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
-                return Some(self.as_str(values[i]));
+                return Some(values[i]);
             }
         }
         None

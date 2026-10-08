@@ -105,41 +105,38 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     }
     RETURN_IF_EXCEPTION(warnScope, {});
 
-    if (!isEntangled())
-        return {};
-
+    // create() already detached the buffers, so (as in node) a message dropped below still consumes the listed ports.
     Vector<TransferredMessagePort> transferredPorts;
+    bool targetsEntangledPeer = false;
     if (!ports.isEmpty()) {
         // Posting a port's own entangled peer targets the message at itself.
         // (The source port itself was rejected before serialization above.)
-        bool targetsEntangledPeer = false;
         for (auto& port : ports) {
             if (port->pipe() == m_pipe.ptr()) {
                 targetsEntangledPeer = true;
                 break;
             }
         }
-        // Detach every transfer-list port up front: transfer is atomic in node, so a
-        // third-party port must not stay usable even when the message is dropped below.
         auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
         if (disentangled.hasException())
             return disentangled.releaseException();
         transferredPorts = disentangled.releaseReturnValue();
+    }
 
-        if (targetsEntangledPeer) {
-            // Posting the port's own entangled peer: node warns and loses the channel
-            // rather than throwing. Transferables were already detached above; drop the
-            // message and close so the dead channel stops reffing the loop.
-            Bun__Process__emitWarning(defaultGlobalObject(&state),
-                JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
-                JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
-                JSC::JSValue::encode(JSC::jsUndefined()),
-                JSC::JSValue::encode(JSC::jsUndefined()));
-            CLEAR_IF_EXCEPTION(warnScope);
-            close();
-            RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });
-            return {};
-        }
+    if (!isEntangled())
+        return {};
+
+    if (targetsEntangledPeer) {
+        // Node warns and loses the channel instead of throwing; close() stops the dead channel from reffing the loop.
+        Bun__Process__emitWarning(defaultGlobalObject(&state),
+            JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
+            JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
+            JSC::JSValue::encode(JSC::jsUndefined()),
+            JSC::JSValue::encode(JSC::jsUndefined()));
+        CLEAR_IF_EXCEPTION(warnScope);
+        close();
+        RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });
+        return {};
     }
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });

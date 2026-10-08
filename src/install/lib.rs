@@ -1,4 +1,4 @@
-#![allow(nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
+#![allow(nonstandard_style)]
 #![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────

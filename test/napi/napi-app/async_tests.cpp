@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -269,6 +270,218 @@ void complete_for_cancel(napi_env env, napi_status status, void *data) {
   napi_delete_async_work(env, cancel_data->work);
 }
 
+// Three completions that each end in the caller's script, and a record of what
+// the runtime answered: a completion always runs (it frees what the call
+// allocated); whether script may run from it is up to the runtime.
+//   call_back_from_async_work(callback): `complete` calls `callback`
+//   resolve_from_async_work(): `complete` resolves the returned promise
+//   call_back_from_threadsafe_function(callback): `call_js` calls `callback`
+//   promise_the_next_async_work_settles(): a promise that the `complete` of the
+//     next settle_that_promise_from_async_work() resolves, whoever queues that
+//   threadsafe_function_that_refs_itself(call = true): its `call_js` refs it
+//     again ("more work is coming"), and nobody ever releases it; a thread
+//     calls it once, unless `call` is false
+//   ref_that_function() / unref_that_function(): the caller refs / unrefs the
+//     last such function
+//   completion_statuses(): "<which>:<napi_status>" for each completion so far
+static std::vector<std::string> completion_statuses_so_far;
+static napi_deferred deferred_the_next_async_work_settles = nullptr;
+
+struct CompletionData {
+  napi_ref callback = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_async_work work = nullptr;
+  napi_threadsafe_function tsfn = nullptr;
+};
+
+static void execute_nothing(napi_env env, void *data) {}
+
+static void complete_by_calling_back(napi_env env, napi_status status,
+                                     void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(opaque);
+  napi_value callback, global;
+  napi_get_reference_value(env, data->callback, &callback);
+  napi_get_global(env, &global);
+  completion_statuses_so_far.push_back(
+      "async_work_callback:" +
+      std::to_string(
+          napi_call_function(env, global, callback, 0, nullptr, nullptr)));
+  napi_delete_reference(env, data->callback);
+  napi_delete_async_work(env, data->work);
+  delete data;
+}
+
+static void complete_by_resolving(napi_env env, napi_status status,
+                                  void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(opaque);
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  completion_statuses_so_far.push_back(
+      "async_work_deferred:" +
+      std::to_string(napi_resolve_deferred(env, data->deferred, undefined)));
+  napi_delete_async_work(env, data->work);
+  delete data;
+}
+
+static void complete_by_resolving_anothers(napi_env env, napi_status status,
+                                           void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(opaque);
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  completion_statuses_so_far.push_back(
+      "async_work_deferred_of_another:" +
+      std::to_string(napi_resolve_deferred(
+          env, deferred_the_next_async_work_settles, undefined)));
+  deferred_the_next_async_work_settles = nullptr;
+  napi_delete_async_work(env, data->work);
+  delete data;
+}
+
+static void call_js_by_calling_back(napi_env env, napi_value callback,
+                                    void *context, void *opaque) {
+  auto *data = reinterpret_cast<CompletionData *>(context);
+  napi_value global;
+  napi_get_global(env, &global);
+  completion_statuses_so_far.push_back(
+      "threadsafe_function_callback:" +
+      std::to_string(
+          napi_call_function(env, global, callback, 0, nullptr, nullptr)));
+  napi_release_threadsafe_function(data->tsfn, napi_tsfn_release);
+  delete data;
+}
+
+static napi_value call_back_from_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  NODE_API_CALL(env, napi_create_reference(env, info[0], 1, &data->callback));
+  NODE_API_CALL(env, napi_create_async_work(
+                         env, nullptr,
+                         Napi::String::New(env, "call_back_from_async_work"),
+                         execute_nothing, complete_by_calling_back, data,
+                         &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return ok(env);
+}
+
+static napi_value resolve_from_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  napi_value promise;
+  NODE_API_CALL(env, napi_create_promise(env, &data->deferred, &promise));
+  NODE_API_CALL(
+      env, napi_create_async_work(
+               env, nullptr, Napi::String::New(env, "resolve_from_async_work"),
+               execute_nothing, complete_by_resolving, data, &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return promise;
+}
+
+struct SelfReffingFunction {
+  napi_threadsafe_function tsfn = nullptr;
+};
+static SelfReffingFunction *last_self_reffing_function = nullptr;
+
+static void call_js_by_reffing(napi_env env, napi_value callback, void *context,
+                               void *opaque) {
+  auto *data = reinterpret_cast<SelfReffingFunction *>(context);
+  if (env == nullptr)
+    return;
+  completion_statuses_so_far.push_back(
+      "threadsafe_function_ref:" +
+      std::to_string(napi_ref_threadsafe_function(env, data->tsfn)));
+}
+
+static void finalize_self_reffing_function(napi_env env, void *data,
+                                           void *hint) {
+  if (last_self_reffing_function == data)
+    last_self_reffing_function = nullptr;
+  delete reinterpret_cast<SelfReffingFunction *>(data);
+}
+
+static napi_value ref_that_function(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  NODE_API_CALL(
+      env, napi_ref_threadsafe_function(env, last_self_reffing_function->tsfn));
+  return ok(env);
+}
+
+static napi_value unref_that_function(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  NODE_API_CALL(env, napi_unref_threadsafe_function(
+                         env, last_self_reffing_function->tsfn));
+  return ok(env);
+}
+
+static napi_value
+threadsafe_function_that_refs_itself(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new SelfReffingFunction();
+  last_self_reffing_function = data;
+  NODE_API_CALL(
+      env, napi_create_threadsafe_function(
+               env, nullptr, nullptr,
+               Napi::String::New(env, "threadsafe_function_that_refs_itself"),
+               0, 1, data, finalize_self_reffing_function, data,
+               call_js_by_reffing, &data->tsfn));
+  if (info.Length() > 0 && info[0].IsBoolean() &&
+      !info[0].As<Napi::Boolean>().Value())
+    return ok(env);
+  std::thread([tsfn = data->tsfn]() {
+    napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+  }).detach();
+  return ok(env);
+}
+
+static napi_value
+promise_the_next_async_work_settles(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value promise;
+  NODE_API_CALL(env, napi_create_promise(
+                         env, &deferred_the_next_async_work_settles, &promise));
+  return promise;
+}
+
+static napi_value
+settle_that_promise_from_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  NODE_API_CALL(
+      env,
+      napi_create_async_work(
+          env, nullptr,
+          Napi::String::New(env, "settle_that_promise_from_async_work"),
+          execute_nothing, complete_by_resolving_anothers, data, &data->work));
+  NODE_API_CALL(env, napi_queue_async_work(env, data->work));
+  return ok(env);
+}
+
+static napi_value
+call_back_from_threadsafe_function(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto *data = new CompletionData();
+  NODE_API_CALL(
+      env,
+      napi_create_threadsafe_function(
+          env, info[0], nullptr,
+          Napi::String::New(env, "call_back_from_threadsafe_function"), 0, 1,
+          nullptr, nullptr, data, call_js_by_calling_back, &data->tsfn));
+  std::thread([tsfn = data->tsfn]() {
+    napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+  }).detach();
+  return ok(env);
+}
+
+static napi_value completion_statuses(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::Array statuses =
+      Napi::Array::New(env, completion_statuses_so_far.size());
+  for (size_t i = 0; i < completion_statuses_so_far.size(); i++) {
+    statuses.Set(static_cast<uint32_t>(i),
+                 Napi::String::New(env, completion_statuses_so_far[i]));
+  }
+  return statuses;
+}
+
 std::atomic<bool> cancel_flag(false);
 
 void blocking_execute_for_cancel(napi_env env, void *data) {
@@ -516,9 +729,10 @@ create_threadsafe_function_after_teardown(const Napi::CallbackInfo &info) {
 }
 
 // A finalizer that runs while the env drains its finalizers at teardown and
-// registers another one: it creates an external buffer with a finalize_cb.
-// That late finalizer must run in the same teardown. Counted process-wide so
-// the parent thread can read it after the worker is gone.
+// tries to register another one: it creates an external buffer with a
+// finalize_cb. The env is torn down with script forbidden, and that call is
+// refused there (node and bun), so the late finalizer never runs. Counted
+// process-wide so the parent thread can read it after the worker is gone.
 static std::atomic<int> late_finalizer_runs{0};
 
 static void late_buffer_finalizer(napi_env env, void *data, void *hint) {
@@ -531,8 +745,9 @@ static void finalizer_that_creates_external_buffer(napi_env env, void *data,
   free(data);
   void *bytes = malloc(16);
   napi_value buffer;
-  // Script is refused during teardown, but N-API object creation is not: this
-  // registers `late_buffer_finalizer` with the env from inside its cleanup.
+  // napi_create_external_buffer is a NAPI_PREAMBLE call: refused with
+  // napi_pending_exception (this module declares NAPI_VERSION 8) while the env
+  // is torn down, so `late_buffer_finalizer` is never registered.
   napi_status status = napi_create_external_buffer(
       env, 16, bytes, late_buffer_finalizer, nullptr, &buffer);
   if (status != napi_ok) {
@@ -542,8 +757,8 @@ static void finalizer_that_creates_external_buffer(napi_env env, void *data,
 
 // napi_wrap's finalizer is env-bound: for an object still alive when the
 // worker exits it runs from the env's cleanup (heap alive), not from GC.
-napi_value
-create_object_whose_finalizer_creates_external_buffer(const Napi::CallbackInfo &info) {
+napi_value create_object_whose_finalizer_creates_external_buffer(
+    const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value object;
   NODE_API_CALL(env, napi_create_object(env, &object));
@@ -653,7 +868,8 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, abort_threadsafe_function_with_queued_items);
   REGISTER_FUNCTION(env, exports,
                     threadsafe_function_with_queued_items_finalized);
-  REGISTER_FUNCTION(env, exports, create_object_whose_finalizer_creates_external_buffer);
+  REGISTER_FUNCTION(env, exports,
+                    create_object_whose_finalizer_creates_external_buffer);
   REGISTER_FUNCTION(env, exports, late_finalizer_run_count);
   REGISTER_FUNCTION(env, exports, create_promise);
   REGISTER_FUNCTION(env, exports, create_promise_with_napi_cpp);
@@ -661,6 +877,15 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_execute);
   REGISTER_FUNCTION(env, exports, create_async_work_with_null_complete);
   REGISTER_FUNCTION(env, exports, test_cancel_async_work);
+  REGISTER_FUNCTION(env, exports, call_back_from_async_work);
+  REGISTER_FUNCTION(env, exports, resolve_from_async_work);
+  REGISTER_FUNCTION(env, exports, call_back_from_threadsafe_function);
+  REGISTER_FUNCTION(env, exports, promise_the_next_async_work_settles);
+  REGISTER_FUNCTION(env, exports, settle_that_promise_from_async_work);
+  REGISTER_FUNCTION(env, exports, threadsafe_function_that_refs_itself);
+  REGISTER_FUNCTION(env, exports, ref_that_function);
+  REGISTER_FUNCTION(env, exports, unref_that_function);
+  REGISTER_FUNCTION(env, exports, completion_statuses);
   REGISTER_FUNCTION(env, exports, create_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, use_orphaned_threadsafe_functions);
   REGISTER_FUNCTION(env, exports, create_leaked_threadsafe_functions);

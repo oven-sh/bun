@@ -11,12 +11,14 @@
 
 const kFlushSync = Symbol("kFlushSync");
 
+type PortReadable = import("node:stream").Readable & { endFromOwner?(): void };
+
 // Readable fed by a MessagePort (worker.stdout/stderr on the parent, process.stdin
 // in the worker). The peer posts arrays of Buffers; null signals EOF.
 function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
   let ended = false;
   let startedReading = false;
-  function onMessage(event: MessageEvent) {
+  function onMessage(event: { data: Uint8Array[] | null }) {
     const payload = event.data;
     if (payload === null) {
       if (ended === false) {
@@ -31,7 +33,7 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
     }
   }
   const Readable = require("internal/streams/readable");
-  const stream = new Readable({
+  const stream: PortReadable = new Readable({
     read() {
       if (startedReading === false && incrementsPortRef) {
         startedReading = true;

@@ -289,10 +289,16 @@ pub(crate) trait VirtualMachineSqlExt {
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
-    /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
     // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
     // accessor (single audited deref under the JS-thread-singleton invariant);
     // the former unsafe trait shim here was dead — inherent methods always win
@@ -323,14 +329,22 @@ impl VirtualMachineSqlExt for VirtualMachine {
         bun_io::js_vm_ctx()
     }
     #[inline]
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().postgres_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .postgres_group::<SSL>(loop_)
     }
     #[inline]
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().mysql_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .mysql_group::<SSL>(loop_)
     }
 }
 
@@ -476,6 +490,17 @@ pub mod api {
                 }
             }
 
+            /// [`server_name`](Self::server_name) as the name a certificate carries: an IPv6 literal without its brackets. Empty when unset.
+            pub(crate) fn server_name_bytes(&self) -> &[u8] {
+                let server_name = self.server_name();
+                if server_name.is_null() {
+                    return b"";
+                }
+                // SAFETY: NUL-terminated C string that the boxed SSLConfig owns.
+                let name = unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes();
+                bun_core::ip_address::strip_ipv6_brackets(name)
+            }
+
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
             #[inline]
             pub(crate) fn reject_unauthorized(&self) -> i32 {
@@ -484,6 +509,20 @@ pub mod api {
                     // SAFETY: live boxed SSLConfig.
                     Some(p) => unsafe { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
                 }
+            }
+
+            /// `server_name` as SNI. `None` when unset or an IP literal, bracketed or not (RFC 6066 section 3).
+            pub(crate) fn sni(&self) -> Option<&core::ffi::CStr> {
+                let server_name = self.server_name();
+                if server_name.is_null() {
+                    return None;
+                }
+                // SAFETY: NUL-terminated C string owned by the boxed SSLConfig
+                // for `self`'s lifetime.
+                let name = unsafe { bun_core::ffi::cstr(server_name) };
+                let bare = bun_core::ip_address::strip_ipv6_brackets(name.to_bytes());
+                let bracketed = bare.len() != name.to_bytes().len();
+                (!bracketed && !bun_core::ip_address::is_ip_address(bare)).then_some(name)
             }
 
             /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but

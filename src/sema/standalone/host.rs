@@ -57,7 +57,16 @@ fn bytes_of(path: &Path) -> &[u8] {
 }
 
 pub fn read(path: impl AsRef<Path>) -> bun_sys::Result<Vec<u8>> {
-    bun_sys::File::read_from(Fd::cwd(), bytes_of(path.as_ref()))
+    read_all(bytes_of(path.as_ref()))
+}
+
+fn read_all(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
+    let file = bun_sys::File::openat(Fd::cwd(), path, bun_sys::O::RDONLY, 0)?;
+    // One more than its size, so that the end is seen without growing.
+    let mut contents = Vec::with_capacity(file.get_end_pos().unwrap_or(0) + 1);
+    // From where it is, not from an offset: it can be a pipe.
+    file.read_to_end_into(&mut contents)?;
+    Ok(contents)
 }
 
 pub fn read_text(path: impl AsRef<Path>) -> bun_sys::Result<String> {

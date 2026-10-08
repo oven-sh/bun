@@ -19,14 +19,21 @@ pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) 
             group(&format_with(|f| {
                 write!(f, first);
                 for expression in rest {
-                    write!(f, [",", indent(&format_args!(soft_line_break_or_space(), expression))]);
+                    write!(
+                        f,
+                        [
+                            ",",
+                            indent(&format_args!(soft_line_break_or_space(), expression))
+                        ]
+                    );
                 }
             }))
         );
     }
 
     let format_inner = format_with(|f| {
-        f.join_with(format_args!(",", soft_line_break_or_space())).entries(all.iter());
+        f.join_with(format_args!(",", soft_line_break_or_space()))
+            .entries(all.iter());
         write_comments_before_closing_parenthesis(e, f);
     });
     match parent {
@@ -59,7 +66,15 @@ pub(crate) fn write_comments_before_closing_parenthesis<'a>(e: Expr<'a>, f: &mut
     if !is_whole_side {
         return;
     }
-    let comments = f.comments().comments_in_range(e.span().end, e.outer_span().end);
-    let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
-    write!(f, FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()));
+    let comments = f
+        .comments()
+        .comments_in_range(e.span().end, e.outer_span().end);
+    let count = comments
+        .iter()
+        .take_while(|comment| !comment.preceded_by_newline())
+        .count();
+    write!(
+        f,
+        FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+    );
 }

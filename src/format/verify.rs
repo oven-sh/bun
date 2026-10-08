@@ -50,8 +50,13 @@ impl Difference {
         // The rest of the line, if that is not long.
         let excerpt = |(text, at): (&[u8], u32)| {
             let rest = text.get(at as usize..).unwrap_or_default();
-            let line = rest.get(..bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())).unwrap_or(rest);
-            (at.min(text.len() as u32), line.get(..40).unwrap_or(line).to_vec())
+            let line = rest
+                .get(..bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()))
+                .unwrap_or(rest);
+            (
+                at.min(text.len() as u32),
+                line.get(..40).unwrap_or(line).to_vec(),
+            )
         };
         Difference {
             what,
@@ -80,14 +85,21 @@ fn is_in_another_language(e: Expr<'_>) -> bool {
     let has_tag = match e.parent() {
         Node::Expr(parent) => match parent.kind() {
             ExprKind::TaggedTemplate(call) => {
-                matches!(call.callee().text(), b"gql" | b"graphql" | b"graphql.experimental" | b"md" | b"markdown")
+                matches!(
+                    call.callee().text(),
+                    b"gql" | b"graphql" | b"graphql.experimental" | b"md" | b"markdown"
+                )
             }
             ExprKind::Call(call) => call.callee().text() == b"graphql",
             _ => false,
         },
         _ => false,
     };
-    let before = e.file().text().get(..e.span().start as usize).unwrap_or_default();
+    let before = e
+        .file()
+        .text()
+        .get(..e.span().start as usize)
+        .unwrap_or_default();
     has_tag
         || before.trim_ascii_end().ends_with(b"/* GraphQL */")
         || crate::css::embed::is_embed_css(e)
@@ -112,12 +124,15 @@ pub(crate) fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
         };
         let (digits, after) = match escape.strip_prefix(b"{") {
             Some(braced) => {
-                let end = bun_core::strings::index_of_char_usize(braced, b'}').unwrap_or(braced.len());
+                let end =
+                    bun_core::strings::index_of_char_usize(braced, b'}').unwrap_or(braced.len());
                 (&braced[..end], braced.get(end + 1..).unwrap_or_default())
             }
             None => escape.split_at(escape.len().min(4)),
         };
-        let code_point = digits.iter().try_fold(0u32, |all, &digit| Some(all.checked_mul(16)? + char::from(digit).to_digit(16)?));
+        let code_point = digits.iter().try_fold(0u32, |all, &digit| {
+            Some(all.checked_mul(16)? + char::from(digit).to_digit(16)?)
+        });
         bun_lint::utils::text::push_code_point(&mut out, code_point.unwrap_or(0xFFFD));
         rest = after;
     }

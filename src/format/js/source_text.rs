@@ -80,7 +80,9 @@ impl<'a> SourceText<'a> {
 
     #[inline]
     pub(crate) fn slice_range(self, start: u32, end: u32) -> &'a [u8] {
-        self.text.get(start as usize..end.max(start) as usize).unwrap_or_default()
+        self.text
+            .get(start as usize..end.max(start) as usize)
+            .unwrap_or_default()
     }
 
     /// The same as [`SourceText::slice_range`].
@@ -116,7 +118,12 @@ impl<'a> SourceText<'a> {
     }
 
     /// White space that is not ASCII counts as a space, U+2028 and U+2029 as `\n`.
-    pub(crate) fn all_bytes_match(self, start: u32, end: u32, predicate: impl Fn(u8) -> bool) -> bool {
+    pub(crate) fn all_bytes_match(
+        self,
+        start: u32,
+        end: u32,
+        predicate: impl Fn(u8) -> bool,
+    ) -> bool {
         let mut rest = self.slice_range(start, end);
         while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
             rest = &rest[at..];
@@ -181,7 +188,12 @@ impl<'a> SourceText<'a> {
     /// looked through.
     ///
     /// `looks_past_comma`: in `a: 1\n\n, b: 2` the comma is on the line of what follows it, and the line breaks before it count.
-    pub(crate) fn get_lines_before(self, span: Span, first_unprinted_comment: Option<Span>, looks_past_comma: bool) -> usize {
+    pub(crate) fn get_lines_before(
+        self,
+        span: Span,
+        first_unprinted_comment: Option<Span>,
+        looks_past_comma: bool,
+    ) -> usize {
         let mut start = span.start;
         if let Some(comment) = first_unprinted_comment
             && comment.end <= start
@@ -240,14 +252,20 @@ impl<'a> SourceText<'a> {
     /// Whether only spaces and tabs are between the previous line break and `position`.
     pub(crate) fn has_line_terminator_before(self, position: u32) -> bool {
         let before = self.to(position);
-        let end = before.iter().rposition(|b| !matches!(b, b' ' | b'\t')).map_or(0, |at| at + 1);
+        let end = before
+            .iter()
+            .rposition(|b| !matches!(b, b' ' | b'\t'))
+            .map_or(0, |at| at + 1);
         line_terminator_len_back(&before[..end]) != 0
     }
 
     /// Whether only spaces and tabs are between `position` and the next line break.
     pub(crate) fn has_line_terminator_after(self, position: u32) -> bool {
         let after = self.from(position);
-        let start = after.iter().position(|b| !matches!(b, b' ' | b'\t')).unwrap_or(after.len());
+        let start = after
+            .iter()
+            .position(|b| !matches!(b, b' ' | b'\t'))
+            .unwrap_or(after.len());
         line_terminator_len(&after[start..]) != 0
     }
 

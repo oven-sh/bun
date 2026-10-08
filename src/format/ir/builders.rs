@@ -132,7 +132,10 @@ impl<'a, T: FnOnce(&mut Formatter<'a>)> Format<'a> for FormatOnce<T> {
 /// A keyword or a punctuator: ASCII, without line breaks or tabs. A string literal does the same.
 #[inline(always)]
 pub(crate) fn token(text: &'static str) -> &'static str {
-    debug_assert!(text.bytes().all(|c| c.is_ascii() && !matches!(c, b'\r' | b'\n' | b'\t')));
+    debug_assert!(
+        text.bytes()
+            .all(|c| c.is_ascii() && !matches!(c, b'\r' | b'\n' | b'\t'))
+    );
     text
 }
 
@@ -316,7 +319,9 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Align<'_, Content> {
         if self.count == 0 {
             return self.content.fmt(f);
         }
-        f.write_element(FormatElement::Tag(Tag::StartAlign(element::Align(self.count))));
+        f.write_element(FormatElement::Tag(Tag::StartAlign(element::Align(
+            self.count,
+        ))));
         self.content.fmt(f);
         f.write_element(FormatElement::Tag(Tag::EndAlign));
     }
@@ -455,9 +460,11 @@ impl<Content: ?Sized> Group<'_, Content> {
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        if let (Some(LineMode::SoftOrSpace), Some(id), false) =
-            (self.content.as_indented_line(), self.group_id, self.should_expand)
-        {
+        if let (Some(LineMode::SoftOrSpace), Some(id), false) = (
+            self.content.as_indented_line(),
+            self.group_id,
+            self.should_expand,
+        ) {
             return f.write_element(FormatElement::IndentedLineGroup(id));
         }
         let mode = match self.should_expand {
@@ -528,7 +535,8 @@ impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        if let (Some(text), None, PrintMode::Expanded) = (self.content.as_token(), self.group_id, self.mode)
+        if let (Some(text), None, PrintMode::Expanded) =
+            (self.content.as_token(), self.group_id, self.mode)
             && let Some(token) = element::Token::new(text)
         {
             return f.write_element(FormatElement::TokenIfBreaks(token));
@@ -557,9 +565,13 @@ pub(crate) struct IndentIfGroupBreaks<'fmt, Content: ?Sized> {
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IndentIfGroupBreaks<'_, Content> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_element(FormatElement::Tag(Tag::StartIndentIfGroupBreaks(self.group_id)));
+        f.write_element(FormatElement::Tag(Tag::StartIndentIfGroupBreaks(
+            self.group_id,
+        )));
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(Tag::EndIndentIfGroupBreaks(self.group_id)));
+        f.write_element(FormatElement::Tag(Tag::EndIndentIfGroupBreaks(
+            self.group_id,
+        )));
     }
 }
 

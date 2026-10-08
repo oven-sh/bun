@@ -51,7 +51,12 @@ fn is_space(byte: Option<&u8>) -> bool {
 
 /// The index of the first character from `from` on that ends a word. A `/` does if `slash` says so,
 /// given what follows it.
-fn word_end(css: &[u8], from: usize, set: &ByteSet, slash: impl Fn(Option<&u8>) -> bool) -> Option<usize> {
+fn word_end(
+    css: &[u8],
+    from: usize,
+    set: &ByteSet,
+    slash: impl Fn(Option<&u8>) -> bool,
+) -> Option<usize> {
     let mut at = from;
     loop {
         at = set.find(css, at)?;
@@ -110,7 +115,8 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
                 is_url_arg = !is_url_arg
                     && paren_count == 1
                     && tokens.last().is_some_and(|last| {
-                        last.kind == TokenKind::Word && &css[last.pos as usize..last.end as usize] == b"url"
+                        last.kind == TokenKind::Word
+                            && &css[last.pos as usize..last.end as usize] == b"url"
                     });
                 (kind, end, next) = (TokenKind::OpenParen, pos + 1, pos + 1);
             }
@@ -123,7 +129,11 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
                 let mut close = pos;
                 loop {
                     close = text::index_of_char_from(css, code, close + 1).ok_or(ParseError)?;
-                    let backslashes = css[..close].iter().rev().take_while(|&&b| b == b'\\').count();
+                    let backslashes = css[..close]
+                        .iter()
+                        .rev()
+                        .take_while(|&&b| b == b'\\')
+                        .count();
                     if backslashes % 2 == 0 {
                         break;
                     }
@@ -142,7 +152,9 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
                     (kind, end, next) = (TokenKind::Operator, pos + 1, pos + 1);
                 }
             }
-            b'/' if css.get(pos + 1) == Some(&b'*') || (!is_url_arg && css.get(pos + 1) == Some(&b'/')) => {
+            b'/' if css.get(pos + 1) == Some(&b'*')
+                || (!is_url_arg && css.get(pos + 1) == Some(&b'/')) =>
+            {
                 let last = if css[pos + 1] == b'*' {
                     text::index_of_from(css, b"*/", pos + 2).ok_or(ParseError)? + 1
                 } else {
@@ -151,7 +163,9 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
                 let content = &css[pos..(last + 1).min(length)];
                 let lines = bun_core::strings::count_char(content, b'\n') as u32;
                 if lines > 0 {
-                    let last_line_len = content.len() - 1 - bun_core::strings::last_index_of_char(content, b'\n').unwrap_or(0);
+                    let last_line_len = content.len()
+                        - 1
+                        - bun_core::strings::last_index_of_char(content, b'\n').unwrap_or(0);
                     line += lines;
                     offset = last as i64 - last_line_len as i64;
                 }
@@ -162,7 +176,8 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
             }
             b'u' | b'U' if css.get(pos + 1) == Some(&b'+') => {
                 let mut at = pos + 3;
-                while at < length && (css[at].is_ascii_hexdigit() || matches!(css[at], b'?' | b'-')) {
+                while at < length && (css[at].is_ascii_hexdigit() || matches!(css[at], b'?' | b'-'))
+                {
                     at += 1;
                 }
                 let at = at.min(length.max(pos + 3));
@@ -191,7 +206,11 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
             kind,
             pos: pos as u32,
             end: end as u32,
-            line: if kind == TokenKind::Space { line } else { start_line },
+            line: if kind == TokenKind::Space {
+                line
+            } else {
+                start_line
+            },
             column: start_column,
             end_line: line,
             end_column: column(next, offset),
@@ -362,7 +381,9 @@ impl ValueNode {
 
     /// A group with nothing in it, which nothing says where it is.
     fn is_empty_group(&self) -> bool {
-        matches!(self.kind, ValueKind::ParenGroup | ValueKind::CommaGroup) && self.groups.0 == self.groups.1 && !self.has_source()
+        matches!(self.kind, ValueKind::ParenGroup | ValueKind::CommaGroup)
+            && self.groups.0 == self.groups.1
+            && !self.has_source()
     }
 
     /// `fillEmptyLocFromParent`
@@ -402,13 +423,21 @@ impl<'v> ValueRef<'v> {
     }
 
     /// `node.groups`, or nothing if it has none.
-    pub(crate) fn groups(self) -> impl DoubleEndedIterator<Item = ValueRef<'v>> + ExactSizeIterator + Clone {
-        self.values.groups(self.id).iter().map(move |&id| self.at(id))
+    pub(crate) fn groups(
+        self,
+    ) -> impl DoubleEndedIterator<Item = ValueRef<'v>> + ExactSizeIterator + Clone {
+        self.values
+            .groups(self.id)
+            .iter()
+            .map(move |&id| self.at(id))
     }
 
     /// `node.groups[index]`
     pub(crate) fn group(self, index: usize) -> Option<ValueRef<'v>> {
-        self.values.groups(self.id).get(index).map(|&id| self.at(id))
+        self.values
+            .groups(self.id)
+            .get(index)
+            .map(|&id| self.at(id))
     }
 }
 
@@ -438,7 +467,12 @@ pub(crate) struct Values {
 
 /// `/^[+-]?((\d+(\.\d*)?)|(\.\d+))([eE][+-]?\d+)?/`: the length of the match.
 fn number_prefix_len(text: &[u8]) -> Option<usize> {
-    let digits = |from: usize| text[from.min(text.len())..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let digits = |from: usize| {
+        text[from.min(text.len())..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+    };
     let mut at = usize::from(matches!(text.first(), Some(b'+' | b'-')));
     let integer = digits(at);
     if integer > 0 {
@@ -507,9 +541,15 @@ impl ValuesParser<'_> {
         let (start, end) = match kind {
             ValueKind::Word => {
                 let value = self.values.text(value);
-                (fix_value_word_loc(value, source.index), fix_value_word_loc(value, end))
+                (
+                    fix_value_word_loc(value, source.index),
+                    fix_value_word_loc(value, end),
+                )
             }
-            ValueKind::Paren => (source.index, source.index + u32::from(self.values.text(value) == b")")),
+            ValueKind::Paren => (
+                source.index,
+                source.index + u32::from(self.values.text(value) == b")"),
+            ),
             _ => (source.index, end),
         };
         let max_end = self.root_offset + self.len as u32;
@@ -524,9 +564,17 @@ impl ValuesParser<'_> {
             first_byte: self.values.text(value).first().copied().unwrap_or(0),
             has_end: true,
             value,
-            before: if std::mem::take(&mut self.spaces) { Before::Spaces } else { Before::Empty },
+            before: if std::mem::take(&mut self.spaces) {
+                Before::Spaces
+            } else {
+                Before::Empty
+            },
             loc,
-            unbalanced: if kind == ValueKind::Func { -1 } else { NO_BALANCE },
+            unbalanced: if kind == ValueKind::Func {
+                -1
+            } else {
+                NO_BALANCE
+            },
             ..ValueNode::new(kind)
         });
         let current = self.current;
@@ -556,8 +604,12 @@ impl ValuesParser<'_> {
                 TokenKind::Comment => {
                     // `.replace(/\/\*|\*\//g, "")`
                     let text = self.text_of(token);
-                    let has_delimiter = |text: &[u8]| text::includes(text, b"/*") || text::includes(text, b"*/");
-                    let mut value = match text.strip_prefix(b"/*").and_then(|it| it.strip_suffix(b"*/")) {
+                    let has_delimiter =
+                        |text: &[u8]| text::includes(text, b"/*") || text::includes(text, b"*/");
+                    let mut value = match text
+                        .strip_prefix(b"/*")
+                        .and_then(|it| it.strip_suffix(b"*/"))
+                    {
                         Some(inner) if !has_delimiter(inner) => self.span(start + 2, end - 2),
                         _ if !has_delimiter(text) => self.span(start, end),
                         _ => {
@@ -643,7 +695,12 @@ impl ValuesParser<'_> {
 
     fn paren_open(&mut self, token: Token) -> Result<(), ParseError> {
         let mut unbalanced = 1;
-        for token in self.values.tokens.get(self.position + 1..).unwrap_or_default() {
+        for token in self
+            .values
+            .tokens
+            .get(self.position + 1..)
+            .unwrap_or_default()
+        {
             match token.kind {
                 TokenKind::OpenParen => unbalanced += 1,
                 TokenKind::CloseParen => unbalanced -= 1,
@@ -706,7 +763,10 @@ impl ValuesParser<'_> {
             _ => false,
         };
         if !no_follow {
-            while self.token(self.position + 1).is_some_and(|next| next.kind == TokenKind::Word) {
+            while self
+                .token(self.position + 1)
+                .is_some_and(|next| next.kind == TokenKind::Word)
+            {
                 self.position += 1;
             }
         }
@@ -714,7 +774,9 @@ impl ValuesParser<'_> {
         let Some(current) = self.token(self.position) else {
             return;
         };
-        let next_is_paren = self.token(self.position + 1).is_some_and(|next| next.kind == TokenKind::OpenParen);
+        let next_is_paren = self
+            .token(self.position + 1)
+            .is_some_and(|next| next.kind == TokenKind::OpenParen);
         let word_len = current.end as usize - word_start;
         let is_number = number_prefix_len(self.text_of(current)).is_some();
 
@@ -729,7 +791,10 @@ impl ValuesParser<'_> {
             let loc = Source {
                 index: current.pos + ind as u32,
                 start_line: current.line,
-                end: (current.end_line, (current.column + index as u32).saturating_sub(1)),
+                end: (
+                    current.end_line,
+                    (current.column + index as u32).saturating_sub(1),
+                ),
             };
             if value.starts_with(b"@") {
                 let value = self.span(start + 1, end);
@@ -739,8 +804,15 @@ impl ValuesParser<'_> {
                 let unit = &value[unit_start..];
                 // `value.replace(unit, "")` removes the first occurrence, wherever it is.
                 // It can only start earlier with what can be in a number.
-                let is_elsewhere = matches!(unit.first(), Some(b'+' | b'-' | b'.' | b'e' | b'E' | b'0'..=b'9'));
-                let number = match if is_elsewhere { bun_core::strings::index_of(value, unit) } else { None } {
+                let is_elsewhere = matches!(
+                    unit.first(),
+                    Some(b'+' | b'-' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                );
+                let number = match if is_elsewhere {
+                    bun_core::strings::index_of(value, unit)
+                } else {
+                    None
+                } {
                     Some(at) if !unit.is_empty() && at != unit_start => {
                         let number = [&value[..at], &value[at + unit.len()..]].concat();
                         self.values.add_text(&number)
@@ -755,8 +827,9 @@ impl ValuesParser<'_> {
                 self.new_node(ValueKind::Func, value, loc);
             } else {
                 let is_hex = value.len() > 1 && value[0] == b'#';
-                let is_color =
-                    is_hex && matches!(value.len(), 4 | 5 | 7 | 9) && value[1..].iter().all(u8::is_ascii_hexdigit);
+                let is_color = is_hex
+                    && matches!(value.len(), 4 | 5 | 7 | 9)
+                    && value[1..].iter().all(u8::is_ascii_hexdigit);
                 let value = self.span(start, end);
                 let id = self.new_node(ValueKind::Word, value, loc);
                 self.node(id).is_hex = is_hex;
@@ -806,8 +879,13 @@ impl Grouper<'_> {
         let mut node = *node;
         let (nodes, lists) = (&mut self.values.nodes, &self.values.lists);
         let children = || {
-            let groups = lists.get(node.groups.0 as usize..node.groups.1 as usize).unwrap_or_default();
-            [node.open, node.close].into_iter().filter(|&id| id != 0).chain(groups.iter().copied())
+            let groups = lists
+                .get(node.groups.0 as usize..node.groups.1 as usize)
+                .unwrap_or_default();
+            [node.open, node.close]
+                .into_iter()
+                .filter(|&id| id != 0)
+                .chain(groups.iter().copied())
         };
         let mut has_empty_group = false;
         for child in children() {
@@ -840,7 +918,10 @@ impl Grouper<'_> {
         if group.kind != ValueKind::ParenGroup || group.open == 0 || group.close == 0 {
             return None;
         }
-        Some((self.node(group.open).loc.source_index()? as usize + 1, self.node(group.close).loc.source_index()? as usize))
+        Some((
+            self.node(group.open).loc.source_index()? as usize + 1,
+            self.node(group.close).loc.source_index()? as usize,
+        ))
     }
 
     /// A `value-comma_group` of `self.values.group[start..]`, after `flattenGroups`: if it is only one, that is it.
@@ -860,7 +941,12 @@ impl Grouper<'_> {
     fn group_nodes_of(&mut self, id: ValueId) -> ValueId {
         // A group of one node is that node.
         let only = self.node(self.node(id).first_child);
-        if only.next_sibling == 0 && matches!(only.kind, ValueKind::Word | ValueKind::String | ValueKind::AtWord | ValueKind::Operator) {
+        if only.next_sibling == 0
+            && matches!(
+                only.kind,
+                ValueKind::Word | ValueKind::String | ValueKind::AtWord | ValueKind::Operator
+            )
+        {
             return self.node(id).first_child;
         }
         // The functions in it first.
@@ -888,8 +974,11 @@ impl Grouper<'_> {
             && self.node(last).kind == ValueKind::Paren
             && self.node(last).first_byte == b')';
 
-        let (parens_start, groups_start, group_start) =
-            (self.values.open_parens.len(), self.values.groups.len(), self.values.group.len());
+        let (parens_start, groups_start, group_start) = (
+            self.values.open_parens.len(),
+            self.values.groups.len(),
+            self.values.group.len(),
+        );
         self.values.open_parens.push(OpenParen {
             open: 0,
             groups_start,
@@ -920,11 +1009,16 @@ impl Grouper<'_> {
             }
 
             if node.kind == ValueKind::Func {
-                let (is_selector, is_url) = (self.values.text(node.value) == b"selector", self.values.text(node.value) == b"url");
-                if is_selector
-                    && let Some((start, end)) = self.arguments_range(node.group)
-                {
-                    let text = self.values.text.get(self.base + start..self.base + end).unwrap_or_default();
+                let (is_selector, is_url) = (
+                    self.values.text(node.value) == b"selector",
+                    self.values.text(node.value) == b"url",
+                );
+                if is_selector && let Some((start, end)) = self.arguments_range(node.group) {
+                    let text = self
+                        .values
+                        .text
+                        .get(self.base + start..self.base + end)
+                        .unwrap_or_default();
                     let selector = self.selectors.parse(text);
                     let mut selector = ValueNode {
                         selector,
@@ -932,7 +1026,8 @@ impl Grouper<'_> {
                     };
                     selector.loc.source_index = start as u32;
                     let selector = self.add(&selector);
-                    self.values.nodes[node.group as usize].groups = self.values.add_list(&[selector]);
+                    self.values.nodes[node.group as usize].groups =
+                        self.values.add_list(&[selector]);
                 }
                 if is_url && self.node(node.group).kind == ValueKind::ParenGroup {
                     let range = self.arguments_range(node.group);
@@ -946,7 +1041,10 @@ impl Grouper<'_> {
                         let is_word = node.kind == ValueKind::Word;
                         has_interpolation |= is_word
                             && values.text(node.value) == b"{"
-                            && previous.is_some_and(|it| values.node(it).kind == ValueKind::Word && values.text(values.node(it).value).ends_with(b"#"));
+                            && previous.is_some_and(|it| {
+                                values.node(it).kind == ValueKind::Word
+                                    && values.text(values.node(it).value).ends_with(b"#")
+                            });
                         has_string_or_function |= match node.kind {
                             ValueKind::String => true,
                             ValueKind::Func => !values.text(node.value).ends_with(b"\\"),
@@ -957,23 +1055,35 @@ impl Grouper<'_> {
                     };
                     for &group in self.values.groups(node.group) {
                         match self.node(group).kind {
-                            ValueKind::CommaGroup => self.values.groups(group).iter().for_each(|&id| look_at(self.values, id)),
+                            ValueKind::CommaGroup => self
+                                .values
+                                .groups(group)
+                                .iter()
+                                .for_each(|&id| look_at(self.values, id)),
                             _ => look_at(self.values, group),
                         }
                     }
                     let is_scss_variable = self.syntax == Syntax::Scss
-                        && first.is_some_and(|it| self.node(it).kind == ValueKind::Word && self.values.text(self.node(it).value).starts_with(b"$"));
+                        && first.is_some_and(|it| {
+                            self.node(it).kind == ValueKind::Word
+                                && self.values.text(self.node(it).value).starts_with(b"$")
+                        });
                     if (has_interpolation || (!has_string_or_function && !is_scss_variable))
                         && let Some((start, end)) = range
                     {
-                        let inner = self.values.text.get(self.base + start..self.base + end).unwrap_or_default();
+                        let inner = self
+                            .values
+                            .text
+                            .get(self.base + start..self.base + end)
+                            .unwrap_or_default();
                         let skipped = inner.len() - text::trim_start(inner).len();
                         let start = self.base + start + skipped;
                         let text = self.add(&ValueNode {
                             value: (start as u32, (start + text::trim(inner).len()) as u32),
                             ..ValueNode::new(ValueKind::Text)
                         });
-                        self.values.nodes[node.group as usize].groups = self.values.add_list(&[text]);
+                        self.values.nodes[node.group as usize].groups =
+                            self.values.add_list(&[text]);
                     }
                 }
             }
@@ -1072,7 +1182,9 @@ impl Values {
     }
 
     pub(crate) fn text(&self, (start, end): Span) -> &[u8] {
-        self.text.get(start as usize..end as usize).unwrap_or_default()
+        self.text
+            .get(start as usize..end as usize)
+            .unwrap_or_default()
     }
 
     /// `node.value`, if it is a string.
@@ -1103,7 +1215,9 @@ impl Values {
     /// `node.groups`, or nothing if it has none.
     pub(crate) fn groups(&self, id: ValueId) -> &[ValueId] {
         let (start, end) = self.node(id).groups;
-        self.lists.get(start as usize..end as usize).unwrap_or_default()
+        self.lists
+            .get(start as usize..end as usize)
+            .unwrap_or_default()
     }
 
     fn add_text(&mut self, text: &[u8]) -> Span {
@@ -1202,7 +1316,11 @@ impl Values {
         let loc = self.nodes[group as usize].loc;
         let loc = Loc {
             source_index: NONE,
-            ..if loc.start_offset != NONE && loc.end_offset != NONE { loc } else { Loc::default() }
+            ..if loc.start_offset != NONE && loc.end_offset != NONE {
+                loc
+            } else {
+                Loc::default()
+            }
         };
         self.nodes[container as usize].group = group;
         self.nodes[container as usize].loc = loc;

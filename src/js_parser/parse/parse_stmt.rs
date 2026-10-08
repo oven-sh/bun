@@ -2269,7 +2269,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 // For Babel `source` is a phase too. It is kept like `defer`: the text tells them apart.
                 if p.is_tolerant()
-                    && (default_name_raw == b"defer" || default_name_raw == b"source" && p.is_babel())
+                    && (default_name_raw == b"defer"
+                        || default_name_raw == b"source" && p.is_babel())
                     && Self::defer_is_modifier(p)
                 {
                     // Only `import source x from "a"`.

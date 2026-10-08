@@ -44,14 +44,20 @@ fn is_simple(e: Expr<'_>, depth: u8) -> bool {
                 | ExprKind::Ident(_)
                 | ExprKind::PrivateIdentifier(_)
                 | ExprKind::Super => break,
-                ExprKind::Regex(regex) if crate::ir::width::string_width(regex.pattern()) <= 5 => break,
-                ExprKind::Template(template) if is_simple_template_literal(template, depth + 1) => break,
+                ExprKind::Regex(regex) if crate::ir::width::string_width(regex.pattern()) <= 5 => {
+                    break;
+                }
+                ExprKind::Template(template) if is_simple_template_literal(template, depth + 1) => {
+                    break;
+                }
                 ExprKind::Object(props)
                     if props.iter().all(|prop| match prop.kind() {
                         PropKind::Shorthand => true,
                         PropKind::Init => {
                             !prop.key().is_some_and(Key::is_computed)
-                                && prop.value().is_some_and(|value| is_simple(value, depth + 1))
+                                && prop
+                                    .value()
+                                    .is_some_and(|value| is_simple(value, depth + 1))
                         }
                         _ => false,
                     }) =>
@@ -78,7 +84,9 @@ fn is_simple(e: Expr<'_>, depth: u8) -> bool {
                     pending.push(obj);
                     index
                 }
-                ExprKind::New(call) | ExprKind::Call(call) if are_simple(call.args(), depth) => call.callee(),
+                ExprKind::New(call) | ExprKind::Call(call) if are_simple(call.args(), depth) => {
+                    call.callee()
+                }
                 ExprKind::ImportCall { args } if are_simple(args, depth) => break,
                 _ => return false,
             };
@@ -90,7 +98,10 @@ fn is_simple(e: Expr<'_>, depth: u8) -> bool {
 
 /// The arguments of a call: the deeper it is, the fewer it may have.
 fn are_simple<'a>(arguments: List<'a, Expr<'a>>, depth: u8) -> bool {
-    arguments.len() + usize::from(depth) <= 2 && arguments.iter().all(|argument| is_simple(argument, depth + 1))
+    arguments.len() + usize::from(depth) <= 2
+        && arguments
+            .iter()
+            .all(|argument| is_simple(argument, depth + 1))
 }
 
 /// No text of the template has a line break, and all substitutions are simple.

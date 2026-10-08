@@ -3,7 +3,8 @@
 
 use super::comments::{Attached, Placement, has_newline_after, has_newline_before};
 use super::parser::{
-    HAS_ALIAS, IS_BLOCK, IS_REPEATABLE, IS_SHORTHAND, Kind, MUTATION, NodeId, SUBSCRIPTION, Tree, read_escape,
+    HAS_ALIAS, IS_BLOCK, IS_REPEATABLE, IS_SHORTHAND, Kind, MUTATION, NodeId, SUBSCRIPTION, Tree,
+    read_escape,
 };
 use crate::ir::element::{Condition, FormatElement, Group, LineMode, PrintMode, Tag, TextWidth};
 use crate::ir::formatter::Formatter;
@@ -45,7 +46,11 @@ impl<'t> Children<'t> {
 
     /// The next ones of `kind`.
     fn all_of(&mut self, kind: Kind) -> &'t [NodeId] {
-        let count = self.rest.iter().take_while(|&&id| self.tree.kind(id) == kind).count();
+        let count = self
+            .rest
+            .iter()
+            .take_while(|&&id| self.tree.kind(id) == kind)
+            .count();
         let (all, rest) = self.rest.split_at(count);
         self.rest = rest;
         all
@@ -97,13 +102,15 @@ impl<'t> Builder<'t, '_, '_> {
 
     fn needs_escapes(&self, text: &[u8]) -> bool {
         self.is_in_template
-            && (bun_core::strings::index_of_any(text, b"\\`").is_some() || bun_core::strings::contains(text, b"${"))
+            && (bun_core::strings::index_of_any(text, b"\\`").is_some()
+                || bun_core::strings::contains(text, b"${"))
     }
 
     /// Prettier's `uncookTemplateElementValue`
     fn escape_for_template(text: &[u8], out: &mut Vec<u8>) {
         for (index, &byte) in text.iter().enumerate() {
-            if matches!(byte, b'\\' | b'`') || (byte == b'$' && text.get(index + 1) == Some(&b'{')) {
+            if matches!(byte, b'\\' | b'`') || (byte == b'$' && text.get(index + 1) == Some(&b'{'))
+            {
                 out.push(b'\\');
             }
             out.push(byte);
@@ -123,7 +130,9 @@ impl<'t> Builder<'t, '_, '_> {
     }
 
     fn slice(&self, span: Span) -> &'t [u8] {
-        self.text.get(span.start as usize..span.end as usize).unwrap_or_default()
+        self.text
+            .get(span.start as usize..span.end as usize)
+            .unwrap_or_default()
     }
 
     /// The part of the text at `span`, which is on one line.
@@ -138,12 +147,19 @@ impl<'t> Builder<'t, '_, '_> {
             return &[];
         }
         let start = self.attached.partition_point(|it| it.node < id);
-        let count = self.attached[start..].iter().take_while(|it| it.node == id).count();
+        let count = self.attached[start..]
+            .iter()
+            .take_while(|it| it.node == id)
+            .count();
         &self.attached[start..start + count]
     }
 
     fn comment_span(&self, attached: &Attached) -> Span {
-        self.tree.comments.get(attached.comment as usize).copied().unwrap_or_default()
+        self.tree
+            .comments
+            .get(attached.comment as usize)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Prettier's `printComment`
@@ -161,7 +177,11 @@ impl<'t> Builder<'t, '_, '_> {
             }
         }
         fn trim_blanks(text: &[u8]) -> &[u8] {
-            let blanks = text.iter().rev().take_while(|byte| matches!(byte, b' ' | b'\t')).count();
+            let blanks = text
+                .iter()
+                .rev()
+                .take_while(|byte| matches!(byte, b' ' | b'\t'))
+                .count();
             &text[..text.len() - blanks]
         }
         let before = trim_blanks(self.text.get(..position as usize).unwrap_or_default());
@@ -174,7 +194,10 @@ impl<'t> Builder<'t, '_, '_> {
         self.comment(span);
         // An empty line after it is kept.
         let after = self.text.get(span.end as usize..).unwrap_or_default();
-        let blanks = after.iter().take_while(|byte| matches!(byte, b' ' | b'\t')).count();
+        let blanks = after
+            .iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t'))
+            .count();
         let line_break = match after.get(blanks..) {
             Some([b'\r', b'\n', ..]) => 2,
             Some([b'\n' | b'\r', ..]) => 1,
@@ -189,7 +212,10 @@ impl<'t> Builder<'t, '_, '_> {
     /// Prettier's `printTrailingComments`
     fn trailing_comments(&mut self, comments: &[Attached]) {
         let mut is_after_line_suffix = false;
-        for attached in comments.iter().filter(|it| it.placement == Placement::Trailing) {
+        for attached in comments
+            .iter()
+            .filter(|it| it.placement == Placement::Trailing)
+        {
             let span = self.comment_span(attached);
             self.tag(Tag::StartLineSuffix);
             let is_on_own_line = is_after_line_suffix || has_newline_before(self.text, span.start);
@@ -210,11 +236,17 @@ impl<'t> Builder<'t, '_, '_> {
     /// Prettier's `printDanglingComments` with `indent: true`
     fn dangling_comments(&mut self, id: NodeId) {
         let comments = self.comments_of(id);
-        if !comments.iter().any(|it| it.placement == Placement::Dangling) {
+        if !comments
+            .iter()
+            .any(|it| it.placement == Placement::Dangling)
+        {
             return;
         }
         self.indent(|b| {
-            for attached in comments.iter().filter(|it| it.placement == Placement::Dangling) {
+            for attached in comments
+                .iter()
+                .filter(|it| it.placement == Placement::Dangling)
+            {
                 b.hardline();
                 b.comment(b.comment_span(attached));
             }
@@ -227,9 +259,15 @@ impl<'t> Builder<'t, '_, '_> {
     fn ignored(&mut self, span: Span) {
         let text = self.slice(span);
         let width = Some(TextWidth::single(self.f.string_width(text)));
-        let line_ending = self.f.options().line_ending.resolve(self.f.source_text().as_bytes()).as_bytes();
+        let line_ending = self
+            .f
+            .options()
+            .line_ending
+            .resolve(self.f.source_text().as_bytes())
+            .as_bytes();
         let needs_escapes = self.needs_escapes(text);
-        if !needs_escapes && line_ending == b"\n" && !bun_core::strings::contains_char(text, b'\r') {
+        if !needs_escapes && line_ending == b"\n" && !bun_core::strings::contains_char(text, b'\r')
+        {
             return self.f.write_text(text, width);
         }
         let mut written = Vec::with_capacity(text.len() + 16);
@@ -257,12 +295,18 @@ impl<'t> Builder<'t, '_, '_> {
         if comments.is_empty() {
             return self.print_node(id);
         }
-        for attached in comments.iter().filter(|it| it.placement == Placement::Leading) {
+        for attached in comments
+            .iter()
+            .filter(|it| it.placement == Placement::Leading)
+        {
             self.leading_comment(self.comment_span(attached));
         }
         let is_ignored = comments.iter().any(|it| {
             let comment = self.slice(self.comment_span(it));
-            matches!(comment.get(1..).unwrap_or_default().trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore")
+            matches!(
+                comment.get(1..).unwrap_or_default().trim_ascii(),
+                b"prettier-ignore" | b"oxfmt-ignore"
+            )
         });
         match is_ignored {
             true => self.ignored(self.tree.span(id)),
@@ -288,8 +332,12 @@ impl<'t> Builder<'t, '_, '_> {
                     (true, false) => self.hardline(),
                 }
                 has_comment = true;
-                let comment_start = start + (line.len() - crate::range::trim_start(line).len()) as u32;
-                self.source(Span::new(comment_start, comment_start + comment.len() as u32));
+                let comment_start =
+                    start + (line.len() - crate::range::trim_start(line).len()) as u32;
+                self.source(Span::new(
+                    comment_start,
+                    comment_start + comment.len() as u32,
+                ));
             }
             is_after_blank_line = comment.is_empty();
             start += line.len() as u32 + 1;
@@ -358,7 +406,9 @@ impl<'t> Builder<'t, '_, '_> {
                 break;
             }
             // That empty line is a forced line break.
-            if keeps_empty_lines && is_next_line_empty(SourceText::new(self.text), self.tree.span(id).end) {
+            if keeps_empty_lines
+                && is_next_line_empty(SourceText::new(self.text), self.tree.span(id).end)
+            {
                 self.line(LineMode::Empty);
             } else {
                 self.token_if(PrintMode::Flat, ", ");
@@ -373,7 +423,10 @@ impl<'t> Builder<'t, '_, '_> {
             return;
         };
         self.print(description);
-        let is_block = self.tree.node(description).is_some_and(|node| node.flags & IS_BLOCK != 0);
+        let is_block = self
+            .tree
+            .node(description)
+            .is_some_and(|node| node.flags & IS_BLOCK != 0);
         match owner == Kind::InputValueDefinition && !is_block {
             true => self.line(LineMode::SoftOrSpace),
             false => self.hardline(),
@@ -449,7 +502,9 @@ impl<'t> Builder<'t, '_, '_> {
     /// `content`: what is between the `"""`.
     fn block_string(&mut self, content: &'t [u8]) {
         fn leading_blanks(line: &[u8]) -> usize {
-            line.iter().take_while(|byte| matches!(byte, b' ' | b'\t')).count()
+            line.iter()
+                .take_while(|byte| matches!(byte, b' ' | b'\t'))
+                .count()
         }
         fn lines(content: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
             // `\r\n`, `\n` and `\r` end a line.
@@ -460,7 +515,11 @@ impl<'t> Builder<'t, '_, '_> {
                     rest = None;
                     return Some(text);
                 };
-                let len = if text[at..].starts_with(b"\r\n") { 2 } else { 1 };
+                let len = if text[at..].starts_with(b"\r\n") {
+                    2
+                } else {
+                    1
+                };
                 rest = Some(&text[at + len..]);
                 Some(&text[..at])
             })
@@ -468,20 +527,39 @@ impl<'t> Builder<'t, '_, '_> {
 
         // graphql-js's `dedentBlockStringLines`
         let is_blank = |line: &[u8]| leading_blanks(line) == line.len();
-        let common_indent =
-            lines(content).skip(1).filter(|line| !is_blank(line)).map(leading_blanks).min().unwrap_or(usize::MAX);
+        let common_indent = lines(content)
+            .skip(1)
+            .filter(|line| !is_blank(line))
+            .map(leading_blanks)
+            .min()
+            .unwrap_or(usize::MAX);
         let first = lines(content).position(|line| !is_blank(line)).unwrap_or(0);
-        let count = lines(content).enumerate().filter(|(_, line)| !is_blank(line)).last().map_or(0, |(last, _)| last + 1 - first);
-        let dedented = lines(content).enumerate().skip(first).take(count).map(|(index, line)| match index {
-            0 => line,
-            _ => line.get(common_indent.min(line.len())..).unwrap_or_default(),
-        });
+        let count = lines(content)
+            .enumerate()
+            .filter(|(_, line)| !is_blank(line))
+            .last()
+            .map_or(0, |(last, _)| last + 1 - first);
+        let dedented = lines(content)
+            .enumerate()
+            .skip(first)
+            .take(count)
+            .map(|(index, line)| match index {
+                0 => line,
+                _ => line
+                    .get(common_indent.min(line.len())..)
+                    .unwrap_or_default(),
+            });
 
         self.token("\"\"\"");
         let mut empty_lines = 0;
         for line in dedented {
             // The printer of Prettier leaves out the blanks at the end of a line.
-            let mut line = &line[..line.len() - line.iter().rev().take_while(|byte| matches!(byte, b' ' | b'\t')).count()];
+            let mut line = &line[..line.len()
+                - line
+                    .iter()
+                    .rev()
+                    .take_while(|byte| matches!(byte, b' ' | b'\t'))
+                    .count()];
             if count == 1 {
                 line = line.trim_ascii();
             }
@@ -503,7 +581,9 @@ impl<'t> Builder<'t, '_, '_> {
             0 => {}
             1 => return self.line(LineMode::Empty),
             // The printer writes no more than one empty line for line breaks.
-            _ => self.f.write_text(&vec![b'\n'; empty_lines + 1], Some(TextWidth::multiline(0))),
+            _ => self
+                .f
+                .write_text(&vec![b'\n'; empty_lines + 1], Some(TextWidth::multiline(0))),
         }
         self.hardline();
     }
@@ -564,7 +644,12 @@ impl<'t> Builder<'t, '_, '_> {
                     b.print(selection_set);
                 }
             }),
-            Kind::Name | Kind::IntValue | Kind::FloatValue | Kind::EnumValue | Kind::BooleanValue | Kind::NullValue => {
+            Kind::Name
+            | Kind::IntValue
+            | Kind::FloatValue
+            | Kind::EnumValue
+            | Kind::BooleanValue
+            | Kind::NullValue => {
                 self.source(node.span);
             }
             Kind::StringValue => self.string_value(node.span, node.flags & IS_BLOCK != 0),
@@ -613,7 +698,9 @@ impl<'t> Builder<'t, '_, '_> {
             Kind::NamedType => self.print_optional(children.next_of(Kind::Name)),
             Kind::VariableDefinition | Kind::InputValueDefinition => {
                 self.description(&mut children, kind);
-                self.print_optional(children.next_if(|it| matches!(it, Kind::Variable | Kind::Name)));
+                self.print_optional(
+                    children.next_if(|it| matches!(it, Kind::Variable | Kind::Name)),
+                );
                 self.token(": ");
                 self.print_optional(children.next_if(Kind::is_type));
                 if let Some(default_value) = children.next_if(Kind::is_value) {
@@ -629,7 +716,9 @@ impl<'t> Builder<'t, '_, '_> {
             | Kind::InterfaceTypeExtension
             | Kind::InterfaceTypeDefinition => {
                 match kind {
-                    Kind::ObjectTypeDefinition | Kind::InputObjectTypeDefinition | Kind::InterfaceTypeDefinition => {
+                    Kind::ObjectTypeDefinition
+                    | Kind::InputObjectTypeDefinition
+                    | Kind::InterfaceTypeDefinition => {
                         self.description(&mut children, kind);
                     }
                     _ => self.token("extend "),
@@ -712,7 +801,11 @@ impl<'t> Builder<'t, '_, '_> {
             }
             Kind::SchemaExtension | Kind::SchemaDefinition => {
                 self.description(&mut children, kind);
-                self.token(if kind == Kind::SchemaExtension { "extend schema" } else { "schema" });
+                self.token(if kind == Kind::SchemaExtension {
+                    "extend schema"
+                } else {
+                    "schema"
+                });
                 self.directives(&mut children, kind);
                 if !children.rest.is_empty() {
                     self.token(" ");
@@ -755,7 +848,9 @@ impl<'t> Builder<'t, '_, '_> {
                     b.token(" =");
                     b.token_if(PrintMode::Flat, " ");
                     b.indent(|b| {
-                        b.tag(Tag::StartConditionalContent(Condition::new(PrintMode::Expanded)));
+                        b.tag(Tag::StartConditionalContent(Condition::new(
+                            PrintMode::Expanded,
+                        )));
                         b.line(LineMode::SoftOrSpace);
                         b.token("| ");
                         b.tag(Tag::EndConditionalContent);

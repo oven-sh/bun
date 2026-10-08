@@ -69,7 +69,11 @@ const fn is_id_byte(byte: u8) -> bool {
 fn id_len(text: &[u8]) -> usize {
     let mut at = 0;
     while let Some(&byte) = text.get(at) {
-        let is_in_id = if byte < 0x80 { is_id_byte(byte) } else { white_space_len(&text[at..]) == 0 };
+        let is_in_id = if byte < 0x80 {
+            is_id_byte(byte)
+        } else {
+            white_space_len(&text[at..]) == 0
+        };
         if !is_in_id {
             break;
         }
@@ -90,7 +94,10 @@ fn white_space_run(text: &[u8]) -> usize {
 
 /// `LOOKAHEAD`: `[=~}\s\/.)\]|]`
 fn is_lookahead(rest: &[u8]) -> bool {
-    matches!(rest.first(), Some(b'=' | b'~' | b'}' | b'/' | b'.' | b')' | b']' | b'|')) || white_space_len(rest) > 0
+    matches!(
+        rest.first(),
+        Some(b'=' | b'~' | b'}' | b'/' | b'.' | b')' | b']' | b'|')
+    ) || white_space_len(rest) > 0
 }
 
 /// `LITERAL_LOOKAHEAD`: `[~}\s)\]]`
@@ -103,7 +110,10 @@ fn is_literal_lookahead(rest: &[u8]) -> bool {
 fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
     let mut at = 1;
     let mut last_escaped = None;
-    while let Some(found) = text.get(at..).and_then(|rest| strings::index_of_char_usize(rest, close)) {
+    while let Some(found) = text
+        .get(at..)
+        .and_then(|rest| strings::index_of_char_usize(rest, close))
+    {
         at += found + 1;
         if text[at - 2] != b'\\' {
             return Some(at);
@@ -147,7 +157,8 @@ impl Lexer<'_> {
     fn is_without_nul(&mut self, end: usize) -> bool {
         let next = match self.next_nul {
             Some(next) if next >= self.at => next,
-            _ => strings::index_of_char_usize(&self.text[self.at..], 0).map_or(self.text.len(), |found| self.at + found),
+            _ => strings::index_of_char_usize(&self.text[self.at..], 0)
+                .map_or(self.text.len(), |found| self.at + found),
         };
         self.next_nul = Some(next);
         next >= end
@@ -191,7 +202,12 @@ impl Lexer<'_> {
         let end = match self.find(b"{{", first) {
             None => self.text.len(),
             Some(mustache) => {
-                let backslashes = self.text[first..mustache].iter().rev().take(2).take_while(|byte| **byte == b'\\').count();
+                let backslashes = self.text[first..mustache]
+                    .iter()
+                    .rev()
+                    .take(2)
+                    .take_while(|byte| **byte == b'\\')
+                    .count();
                 mustache - backslashes
             }
         };
@@ -212,7 +228,10 @@ impl Lexer<'_> {
             let rest_len = rest.len();
             if let Some(rest) = rest.strip_prefix(b"~").unwrap_or(rest).strip_prefix(b"}}") {
                 self.pop_state();
-                self.token(TokenKind::Comment, dashes + 2 + (rest_len - rest.len()) - self.at);
+                self.token(
+                    TokenKind::Comment,
+                    dashes + 2 + (rest_len - rest.len()) - self.at,
+                );
                 return Ok(());
             }
             from = dashes + 1;
@@ -229,7 +248,14 @@ impl Lexer<'_> {
                     if len > 0 && name[len..].starts_with(b"}}}}") {
                         self.pop_state();
                         let is_nested = self.states.last() == Some(&State::Raw);
-                        self.token(if is_nested { TokenKind::Content } else { TokenKind::EndRawBlock }, 5 + len + 4);
+                        self.token(
+                            if is_nested {
+                                TokenKind::Content
+                            } else {
+                                TokenKind::EndRawBlock
+                            },
+                            5 + len + 4,
+                        );
                         return Ok(());
                     }
                 }
@@ -259,7 +285,11 @@ impl Lexer<'_> {
         // `\s*{RIGHT_STRIP}?"}}"`
         let close_len = |from: usize| {
             let from = from + white_space_run(&rest[from..]);
-            let from = if rest.get(from) == Some(&b'~') { from + 1 } else { from };
+            let from = if rest.get(from) == Some(&b'~') {
+                from + 1
+            } else {
+                from
+            };
             rest[from..].starts_with(b"}}").then_some(from + 2)
         };
         match rest.get(at) {
@@ -297,7 +327,10 @@ impl Lexer<'_> {
                 } else if let Some(len) = close_len(after) {
                     self.pop_state();
                     self.token(TokenKind::Inverse, len);
-                } else if rest.get(after).is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_') {
+                } else if rest
+                    .get(after)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
                     self.token(TokenKind::Open, at);
                 } else {
                     self.token(TokenKind::OpenInverseChain, after);
@@ -325,7 +358,10 @@ impl Lexer<'_> {
             }
             b'}' if rest.starts_with(b"}}}") || rest.starts_with(b"}~}}") => {
                 self.pop_state();
-                self.token(TokenKind::CloseUnescaped, if rest[1] == b'~' { 4 } else { 3 });
+                self.token(
+                    TokenKind::CloseUnescaped,
+                    if rest[1] == b'~' { 4 } else { 3 },
+                );
             }
             b'}' if rest.starts_with(b"}}") => {
                 self.pop_state();
@@ -376,7 +412,12 @@ impl Lexer<'_> {
 
 /// `\-?[0-9]+(?:\.[0-9]+)?/{LITERAL_LOOKAHEAD}`
 fn number_len(text: &[u8]) -> Option<usize> {
-    let digits = |from: usize| text[from..].iter().take_while(|byte| byte.is_ascii_digit()).count();
+    let digits = |from: usize| {
+        text[from..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
+    };
     let sign = usize::from(text.first() == Some(&b'-'));
     let whole = digits(sign);
     if whole == 0 {
@@ -394,7 +435,11 @@ fn number_len(text: &[u8]) -> Option<usize> {
 
 /// Writes the tokens of `text` to `tokens`, which is empty, and where the parser takes them to be to `positions`. The
 /// last is `Eof`.
-pub(crate) fn lex(text: &[u8], tokens: &mut Vec<Token>, positions: &mut Positions) -> Result<(), Error> {
+pub(crate) fn lex(
+    text: &[u8],
+    tokens: &mut Vec<Token>,
+    positions: &mut Positions,
+) -> Result<(), Error> {
     let counts_wrongly = Positions::can_be_wrong(text);
     let mut lexer = Lexer {
         text,

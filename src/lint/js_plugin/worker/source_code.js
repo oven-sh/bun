@@ -156,9 +156,7 @@ class SourceCode extends TokenStore {
   getLocFromIndex(index) {
     if (typeof index !== "number") throw new TypeError("Expected `index` to be a number.");
     if (index < 0 || index > text.length) {
-      throw new RangeError(
-        `Index out of range (requested index ${index}, but source text has length ${text.length}).`,
-      );
+      throw new RangeError(`Index out of range (requested index ${index}, but source text has length ${text.length}).`);
     }
     return locationOf(index);
   }
@@ -169,9 +167,7 @@ class SourceCode extends TokenStore {
     }
     const starts = this.lineStartIndices;
     if (loc.line <= 0) {
-      throw new RangeError(
-        `Line number out of range (line ${loc.line} requested). Line numbers should be 1-based.`,
-      );
+      throw new RangeError(`Line number out of range (line ${loc.line} requested). Line numbers should be 1-based.`);
     }
     if (loc.line > starts.length) {
       throw new RangeError(

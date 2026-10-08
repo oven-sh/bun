@@ -31,7 +31,12 @@ test.skipIf(!hasRunner).concurrent.each([
   async (suite, runner, every) => {
     using dir = tempDir(`format-${suite}`, {});
     const bundle = join(String(dir), "bundle.txt");
-    await Bun.write(bundle, suite === "own" ? ownCases() : Bun.zstdDecompressSync(await Bun.file(join(import.meta.dir, suite, "bundle.zst")).bytes()));
+    await Bun.write(
+      bundle,
+      suite === "own"
+        ? ownCases()
+        : Bun.zstdDecompressSync(await Bun.file(join(import.meta.dir, suite, "bundle.zst")).bytes()),
+    );
     await using proc = Bun.spawn({
       cmd: [bunExe(), "format", `--run-${runner}-tests`, bundle, `--every=${every}`],
       env: bunEnv,

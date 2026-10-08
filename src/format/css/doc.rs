@@ -159,7 +159,8 @@ pub(crate) fn join<'a>(separator: &Doc<'a>, docs: Vec<Doc<'a>>) -> Vec<Doc<'a>> 
 /// Prettier's `cleanDoc`: no arrays in arrays, no empty strings, strings that follow each other are
 /// one.
 pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
-    let wrap = |contents: Box<Doc<'a>>, wrapper: fn(Box<Doc<'a>>) -> Doc<'a>| match clean(*contents) {
+    let wrap = |contents: Box<Doc<'a>>, wrapper: fn(Box<Doc<'a>>) -> Doc<'a>| match clean(*contents)
+    {
         contents if contents.is_empty_text() => Doc::EMPTY,
         contents => wrapper(Box::new(contents)),
     };
@@ -178,7 +179,9 @@ pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
             id,
             is_conditional,
         } => match clean(*contents) {
-            contents if contents.is_empty_text() && !should_break && id == 0 && !is_conditional => Doc::EMPTY,
+            contents if contents.is_empty_text() && !should_break && id == 0 && !is_conditional => {
+                Doc::EMPTY
+            }
             contents @ Doc::Group {
                 should_break: inner,
                 id: 0,
@@ -206,7 +209,11 @@ pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
             flat_contents,
             group_id,
         } => match (clean(*break_contents), clean(*flat_contents)) {
-            (break_contents, flat_contents) if break_contents.is_empty_text() && flat_contents.is_empty_text() => Doc::EMPTY,
+            (break_contents, flat_contents)
+                if break_contents.is_empty_text() && flat_contents.is_empty_text() =>
+            {
+                Doc::EMPTY
+            }
             (break_contents, flat_contents) => Doc::IfBreak {
                 break_contents: Box::new(break_contents),
                 flat_contents: Box::new(flat_contents),
@@ -278,7 +285,10 @@ pub(crate) fn strip_trailing_hardline(doc: Doc<'_>) -> Doc<'_> {
             Doc::Array(parts)
         }
         Doc::Text(mut text) => {
-            let len = text.iter().rposition(|b| !matches!(b, b'\n' | b'\r')).map_or(0, |at| at + 1);
+            let len = text
+                .iter()
+                .rposition(|b| !matches!(b, b'\n' | b'\r'))
+                .map_or(0, |at| at + 1);
             match &mut text {
                 Cow::Borrowed(text) => *text = &text[..len],
                 Cow::Owned(text) => text.truncate(len),
@@ -300,7 +310,9 @@ pub(crate) fn replace_end_of_line_with_literal_lines(text: Cow<'_, [u8]>) -> Doc
     if !bun_core::strings::contains_char(&text, b'\n') {
         return Doc::Text(text);
     }
-    let lines = bun_core::strings::split(&text, b"\n").map(|line| Doc::from(line.to_vec())).collect();
+    let lines = bun_core::strings::split(&text, b"\n")
+        .map(|line| Doc::from(line.to_vec()))
+        .collect();
     Doc::Array(join(&Doc::Line(Line::Literal), lines))
 }
 
@@ -320,7 +332,11 @@ pub(crate) enum IndentCommand {
 #[derive(Copy, Clone)]
 enum Element {
     /// A range of `Elements::texts`, and its width.
-    Text { start: u32, len: u32, width: u32 },
+    Text {
+        start: u32,
+        len: u32,
+        width: u32,
+    },
     Line(Line),
     /// `hardline`
     HardLine,
@@ -346,7 +362,9 @@ enum Element {
     StartFill,
     EndFill,
     /// What is in a `fill`: contents and separators, which take turns.
-    StartItem { end: u32 },
+    StartItem {
+        end: u32,
+    },
     EndItem,
     /// The contents for a broken group follow, then `Else`, then the others.
     StartIfBreak {
@@ -355,8 +373,12 @@ enum Element {
         /// Not 0: the group that it is about. Otherwise the one that it is in.
         group_id: u32,
     },
-    Else { end: u32 },
-    StartLineSuffix { end: u32 },
+    Else {
+        end: u32,
+    },
+    StartLineSuffix {
+        end: u32,
+    },
 }
 
 /// A document: its parts, one after the other. It is written from the first to the last.
@@ -399,7 +421,9 @@ impl Elements {
     /// What is written next depends on whether the group that it is in is broken.
     fn mark_groups(&mut self) {
         for index in self.groups_with_lines..self.open_groups.len() {
-            if let Element::StartGroup { is_plain, .. } = &mut self.list[self.open_groups[index] as usize] {
+            if let Element::StartGroup { is_plain, .. } =
+                &mut self.list[self.open_groups[index] as usize]
+            {
                 *is_plain = false;
             }
         }
@@ -441,8 +465,13 @@ impl Elements {
         for &group in self.open_groups.iter().rev() {
             match &mut self.list[group as usize] {
                 // So are the groups around it.
-                Element::StartGroup { should_break: true, .. } => break,
-                Element::StartGroup { is_conditional: true, .. } => break,
+                Element::StartGroup {
+                    should_break: true, ..
+                } => break,
+                Element::StartGroup {
+                    is_conditional: true,
+                    ..
+                } => break,
                 Element::StartGroup { should_break, .. } => *should_break = true,
                 _ => {}
             }
@@ -501,10 +530,14 @@ impl Elements {
     }
 
     pub(crate) fn start_indent(&mut self, command: IndentCommand) {
-        let index = self.indents.iter().position(|it| *it == command).unwrap_or_else(|| {
-            self.indents.push(command);
-            self.indents.len() - 1
-        });
+        let index = self
+            .indents
+            .iter()
+            .position(|it| *it == command)
+            .unwrap_or_else(|| {
+                self.indents.push(command);
+                self.indents.len() - 1
+            });
         self.start(Element::StartIndent(index as u32));
     }
 
@@ -578,7 +611,11 @@ impl Elements {
                 Element::Line(Line::Space) => {
                     let start = self.texts.len() as u32;
                     self.texts.push(b' ');
-                    *element = Element::Text { start, len: 1, width: 1 };
+                    *element = Element::Text {
+                        start,
+                        len: 1,
+                        width: 1,
+                    };
                 }
                 Element::Line(Line::Soft) => *element = Element::Nothing,
                 // Only the contents for a group on one line stay.
@@ -602,7 +639,10 @@ impl Elements {
         };
         for element in &mut self.list {
             match element {
-                Element::StartGroup { end, .. } | Element::StartItem { end } | Element::Else { end } | Element::StartLineSuffix { end } => {
+                Element::StartGroup { end, .. }
+                | Element::StartItem { end }
+                | Element::Else { end }
+                | Element::StartLineSuffix { end } => {
                     shift(end);
                 }
                 Element::StartIfBreak { otherwise, end, .. } => {
@@ -625,7 +665,10 @@ impl Elements {
             return;
         };
         self.end_fill();
-        self.insert(start as usize, &[Element::StartFill, Element::StartItem { end: 0 }]);
+        self.insert(
+            start as usize,
+            &[Element::StartFill, Element::StartItem { end: 0 }],
+        );
         self.open.extend([start, start + 1]);
     }
 
@@ -676,7 +719,9 @@ impl Elements {
             Doc::Array(parts) => parts.iter().for_each(|part| self.document(part)),
             Doc::Indent(contents) => indented(self, IndentCommand::Indent, contents),
             Doc::Align(Alignment::Spaces(0), contents) => self.document(contents),
-            Doc::Align(alignment, contents) => indented(self, IndentCommand::Align(*alignment), contents),
+            Doc::Align(alignment, contents) => {
+                indented(self, IndentCommand::Align(*alignment), contents)
+            }
             Doc::Dedent(contents) => indented(self, IndentCommand::Dedent, contents),
             Doc::DedentToRoot(contents) => indented(self, IndentCommand::DedentToRoot, contents),
             Doc::MarkAsRoot(contents) => indented(self, IndentCommand::MarkAsRoot, contents),
@@ -728,7 +773,10 @@ impl Elements {
         for index in start..end {
             let mut element = self.list[index];
             match &mut element {
-                Element::StartGroup { end, .. } | Element::StartItem { end } | Element::Else { end } | Element::StartLineSuffix { end } => {
+                Element::StartGroup { end, .. }
+                | Element::StartItem { end }
+                | Element::Else { end }
+                | Element::StartLineSuffix { end } => {
                     *end += shift;
                 }
                 Element::StartIfBreak { otherwise, end, .. } => {
@@ -759,7 +807,9 @@ impl Elements {
                 Box::new(contents)
             };
             parts.push(match element {
-                Element::Text { start, len, .. } => Doc::from(self.texts[start as usize..(start + len) as usize].to_vec()),
+                Element::Text { start, len, .. } => {
+                    Doc::from(self.texts[start as usize..(start + len) as usize].to_vec())
+                }
                 Element::HardLine => hardline(),
                 Element::BreakParent => Doc::BreakParent,
                 Element::Line(line) => Doc::Line(line),
@@ -796,7 +846,11 @@ impl Elements {
                     *at += 1;
                     Doc::Fill(items)
                 }
-                Element::StartIfBreak { otherwise, end, group_id } => {
+                Element::StartIfBreak {
+                    otherwise,
+                    end,
+                    group_id,
+                } => {
                     let break_contents = contents(at, otherwise);
                     Doc::IfBreak {
                         break_contents,
@@ -805,7 +859,12 @@ impl Elements {
                     }
                 }
                 Element::StartLineSuffix { end } => Doc::LineSuffix(contents(at, end)),
-                Element::Nothing | Element::End | Element::EndFill | Element::StartItem { .. } | Element::EndItem | Element::Else { .. } => {
+                Element::Nothing
+                | Element::End
+                | Element::EndFill
+                | Element::StartItem { .. }
+                | Element::EndItem
+                | Element::Else { .. } => {
                     continue;
                 }
             });
@@ -896,7 +955,11 @@ fn string_width(text: &[u8]) -> usize {
 }
 
 fn group_mode(group_modes: &[(u32, Mode)], id: u32) -> Option<Mode> {
-    group_modes.iter().rev().find(|(group, _)| *group == id).map(|(_, mode)| *mode)
+    group_modes
+        .iter()
+        .rev()
+        .find(|(group, _)| *group == id)
+        .map(|(_, mode)| *mode)
 }
 
 impl<'o> Printer<'o> {
@@ -995,7 +1058,8 @@ impl<'o> Printer<'o> {
                     value.extend_from_slice(text.as_bytes());
                     length += text.len();
                 }
-                IndentCommand::Dedent | IndentCommand::DedentToRoot | IndentCommand::MarkAsRoot => {}
+                IndentCommand::Dedent | IndentCommand::DedentToRoot | IndentCommand::MarkAsRoot => {
+                }
             }
         }
         let id = self.indents.len() as u32;
@@ -1019,7 +1083,9 @@ impl<'o> Printer<'o> {
 
     #[inline]
     pub(crate) fn write_text(&mut self, text: &[u8]) {
-        if matches!(self.literal_new_line, [b'\n']) || !bun_core::strings::contains_char(text, b'\n') {
+        if matches!(self.literal_new_line, [b'\n'])
+            || !bun_core::strings::contains_char(text, b'\n')
+        {
             return self.out.extend_from_slice(text);
         }
         for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {
@@ -1046,7 +1112,10 @@ impl<'o> Printer<'o> {
         let (mut at, mut end, mut mode) = (start, end, Mode::Flat);
         // What is left of what follows: the frames that end there, and the tasks.
         let mut rest = rest;
-        let (mut frames_left, mut tasks_left) = (self.frames.len(), if rest.is_some() { self.tasks.len() } else { 0 });
+        let (mut frames_left, mut tasks_left) = (
+            self.frames.len(),
+            if rest.is_some() { self.tasks.len() } else { 0 },
+        );
         // How the next item of the `fill` that is being printed is printed, if that has been decided.
         let mut separator_mode = None;
         let outer_modes = &mut self.outer_modes;
@@ -1107,14 +1176,20 @@ impl<'o> Printer<'o> {
                         };
                         mode = frame.mode;
                         if matches!(element, Element::EndItem)
-                            && let Some(fill) = frames_left.checked_sub(1).and_then(|at| self.frames.get(at))
+                            && let Some(fill) = frames_left
+                                .checked_sub(1)
+                                .and_then(|at| self.frames.get(at))
                             && !fill.is_at_separator
                         {
                             separator_mode = Some(fill.separator_mode);
                         }
                     }
                 },
-                Element::StartIfBreak { otherwise, group_id, .. } => {
+                Element::StartIfBreak {
+                    otherwise,
+                    group_id,
+                    ..
+                } => {
                     let group_mode = match group_id {
                         0 => mode,
                         id => group_mode(&self.group_modes, id).unwrap_or(Mode::Flat),
@@ -1159,7 +1234,12 @@ impl<'o> Printer<'o> {
                 let Some(task) = self.tasks.pop() else {
                     break;
                 };
-                (at, end, mode, indent) = (task.start as usize, task.end as usize, task.mode, task.indent);
+                (at, end, mode, indent) = (
+                    task.start as usize,
+                    task.end as usize,
+                    task.mode,
+                    task.indent,
+                );
                 continue;
             }
             let frame = Frame {
@@ -1187,7 +1267,11 @@ impl<'o> Printer<'o> {
                     ..
                 } => {
                     let group_mode = if mode == Mode::Flat && !should_remeasure {
-                        if should_break { Mode::Break } else { Mode::Flat }
+                        if should_break {
+                            Mode::Break
+                        } else {
+                            Mode::Flat
+                        }
                     } else if is_plain {
                         should_remeasure = false;
                         Mode::Flat
@@ -1195,7 +1279,14 @@ impl<'o> Printer<'o> {
                         should_remeasure = false;
                         let remaining_width = self.width as isize - position as isize;
                         let rest = (group_end as usize + 1, end, mode);
-                        match !should_break && self.fits(elements, (at, group_end as usize), Some(rest), remaining_width, false) {
+                        match !should_break
+                            && self.fits(
+                                elements,
+                                (at, group_end as usize),
+                                Some(rest),
+                                remaining_width,
+                                false,
+                            ) {
                             true => Mode::Flat,
                             false => Mode::Break,
                         }
@@ -1217,7 +1308,8 @@ impl<'o> Printer<'o> {
                     let item_mode = match is_separator {
                         true => self.frames.last().map_or(mode, |fill| fill.separator_mode),
                         false => {
-                            let (contents_mode, separator_mode) = self.measure_fill(elements, at, item_end as usize, position);
+                            let (contents_mode, separator_mode) =
+                                self.measure_fill(elements, at, item_end as usize, position);
                             if let Some(fill) = self.frames.last_mut() {
                                 fill.separator_mode = separator_mode;
                             }
@@ -1239,7 +1331,11 @@ impl<'o> Printer<'o> {
                     otherwise,
                     end: if_break_end,
                     group_id,
-                } => match if group_id == 0 { Some(mode) } else { group_mode(&self.group_modes, group_id) } {
+                } => match if group_id == 0 {
+                    Some(mode)
+                } else {
+                    group_mode(&self.group_modes, group_id)
+                } {
                     Some(Mode::Break) => {}
                     Some(Mode::Flat) => at = otherwise as usize + 1,
                     None => at = if_break_end as usize,
@@ -1310,18 +1406,35 @@ impl<'o> Printer<'o> {
 
     /// What Prettier does with a `fill`: how the contents that are in `elements[start..end]` are printed, and the
     /// separator behind them.
-    fn measure_fill(&mut self, elements: &Elements, start: usize, end: usize, position: usize) -> (Mode, Mode) {
+    fn measure_fill(
+        &mut self,
+        elements: &Elements,
+        start: usize,
+        end: usize,
+        position: usize,
+    ) -> (Mode, Mode) {
         let remaining_width = self.width as isize - position as isize;
         let mode_of = |fits: bool| if fits { Mode::Flat } else { Mode::Break };
         let contents_fit = self.fits(elements, (start, end), None, remaining_width, true);
         let Some(&Element::StartItem { end: separator_end }) = elements.list.get(end + 1) else {
             return (mode_of(contents_fit), Mode::Break);
         };
-        let Some(&Element::StartItem { end: second_end }) = elements.list.get(separator_end as usize + 1) else {
+        let Some(&Element::StartItem { end: second_end }) =
+            elements.list.get(separator_end as usize + 1)
+        else {
             return (mode_of(contents_fit), mode_of(contents_fit));
         };
-        let first_and_second_fit = self.fits(elements, (start - 1, second_end as usize + 1), None, remaining_width, true);
-        (mode_of(first_and_second_fit || contents_fit), mode_of(first_and_second_fit))
+        let first_and_second_fit = self.fits(
+            elements,
+            (start - 1, second_end as usize + 1),
+            None,
+            remaining_width,
+            true,
+        );
+        (
+            mode_of(first_and_second_fit || contents_fit),
+            mode_of(first_and_second_fit),
+        )
     }
 }
 

@@ -5,7 +5,10 @@
 //! line. So this keeps track of whether anything has been written since the last line break, and asks for an empty line
 //! where Prettier gets one.
 
-use crate::ir::element::{Condition, CursorMark, DedentMode, Group, GroupMode, Interned, LineMode, PrintMode, Text, TextWidth};
+use crate::ir::element::{
+    Condition, CursorMark, DedentMode, Group, GroupMode, Interned, LineMode, PrintMode, Text,
+    TextWidth,
+};
 use crate::prelude::*;
 use bun_core::strings;
 
@@ -31,11 +34,19 @@ pub(crate) struct Writer<'w, 'f> {
 impl<'w, 'f> Writer<'w, 'f> {
     /// `indent_level`: how many `indent`s are around what is written, if that is known. `is_at_start`: nothing has been
     /// written yet.
-    pub(crate) fn new(f: &'w mut Formatter<'f>, indent_level: Option<u32>, is_at_start: bool) -> Self {
+    pub(crate) fn new(
+        f: &'w mut Formatter<'f>,
+        indent_level: Option<u32>,
+        is_at_start: bool,
+    ) -> Self {
         Writer {
             f,
             pending_line: None,
-            empty_line: if is_at_start { EmptyLine::Yes } else { EmptyLine::No },
+            empty_line: if is_at_start {
+                EmptyLine::Yes
+            } else {
+                EmptyLine::No
+            },
             indent_level,
         }
     }
@@ -59,7 +70,9 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.pending_line = Some(match self.pending_line {
             None => (mode, 1),
             Some((LineMode::Hard, count)) => (LineMode::Hard, count + 1),
-            Some((LineMode::SoftOrSpace, count)) if mode == LineMode::Soft => (LineMode::SoftOrSpace, count + 1),
+            Some((LineMode::SoftOrSpace, count)) if mode == LineMode::Soft => {
+                (LineMode::SoftOrSpace, count + 1)
+            }
             Some((_, count)) => (mode, count + 1),
         });
     }
@@ -74,32 +87,45 @@ impl<'w, 'f> Writer<'w, 'f> {
         let written_by_mode = if is_line_empty { 0 } else { 1 };
         if mode == LineMode::Hard && is_line_empty {
             // The first is for the indentation that is due not to be written.
-            self.f.write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
+            self.f
+                .write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
-            self.f.write_text(&b"\n".repeat(count as usize), Some(TextWidth::multiline(0)));
-            self.f.write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
+            self.f
+                .write_text(&b"\n".repeat(count as usize), Some(TextWidth::multiline(0)));
+            self.f
+                .write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
         } else if mode == LineMode::Hard && count > written_by_mode + 1 {
             let extra = (count - written_by_mode - 1) as usize;
-            self.f.write_text(&b"\n".repeat(extra + written_by_mode as usize), Some(TextWidth::multiline(0)));
+            self.f.write_text(
+                &b"\n".repeat(extra + written_by_mode as usize),
+                Some(TextWidth::multiline(0)),
+            );
             self.f.write_element(FormatElement::Line(LineMode::Empty));
         } else {
             let with_empty_line = count > written_by_mode;
-            self.f.write_element(FormatElement::Line(match (mode, with_empty_line) {
-                (mode, false) => mode,
-                (LineMode::Soft, true) => LineMode::SoftEmpty,
-                (LineMode::SoftOrSpace, true) => LineMode::SoftOrSpaceEmpty,
-                (_, true) => LineMode::Empty,
-            }));
+            self.f
+                .write_element(FormatElement::Line(match (mode, with_empty_line) {
+                    (mode, false) => mode,
+                    (LineMode::Soft, true) => LineMode::SoftEmpty,
+                    (LineMode::SoftOrSpace, true) => LineMode::SoftOrSpaceEmpty,
+                    (_, true) => LineMode::Empty,
+                }));
         }
-        self.empty_line = if mode == LineMode::Hard { EmptyLine::Yes } else { EmptyLine::IfGroupBreaks };
+        self.empty_line = if mode == LineMode::Hard {
+            EmptyLine::Yes
+        } else {
+            EmptyLine::IfGroupBreaks
+        };
     }
 
     /// Something starts or ends that decides by itself whether the line breaks in it are line breaks.
     fn tag(&mut self, tag: Tag) {
         self.flush();
         // A line break in what starts here is one only if those of the group around it are.
-        if self.empty_line == EmptyLine::IfGroupBreaks && !matches!(tag, Tag::StartGroup(_) | Tag::StartFill | Tag::StartEntry) {
+        if self.empty_line == EmptyLine::IfGroupBreaks
+            && !matches!(tag, Tag::StartGroup(_) | Tag::StartFill | Tag::StartEntry)
+        {
             self.empty_line = EmptyLine::No;
         }
         self.f.write_element(FormatElement::Tag(tag));
@@ -131,7 +157,11 @@ impl<'w, 'f> Writer<'w, 'f> {
     // ───────────────────────────── strings ─────────────────────────────
 
     fn note_text(&mut self, text: &[u8]) {
-        self.empty_line = if text.ends_with(b"\n") { EmptyLine::Yes } else { EmptyLine::No };
+        self.empty_line = if text.ends_with(b"\n") {
+            EmptyLine::Yes
+        } else {
+            EmptyLine::No
+        };
     }
 
     /// A keyword or a punctuator.
@@ -165,13 +195,23 @@ impl<'w, 'f> Writer<'w, 'f> {
     pub(crate) fn built_text(&mut self, build: impl FnOnce(&mut Vec<u8>)) {
         let start = self.f.storage.text.len();
         build(&mut self.f.storage.text);
-        let Some(text) = self.f.storage.text.get(start..).filter(|text| !text.is_empty()) else {
+        let Some(text) = self
+            .f
+            .storage
+            .text
+            .get(start..)
+            .filter(|text| !text.is_empty())
+        else {
             return;
         };
         let (len, ends_with_line_break) = (text.len() as u32, text.ends_with(b"\n"));
         let width = TextWidth::from_text_as(text, self.f.options().flavor);
         self.flush();
-        self.empty_line = if ends_with_line_break { EmptyLine::Yes } else { EmptyLine::No };
+        self.empty_line = if ends_with_line_break {
+            EmptyLine::Yes
+        } else {
+            EmptyLine::No
+        };
         self.f.write_element(FormatElement::OwnedText(Text {
             start: start as u32,
             len,
@@ -202,12 +242,14 @@ impl<'w, 'f> Writer<'w, 'f> {
         loop {
             // Up to the first line break that is not part of a text.
             let (mut end, mut has_line_breaks) = (0, false);
-            while let Some(at) = strings::index_of_char_usize(&rest[end..], b'\n').map(|at| end + at)
+            while let Some(at) =
+                strings::index_of_char_usize(&rest[end..], b'\n').map(|at| end + at)
                 && rest[..at].ends_with(b"\r")
             {
                 (end, has_line_breaks) = (at + 1, true);
             }
-            let end = strings::index_of_char_usize(&rest[end..], b'\n').map_or(rest.len(), |at| end + at);
+            let end =
+                strings::index_of_char_usize(&rest[end..], b'\n').map_or(rest.len(), |at| end + at);
             let line = &rest[..end];
             match has_line_breaks {
                 false => self.text(line),
@@ -235,7 +277,11 @@ impl<'w, 'f> Writer<'w, 'f> {
     }
 
     pub(crate) fn start_group_with(&mut self, should_break: bool, id: Option<GroupId>) {
-        let mode = if should_break { GroupMode::Expand } else { GroupMode::Flat };
+        let mode = if should_break {
+            GroupMode::Expand
+        } else {
+            GroupMode::Flat
+        };
         self.tag(Tag::StartGroup(Group::new().with_id(id).with_mode(mode)));
     }
 
@@ -290,8 +336,14 @@ impl<'w, 'f> Writer<'w, 'f> {
     /// Starts what is only there if the group with the id is broken, or only if it is not. `None`: the group that it
     /// is in.
     pub(crate) fn start_if(&mut self, is_broken: bool, group_id: Option<GroupId>) {
-        let mode = if is_broken { PrintMode::Expanded } else { PrintMode::Flat };
-        self.tag(Tag::StartConditionalContent(Condition::new(mode).with_group_id(group_id)));
+        let mode = if is_broken {
+            PrintMode::Expanded
+        } else {
+            PrintMode::Flat
+        };
+        self.tag(Tag::StartConditionalContent(
+            Condition::new(mode).with_group_id(group_id),
+        ));
     }
 
     pub(crate) fn end_if(&mut self) {
@@ -363,7 +415,11 @@ impl<'w, 'f> Writer<'w, 'f> {
 
     /// Ends it. Returns what has been written, which is not part of the document yet, if `is_kept` and it is
     /// something.
-    pub(crate) fn end_attempt_as_content(&mut self, attempt: Attempt, is_kept: bool) -> Option<Interned> {
+    pub(crate) fn end_attempt_as_content(
+        &mut self,
+        attempt: Attempt,
+        is_kept: bool,
+    ) -> Option<Interned> {
         match is_kept {
             true => self.flush(),
             false => self.pending_line = None,

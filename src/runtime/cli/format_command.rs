@@ -30,12 +30,18 @@ impl FormatCommand {
             && let Some(run) = test_runner(first.as_bytes())
         {
             let rest: Vec<&[u8]> = rest.iter().map(|arg| arg.as_bytes()).collect();
-            let ran = bun_format_conformance::run_from_command_line(&rest, run, &|path, text, options| {
-                bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(|is_syntax_error| match is_syntax_error {
-                    true => bun_format_conformance::Failure::SyntaxError,
-                    false => bun_format_conformance::Failure::Other,
-                })
-            });
+            let ran = bun_format_conformance::run_from_command_line(
+                &rest,
+                run,
+                &|path, text, options| {
+                    bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(
+                        |is_syntax_error| match is_syntax_error {
+                            true => bun_format_conformance::Failure::SyntaxError,
+                            false => bun_format_conformance::Failure::Other,
+                        },
+                    )
+                },
+            );
             Global::exit(u32::from(!ran));
         }
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();

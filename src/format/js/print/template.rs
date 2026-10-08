@@ -5,16 +5,20 @@
 
 use super::type_parameters::type_arguments;
 use crate::css::embed;
+use crate::cursor::around_node_at;
 use crate::ir::width::string_width;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::string::push_with_normalized_newlines;
-use crate::cursor::around_node_at;
 use crate::prelude::*;
 use crate::{format_args, write};
 
 /// `` `a${b}c` ``
-pub(crate) fn write_template_literal<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_template_literal<'a>(
+    e: Expr<'a>,
+    template: Template<'a>,
+    f: &mut Formatter<'a>,
+) {
     if !embed::write_template(e, template, f)
         && !crate::graphql::embed::write_template(e, template, f)
         && !crate::html::in_js::write_template(e, template, f)
@@ -26,7 +30,11 @@ pub(crate) fn write_template_literal<'a>(e: Expr<'a>, template: Template<'a>, f:
 
 /// `${e}` at `i` in a template that is written as the language in it. Prettier's
 /// `printEmbeddedTemplateExpressions`.
-pub(crate) fn write_embedded_template_expression<'a>(template: Template<'a>, i: usize, f: &mut Formatter<'a>) {
+pub(crate) fn write_embedded_template_expression<'a>(
+    template: Template<'a>,
+    i: usize,
+    f: &mut Formatter<'a>,
+) {
     let template = TemplateLike::TemplateLiteral(template);
     if let Some(expression) = template.expression(i) {
         let expression = FormatTemplateExpression {
@@ -40,21 +48,43 @@ pub(crate) fn write_embedded_template_expression<'a>(template: Template<'a>, i: 
 }
 
 /// `` tag`a${b}c` ``
-pub(crate) fn write_tagged_template_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
-    write!(f, [call.callee(), type_arguments(call.type_args(), Node::Expr(e))]);
+pub(crate) fn write_tagged_template_expression<'a>(
+    e: Expr<'a>,
+    call: Call<'a>,
+    f: &mut Formatter<'a>,
+) {
+    write!(
+        f,
+        [
+            call.callee(),
+            type_arguments(call.type_args(), Node::Expr(e))
+        ]
+    );
     let Some(quasi) = call.template() else {
         return;
     };
 
     let comments = f.comments().comments_before(quasi.span().start);
     if let Some(first) = comments.first() {
-        let tag_end = call.type_args().angle_brackets_span().map_or_else(|| call.callee().span().end, |it| it.end);
-        match f.source_text().contains_newline_between(tag_end, first.span.start) {
+        let tag_end = call
+            .type_args()
+            .angle_brackets_span()
+            .map_or_else(|| call.callee().span().end, |it| it.end);
+        match f
+            .source_text()
+            .contains_newline_between(tag_end, first.span.start)
+        {
             true => write!(f, soft_line_break()),
             false => write!(f, space()),
         }
     }
-    write!(f, [line_suffix_boundary(), FormatLeadingComments::Comments(comments)]);
+    write!(
+        f,
+        [
+            line_suffix_boundary(),
+            FormatLeadingComments::Comments(comments)
+        ]
+    );
 
     let ExprKind::Template(template) = quasi.kind() else {
         return;
@@ -91,13 +121,16 @@ impl TemplateElementIndention {
     }
 
     fn align(self, indent_width: IndentWidth) -> u8 {
-        (self.0 % u32::from(indent_width.value()).max(1)).try_into().unwrap_or(u8::MAX)
+        (self.0 % u32::from(indent_width.value()).max(1))
+            .try_into()
+            .unwrap_or(u8::MAX)
     }
 
     /// That of the last line of `text`. If it is all on one line, `previous_indention`.
     fn after_last_new_line(text: &[u8], tab_width: u32, previous_indention: Self) -> Self {
         use bun_core::strings::last_index_of_char;
-        let Some(new_line) = last_index_of_char(text, b'\n').max(last_index_of_char(text, b'\r')) else {
+        let Some(new_line) = last_index_of_char(text, b'\n').max(last_index_of_char(text, b'\r'))
+        else {
             return previous_indention;
         };
         let mut size: u32 = 0;
@@ -153,7 +186,9 @@ impl<'a> TemplateLike<'a> {
     fn interpolation_span(self, i: usize) -> Span {
         match self {
             Self::TemplateLiteral(t) => Span::new(t.quasi_span(i).end, t.quasi_span(i + 1).start),
-            Self::TSTemplateLiteralType(t) => Span::new(t.quasi_span(i).end, t.quasi_span(i + 1).start),
+            Self::TSTemplateLiteralType(t) => {
+                Span::new(t.quasi_span(i).end, t.quasi_span(i + 1).start)
+            }
         }
     }
 
@@ -167,7 +202,8 @@ impl<'a> TemplateLike<'a> {
         let mut indention = TemplateElementIndention::default();
         (0..self.quasi_count()).map_while(move |i| {
             let quasi_text = self.raw(i);
-            indention = TemplateElementIndention::after_last_new_line(quasi_text, tab_width, indention);
+            indention =
+                TemplateElementIndention::after_last_new_line(quasi_text, tab_width, indention);
             let indention = match is_in_jest_each {
                 true => TemplateElementIndention(indention.0.max(tab_width)),
                 false => indention,
@@ -176,7 +212,8 @@ impl<'a> TemplateLike<'a> {
                 expression: self.expression(i)?,
                 interpolation: self.interpolation_span(i),
                 indention: Some(indention),
-                after_new_line: indention.0 == 0 && matches!(quasi_text.last(), Some(b'\n' | b'\r')),
+                after_new_line: indention.0 == 0
+                    && matches!(quasi_text.last(), Some(b'\n' | b'\r')),
             })
         })
     }
@@ -188,10 +225,14 @@ impl<'a> Format<'a> for TemplateLike<'a> {
         let mut expressions = self.expressions(false, f);
         for i in 0..self.quasi_count() {
             let raw = self.raw(i);
-            around_node_at(|| self.content_span(i), f, |f| match bun_core::strings::contains_char(raw, b'\r') {
-                true => f.write_built_text(|out| push_with_normalized_newlines(out, raw)),
-                false => write!(f, text(raw)),
-            });
+            around_node_at(
+                || self.content_span(i),
+                f,
+                |f| match bun_core::strings::contains_char(raw, b'\r') {
+                    true => f.write_built_text(|out| push_with_normalized_newlines(out, raw)),
+                    false => write!(f, text(raw)),
+                },
+            );
             write!(f, expressions.next());
         }
         write!(f, "`");
@@ -232,14 +273,16 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             TemplateExpression::Expression(e) => {
                 has_comment_in_expression = !f.is_quiet()
                     && (f.comments().has_comment_before(e.span().start)
-                        || f.comments().has_comment_in_range(e.span().end, self.interpolation.end));
+                        || f.comments()
+                            .has_comment_in_range(e.span().end, self.interpolation.end));
                 f.intern(&format_with(|f| {
                     match e.kind() {
                         ExprKind::Jsx(_) => e.fmt(f),
                         _ => FormatNodeWithoutTrailingComments(&e).fmt(f),
                     }
                     if !f.is_quiet() {
-                        let trailing_comments = f.comments().comments_before(self.interpolation.end);
+                        let trailing_comments =
+                            f.comments().comments_before(self.interpolation.end);
                         FormatTrailingComments::Comments(trailing_comments).fmt(f);
                     }
                 }))
@@ -291,10 +334,20 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
         let format_indented = format_with(|f| match self.indention {
             None => write!(f, format_inner),
             Some(_) if self.after_new_line => write!(f, dedent_to_root(&format_inner)),
-            Some(indention) => write_with_indention(&format_inner, indention, f.options().indent_width, f),
+            Some(indention) => {
+                write_with_indention(&format_inner, indention, f.options().indent_width, f)
+            }
         });
 
-        write!(f, group(&format_args!("${", format_indented, line_suffix_boundary(), "}")));
+        write!(
+            f,
+            group(&format_args!(
+                "${",
+                format_indented,
+                line_suffix_boundary(),
+                "}"
+            ))
+        );
     }
 }
 
@@ -405,15 +458,22 @@ impl EachTemplateTable {
         let header = template.raw(0);
         let header = header.strip_suffix(b"|").unwrap_or(header);
         for column in bun_core::strings::split(header, b"|") {
-            table.entry(EachTemplateElement::Column(EachTemplateColumn::new(column.trim_ascii().to_vec(), false)));
+            table.entry(EachTemplateElement::Column(EachTemplateColumn::new(
+                column.trim_ascii().to_vec(),
+                false,
+            )));
         }
         table.entry(EachTemplateElement::LineBreak);
 
         let expressions = TemplateLike::TemplateLiteral(template).expressions(true, f);
         for (index, format_expression) in expressions.enumerate() {
-            let text = f.print_to_text(&format_with(|f| f.write_without_soft_lines(&format_expression)));
+            let text = f.print_to_text(&format_with(|f| {
+                f.write_without_soft_lines(&format_expression)
+            }));
             let will_break = bun_core::strings::contains_char(&text, b'\n');
-            table.entry(EachTemplateElement::Column(EachTemplateColumn::new(text, will_break)));
+            table.entry(EachTemplateElement::Column(EachTemplateColumn::new(
+                text, will_break,
+            )));
 
             if index + 1 < template.quasi_count()
                 && bun_core::strings::index_of_any(template.raw(index + 1), b"\r\n").is_some()
@@ -435,18 +495,27 @@ impl<'a> Format<'a> for EachTemplateTable {
 
             while let Some(element) = iter.next() {
                 let is_last = iter.peek().is_none();
-                let is_last_in_row = is_last || matches!(iter.peek(), Some(EachTemplateElement::LineBreak));
+                let is_last_in_row =
+                    is_last || matches!(iter.peek(), Some(EachTemplateElement::LineBreak));
                 match element {
                     EachTemplateElement::Column(column) => {
-                        let is_aligned = !is_last_in_row && self.rows.get(current_row) == Some(&false);
-                        let column_width = self.columns_width.get(current_column).copied().unwrap_or_default();
+                        let is_aligned =
+                            !is_last_in_row && self.rows.get(current_row) == Some(&false);
+                        let column_width = self
+                            .columns_width
+                            .get(current_column)
+                            .copied()
+                            .unwrap_or_default();
                         f.write_built_text(|out| {
                             if current_column != 0 && (!is_last_in_row || !column.text.is_empty()) {
                                 out.push(b' ');
                             }
                             out.extend_from_slice(&column.text);
                             if is_aligned {
-                                out.extend(std::iter::repeat_n(b' ', column_width.saturating_sub(column.width)));
+                                out.extend(std::iter::repeat_n(
+                                    b' ',
+                                    column_width.saturating_sub(column.width),
+                                ));
                             }
                             if !is_last_in_row {
                                 out.push(b' ');
@@ -467,6 +536,15 @@ impl<'a> Format<'a> for EachTemplateTable {
                 }
             }
         });
-        write!(f, [line_suffix_boundary(), "`", indent(&table_content), hard_line_break(), "`"]);
+        write!(
+            f,
+            [
+                line_suffix_boundary(),
+                "`",
+                indent(&table_content),
+                hard_line_break(),
+                "`"
+            ]
+        );
     }
 }

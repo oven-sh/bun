@@ -92,7 +92,8 @@ fn write_arrow<'a>(
     is_nested: bool,
     f: &mut Formatter<'a>,
 ) {
-    let expand_last_arg = options.call_argument_layout == Some(GroupedCallArgumentLayout::GroupedLastArgument);
+    let expand_last_arg =
+        options.call_argument_layout == Some(GroupedCallArgumentLayout::GroupedLastArgument);
 
     // Arrow functions that are each the body of the one before break after each `=>`:
     //
@@ -120,9 +121,12 @@ fn write_arrow<'a>(
     let add_parens_if_not_break = !is_body_type_cast && should_add_parens_if_not_break(tail);
     let is_body_on_same_line = (!has_own_line_comment
         && !is_body_type_cast
-        && (get_expression(tail).is_none_or(|body| is_sequence(body) || may_break_after_short_prefix(body, f))
+        && (get_expression(tail)
+            .is_none_or(|body| is_sequence(body) || may_break_after_short_prefix(body, f))
             || (!should_break_chain && add_parens_if_not_break)))
-        || (add_parens_if_not_break && expand_last_arg && counts_space_before_commented_conditional(f));
+        || (add_parens_if_not_break
+            && expand_last_arg
+            && counts_space_before_commented_conditional(f));
 
     let format_body = FormatArrowBody {
         arrow: tail,
@@ -136,7 +140,8 @@ fn write_arrow<'a>(
         }
         let trailing_comma = expand_last_arg.then_some(FormatTrailingCommas::All);
         // The `)` of the call, or the `}` in JSX, is on a line of its own if the body is.
-        let should_add_soft_line = (expand_last_arg && !has_dangling_comments(arrow, options.cache_mode, f))
+        let should_add_soft_line = (expand_last_arg
+            && !has_dangling_comments(arrow, options.cache_mode, f))
             || matches!(
                 e.ast_parent(),
                 container @ AstNodes::JSXExpressionContainer(_)
@@ -144,14 +149,34 @@ fn write_arrow<'a>(
             );
         let trailing_line = should_add_soft_line.then_some(soft_line_break());
         if is_body_on_same_line {
-            write!(f, [space(), FormatConditionalBody(&format_body, trailing_comma, trailing_line)]);
+            write!(
+                f,
+                [
+                    space(),
+                    FormatConditionalBody(&format_body, trailing_comma, trailing_line)
+                ]
+            );
         } else {
-            write!(f, [soft_line_indent_or_space(&format_body), trailing_comma, trailing_line]);
+            write!(
+                f,
+                [
+                    soft_line_indent_or_space(&format_body),
+                    trailing_comma,
+                    trailing_line
+                ]
+            );
         }
     });
 
     if !should_print_as_chain {
-        write!(f, [FormatSignature::new(arrow, options, is_nested), space(), "=>"]);
+        write!(
+            f,
+            [
+                FormatSignature::new(arrow, options, is_nested),
+                space(),
+                "=>"
+            ]
+        );
         return match is_body_on_same_line && !add_parens_if_not_break {
             true => write!(f, format_body),
             false => write!(f, group(&format_body)),
@@ -168,7 +193,8 @@ fn write_arrow<'a>(
     let should_print_soft_line = should_indent_signatures
         && options.assignment_layout != Some(AssignmentLikeLayout::BreakAfterOperator)
         && !has_leading_comment(e, is_callee, f);
-    let should_break_signatures = options.assignment_layout == Some(AssignmentLikeLayout::ChainTailArrowFunction)
+    let should_break_signatures = options.assignment_layout
+        == Some(AssignmentLikeLayout::ChainTailArrowFunction)
         || (is_callee && !is_body_on_same_line);
     // As an argument or an operand, the first starts where the chain starts.
     let is_first_indented = !matches!(
@@ -184,7 +210,15 @@ fn write_arrow<'a>(
     let format_rest = format_with(|f| {
         let mut current = arrow;
         while let Some(next) = next_in_chain(current).filter(|_| current != tail) {
-            write!(f, [space(), "=>", soft_line_break_or_space(), FormatCommentsBeforeArrow(next, options.cache_mode)]);
+            write!(
+                f,
+                [
+                    space(),
+                    "=>",
+                    soft_line_break_or_space(),
+                    FormatCommentsBeforeArrow(next, options.cache_mode)
+                ]
+            );
             write!(f, FormatSignature::new(next, options, false));
             current = next;
         }
@@ -199,13 +233,22 @@ fn write_arrow<'a>(
                     // once more. The empty text is what makes this line break count.
                     should_print_soft_line.then_some(""),
                     should_print_soft_line.then_some(soft_line_break()),
-                    group(&format_args!(format_first, format_rest)).should_expand(should_break_chain)
+                    group(&format_args!(format_first, format_rest))
+                        .should_expand(should_break_chain)
                 ))
             );
         } else if is_first_indented {
-            write!(f, group(&indent(&format_args!(format_first, format_rest))).should_expand(should_break_chain));
+            write!(
+                f,
+                group(&indent(&format_args!(format_first, format_rest)))
+                    .should_expand(should_break_chain)
+            );
         } else {
-            write!(f, group(&format_args!(format_first, indent(&format_rest))).should_expand(should_break_chain));
+            write!(
+                f,
+                group(&format_args!(format_first, indent(&format_rest)))
+                    .should_expand(should_break_chain)
+            );
         }
     });
 
@@ -213,7 +256,9 @@ fn write_arrow<'a>(
     write!(
         f,
         group(&format_args!(
-            group(&format_signatures).with_group_id(Some(group_id)).should_expand(should_break_signatures),
+            group(&format_signatures)
+                .with_group_id(Some(group_id))
+                .should_expand(should_break_signatures),
             space(),
             "=>",
             indent_if_group_breaks(&format_body, group_id),
@@ -255,15 +300,25 @@ fn has_complex_signature(arrow: Func<'_>) -> bool {
 fn has_leading_comment<'a>(e: Expr<'a>, is_callee: bool, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
     let start = e.span().start;
-    comments.comments_before(start).last().or_else(|| comments.printed_comments().last()).is_some_and(|comment| {
-        comment.end() <= start
-            && (!is_callee || comment.start() >= e.outer_span().start)
-            && f.source_text().all_bytes_match(comment.end(), start, |b| b.is_ascii_whitespace() || b == b'(')
-    })
+    comments
+        .comments_before(start)
+        .last()
+        .or_else(|| comments.printed_comments().last())
+        .is_some_and(|comment| {
+            comment.end() <= start
+                && (!is_callee || comment.start() >= e.outer_span().start)
+                && f.source_text().all_bytes_match(comment.end(), start, |b| {
+                    b.is_ascii_whitespace() || b == b'('
+                })
+        })
 }
 
 /// Whether there are comments in the `()` of `arrow`, or before its `=>`.
-fn has_dangling_comments<'a>(arrow: Func<'a>, cache_mode: FunctionCacheMode, f: &Formatter<'a>) -> bool {
+fn has_dangling_comments<'a>(
+    arrow: Func<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &Formatter<'a>,
+) -> bool {
     if f.is_quiet() && matches!(cache_mode, FunctionCacheMode::NoCache) {
         return false;
     }
@@ -272,28 +327,40 @@ fn has_dangling_comments<'a>(arrow: Func<'a>, cache_mode: FunctionCacheMode, f: 
     };
     let params = FormatFormalParameters(arrow).span();
     let signature_end = arrow.return_type().map_or(params.end, |ty| ty.span().end);
-    comments_between(signature_end, arrow_token.start, f).next().is_some()
-        || (arrow.params_with_this().next().is_none() && comments_between(params.start, params.end, f).next().is_some())
+    comments_between(signature_end, arrow_token.start, f)
+        .next()
+        .is_some()
+        || (arrow.params_with_this().next().is_none()
+            && comments_between(params.start, params.end, f)
+                .next()
+                .is_some())
 }
 
 /// Prettier's `hasLeadingOwnLineComment` for the body of `arrow`: then the body goes on the next
 /// line, after the comment.
-fn has_leading_own_line_comment<'a>(arrow: Func<'a>, cache_mode: FunctionCacheMode, f: &Formatter<'a>) -> bool {
+fn has_leading_own_line_comment<'a>(
+    arrow: Func<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &Formatter<'a>,
+) -> bool {
     if f.is_quiet() && matches!(cache_mode, FunctionCacheMode::NoCache) {
         return false;
     }
     let Some(arrow_token) = arrow.arrow_span() else {
         return false;
     };
-    let has_preceding_node =
-        arrow.params_with_this().next().is_some() || !arrow.type_params().is_empty() || arrow.return_type().is_some();
+    let has_preceding_node = arrow.params_with_this().next().is_some()
+        || !arrow.type_params().is_empty()
+        || arrow.return_type().is_some();
     // If nothing else is between them and the body, the comments before the `(` lead it as well.
     let start = match has_preceding_node {
         true => arrow_token.end,
         false => arrow.span().start,
     };
-    let is_before_arrow_token =
-        |comment: &Comment| comment.start() >= FormatFormalParameters(arrow).span().start && comment.end() <= arrow_token.start;
+    let is_before_arrow_token = |comment: &Comment| {
+        comment.start() >= FormatFormalParameters(arrow).span().start
+            && comment.end() <= arrow_token.start
+    };
     let mut comments = comments_between(start, AstNodes::FunctionBody(arrow).span().start, f)
         .filter(|comment| has_preceding_node || !is_before_arrow_token(comment));
     match arrow.body() {
@@ -303,8 +370,9 @@ fn has_leading_own_line_comment<'a>(arrow: Func<'a>, cache_mode: FunctionCacheMo
         FnBody::Expr(_) => comments.any(|comment| comment.followed_by_newline()),
         // A comment at the end of the line of the `=>` is moved into the block, if there is
         // anything before the `=>` that it could belong to.
-        _ => comments
-            .any(|comment| comment.followed_by_newline() && (comment.preceded_by_newline() || !has_preceding_node)),
+        _ => comments.any(|comment| {
+            comment.followed_by_newline() && (comment.preceded_by_newline() || !has_preceding_node)
+        }),
     }
 }
 
@@ -330,9 +398,14 @@ fn may_break_after_short_prefix<'a>(body: Expr<'a>, f: &Formatter<'a>) -> bool {
 /// Whether `expression` is a template that has a line break in its text and starts on the line of
 /// the token before it.
 #[inline]
-pub(crate) fn is_multiline_template_starting_on_same_line(expression: Expr<'_>, source_text: SourceText<'_>) -> bool {
-    matches!(expression.tag(), ExprTag::Template | ExprTag::TaggedTemplate)
-        && is_multiline_and_starts_on_same_line(expression, source_text)
+pub(crate) fn is_multiline_template_starting_on_same_line(
+    expression: Expr<'_>,
+    source_text: SourceText<'_>,
+) -> bool {
+    matches!(
+        expression.tag(),
+        ExprTag::Template | ExprTag::TaggedTemplate
+    ) && is_multiline_and_starts_on_same_line(expression, source_text)
 }
 
 /// `expression`: a template.
@@ -356,7 +429,10 @@ fn should_add_parens_if_not_break(arrow: Func<'_>) -> bool {
         return false;
     };
     matches!(expression.kind(), ExprKind::Cond { .. })
-        && !matches!(ExpressionLeftSide::leftmost(expression).kind(), ExprKind::Object(_))
+        && !matches!(
+            ExpressionLeftSide::leftmost(expression).kind(),
+            ExprKind::Object(_)
+        )
 }
 
 /// The comments before `arrow`, which is the body of another arrow function.
@@ -368,7 +444,12 @@ impl<'a> Format<'a> for FormatCommentsBeforeArrow<'a> {
             return;
         }
         let span = self.0.as_ast_nodes().span();
-        FormatContentWithCacheMode::new(|| Span::empty(span.start), format_leading_comments(span), self.1).fmt(f);
+        FormatContentWithCacheMode::new(
+            || Span::empty(span.start),
+            format_leading_comments(span),
+            self.1,
+        )
+        .fmt(f);
     }
 }
 
@@ -383,7 +464,11 @@ struct FormatSignature<'a> {
 }
 
 impl<'a> FormatSignature<'a> {
-    fn new(arrow: Func<'a>, options: FormatJsArrowFunctionExpressionOptions, should_remove_soft_lines: bool) -> Self {
+    fn new(
+        arrow: Func<'a>,
+        options: FormatJsArrowFunctionExpressionOptions,
+        should_remove_soft_lines: bool,
+    ) -> Self {
         FormatSignature {
             arrow,
             cache_mode: options.cache_mode,
@@ -418,7 +503,9 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             (true, _) => write!(f, [type_params, params, return_type]),
             (false, Some(return_type)) => write!(f, return_type),
             // The arguments expect to find something in the cache.
-            (false, None) if matches!(cache_mode, FunctionCacheMode::Cache) => f.write_element(FormatElement::Nop),
+            (false, None) if matches!(cache_mode, FunctionCacheMode::Cache) => {
+                f.write_element(FormatElement::Nop)
+            }
             (false, None) => {}
         });
         let flattened = FormatContentWithCacheMode::new(|| params.span(), flattened, cache_mode);
@@ -426,7 +513,13 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             true => f.write_without_soft_lines(&flattened),
             false => flattened.fmt(f),
         });
-        write!(f, group(&format_args!(arrow.is_async().then_some("async "), fixed, flattened)));
+        write!(
+            f,
+            group(&format_args!(
+                arrow.is_async().then_some("async "),
+                fixed, flattened
+            ))
+        );
 
         if f.is_quiet() && matches!(cache_mode, FunctionCacheMode::NoCache) {
             return;
@@ -441,7 +534,10 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             _ => comments,
         };
         let content = FormatTrailingComments::Comments(comments);
-        write!(f, FormatContentWithCacheMode::new(|| arrow.as_ast_nodes().span(), content, cache_mode));
+        write!(
+            f,
+            FormatContentWithCacheMode::new(|| arrow.as_ast_nodes().span(), content, cache_mode)
+        );
     }
 }
 
@@ -501,7 +597,10 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
 fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
     let is_sequence = is_sequence(body) && !is_cast_target(body, f);
     if f.is_quiet() {
-        return write!(f, [is_sequence.then_some("("), body, is_sequence.then_some(")")]);
+        return write!(
+            f,
+            [is_sequence.then_some("("), body, is_sequence.then_some(")")]
+        );
     }
     if is_sequence {
         // The comments are outside of the parentheses.
@@ -517,8 +616,16 @@ fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, body);
     // `(a ? b : c /* comment */)`: in the parentheses that are written if it does not break.
     if matches!(body.kind(), ExprKind::Cond { .. }) {
-        let comments = f.comments().comments_in_range(body.span().end, body.outer_span().end);
-        let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
-        write!(f, FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()));
+        let comments = f
+            .comments()
+            .comments_in_range(body.span().end, body.outer_span().end);
+        let count = comments
+            .iter()
+            .take_while(|comment| !comment.preceded_by_newline())
+            .count();
+        write!(
+            f,
+            FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+        );
     }
 }

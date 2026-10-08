@@ -15,12 +15,16 @@ fn is_table_separator(line: &[u8]) -> bool {
     !inner.is_empty()
         && strings::split(inner, b"|").all(|cell| {
             let cell = trim(cell);
-            !cell.is_empty() && cell.iter().all(|byte| matches!(byte, b'-' | b':' | b' ')) && strings::contains_char(cell, b'-')
+            !cell.is_empty()
+                && cell.iter().all(|byte| matches!(byte, b'-' | b':' | b' '))
+                && strings::contains_char(cell, b'-')
         })
 }
 
 fn parse_table_cells(line: &[u8]) -> Vec<&[u8]> {
-    strings::split(without_outer_pipes(line), b"|").map(trim).collect()
+    strings::split(without_outer_pipes(line), b"|")
+        .map(trim)
+        .collect()
 }
 
 /// The lines of a table, with its columns aligned if it has a row of dashes.
@@ -50,7 +54,11 @@ pub(super) fn format_table_block(table_lines: &[&[u8]]) -> Vec<Vec<u8>> {
     let mut result = Vec::with_capacity(table_lines.len());
     for index in 0..table_lines.len() {
         let mut row = Vec::new();
-        let cells = if index == separator_index { None } else { rows.next() };
+        let cells = if index == separator_index {
+            None
+        } else {
+            rows.next()
+        };
         for (column, &width) in widths.iter().enumerate() {
             row.extend_from_slice(if column == 0 { b"| " } else { b" | " });
             match cells {
@@ -60,7 +68,10 @@ pub(super) fn format_table_block(table_lines: &[&[u8]]) -> Vec<Vec<u8>> {
                     if left {
                         row.push(b':');
                     }
-                    row.resize(row.len() + width - usize::from(left) - usize::from(right), b'-');
+                    row.resize(
+                        row.len() + width - usize::from(left) - usize::from(right),
+                        b'-',
+                    );
                     if right {
                         row.push(b':');
                     }
@@ -141,7 +152,10 @@ fn tokenize_words(text: &[u8]) -> Vec<&[u8]> {
 
 /// Whether `token` is like `{@link Foo}`, with or without something behind it.
 fn is_inline_tag(token: &[u8]) -> bool {
-    token.len() >= 3 && token.starts_with(b"{@") && strings::contains_char(&token[2..], b' ') && strings::contains_char(token, b'}')
+    token.len() >= 3
+        && token.starts_with(b"{@")
+        && strings::contains_char(&token[2..], b' ')
+        && strings::contains_char(token, b'}')
 }
 
 /// Breaks a paragraph into lines of at most `max_width` columns. The first has `first_line_offset` columns
@@ -171,12 +185,18 @@ pub(super) fn wrap_paragraph(
     for word in words {
         let word_width = str_width(word);
         let tag_count = usize::from(is_inline_tag(word));
-        let capacity = if is_first_line { first_line_max } else { effective_max };
+        let capacity = if is_first_line {
+            first_line_max
+        } else {
+            effective_max
+        };
         if current_line.is_empty() {
             current_line.extend_from_slice(word);
             current_width = word_width;
             current_line_tag_count = tag_count;
-        } else if current_width + 1 + word_width <= capacity + current_line_tag_count + tag_count || is_block_marker_token(word) {
+        } else if current_width + 1 + word_width <= capacity + current_line_tag_count + tag_count
+            || is_block_marker_token(word)
+        {
             current_line.push(b' ');
             current_line.extend_from_slice(word);
             current_width += 1 + word_width;
@@ -209,11 +229,19 @@ pub(super) fn wrap_paragraph(
 /// For text that is nothing but paragraphs with empty lines between them. `is_balanced`: a paragraph whose
 /// lines all fit keeps them.
 pub(super) fn wrap_plain_paragraphs(text: &[u8], max_width: usize, is_balanced: bool) -> Vec<u8> {
-    fn flush(paragraph: &mut Vec<&[u8]>, max_width: usize, is_balanced: bool, out: &mut LineBuffer) {
+    fn flush(
+        paragraph: &mut Vec<&[u8]>,
+        max_width: usize,
+        is_balanced: bool,
+        out: &mut LineBuffer,
+    ) {
         if paragraph.is_empty() {
             return;
         }
-        if is_balanced && paragraph.len() > 1 && paragraph.iter().all(|line| str_width(line) <= max_width) {
+        if is_balanced
+            && paragraph.len() > 1
+            && paragraph.iter().all(|line| str_width(line) <= max_width)
+        {
             for line in paragraph.iter() {
                 out.push(line);
             }

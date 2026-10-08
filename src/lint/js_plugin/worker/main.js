@@ -92,7 +92,9 @@ function stringify(value) {
     hasInfinity = true;
     return it > 0 ? "\0+Infinity" : "\0-Infinity";
   });
-  return hasInfinity ? json.replace(/"\\u0000([+-])Infinity"/g, (_, sign) => (sign === "+" ? "1e999" : "-1e999")) : json;
+  return hasInfinity
+    ? json.replace(/"\\u0000([+-])Infinity"/g, (_, sign) => (sign === "+" ? "1e999" : "-1e999"))
+    : json;
 }
 
 // What the configuration files that were needed to find a plugin export, by their paths.
@@ -434,7 +436,10 @@ function callsByNode(isExit, byType) {
   });
   for (const [id, list] of byNode) {
     list.sort((a, b) => compareSelectors(a.selector, b.selector));
-    byNode.set(id, list.flatMap(it => it.calls));
+    byNode.set(
+      id,
+      list.flatMap(it => it.calls),
+    );
   }
   return byNode;
 }
@@ -548,7 +553,9 @@ function lint() {
     // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
     // under one of them.
     const listeners =
-      typeof entry.rule.createOnce === "function" ? listenersOfOnce(entry) : entry.rule.create(fileContext.extend(entry.own));
+      typeof entry.rule.createOnce === "function"
+        ? listenersOfOnce(entry)
+        : entry.rule.create(fileContext.extend(entry.own));
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }

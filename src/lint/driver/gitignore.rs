@@ -22,7 +22,11 @@ enum Matcher {
     InsideAnywhere(Vec<u8>),
     /// Anything else. What it matches starts with `prefix`. `is_for_names`: it has no slash, and so
     /// is for a name in any directory.
-    Pattern { prefix: Vec<u8>, pattern: Vec<u8>, is_for_names: bool },
+    Pattern {
+        prefix: Vec<u8>,
+        pattern: Vec<u8>,
+        is_for_names: bool,
+    },
 }
 
 struct Pattern {
@@ -80,20 +84,25 @@ fn wildmatch(mut pattern: &[u8], mut text: &[u8], mut starts_part: bool, stars: 
             ([b'*', b'*'], text) if starts_part => return !text.is_empty(),
             ([b'*', rest @ ..], text) => {
                 let part = strings::index_of_char_usize(text, b'/').unwrap_or(text.len());
-                return (0..=part).any(|skipped| wildmatch(rest, &text[skipped..], false, stars - 1));
+                return (0..=part)
+                    .any(|skipped| wildmatch(rest, &text[skipped..], false, stars - 1));
             }
             ([b'?', pattern @ ..], [byte, text @ ..]) if *byte != b'/' => {
                 starts_part = false;
                 (pattern, text)
             }
-            ([b'[', inside @ ..], [byte, text @ ..]) if *byte != b'/' => match class(inside, *byte) {
+            ([b'[', inside @ ..], [byte, text @ ..]) if *byte != b'/' => match class(inside, *byte)
+            {
                 Some((true, pattern)) => {
                     starts_part = false;
                     (pattern, text)
                 }
                 _ => return false,
             },
-            ([b'\\', wanted, pattern @ ..], [byte, text @ ..]) | ([wanted, pattern @ ..], [byte, text @ ..]) if wanted == byte => {
+            ([b'\\', wanted, pattern @ ..], [byte, text @ ..])
+            | ([wanted, pattern @ ..], [byte, text @ ..])
+                if wanted == byte =>
+            {
                 starts_part = *byte == b'/';
                 (pattern, text)
             }
@@ -111,17 +120,30 @@ impl Pattern {
         let pattern = pattern.trim_ascii_end();
         let name = pattern.strip_suffix(b"/").unwrap_or(pattern);
         const SPECIAL: &[u8] = b"*?[]\\{}()!";
-        let is_literal = |text: &[u8]| !text.is_empty() && strings::index_of_any(text, SPECIAL).is_none();
+        let is_literal =
+            |text: &[u8]| !text.is_empty() && strings::index_of_any(text, SPECIAL).is_none();
         let has_slash = |text: &[u8]| strings::contains_char(text, b'/');
         let from_here = name.strip_prefix(b"/").unwrap_or(name);
         // Without `**/` in front and `/**` behind.
-        let (is_anywhere, middle) = from_here.strip_prefix(b"**/").map_or_else(|| (!has_slash(name), from_here), |rest| (true, rest));
-        let (is_inside, middle) = middle.strip_suffix(b"/**").map_or((false, middle), |rest| (true, rest));
+        let (is_anywhere, middle) = from_here
+            .strip_prefix(b"**/")
+            .map_or_else(|| (!has_slash(name), from_here), |rest| (true, rest));
+        let (is_inside, middle) = middle
+            .strip_suffix(b"/**")
+            .map_or((false, middle), |rest| (true, rest));
         let matcher = match (is_anywhere, is_inside, middle) {
-            (true, false, middle) if is_literal(middle) && !has_slash(middle) => Matcher::Name(middle.to_vec()),
-            (true, false, [b'*', suffix @ ..]) if is_literal(suffix) && !has_slash(suffix) => Matcher::Suffix(suffix.to_vec()),
-            (true, false, middle) if is_literal(middle) => Matcher::PathAnywhere([b"/", middle].concat()),
-            (true, true, middle) if is_literal(middle) => Matcher::InsideAnywhere([b"/", middle, b"/"].concat()),
+            (true, false, middle) if is_literal(middle) && !has_slash(middle) => {
+                Matcher::Name(middle.to_vec())
+            }
+            (true, false, [b'*', suffix @ ..]) if is_literal(suffix) && !has_slash(suffix) => {
+                Matcher::Suffix(suffix.to_vec())
+            }
+            (true, false, middle) if is_literal(middle) => {
+                Matcher::PathAnywhere([b"/", middle].concat())
+            }
+            (true, true, middle) if is_literal(middle) => {
+                Matcher::InsideAnywhere([b"/", middle, b"/"].concat())
+            }
             (false, false, middle) if is_literal(middle) => Matcher::Path(middle.to_vec()),
             (false, true, middle) if is_literal(middle) => Matcher::Inside([middle, b"/"].concat()),
             // `**/a*` is `a*`.
@@ -131,7 +153,11 @@ impl Pattern {
                 is_for_names: true,
             },
             _ => Matcher::Pattern {
-                prefix: if has_slash(name) { from_here[..strings::index_of_any(from_here, SPECIAL).unwrap_or(0)].to_vec() } else { Vec::new() },
+                prefix: if has_slash(name) {
+                    from_here[..strings::index_of_any(from_here, SPECIAL).unwrap_or(0)].to_vec()
+                } else {
+                    Vec::new()
+                },
                 pattern: from_here.to_vec(),
                 is_for_names: !has_slash(name),
             },
@@ -152,9 +178,17 @@ impl Pattern {
             Matcher::Path(wanted) => path == &wanted[..],
             Matcher::Inside(directory) => path.starts_with(directory),
             Matcher::PathAnywhere(wanted) => path.ends_with(wanted) || path == &wanted[1..],
-            Matcher::InsideAnywhere(directory) => path.starts_with(&directory[1..]) || strings::contains(path, directory),
-            Matcher::Pattern { pattern, is_for_names: true, .. } => wildmatch(pattern, name, true, 64),
-            Matcher::Pattern { prefix, pattern, .. } => path.starts_with(prefix) && wildmatch(pattern, path, true, 64),
+            Matcher::InsideAnywhere(directory) => {
+                path.starts_with(&directory[1..]) || strings::contains(path, directory)
+            }
+            Matcher::Pattern {
+                pattern,
+                is_for_names: true,
+                ..
+            } => wildmatch(pattern, name, true, 64),
+            Matcher::Pattern {
+                prefix, pattern, ..
+            } => path.starts_with(prefix) && wildmatch(pattern, path, true, 64),
         }
     }
 }
@@ -192,7 +226,11 @@ impl Ignores {
                 Matcher::Path(path) => ignores.by_path.entry(path.clone()).or_default().push(at),
                 Matcher::Suffix(suffix) => match &suffix[..] {
                     [b'.', extension @ ..] if !strings::contains_char(extension, b'.') => {
-                        ignores.by_extension.entry(extension.to_vec()).or_default().push(at);
+                        ignores
+                            .by_extension
+                            .entry(extension.to_vec())
+                            .or_default()
+                            .push(at);
                     }
                     _ => ignores.others.push(at),
                 },
@@ -207,8 +245,16 @@ impl Ignores {
     /// part of it.
     fn last_match(&self, path: &[u8], name: &[u8], is_directory: bool) -> Option<&Pattern> {
         let last = |found: Option<&Vec<u32>>| {
-            let applies = |at: &&u32| is_directory || self.patterns.get(**at as usize).is_some_and(|it| !it.is_for_directories);
-            found.and_then(|all| all.iter().rev().find(applies)).copied()
+            let applies = |at: &&u32| {
+                is_directory
+                    || self
+                        .patterns
+                        .get(**at as usize)
+                        .is_some_and(|it| !it.is_for_directories)
+            };
+            found
+                .and_then(|all| all.iter().rev().find(applies))
+                .copied()
         };
         let extension = strings::last_index_of_char(name, b'.').map(|dot| &name[dot + 1..]);
         let mut best = last(self.by_name.get(name))
@@ -216,7 +262,11 @@ impl Ignores {
             .max(extension.and_then(|it| last(self.by_extension.get(it))));
         // Those before the best so far say nothing.
         let later = self.others.iter().rev().take_while(|at| Some(**at) > best);
-        if let Some(at) = later.copied().find(|at| self.patterns.get(*at as usize).is_some_and(|it| it.matches(path, name, is_directory))) {
+        if let Some(at) = later.copied().find(|at| {
+            self.patterns
+                .get(*at as usize)
+                .is_some_and(|it| it.matches(path, name, is_directory))
+        }) {
             best = Some(at);
         }
         self.patterns.get(best? as usize)
@@ -227,20 +277,30 @@ pub(crate) type Chain = Option<Arc<Ignores>>;
 
 /// Adds `pattern` with each `{a,b}` in it replaced by one of `a` and `b`, in all ways.
 fn expand_braces(pattern: &[u8], into: &mut Vec<Vec<u8>>) {
-    let open = strings::index_of_char_usize(pattern, b'{').filter(|&at| at == 0 || pattern[at - 1] != b'\\');
-    let close = open.and_then(|open| Some(open + strings::index_of_char_usize(&pattern[open..], b'}')?));
+    let open = strings::index_of_char_usize(pattern, b'{')
+        .filter(|&at| at == 0 || pattern[at - 1] != b'\\');
+    let close =
+        open.and_then(|open| Some(open + strings::index_of_char_usize(&pattern[open..], b'}')?));
     let (Some(open), Some(close), true) = (open, close, into.len() < 256) else {
         into.push(pattern.to_vec());
         return;
     };
     for alternative in strings::split(&pattern[open + 1..close], b",") {
-        expand_braces(&[&pattern[..open], alternative, &pattern[close + 1..]].concat(), into);
+        expand_braces(
+            &[&pattern[..open], alternative, &pattern[close + 1..]].concat(),
+            into,
+        );
     }
 }
 
 /// `chain` and the patterns in `text`, which are relative to `directory`. `expands_braces`: `{a,b}`
 /// is `a` or `b`, as for oxlint and oxfmt. Git and Prettier take the braces as they are.
-pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], expands_braces: bool) -> Chain {
+pub(crate) fn with_text(
+    chain: Chain,
+    directory: &[u8],
+    text: &[u8],
+    expands_braces: bool,
+) -> Chain {
     let lines = strings::split(text, b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
     let mut patterns: Vec<Pattern> = Vec::new();
     for line in lines.filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#")) {
@@ -260,7 +320,12 @@ pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], expands_bra
 }
 
 /// `chain` and the file at `path`, whose patterns are relative to `directory`.
-pub(crate) fn with_file(chain: Chain, directory: &[u8], path: &[u8], expands_braces: bool) -> Chain {
+pub(crate) fn with_file(
+    chain: Chain,
+    directory: &[u8],
+    path: &[u8],
+    expands_braces: bool,
+) -> Chain {
     match fs::read(path) {
         Ok(text) => with_text(chain, directory, &text, expands_braces),
         Err(_) => chain,
@@ -271,7 +336,11 @@ pub(crate) fn with_file(chain: Chain, directory: &[u8], path: &[u8], expands_bra
 /// the root of the repository. `names`: what they are called, the one that overrides the other
 /// last.
 pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
-    let is_root = |directory: &&[u8]| [&b".git"[..], b".jj"].iter().any(|name| bun_sys::exists(&paths::join(directory, name)));
+    let is_root = |directory: &&[u8]| {
+        [&b".git"[..], b".jj"]
+            .iter()
+            .any(|name| bun_sys::exists(&paths::join(directory, name)))
+    };
     let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
     // Outside of a repository, all the way up.
     if let Some(root) = directories.iter().position(is_root) {
@@ -295,7 +364,9 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
     let mut next = chain.as_ref();
     let name = paths::basename(path);
     while let Some(ignores) = next {
-        if let Some(pattern) = paths::inside(&ignores.directory, path).and_then(|inside| ignores.last_match(inside, name, is_directory)) {
+        if let Some(pattern) = paths::inside(&ignores.directory, path)
+            .and_then(|inside| ignores.last_match(inside, name, is_directory))
+        {
             return !pattern.is_negated;
         }
         next = ignores.above.as_ref();
@@ -307,5 +378,9 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
 /// come to by way of its directories.
 pub(crate) fn is_file_ignored_anywhere(chain: &Chain, path: &[u8]) -> bool {
     let directories: Vec<&[u8]> = paths::ancestors(paths::dirname(path)).collect();
-    directories.iter().rev().any(|directory| is_ignored(chain, directory, true)) || is_ignored(chain, path, false)
+    directories
+        .iter()
+        .rev()
+        .any(|directory| is_ignored(chain, directory, true))
+        || is_ignored(chain, path, false)
 }

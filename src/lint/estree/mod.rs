@@ -63,7 +63,10 @@ impl FieldEntry {
 impl NodeType {
     /// The type that is called `name`.
     pub fn from_name(name: &[u8]) -> Option<NodeType> {
-        NodeType::ALL.iter().copied().find(|it| it.name().as_bytes() == name)
+        NodeType::ALL
+            .iter()
+            .copied()
+            .find(|it| it.name().as_bytes() == name)
     }
 
     /// The entry of `field`, if a node of this type has such a field.
@@ -73,7 +76,10 @@ impl NodeType {
 
     /// The fields that a traversal goes into, in that order.
     pub fn visitor_keys(self) -> impl Iterator<Item = Field> {
-        self.fields().iter().take_while(|it| it.is_child).map(|it| it.field)
+        self.fields()
+            .iter()
+            .take_while(|it| it.is_child)
+            .map(|it| it.field)
     }
 }
 
@@ -89,7 +95,13 @@ impl<'a> VNode<'a> {
     /// Its enumerable fields that are not `undefined`, except `type`, `range`, `loc` and `parent`.
     pub fn fields(self) -> impl Iterator<Item = (Field, Value<'a>)> {
         let dialect = self.dialect();
-        let entries = self.node_type().fields().iter().filter(move |it| it.is_in(dialect) && !it.is_hidden);
-        entries.map(move |it| (it.field, (it.get)(self))).filter(|it| !matches!(it.1, Value::Undefined))
+        let entries = self
+            .node_type()
+            .fields()
+            .iter()
+            .filter(move |it| it.is_in(dialect) && !it.is_hidden);
+        entries
+            .map(move |it| (it.field, (it.get)(self)))
+            .filter(|it| !matches!(it.1, Value::Undefined))
     }
 }

@@ -44,14 +44,17 @@ impl Parser<'_> {
         let mut mode = ResolutionMode::None;
         // After an import, `with` can be on the next line. After an export it starts a statement
         // there.
-        if self.token() == T::With
-            && !(is_export && self.newline_before() && !self.is_ecmascript)
-        {
+        if self.token() == T::With && !(is_export && self.newline_before() && !self.is_ecmascript) {
             mode = self.import_attributes(false);
         } else if self.token() == T::Assert && !self.newline_before() {
             // An error of the native parser.
             match self.options.dialect.typescript_5 {
-                true => self.flag(DiagnosticKind::Grammar, 2880, (self.lx.start, self.lx.end), &[]),
+                true => self.flag(
+                    DiagnosticKind::Grammar,
+                    2880,
+                    (self.lx.start, self.lx.end),
+                    &[],
+                ),
                 false => self.report(),
             }
             mode = self.import_attributes(false);
@@ -220,8 +223,7 @@ impl Parser<'_> {
         let (mut type_only, mut is_deferred) = (false, false);
         if let Some((_, _, T::Type | T::TypeOf)) = identifier {
             let is_modifier = (self.token() != T::From
-                || self.is_identifier()
-                    && matches!(self.peek(), T::From | T::Equals))
+                || self.is_identifier() && matches!(self.peek(), T::From | T::Equals))
                 && (self.is_identifier() || matches!(self.token(), T::Asterisk | T::OpenBrace));
             if is_modifier {
                 type_only = true;

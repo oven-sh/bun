@@ -17,7 +17,11 @@ impl<'a> Formatter<'a> {
     #[inline]
     pub(crate) fn lines_before(&self, span: Span) -> usize {
         let looks_past_comma = !comma_ends_the_search_for_line_breaks(self);
-        self.source_text().get_lines_before(span, self.comments().first_unprinted_span(), looks_past_comma)
+        self.source_text().get_lines_before(
+            span,
+            self.comments().first_unprinted_span(),
+            looks_past_comma,
+        )
     }
 
     /// Whether nothing has been written since the start of a group but what the group starts a
@@ -26,19 +30,31 @@ impl<'a> Formatter<'a> {
     /// All that a group with nothing but text in it does is that the printer measures again from
     /// there on, as it does from the start of any group. So here such a group makes no difference.
     pub(crate) fn is_at_start_of_group(&self) -> bool {
-        let is_indentation =
-            |it: &&FormatElement| matches!(it, FormatElement::Tag(Tag::StartIndent) | FormatElement::Line(LineMode::Soft));
+        let is_indentation = |it: &&FormatElement| {
+            matches!(
+                it,
+                FormatElement::Tag(Tag::StartIndent) | FormatElement::Line(LineMode::Soft)
+            )
+        };
         matches!(
-            self.elements().iter().rev().take(3).find(|it| !is_indentation(it)),
+            self.elements()
+                .iter()
+                .rev()
+                .take(3)
+                .find(|it| !is_indentation(it)),
             Some(FormatElement::Tag(Tag::StartGroup(_)))
         )
     }
 
-    pub(crate) fn join_nodes_with_soft_line<'fmt>(&'fmt mut self) -> JoinNodesBuilder<'fmt, 'a, Line> {
+    pub(crate) fn join_nodes_with_soft_line<'fmt>(
+        &'fmt mut self,
+    ) -> JoinNodesBuilder<'fmt, 'a, Line> {
         JoinNodesBuilder::new(soft_line_break_or_space(), self)
     }
 
-    pub(crate) fn join_nodes_with_hardline<'fmt>(&'fmt mut self) -> JoinNodesBuilder<'fmt, 'a, Line> {
+    pub(crate) fn join_nodes_with_hardline<'fmt>(
+        &'fmt mut self,
+    ) -> JoinNodesBuilder<'fmt, 'a, Line> {
         JoinNodesBuilder::new(hard_line_break(), self)
     }
 
@@ -50,7 +66,8 @@ impl<'a> Formatter<'a> {
     /// printed.
     pub(crate) fn speculate_will_break(&mut self, content: &(impl Format<'a> + Spanned)) -> bool {
         let snapshot = self.comments().snapshot();
-        self.comments_mut().skip_comments_before(content.span().start);
+        self.comments_mut()
+            .skip_comments_before(content.span().start);
         let will_break = match self.intern(content) {
             Some(element) => element.will_break(self),
             None => false,
@@ -173,7 +190,9 @@ impl<'a, E: Format<'a>> Format<'a> for FormatSeparatedElement<E> {
         }
         match self.options.trailing_separator {
             TrailingSeparator::Allowed => {
-                if_group_breaks(&self.separator).with_group_id(self.options.group_id).fmt(f);
+                if_group_breaks(&self.separator)
+                    .with_group_id(self.options.group_id)
+                    .fmt(f);
             }
             TrailingSeparator::Mandatory => self.separator.fmt(f),
             TrailingSeparator::Disallowed | TrailingSeparator::Omit => {}

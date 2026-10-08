@@ -21,7 +21,10 @@ pub(crate) fn write_binding_pattern<'a>(pat: Pat<'a>, f: &mut Formatter<'a>) {
 fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mut Formatter<'a>) {
     write!(f, "[");
     if elements.is_empty() {
-        write!(f, format_dangling_comments(pat.span()).with_soft_block_indent());
+        write!(
+            f,
+            format_dangling_comments(pat.span()).with_soft_block_indent()
+        );
     } else {
         let rest = elements.last().filter(|it| is_rest_element(*it));
         let count = elements.len() - usize::from(rest.is_some());
@@ -31,7 +34,10 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
                 if count > 0 {
                     write_array_node(
                         elements.len(),
-                        elements.iter().take(count).map(|element| element.pat().is_some().then_some(element)),
+                        elements
+                            .iter()
+                            .take(count)
+                            .map(|element| element.pat().is_some().then_some(element)),
                         f,
                     );
                 }
@@ -48,7 +54,17 @@ fn write_assignment_pattern<'a>(left: Pat<'a>, right: Expr<'a>, f: &mut Formatte
     // So that the comments in it are not taken for comments before the `=`.
     left.inspect(f);
     let comments = f.comments().own_line_comments_before(right.span().start);
-    write!(f, [FormatLeadingComments::Comments(comments), group(&left), space(), "=", space(), right]);
+    write!(
+        f,
+        [
+            FormatLeadingComments::Comments(comments),
+            group(&left),
+            space(),
+            "=",
+            space(),
+            right
+        ]
+    );
 }
 
 /// `[...a = 1]` is an error, and `a = 1` in typescript-estree's tree.
@@ -65,7 +81,9 @@ pub(crate) fn write_array_pattern_element<'a>(element: PatElem<'a>, f: &mut Form
     if is_rest_element(element) {
         format_node(element.span(), parent, f, |f| write!(f, ["...", pat]));
     } else if let Some(default) = element.default() {
-        format_node(element.span(), parent, f, |f| write_assignment_pattern(pat, default, f));
+        format_node(element.span(), parent, f, |f| {
+            write_assignment_pattern(pat, default, f)
+        });
     } else {
         pat.fmt(f);
     }
@@ -83,8 +101,13 @@ pub(crate) fn write_binding_property<'a>(property: PatProp<'a>, f: &mut Formatte
         && let Some(key) = property.key()
         && !f.comments().has_comment_in_span(key.span(f.file()))
     {
-        let comments = f.comments().comments_leading_property(key.span(f.file()).end, property.value().span().start);
-        if comments.iter().any(|comment| f.comments().is_suppression_comment(comment)) {
+        let comments = f
+            .comments()
+            .comments_leading_property(key.span(f.file()).end, property.value().span().start);
+        if comments
+            .iter()
+            .any(|comment| f.comments().is_suppression_comment(comment))
+        {
             return write!(f, FormatSuppressedNode(property.span()));
         }
         write!(f, FormatLeadingComments::Comments(comments));

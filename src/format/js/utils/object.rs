@@ -2,8 +2,8 @@
 
 use super::number::format_trimmed_number;
 use super::string::{
-    FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number, is_es5_identifier_name,
-    is_simple_number,
+    FormatLiteralStringToken, StringLiteralParentKind, is_canonical_simple_number,
+    is_es5_identifier_name, is_simple_number,
 };
 use crate::ir::width::string_width;
 use crate::js::format::format_node;
@@ -24,7 +24,6 @@ impl<'a> FormatKey<'a> {
     pub(crate) fn new(key: Key<'a>, parent: AstNodes<'a>) -> Self {
         FormatKey { key, parent }
     }
-
 }
 
 /// Writes `key`, which is not an expression in brackets. `parent`: what it is the name of. Returns
@@ -73,10 +72,18 @@ fn quoted<'a>(text: &[u8], f: &Formatter<'a>) -> Cow<'a, [u8]> {
 }
 
 /// What is written for `key`, which is at `span` and is not an expression in brackets.
-fn printed_key<'a>(key: Key<'a>, span: Span, parent: AstNodes<'a>, f: &Formatter<'a>) -> Cow<'a, [u8]> {
+fn printed_key<'a>(
+    key: Key<'a>,
+    span: Span,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> Cow<'a, [u8]> {
     let source = f.source_text().text_for(&span);
-    let string_literal =
-        || FormatLiteralStringToken::new(source, false, StringLiteralParentKind::Expression).clean_text(f).into_text();
+    let string_literal = || {
+        FormatLiteralStringToken::new(source, false, StringLiteralParentKind::Expression)
+            .clean_text(f)
+            .into_text()
+    };
     match key.kind() {
         KeyKind::Ident(name) if should_quote_keys(parent, f) => quoted(name.bytes(), f),
         KeyKind::Ident(_) | KeyKind::Private(_) | KeyKind::Computed(_) => Cow::Borrowed(source),
@@ -97,8 +104,9 @@ fn printed_key<'a>(key: Key<'a>, span: Span, parent: AstNodes<'a>, f: &Formatter
             let printed = format_trimmed_number(source);
             // Prettier's `isKeySafeToQuote`: not in TypeScript, where it changes the type, and only
             // if the number is written the way it is converted to a string.
-            let is_safe_to_quote =
-                f.context().has_tree_of_babel() && is_simple_number(&printed) && name.bytes() == &*printed;
+            let is_safe_to_quote = f.context().has_tree_of_babel()
+                && is_simple_number(&printed)
+                && name.bytes() == &*printed;
             match is_safe_to_quote && should_quote_keys(parent, f) {
                 true => quoted(&printed, f),
                 false => printed,
@@ -115,7 +123,11 @@ fn is_parser_for_programs(f: &Formatter<'_>) -> bool {
 
 /// Prettier's `isKeySafeToUnquote`. `string`: a string literal that is the name of `parent`.
 /// Returns it without its quotes.
-fn unquoted<'a>(string: &'a [u8], parent: Option<AstNodes<'a>>, f: &Formatter<'a>) -> Option<&'a [u8]> {
+fn unquoted<'a>(
+    string: &'a [u8],
+    parent: Option<AstNodes<'a>>,
+    f: &Formatter<'a>,
+) -> Option<&'a [u8]> {
     let content = string.get(1..string.len().saturating_sub(1))?;
     let is_javascript = f.file().is_javascript();
     let is_safe = match parent {
@@ -123,7 +135,11 @@ fn unquoted<'a>(string: &'a [u8], parent: Option<AstNodes<'a>>, f: &Formatter<'a
         // With `strictPropertyInitialization`, TypeScript treats a property with a quoted name
         // differently.
         Some(AstNodes::PropertyDefinition(member))
-            if !is_javascript && !member.modifiers().iter().any(|it| it.flag() == Flags::ABSTRACT) =>
+            if !is_javascript
+                && !member
+                    .modifiers()
+                    .iter()
+                    .any(|it| it.flag() == Flags::ABSTRACT) =>
         {
             false
         }
@@ -142,7 +158,11 @@ fn unquoted<'a>(string: &'a [u8], parent: Option<AstNodes<'a>>, f: &Formatter<'a
 
 /// Whether `key`, the name of `parent`, is a string that cannot do without its quotes. With
 /// `quoteProps: "consistent"`, the names next to it are quoted then.
-pub(crate) fn key_requires_quotes<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn key_requires_quotes<'a>(
+    key: Key<'a>,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     requires_quotes(key, Some(parent), f)
 }
 
@@ -170,15 +190,19 @@ fn siblings_require_quotes<'a>(parent: AstNodes<'a>, f: &Formatter<'a>) -> bool 
         | AstNodes::AccessorProperty(_)
         | AstNodes::TSEnumMember(_) => f.context().is_quote_needed(),
         AstNodes::BindingProperty(property) => match property.parent() {
-            Node::Pat(pattern) => matches!(pattern.kind(), PatKind::Object(properties) if properties.iter().any(|it| {
-                it.key().is_some_and(|key| key_requires_quotes(key, AstNodes::BindingProperty(it), f))
-            })),
+            Node::Pat(pattern) => {
+                matches!(pattern.kind(), PatKind::Object(properties) if properties.iter().any(|it| {
+                    it.key().is_some_and(|key| key_requires_quotes(key, AstNodes::BindingProperty(it), f))
+                }))
+            }
             _ => false,
         },
         AstNodes::AssignmentTargetPropertyProperty(property) => match property.parent() {
-            Node::Expr(object) => matches!(object.kind(), ExprKind::Object(properties) if properties.iter().any(|it| {
-                it.key().is_some_and(|key| key_requires_quotes(key, parent, f))
-            })),
+            Node::Expr(object) => {
+                matches!(object.kind(), ExprKind::Object(properties) if properties.iter().any(|it| {
+                    it.key().is_some_and(|key| key_requires_quotes(key, parent, f))
+                }))
+            }
             _ => false,
         },
         _ => false,
@@ -200,7 +224,11 @@ fn should_unquote_keys<'a>(parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// Prettier's `printKey`.
-pub(crate) fn format_computed_or_property_key<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn format_computed_or_property_key<'a>(
+    key: Key<'a>,
+    parent: AstNodes<'a>,
+    f: &mut Formatter<'a>,
+) {
     match key.is_computed() {
         true => write!(f, ["[", FormatKey::new(key, parent), "]"]),
         false => write!(f, FormatKey::new(key, parent)),
@@ -210,6 +238,10 @@ pub(crate) fn format_computed_or_property_key<'a>(key: Key<'a>, parent: AstNodes
 /// Writes a key that is not computed. `parent`: what it is the name of. Returns the number of columns
 /// that it takes.
 #[inline]
-pub(crate) fn write_member_name<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Formatter<'a>) -> usize {
+pub(crate) fn write_member_name<'a>(
+    key: Key<'a>,
+    parent: impl Fn() -> AstNodes<'a>,
+    f: &mut Formatter<'a>,
+) -> usize {
     write_key(key, parent, f)
 }

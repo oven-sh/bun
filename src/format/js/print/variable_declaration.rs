@@ -27,7 +27,9 @@ pub(crate) fn write_variable_declaration<'a>(
 ) {
     // Whether it ends with a `;`, which it does not in the head of a loop, and whether it is in a loop.
     let (semicolon, is_in_for_loop) = match statement.parent() {
-        _ if !statement.modifiers().is_empty() && statement.is_exported() => (statement.is_default_export(), false),
+        _ if !statement.modifiers().is_empty() && statement.is_exported() => {
+            (statement.is_default_export(), false)
+        }
         Node::Stmt(parent) => match parent.tag() {
             StmtTag::For => (parent.for_init() != Some(statement), true),
             StmtTag::ForIn | StmtTag::ForOf => (parent.for_left() != Some(statement), true),
@@ -35,9 +37,14 @@ pub(crate) fn write_variable_declaration<'a>(
         },
         _ => (true, false),
     };
-    let is_parent_for_loop = is_in_for_loop && (!semicolon || body_of_for_loop_is_written_like_its_head(f));
+    let is_parent_for_loop =
+        is_in_for_loop && (!semicolon || body_of_for_loop_is_written_like_its_head(f));
 
-    if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT) {
+    if statement
+        .modifiers()
+        .iter()
+        .any(|it| it.flag() == Flags::AMBIENT)
+    {
         write!(f, ["declare", space()]);
     }
 
@@ -52,7 +59,10 @@ pub(crate) fn write_variable_declaration<'a>(
     );
     // All that can break in `const a = b;` is in the group of the declarator, which fits if and only
     // if a group around this fits.
-    match f.is_quiet() && declarations.len() == 1 && declarations.first().is_some_and(|it| it.init().is_some()) {
+    match f.is_quiet()
+        && declarations.len() == 1
+        && declarations.first().is_some_and(|it| it.init().is_some())
+    {
         true => write!(f, content),
         false => write!(f, group(&content)),
     }
@@ -69,7 +79,10 @@ impl<'a> Format<'a> for FormatVariableDeclarators<'a> {
         if length == 1 && f.is_quiet() {
             return write!(f, self.declarations.first());
         }
-        let has_any_initializer = self.declarations.iter().any(|declarator| declarator.init().is_some());
+        let has_any_initializer = self
+            .declarations
+            .iter()
+            .any(|declarator| declarator.init().is_some());
         let format_separator = match !self.is_parent_for_loop && has_any_initializer {
             true => hard_line_break(),
             false => soft_line_break_or_space(),
@@ -81,7 +94,11 @@ impl<'a> Format<'a> for FormatVariableDeclarators<'a> {
             return;
         };
 
-        if length == 1 && !f.comments().has_comment_before(first_declarator.span().start) {
+        if length == 1
+            && !f
+                .comments()
+                .has_comment_before(first_declarator.span().start)
+        {
             return write!(f, first_declarator);
         }
 

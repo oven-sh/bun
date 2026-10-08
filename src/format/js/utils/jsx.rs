@@ -30,7 +30,13 @@ pub(crate) struct JsxSpace;
 
 impl<'a> Format<'a> for JsxSpace {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write!(f, [if_group_breaks(&format_args!(JsxRawSpace, soft_line_break())), if_group_fits_on_line(&space())]);
+        write!(
+            f,
+            [
+                if_group_breaks(&format_args!(JsxRawSpace, soft_line_break())),
+                if_group_fits_on_line(&space())
+            ]
+        );
     }
 }
 
@@ -53,5 +59,7 @@ impl<'a> Format<'a> for JsxRawSpace {
 pub(crate) fn is_whitespace_jsx_expression<'a>(child: Expr<'a>, comments: &Comments<'a>) -> bool {
     matches!(child.kind(), ExprKind::String(value) if value.bytes() == b" ")
         && !child.is_jsx_text()
-        && child.jsx_container_span().is_some_and(|span| !comments.has_comment_in_span(span))
+        && child
+            .jsx_container_span()
+            .is_some_and(|span| !comments.has_comment_in_span(span))
 }

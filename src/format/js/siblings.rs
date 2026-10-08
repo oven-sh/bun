@@ -11,10 +11,12 @@
 //! - After the last child, it is that of the parent. If the parent is a statement, a pattern or a
 //!   list of parameters, it is 0.
 
-use super::ast_nodes::{AsAstNodes, AstNodes, ExpressionStatement, type_arguments_of, type_parameters_of};
+use super::ast_nodes::{
+    AsAstNodes, AstNodes, ExpressionStatement, type_arguments_of, type_parameters_of,
+};
 use bun_lint::ast::{
-    ExprKind, FnBody, Func, Handle, ImportEqualsTarget, Key, List, Member, ModuleName, Node, PatKind,
-    StmtKind, TypeKind,
+    ExprKind, FnBody, Func, Handle, ImportEqualsTarget, Key, List, Member, ModuleName, Node,
+    PatKind, StmtKind, TypeKind,
 };
 use bun_lint::span::{Span, Spanned};
 
@@ -106,9 +108,16 @@ fn key_span<'a>(key: Option<Key<'a>>, node: Node<'a>) -> Option<Span> {
 /// and body.
 fn function_fields(finder: &mut Finder, func: Func<'_>) {
     let first_parameter = func.params().first().map(|it| it.span().start);
-    finder.one(func.type_params().angle_brackets_span()).one(func.this_param().map(|it| it.span()));
+    finder
+        .one(func.type_params().angle_brackets_span())
+        .one(func.this_param().map(|it| it.span()));
     // `this` is in the parentheses. If it is the only parameter, nothing follows it there.
-    if finder.is_found && finder.following.is_none() && func.this_param().is_some_and(|it| it.span().contains(finder.me)) {
+    if finder.is_found
+        && finder.following.is_none()
+        && func
+            .this_param()
+            .is_some_and(|it| it.span().contains(finder.me))
+    {
         finder.following = Some(first_parameter.unwrap_or(0));
     }
     finder
@@ -125,19 +134,27 @@ fn function_fields(finder: &mut Finder, func: Func<'_>) {
 /// node for it: the parameters are children of the method.
 fn method_function(finder: &mut Finder, func: Func<'_>) {
     let first_parameter = func.params().first().filter(|it| it.file().is_javascript());
-    finder.transparent(Some(func.estree_span()), first_parameter.map(|it| it.span().start));
+    finder.transparent(
+        Some(func.estree_span()),
+        first_parameter.map(|it| it.span().start),
+    );
 }
 
 fn member_fields(finder: &mut Finder, member: Member<'_>) {
     finder
-        .spans(member.decorators().map(|it| AstNodes::Decorator(it).span()), false)
+        .spans(
+            member.decorators().map(|it| AstNodes::Decorator(it).span()),
+            false,
+        )
         .one(match member.constructor_keyword() {
             Some(keyword) => Some(keyword.span()),
             None => key_span(member.key(), Node::Member(member)),
         });
     match member.func() {
         // The `Function` of a method of a class is one child.
-        Some(func) if matches!(func.as_ast_nodes(), AstNodes::Function(_)) => method_function(finder, func),
+        Some(func) if matches!(func.as_ast_nodes(), AstNodes::Function(_)) => {
+            method_function(finder, func)
+        }
         Some(func) => function_fields(finder, func),
         None => {
             finder
@@ -180,7 +197,13 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             let is_target = matches!(parent, N::ArrayAssignmentTarget(_));
             inherits = !is_target;
             if let ExprKind::Array(elements) = e.kind() {
-                f.spans(elements.iter().filter(|it| !it.is_missing()).map(|it| it.span()), is_target);
+                f.spans(
+                    elements
+                        .iter()
+                        .filter(|it| !it.is_missing())
+                        .map(|it| it.span()),
+                    is_target,
+                );
             }
         }
         N::ObjectExpression(e) | N::ObjectAssignmentTarget(e) => {
@@ -198,7 +221,10 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             match prop.func() {
                 Some(func) => method_function(f, func),
                 None => {
-                    f.one(prop.value().map(|it| it.jsx_container_span().unwrap_or_else(|| it.span())));
+                    f.one(
+                        prop.value()
+                            .map(|it| it.jsx_container_span().unwrap_or_else(|| it.span())),
+                    );
                 }
             }
         }
@@ -208,7 +234,9 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             }
         }
         N::TaggedTemplateExpression(e) | N::CallExpression(e) | N::NewExpression(e) => {
-            if let ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) = e.kind() {
+            if let ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) =
+                e.kind()
+            {
                 f.one(span_of(call.callee()))
                     .one(call.type_args().angle_brackets_span())
                     .one(call.template().map(|it| it.span()));
@@ -222,7 +250,9 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                 f.list(args, true);
             }
         }
-        N::StaticMemberExpression(e) | N::PrivateFieldExpression(e) | N::ComputedMemberExpression(e) => {
+        N::StaticMemberExpression(e)
+        | N::PrivateFieldExpression(e)
+        | N::ComputedMemberExpression(e) => {
             match e.kind() {
                 ExprKind::Dot { obj, name, .. } => f.one(span_of(obj)).one(Some(name.span())),
                 ExprKind::Index { obj, index, .. } => f.one(span_of(obj)).one(span_of(index)),
@@ -247,15 +277,17 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                 f.one(span_of(test)).one(span_of(yes)).one(span_of(no));
             }
         }
-        N::TSAsExpression(e) | N::TSSatisfiesExpression(e) | N::TypeCastExpression(e) => match e.kind() {
-            ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
-                f.one(span_of(expr)).one(Some(ty.span()));
+        N::TSAsExpression(e) | N::TSSatisfiesExpression(e) | N::TypeCastExpression(e) => {
+            match e.kind() {
+                ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
+                    f.one(span_of(expr)).one(Some(ty.span()));
+                }
+                ExprKind::AsConst(expr) => {
+                    f.one(span_of(expr)).one(e.const_keyword_span());
+                }
+                _ => {}
             }
-            ExprKind::AsConst(expr) => {
-                f.one(span_of(expr)).one(e.const_keyword_span());
-            }
-            _ => {}
-        },
+        }
         N::TSTypeAssertion(e) => match e.kind() {
             ExprKind::As { expr, ty } => {
                 f.one(Some(ty.span())).one(span_of(expr));
@@ -274,7 +306,9 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             if let ExprKind::Jsx(jsx) = e.kind() {
                 f.one(Some(jsx.opening_span()))
                     .spans(
-                        jsx.children().iter().map(|it| it.jsx_container_span().unwrap_or_else(|| it.span())),
+                        jsx.children()
+                            .iter()
+                            .map(|it| it.jsx_container_span().unwrap_or_else(|| it.span())),
                         false,
                     )
                     .one(jsx.closing_span());
@@ -284,7 +318,12 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             if let ExprKind::Jsx(jsx) = e.kind() {
                 // The `a` of `<a.b>` is followed by `b`.
                 let mut name = jsx.tag();
-                while let Some(ExprKind::Dot { obj, name: property, .. }) = name.map(|it| it.kind()) {
+                while let Some(ExprKind::Dot {
+                    obj,
+                    name: property,
+                    ..
+                }) = name.map(|it| it.kind())
+                {
                     if obj.span() == span {
                         return Some(property.span().start);
                     }
@@ -350,17 +389,22 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             inherits = false;
             match pat.kind() {
                 PatKind::Object(props) => f.list(props, true),
-                PatKind::Array(elements) => {
-                    f.spans(elements.iter().filter(|it| it.pat().is_some()).map(|it| it.span()), true)
-                }
+                PatKind::Array(elements) => f.spans(
+                    elements
+                        .iter()
+                        .filter(|it| it.pat().is_some())
+                        .map(|it| it.span()),
+                    true,
+                ),
                 _ => f,
             };
         }
         N::BindingProperty(prop) => {
-            f.one(key_span(prop.key(), Node::PatProp(prop))).one(Some(match prop.default() {
-                Some(default) => prop.value().span().to(default.span()),
-                None => prop.value().span(),
-            }));
+            f.one(key_span(prop.key(), Node::PatProp(prop)))
+                .one(Some(match prop.default() {
+                    Some(default) => prop.value().span().to(default.span()),
+                    None => prop.value().span(),
+                }));
         }
         N::AssignmentPattern(it) => {
             let (pat, default) = match it {
@@ -368,15 +412,18 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                 Node::PatElem(element) => (element.pat(), element.default()),
                 _ => (None, None),
             };
-            f.one(pat.map(|it| it.span())).one(default.map(|it| it.span()));
+            f.one(pat.map(|it| it.span()))
+                .one(default.map(|it| it.span()));
         }
 
         N::SwitchCase(case) => {
-            f.one(case.test().map(|it| it.span())).list(case.body(), false);
+            f.one(case.test().map(|it| it.span()))
+                .list(case.body(), false);
         }
         N::CatchClause(statement) => {
             if let StmtKind::Try { param, handler, .. } = statement.kind() {
-                f.one(param.map(|it| it.span())).one(handler.map(|it| it.span()));
+                f.one(param.map(|it| it.span()))
+                    .one(handler.map(|it| it.span()));
             }
         }
         N::TSModuleBlock(statement) => {
@@ -395,13 +442,16 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             }
         }
         N::TSEnumMember(member) => {
-            f.one(key_span(member.key(), Node::EnumMember(member))).one(member.init().map(|it| it.span()));
+            f.one(key_span(member.key(), Node::EnumMember(member)))
+                .one(member.init().map(|it| it.span()));
         }
         N::ImportSpecifier(spec) => {
-            f.one(Some(spec.imported().span())).one(Some(spec.local().span()));
+            f.one(Some(spec.imported().span()))
+                .one(Some(spec.local().span()));
         }
         N::ExportSpecifier(spec) => {
-            f.one(Some(spec.local().span())).one(Some(spec.exported().span()));
+            f.one(Some(spec.local().span()))
+                .one(Some(spec.exported().span()));
         }
 
         N::ExpressionStatement(ExpressionStatement::ArrowBody(_)) => {}
@@ -454,7 +504,9 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                     f.list(declarations, false);
                 }
                 StmtKind::If { test, yes, no } => {
-                    f.one(span_of(test)).one(Some(yes.span())).one(no.map(|it| it.span()));
+                    f.one(span_of(test))
+                        .one(Some(yes.span()))
+                        .one(no.map(|it| it.span()));
                 }
                 StmtKind::For {
                     init,
@@ -467,8 +519,13 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                         .one(update.map(|it| it.span()))
                         .one(Some(body.span()));
                 }
-                StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
-                    f.one(Some(head(left))).one(span_of(expr)).one(Some(body.span()));
+                StmtKind::ForIn { left, expr, body }
+                | StmtKind::ForOf {
+                    left, expr, body, ..
+                } => {
+                    f.one(Some(head(left)))
+                        .one(span_of(expr))
+                        .one(Some(body.span()));
                 }
                 StmtKind::While { test, body } => {
                     f.one(span_of(test)).one(Some(body.span()));
@@ -490,7 +547,8 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                         .one(finalizer.map(|it| it.span()));
                 }
                 StmtKind::Labeled { body, .. } => {
-                    f.one(statement.label().map(|it| it.span())).one(Some(body.span()));
+                    f.one(statement.label().map(|it| it.span()))
+                        .one(Some(body.span()));
                 }
                 StmtKind::Import(import) => {
                     f.one(import.default().map(|it| it.span()))
@@ -520,10 +578,11 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                     f.one(name).one(module.innermost().body_span());
                 }
                 StmtKind::ImportEquals(import) => {
-                    f.one(Some(import.name().span())).one(match import.target() {
-                        ImportEqualsTarget::Require(_) => import.require_span(),
-                        ImportEqualsTarget::Entity(name) => Some(name.span()),
-                    });
+                    f.one(Some(import.name().span()))
+                        .one(match import.target() {
+                            ImportEqualsTarget::Require(_) => import.require_span(),
+                            ImportEqualsTarget::Entity(name) => Some(name.span()),
+                        });
                 }
                 _ => {}
             }
@@ -544,7 +603,10 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             }
         }
         N::TSUnionType(ty) | N::TSIntersectionType(ty) | N::TSTemplateLiteralType(ty) => {
-            if let TypeKind::Union(types) | TypeKind::Intersection(types) | TypeKind::Template(types) = ty.kind() {
+            if let TypeKind::Union(types)
+            | TypeKind::Intersection(types)
+            | TypeKind::Template(types) = ty.kind()
+            {
                 f.list(types, false);
             }
         }
@@ -554,7 +616,8 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             }
         }
         N::TSNamedTupleMember(element) => {
-            f.one(element.name().map(|it| it.span())).one(Some(element.ty().span()));
+            f.one(element.name().map(|it| it.span()))
+                .one(Some(element.ty().span()));
         }
         N::TSIndexedAccessType(ty) => {
             if let TypeKind::IndexedAccess { obj, index } = ty.kind() {
@@ -568,11 +631,14 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
         | N::TSImportType(ty) => {
             let name = match ty.kind() {
                 TypeKind::Ref { name, .. } => Some(name.span()),
-                TypeKind::Heritage { expr, .. } | TypeKind::Typeof { expr, .. } => Some(expr.span()),
+                TypeKind::Heritage { expr, .. } | TypeKind::Typeof { expr, .. } => {
+                    Some(expr.span())
+                }
                 TypeKind::Import { .. } => ty.import_source_span(),
                 _ => None,
             };
-            f.one(name).one(type_arguments_of(Node::Type(ty)).and_then(|it| it.angle_brackets_span()));
+            f.one(name)
+                .one(type_arguments_of(Node::Type(ty)).and_then(|it| it.angle_brackets_span()));
         }
         N::TSTypeParameterInstantiation(owner) => {
             if let Some(arguments) = type_arguments_of(owner) {
@@ -609,7 +675,8 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
         }
         N::TSTypePredicate(ty) => {
             if let TypeKind::Predicate { ty: asserted, .. } = ty.kind() {
-                f.one(ty.predicate_param().map(|it| it.span())).one(asserted.map(|it| it.annotation_span()));
+                f.one(ty.predicate_param().map(|it| it.span()))
+                    .one(asserted.map(|it| it.annotation_span()));
             }
         }
         // One child, or none.

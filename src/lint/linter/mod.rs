@@ -57,8 +57,8 @@ pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 pub(crate) use space::trim as trim_js_space;
 pub use syntax::{
-    Refusal, TypesInJavaScript, not_in_a_project, parse_error, refusal_of_prettier,
-    goes_to_flow, refused_by_prettier, refused_by_prettier_with,
+    Refusal, TypesInJavaScript, goes_to_flow, not_in_a_project, parse_error, refusal_of_prettier,
+    refused_by_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -530,18 +530,29 @@ impl Linter {
 /// Whether it says that a rule has reported as much as it can in the file: see [`Cx::report`](crate::context::Cx::report).
 fn is_closing(message: &LintMessage) -> bool {
     matches!(message.rule_id, Some(RuleId::Known(_)))
-        && matches!(message.message_id.as_deref(), Some("tooManyProblems" | "tooLargeProblems"))
+        && matches!(
+            message.message_id.as_deref(),
+            Some("tooManyProblems" | "tooLargeProblems")
+        )
 }
 
 /// That reports of `rule` are missing is not shown if and only if none of those that are kept is shown: then comments switch the
 /// rule off here. Which comment happens to be where the first missing report would be does not count.
 fn suppress_closing_like_the_rest(problems: &mut [LintMessage], rule: &RuleId) {
-    let mut kept = problems.iter().filter(|it| it.rule_id.as_ref() == Some(rule) && !is_closing(it));
+    let mut kept = problems
+        .iter()
+        .filter(|it| it.rule_id.as_ref() == Some(rule) && !is_closing(it));
     let suppressions = match kept.clone().all(|it| !it.suppressions.is_empty()) {
-        true => kept.next_back().map(|it| it.suppressions.clone()).unwrap_or_default(),
+        true => kept
+            .next_back()
+            .map(|it| it.suppressions.clone())
+            .unwrap_or_default(),
         false => Vec::new(),
     };
-    for closing in problems.iter_mut().filter(|it| it.rule_id.as_ref() == Some(rule) && is_closing(it)) {
+    for closing in problems
+        .iter_mut()
+        .filter(|it| it.rule_id.as_ref() == Some(rule) && is_closing(it))
+    {
         closing.suppressions.clone_from(&suppressions);
     }
 }

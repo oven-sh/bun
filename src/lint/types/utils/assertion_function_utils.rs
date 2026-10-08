@@ -8,7 +8,10 @@ use crate::types::{Type, TypePredicate, TypePredicateKind};
 ///
 /// `wraps_around`: a predicate about a name that is no parameter has the index -1 upstream, which
 /// `checkableArguments.at(-1)` takes for the last argument and `checkableArguments[-1]` for none.
-fn find_asserted_argument(node: Expr<'_>, wraps_around: bool) -> Option<(Expr<'_>, TypePredicate<'_>)> {
+fn find_asserted_argument(
+    node: Expr<'_>,
+    wraps_around: bool,
+) -> Option<(Expr<'_>, TypePredicate<'_>)> {
     let arguments = node.as_call()?.args();
     let is_spread = |argument: Expr| matches!(argument.kind(), ExprKind::Spread(_));
     let checkable_arguments = arguments
@@ -19,7 +22,10 @@ fn find_asserted_argument(node: Expr<'_>, wraps_around: bool) -> Option<(Expr<'_
         return None;
     }
     let type_predicate = node.resolved_signature()?.get_type_predicate()?;
-    let is_about_a_name = matches!(type_predicate.kind(), TypePredicateKind::Identifier | TypePredicateKind::AssertsIdentifier);
+    let is_about_a_name = matches!(
+        type_predicate.kind(),
+        TypePredicateKind::Identifier | TypePredicateKind::AssertsIdentifier
+    );
     let parameter_index = match type_predicate.parameter_index() {
         Some(parameter_index) => parameter_index,
         None if wraps_around && is_about_a_name => checkable_arguments - 1,

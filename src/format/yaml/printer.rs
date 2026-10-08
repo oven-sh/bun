@@ -29,7 +29,12 @@ fn is_inline_node(node: Option<&Node<'_>>) -> bool {
     node.is_none_or(|node| {
         matches!(
             node.kind,
-            Kind::Plain | Kind::QuoteDouble | Kind::QuoteSingle | Kind::Alias | Kind::FlowMapping | Kind::FlowSequence
+            Kind::Plain
+                | Kind::QuoteDouble
+                | Kind::QuoteSingle
+                | Kind::Alias
+                | Kind::FlowMapping
+                | Kind::FlowSequence
         )
     })
 }
@@ -50,12 +55,19 @@ fn is_empty_node(node: &Node<'_>) -> bool {
 /// `shouldPrintEndComments`
 fn should_print_end_comments(node: &Node<'_>) -> bool {
     !node.end_comments.is_empty()
-        && !matches!(node.kind, Kind::DocumentHead | Kind::DocumentBody | Kind::FlowMapping | Kind::FlowSequence)
+        && !matches!(
+            node.kind,
+            Kind::DocumentHead | Kind::DocumentBody | Kind::FlowMapping | Kind::FlowSequence
+        )
 }
 
 /// Prettier's `isPreviousLineEmpty`.
 fn is_previous_line_empty(text: &[u8], start: usize) -> bool {
-    let skip_spaces = |text: &[u8]| text.iter().rposition(|b| !matches!(b, b' ' | b'\t')).map_or(0, |at| at + 1);
+    let skip_spaces = |text: &[u8]| {
+        text.iter()
+            .rposition(|b| !matches!(b, b' ' | b'\t'))
+            .map_or(0, |at| at + 1)
+    };
     // `skipNewline`
     let newline_len = |text: &[u8]| match text {
         [.., b'\n'] => 1,
@@ -97,7 +109,11 @@ enum Words<'c> {
 impl<'c> Words<'c> {
     /// All of a line.
     fn line(line: &'c [u8]) -> Self {
-        if line.is_empty() { Words::None } else { Words::One(line) }
+        if line.is_empty() {
+            Words::None
+        } else {
+            Words::One(line)
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -149,7 +165,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     fn source(&self, node: &Node<'a>) -> &'a [u8] {
-        self.text.get(node.position.start.offset as usize..node.position.end.offset as usize).unwrap_or_default()
+        self.text
+            .get(node.position.start.offset as usize..node.position.end.offset as usize)
+            .unwrap_or_default()
     }
 
     fn parent(&self, node: &Node<'a>) -> Option<&'t Node<'a>> {
@@ -165,7 +183,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     fn start_align(&mut self, width: u32) {
-        self.out.start_indent(IndentCommand::Align(Alignment::Spaces(width)));
+        self.out
+            .start_indent(IndentCommand::Align(Alignment::Spaces(width)));
     }
 
     /// `join(hardline, path.map(print, ..))`, for comments.
@@ -187,7 +206,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if index > 0 {
                 self.out.hard_line();
             }
-            self.print(child, is_last_descendant && node.children.last() == Some(child));
+            self.print(
+                child,
+                is_last_descendant && node.children.last() == Some(child),
+            );
         }
     }
 
@@ -215,7 +237,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `printNextEmptyLine`: whether it is a `softline`.
     fn has_next_empty_line(&mut self, node: &Node<'a>) -> bool {
-        self.printed_empty_lines.get_mut(node.position.end.offset as usize).is_some_and(|it| !std::mem::replace(it, true))
+        self.printed_empty_lines
+            .get_mut(node.position.end.offset as usize)
+            .is_some_and(|it| !std::mem::replace(it, true))
             && self.is_next_line_empty(node)
             && !self.parent(node).is_some_and(should_print_end_comments)
     }
@@ -223,13 +247,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// `hasPrettierIgnore`
     fn has_prettier_ignore(&self, node: &Node<'a>) -> bool {
         let comments = match node.kind {
-            Kind::DocumentBody => match self.parent(node).and_then(|document| self.first_child(document)) {
+            Kind::DocumentBody => match self
+                .parent(node)
+                .and_then(|document| self.first_child(document))
+            {
                 Some(head) => head.end_comments,
                 None => return false,
             },
             _ => node.leading_comments,
         };
-        comments.last().is_some_and(|comment| matches!(text::trim(&self.node(comment).value), b"prettier-ignore" | b"oxfmt-ignore"))
+        comments.last().is_some_and(|comment| {
+            matches!(
+                text::trim(&self.node(comment).value),
+                b"prettier-ignore" | b"oxfmt-ignore"
+            )
+        })
     }
 
     /// `genericPrint`. `is_last_descendant`: `isLastDescendantNode(path)`, for what is not a comment, a tag
@@ -252,12 +284,19 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
         let has_next_empty_line = matches!(
             node.kind,
-            Kind::Mapping | Kind::Sequence | Kind::Comment | Kind::Directive | Kind::MappingItem | Kind::SequenceItem
+            Kind::Mapping
+                | Kind::Sequence
+                | Kind::Comment
+                | Kind::Directive
+                | Kind::MappingItem
+                | Kind::SequenceItem
         ) && !(is_last_descendant && node.kind != Kind::Comment)
             && self.has_next_empty_line(node);
 
         if node.tag.is_some() || node.anchor.is_some() {
-            match matches!(node.kind, Kind::Sequence | Kind::Mapping) && node.middle_comments.is_empty() {
+            match matches!(node.kind, Kind::Sequence | Kind::Mapping)
+                && node.middle_comments.is_empty()
+            {
                 true => self.out.hard_line(),
                 false => self.out.text(b" "),
             }
@@ -272,7 +311,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
         if self.has_prettier_ignore(node) {
             // `replaceEndOfLine`
-            for (index, line) in strings::split(text::trim_end(self.source(node)), b"\n").enumerate() {
+            for (index, line) in
+                strings::split(text::trim_end(self.source(node)), b"\n").enumerate()
+            {
                 if index > 0 {
                     self.out.line(Line::Literal);
                     self.out.break_parent();
@@ -291,7 +332,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             let parent = self.parent(node);
             let is_key_of_mapping = parent.is_some_and(|parent| {
                 parent.kind == Kind::MappingKey
-                    && self.parent(parent).and_then(|item| self.parent(item)).is_some_and(|it| it.kind == Kind::Mapping)
+                    && self
+                        .parent(parent)
+                        .and_then(|item| self.parent(item))
+                        .is_some_and(|it| it.kind == Kind::Mapping)
             });
             self.out.start_line_suffix();
             if !(node.kind == Kind::MappingValue && node.children.is_empty()) {
@@ -312,7 +356,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             let tree = self.tree;
             for comment in tree.items(node.end_comments) {
                 self.out.hard_line();
-                if is_previous_line_empty(self.text, self.node(comment).position.start.offset as usize) {
+                if is_previous_line_empty(
+                    self.text,
+                    self.node(comment).position.start.offset as usize,
+                ) {
                     self.out.hard_line();
                 }
                 self.print(comment, false);
@@ -332,14 +379,18 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             Kind::Root => {
                 let last = self.last_descendant(node);
                 let should_print_hardline =
-                    !(matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded) && last.chomping == Chomping::Keep);
+                    !(matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
+                        && last.chomping == Chomping::Keep);
                 for (index, child) in tree.items(node.children).enumerate() {
                     if index > 0 {
                         self.out.hard_line();
                     }
                     let document = self.node(child);
                     self.print(child, document.next.is_none());
-                    if self.should_print_document_end_marker(document, document.next.map(|next| self.node(next))) {
+                    if self.should_print_document_end_marker(
+                        document,
+                        document.next.map(|next| self.node(next)),
+                    ) {
                         if should_print_hardline {
                             self.out.hard_line();
                         }
@@ -355,7 +406,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 }
             }
             Kind::Document => {
-                let (Some(head_id), Some(body_id), 2) = (node.children.first(), node.children.last(), node.children.len()) else {
+                let (Some(head_id), Some(body_id), 2) = (
+                    node.children.first(),
+                    node.children.last(),
+                    node.children.len(),
+                ) else {
                     return;
                 };
                 let (head, body) = (self.node(head_id), self.node(body_id));
@@ -393,15 +448,22 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             Kind::DocumentBody => {
                 self.print_children(node, is_last_descendant);
-                if let (Some(last_child), Some(first_comment)) = (node.children.last(), node.end_comments.first()) {
+                if let (Some(last_child), Some(first_comment)) =
+                    (node.children.last(), node.end_comments.first())
+                {
                     let last = self.last_descendant(node);
-                    let hard_lines = if matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral) {
+                    let hard_lines = if matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral)
+                    {
                         // There is a line break at the end of a block scalar that keeps its line breaks.
-                        if last.chomping == Chomping::Keep { 0 } else { 2 }
+                        if last.chomping == Chomping::Keep {
+                            0
+                        } else {
+                            2
+                        }
                     } else {
                         let start = self.node(first_comment).position.start.offset as usize;
-                        let keeps_empty_line =
-                            self.node(last_child).kind == Kind::Mapping && is_previous_line_empty(self.text, start);
+                        let keeps_empty_line = self.node(last_child).kind == Kind::Mapping
+                            && is_previous_line_empty(self.text, start);
                         if keeps_empty_line { 2 } else { 1 }
                     };
                     for _ in 0..hard_lines {
@@ -413,12 +475,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             Kind::Directive => {
                 // The name without the `%`, and the parameters.
                 self.out.text(b"%");
-                let parts = strings::split_any(text::trim(&node.value), b" \t").filter(|part| !part.is_empty());
+                let parts = strings::split_any(text::trim(&node.value), b" \t")
+                    .filter(|part| !part.is_empty());
                 for (index, part) in parts.enumerate() {
                     if index > 0 {
                         self.out.text(b" ");
                     }
-                    self.out.text(if index == 0 { part.strip_prefix(b"%").unwrap_or(part) } else { part });
+                    self.out.text(if index == 0 {
+                        part.strip_prefix(b"%").unwrap_or(part)
+                    } else {
+                        part
+                    });
                 }
             }
             Kind::Comment => {
@@ -451,68 +518,88 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     self.print(content, is_last_descendant);
                 }
             }
-            Kind::MappingItem | Kind::FlowMappingItem => self.print_mapping_item(node, is_last_descendant),
-            Kind::FlowMapping | Kind::FlowSequence => self.print_flow_mapping(node, is_last_descendant),
+            Kind::MappingItem | Kind::FlowMappingItem => {
+                self.print_mapping_item(node, is_last_descendant)
+            }
+            Kind::FlowMapping | Kind::FlowSequence => {
+                self.print_flow_mapping(node, is_last_descendant)
+            }
         }
     }
 
     /// `shouldPrintDocumentEndMarker`
-    fn should_print_document_end_marker(&self, document: &Node<'a>, next: Option<&'t Node<'a>>) -> bool {
+    fn should_print_document_end_marker(
+        &self,
+        document: &Node<'a>,
+        next: Option<&'t Node<'a>>,
+    ) -> bool {
         if document.document_end_marker || document.trailing_comment.is_some() {
             return true;
         }
-        next.and_then(|next| self.first_child(next)).is_some_and(|head| !head.children.is_empty() || !head.end_comments.is_empty())
+        next.and_then(|next| self.first_child(next))
+            .is_some_and(|head| !head.children.is_empty() || !head.end_comments.is_empty())
     }
 
     fn print_quoted(&mut self, node: &Node<'a>) {
         let source = self.source(node);
-        let raw = source.get(1..source.len().saturating_sub(1)).unwrap_or_default();
+        let raw = source
+            .get(1..source.len().saturating_sub(1))
+            .unwrap_or_default();
         let is_double = node.kind == Kind::QuoteDouble;
         // `/\\[^"]/`
         let has_escape = |raw: &[u8]| (1..raw.len()).any(|i| raw[i - 1] == b'\\' && raw[i] != b'"');
-        let (quote, content): (&[u8], Cow<'_, [u8]>) = if (!is_double && strings::contains_char(raw, b'\\')) || (is_double && has_escape(raw)) {
-            // Only in double quotes are there escapes, and in single quotes a backslash needs none.
-            (if is_double { b"\"" } else { b"'" }, Cow::Borrowed(raw))
-        } else if strings::contains_char(raw, b'"') {
-            let content = match is_double {
-                false => Cow::Borrowed(raw),
-                true => {
-                    // `.replaceAll('\\"', '"').replaceAll("'", "''")`
-                    let mut content = Vec::with_capacity(raw.len());
-                    let mut i = 0;
-                    while let Some(&byte) = raw.get(i) {
-                        match byte {
-                            b'\\' if raw.get(i + 1) == Some(&b'"') => {
-                                content.push(b'"');
-                                i += 1;
+        let (quote, content): (&[u8], Cow<'_, [u8]>) =
+            if (!is_double && strings::contains_char(raw, b'\\')) || (is_double && has_escape(raw))
+            {
+                // Only in double quotes are there escapes, and in single quotes a backslash needs none.
+                (if is_double { b"\"" } else { b"'" }, Cow::Borrowed(raw))
+            } else if strings::contains_char(raw, b'"') {
+                let content = match is_double {
+                    false => Cow::Borrowed(raw),
+                    true => {
+                        // `.replaceAll('\\"', '"').replaceAll("'", "''")`
+                        let mut content = Vec::with_capacity(raw.len());
+                        let mut i = 0;
+                        while let Some(&byte) = raw.get(i) {
+                            match byte {
+                                b'\\' if raw.get(i + 1) == Some(&b'"') => {
+                                    content.push(b'"');
+                                    i += 1;
+                                }
+                                b'\'' => content.extend_from_slice(b"''"),
+                                _ => content.push(byte),
                             }
-                            b'\'' => content.extend_from_slice(b"''"),
-                            _ => content.push(byte),
+                            i += 1;
                         }
-                        i += 1;
+                        Cow::Owned(content)
                     }
-                    Cow::Owned(content)
-                }
-            };
-            (b"'", content)
-        } else if strings::contains_char(raw, b'\'') {
-            let content = match is_double {
-                true => Cow::Borrowed(raw),
-                false => {
-                    // `.replaceAll("''", "'")`
-                    let mut content = Vec::with_capacity(raw.len());
-                    let mut i = 0;
-                    while let Some(&byte) = raw.get(i) {
-                        content.push(byte);
-                        i += if byte == b'\'' && raw.get(i + 1) == Some(&b'\'') { 2 } else { 1 };
+                };
+                (b"'", content)
+            } else if strings::contains_char(raw, b'\'') {
+                let content = match is_double {
+                    true => Cow::Borrowed(raw),
+                    false => {
+                        // `.replaceAll("''", "'")`
+                        let mut content = Vec::with_capacity(raw.len());
+                        let mut i = 0;
+                        while let Some(&byte) = raw.get(i) {
+                            content.push(byte);
+                            i += if byte == b'\'' && raw.get(i + 1) == Some(&b'\'') {
+                                2
+                            } else {
+                                1
+                            };
+                        }
+                        Cow::Owned(content)
                     }
-                    Cow::Owned(content)
-                }
+                };
+                (b"\"", content)
+            } else {
+                (
+                    if self.single_quote { b"'" } else { b"\"" },
+                    Cow::Borrowed(raw),
+                )
             };
-            (b"\"", content)
-        } else {
-            (if self.single_quote { b"'" } else { b"\"" }, Cow::Borrowed(raw))
-        };
         self.out.text(quote);
         self.print_flow_scalar_content(node.kind, &content);
         self.out.text(quote);
@@ -524,7 +611,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if self.prose_wrap == ProseWrap::Preserve && !strings::contains_char(content, b'\n') {
             return Words::line(content).write_fill(self.out);
         }
-        for (index, words) in self.flow_scalar_line_contents(kind, content).iter().enumerate() {
+        for (index, words) in self
+            .flow_scalar_line_contents(kind, content)
+            .iter()
+            .enumerate()
+        {
             if index > 0 {
                 self.out.hard_line();
             }
@@ -567,7 +658,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// `getBlockValueLineContents`
-    fn block_value_line_contents(&self, node: &Node<'a>, parent_indent: usize, is_last_descendant: bool) -> Vec<Words<'a>> {
+    fn block_value_line_contents(
+        &self,
+        node: &Node<'a>,
+        parent_indent: usize,
+        is_last_descendant: bool,
+    ) -> Vec<Words<'a>> {
         if node.position.start.line == node.position.end.line {
             return Vec::new();
         }
@@ -590,63 +686,69 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 .unwrap_or(usize::MAX),
             Some(indent) => (indent as usize + parent_indent).saturating_sub(1),
         };
-        let raw_lines: Vec<&'a [u8]> =
-            strings::split(content, b"\n").map(|line| line.get(leading_space_count..).unwrap_or_default()).collect();
+        let raw_lines: Vec<&'a [u8]> = strings::split(content, b"\n")
+            .map(|line| line.get(leading_space_count..).unwrap_or_default())
+            .collect();
 
-        let lines: Vec<Words<'a>> = if self.prose_wrap == ProseWrap::Preserve || node.kind == Kind::BlockLiteral {
-            raw_lines.iter().map(|&line| Words::line(line)).collect()
-        } else {
-            let mut lines: Vec<Vec<&'a [u8]>> = Vec::new();
-            for (index, line) in raw_lines.iter().enumerate() {
-                let words = split_with_single_space(line);
-                // The test is made with the words joined by commas.
-                let is_blank_at = |word: Option<&&[u8]>, at_start: bool| {
-                    word.is_some_and(|word| match at_start {
-                        true => text::starts_with_white_space(word),
-                        false => text::trim_end(word).len() < word.len(),
-                    })
-                };
-                match lines.last_mut() {
-                    Some(last)
-                        if index > 0
-                            && !words.is_empty()
-                            && !raw_lines[index - 1].is_empty()
-                            && !is_blank_at(words.first(), true)
-                            && !is_blank_at(last.first(), true)
-                            && !is_blank_at(last.last(), false) =>
-                    {
-                        last.extend(words);
-                    }
-                    _ => lines.push(words),
-                }
-            }
-            // No white space at the end of a line: a word that ends with some takes the next one along.
-            let mut merged: Vec<Words<'a>> = Vec::with_capacity(lines.len());
-            for words in lines {
-                let needs_merging = words.iter().rev().skip(1).any(|word| text::trim_end(word).len() < word.len());
-                if !needs_merging && self.prose_wrap != ProseWrap::Never {
-                    merged.push(Words::Slices(words));
-                    continue;
-                }
-                if self.prose_wrap == ProseWrap::Never {
-                    merged.push(Words::Joined(words.join(&b" "[..])));
-                    continue;
-                }
-                // The words are next to each other in the text, with one space in between.
-                let mut slices: Vec<&'a [u8]> = Vec::with_capacity(words.len());
-                for word in words {
-                    match slices.last_mut() {
-                        Some(last) if text::trim_end(last).len() < last.len() => {
-                            let start = last.as_ptr().addr() - self.text.as_ptr().addr();
-                            *last = &self.text[start..start + last.len() + 1 + word.len()];
+        let lines: Vec<Words<'a>> =
+            if self.prose_wrap == ProseWrap::Preserve || node.kind == Kind::BlockLiteral {
+                raw_lines.iter().map(|&line| Words::line(line)).collect()
+            } else {
+                let mut lines: Vec<Vec<&'a [u8]>> = Vec::new();
+                for (index, line) in raw_lines.iter().enumerate() {
+                    let words = split_with_single_space(line);
+                    // The test is made with the words joined by commas.
+                    let is_blank_at = |word: Option<&&[u8]>, at_start: bool| {
+                        word.is_some_and(|word| match at_start {
+                            true => text::starts_with_white_space(word),
+                            false => text::trim_end(word).len() < word.len(),
+                        })
+                    };
+                    match lines.last_mut() {
+                        Some(last)
+                            if index > 0
+                                && !words.is_empty()
+                                && !raw_lines[index - 1].is_empty()
+                                && !is_blank_at(words.first(), true)
+                                && !is_blank_at(last.first(), true)
+                                && !is_blank_at(last.last(), false) =>
+                        {
+                            last.extend(words);
                         }
-                        _ => slices.push(word),
+                        _ => lines.push(words),
                     }
                 }
-                merged.push(Words::Slices(slices));
-            }
-            merged
-        };
+                // No white space at the end of a line: a word that ends with some takes the next one along.
+                let mut merged: Vec<Words<'a>> = Vec::with_capacity(lines.len());
+                for words in lines {
+                    let needs_merging = words
+                        .iter()
+                        .rev()
+                        .skip(1)
+                        .any(|word| text::trim_end(word).len() < word.len());
+                    if !needs_merging && self.prose_wrap != ProseWrap::Never {
+                        merged.push(Words::Slices(words));
+                        continue;
+                    }
+                    if self.prose_wrap == ProseWrap::Never {
+                        merged.push(Words::Joined(words.join(&b" "[..])));
+                        continue;
+                    }
+                    // The words are next to each other in the text, with one space in between.
+                    let mut slices: Vec<&'a [u8]> = Vec::with_capacity(words.len());
+                    for word in words {
+                        match slices.last_mut() {
+                            Some(last) if text::trim_end(last).len() < last.len() => {
+                                let start = last.as_ptr().addr() - self.text.as_ptr().addr();
+                                *last = &self.text[start..start + last.len() + 1 + word.len()];
+                            }
+                            _ => slices.push(word),
+                        }
+                    }
+                    merged.push(Words::Slices(slices));
+                }
+                merged
+            };
 
         // `removeUnnecessaryTrailingNewlines`
         let mut lines = lines;
@@ -665,7 +767,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 Words::Joined(text) => is_blank(text),
             }
         };
-        let trailing_newline_count = lines.iter().rev().take_while(|words| is_blank(words)).count();
+        let trailing_newline_count = lines
+            .iter()
+            .rev()
+            .take_while(|words| is_blank(words))
+            .count();
         let removed = match trailing_newline_count {
             0 => 0,
             // The next empty line.
@@ -684,7 +790,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             parent_indent += usize::from(matches!(it.kind, Kind::Sequence | Kind::Mapping));
             ancestor = self.parent(it);
         }
-        self.out.text(if node.kind == Kind::BlockFolded { b">" } else { b"|" });
+        self.out.text(if node.kind == Kind::BlockFolded {
+            b">"
+        } else {
+            b"|"
+        });
         if let Some(indent) = node.indent {
             self.out.text(indent.to_string().as_bytes());
         }
@@ -743,14 +853,18 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// `printFlowMapping` and `printFlowSequence`
     fn print_flow_mapping(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
         let is_mapping = node.kind == Kind::FlowMapping;
-        let bracket_spacing = match is_mapping && !node.children.is_empty() && self.bracket_spacing {
+        let bracket_spacing = match is_mapping && !node.children.is_empty() && self.bracket_spacing
+        {
             true => Line::Space,
             false => Line::Soft,
         };
         let tree = self.tree;
         let is_last_item_empty_mapping_item = node.children.last().is_some_and(|last| {
             let last = self.node(last);
-            last.kind == Kind::FlowMappingItem && tree.items(last.children).all(|child| is_empty_node(self.node(child)))
+            last.kind == Kind::FlowMappingItem
+                && tree
+                    .items(last.children)
+                    .all(|child| is_empty_node(self.node(child)))
         });
         self.out.text(if is_mapping { b"{" } else { b"[" });
         self.start_align(self.tab_width);
@@ -763,7 +877,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             };
             self.out.text(b",");
             self.out.line(Line::Space);
-            if child.position.start.line != self.node(next).position.start.line && self.has_next_empty_line(child) {
+            if child.position.start.line != self.node(next).position.start.line
+                && self.has_next_empty_line(child)
+            {
                 self.out.line(Line::Soft);
             }
         }
@@ -810,7 +926,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `printMappingItem`
     fn print_mapping_item(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
-        let (Some(key_id), Some(value_id), 2) = (node.children.first(), node.children.last(), node.children.len()) else {
+        let (Some(key_id), Some(value_id), 2) = (
+            node.children.first(),
+            node.children.last(),
+            node.children.len(),
+        ) else {
             return;
         };
         let (key, value) = (self.node(key_id), self.node(value_id));
@@ -821,13 +941,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
         let (key_content, value_content) = (self.first_child(key), self.first_child(value));
         // `needsSpaceInFrontOfMappingValue`
-        let space_before_colon: &[u8] = if key_content.is_some_and(|it| it.kind == Kind::Alias) { b" " } else { b"" };
+        let space_before_colon: &[u8] = if key_content.is_some_and(|it| it.kind == Kind::Alias) {
+            b" "
+        } else {
+            b""
+        };
 
         if is_empty_value {
-            if node.kind == Kind::FlowMappingItem && parent.is_some_and(|it| it.kind == Kind::FlowMapping) {
+            if node.kind == Kind::FlowMappingItem
+                && parent.is_some_and(|it| it.kind == Kind::FlowMapping)
+            {
                 return self.print(key_id, is_last_descendant);
             }
-            let is_in_set = parent.and_then(|it| it.tag).is_some_and(|tag| self.node(tag).is_set_tag);
+            let is_in_set = parent
+                .and_then(|it| it.tag)
+                .is_some_and(|tag| self.node(tag).is_set_tag);
             if node.kind == Kind::MappingItem
                 && self.is_absolutely_printed_as_single_line(key_content)
                 && key_content.is_none_or(|it| it.trailing_comment.is_none())
@@ -868,14 +996,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             return self.out.end_indent();
         }
 
-        let has_no_comments_before_or_in =
-            |content: Option<&Node<'a>>| content.is_none_or(|it| it.leading_comments.is_empty() && it.middle_comments.is_empty());
+        let has_no_comments_before_or_in = |content: Option<&Node<'a>>| {
+            content.is_none_or(|it| it.leading_comments.is_empty() && it.middle_comments.is_empty())
+        };
         let key_has_no_comments = has_no_comments_before_or_in(key_content)
             && key_content.is_none_or(|it| it.trailing_comment.is_none())
             && key.end_comments.is_empty();
         // `isSingleLineNode`
         let is_single_line_key = key_content.is_none_or(|it| match it.kind {
-            Kind::Plain | Kind::QuoteDouble | Kind::QuoteSingle => it.position.start.line == it.position.end.line,
+            Kind::Plain | Kind::QuoteDouble | Kind::QuoteSingle => {
+                it.position.start.line == it.position.end.line
+            }
             Kind::Alias => true,
             _ => false,
         });
@@ -901,7 +1032,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             out.text(space_before_colon);
             out.text(b":");
             if has_end_comments
-                && value_content.is_some_and(|it| matches!(it.kind, Kind::FlowMapping | Kind::FlowSequence) && it.children.is_empty())
+                && value_content.is_some_and(|it| {
+                    matches!(it.kind, Kind::FlowMapping | Kind::FlowSequence)
+                        && it.children.is_empty()
+                })
             {
                 out.text(b" ");
             } else if value_content.is_some_and(|it| !it.leading_comments.is_empty())
@@ -909,7 +1043,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 || (parent.is_some_and(|it| it.kind == Kind::Mapping)
                     && key_content.is_some_and(|it| it.trailing_comment.is_some())
                     && is_inline_node(value_content))
-                || value_content.is_some_and(|it| is_block_collection(it) && it.tag.is_none() && it.anchor.is_none())
+                || value_content.is_some_and(|it| {
+                    is_block_collection(it) && it.tag.is_none() && it.anchor.is_none()
+                })
             {
                 out.hard_line();
             } else if value_content.is_some() {

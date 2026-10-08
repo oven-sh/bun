@@ -51,7 +51,10 @@ pub(crate) fn end_of_line_comments(comments: &[Comment]) -> &[Comment] {
 ///
 /// Prettier's `shouldAttachToUnionTypeFirstElement`: a block comment on one line, with nothing but
 /// blanks and other comments between it and the union.
-pub(crate) fn union_leading_comments<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> (&'a [Comment], &'a [Comment]) {
+pub(crate) fn union_leading_comments<'a>(
+    ty: TypeNode<'a>,
+    f: &Formatter<'a>,
+) -> (&'a [Comment], &'a [Comment]) {
     if f.is_quiet() {
         return (&[], &[]);
     }
@@ -62,7 +65,8 @@ pub(crate) fn union_leading_comments<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) ->
         let is_adjacent = comment.is_block()
             && !comment.is_multiline_block()
             && !f.comments().is_suppression_comment(comment)
-            && f.source_text().all_bytes_match(comment.span.end, end, |b| matches!(b, b' ' | b'\t'));
+            && f.source_text()
+                .all_bytes_match(comment.span.end, end, |b| matches!(b, b' ' | b'\t'));
         if !is_adjacent {
             break;
         }
@@ -74,12 +78,19 @@ pub(crate) fn union_leading_comments<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) ->
 
 /// Prettier's `shouldHugUnionType` for the union `ty`: it is one object type or name, and otherwise
 /// only `null` and `void`.
-pub(crate) fn should_hug_type<'a>(ty: TypeNode<'a>, types: List<'a, TypeNode<'a>>, f: &Formatter<'a>) -> bool {
-    let is_object_like = |t: &TypeNode<'a>| matches!(t.kind(), TypeKind::Object(_) | TypeKind::Ref { .. });
+pub(crate) fn should_hug_type<'a>(
+    ty: TypeNode<'a>,
+    types: List<'a, TypeNode<'a>>,
+    f: &Formatter<'a>,
+) -> bool {
+    let is_object_like =
+        |t: &TypeNode<'a>| matches!(t.kind(), TypeKind::Object(_) | TypeKind::Ref { .. });
     let Some(object_type) = types.iter().find(is_object_like) else {
         return false;
     };
-    if !types.iter().all(|t| t == object_type || matches!(t.kind(), TypeKind::Keyword(Keyword::Void | Keyword::Null))) {
+    if !types.iter().all(|t| {
+        t == object_type || matches!(t.kind(), TypeKind::Keyword(Keyword::Void | Keyword::Null))
+    }) {
         return false;
     }
     // Not if one of the types has a comment.

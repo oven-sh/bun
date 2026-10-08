@@ -4,15 +4,27 @@ use crate::js::utils::expression::ExpressionLeftSide;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-pub(crate) fn write_return_statement<'a>(_statement: Stmt<'a>, argument: Option<Expr<'a>>, f: &mut Formatter<'a>) {
+pub(crate) fn write_return_statement<'a>(
+    _statement: Stmt<'a>,
+    argument: Option<Expr<'a>>,
+    f: &mut Formatter<'a>,
+) {
     write_return_or_throw("return", argument, f);
 }
 
-pub(crate) fn write_throw_statement<'a>(_statement: Stmt<'a>, argument: Expr<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_throw_statement<'a>(
+    _statement: Stmt<'a>,
+    argument: Expr<'a>,
+    f: &mut Formatter<'a>,
+) {
     write_return_or_throw("throw", Some(argument), f);
 }
 
-fn write_return_or_throw<'a>(keyword: &'static str, argument: Option<Expr<'a>>, f: &mut Formatter<'a>) {
+fn write_return_or_throw<'a>(
+    keyword: &'static str,
+    argument: Option<Expr<'a>>,
+    f: &mut Formatter<'a>,
+) {
     write!(f, keyword);
     if let Some(argument) = argument {
         write!(f, [space(), FormatAdjacentArgument(argument)]);
@@ -46,11 +58,19 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
         {
             write!(
                 f,
-                group(&format_args!(if_group_breaks(&"("), soft_block_indent(&argument), if_group_breaks(&")")))
+                group(&format_args!(
+                    if_group_breaks(&"("),
+                    soft_block_indent(&argument),
+                    if_group_breaks(&")")
+                ))
             );
         } else if is_sequence {
-            let format_argument =
-                format_with(|f| write!(f, group(&format_args!("(", soft_block_indent(&argument), ")"))));
+            let format_argument = format_with(|f| {
+                write!(
+                    f,
+                    group(&format_args!("(", soft_block_indent(&argument), ")"))
+                )
+            });
             if f.is_quiet() {
                 return write!(f, format_argument);
             }
@@ -61,9 +81,12 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
             // The comments before the `)` go behind it. After `return`, only those that start
             // their line: see `write_comments_before_closing_parenthesis`.
             let is_return = matches!(argument.ast_parent(), AstNodes::ReturnStatement(_));
-            let limit = (f.comments().comments_in_range(span.end, argument.outer_span().end).iter())
-                .find(|comment| !is_return || comment.preceded_by_newline())
-                .map_or_else(|| argument.outer_span().end, |comment| comment.span.start);
+            let limit = (f
+                .comments()
+                .comments_in_range(span.end, argument.outer_span().end)
+                .iter())
+            .find(|comment| !is_return || comment.preceded_by_newline())
+            .map_or_else(|| argument.outer_span().end, |comment| comment.span.start);
             let previous_limit = f.comments_mut().limit_comments_up_to(limit);
             write!(f, format_argument);
             f.comments_mut().restore_view_limit(previous_limit);
@@ -84,27 +107,34 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
         .get_type_cast_comment_index(argument.span())
         .and_then(|index| comments.unprinted_comments().get(index))
         .map(|comment| comment.span.end);
-    let is_before_type_cast = |comment: &Comment| type_cast_comment_end.is_none_or(|end| comment.span.start < end);
+    let is_before_type_cast =
+        |comment: &Comment| type_cast_comment_end.is_none_or(|end| comment.span.start < end);
 
     for left_side in ExpressionLeftSide::from(argument).iter() {
         let leading_comments = comments.comments_before(left_side.span().start);
         if leading_comments.iter().any(|comment| {
-            (comment.is_multiline_block() || comment.followed_by_newline()) && is_before_type_cast(comment)
+            (comment.is_multiline_block() || comment.followed_by_newline())
+                && is_before_type_cast(comment)
         }) {
             return true;
         }
         // After `yield`, which only oxfmt asks about, only what is before the left edge counts.
-        if left_side.is_assignment_target || matches!(argument.ast_parent(), AstNodes::YieldExpression(_)) {
+        if left_side.is_assignment_target
+            || matches!(argument.ast_parent(), AstNodes::YieldExpression(_))
+        {
             continue;
         }
         if let ExprKind::Dot { obj, name, .. } = left_side.expr.kind()
             && !name.bytes().starts_with(b"#")
-            && comments.comments_in_range(obj.span().end, name.span().end).iter().any(|comment| {
-                // Prettier's `handleMemberExpressionComments`: it leads the member expression.
-                comment.preceded_by_newline()
-                    && (comment.is_multiline_block() || comment.followed_by_newline())
-                    && is_before_type_cast(comment)
-            })
+            && comments
+                .comments_in_range(obj.span().end, name.span().end)
+                .iter()
+                .any(|comment| {
+                    // Prettier's `handleMemberExpressionComments`: it leads the member expression.
+                    comment.preceded_by_newline()
+                        && (comment.is_multiline_block() || comment.followed_by_newline())
+                        && is_before_type_cast(comment)
+                })
         {
             return true;
         }

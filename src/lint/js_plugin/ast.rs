@@ -65,11 +65,75 @@ const INNER_TEXT: u32 = word(Tag::Constant, 5);
 
 /// Strings that are frequent and not where their node starts. Sorted.
 pub(super) const STRINGS: &[&str] = &[
-    "!", "!=", "!==", "%", "%=", "&", "&&", "&&=", "&=", "*", "**", "**=", "*=", "+", "++", "+=", "-", "--", "-=", "/", "/=",
-    "<", "<<", "<<=", "<=", "=", "==", "===", ">", ">=", ">>", ">>=", ">>>", ">>>=", "??", "??=", "^", "^=", "await using",
-    "const", "constructor", "delete", "get", "in", "init", "instanceof", "keyof", "let", "method", "module", "namespace",
-    "private", "protected", "public", "readonly", "script", "set", "type", "typeof", "unique", "using", "value", "var", "void",
-    "|", "|=", "||", "||=", "~",
+    "!",
+    "!=",
+    "!==",
+    "%",
+    "%=",
+    "&",
+    "&&",
+    "&&=",
+    "&=",
+    "*",
+    "**",
+    "**=",
+    "*=",
+    "+",
+    "++",
+    "+=",
+    "-",
+    "--",
+    "-=",
+    "/",
+    "/=",
+    "<",
+    "<<",
+    "<<=",
+    "<=",
+    "=",
+    "==",
+    "===",
+    ">",
+    ">=",
+    ">>",
+    ">>=",
+    ">>>",
+    ">>>=",
+    "??",
+    "??=",
+    "^",
+    "^=",
+    "await using",
+    "const",
+    "constructor",
+    "delete",
+    "get",
+    "in",
+    "init",
+    "instanceof",
+    "keyof",
+    "let",
+    "method",
+    "module",
+    "namespace",
+    "private",
+    "protected",
+    "public",
+    "readonly",
+    "script",
+    "set",
+    "type",
+    "typeof",
+    "unique",
+    "using",
+    "value",
+    "var",
+    "void",
+    "|",
+    "|=",
+    "||",
+    "||=",
+    "~",
 ];
 
 /// The numbers of the nodes of a file.
@@ -149,7 +213,10 @@ impl<'a> Writer<'a, '_> {
         self.tree.parents.push(parent);
         let fields = node_type.fields();
         let at = self.tree.fields.len();
-        let count = fields.iter().filter(|it| it.is_in(self.dialect) && !it.is_hidden).count();
+        let count = fields
+            .iter()
+            .filter(|it| it.is_in(self.dialect) && !it.is_hidden)
+            .count();
         self.tree.fields.resize(at + count, UNDEFINED);
         self.open.push(Open::Node(OpenNode {
             node,
@@ -226,8 +293,12 @@ impl<'a> Writer<'a, '_> {
                 self.tree.lists.push(digits);
                 word(Tag::BigInt, self.tree.lists.len() - 1)
             }
-            Value::Object(Object::Regex { pattern, flags }) => self.pair(Tag::RegExpParts, Some(pattern), flags, span),
-            Value::Object(Object::Template { cooked, raw }) => self.pair(Tag::Template, cooked, raw, span),
+            Value::Object(Object::Regex { pattern, flags }) => {
+                self.pair(Tag::RegExpParts, Some(pattern), flags, span)
+            }
+            Value::Object(Object::Template { cooked, raw }) => {
+                self.pair(Tag::Template, cooked, raw, span)
+            }
             Value::Nodes(list) => {
                 let (at, len) = (self.tree.lists.len(), list.len());
                 self.tree.lists.push(len as u32);
@@ -254,13 +325,18 @@ impl<'a> Writer<'a, '_> {
             Some(first) if first == second => second_word,
             Some(first) => self.string(first, span),
         };
-        self.tree.lists.extend_from_slice(&[first_word, second_word]);
+        self.tree
+            .lists
+            .extend_from_slice(&[first_word, second_word]);
         word(tag, self.tree.lists.len() - 2)
     }
 
     /// The word for a string in a field of the node at `span`.
     fn string(&mut self, value: &[u8], span: Span) -> u32 {
-        let whole = self.text.get(span.start as usize..span.end as usize).unwrap_or_default();
+        let whole = self
+            .text
+            .get(span.start as usize..span.end as usize)
+            .unwrap_or_default();
         if value == whole {
             return TEXT;
         }
@@ -283,7 +359,10 @@ impl<'a> Writer<'a, '_> {
             }
         };
         let (start, end) = match start_in_text {
-            Some(start) => (self.offsets.to_utf16(start), self.offsets.to_utf16(start + value.len() as u32)),
+            Some(start) => (
+                self.offsets.to_utf16(start),
+                self.offsets.to_utf16(start + value.len() as u32),
+            ),
             None if has_surrogate(value) => return self.units(value),
             None => {
                 let start = self.extra_units;
@@ -303,14 +382,19 @@ impl<'a> Writer<'a, '_> {
         let mut i = 0;
         while i < value.len() {
             if let [0xED, second @ 0xA0..=0xBF, third @ 0x80..=0xBF, ..] = value[i..] {
-                self.tree.lists.push(0xD000 | u32::from(second & 0x3F) << 6 | u32::from(third & 0x3F));
+                self.tree
+                    .lists
+                    .push(0xD000 | u32::from(second & 0x3F) << 6 | u32::from(third & 0x3F));
                 i += 3;
                 continue;
             }
             let (c, size) = bun_core::lexer::char_and_size(value, i);
             i += size.max(1);
             match u32::try_from(c).unwrap_or(0xFFFD) {
-                c @ 0x1_0000.. => self.tree.lists.extend_from_slice(&[0xD800 + ((c - 0x1_0000) >> 10), 0xDC00 + (c & 0x3FF)]),
+                c @ 0x1_0000.. => self
+                    .tree
+                    .lists
+                    .extend_from_slice(&[0xD800 + ((c - 0x1_0000) >> 10), 0xDC00 + (c & 0x3FF)]),
                 c => self.tree.lists.push(c),
             }
         }
@@ -339,7 +423,11 @@ fn write_matches(matches: &[Vec<u32>], out: &mut Vec<u8>) {
     }
 }
 
-fn walk<'a, 's>(file: &'a File<'a>, offsets: &'s Offsets, selectors: &'s [Option<&'s Selector>]) -> Writer<'a, 's> {
+fn walk<'a, 's>(
+    file: &'a File<'a>,
+    offsets: &'s Offsets,
+    selectors: &'s [Option<&'s Selector>],
+) -> Writer<'a, 's> {
     let mut writer = Writer {
         text: file.text(),
         dialect: Dialect::of(file),
@@ -389,7 +477,15 @@ pub(super) fn write<'a>(
     for number in &tree.numbers {
         out.extend_from_slice(&number.to_le_bytes());
     }
-    for part in [&tree.starts, &tree.ends, &tree.parents, &tree.fields, &tree.lists, &tree.strings, &tree.twice] {
+    for part in [
+        &tree.starts,
+        &tree.ends,
+        &tree.parents,
+        &tree.fields,
+        &tree.lists,
+        &tree.strings,
+        &tree.twice,
+    ] {
         wire::words(out, part);
     }
     write_matches(&writer.matches, out);
@@ -399,6 +495,11 @@ pub(super) fn write<'a>(
 }
 
 /// Appends only what matches `selectors`.
-pub(super) fn write_only_matches<'a>(file: &'a File<'a>, offsets: &Offsets, selectors: &[Option<&Selector>], out: &mut Vec<u8>) {
+pub(super) fn write_only_matches<'a>(
+    file: &'a File<'a>,
+    offsets: &Offsets,
+    selectors: &[Option<&Selector>],
+    out: &mut Vec<u8>,
+) {
     write_matches(&walk(file, offsets, selectors).matches, out);
 }

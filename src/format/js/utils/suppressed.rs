@@ -46,7 +46,9 @@ fn write_source(span: Span, is_one_string: bool, f: &mut Formatter<'_>) {
     let width = match TextWidth::from_text(&text, 0) {
         width if !width.is_multiline() || !is_one_string => width,
         _ => TextWidth::multiline_string(
-            bun_core::strings::split(&text, b"\n").map(|line| TextWidth::from_text(line, 0).value()).sum(),
+            bun_core::strings::split(&text, b"\n")
+                .map(|line| TextWidth::from_text(line, 0).value())
+                .sum(),
         ),
     };
     f.write_text(&text, Some(width));

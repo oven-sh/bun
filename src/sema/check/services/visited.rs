@@ -73,7 +73,10 @@ pub(in crate::check) enum VisitedKind {
 impl Checker<'_, '_> {
     /// `node.Symbol` for every declaration of `file`. `declareSymbolEx`: `Symbol::decls` also lists
     /// the declarations the symbol rejected. Each has its own symbol, created later.
-    pub(in crate::check) fn symbols_of_declarations(&self, file: FileId) -> FxHashMap<Decl, SymbolId> {
+    pub(in crate::check) fn symbols_of_declarations(
+        &self,
+        file: FileId,
+    ) -> FxHashMap<Decl, SymbolId> {
         let mut symbols: FxHashMap<Decl, SymbolId> = FxHashMap::default();
         for (index, symbol) in self.bound(file).symbols.iter().enumerate() {
             // `cloneSymbol` copies the declarations, whose `Symbol` is still the one the binder

@@ -339,19 +339,28 @@ impl Tree {
         if string.is_null() {
             return &[];
         }
-        let from = if string.len & Str::OWNED != 0 { &self.strings[..] } else { text };
+        let from = if string.len & Str::OWNED != 0 {
+            &self.strings[..]
+        } else {
+            text
+        };
         let (start, len) = (string.start as usize, (string.len & !Str::OWNED) as usize);
         from.get(start..start + len).unwrap_or_default()
     }
 
     /// The number of the line that `offset` is on. The first is 1.
     pub(crate) fn line(&self, offset: u32) -> u32 {
-        self.line_starts.partition_point(|&start| start <= offset).max(1) as u32
+        self.line_starts
+            .partition_point(|&start| start <= offset)
+            .max(1) as u32
     }
 
     /// Where the line that `offset` is on starts.
     pub(crate) fn line_start(&self, offset: u32) -> u32 {
-        self.line_starts.get(self.line(offset) as usize - 1).copied().unwrap_or(0)
+        self.line_starts
+            .get(self.line(offset) as usize - 1)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -391,8 +400,13 @@ pub(crate) fn dump(text: &[u8], tree: &Tree, root: NodeId, out: &mut Vec<u8>) {
         out.push(b'"');
     }
     fn column(text: &[u8], tree: &Tree, offset: u32) -> usize {
-        let line = text.get(tree.line_start(offset) as usize..offset as usize).unwrap_or_default();
-        1 + line.iter().map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0)).sum::<usize>()
+        let line = text
+            .get(tree.line_start(offset) as usize..offset as usize)
+            .unwrap_or_default();
+        1 + line
+            .iter()
+            .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
+            .sum::<usize>()
     }
     let mut stack = vec![(root, 0usize)];
     while let Some((id, depth)) = stack.pop() {
@@ -479,18 +493,34 @@ pub(crate) fn dump(text: &[u8], tree: &Tree, root: NodeId, out: &mut Vec<u8>) {
             }
             Kind::Heading => out.extend_from_slice(format!(" depth={}", node.number).as_bytes()),
             Kind::List => {
-                let start = if node.ordered { node.number.to_string() } else { "null".to_string() };
+                let start = if node.ordered {
+                    node.number.to_string()
+                } else {
+                    "null".to_string()
+                };
                 out.extend_from_slice(
-                    format!(" ordered={} spread={} start={start}", node.ordered, node.spread).as_bytes(),
+                    format!(
+                        " ordered={} spread={} start={start}",
+                        node.ordered, node.spread
+                    )
+                    .as_bytes(),
                 );
             }
             Kind::ListItem => {
-                let checked = ["null", "false", "true"].get(node.checked as usize).copied().unwrap_or("null");
-                out.extend_from_slice(format!(" checked={checked} spread={}", node.spread).as_bytes());
+                let checked = ["null", "false", "true"]
+                    .get(node.checked as usize)
+                    .copied()
+                    .unwrap_or("null");
+                out.extend_from_slice(
+                    format!(" checked={checked} spread={}", node.spread).as_bytes(),
+                );
             }
             Kind::Table => {
                 let first = node.first_align as usize;
-                let aligns = tree.aligns.get(first..first + node.number as usize).unwrap_or_default();
+                let aligns = tree
+                    .aligns
+                    .get(first..first + node.number as usize)
+                    .unwrap_or_default();
                 let names: Vec<&str> = aligns
                     .iter()
                     .map(|align| match align {

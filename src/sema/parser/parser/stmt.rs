@@ -429,7 +429,13 @@ impl Parser<'_> {
         let base = self.s.modifiers.len();
         // The common declarations have no modifier.
         let flags = match self.token() {
-            T::Var | T::Let | T::Function | T::Class | T::Enum | T::Import | T::Interface
+            T::Var
+            | T::Let
+            | T::Function
+            | T::Class
+            | T::Enum
+            | T::Import
+            | T::Interface
             | T::Type => Flags::empty(),
             _ => self.modifiers(true, false, false),
         };
@@ -552,7 +558,13 @@ impl Parser<'_> {
             if !is_in_for
                 && self.token() == T::Exclamation
                 && !self.newline_before()
-                && matches!(self.f.pats.get(pat.idx()), Some(Pat { kind: PatKind::Ident(_), .. }))
+                && matches!(
+                    self.f.pats.get(pat.idx()),
+                    Some(Pat {
+                        kind: PatKind::Ident(_),
+                        ..
+                    })
+                )
             {
                 self.next();
                 flags |= Flags::DEFINITE;
@@ -931,10 +943,13 @@ impl Parser<'_> {
             true => Atom::NONE,
             false => {
                 // The reference notes the name at the start of the statement.
-                let (label, _) = (self.lx.atom, self.is_identifier() || {
-                    self.fail();
-                    false
-                });
+                let (label, _) = (
+                    self.lx.atom,
+                    self.is_identifier() || {
+                        self.fail();
+                        false
+                    },
+                );
                 self.note_identifier(label, start.pos);
                 self.next();
                 label
@@ -1022,8 +1037,7 @@ impl Parser<'_> {
         let start = self.start();
         self.next();
         let block = self.block();
-        let (mut param, mut handler, mut finalizer) =
-            (VarDeclId::NONE, StmtId::NONE, StmtId::NONE);
+        let (mut param, mut handler, mut finalizer) = (VarDeclId::NONE, StmtId::NONE, StmtId::NONE);
         if self.eat(T::Catch) {
             if self.eat(T::OpenParen) {
                 // `parseVariableDeclaration`

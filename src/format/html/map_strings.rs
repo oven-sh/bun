@@ -27,7 +27,9 @@ fn text_of<'t>(element: &'t FormatElement, source: &'t [u8], owned: &'t [u8]) ->
 pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut Formatter<'_>) {
     let source = f.source_text().as_bytes();
     // Everything that `content` stands for is in it: what is captured stays where it is written.
-    let changes = f.storage.interned(content).iter().any(|element| text_of(element, source, &f.storage.text).is_some_and(|text| map.changes(text)));
+    let changes = f.storage.interned(content).iter().any(|element| {
+        text_of(element, source, &f.storage.text).is_some_and(|text| map.changes(text))
+    });
     match changes {
         false => f.write_element(FormatElement::Interned(content)),
         true => {
@@ -82,18 +84,32 @@ impl<M: MapString> Mapper<'_, M> {
                     }
                 }
                 FormatElement::BestFitting(best_fitting) => {
-                    let variants: SmallVec<[Interned; 4]> = f.storage.variants(best_fitting).iter().copied().collect();
-                    let variants: SmallVec<[Interned; 4]> = variants.into_iter().map(|variant| self.capture(variant, f)).collect();
+                    let variants: SmallVec<[Interned; 4]> =
+                        f.storage.variants(best_fitting).iter().copied().collect();
+                    let variants: SmallVec<[Interned; 4]> = variants
+                        .into_iter()
+                        .map(|variant| self.capture(variant, f))
+                        .collect();
                     let mapped = f.best_fitting_of(&variants);
                     f.write_element(mapped);
                 }
                 // What is in it is measured anew.
                 FormatElement::Tag(Tag::StartGroup(group)) => {
-                    let mode = if group.mode() == GroupMode::Expand { GroupMode::Expand } else { GroupMode::Flat };
-                    f.write_element(FormatElement::Tag(Tag::StartGroup(Group::new().with_id(group.id()).with_mode(mode))));
+                    let mode = if group.mode() == GroupMode::Expand {
+                        GroupMode::Expand
+                    } else {
+                        GroupMode::Flat
+                    };
+                    f.write_element(FormatElement::Tag(Tag::StartGroup(
+                        Group::new().with_id(group.id()).with_mode(mode),
+                    )));
                 }
-                FormatElement::Token(_) | FormatElement::SourceText(_) | FormatElement::OwnedText(_) => {
-                    let Some(text) = text_of(&element, source, &f.storage.text).filter(|text| self.map.changes(text)) else {
+                FormatElement::Token(_)
+                | FormatElement::SourceText(_)
+                | FormatElement::OwnedText(_) => {
+                    let Some(text) = text_of(&element, source, &f.storage.text)
+                        .filter(|text| self.map.changes(text))
+                    else {
                         f.write_element(element);
                         continue;
                     };

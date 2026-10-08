@@ -59,10 +59,13 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
                 || (text.len() >= 8 && bun_core::strings::contains_char(text, b'\\'));
         }
         // `in` in the head of a `for` statement, and a sequence, depend on more.
-        T::Binary if matches!(e.binary_operator(), None | Some(BinOp::In | BinOp::Comma)) => return true,
+        T::Binary if matches!(e.binary_operator(), None | Some(BinOp::In | BinOp::Comma)) => {
+            return true;
+        }
         _ => {}
     }
-    let is_argument = |call: Expr<'a>| matches!(call.tag(), T::Call | T::New) && call.callee() != Some(e);
+    let is_argument =
+        |call: Expr<'a>| matches!(call.tag(), T::Call | T::New) && call.callee() != Some(e);
     let parent = e.parent();
     // For anything but an assignment, `for (var a = (e) in b);` is all there is to an initializer.
     if let (Node::VarDecl(_), false) = (parent, tag == T::Assign) {
@@ -79,30 +82,52 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
         | T::ImportMeta
         | T::NewTarget
         | T::Array => false,
-        T::Number => matches!(parent, Node::Expr(parent) if matches!(parent.tag(), T::Dot | T::Index)),
+        T::Number => {
+            matches!(parent, Node::Expr(parent) if matches!(parent.tag(), T::Dot | T::Index))
+        }
         T::String => matches!(parent, Node::Stmt(_)),
         T::New => matches!(parent, Node::Class(_)),
-        T::Dot | T::Index | T::Call | T::ImportCall | T::NonNull | T::TaggedTemplate => match parent {
-            Node::Expr(parent) => parent.tag() == T::New,
-            Node::Stmt(statement) => statement.tag() == StmtTag::ExportDefault,
-            Node::Class(_) => matches!(tag, T::NonNull | T::TaggedTemplate),
-            _ => false,
-        },
+        T::Dot | T::Index | T::Call | T::ImportCall | T::NonNull | T::TaggedTemplate => {
+            match parent {
+                Node::Expr(parent) => parent.tag() == T::New,
+                Node::Stmt(statement) => statement.tag() == StmtTag::ExportDefault,
+                Node::Class(_) => matches!(tag, T::NonNull | T::TaggedTemplate),
+                _ => false,
+            }
+        }
         T::Object | T::Fn => match parent {
             Node::Expr(parent) => parent.tag() != T::Array && !is_argument(parent),
             Node::Stmt(statement) => statement.tag() != StmtTag::Return,
             Node::Func(_) => tag == T::Object,
-            Node::Prop(_) | Node::Param(_) | Node::PatProp(_) | Node::PatElem(_) | Node::Member(_) => false,
+            Node::Prop(_)
+            | Node::Param(_)
+            | Node::PatProp(_)
+            | Node::PatElem(_)
+            | Node::Member(_) => false,
             _ => true,
         },
         T::Assign => match parent {
-            Node::Stmt(statement) if statement.tag() == StmtTag::Expr => e.left().is_none_or(|left| left.tag() == T::Object),
+            Node::Stmt(statement) if statement.tag() == StmtTag::Expr => {
+                e.left().is_none_or(|left| left.tag() == T::Object)
+            }
             _ => true,
         },
-        T::Binary | T::Unary | T::Cond | T::As | T::AsConst | T::Satisfies | T::Await | T::Yield => match parent {
+        T::Binary
+        | T::Unary
+        | T::Cond
+        | T::As
+        | T::AsConst
+        | T::Satisfies
+        | T::Await
+        | T::Yield => match parent {
             Node::Expr(parent) => !is_argument(parent),
             Node::Stmt(statement) => statement.tag() == StmtTag::ExportDefault,
-            Node::Func(_) | Node::Case(_) | Node::Param(_) | Node::PatProp(_) | Node::PatElem(_) | Node::Member(_) => false,
+            Node::Func(_)
+            | Node::Case(_)
+            | Node::Param(_)
+            | Node::PatProp(_)
+            | Node::PatElem(_)
+            | Node::Member(_) => false,
             _ => true,
         },
         _ => true,
@@ -112,7 +137,10 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
 fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let kind = e.kind();
     match kind {
-        ExprKind::Missing | ExprKind::PrivateIdentifier(_) | ExprKind::Super | ExprKind::Spread(_) => return false,
+        ExprKind::Missing
+        | ExprKind::PrivateIdentifier(_)
+        | ExprKind::Super
+        | ExprKind::Spread(_) => return false,
         ExprKind::Ident(_) => return identifier_needs_parentheses(e, f),
         ExprKind::This
         | ExprKind::Null
@@ -128,7 +156,12 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         // The function of a method is not an expression of its own.
         ExprKind::Fn(func) if !func.is_arrow() && func.kind() != FnKind::Expr => return false,
         // The `ChainExpression` has them.
-        ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) | ExprKind::NonNull(_) if is_chain_root(e) => {
+        ExprKind::Dot { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::Call(_)
+        | ExprKind::NonNull(_)
+            if is_chain_root(e) =>
+        {
             return false;
         }
         _ => {}
@@ -155,7 +188,10 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         },
         ExprKind::Fn(func) if func.is_arrow() => false,
         ExprKind::Fn(_) | ExprKind::Class(_) => {
-            matches!(left_edge_end(e, e.as_chain_element()).1, N::ExpressionStatement(ExpressionStatement::Stmt(_)))
+            matches!(
+                left_edge_end(e, e.as_chain_element()).1,
+                N::ExpressionStatement(ExpressionStatement::Stmt(_))
+            )
         }
         _ => false,
     };
@@ -172,7 +208,10 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         // So that it does not become a directive.
         ExprKind::String(_) => {
             matches!(parent, N::ExpressionStatement(ExpressionStatement::Stmt(_)))
-                && matches!(parent.parent(), N::Program(_) | N::FunctionBody(_) | N::BlockStatement(_))
+                && matches!(
+                    parent.parent(),
+                    N::Program(_) | N::FunctionBody(_) | N::BlockStatement(_)
+                )
         }
         ExprKind::Unary { op, .. } => match parent {
             N::UnaryExpression(parent) => {
@@ -206,7 +245,9 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             N::ExpressionStatement(statement) => !statement.is_arrow_function_body(),
             _ => true,
         },
-        ExprKind::Binary { op, .. } if is_angular_pipe(op, f) => angular_pipe_needs_parentheses(e, parent),
+        ExprKind::Binary { op, .. } if is_angular_pipe(op, f) => {
+            angular_pipe_needs_parentheses(e, parent)
+        }
         ExprKind::Binary { op, .. } => {
             matches!(parent, N::UpdateExpression(_))
                 || (op == BinOp::In && is_in_for_statement_initializer(e))
@@ -244,11 +285,19 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             | N::TSAsExpression(_)
             | N::TSSatisfiesExpression(_)
             | N::TSNonNullExpression(_) => true,
-            N::ConditionalExpression(conditional) => conditional.test() == Some(e) && !f.options().experimental_ternaries,
+            N::ConditionalExpression(conditional) => {
+                conditional.test() == Some(e) && !f.options().experimental_ternaries
+            }
             _ => is_member_object(e, parent) || parent.is_call_like_callee(e),
         },
         ExprKind::Fn(func) if func.is_arrow() => match parent {
-            N::BinaryExpression(binary) if binary.binary_operator().is_some_and(|operator| is_angular_pipe(operator, f)) => false,
+            N::BinaryExpression(binary)
+                if binary
+                    .binary_operator()
+                    .is_some_and(|operator| is_angular_pipe(operator, f)) =>
+            {
+                false
+            }
             N::BinaryExpression(_)
             | N::PrivateInExpression(_)
             | N::TSAsExpression(_)
@@ -264,15 +313,21 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             _ => is_member_object(e, parent) || parent.is_call_like_callee(e),
         },
         // An IIFE. A tagged template is much the same.
-        ExprKind::Fn(_) => matches!(parent, N::TaggedTemplateExpression(_)) || parent.is_call_like_callee(e),
-        ExprKind::Class(_) => matches!(parent, N::NewExpression(_)) && parent.is_call_like_callee(e),
+        ExprKind::Fn(_) => {
+            matches!(parent, N::TaggedTemplateExpression(_)) || parent.is_call_like_callee(e)
+        }
+        ExprKind::Class(_) => {
+            matches!(parent, N::NewExpression(_)) && parent.is_call_like_callee(e)
+        }
         ExprKind::Dot { .. }
         | ExprKind::Index { .. }
         | ExprKind::Call(_)
         | ExprKind::NonNull(_)
         | ExprKind::TaggedTemplate(_)
         | ExprKind::ImportCall { .. } => {
-            matches!(parent, N::NewExpression(_)) && parent.is_call_like_callee(e) && has_call_on_left_edge(e)
+            matches!(parent, N::NewExpression(_))
+                && parent.is_call_like_callee(e)
+                && has_call_on_left_edge(e)
         }
         ExprKind::Instantiation { .. } => is_member_object(e, parent),
         ExprKind::Jsx(_) => jsx_needs_parentheses(e, parent),
@@ -281,7 +336,11 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// Prettier's `parentNeedsParentheses`: what depends on the parent more than on `e`.
-fn parent_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> Option<bool> {
+fn parent_needs_parentheses<'a>(
+    e: Expr<'a>,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> Option<bool> {
     match parent {
         // `class A extends (e) {}`
         N::Class(_) => {
@@ -304,11 +363,15 @@ fn parent_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter
                 _ => None,
             }
         }
-        N::ExportDefaultDeclaration(_) => should_wrap_function_for_export_default(e, f).then_some(true),
+        N::ExportDefaultDeclaration(_) => {
+            should_wrap_function_for_export_default(e, f).then_some(true)
+        }
         // Written by `print/decorators.rs`.
         N::Decorator(_) => Some(false),
         N::VariableDeclarator(_) => is_for_in_statement_init(e).then_some(true),
-        N::TSInstantiationExpression(_) => matches!(e.kind(), ExprKind::Await(_) | ExprKind::Yield { .. }).then_some(true),
+        N::TSInstantiationExpression(_) => {
+            matches!(e.kind(), ExprKind::Await(_) | ExprKind::Yield { .. }).then_some(true)
+        }
         _ => None,
     }
 }
@@ -347,7 +410,9 @@ fn should_wrap_function_for_export_default<'a>(declaration: Expr<'a>, f: &Format
                 op: UnOp::PostInc | UnOp::PostDec,
                 operand,
             } => operand,
-            ExprKind::As { .. } | ExprKind::AsConst(_) if current.is_angle_bracket_assertion() => return false,
+            ExprKind::As { .. } | ExprKind::AsConst(_) if current.is_angle_bracket_assertion() => {
+                return false;
+            }
             ExprKind::As { expr, .. }
             | ExprKind::AsConst(expr)
             | ExprKind::Satisfies { expr, .. }
@@ -368,8 +433,14 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
         // An IIFE is in parentheses already.
         let is_function = matches!(current.kind(), ExprKind::Fn(func) if !func.is_arrow());
         current = match parent {
-            N::BinaryExpression(it) | N::LogicalExpression(it) | N::AssignmentExpression(it) if is(it.left()) => it,
-            N::StaticMemberExpression(it) | N::PrivateFieldExpression(it) | N::ComputedMemberExpression(it)
+            N::BinaryExpression(it) | N::LogicalExpression(it) | N::AssignmentExpression(it)
+                if is(it.left()) =>
+            {
+                it
+            }
+            N::StaticMemberExpression(it)
+            | N::PrivateFieldExpression(it)
+            | N::ComputedMemberExpression(it)
                 if is(it.object()) =>
             {
                 it
@@ -377,9 +448,16 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
             N::TaggedTemplateExpression(it) if is(it.tag_expression()) && !is_function => it,
             N::CallExpression(it) if is(it.callee()) && !is_function => it,
             N::ConditionalExpression(it) if is(it.test()) => it,
-            N::UpdateExpression(it) if matches!(it.unary_operator(), Some(UnOp::PostInc | UnOp::PostDec)) => it,
+            N::UpdateExpression(it)
+                if matches!(it.unary_operator(), Some(UnOp::PostInc | UnOp::PostDec)) =>
+            {
+                it
+            }
             N::SequenceExpression(it) if is(it.sequence().first().copied()) => it,
-            N::ChainExpression(it) | N::TSNonNullExpression(it) | N::TSAsExpression(it) | N::TSSatisfiesExpression(it) => it,
+            N::ChainExpression(it)
+            | N::TSNonNullExpression(it)
+            | N::TSAsExpression(it)
+            | N::TSSatisfiesExpression(it) => it,
             _ => return (current, parent),
         };
         node = parent;
@@ -390,7 +468,16 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
 fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
     matches!(
         name,
-        b"async" | b"let" | b"await" | b"interface" | b"module" | b"using" | b"yield" | b"component" | b"hook" | b"type"
+        b"async"
+            | b"let"
+            | b"await"
+            | b"interface"
+            | b"module"
+            | b"using"
+            | b"yield"
+            | b"component"
+            | b"hook"
+            | b"type"
     )
 }
 
@@ -402,7 +489,9 @@ fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         return false;
     }
     let is_left_of = |statement: Stmt<'a>, left: Expr<'a>| {
-        statement.for_left().is_some_and(|it| matches!(it.kind(), StmtKind::Expr(it) if it == left))
+        statement
+            .for_left()
+            .is_some_and(|it| matches!(it.kind(), StmtKind::Expr(it) if it == left))
     };
     let parent = e.ast_parent();
     if name == b"async" {
@@ -414,13 +503,17 @@ fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         let (top, end) = left_edge_end(e, N::IdentifierReference(e));
         match end {
             // `for ((let) of []);`, `for ((let).a of []);`, `for ((let).a in []);`
-            N::ForOfStatement(statement) | N::ForInStatement(statement) if is_left_of(statement, top) => return true,
+            N::ForOfStatement(statement) | N::ForInStatement(statement)
+                if is_left_of(statement, top) =>
+            {
+                return true;
+            }
             // `(let)[a] = 1`
             N::ExpressionStatement(ExpressionStatement::Stmt(_)) | N::ForStatement(_) => {
                 let is_start = match end {
-                    N::ForStatement(statement) => {
-                        statement.for_init().is_some_and(|it| matches!(it.kind(), StmtKind::Expr(it) if it == top))
-                    }
+                    N::ForStatement(statement) => statement
+                        .for_init()
+                        .is_some_and(|it| matches!(it.kind(), StmtKind::Expr(it) if it == top)),
                     _ => true,
                 };
                 if is_start
@@ -438,17 +531,27 @@ fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     while matches!(ancestor, N::TSSatisfiesExpression(_) | N::TSAsExpression(_)) {
         ancestor = ancestor.parent();
     }
-    ancestor != parent && matches!(ancestor, N::ExpressionStatement(ExpressionStatement::Stmt(_)))
+    ancestor != parent
+        && matches!(
+            ancestor,
+            N::ExpressionStatement(ExpressionStatement::Stmt(_))
+        )
 }
 
-fn assignment_needs_parentheses<'a>(e: Expr<'a>, left: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+fn assignment_needs_parentheses<'a>(
+    e: Expr<'a>,
+    left: Expr<'a>,
+    parent: AstNodes<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     // `[a = 1] = b`
     if matches!(e.as_chain_element(), N::AssignmentTargetWithDefault(_)) {
         return false;
     }
     let is_init_or_update = |statement: Stmt<'a>, e: Expr<'a>| match statement.kind() {
         StmtKind::For { init, update, .. } => {
-            update == Some(e) || init.is_some_and(|it| matches!(it.kind(), StmtKind::Expr(it) if it == e))
+            update == Some(e)
+                || init.is_some_and(|it| matches!(it.kind(), StmtKind::Expr(it) if it == e))
         }
         _ => false,
     };
@@ -480,7 +583,12 @@ fn assignment_needs_parentheses<'a>(e: Expr<'a>, left: Expr<'a>, parent: AstNode
 pub(crate) fn has_own_line_comment_between(start: u32, end: u32, f: &Formatter<'_>) -> bool {
     let breaks = |comment: &Comment| comment.followed_by_newline() || comment.is_multiline_block();
     let comments = f.comments();
-    comments.printed_comments().iter().rev().take_while(|comment| comment.start() >= start).any(breaks)
+    comments
+        .printed_comments()
+        .iter()
+        .rev()
+        .take_while(|comment| comment.start() >= start)
+        .any(breaks)
         || comments.comments_before_iter(end).any(breaks)
 }
 
@@ -518,7 +626,9 @@ fn binary_or_cast_needs_parentheses<'a>(
         N::LogicalExpression(logical) if operator.is_some_and(BinOp::is_logical) => {
             return logical.binary_operator() != operator;
         }
-        N::LogicalExpression(parent) | N::BinaryExpression(parent) | N::PrivateInExpression(parent) => parent,
+        N::LogicalExpression(parent)
+        | N::BinaryExpression(parent)
+        | N::PrivateInExpression(parent) => parent,
         _ => return is_member_object(e, parent) || parent.is_call_like_callee(e),
     };
     let ExprKind::Binary {
@@ -556,7 +666,9 @@ fn angular_pipe_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool
         N::ObjectProperty(_) => e.is_parenthesized(),
         N::CallExpression(call) => call.callee() == Some(e),
         // Babel's `MemberExpression`, not its `OptionalMemberExpression`.
-        N::ComputedMemberExpression(member) => member.object() == Some(e) || is_optional_member_expression_of_babel(member),
+        N::ComputedMemberExpression(member) => {
+            member.object() == Some(e) || is_optional_member_expression_of_babel(member)
+        }
         _ => true,
     }
 }
@@ -630,7 +742,9 @@ fn has_call_on_left_edge(e: Expr<'_>) -> bool {
 
 fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
     match parent {
-        N::BinaryExpression(binary) => binary.binary_operator() == Some(BinOp::Lt) && binary.left() == Some(e),
+        N::BinaryExpression(binary) => {
+            binary.binary_operator() == Some(BinOp::Lt) && binary.left() == Some(e)
+        }
         N::CallExpression(_) | N::NewExpression(_) => parent.is_call_like_callee(e),
         N::ArrayExpression(_)
         | N::PrivateInExpression(_)

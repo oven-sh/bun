@@ -25,9 +25,19 @@ use crate::{FormatError, FormatOptions};
 /// Whether Prettier takes the file at `path` for Markdown.
 pub fn is_markdown_path(path: &[u8]) -> bool {
     const EXTENSIONS: [&[u8]; 10] = [
-        b".md", b".livemd", b".markdown", b".mdown", b".mdwn", b".mkd", b".mkdn", b".mkdown", b".ronn", b".scd",
+        b".md",
+        b".livemd",
+        b".markdown",
+        b".mdown",
+        b".mdwn",
+        b".mkd",
+        b".mkdn",
+        b".mkdown",
+        b".ronn",
+        b".scd",
     ];
-    let separator = bun_core::strings::last_index_of_char(path, b'/').max(bun_core::strings::last_index_of_char(path, b'\\'));
+    let separator = bun_core::strings::last_index_of_char(path, b'/')
+        .max(bun_core::strings::last_index_of_char(path, b'\\'));
     let name = &path[separator.map_or(0, |at| at + 1)..];
     let name = name.to_ascii_lowercase();
     matches!(&name[..], b"contents.lr" | b"readme")
@@ -68,19 +78,37 @@ pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::Node
 pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
     Some(match language {
         // The names of languages, then other names for them, then extensions of files.
-        b"json.stringify" | b"geojson" | b"jsonl" | b"sarif" | b"topojson" | b"importmap" => b"json-stringify",
-        b"json" | b"4DForm" | b"4DProject" | b"avsc" | b"gltf" | b"har" | b"ice" | b"JSON-tmLanguage" | b"json.example"
-        | b"mcmeta" | b"slnlaunch" | b"tact" | b"tfstate" | b"tfstate.backup" | b"webapp" | b"webmanifest" | b"yy"
-        | b"yyp" => b"json",
-        b"jsonc" | b"code-snippets" | b"code-workspace" | b"sublime-build" | b"sublime-color-scheme" | b"sublime-commands"
-        | b"sublime-completions" | b"sublime-keymap" | b"sublime-macro" | b"sublime-menu" | b"sublime-mousemap"
-        | b"sublime-project" | b"sublime-settings" | b"sublime-theme" | b"sublime-workspace" | b"sublime_metrics"
+        b"json.stringify" | b"geojson" | b"jsonl" | b"sarif" | b"topojson" | b"importmap" => {
+            b"json-stringify"
+        }
+        b"json" | b"4DForm" | b"4DProject" | b"avsc" | b"gltf" | b"har" | b"ice"
+        | b"JSON-tmLanguage" | b"json.example" | b"mcmeta" | b"slnlaunch" | b"tact"
+        | b"tfstate" | b"tfstate.backup" | b"webapp" | b"webmanifest" | b"yy" | b"yyp" => b"json",
+        b"jsonc"
+        | b"code-snippets"
+        | b"code-workspace"
+        | b"sublime-build"
+        | b"sublime-color-scheme"
+        | b"sublime-commands"
+        | b"sublime-completions"
+        | b"sublime-keymap"
+        | b"sublime-macro"
+        | b"sublime-menu"
+        | b"sublime-mousemap"
+        | b"sublime-project"
+        | b"sublime-settings"
+        | b"sublime-theme"
+        | b"sublime-workspace"
+        | b"sublime_metrics"
         | b"sublime_session" => b"jsonc",
         b"json5" => b"json5",
-        b"javascript" | b"jsx" | b"js" | b"node" | b"_js" | b"bones" | b"cjs" | b"es" | b"es6" | b"gs" | b"jake" | b"jsb"
-        | b"jscad" | b"jsfl" | b"jslib" | b"jsm" | b"jspre" | b"jss" | b"mjs" | b"njs" | b"pac" | b"sjs" | b"ssjs"
-        | b"xsjs" | b"xsjslib" | b"start.frag" | b"end.frag" | b"wxs" => b"babel",
-        b"typescript" | b"tsx" | b"ts" | b"typescriptreact" | b"cts" | b"mts" | b"angular-ts" => b"typescript",
+        b"javascript" | b"jsx" | b"js" | b"node" | b"_js" | b"bones" | b"cjs" | b"es" | b"es6"
+        | b"gs" | b"jake" | b"jsb" | b"jscad" | b"jsfl" | b"jslib" | b"jsm" | b"jspre" | b"jss"
+        | b"mjs" | b"njs" | b"pac" | b"sjs" | b"ssjs" | b"xsjs" | b"xsjslib" | b"start.frag"
+        | b"end.frag" | b"wxs" => b"babel",
+        b"typescript" | b"tsx" | b"ts" | b"typescriptreact" | b"cts" | b"mts" | b"angular-ts" => {
+            b"typescript"
+        }
         b"graphql" | b"gql" | b"graphqls" => b"graphql",
         b"handlebars" | b"hbs" | b"htmlbars" => b"glimmer",
         b"html" | b"hta" | b"htm" | b"html.hl" | b"inc" | b"xht" => b"html",
@@ -89,13 +117,13 @@ pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
         b"vue" => b"vue",
         b"lightning web components" | b"LWC" | b"lwc" => b"lwc",
         b"mjml" | b"MJML" => b"mjml",
-        b"markdown" | b"md" | b"pandoc" | b"livemd" | b"mdown" | b"mdwn" | b"mkd" | b"mkdn" | b"mkdown" | b"ronn" | b"scd"
-        | b"workbook" => b"markdown",
+        b"markdown" | b"md" | b"pandoc" | b"livemd" | b"mdown" | b"mdwn" | b"mkd" | b"mkdn"
+        | b"mkdown" | b"ronn" | b"scd" | b"workbook" => b"markdown",
         b"css" | b"postcss" | b"wxss" | b"pcss" => b"css",
         b"less" | b"less-css" => b"less",
         b"scss" => b"scss",
-        b"yaml" | b"yml" | b"mir" | b"reek" | b"rviz" | b"sublime-syntax" | b"syntax" | b"yaml-tmlanguage" | b"yaml.sed"
-        | b"yml.mysql" => b"yaml",
+        b"yaml" | b"yml" | b"mir" | b"reek" | b"rviz" | b"sublime-syntax" | b"syntax"
+        | b"yaml-tmlanguage" | b"yaml.sed" | b"yml.mysql" => b"yaml",
         _ => return None,
     })
 }
@@ -129,7 +157,9 @@ fn format_embedded(
     // To the parsers of Prettier it is white space.
     let code = code.strip_prefix(BOM).unwrap_or(code);
     // To these parsers, nothing is a syntax error. Only a whole file with nothing in it does not get to them.
-    if matches!(parser, b"json" | b"json5" | b"json-stringify" | b"graphql") && trim_start(code).is_empty() {
+    if matches!(parser, b"json" | b"json5" | b"json-stringify" | b"graphql")
+        && trim_start(code).is_empty()
+    {
         return None;
     }
     let options = FormatOptions {
@@ -158,12 +188,27 @@ fn format_embedded(
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
         crate::css::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
     } else if let Some(parser) = crate::html::Parser::from_name(parser) {
-        options.embedded_html && crate::html::format(b"", code, parser, &options, &mut Default::default(), &mut out).is_ok()
+        options.embedded_html
+            && crate::html::format(
+                b"",
+                code,
+                parser,
+                &options,
+                &mut Default::default(),
+                &mut out,
+            )
+            .is_ok()
     } else {
         match parser {
-            b"graphql" => crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok(),
-            b"glimmer" => crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok(),
-            b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok(),
+            b"graphql" => {
+                crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok()
+            }
+            b"glimmer" => {
+                crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok()
+            }
+            b"yaml" => {
+                crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok()
+            }
             b"markdown" | b"mdx" => {
                 let mode = Mode {
                     is_in_template,
@@ -187,7 +232,10 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     let content = trim_start(content);
     let strip_pragma = |text: &'_ [u8]| -> Option<usize> {
         let name = text.strip_prefix(b"@")?;
-        pragmas.iter().find(|pragma| name.starts_with(pragma)).map(|pragma| pragma.len() + 1)
+        pragmas
+            .iter()
+            .find(|pragma| name.starts_with(pragma))
+            .map(|pragma| pragma.len() + 1)
     };
     // `<!-- @format -->`, `{/* @format */}`
     let is_between = |open: &[&[u8]], close: &[&[u8]]| {
@@ -202,13 +250,15 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
             return false;
         };
         rest = &rest[len..];
-        close.iter().all(|part| match trim_start(rest).strip_prefix(*part) {
-            Some(after) => {
-                rest = after;
-                true
-            }
-            None => false,
-        })
+        close
+            .iter()
+            .all(|part| match trim_start(rest).strip_prefix(*part) {
+                Some(after) => {
+                    rest = after;
+                    true
+                }
+                None => false,
+            })
     };
     if is_between(&[b"<!--"], &[b"-->"]) || is_between(&[b"{", b"/*"], &[b"*/", b"}"]) {
         return true;
@@ -227,12 +277,22 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
 }
 
 /// Appends the formatted `text` to `out`.
-pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
+pub fn format(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
     format_in(text, options, scratch, out, Mode::default())
 }
 
 /// The same for MDX.
-pub fn format_mdx(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
+pub fn format_mdx(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
     let mode = Mode {
         is_mdx: true,
         ..Mode::default()
@@ -282,7 +342,10 @@ fn format_in(
         return Ok(());
     }
     let mut with_pragma = Vec::new();
-    if options.insert_pragma && !options.require_pragma && !has_pragma(text, [b"format", b"prettier"]) {
+    if options.insert_pragma
+        && !options.require_pragma
+        && !has_pragma(text, [b"format", b"prettier"])
+    {
         let front_matter_end = front_matter::parse(text).map_or(0, |it| it.end);
         if front_matter_end > 0 {
             with_pragma.extend_from_slice(&text[..front_matter_end]);
@@ -296,7 +359,9 @@ fn format_in(
         return Ok(());
     }
 
-    with_document(text, &options, &mut scratch.tree, mode, |document| doc::print(document, &options, text, out))
+    with_document(text, &options, &mut scratch.tree, mode, |document| {
+        doc::print(document, &options, text, out)
+    })
 }
 
 /// Calls `then` with the document for `text`, in which every line break is `\n`.
@@ -310,7 +375,11 @@ fn with_document<R>(
     let blanked = block::blank_front_matter(text);
     let original = text;
     let text = blanked.as_deref().unwrap_or(text);
-    let syntax = if mode.is_mdx { block::Syntax::Mdx } else { block::Syntax::Markdown };
+    let syntax = if mode.is_mdx {
+        block::Syntax::Mdx
+    } else {
+        block::Syntax::Markdown
+    };
     let root = block::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
@@ -327,9 +396,18 @@ fn with_document<R>(
         return Err(FormatError::NestedTooDeeply);
     }
 
-    let formats_embedded = matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Auto);
+    let formats_embedded = matches!(
+        options.embedded_language_formatting,
+        EmbeddedLanguageFormatting::Auto
+    );
     let mut embed = |embedded: &printer::Embedded<'_>| match formats_embedded {
-        true => format_embedded(embedded.language, embedded.code, embedded.width, options, mode.is_in_template),
+        true => format_embedded(
+            embedded.language,
+            embedded.code,
+            embedded.width,
+            options,
+            mode.is_in_template,
+        ),
         false => None,
     };
     let mut printer = printer::Printer {

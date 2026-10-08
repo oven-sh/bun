@@ -10,10 +10,24 @@ pub(crate) fn write_switch_statement<'a>(
     cases: List<'a, Case<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    write!(f, ["switch", space(), "(", group(&soft_block_indent(&discriminant)), ")", space(), "{"]);
+    write!(
+        f,
+        [
+            "switch",
+            space(),
+            "(",
+            group(&soft_block_indent(&discriminant)),
+            ")",
+            space(),
+            "{"
+        ]
+    );
     if cases.is_empty() {
         match f.comments().has_comment_before(statement.span().end) {
-            true => write!(f, format_dangling_comments(statement.span()).with_block_indent()),
+            true => write!(
+                f,
+                format_dangling_comments(statement.span()).with_block_indent()
+            ),
             false => write!(f, hard_line_break()),
         }
         return write!(f, "}");
@@ -37,7 +51,10 @@ pub(crate) fn write_switch_statement<'a>(
 /// `case a: ..`, `default: ..`
 pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     // `case 1: a(); // prettier-ignore`: the comment is not in the `case`, so it trails all of it.
-    if !f.is_quiet() && f.comments().has_trailing_suppression_comment(case.span().end) {
+    if !f.is_quiet()
+        && f.comments()
+            .has_trailing_suppression_comment(case.span().end)
+    {
         return write!(f, FormatSuppressedNode(case.span()));
     }
     match case.test() {
@@ -46,7 +63,9 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     }
 
     let consequent = case.body();
-    let mut statements = consequent.iter().filter(|it| !matches!(it.kind(), StmtKind::Empty));
+    let mut statements = consequent
+        .iter()
+        .filter(|it| !matches!(it.kind(), StmtKind::Empty));
     let Some(first_statement) = statements.next() else {
         // `default /* comment */:`
         if case.test().is_none() && f.comments().has_comment_before(case.span().end) {
@@ -55,12 +74,15 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
         return;
     };
     // The `{` of a block that is all there is goes on the line of the `case`.
-    let is_single_block_statement = matches!(first_statement.kind(), StmtKind::Block(_)) && statements.next().is_none();
+    let is_single_block_statement =
+        matches!(first_statement.kind(), StmtKind::Block(_)) && statements.next().is_none();
 
     // Prettier's `handleSwitchDefaultCaseComments`: the comments on the line of `default:` stay
     // there, but for a line comment before a block, which is written in the block.
     if case.test().is_none() && !f.is_quiet() && consequent.first() == Some(first_statement) {
-        let mut comments = f.comments().end_of_line_comments_after(case.span().start + "default".len() as u32);
+        let mut comments = f
+            .comments()
+            .end_of_line_comments_after(case.span().start + "default".len() as u32);
         let mut is_comment_in_block = false;
         if let [rest @ .., last] = comments
             && last.is_line()
@@ -90,6 +112,12 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     if is_single_block_statement {
         write!(f, [space(), FormatStatements(consequent)]);
     } else {
-        write!(f, indent(&format_args!(hard_line_break(), FormatStatements(consequent))));
+        write!(
+            f,
+            indent(&format_args!(
+                hard_line_break(),
+                FormatStatements(consequent)
+            ))
+        );
     }
 }

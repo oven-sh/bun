@@ -37,7 +37,8 @@ impl Expr<'_> {
 impl Modifier<'_> {
     /// The keyword or the sign as it is written: `static`, `proto`, `+`, `opaque`.
     pub fn token_span(self) -> Span {
-        self.file.flow_token_span_at(self.try_raw().map_or(0, |raw| raw.pos))
+        self.file
+            .flow_token_span_at(self.try_raw().map_or(0, |raw| raw.pos))
     }
 }
 
@@ -64,7 +65,8 @@ impl<'a> TypeNode<'a> {
 
     /// The first token of the type.
     pub fn first_token(self) -> &'a [u8] {
-        self.file.slice(self.file.flow_token_span_at(self.span().start))
+        self.file
+            .slice(self.file.flow_token_span_at(self.span().start))
     }
 
     /// `{| |}`
@@ -74,19 +76,26 @@ impl<'a> TypeNode<'a> {
 
     /// `obj?.[index]`, for an `IndexedAccess` of `obj`.
     pub fn has_flow_optional_token(self, obj: TypeNode<'a>) -> bool {
-        self.file.slice(next_token(self.file.text(), obj.outer_span().end)) == b"?."
+        self.file
+            .slice(next_token(self.file.text(), obj.outer_span().end))
+            == b"?."
     }
 }
 
 impl<'a> TypeParam<'a> {
     /// `const`, and the variance: `+`, `-`, `in`, `out`.
     pub fn modifiers(self) -> List<'a, Modifier<'a>> {
-        List::run(self.file, self.try_raw().map_or(hir::Span::EMPTY, |raw| raw.modifiers))
+        List::run(
+            self.file,
+            self.try_raw().map_or(hir::Span::EMPTY, |raw| raw.modifiers),
+        )
     }
 
     /// `T: Bound`, as opposed to `T extends Bound`.
     pub fn has_flow_colon(self) -> bool {
-        self.file.slice(next_token(self.file.text(), self.name().span().end)) == b":"
+        self.file
+            .slice(next_token(self.file.text(), self.name().span().end))
+            == b":"
     }
 }
 
@@ -104,10 +113,17 @@ impl<'a> TupleElem<'a> {
         // The label is followed by the `?` or the `:`.
         let after = self.file.slice(next_token(text, first.end));
         if raw.has_dots || after == b":" || after == b"?" {
-            let start = if raw.has_dots { next_token(text, first.end).start } else { first.start };
+            let start = if raw.has_dots {
+                next_token(text, first.end).start
+            } else {
+                first.start
+            };
             return (None, Some(self.file.ident(raw.name, start)));
         }
-        (Some(first), Some(self.file.ident(raw.name, next_token(text, first.end).start)))
+        (
+            Some(first),
+            Some(self.file.ident(raw.name, next_token(text, first.end).start)),
+        )
     }
 
     /// The `T`. `None` for the `...` that ends an inexact tuple.
@@ -142,7 +158,8 @@ impl<'a> Member<'a> {
 
     /// `...T`, or the `...` that ends an inexact object type.
     pub fn is_flow_spread(self) -> bool {
-        self.try_raw().is_some_and(|raw| raw.flags.contains(Flags::REST))
+        self.try_raw()
+            .is_some_and(|raw| raw.flags.contains(Flags::REST))
     }
 }
 
@@ -150,14 +167,20 @@ impl<'a> Interface<'a> {
     /// Of `opaque type A: B = C`: the `C`. The bounds are [`Interface::extends`].
     pub fn flow_opaque_type(self) -> Option<TypeNode<'a>> {
         let file = self.stmt().file();
-        List::ids(file, file.hir.interfaces.get(self.id().idx())?.other_heritage).first()
+        List::ids(
+            file,
+            file.hir.interfaces.get(self.id().idx())?.other_heritage,
+        )
+        .first()
     }
 }
 
 impl<'a> Class<'a> {
     /// Of `declare class A mixins B, C`: `B` and `C`.
     pub fn flow_mixins(self) -> List<'a, TypeNode<'a>> {
-        let list = self.try_raw().map_or(hir::IdList::EMPTY, |raw| raw.other_implements);
+        let list = self
+            .try_raw()
+            .map_or(hir::IdList::EMPTY, |raw| raw.other_implements);
         List::ids(self.file, list)
     }
 }

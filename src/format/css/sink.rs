@@ -144,7 +144,9 @@ impl<'o> Sink<'o> {
 
     /// Whether a text of `len` characters fits on the line.
     pub(crate) fn has_room_for(&self, len: usize) -> bool {
-        self.printer.as_ref().is_none_or(|printer| self.line_start_column + (printer.out.len() - self.line_start) + len <= printer.width)
+        self.printer.as_ref().is_none_or(|printer| {
+            self.line_start_column + (printer.out.len() - self.line_start) + len <= printer.width
+        })
     }
 
     /// Prints the document that the unit has been written to.
@@ -169,13 +171,22 @@ impl<'o> Sink<'o> {
     }
 
     fn column(&self) -> usize {
-        let written = self.printer.as_ref().and_then(|printer| printer.out.get(self.line_start..)).unwrap_or_default();
+        let written = self
+            .printer
+            .as_ref()
+            .and_then(|printer| printer.out.get(self.line_start..))
+            .unwrap_or_default();
         self.line_start_column + crate::ir::width::string_width(written) as usize
     }
 
     /// The line is complete.
     fn check_line(&mut self) {
-        if self.has_group_in_line && self.printer.as_ref().is_some_and(|printer| self.column() > printer.width) {
+        if self.has_group_in_line
+            && self
+                .printer
+                .as_ref()
+                .is_some_and(|printer| self.column() > printer.width)
+        {
             self.has_failed = true;
         }
     }
@@ -184,13 +195,18 @@ impl<'o> Sink<'o> {
 
     /// Where the output is, if that is what is written to, for `written_since`.
     pub(crate) fn position(&self) -> Option<(usize, u32)> {
-        let printer = self.printer.as_ref().filter(|_| self.is_straight() && !self.has_failed)?;
+        let printer = self
+            .printer
+            .as_ref()
+            .filter(|_| self.is_straight() && !self.has_failed)?;
         Some((printer.out.len(), self.line_breaks))
     }
 
     /// What has been written since `position`, if that is a part of a line, and whether there is a group in the line.
     pub(crate) fn written_since(&self, (len, line_breaks): (usize, u32)) -> Option<(&[u8], bool)> {
-        let printer = self.printer.as_ref().filter(|_| self.is_straight() && !self.has_failed && self.line_breaks == line_breaks)?;
+        let printer = self.printer.as_ref().filter(|_| {
+            self.is_straight() && !self.has_failed && self.line_breaks == line_breaks
+        })?;
         Some((printer.out.get(len..)?, self.has_group_in_line))
     }
 
@@ -375,7 +391,10 @@ impl<'o> Sink<'o> {
         let elements = &mut self.elements;
         elements.end_item();
         elements.start_item();
-        let is_dedented = matches!(separator, Separator::DedentedLine | Separator::DedentedHardLine);
+        let is_dedented = matches!(
+            separator,
+            Separator::DedentedLine | Separator::DedentedHardLine
+        );
         if is_dedented {
             elements.start_indent(IndentCommand::Dedent);
         }

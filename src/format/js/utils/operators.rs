@@ -53,7 +53,9 @@ impl BinOpExt for BinOp {
             BinOp::BitXor => Precedence::BitwiseXor,
             BinOp::BitAnd => Precedence::BitwiseAnd,
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => Precedence::Equals,
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => Precedence::Compare,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => {
+                Precedence::Compare
+            }
             BinOp::Shl | BinOp::Shr | BinOp::UShr => Precedence::Shift,
             BinOp::Add | BinOp::Sub => Precedence::Add,
             BinOp::Mul | BinOp::Div | BinOp::Rem => Precedence::Multiply,
@@ -100,7 +102,10 @@ impl UnOpExt for UnOp {
 
     #[inline]
     fn is_update(self) -> bool {
-        matches!(self, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec)
+        matches!(
+            self,
+            UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+        )
     }
 
     #[inline]

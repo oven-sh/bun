@@ -6,7 +6,9 @@
 //! document is finished. [`propagate_expand`] does the same for a document that has been written
 //! without a `Formatter`.
 
-use super::element::{Flat, FlatFlags, FormatElement, GroupMode, Interned, LineMode, PrintMode, Tag};
+use super::element::{
+    Flat, FlatFlags, FormatElement, GroupMode, Interned, LineMode, PrintMode, Tag,
+};
 use super::formatter::Storage;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -86,7 +88,10 @@ pub(crate) fn propagate_expand(root: Interned, storage: &mut Storage, tracker: &
     tracker.clear();
     // Where the skipped content ends that encloses the current one, and so on.
     let mut ends = Vec::new();
-    let mut end = root.start.saturating_add(root.len).min(storage.pool.len() as u32);
+    let mut end = root
+        .start
+        .saturating_add(root.len)
+        .min(storage.pool.len() as u32);
     let mut index = root.start;
     loop {
         while index < end {
@@ -149,7 +154,9 @@ impl Tracker {
             FormatElement::LineSuffixBoundary => self.state.last_boundary = index,
             FormatElement::Skip(_) => self.state.last_unknown = index,
             FormatElement::Interned(interned) => self.interned(interned, index, storage),
-            FormatElement::BestFitting(best_fitting) => self.best_fitting(best_fitting.first, index, storage),
+            FormatElement::BestFitting(best_fitting) => {
+                self.best_fitting(best_fitting.first, index, storage)
+            }
             FormatElement::Tag(tag) => match tag {
                 Tag::StartGroup(group) => {
                     if group.mode() == GroupMode::Expand && !self.state.is_in_line_suffix {
@@ -158,17 +165,23 @@ impl Tracker {
                     self.open(FrameKind::Group, index);
                 }
                 Tag::EndGroup => self.end_group(index, storage),
-                Tag::StartConditionalContent(condition) => match (condition.group_id, condition.mode) {
-                    (Some(_), _) => self.open_apart(FrameKind::Unknown, index),
-                    (None, PrintMode::Expanded) => self.open_apart(FrameKind::IfExpanded, index),
-                    (None, PrintMode::Flat) => self.open(FrameKind::IfFlat, index),
-                },
+                Tag::StartConditionalContent(condition) => {
+                    match (condition.group_id, condition.mode) {
+                        (Some(_), _) => self.open_apart(FrameKind::Unknown, index),
+                        (None, PrintMode::Expanded) => {
+                            self.open_apart(FrameKind::IfExpanded, index)
+                        }
+                        (None, PrintMode::Flat) => self.open(FrameKind::IfFlat, index),
+                    }
+                }
                 Tag::StartLineSuffix => {
                     self.open_apart(FrameKind::Unknown, index);
                     self.state.is_in_line_suffix = true;
                 }
                 Tag::EndConditionalContent | Tag::EndLineSuffix => self.end_content(index),
-                Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode) => self.line(mode, index),
+                Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode) => {
+                    self.line(mode, index)
+                }
                 // These change where a line starts, or nothing at all.
                 Tag::StartIndent
                 | Tag::EndIndent
@@ -240,7 +253,11 @@ impl Tracker {
     /// it and not been used are forgotten.
     #[inline]
     fn close(&mut self, kinds: &[FrameKind]) -> Option<Frame> {
-        while self.frames.pop_if(|frame| frame.kind == FrameKind::Reserved).is_some() {}
+        while self
+            .frames
+            .pop_if(|frame| frame.kind == FrameKind::Reserved)
+            .is_some()
+        {}
         let frame = self.frames.pop_if(|frame| kinds.contains(&frame.kind))?;
         self.state.without_text = self.state.without_text.min(self.frames.len() as u32);
         Some(frame)
@@ -254,7 +271,11 @@ impl Tracker {
 
     /// The place that has been reserved at `start` has become the start tag of a group.
     pub(crate) fn use_reserved(&mut self, start: u32, mode: GroupMode) {
-        while self.frames.pop_if(|frame| frame.kind == FrameKind::Reserved && frame.start > start).is_some() {}
+        while self
+            .frames
+            .pop_if(|frame| frame.kind == FrameKind::Reserved && frame.start > start)
+            .is_some()
+        {}
         self.state.without_text = self.state.without_text.min(self.frames.len() as u32);
         if let Some(frame) = self.frames.last_mut()
             && frame.kind == FrameKind::Reserved
@@ -269,7 +290,8 @@ impl Tracker {
 
     fn end_group(&mut self, index: u32, storage: &mut Storage) {
         if let Some(frame) = self.close(&[FrameKind::Group])
-            && let Some(FormatElement::Tag(Tag::StartGroup(group))) = storage.pool.get_mut(frame.start as usize)
+            && let Some(FormatElement::Tag(Tag::StartGroup(group))) =
+                storage.pool.get_mut(frame.start as usize)
         {
             if self.state.last_break > frame.start {
                 group.propagate_expand();
@@ -351,7 +373,10 @@ impl Tracker {
         if width == 0 {
             self.state.last_unknown = index;
         }
-        let start = self.state.width.wrapping_add(u32::from(self.state.is_space_pending));
+        let start = self
+            .state
+            .width
+            .wrapping_add(u32::from(self.state.is_space_pending));
         if (self.state.without_text as usize) < self.frames.len() {
             self.first_text(start);
         }
@@ -364,7 +389,11 @@ impl Tracker {
     #[inline(never)]
     fn first_text(&mut self, start: u32) {
         let state = &self.state;
-        for frame in self.frames.get_mut(state.without_text as usize..).unwrap_or_default() {
+        for frame in self
+            .frames
+            .get_mut(state.without_text as usize..)
+            .unwrap_or_default()
+        {
             frame.first_text = start;
             frame.start_flags = FlatFlags::default()
                 .with(FlatFlags::STARTS_WITH_LINE, state.last_line > frame.start)
@@ -434,7 +463,10 @@ impl Tracker {
             return Flat::default();
         }
         let flags = FlatFlags::MEASURED
-            .with(FlatFlags::HAS_LINE_SUFFIX_BOUNDARY, state.last_boundary > frame.start)
+            .with(
+                FlatFlags::HAS_LINE_SUFFIX_BOUNDARY,
+                state.last_boundary > frame.start,
+            )
             .with(FlatFlags::HAS_GROUP_IDS, state.last_group_id > frame.start);
         if frame.first_text == NO_TEXT {
             return Flat {
@@ -450,7 +482,10 @@ impl Tracker {
                 flags: flags
                     .with(frame.start_flags, true)
                     .with(FlatFlags::ENDS_WITH_SPACE, state.is_space_pending)
-                    .with(FlatFlags::ENDS_WITH_SPACE_ELEMENT, state.is_space_element_pending),
+                    .with(
+                        FlatFlags::ENDS_WITH_SPACE_ELEMENT,
+                        state.is_space_element_pending,
+                    ),
             },
             Err(_) => Flat::default(),
         }

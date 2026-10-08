@@ -3,8 +3,8 @@
 use super::super::*;
 use super::visited::VisitedKind;
 use super::{NodeRef, Services};
-use crate::check::errors_type_nodes::rest_element_type_node;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, SymbolId, flags_of_member};
+use crate::check::errors_type_nodes::rest_element_type_node;
 use crate::node::{Kind, Node, NodeData, Part};
 
 impl Checker<'_, '_> {
@@ -400,7 +400,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`isLiteralOfContextualType`) and what is a const context (`isConstContext`), and a generic function keeps its declared
     /// type (`instantiateTypeWithSingleGenericCallSignature`). The cached type of an argument is the one from which the type
     /// arguments of its call were inferred.
-    pub(in crate::check) fn get_type_of_expression_after_check(&mut self, file: FileId, e: ExprId) -> TypeId {
+    pub(in crate::check) fn get_type_of_expression_after_check(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> TypeId {
         // The first check, which resolves the calls enclosing `e`.
         self.type_of_expr(file, e);
         let outer = self.begin_recheck();
@@ -414,7 +418,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypeOfSymbol` for a member of an object literal or a JSX attribute whose `symbol.ValueDeclaration` is `p`. The first
     /// request runs `checkPropertyAssignment`, `checkJsxAttribute` or the equivalent. `checkObjectLiteral` does not request it.
-    pub(in crate::check) fn get_type_of_literal_member(&mut self, file: FileId, p: PropId) -> TypeId {
+    pub(in crate::check) fn get_type_of_literal_member(
+        &mut self,
+        file: FileId,
+        p: PropId,
+    ) -> TypeId {
         // `checkShorthandPropertyAssignment(declaration, true)`: for `{ a = 1 }` the name is
         // checked.
         let hir = self.hir(file);
@@ -475,7 +483,8 @@ impl Services<'_, '_, '_> {
         if hir.is_part_of_type_node(at) {
             return self.type_of_part_of_type_node(node);
         }
-        let is_visited = hir.is_expression_node(at) || kind == Kind::Identifier || hir.is_declaration_name(at);
+        let is_visited =
+            hir.is_expression_node(at) || kind == Kind::Identifier || hir.is_declaration_name(at);
         if is_visited && let Some(visited) = self.visited_kind(node) {
             return self.c.get_type_of_visited_node(file, visited, start);
         }
@@ -497,19 +506,27 @@ impl Services<'_, '_, '_> {
             symbol => symbol,
         };
         let declared_type_of = |services: &mut Self, symbol: SymbolId| match symbol.is_some() {
-            true => services.c.declared_type(services.c.files().sym(file, symbol)),
+            true => services
+                .c
+                .declared_type(services.c.files().sym(file, symbol)),
             false => TypeId::ERROR,
         };
         let type_of = |services: &mut Self, symbol: SymbolId| match symbol.is_some() {
-            true => services.c.type_of_symbol(services.c.files().sym(file, symbol)),
+            true => services
+                .c
+                .type_of_symbol(services.c.files().sym(file, symbol)),
             false => TypeId::ERROR,
         };
         match hir.data(at) {
             // `isTypeDeclaration`: the declared type.
             NodeData::Stmt(s) => match hir[s].kind {
                 StmtKind::Class(c) => return declared_type_of(self, bound.class_symbol[c.idx()]),
-                StmtKind::Interface(i) => return declared_type_of(self, bound.interface_symbol[i.idx()]),
-                StmtKind::TypeAlias(a) => return declared_type_of(self, bound.alias_symbol[a.idx()]),
+                StmtKind::Interface(i) => {
+                    return declared_type_of(self, bound.interface_symbol[i.idx()]);
+                }
+                StmtKind::TypeAlias(a) => {
+                    return declared_type_of(self, bound.alias_symbol[a.idx()]);
+                }
                 StmtKind::Enum(e) => return declared_type_of(self, bound.enum_symbol[e.idx()]),
                 StmtKind::Module(m) => return type_of(self, bound.module_symbol[m.idx()]),
                 StmtKind::ImportEquals(i) => {
@@ -518,7 +535,9 @@ impl Services<'_, '_, '_> {
                 }
                 _ => {}
             },
-            NodeData::TypeParam(p) => return declared_type_of(self, bound.type_param_symbol[p.idx()]),
+            NodeData::TypeParam(p) => {
+                return declared_type_of(self, bound.type_param_symbol[p.idx()]);
+            }
             // A static block and a `;` declare nothing.
             NodeData::Member(m) if bound.member_symbol[m.idx()].is_none() => return TypeId::ERROR,
             NodeData::EnumMember(m) => return type_of(self, bound.enum_member_symbol[m.idx()]),
@@ -540,11 +559,18 @@ impl Services<'_, '_, '_> {
             // `getTypeForVariableLikeDeclaration`.
             NodeData::Pat(pat) => return self.c.type_of_pat(file, pat),
             // A variable declaration whose name is a pattern has no symbol.
-            NodeData::VarDecl(d) if !matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => return TypeId::ERROR,
-            NodeData::PatProp(p) if hir[p].value.is_some() && !matches!(hir[hir[p].value].kind, PatKind::Ident(_)) => {
+            NodeData::VarDecl(d) if !matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
+                return TypeId::ERROR;
+            }
+            NodeData::PatProp(p)
+                if hir[p].value.is_some()
+                    && !matches!(hir[hir[p].value].kind, PatKind::Ident(_)) =>
+            {
                 return self.c.type_of_pat(file, hir[p].value);
             }
-            NodeData::PatElem(e) if hir[e].pat.is_some() && !matches!(hir[hir[e].pat].kind, PatKind::Ident(_)) => {
+            NodeData::PatElem(e)
+                if hir[e].pat.is_some() && !matches!(hir[hir[e].pat].kind, PatKind::Ident(_)) =>
+            {
                 return self.c.type_of_pat(file, hir[e].pat);
             }
             NodeData::Part(Part::ImportClause, row) => {
@@ -578,7 +604,9 @@ impl Services<'_, '_, '_> {
             _ => {}
         }
         // `isDeclaration`: `getTypeOfSymbol(getSymbolOfDeclaration(node))`
-        self.c.iso_type_of_declared(file, at).unwrap_or(TypeId::ERROR)
+        self.c
+            .iso_type_of_declared(file, at)
+            .unwrap_or(TypeId::ERROR)
     }
 
     /// `getTypeFromTypeNode` of what `isPartOfTypeNode` holds for.
@@ -646,9 +674,16 @@ impl Services<'_, '_, '_> {
                 self.c.regular(ty)
             }
             // An identifier or a qualified name: the declared type of what it refers to.
-            _ => match self.symbol_at_location(node).and_then(|symbol| self.sym_of(symbol)) {
+            _ => match self
+                .symbol_at_location(node)
+                .and_then(|symbol| self.sym_of(symbol))
+            {
                 Some(symbol) => {
-                    let target = self.c.files().resolve_alias_if_needed(symbol).unwrap_or(symbol);
+                    let target = self
+                        .c
+                        .files()
+                        .resolve_alias_if_needed(symbol)
+                        .unwrap_or(symbol);
                     self.c.declared_type(target)
                 }
                 None => TypeId::ERROR,

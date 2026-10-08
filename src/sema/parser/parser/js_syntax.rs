@@ -22,7 +22,8 @@ impl Parser<'_> {
     }
 
     fn js_error_at_types(&mut self, first: TypeNodeId, last: TypeNodeId, code: u32) {
-        if let (Some(first), Some(last)) = (self.f.types.get(first.idx()), self.f.types.get(last.idx()))
+        if let (Some(first), Some(last)) =
+            (self.f.types.get(first.idx()), self.f.types.get(last.idx()))
         {
             self.js_error((first.pos, last.end), code, b"");
         }
@@ -62,7 +63,11 @@ impl Parser<'_> {
     /// `checkJSDecoratorSyntax` for a node whose modifiers are `list`: a class declaration
     /// (`is_class_declaration`), or a node for which `CanHaveIllegalDecorators` is true.
     #[cold]
-    pub(crate) fn check_js_decorators(&mut self, list: Span<ModifierId>, is_class_declaration: bool) {
+    pub(crate) fn check_js_decorators(
+        &mut self,
+        list: Span<ModifierId>,
+        is_class_declaration: bool,
+    ) {
         // Nodes can be missing.
         if self.has_failed() {
             return;
@@ -184,7 +189,12 @@ impl Parser<'_> {
         {
             self.js_error((question, 0), 8009, b"?");
         }
-        if self.f.fns.get(member.func.idx()).is_some_and(|it| !has_body_node(it)) {
+        if self
+            .f
+            .fns
+            .get(member.func.idx())
+            .is_some_and(|it| !has_body_node(it))
+        {
             self.js_error((member.start, member.loc.end), 8017, b"");
         }
         match member.kind {

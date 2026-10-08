@@ -183,7 +183,9 @@ impl Scanner<'_, '_> {
                 self.token(Kind::PrivateIdentifier, start)
             }
             b'/' if self.is_start_of_regex() => self.scan_regex(start),
-            b'+' | b'-' | b'/' | b'%' | b'<' | b'>' => self.scan_complex_operator(start, b'=', None),
+            b'+' | b'-' | b'/' | b'%' | b'<' | b'>' => {
+                self.scan_complex_operator(start, b'=', None)
+            }
             b'^' => {
                 self.advance();
                 self.token(Kind::Operator, start)
@@ -257,7 +259,14 @@ impl Scanner<'_, '_> {
             self.advance();
         }
         let is_keyword = self.input.get(start..self.index).is_some_and(is_keyword);
-        self.token(if is_keyword { Kind::Keyword } else { Kind::Identifier }, start)
+        self.token(
+            if is_keyword {
+                Kind::Keyword
+            } else {
+                Kind::Identifier
+            },
+            start,
+        )
     }
 
     /// `start`: where the number starts, which is at the character before if that is a `.`.
@@ -355,15 +364,21 @@ impl Scanner<'_, '_> {
 
     fn is_start_of_regex(&self) -> bool {
         let is_operator = |token: &Token, operator: &[u8]| {
-            token.kind == Kind::Operator && self.input.get(token.start as usize..token.end as usize) == Some(operator)
+            token.kind == Kind::Operator
+                && self.input.get(token.start as usize..token.end as usize) == Some(operator)
         };
         match self.tokens.as_slice() {
             [] => true,
             [before @ .., previous] if is_operator(previous, b"!") => {
                 // It negates what follows it. After one of these it asserts that what is before it is not null.
-                !before.last().is_some_and(|it| matches!(it.kind, Kind::Identifier | Kind::Character(b')' | b']')))
+                !before.last().is_some_and(|it| {
+                    matches!(it.kind, Kind::Identifier | Kind::Character(b')' | b']'))
+                })
             }
-            [.., previous] => matches!(previous.kind, Kind::Operator | Kind::Character(b'(' | b'[' | b',' | b':')),
+            [.., previous] => matches!(
+                previous.kind,
+                Kind::Operator | Kind::Character(b'(' | b'[' | b',' | b':')
+            ),
         }
     }
 

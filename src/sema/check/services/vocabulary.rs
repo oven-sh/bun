@@ -171,8 +171,14 @@ bitflags::bitflags! {
 }
 
 const SYMBOL_FLAGS: [(SymFlags, SymbolFlags); 27] = [
-    (SymFlags::FUNCTION_SCOPED_VARIABLE, SymbolFlags::FUNCTION_SCOPED_VARIABLE),
-    (SymFlags::BLOCK_SCOPED_VARIABLE, SymbolFlags::BLOCK_SCOPED_VARIABLE),
+    (
+        SymFlags::FUNCTION_SCOPED_VARIABLE,
+        SymbolFlags::FUNCTION_SCOPED_VARIABLE,
+    ),
+    (
+        SymFlags::BLOCK_SCOPED_VARIABLE,
+        SymbolFlags::BLOCK_SCOPED_VARIABLE,
+    ),
     (SymFlags::PROPERTY, SymbolFlags::PROPERTY),
     (SymFlags::ENUM_MEMBER, SymbolFlags::ENUM_MEMBER),
     (SymFlags::FUNCTION, SymbolFlags::FUNCTION),
@@ -362,8 +368,8 @@ bitflags::bitflags! {
 
 impl TypeFormatFlags {
     /// What `typeToString(type)` uses when it is given no flags.
-    pub const DEFAULT: TypeFormatFlags =
-        TypeFormatFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE.union(TypeFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE);
+    pub const DEFAULT: TypeFormatFlags = TypeFormatFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE
+        .union(TypeFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE);
 }
 
 bitflags::bitflags! {
@@ -630,7 +636,10 @@ pub enum LiteralValue<'a> {
     String(&'a [u8]),
     Number(f64),
     /// `PseudoBigInt`
-    BigInt { negative: bool, base10: &'a [u8] },
+    BigInt {
+        negative: bool,
+        base10: &'a [u8],
+    },
 }
 
 /// What a type is made of, where that is not a list of types.
@@ -648,9 +657,14 @@ pub enum Structure<'a> {
         root_false_type: TypeId,
     },
     /// `object[index]`
-    IndexedAccess { object: TypeId, index: TypeId },
+    IndexedAccess {
+        object: TypeId,
+        index: TypeId,
+    },
     /// `keyof ty`
-    Index { ty: TypeId },
+    Index {
+        ty: TypeId,
+    },
     /// `{ [type_parameter in constraint as name_type]: template }`
     Mapped {
         type_parameter: TypeId,
@@ -666,8 +680,13 @@ pub enum Structure<'a> {
         types: &'a [TypeId],
     },
     /// `Uppercase<ty>`
-    StringMapping { ty: TypeId },
-    Substitution { base: TypeId, constraint: TypeId },
+    StringMapping {
+        ty: TypeId,
+    },
+    Substitution {
+        base: TypeId,
+        constraint: TypeId,
+    },
     Other,
 }
 

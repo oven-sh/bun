@@ -98,11 +98,15 @@ pub fn is_compiler_option_enabled(options: CompilerOptions, option: CompilerOpti
         NoImplicitReturns => options.no_implicit_returns,
         NoImplicitThis => options.no_implicit_this,
         NoPropertyAccessFromIndexSignature => options.no_property_access_from_index_signature,
-        NoUncheckedIndexedAccess => options.no_unchecked_indexed_access && options.strict_null_checks,
+        NoUncheckedIndexedAccess => {
+            options.no_unchecked_indexed_access && options.strict_null_checks
+        }
         StrictBindCallApply => options.strict_bind_call_apply,
         StrictFunctionTypes => options.strict_function_types,
         StrictNullChecks => options.strict_null_checks,
-        StrictPropertyInitialization => options.strict_property_initialization && options.strict_null_checks,
+        StrictPropertyInitialization => {
+            options.strict_property_initialization && options.strict_null_checks
+        }
         UseUnknownInCatchVariables => options.use_unknown_in_catch_variables,
         VerbatimModuleSyntax => options.verbatim_module_syntax,
     }
@@ -286,7 +290,11 @@ pub fn get_call_signatures_of_type<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
             return Vec::new();
         }
         if is_union_type(ty) {
-            return ty.types().iter().flat_map(|it| collect(it, depth + 1)).collect();
+            return ty
+                .types()
+                .iter()
+                .flat_map(|it| collect(it, depth + 1))
+                .collect();
         }
         if is_intersection_type(ty) {
             let mut signatures: Option<Vec<Signature>> = None;
@@ -314,7 +322,10 @@ pub fn get_property_of_type<'a>(ty: Type<'a>, name: &[u8]) -> Option<TsSymbol<'a
 
 /// `getWellKnownSymbolPropertyOfType(type, wellKnownSymbolName, typeChecker)`: the property whose
 /// key is `Symbol[name]`, as in `get_well_known_symbol_property_of_type(ty, "iterator")`.
-pub fn get_well_known_symbol_property_of_type<'a>(ty: Type<'a>, name: &str) -> Option<TsSymbol<'a>> {
+pub fn get_well_known_symbol_property_of_type<'a>(
+    ty: Type<'a>,
+    name: &str,
+) -> Option<TsSymbol<'a>> {
     let mut key = Vec::with_capacity(3 + name.len());
     key.extend_from_slice(b"__@");
     key.extend_from_slice(name.as_bytes());
@@ -368,13 +379,18 @@ pub fn is_thenable<'a>(file: &'a crate::ast::File<'a>, node: impl Locate<'a>) ->
 
 fn is_callback<'a>(param: TsSymbol<'a>, node: TsNode<'a>) -> bool {
     let mut ty = param.get_type_at_location(node).get_apparent_type();
-    if param.value_declaration().is_some_and(|it| it.has_dot_dot_dot_token()) {
+    if param
+        .value_declaration()
+        .is_some_and(|it| it.has_dot_dot_dot_token())
+    {
         match ty.get_number_index_type() {
             Some(element) => ty = element,
             None => return false,
         }
     }
-    union_constituents(ty).iter().any(|it| !it.get_call_signatures().is_empty())
+    union_constituents(ty)
+        .iter()
+        .any(|it| !it.get_call_signatures().is_empty())
 }
 
 /// `isNumericPropertyName(name)`: `String(+name) === name`
@@ -397,15 +413,20 @@ fn is_property_readonly_in_type_at(ty: Type, name: &[u8], depth: u32) -> bool {
     let (mut seen_property, mut seen_readonly_signature) = (false, false);
     for sub_type in union_constituents(ty) {
         if sub_type.get_property(name).is_none() {
-            let number = is_numeric_property_name(name).then(|| sub_type.get_index_info(IndexKind::Number));
-            let index = number.flatten().or_else(|| sub_type.get_index_info(IndexKind::String));
+            let number =
+                is_numeric_property_name(name).then(|| sub_type.get_index_info(IndexKind::Number));
+            let index = number
+                .flatten()
+                .or_else(|| sub_type.get_index_info(IndexKind::String));
             if index.is_some_and(|it| it.is_readonly()) {
                 if seen_property {
                     return true;
                 }
                 seen_readonly_signature = true;
             }
-        } else if seen_readonly_signature || is_readonly_property_intersection(sub_type, name, depth) {
+        } else if seen_readonly_signature
+            || is_readonly_property_intersection(sub_type, name, depth)
+        {
             return true;
         } else {
             seen_property = true;
@@ -432,7 +453,11 @@ fn is_readonly_property_from_mapped_type(ty: Type, name: &[u8], depth: u32) -> O
         return Some(readonly != MappedModifier::Remove);
     }
     let modifiers_type = ty.get_modifiers_type_from_mapped_type()?;
-    Some(is_property_readonly_in_type_at(modifiers_type, name, depth + 1))
+    Some(is_property_readonly_in_type_at(
+        modifiers_type,
+        name,
+        depth + 1,
+    ))
 }
 
 fn is_readonly_property_intersection(ty: Type, name: &[u8], depth: u32) -> bool {
@@ -446,7 +471,9 @@ fn is_readonly_property_intersection(ty: Type, name: &[u8], depth: u32) -> bool 
             {
                 return target.readonly();
             }
-            if let Some(is_readonly) = is_readonly_property_from_mapped_type(constituent, name, depth) {
+            if let Some(is_readonly) =
+                is_readonly_property_from_mapped_type(constituent, name, depth)
+            {
                 return is_readonly;
             }
         }
@@ -465,10 +492,14 @@ pub fn symbol_has_readonly_declaration(symbol: TsSymbol) -> bool {
             return true;
         }
         match node.kind() {
-            SyntaxKind::VariableDeclaration => node.parent().is_some_and(|list| list.flags().contains(NodeFlags::CONST)),
+            SyntaxKind::VariableDeclaration => node
+                .parent()
+                .is_some_and(|list| list.flags().contains(NodeFlags::CONST)),
             SyntaxKind::CallExpression => is_readonly_assignment_declaration(node),
             SyntaxKind::EnumMember => true,
-            SyntaxKind::PropertyAssignment | SyntaxKind::ShorthandPropertyAssignment => is_in_const_context(node),
+            SyntaxKind::PropertyAssignment | SyntaxKind::ShorthandPropertyAssignment => {
+                is_in_const_context(node)
+            }
             _ => false,
         }
     })
@@ -492,7 +523,9 @@ fn arguments_of_define_property_call(node: TsNode<'_>) -> Option<[TsNode<'_>; 3]
     }
     let is_name = matches!(
         found[1].kind(),
-        SyntaxKind::StringLiteral | SyntaxKind::NumericLiteral | SyntaxKind::NoSubstitutionTemplateLiteral
+        SyntaxKind::StringLiteral
+            | SyntaxKind::NumericLiteral
+            | SyntaxKind::NoSubstitutionTemplateLiteral
     );
     (is_name && is_entity_name_expression(found[0])).then_some(found)
 }
@@ -502,7 +535,11 @@ fn is_entity_name_expression(mut node: TsNode) -> bool {
     for _ in 0..4096 {
         match node.kind() {
             SyntaxKind::Identifier => return true,
-            SyntaxKind::PropertyAccessExpression if node.name().is_some_and(|it| it.kind() == SyntaxKind::Identifier) => {
+            SyntaxKind::PropertyAccessExpression
+                if node
+                    .name()
+                    .is_some_and(|it| it.kind() == SyntaxKind::Identifier) =>
+            {
                 match node.expression() {
                     Some(object) => node = object,
                     None => return false,
@@ -525,7 +562,9 @@ fn is_readonly_assignment_declaration(node: TsNode) -> bool {
     let Some(writable) = descriptor_type.get_property(b"writable") else {
         return false;
     };
-    let assignment = writable.value_declaration().filter(|it| it.kind() == SyntaxKind::PropertyAssignment);
+    let assignment = writable
+        .value_declaration()
+        .filter(|it| it.kind() == SyntaxKind::PropertyAssignment);
     let writable_type = match assignment.and_then(|it| it.initializer()) {
         Some(initializer) => initializer.get_type_at_location(),
         None => writable.get_type_at_location(descriptor),
@@ -547,14 +586,18 @@ pub fn is_in_const_context(node: TsNode) -> bool {
             | SyntaxKind::TemplateExpression => current = parent,
             SyntaxKind::AsExpression | SyntaxKind::TypeAssertionExpression => {
                 // `isConstAssertionExpression`
-                return parent.children().any(|it| it.kind() == SyntaxKind::TypeReference && it.get_source_text() == b"const");
+                return parent.children().any(|it| {
+                    it.kind() == SyntaxKind::TypeReference && it.get_source_text() == b"const"
+                });
             }
             SyntaxKind::CallExpression => {
                 let Some(signature) = parent.get_resolved_signature() else {
                     return false;
                 };
                 let callee = parent.expression();
-                let arguments = parent.children().filter(|&child| Some(child) != callee && !child.kind().is_type_node());
+                let arguments = parent
+                    .children()
+                    .filter(|&child| Some(child) != callee && !child.kind().is_type_node());
                 let mut arguments = arguments;
                 let Some(index) = arguments.position(|child| child == current) else {
                     return false;
@@ -572,7 +615,9 @@ pub fn is_in_const_context(node: TsNode) -> bool {
                     return false;
                 }
                 let text = parent.get_source_text();
-                if !matches!(text.first(), Some(b'-' | b'+')) || matches!(text.get(1), Some(b'-' | b'+')) {
+                if !matches!(text.first(), Some(b'-' | b'+'))
+                    || matches!(text.get(1), Some(b'-' | b'+'))
+                {
                     return false;
                 }
                 current = parent;

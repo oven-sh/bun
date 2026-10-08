@@ -26,12 +26,14 @@ impl Run {
 
     #[inline]
     pub(super) fn of<T>(self, all: &[T]) -> &[T] {
-        all.get(self.start as usize..(self.start + self.len) as usize).unwrap_or_default()
+        all.get(self.start as usize..(self.start + self.len) as usize)
+            .unwrap_or_default()
     }
 
     #[inline]
     pub(super) fn of_mut<T>(self, all: &mut [T]) -> &mut [T] {
-        all.get_mut(self.start as usize..(self.start + self.len) as usize).unwrap_or_default()
+        all.get_mut(self.start as usize..(self.start + self.len) as usize)
+            .unwrap_or_default()
     }
 }
 
@@ -69,7 +71,10 @@ impl TypeSet {
     }
 
     pub(super) fn iter(self) -> impl Iterator<Item = NodeType> {
-        NodeType::ALL.iter().copied().filter(move |it| self.contains(*it))
+        NodeType::ALL
+            .iter()
+            .copied()
+            .filter(move |it| self.contains(*it))
     }
 }
 
@@ -234,8 +239,13 @@ impl Key {
 
 /// The index that the property name `name` is for an array.
 fn array_index(name: &[u8]) -> Option<u32> {
-    let is_canonical = name.iter().all(u8::is_ascii_digit) && (name.len() == 1 || !name.starts_with(b"0"));
-    if is_canonical { std::str::from_utf8(name).ok()?.parse().ok() } else { None }
+    let is_canonical =
+        name.iter().all(u8::is_ascii_digit) && (name.len() == 1 || !name.starts_with(b"0"));
+    if is_canonical {
+        std::str::from_utf8(name).ok()?.parse().ok()
+    } else {
+        None
+    }
 }
 
 /// What `typeof` says.
@@ -279,11 +289,17 @@ pub(super) enum Test {
     /// `[a=/b/]`, `[a!=/b/]`
     Regex { regex: Box<Regex>, is_negated: bool },
     /// `[a=type(b)]`, `[a!=type(b)]`
-    Type { js_type: Option<JsType>, is_negated: bool },
+    Type {
+        js_type: Option<JsType>,
+        is_negated: bool,
+    },
     /// `[a=b]`, `[a!=b]`
     Equals { literal: Literal, is_negated: bool },
     /// `[a<b]`, ..
-    Compare { literal: Literal, relation: Relation },
+    Compare {
+        literal: Literal,
+        relation: Relation,
+    },
 }
 
 /// `"a"`, `'a'`, `1`, `a`

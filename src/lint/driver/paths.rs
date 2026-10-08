@@ -74,7 +74,10 @@ pub(crate) fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
         return rest.to_vec();
     }
     let names = |path| strings::split(path, b"/").filter(|name: &&[u8]| !name.is_empty());
-    let common = names(base).zip(names(path)).take_while(|(a, b)| a == b).count();
+    let common = names(base)
+        .zip(names(path))
+        .take_while(|(a, b)| a == b)
+        .count();
     let mut parts: Vec<&[u8]> = vec![b".."; names(base).count() - common];
     parts.extend(names(path).skip(common));
     parts.join(&b'/')
@@ -106,7 +109,11 @@ fn posix_dirname(path: &[u8]) -> &[u8] {
         if path[at] != b'/' {
             is_after_name = true;
         } else if is_after_name {
-            return if has_root && at == 1 { b"//" } else { &path[..at] };
+            return if has_root && at == 1 {
+                b"//"
+            } else {
+                &path[..at]
+            };
         }
     }
     if has_root { b"/" } else { b"." }
@@ -151,9 +158,16 @@ fn is_extglob(text: &[u8]) -> bool {
     while at < text.len() {
         match text[at] {
             // `.` does not match a line terminator.
-            b'\\' if text.get(at + 1).is_some_and(|next| !matches!(next, b'\n' | b'\r')) => at += 2,
+            b'\\'
+                if text
+                    .get(at + 1)
+                    .is_some_and(|next| !matches!(next, b'\n' | b'\r')) =>
+            {
+                at += 2
+            }
             b'@' | b'?' | b'!' | b'+' | b'*' if text.get(at + 1) == Some(&b'(') => {
-                let line = strings::index_of_any(&text[at + 2..], b"\n\r").map_or(text.len(), |end| at + 2 + end);
+                let line = strings::index_of_any(&text[at + 2..], b"\n\r")
+                    .map_or(text.len(), |end| at + 2 + end);
                 if strings::contains_char(&text[at + 2..line], b')') {
                     return true;
                 }
@@ -284,7 +298,10 @@ fn is_globby(text: &[u8]) -> bool {
     }
     // `/[^\\][{[]/`
     let mut from = 1;
-    while let Some(found) = text.get(from..).and_then(|rest| strings::index_of_any(rest, b"{[")) {
+    while let Some(found) = text
+        .get(from..)
+        .and_then(|rest| strings::index_of_any(rest, b"{["))
+    {
         if text[from + found - 1] != b'\\' {
             return true;
         }
@@ -317,7 +334,11 @@ pub(crate) fn glob_parent(pattern: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(parent.len());
     let mut at = 0;
     while at < parent.len() {
-        if parent[at] == b'\\' && parent.get(at + 1).is_some_and(|next| strings::contains_char(b"!*?|[](){}", *next)) {
+        if parent[at] == b'\\'
+            && parent
+                .get(at + 1)
+                .is_some_and(|next| strings::contains_char(b"!*?|[](){}", *next))
+        {
             at += 1;
         }
         out.push(parent[at]);

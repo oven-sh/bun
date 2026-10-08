@@ -375,7 +375,11 @@ impl<'a> File<'a> {
     /// Asks the type checker.
     #[inline]
     pub(crate) fn query<R>(&self, ask: impl FnOnce(&mut dyn Queries<'a>) -> R) -> R {
-        match self.types.as_ref().map(|checker| checker.queries.try_borrow_mut()) {
+        match self
+            .types
+            .as_ref()
+            .map(|checker| checker.queries.try_borrow_mut())
+        {
             Some(Ok(mut queries)) => ask(&mut **queries),
             _ => ask(&mut NoTypes),
         }
@@ -384,7 +388,9 @@ impl<'a> File<'a> {
     /// The number that the program gives the file.
     #[inline]
     pub(crate) fn id_in_program(&self) -> FileId {
-        self.types.as_ref().map_or(FileId(u32::MAX), |checker| checker.file)
+        self.types
+            .as_ref()
+            .map_or(FileId(u32::MAX), |checker| checker.file)
     }
 }
 
@@ -418,7 +424,11 @@ impl<'a> Types<'a> {
     /// `program.getCompilerOptions()`
     #[inline]
     pub fn compiler_options(self) -> CompilerOptions {
-        self.file.types.as_ref().map(|checker| checker.options).unwrap_or_default()
+        self.file
+            .types
+            .as_ref()
+            .map(|checker| checker.options)
+            .unwrap_or_default()
     }
 
     /// `program.getCurrentDirectory()`
@@ -484,7 +494,8 @@ impl<'a> Types<'a> {
         call: impl Locate<'a>,
         index: usize,
     ) -> Option<Type<'a>> {
-        call.locate(self.file).get_contextual_type_for_argument_at_index(index)
+        call.locate(self.file)
+            .get_contextual_type_for_argument_at_index(index)
     }
 
     /// `checker.getResolvedSignature(node)`, for a call, a `new`, a tagged template, a decorator or
@@ -499,14 +510,23 @@ impl<'a> Types<'a> {
     }
 
     /// `checker.getShorthandAssignmentValueSymbol(node)`: what the `a` of `{ a }` refers to.
-    pub fn get_shorthand_assignment_value_symbol(self, node: impl Locate<'a>) -> Option<TsSymbol<'a>> {
-        node.locate(self.file).get_shorthand_assignment_value_symbol()
+    pub fn get_shorthand_assignment_value_symbol(
+        self,
+        node: impl Locate<'a>,
+    ) -> Option<TsSymbol<'a>> {
+        node.locate(self.file)
+            .get_shorthand_assignment_value_symbol()
     }
 
     /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, which does not make
     /// the list. It is not [`Types::resolve_name`]: an alias counts for what it is, not for what it
     /// is an alias of.
-    pub fn get_symbol_in_scope(self, node: impl Locate<'a>, meaning: SymbolFlags, name: &[u8]) -> Option<TsSymbol<'a>> {
+    pub fn get_symbol_in_scope(
+        self,
+        node: impl Locate<'a>,
+        meaning: SymbolFlags,
+        name: &[u8],
+    ) -> Option<TsSymbol<'a>> {
         let (file, node) = (self.file, node.locate(self.file).raw());
         let symbol = file.query(|q| q.symbol_in_scope(node, meaning, name))?;
         Some(TsSymbol::new(file, symbol))
@@ -533,7 +553,9 @@ impl<'a> Types<'a> {
         exclude_globals: bool,
     ) -> Option<TsSymbol<'a>> {
         let node = node.locate(self.file).raw();
-        let id = self.file.query(|q| q.resolve_name(node, name, meaning, exclude_globals))?;
+        let id = self
+            .file
+            .query(|q| q.resolve_name(node, name, meaning, exclude_globals))?;
         Some(TsSymbol::new(self.file, id))
     }
 
@@ -598,7 +620,10 @@ impl<'a> Types<'a> {
     /// `checker.getUnionType(types, reduction)`
     pub fn get_union_type(self, types: &[Type<'a>], reduction: UnionReduction) -> Type<'a> {
         let ids: smallvec::SmallVec<[TypeId; 8]> = types.iter().map(|ty| ty.id()).collect();
-        Type::new(self.file, self.file.query(|q| q.union_type(&ids, reduction)))
+        Type::new(
+            self.file,
+            self.file.query(|q| q.union_type(&ids, reduction)),
+        )
     }
 
     /// `checker.getIntersectionType(types)`
@@ -690,7 +715,10 @@ impl<'a> Types<'a> {
     }
 
     /// `checker.getIndexInfosOfType(type)`
-    pub fn get_index_infos_of_type(self, ty: Type<'a>) -> impl ExactSizeIterator<Item = IndexInfo<'a>> + 'a {
+    pub fn get_index_infos_of_type(
+        self,
+        ty: Type<'a>,
+    ) -> impl ExactSizeIterator<Item = IndexInfo<'a>> + 'a {
         ty.get_index_infos()
     }
 
@@ -705,7 +733,11 @@ impl<'a> Types<'a> {
     }
 
     /// `checker.getSignaturesOfType(type, kind)`
-    pub fn get_signatures_of_type(self, ty: Type<'a>, kind: SignatureKind) -> signature::SignatureList<'a> {
+    pub fn get_signatures_of_type(
+        self,
+        ty: Type<'a>,
+        kind: SignatureKind,
+    ) -> signature::SignatureList<'a> {
         ty.get_signatures(kind)
     }
 
@@ -715,7 +747,10 @@ impl<'a> Types<'a> {
     }
 
     /// `checker.getTypePredicateOfSignature(signature)`
-    pub fn get_type_predicate_of_signature(self, signature: Signature<'a>) -> Option<TypePredicate<'a>> {
+    pub fn get_type_predicate_of_signature(
+        self,
+        signature: Signature<'a>,
+    ) -> Option<TypePredicate<'a>> {
         signature.get_type_predicate()
     }
 
@@ -725,7 +760,11 @@ impl<'a> Types<'a> {
     }
 
     /// `checker.getTypeOfSymbolAtLocation(symbol, node)`
-    pub fn get_type_of_symbol_at_location(self, symbol: TsSymbol<'a>, node: impl Locate<'a>) -> Type<'a> {
+    pub fn get_type_of_symbol_at_location(
+        self,
+        symbol: TsSymbol<'a>,
+        node: impl Locate<'a>,
+    ) -> Type<'a> {
         symbol.get_type_at_location(node)
     }
 

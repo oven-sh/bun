@@ -2,12 +2,13 @@
 //! does with the result.
 
 use super::FormatJsxChild;
+use crate::cursor::around_jsx_children;
 use crate::ir::element::{Group as GroupTag, GroupMode};
 use crate::js::utils::jsx::{
-    JsxRawSpace, JsxSpace, has_line_break, is_jsx_whitespace, is_meaningful_jsx_text, is_whitespace_jsx_expression,
+    JsxRawSpace, JsxSpace, has_line_break, is_jsx_whitespace, is_meaningful_jsx_text,
+    is_whitespace_jsx_expression,
 };
 use crate::js::utils::suppressed::FormatSuppressedNode;
-use crate::cursor::around_jsx_children;
 use crate::prelude::*;
 use crate::write;
 use smallvec::SmallVec;
@@ -45,7 +46,10 @@ enum Item<'a> {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Part {
     /// `items[start..end]`. Empty, it is Prettier's `""`.
-    Content { start: u32, end: u32 },
+    Content {
+        start: u32,
+        end: u32,
+    },
     Separator(Separator),
 }
 
@@ -154,17 +158,28 @@ impl<'a> Children<'a> {
         if self.is_facebook_translation_tag {
             return;
         }
-        self.push_line(match is_next_to_self_closing_element && !is_single_code_unit(word) {
-            true => Separator::HardLine,
-            false => Separator::SoftLine,
-        });
+        self.push_line(
+            match is_next_to_self_closing_element && !is_single_code_unit(word) {
+                true => Separator::HardLine,
+                false => Separator::SoftLine,
+            },
+        );
     }
 
     /// Prettier's `separatorWithWhitespace`. `word`: the word next to the place.
-    fn push_separator_with_whitespace(&mut self, word: &[u8], is_next_to_self_closing_element: bool) {
-        let is_soft =
-            !self.is_facebook_translation_tag && is_single_code_unit(word) && !is_next_to_self_closing_element;
-        self.push_line(if is_soft { Separator::SoftLine } else { Separator::HardLine });
+    fn push_separator_with_whitespace(
+        &mut self,
+        word: &[u8],
+        is_next_to_self_closing_element: bool,
+    ) {
+        let is_soft = !self.is_facebook_translation_tag
+            && is_single_code_unit(word)
+            && !is_next_to_self_closing_element;
+        self.push_line(if is_soft {
+            Separator::SoftLine
+        } else {
+            Separator::HardLine
+        });
     }
 
     fn push_text(&mut self, text: &'a [u8], next: Option<Child<'a>>) {
@@ -181,7 +196,10 @@ impl<'a> Children<'a> {
         let (leading_whitespace, mut rest) = split_leading_whitespace(text);
         if !leading_whitespace.is_empty() {
             match has_line_break(leading_whitespace) {
-                true => self.push_separator_with_whitespace(split_first_word(rest).0, is_before_self_closing_element),
+                true => self.push_separator_with_whitespace(
+                    split_first_word(rest).0,
+                    is_before_self_closing_element,
+                ),
                 false => self.push_line(Separator::JsxWhitespace),
             }
         }
@@ -211,7 +229,10 @@ impl<'a> Children<'a> {
         match next {
             Some(Child::Text(text)) if is_meaningful_jsx_text(text) => {
                 let first_word = split_first_word(split_leading_whitespace(text).1).0;
-                self.push_separator_no_whitespace(first_word, Child::Node(node).is_self_closing_element());
+                self.push_separator_no_whitespace(
+                    first_word,
+                    Child::Node(node).is_self_closing_element(),
+                );
             }
             _ => self.push_line(Separator::HardLine),
         }
@@ -243,8 +264,8 @@ impl<'a> Children<'a> {
             match child {
                 Child::Text(text) => children.push_text(text, next),
                 Child::Node(node) => {
-                    let is_expression_container =
-                        node.jsx_container_span().is_some() && !matches!(node.kind(), ExprKind::Spread(_));
+                    let is_expression_container = node.jsx_container_span().is_some()
+                        && !matches!(node.kind(), ExprKind::Spread(_));
                     expression_count += usize::from(is_expression_container);
                     children.push_node(node, next);
                 }
@@ -271,7 +292,8 @@ impl<'a> Children<'a> {
                 [next] => (Some(next), None),
                 [] => (None, None),
             };
-            let (Part::Separator(separator), Some(next), Some(Part::Separator(after_next))) = (part, next, after_next)
+            let (Part::Separator(separator), Some(next), Some(Part::Separator(after_next))) =
+                (part, next, after_next)
             else {
                 kept.push(part);
                 continue;
@@ -316,7 +338,10 @@ impl<'a> Children<'a> {
 
     fn items_of(&self, part: Part) -> &[Item<'a>] {
         match part {
-            Part::Content { start, end } => self.items.get(start as usize..end as usize).unwrap_or_default(),
+            Part::Content { start, end } => self
+                .items
+                .get(start as usize..end as usize)
+                .unwrap_or_default(),
             Part::Separator(_) => &[],
         }
     }
@@ -368,9 +393,10 @@ pub(super) fn format_children<'a>(
                         }
                         Item::Node(node) => FormatJsxChild(node),
                     };
-                    let is_suppressed = is_after_ignore_comment && matches!(node.0.kind(), ExprKind::Jsx(_));
-                    is_after_ignore_comment =
-                        matches!(node.0.kind(), ExprKind::Missing) && f.comments().is_suppressed(node.span().end);
+                    let is_suppressed =
+                        is_after_ignore_comment && matches!(node.0.kind(), ExprKind::Jsx(_));
+                    is_after_ignore_comment = matches!(node.0.kind(), ExprKind::Missing)
+                        && f.comments().is_suppressed(node.span().end);
                     let format_node = format_with(|f| match is_suppressed {
                         true => FormatSuppressedNode(node.span()).fmt(f),
                         false => node.fmt(f),
@@ -400,7 +426,10 @@ pub(super) fn format_children<'a>(
                 match parts.len() {
                     // There is nothing else.
                     2 => multiline.write_content(&JsxRawSpace, f),
-                    _ => multiline.write_separator(&format_with(|f| write!(f, [JsxRawSpace, hard_line_break()])), f),
+                    _ => multiline.write_separator(
+                        &format_with(|f| write!(f, [JsxRawSpace, hard_line_break()])),
+                        f,
+                    ),
                 }
                 continue;
             }
@@ -417,7 +446,9 @@ pub(super) fn format_children<'a>(
         match separator == Separator::HardLine && is_after_line_break {
             // The printer makes one line break of two in a row.
             true => multiline.write_separator(&empty_line(), f),
-            false if is_mdx_block && separator == Separator::JsxWhitespace => multiline.write_separator(&Separator::Line, f),
+            false if is_mdx_block && separator == Separator::JsxWhitespace => {
+                multiline.write_separator(&Separator::Line, f)
+            }
             false => multiline.write_separator(&separator, f),
         }
     }
@@ -468,11 +499,17 @@ impl MultilineBuilder {
 
     fn write_separator<'a>(&mut self, separator: &dyn Format<'a>, f: &mut Formatter<'a>) {
         if self.is_fill {
-            self.result.extend([FormatElement::Tag(Tag::EndEntry), FormatElement::Tag(Tag::StartEntry)]);
+            self.result.extend([
+                FormatElement::Tag(Tag::EndEntry),
+                FormatElement::Tag(Tag::StartEntry),
+            ]);
         }
         f.write_into(&mut self.result, separator);
         if self.is_fill {
-            self.result.extend([FormatElement::Tag(Tag::EndEntry), FormatElement::Tag(Tag::StartEntry)]);
+            self.result.extend([
+                FormatElement::Tag(Tag::EndEntry),
+                FormatElement::Tag(Tag::StartEntry),
+            ]);
         }
     }
 
@@ -502,7 +539,10 @@ impl FormatMultilineChildren {
     pub(super) fn fmt_content(&self, f: &mut Formatter<'_>) {
         let (start, end) = match self.is_fill {
             true => (Tag::StartFill, Tag::EndFill),
-            false => (Tag::StartGroup(GroupTag::new().with_mode(GroupMode::Expand)), Tag::EndGroup),
+            false => (
+                Tag::StartGroup(GroupTag::new().with_mode(GroupMode::Expand)),
+                Tag::EndGroup,
+            ),
         };
         f.write_element(FormatElement::Tag(start));
         if let Some(elements) = self.elements {
@@ -519,7 +559,8 @@ impl<'a> Format<'a> for FormatMultilineChildren {
             return write!(f, [hard_line_break(), empty_line()]);
         }
         let format_inner = format_with(|f| self.fmt_content(f));
-        let format_inner = format_with(|f| around_jsx_children(self.element, false, f, |f| format_inner.fmt(f)));
+        let format_inner =
+            format_with(|f| around_jsx_children(self.element, false, f, |f| format_inner.fmt(f)));
         write!(f, block_indent(&format_inner));
     }
 }
@@ -539,7 +580,11 @@ impl FlatBuilder {
     }
 
     fn finish(self, f: &mut Formatter<'_>) -> FormatFlatChildren {
-        let elements = if self.disabled { None } else { f.intern_slice(&self.result) };
+        let elements = if self.disabled {
+            None
+        } else {
+            f.intern_slice(&self.result)
+        };
         f.recycle_vec(self.result);
         FormatFlatChildren { elements }
     }

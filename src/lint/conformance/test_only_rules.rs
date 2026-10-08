@@ -56,7 +56,11 @@ fn add_named_import<'a>(file: &'a File<'a>, id: &str, into: &mut Vec<LintMessage
             end: Some((end.line, end.column + 1)),
             fix: Some(Fix {
                 span: Span::new(at, at),
-                text: if has_comma { b"I18nManager".to_vec() } else { b",I18nManager".to_vec() },
+                text: if has_comma {
+                    b"I18nManager".to_vec()
+                } else {
+                    b",I18nManager".to_vec()
+                },
             }),
             ..LintMessage::default()
         });
@@ -73,7 +77,10 @@ pub(crate) struct Enabled {
 impl Enabled {
     pub(crate) fn in_code(code: &[u8]) -> Enabled {
         Enabled {
-            names: RULES.into_iter().filter(|name| strings::contains(code, name.as_bytes())).collect(),
+            names: RULES
+                .into_iter()
+                .filter(|name| strings::contains(code, name.as_bytes()))
+                .collect(),
             messages: RefCell::default(),
         }
     }
@@ -82,7 +89,9 @@ impl Enabled {
     pub(crate) fn prepare<'a>(&self, file: &'a File<'a>) {
         for &name in &self.names {
             match name {
-                "custom/use-every-a" | "@rule-tester/use-every-a" => mark_as_used(file, "a", &[StmtTag::Var, StmtTag::Return]),
+                "custom/use-every-a" | "@rule-tester/use-every-a" => {
+                    mark_as_used(file, "a", &[StmtTag::Var, StmtTag::Return])
+                }
                 "custom/use-x" => mark_as_used(file, "x", &[StmtTag::Var]),
                 "test/use-a" => mark_as_used(file, "a", &[StmtTag::Var]),
                 // It gives each variable a reference that is nowhere in the code, after which nothing is known about the variable.

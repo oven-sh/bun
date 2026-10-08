@@ -65,14 +65,21 @@ struct OperandComments<'a> {
 }
 
 impl<'a> OperandComments<'a> {
-    fn new(test: Operand<'a>, consequent: Operand<'a>, alternate: Operand<'a>, f: &Formatter<'a>) -> Self {
+    fn new(
+        test: Operand<'a>,
+        consequent: Operand<'a>,
+        alternate: Operand<'a>,
+        f: &Formatter<'a>,
+    ) -> Self {
         if f.is_quiet() {
             return Self::default();
         }
         let split = |before: Operand<'a>, after: Operand<'a>, operator: u8| {
             let start = before.span().end;
             let comments = f.comments().comments_in_range(start, after.span().start);
-            comments.split_at_checked(trailing_count(comments, start, operator, f.source_text())).unwrap_or((comments, &[]))
+            comments
+                .split_at_checked(trailing_count(comments, start, operator, f.source_text()))
+                .unwrap_or((comments, &[]))
         };
         let (after_test, before_consequent) = split(test, consequent, b'?');
         let (after_consequent, rest) = split(consequent, alternate, b':');
@@ -80,9 +87,10 @@ impl<'a> OperandComments<'a> {
         // `ChainExpression`, which TypeScript files have: Prettier compares the alternate with the
         // node that follows the comment, and that is the member access or the call in it.
         let count = match alternate {
-            Operand::Expr(e) if f.file().is_javascript() || !is_chain_root(e) => {
-                rest.iter().take_while(|comment| comment.is_line() || comment.is_multiline_block()).count()
-            }
+            Operand::Expr(e) if f.file().is_javascript() || !is_chain_root(e) => rest
+                .iter()
+                .take_while(|comment| comment.is_line() || comment.is_multiline_block())
+                .count(),
             _ => 0,
         };
         let (before_colon, before_alternate) = rest.split_at_checked(count).unwrap_or((rest, &[]));
@@ -97,16 +105,26 @@ impl<'a> OperandComments<'a> {
 
     /// Prettier's `hasMultilineBlockComments`: of the comments of the operands.
     fn has_multiline_block(&self) -> bool {
-        [self.after_test, self.before_consequent, self.after_consequent, self.before_alternate]
-            .into_iter()
-            .flatten()
-            .any(|comment| comment.is_multiline_block())
+        [
+            self.after_test,
+            self.before_consequent,
+            self.after_consequent,
+            self.before_alternate,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|comment| comment.is_multiline_block())
     }
 }
 
 /// How many of `comments`, which are between an operand that ends at `start` and the next, trail the
 /// former: those on its line, if they are before `operator` or the last of them ends the line.
-fn trailing_count(comments: &[Comment], mut start: u32, operator: u8, source_text: SourceText<'_>) -> usize {
+fn trailing_count(
+    comments: &[Comment],
+    mut start: u32,
+    operator: u8,
+    source_text: SourceText<'_>,
+) -> usize {
     let mut first_after_operator = None;
     for (index, comment) in comments.iter().enumerate() {
         if source_text.contains_newline_between(start, comment.span.start) {
@@ -115,7 +133,9 @@ fn trailing_count(comments: &[Comment], mut start: u32, operator: u8, source_tex
         if comment.is_line() || comment.followed_by_newline() {
             return index + 1;
         }
-        if first_after_operator.is_none() && source_text.bytes_contain(start, comment.span.start, operator) {
+        if first_after_operator.is_none()
+            && source_text.bytes_contain(start, comment.span.start, operator)
+        {
             first_after_operator = Some(index);
         }
         start = comment.span.end;
@@ -128,7 +148,13 @@ struct FormatOperand<'a>(Operand<'a>, &'a [Comment]);
 
 impl<'a> Format<'a> for FormatOperand<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write!(f, [FormatNodeWithoutTrailingComments(&self.0), FormatTrailingComments::Comments(self.1)]);
+        write!(
+            f,
+            [
+                FormatNodeWithoutTrailingComments(&self.0),
+                FormatTrailingComments::Comments(self.1)
+            ]
+        );
     }
 }
 
@@ -148,7 +174,14 @@ struct WrapInParens<'b, T>(&'b T);
 
 impl<'a, T: Format<'a>> Format<'a> for WrapInParens<'_, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write!(f, [if_group_breaks(&"("), soft_block_indent(self.0), if_group_breaks(&")")]);
+        write!(
+            f,
+            [
+                if_group_breaks(&"("),
+                soft_block_indent(self.0),
+                if_group_breaks(&")")
+            ]
+        );
     }
 }
 
@@ -158,7 +191,8 @@ pub(crate) fn should_break<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool
     let ExprKind::Cond { test, yes, no } = conditional.kind() else {
         return false;
     };
-    let (test, consequent, alternate) = (Operand::Expr(test), Operand::Expr(yes), Operand::Expr(no));
+    let (test, consequent, alternate) =
+        (Operand::Expr(test), Operand::Expr(yes), Operand::Expr(no));
     consequent.is_conditional()
         || alternate.is_conditional()
         || OperandComments::new(test, consequent, alternate, f).has_multiline_block()
@@ -168,29 +202,43 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     // The last of what is before the `?`, what is after it, and what is after the `:`.
     let (test, consequent, alternate, parent) = match conditional {
         ConditionalLike::ConditionalExpression(e) => match e.kind() {
-            ExprKind::Cond { test, yes, no } => (Operand::Expr(test), Operand::Expr(yes), Operand::Expr(no), e.ast_parent()),
+            ExprKind::Cond { test, yes, no } => (
+                Operand::Expr(test),
+                Operand::Expr(yes),
+                Operand::Expr(no),
+                e.ast_parent(),
+            ),
             _ => return,
         },
         ConditionalLike::TSConditionalType(ty) => match ty.kind() {
-            TypeKind::Cond { extends, yes, no, .. } => {
-                (Operand::Type(extends), Operand::Type(yes), Operand::Type(no), ty.ast_parent())
-            }
+            TypeKind::Cond {
+                extends, yes, no, ..
+            } => (
+                Operand::Type(extends),
+                Operand::Type(yes),
+                Operand::Type(no),
+                ty.ast_parent(),
+            ),
             _ => return,
         },
     };
     let is_ts_conditional = matches!(conditional, ConditionalLike::TSConditionalType(_));
 
     let (is_parent_ternary, is_in_test, is_in_alternate) = match (conditional, parent) {
-        (ConditionalLike::ConditionalExpression(e), AstNodes::ConditionalExpression(parent)) => match parent.kind() {
-            ExprKind::Cond { test, no, .. } => (true, test == e, no == e),
-            _ => (false, false, false),
-        },
-        (ConditionalLike::TSConditionalType(ty), AstNodes::TSConditionalType(parent)) => match parent.kind() {
-            TypeKind::Cond {
-                check, extends, no, ..
-            } => (true, check == ty || extends == ty, no == ty),
-            _ => (false, false, false),
-        },
+        (ConditionalLike::ConditionalExpression(e), AstNodes::ConditionalExpression(parent)) => {
+            match parent.kind() {
+                ExprKind::Cond { test, no, .. } => (true, test == e, no == e),
+                _ => (false, false, false),
+            }
+        }
+        (ConditionalLike::TSConditionalType(ty), AstNodes::TSConditionalType(parent)) => {
+            match parent.kind() {
+                TypeKind::Cond {
+                    check, extends, no, ..
+                } => (true, check == ty || extends == ty, no == ty),
+                _ => (false, false, false),
+            }
+        }
         _ => (false, false, false),
     };
     let is_consequent_ternary = consequent.is_conditional();
@@ -200,13 +248,17 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     let indent_width = f.options().indent_width.value();
     let is_big_tabs = indent_width > 2 || use_tabs;
 
-    let is_on_same_line_as_return = matches!(parent, AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_))
-        && !is_consequent_ternary
+    let is_on_same_line_as_return = matches!(
+        parent,
+        AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_)
+    ) && !is_consequent_ternary
         && !is_alternate_ternary;
     let is_in_jsx = match conditional {
         ConditionalLike::ConditionalExpression(e) => {
-            matches!(first_non_conditional_parent(e), AstNodes::JSXExpressionContainer(_))
-                && !matches!(parent.parent(), AstNodes::JSXAttribute(_))
+            matches!(
+                first_non_conditional_parent(e),
+                AstNodes::JSXExpressionContainer(_)
+            ) && !matches!(parent.parent(), AstNodes::JSXAttribute(_))
         }
         ConditionalLike::TSConditionalType(_) => false,
     };
@@ -219,7 +271,9 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         && match parent {
             AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
             // It is the left side.
-            AstNodes::BinaryExpression(binary) => binary.binary_operator().is_some_and(|operator| is_angular_pipe(operator, f)),
+            AstNodes::BinaryExpression(binary) => binary
+                .binary_operator()
+                .is_some_and(|operator| is_angular_pipe(operator, f)),
             _ => false,
         };
     let break_ts_closing_paren = match conditional {
@@ -229,7 +283,8 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
 
     // A chain breaks as a whole.
     let comments = OperandComments::new(test, consequent, alternate, f);
-    let should_break = is_consequent_ternary || is_alternate_ternary || comments.has_multiline_block();
+    let should_break =
+        is_consequent_ternary || is_alternate_ternary || comments.has_multiline_block();
 
     // So that a short consequent is not pushed to the next line:
     //
@@ -239,7 +294,9 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     let try_to_parenthesize_alternate = !is_in_chain
         && !is_parent_ternary
         && match (test, consequent) {
-            (Operand::Expr(_), Operand::Expr(consequent)) if is_in_jsx => matches!(consequent.kind(), ExprKind::Null),
+            (Operand::Expr(_), Operand::Expr(consequent)) if is_in_jsx => {
+                matches!(consequent.kind(), ExprKind::Null)
+            }
             (Operand::Expr(test), Operand::Expr(consequent)) => {
                 comments.before_consequent.is_empty()
                     && comments.after_consequent.is_empty()
@@ -251,7 +308,8 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
 
     let should_group_test_and_consequent = is_in_chain
         || (is_ts_conditional && !is_parent_ternary)
-        || (is_parent_ternary && matches!(test, Operand::Expr(test) if is_simple_expression_by_node_count(test, 1, f)))
+        || (is_parent_ternary
+            && matches!(test, Operand::Expr(test) if is_simple_expression_by_node_count(test, 1, f)))
         || try_to_parenthesize_alternate;
 
     let test_id = f.group_id("test");
@@ -262,7 +320,13 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
             ConditionalLike::ConditionalExpression(_) => {
                 let is_conditional = test.is_conditional();
                 let test = FormatOperand(test, comments.after_test);
-                write!(f, [WrapInParens(&test), is_conditional.then_some(expand_parent())]);
+                write!(
+                    f,
+                    [
+                        WrapInParens(&test),
+                        is_conditional.then_some(expand_parent())
+                    ]
+                );
             }
             ConditionalLike::TSConditionalType(ty) => {
                 let TypeKind::Cond { check, extends, .. } = ty.kind() else {
@@ -276,7 +340,10 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
                 }
             }
         });
-        write!(f, group(&format_args!(format_test, space(), "?")).with_group_id(Some(test_id)));
+        write!(
+            f,
+            group(&format_args!(format_test, space(), "?")).with_group_id(Some(test_id))
+        );
     });
 
     let format_consequent = format_with(|f| {
@@ -285,8 +352,18 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
                 && (is_parent_ternary
                     || is_in_chain
                     || matches!(consequent, Operand::Expr(consequent) if matches!(consequent.kind(), ExprKind::Jsx(_)))));
-        let line = if is_on_its_own_line { hard_line_break() } else { soft_line_break_or_space() };
-        write!(f, indent(&format_args!(line, FormatOperand(consequent, comments.after_consequent))));
+        let line = if is_on_its_own_line {
+            hard_line_break()
+        } else {
+            soft_line_break_or_space()
+        };
+        write!(
+            f,
+            indent(&format_args!(
+                line,
+                FormatOperand(consequent, comments.after_consequent)
+            ))
+        );
     });
 
     let format_test_and_consequent = format_with(|f| {
@@ -308,7 +385,10 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
                 ]
             );
         });
-        write!(f, group(&content).with_group_id(Some(test_and_consequent_id)));
+        write!(
+            f,
+            group(&content).with_group_id(Some(test_and_consequent_id))
+        );
     });
 
     let format_alternate = format_with(|f| {
@@ -321,7 +401,8 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
             f,
             [
                 if_group_breaks(&alternate).with_group_id(Some(test_and_consequent_id)),
-                if_group_fits_on_line(&dedent(&WrapInParens(&alternate))).with_group_id(Some(test_and_consequent_id))
+                if_group_fits_on_line(&dedent(&WrapInParens(&alternate)))
+                    .with_group_id(Some(test_and_consequent_id))
             ]
         );
     });
@@ -329,7 +410,14 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     // What lines the alternate up with the consequent, which is indented.
     let fill_tab = format_with(|f| match use_tabs {
         true => write!(f, text(b"\t")),
-        false => write!(f, text(SPACES.get(..usize::from(indent_width).saturating_sub(1)).unwrap_or_default())),
+        false => write!(
+            f,
+            text(
+                SPACES
+                    .get(..usize::from(indent_width).saturating_sub(1))
+                    .unwrap_or_default()
+            )
+        ),
     });
 
     let format_parts = format_with(|f| {
@@ -340,14 +428,21 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
                 comments: comments.before_colon,
                 indent: DanglingIndentMode::None,
             };
-            write!(f, [indent(&format_args!(hard_line_break(), comments)), hard_line_break()]);
+            write!(
+                f,
+                [
+                    indent(&format_args!(hard_line_break(), comments)),
+                    hard_line_break()
+                ]
+            );
         } else if is_alternate_ternary {
             write!(f, hard_line_break());
         } else if try_to_parenthesize_alternate {
             write!(
                 f,
                 [
-                    if_group_breaks(&soft_line_break_or_space()).with_group_id(Some(test_and_consequent_id)),
+                    if_group_breaks(&soft_line_break_or_space())
+                        .with_group_id(Some(test_and_consequent_id)),
                     if_group_fits_on_line(&space()).with_group_id(Some(test_and_consequent_id))
                 ]
             );
@@ -362,7 +457,10 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         } else if should_group_test_and_consequent {
             let if_it_fits = format_with(|f| match is_in_chain || try_to_parenthesize_alternate {
                 true => write!(f, space()),
-                false => write!(f, [if_group_breaks(&fill_tab), if_group_fits_on_line(&space())]),
+                false => write!(
+                    f,
+                    [if_group_breaks(&fill_tab), if_group_fits_on_line(&space())]
+                ),
             });
             write!(
                 f,
@@ -372,7 +470,10 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
                 ]
             );
         } else {
-            write!(f, [if_group_breaks(&fill_tab), if_group_fits_on_line(&space())]);
+            write!(
+                f,
+                [if_group_breaks(&fill_tab), if_group_fits_on_line(&space())]
+            );
         }
 
         if is_alternate_ternary {
@@ -380,7 +481,9 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         } else {
             let line = (is_in_jsx && !try_to_parenthesize_alternate).then(|| match conditional {
                 // Prettier writes both line breaks, which makes an empty line.
-                ConditionalLike::ConditionalExpression(e) if is_followed_by_line_break(e) => soft_empty_line(),
+                ConditionalLike::ConditionalExpression(e) if is_followed_by_line_break(e) => {
+                    soft_empty_line()
+                }
                 _ => soft_line_break(),
             });
             write!(f, group(&format_args!(indent(&format_alternate), line)));
@@ -438,7 +541,8 @@ fn is_followed_by_line_break(e: Expr<'_>) -> bool {
         last = conditional;
         parent = parent.parent();
     }
-    matches!(parent, AstNodes::JSXExpressionContainer(_)) && matches!(parent.parent(), AstNodes::JSXAttribute(_))
+    matches!(parent, AstNodes::JSXExpressionContainer(_))
+        && matches!(parent.parent(), AstNodes::JSXAttribute(_))
 }
 
 /// Prettier's `shouldExtraIndentForConditionalExpression`: whether `conditional` is what a chain of
@@ -463,7 +567,9 @@ fn should_extra_indent(conditional: Expr<'_>) -> bool {
                 parent = parent.parent();
                 break;
             }
-            AstNodes::TSAsExpression(it) | AstNodes::TSSatisfiesExpression(it) if it.expression() == Some(child) => {
+            AstNodes::TSAsExpression(it) | AstNodes::TSSatisfiesExpression(it)
+                if it.expression() == Some(child) =>
+            {
                 child = it;
                 parent = parent.parent();
                 break;
@@ -479,9 +585,9 @@ fn should_extra_indent(conditional: Expr<'_>) -> bool {
         AstNodes::AssignmentExpression(it) => it.right() == Some(child),
         AstNodes::VariableDeclarator(it) => it.init() == Some(child),
         AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_) => true,
-        AstNodes::UnaryExpression(it) | AstNodes::YieldExpression(it) | AstNodes::AwaitExpression(it) => {
-            it.argument() == Some(child)
-        }
+        AstNodes::UnaryExpression(it)
+        | AstNodes::YieldExpression(it)
+        | AstNodes::AwaitExpression(it) => it.argument() == Some(child),
         _ => false,
     }
 }
@@ -521,35 +627,56 @@ fn inner_node_count(e: Expr<'_>, max: u32, is_javascript: bool) -> u32 {
         } => 0,
         ExprKind::PrivateIdentifier(_) => private_name,
         ExprKind::ImportMeta | ExprKind::NewTarget => 2,
-        ExprKind::Dot { obj, name, .. } => {
-            child(obj, 1 + if name.bytes().starts_with(b"#") { private_name } else { 0 })
-        }
+        ExprKind::Dot { obj, name, .. } => child(
+            obj,
+            1 + if name.bytes().starts_with(b"#") {
+                private_name
+            } else {
+                0
+            },
+        ),
         ExprKind::Index { obj, index, .. } => child(index, child(obj, 0)),
-        ExprKind::Call(call) | ExprKind::New(call) => child(call.callee(), u32::from(!call.type_args().is_empty())),
+        ExprKind::Call(call) | ExprKind::New(call) => {
+            child(call.callee(), u32::from(!call.type_args().is_empty()))
+        }
         // The template is a node.
-        ExprKind::TaggedTemplate(call) => child(call.callee(), 1 + u32::from(!call.type_args().is_empty())),
-        ExprKind::Unary { operand, .. } | ExprKind::Await(operand) | ExprKind::Spread(operand) => child(operand, 0),
+        ExprKind::TaggedTemplate(call) => {
+            child(call.callee(), 1 + u32::from(!call.type_args().is_empty()))
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Await(operand) | ExprKind::Spread(operand) => {
+            child(operand, 0)
+        }
         ExprKind::Yield { value, .. } => value.map_or(0, |value| child(value, 0)),
         ExprKind::Binary { left, right, .. } => child(right, child(left, 0)),
         ExprKind::Assign { target, value, .. } => child(value, child(target, 0)),
         ExprKind::Cond { test, yes, no } => child(no, child(yes, child(test, 0))),
-        ExprKind::NonNull(expression) => child(expression, e.non_null_count().saturating_sub(1) as u32),
-        ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => child(expr, 1 + inner_type_node_count(ty)),
+        ExprKind::NonNull(expression) => {
+            child(expression, e.non_null_count().saturating_sub(1) as u32)
+        }
+        ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
+            child(expr, 1 + inner_type_node_count(ty))
+        }
         // `const` is a `TSTypeReference` with a name.
         ExprKind::AsConst(expr) => child(expr, 2),
         ExprKind::Instantiation { expr, .. } => child(expr, 1),
-        ExprKind::ImportCall { args } => args.iter().fold(0, |count, argument| child(argument, count)),
+        ExprKind::ImportCall { args } => args
+            .iter()
+            .fold(0, |count, argument| child(argument, count)),
         ExprKind::Fn(func) => {
             let signature = u32::from(func.name().is_some())
                 + u32::from(!func.type_params().is_empty())
-                + func.return_type().map_or(0, |ty| 2 + inner_type_node_count(ty));
+                + func
+                    .return_type()
+                    .map_or(0, |ty| 2 + inner_type_node_count(ty));
             match func.body() {
                 FnBody::Expr(body) => child(body, signature),
                 _ => signature + 1,
             }
         }
         // At least the body, or the opening element and its name.
-        ExprKind::Class(class) => 1 + u32::from(class.name().is_some()) + class.extends().map_or(0, |it| child(it, 0)),
+        ExprKind::Class(class) => {
+            1 + u32::from(class.name().is_some()) + class.extends().map_or(0, |it| child(it, 0))
+        }
         ExprKind::Jsx(_) => 2,
     };
     match !is_javascript && is_chain_root(e) {
@@ -563,7 +690,9 @@ fn inner_type_node_count(ty: TypeNode<'_>) -> u32 {
     match ty.kind() {
         TypeKind::Keyword(_) => 0,
         TypeKind::StringLit(_) | TypeKind::BoolLit(_) => 1,
-        TypeKind::Ref { name, args } => (2 * name.len() as u32).saturating_sub(1) + u32::from(!args.is_empty()),
+        TypeKind::Ref { name, args } => {
+            (2 * name.len() as u32).saturating_sub(1) + u32::from(!args.is_empty())
+        }
         TypeKind::Array(element) => 1 + inner_type_node_count(element),
         _ => 4,
     }

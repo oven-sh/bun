@@ -7,40 +7,80 @@ use bun_clap as clap;
 
 /// A flag without a description is understood, and not listed in the help.
 pub const PARAMS: &[Param] = &[
-    clap::param!("-c, --check                     Do not write. Exit with 1 if a file is not formatted"),
-    clap::param!("-l, --list-different            Do not write. Print the files that are not formatted, and exit with 1 if there are any"),
-    clap::param!("--stdin-filepath <path>         Format standard input as that file, and print the result"),
-    clap::param!("--config <path>                 Use this configuration file instead of looking for one"),
+    clap::param!(
+        "-c, --check                     Do not write. Exit with 1 if a file is not formatted"
+    ),
+    clap::param!(
+        "-l, --list-different            Do not write. Print the files that are not formatted, and exit with 1 if there are any"
+    ),
+    clap::param!(
+        "--stdin-filepath <path>         Format standard input as that file, and print the result"
+    ),
+    clap::param!(
+        "--config <path>                 Use this configuration file instead of looking for one"
+    ),
     clap::param!("--no-config                     Do not look for a configuration file"),
-    clap::param!("--disable-nested-config         Use the configuration file of the working directory for every file"),
+    clap::param!(
+        "--disable-nested-config         Use the configuration file of the working directory for every file"
+    ),
     clap::param!("--no-editorconfig               Do not read <b>.editorconfig<r>"),
-    clap::param!("--config-precedence <which>     <b>cli-override<r> <d>(default)<r>, <b>file-override<r>, or <b>prefer-file<r>"),
-    clap::param!("--ignore-path <path>...         Files with patterns to ignore <d>(default: .gitignore and .prettierignore)<r>"),
+    clap::param!(
+        "--config-precedence <which>     <b>cli-override<r> <d>(default)<r>, <b>file-override<r>, or <b>prefer-file<r>"
+    ),
+    clap::param!(
+        "--ignore-path <path>...         Files with patterns to ignore <d>(default: .gitignore and .prettierignore)<r>"
+    ),
     clap::param!("--with-node-modules             Format files in <b>node_modules<r> too"),
     clap::param!("--no-error-on-unmatched-pattern  Do not fail if an argument matches no file"),
-    clap::param!("-u, --ignore-unknown            Say nothing about a file that there is no parser for"),
-    clap::param!("--find-config-path <path>       Print the configuration file of a file, and format nothing"),
-    clap::param!("--log-level <level>             <b>silent<r>, <b>error<r>, <b>warn<r>, <b>log<r> <d>(default)<r>, or <b>debug<r>"),
+    clap::param!(
+        "-u, --ignore-unknown            Say nothing about a file that there is no parser for"
+    ),
+    clap::param!(
+        "--find-config-path <path>       Print the configuration file of a file, and format nothing"
+    ),
+    clap::param!(
+        "--log-level <level>             <b>silent<r>, <b>error<r>, <b>warn<r>, <b>log<r> <d>(default)<r>, or <b>debug<r>"
+    ),
     clap::param!("--print-width <n>               The line length to wrap at <d>(default: 80)<r>"),
     clap::param!("--tab-width <n>                 Spaces per indentation level <d>(default: 2)<r>"),
     clap::param!("--use-tabs                      Indent with tabs"),
     clap::param!("--no-semi                       Only print semicolons where they are needed"),
     clap::param!("--single-quote                  Use single quotes"),
     clap::param!("--jsx-single-quote              Use single quotes in JSX"),
-    clap::param!("--quote-props <when>            <b>as-needed<r> <d>(default)<r>, <b>consistent<r>, or <b>preserve<r>"),
-    clap::param!("--trailing-comma <where>        <b>all<r> <d>(default)<r>, <b>es5<r>, or <b>none<r>"),
-    clap::param!("--no-bracket-spacing            No spaces between the braces of an object literal"),
-    clap::param!("--bracket-same-line             Put the closing bracket of a multi-line element at the end of the last line"),
+    clap::param!(
+        "--quote-props <when>            <b>as-needed<r> <d>(default)<r>, <b>consistent<r>, or <b>preserve<r>"
+    ),
+    clap::param!(
+        "--trailing-comma <where>        <b>all<r> <d>(default)<r>, <b>es5<r>, or <b>none<r>"
+    ),
+    clap::param!(
+        "--no-bracket-spacing            No spaces between the braces of an object literal"
+    ),
+    clap::param!(
+        "--bracket-same-line             Put the closing bracket of a multi-line element at the end of the last line"
+    ),
     clap::param!("--arrow-parens <when>           <b>always<r> <d>(default)<r> or <b>avoid<r>"),
-    clap::param!("--object-wrap <how>             <b>preserve<r> <d>(default)<r> or <b>collapse<r>"),
+    clap::param!(
+        "--object-wrap <how>             <b>preserve<r> <d>(default)<r> or <b>collapse<r>"
+    ),
     clap::param!("--single-attribute-per-line     One attribute per line in JSX"),
-    clap::param!("--end-of-line <which>           <b>lf<r> <d>(default)<r>, <b>crlf<r>, <b>cr<r>, or <b>auto<r>"),
-    clap::param!("--require-pragma                Only format files that start with a comment that has <b>@format<r> or <b>@prettier<r>"),
-    clap::param!("--check-ignore-pragma           Do not format files that start with a comment that has <b>@noformat<r> or <b>@noprettier<r>"),
-    clap::param!("--insert-pragma                 Put a comment with <b>@format<r> at the top of the files that are formatted"),
+    clap::param!(
+        "--end-of-line <which>           <b>lf<r> <d>(default)<r>, <b>crlf<r>, <b>cr<r>, or <b>auto<r>"
+    ),
+    clap::param!(
+        "--require-pragma                Only format files that start with a comment that has <b>@format<r> or <b>@prettier<r>"
+    ),
+    clap::param!(
+        "--check-ignore-pragma           Do not format files that start with a comment that has <b>@noformat<r> or <b>@noprettier<r>"
+    ),
+    clap::param!(
+        "--insert-pragma                 Put a comment with <b>@format<r> at the top of the files that are formatted"
+    ),
     clap::param!("--range-start <offset>          Only format the statements from this offset on"),
     clap::param!("--range-end <offset>            Only format the statements up to this offset"),
-    clap::param!("--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"),
+    clap::param!(
+        "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
+    ),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),
     clap::param!("-h, --help                      Print this help menu"),
@@ -211,7 +251,12 @@ fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
 }
 
 impl Options {
-    fn set(&mut self, name: &'static [u8], value: Option<&[u8]>, is_on: bool) -> Result<(), UsageError> {
+    fn set(
+        &mut self,
+        name: &'static [u8],
+        value: Option<&[u8]>,
+        is_on: bool,
+    ) -> Result<(), UsageError> {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
         if let Some(option) = option_of(name) {
@@ -229,7 +274,9 @@ impl Options {
             b"config" => self.config = owned(),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"list-files" => self.list_files = is_on,
-            b"init" | b"migrate" | b"lsp" => return error(&[b"bun format does not support --", name, b"."]),
+            b"init" | b"migrate" | b"lsp" => {
+                return error(&[b"bun format does not support --", name, b"."]);
+            }
             b"editorconfig" => self.editorconfig = is_on,
             b"config-precedence" => {
                 self.config_precedence = match text {

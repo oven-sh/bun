@@ -15,11 +15,11 @@ use bun_core::strings;
 use bun_format::pragma::BeforeParsing;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
+use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
-use bun_js_parser::sema::Summary;
 use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
@@ -72,12 +72,26 @@ struct How<'h> {
 }
 
 /// Parses `text` and calls `then` with the tree, and with what the names in it are of.
-fn with_tree<'h, R>(how: &How<'h>, text: &[u8], then: impl FnOnce(Summary<'_, 'h>, &dyn Intern, &LanguageOptions) -> R) -> R {
+fn with_tree<'h, R>(
+    how: &How<'h>,
+    text: &[u8],
+    then: impl FnOnce(Summary<'_, 'h>, &dyn Intern, &LanguageOptions) -> R,
+) -> R {
     let path = how.path;
-    let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"].iter().any(|it| path.ends_with(it));
+    let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
+        .iter()
+        .any(|it| path.ends_with(it));
     let language = LanguageOptions {
-        parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
-        source_type: if how.is_script { SourceType::Script } else { SourceType::Module },
+        parser: if is_typescript {
+            Parser::TypeScript
+        } else {
+            Parser::Espree
+        },
+        source_type: if how.is_script {
+            SourceType::Script
+        } else {
+            SourceType::Module
+        },
         ..LanguageOptions::default()
     };
     let session = how.memory;
@@ -98,12 +112,21 @@ fn with_tree<'h, R>(how: &How<'h>, text: &[u8], then: impl FnOnce(Summary<'_, 'h
 }
 
 /// Parses `text` and calls `then` with the file, with its tree, and with the first error in it.
-fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, &Program<'a>, Option<&'a Diagnostic>) -> R) -> R {
+fn with_file<R>(
+    how: &How,
+    text: &[u8],
+    then: impl for<'a> FnOnce(&'a File<'a>, &Program<'a>, Option<&'a Diagnostic>) -> R,
+) -> R {
     let (path, session) = (how.path, how.memory);
     let arena = session.arena();
     with_tree(how, text, |mut summary, atoms, language| {
         // To tell which imports are used takes symbols.
-        let needs_symbols = how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols());
+        let needs_symbols = how
+            .resolved
+            .options
+            .sort_imports
+            .as_deref()
+            .is_some_and(|it| it.needs_symbols());
         let mut recycled = Recycled::of_this_thread();
         // Where the parser has left it, if that will do.
         if !needs_symbols
@@ -111,7 +134,11 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
             && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
         {
             let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
-            return then(&file, &Program::new(&**hir, text, atoms), hir.diagnostics.first());
+            return then(
+                &file,
+                &Program::new(&**hir, text, atoms),
+                hir.diagnostics.first(),
+            );
         }
         let mut hir = summary.into_arena((arena, session));
         hir.text = Cow::Borrowed(text);
@@ -122,10 +149,18 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
         };
         if needs_symbols {
             let bound = bind(&hir, bind_options, atoms, arena);
-            return then(&File::new(path, &hir, &bound, atoms, language, None), &Program::new(&hir, text, atoms), hir.diagnostics.first());
+            return then(
+                &File::new(path, &hir, &bound, atoms, language, None),
+                &Program::new(&hir, text, atoms),
+                hir.diagnostics.first(),
+            );
         }
         let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
-        then(&File::new(path, &hir, bound, atoms, language, None), &Program::new(&hir, text, atoms), hir.diagnostics.first())
+        then(
+            &File::new(path, &hir, bound, atoms, language, None),
+            &Program::new(&hir, text, atoms),
+            hir.diagnostics.first(),
+        )
     })
 }
 
@@ -156,7 +191,9 @@ struct Scratches {
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
-    let end = out.strip_suffix(b"\n").map_or(out.len(), |rest| rest.strip_suffix(b"\r").unwrap_or(rest).len());
+    let end = out.strip_suffix(b"\n").map_or(out.len(), |rest| {
+        rest.strip_suffix(b"\r").unwrap_or(rest).len()
+    });
     out.truncate(end);
 }
 
@@ -168,12 +205,26 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
         omits_final_newline: false,
     };
     let names = Session::new();
-    let formatted = format(path, code, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false);
-    formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
+    let formatted = format(
+        path,
+        code,
+        &resolved,
+        (&Interner::new_in(&names), &names),
+        &mut Scratches::default(),
+        false,
+    );
+    formatted
+        .map(|(formatted, _)| out.extend_from_slice(&formatted))
+        .is_ok()
 }
 
 /// For the scripts and expressions in HTML: calls `then` with `code` parsed as the file at `path`.
-fn parse_javascript(path: &[u8], code: &[u8], is_script: bool, then: &mut dyn for<'b> FnMut(&'b File<'b>)) {
+fn parse_javascript(
+    path: &[u8],
+    code: &[u8],
+    is_script: bool,
+    then: &mut dyn for<'b> FnMut(&'b File<'b>),
+) {
     let names = Session::new();
     let how = How {
         path,
@@ -190,10 +241,21 @@ fn parse_javascript(path: &[u8], code: &[u8], is_script: bool, then: &mut dyn fo
 type Formatted = (Vec<u8>, Option<u32>);
 
 /// The formatted text of the file at `path`. `verifies`: it is parsed and compared with `text`.
-fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn Intern, &Session), scratch: &mut Scratches, verifies: bool) -> Result<Formatted, Failure> {
+fn format(
+    path: &[u8],
+    text: &[u8],
+    resolved: &Resolved,
+    (atoms, memory): (&dyn Intern, &Session),
+    scratch: &mut Scratches,
+    verifies: bool,
+) -> Result<Formatted, Failure> {
     let options = &resolved.options;
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
-    let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path);
+    let name = options
+        .filepath
+        .as_deref()
+        .filter(|it| !it.is_empty())
+        .unwrap_or(path);
     let finish = |done: Result<(), FormatError>, mut out: Vec<u8>, what: &str| match done {
         Ok(()) => {
             if resolved.omits_final_newline {
@@ -202,7 +264,9 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
             let cursor = bun_format::cursor::cursor_in_formatted_text(text, options, &out);
             Ok((out, cursor))
         }
-        Err(FormatError::SyntaxError) => Err(Failure::Syntax(format!("SyntaxError: It is not {what}.").into_bytes())),
+        Err(FormatError::SyntaxError) => Err(Failure::Syntax(
+            format!("SyntaxError: It is not {what}.").into_bytes(),
+        )),
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
         Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
     };
@@ -211,8 +275,13 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
         Some(Kind::Script) | None => {}
         Some(Kind::Json(parser)) => {
             let mut sorted = Vec::new();
-            let text = match options.sort_package_json.filter(|_| paths::basename(name) == b"package.json") {
-                Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => &sorted[..],
+            let text = match options
+                .sort_package_json
+                .filter(|_| paths::basename(name) == b"package.json")
+            {
+                Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => {
+                    &sorted[..]
+                }
                 _ => text,
             };
             let done = bun_format::json::format(text, parser, options, &mut scratch.json, &mut out);
@@ -231,7 +300,8 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
             return finish(done, out, "Markdown");
         }
         Some(Kind::Mdx) => {
-            let done = bun_format::markdown::format_mdx(text, options, &mut scratch.markdown, &mut out);
+            let done =
+                bun_format::markdown::format_mdx(text, options, &mut scratch.markdown, &mut out);
             return finish(done, out, "MDX");
         }
         Some(Kind::GraphQl) => {
@@ -239,12 +309,23 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
             return finish(done, out, "GraphQL");
         }
         Some(Kind::Handlebars) => {
-            let done = bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
+            let done =
+                bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
             return finish(done, out, "Handlebars");
         }
         Some(Kind::Html(parser)) => {
-            let done = bun_format::html::format_with_cursor(name, text, parser, options, &mut scratch.html, &mut out);
-            if verifies && done.is_ok() && !bun_format::html::has_same_content(text, &out, parser, options) {
+            let done = bun_format::html::format_with_cursor(
+                name,
+                text,
+                parser,
+                options,
+                &mut scratch.html,
+                &mut out,
+            );
+            if verifies
+                && done.is_ok()
+                && !bun_format::html::has_same_content(text, &out, parser, options)
+            {
                 return Err(Failure::Bug("formatting would change what is in the file"));
             }
             let cursor = done.as_ref().ok().copied().flatten();
@@ -281,21 +362,44 @@ fn print<'a>(
 ) -> Result<Formatted, Failure> {
     let options = &how.resolved.options;
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
-    let takes_types = matches!(options.parser.as_deref(), Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts"));
+    let takes_types = matches!(
+        options.parser.as_deref(),
+        Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts")
+    );
     let types = match takes_types {
         true => TypesInJavaScript::Tolerated,
         false => TypesInJavaScript::Refused,
     };
     if let Some(why) = bun_lint::linter::refusal_of_prettier(file, types) {
         let at = file.position(why.at);
-        return Err(Failure::Syntax(format!("SyntaxError: {} ({}:{})", BStr::new(&why.message), at.line, at.column + 1).into_bytes()));
+        return Err(Failure::Syntax(
+            format!(
+                "SyntaxError: {} ({}:{})",
+                BStr::new(&why.message),
+                at.line,
+                at.column + 1
+            )
+            .into_bytes(),
+        ));
     }
     let mut out = Vec::new();
-    let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _, _| then(file));
-    let cursor = match bun_format::range::format_with_cursor(file, options, &mut scratch.js, &mut out, parse) {
+    let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
+        with_file(how, part, |file, _, _| then(file))
+    };
+    let cursor = match bun_format::range::format_with_cursor(
+        file,
+        options,
+        &mut scratch.js,
+        &mut out,
+        parse,
+    ) {
         Ok(cursor) => cursor,
-        Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
-        Err(FormatError::NestedTooDeeply) => return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
+        Err(FormatError::SyntaxError) => {
+            return Err(Failure::Syntax(syntax_error(file, first_error)));
+        }
+        Err(FormatError::NestedTooDeeply) => {
+            return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+        }
         Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
     };
     if how.resolved.omits_final_newline {
@@ -321,7 +425,9 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
         // A file whose imports move is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-            Some(sorted) => with_file(how, &sorted, |file, program, first_error| print((file, program), first_error, how, scratch)),
+            Some(sorted) => with_file(how, &sorted, |file, program, first_error| {
+                print((file, program), first_error, how, scratch)
+            }),
             None => print((file, program), first_error, how, scratch),
         }
     })
@@ -329,7 +435,11 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
 
 /// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
 /// the cursor ends up. For the tests of the formatter. `Err(true)`: a syntax error.
-pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Result<(Vec<u8>, Option<u32>), bool> {
+pub fn format_for_tests(
+    path: &[u8],
+    text: &[u8],
+    options: &FormatOptions,
+) -> Result<(Vec<u8>, Option<u32>), bool> {
     let resolved = Resolved {
         options: FormatOptions {
             format_javascript: Some(format_javascript),
@@ -339,7 +449,15 @@ pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Re
         omits_final_newline: false,
     };
     let names = Session::new();
-    format(path, text, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false).map_err(|failure| matches!(failure, Failure::Syntax(_)))
+    format(
+        path,
+        text,
+        &resolved,
+        (&Interner::new_in(&names), &names),
+        &mut Scratches::default(),
+        false,
+    )
+    .map_err(|failure| matches!(failure, Failure::Syntax(_)))
 }
 
 /// What has become of a file.
@@ -370,7 +488,12 @@ impl Run<'_> {
     /// Prettier's `logger.warn`
     fn warn(&mut self, text: &[u8]) {
         if self.options.log_level >= LogLevel::Warn {
-            pretty!(&mut self.out.stderr, self.colors(), "[<yellow>warn<r>] {}\n", BStr::new(text));
+            pretty!(
+                &mut self.out.stderr,
+                self.colors(),
+                "[<yellow>warn<r>] {}\n",
+                BStr::new(text)
+            );
         }
     }
 
@@ -378,7 +501,12 @@ impl Run<'_> {
     fn error(&mut self, text: &[u8]) {
         if self.options.log_level >= LogLevel::Error {
             for line in strings::split(text, b"\n") {
-                pretty!(&mut self.out.stderr, self.colors(), "[<red>error<r>] {}\n", BStr::new(line));
+                pretty!(
+                    &mut self.out.stderr,
+                    self.colors(),
+                    "[<red>error<r>] {}\n",
+                    BStr::new(line)
+                );
             }
         }
         self.out.exit_code = 2;
@@ -405,7 +533,13 @@ impl Run<'_> {
     fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
         match failure {
             Failure::Syntax(error) => [shown, b": ", &error].concat(),
-            Failure::Bug(what) => [shown, b": ", what.as_bytes(), b". It is left as it is. This is a bug in Bun."].concat(),
+            Failure::Bug(what) => [
+                shown,
+                b": ",
+                what.as_bytes(),
+                b". It is left as it is. This is a bug in Bun.",
+            ]
+            .concat(),
         }
     }
 
@@ -413,15 +547,24 @@ impl Run<'_> {
     fn format_stdin(mut self, configs: &Configs, ignored: &Ignored, name: &[u8]) -> Outcome {
         let text = match fs::read_stdin() {
             Ok(text) => text,
-            Err(error) => return self.fail(&[&b"Cannot read standard input: "[..], &fs::describe(&error)].concat()),
+            Err(error) => {
+                return self
+                    .fail(&[&b"Cannot read standard input: "[..], &fs::describe(&error)].concat());
+            }
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
-        let found = configs.for_directory(paths::dirname(&path)).and_then(|scope| {
-            let of_config = configs.ignores_of(&scope);
-            let options = configs.options_for(&scope, &path)?;
-            let is_another_language = files::language_of(&path) == Language::Other && options.options.parser.is_none();
-            Ok((!ignored.ignores_file(&path, of_config) && !is_another_language).then_some(options))
-        });
+        let found = configs
+            .for_directory(paths::dirname(&path))
+            .and_then(|scope| {
+                let of_config = configs.ignores_of(&scope);
+                let options = configs.options_for(&scope, &path)?;
+                let is_another_language = files::language_of(&path) == Language::Other
+                    && options.options.parser.is_none();
+                Ok(
+                    (!ignored.ignores_file(&path, of_config) && !is_another_language)
+                        .then_some(options),
+                )
+            });
         let options = match found {
             Ok(Some(options)) => options,
             Ok(None) => {
@@ -431,9 +574,19 @@ impl Run<'_> {
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
         let is_left_alone = configs.flavor == Flavor::Oxfmt && files::is_left_alone_by_oxfmt(&path);
-        if is_left_alone || (files::language_of(&path) == Language::Unknown && options.options.parser.is_none()) {
+        if is_left_alone
+            || (files::language_of(&path) == Language::Unknown && options.options.parser.is_none())
+        {
             let only_looks = self.options.check || self.options.list_different;
-            let mut out = self.fail_to_start(configs.flavor, &[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
+            let mut out = self.fail_to_start(
+                configs.flavor,
+                &[
+                    b"No parser could be inferred for file \"",
+                    &path[..],
+                    b"\".",
+                ]
+                .concat(),
+            );
             // As Prettier's `handleError`.
             if configs.flavor == Flavor::Prettier && only_looks {
                 out.exit_code = 0;
@@ -441,7 +594,14 @@ impl Run<'_> {
             return out;
         }
         let names = Session::new();
-        match format(&path, &text, &options, (&Interner::new_in(&names), &names), &mut Scratches::default(), self.options.verify) {
+        match format(
+            &path,
+            &text,
+            &options,
+            (&Interner::new_in(&names), &names),
+            &mut Scratches::default(),
+            self.options.verify,
+        ) {
             Err(failure) => self.error(&Self::describe(name, failure)),
             Ok((formatted, _)) if self.options.check || self.options.list_different => {
                 if formatted != text {
@@ -470,13 +630,23 @@ impl Run<'_> {
         }
         let pool = Pool::new(options.threads);
         let dot = [b".".to_vec()];
-        let patterns = if options.patterns.is_empty() { &dot[..] } else { &options.patterns[..] };
+        let patterns = if options.patterns.is_empty() {
+            &dot[..]
+        } else {
+            &options.patterns[..]
+        };
         let started = Instant::now();
         let expand = match configs.flavor {
             Flavor::Prettier => files::expand,
             Flavor::Oxfmt => files::expand_as_oxfmt,
         };
-        let expanded = match expand(configs, &pool, ignored, patterns, options.error_on_unmatched_pattern) {
+        let expanded = match expand(
+            configs,
+            &pool,
+            ignored,
+            patterns,
+            options.error_on_unmatched_pattern,
+        ) {
             Ok(expanded) => expanded,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
@@ -498,11 +668,16 @@ impl Run<'_> {
             match files::language_of(&target.path) {
                 _ if !is_wanted(target) => {}
                 // The `parser` option says what it is.
-                Language::Other | Language::Unknown if configs.names_parser_for(&target.scope, &target.path) => work.push((index, target)),
+                Language::Other | Language::Unknown
+                    if configs.names_parser_for(&target.scope, &target.path) =>
+                {
+                    work.push((index, target))
+                }
                 Language::Supported => work.push((index, target)),
                 Language::Other => {
                     let name = paths::basename(&target.path);
-                    let kind = strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..]);
+                    let kind =
+                        strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..]);
                     match others.iter_mut().find(|it| it.0 == kind) {
                         Some(entry) => entry.1 += 1,
                         None => others.push((kind, 1)),
@@ -510,13 +685,22 @@ impl Run<'_> {
                 }
                 Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
                 Language::Unknown => {
-                    done[index] = Some(Done::Failed([b"No parser could be inferred for file \"", &target.path[..], b"\"."].concat()));
+                    done[index] = Some(Done::Failed(
+                        [
+                            b"No parser could be inferred for file \"",
+                            &target.path[..],
+                            b"\".",
+                        ]
+                        .concat(),
+                    ));
                 }
             }
         }
         if options.list_files {
             for (_, target) in &work {
-                self.out.stdout.extend_from_slice(&paths::relative(cwd, &target.path));
+                self.out
+                    .stdout
+                    .extend_from_slice(&paths::relative(cwd, &target.path));
                 self.out.stdout.push(b'\n');
             }
             return self.out;
@@ -534,17 +718,40 @@ impl Run<'_> {
             let shown = paths::relative(cwd, &target.path);
             let mut scratch = scratches.lock().pop().unwrap_or_default();
             let result = (|| {
-                let options = configs.options_for(&target.scope, &target.path).map_err(|error| error.0)?;
-                let text = fs::read_sized(&target.path, target.size)
-                    .map_err(|error| [b"Unable to read file \"", &shown[..], b"\":\n", &fs::describe(&error)].concat())?;
-                let (formatted, _) = format(&target.path, &text, &options, (&atoms, &memory), &mut scratch, self.options.verify && !only_looks)
-                    .map_err(|failure| Self::describe(&shown, failure))?;
+                let options = configs
+                    .options_for(&target.scope, &target.path)
+                    .map_err(|error| error.0)?;
+                let text = fs::read_sized(&target.path, target.size).map_err(|error| {
+                    [
+                        b"Unable to read file \"",
+                        &shown[..],
+                        b"\":\n",
+                        &fs::describe(&error),
+                    ]
+                    .concat()
+                })?;
+                let (formatted, _) = format(
+                    &target.path,
+                    &text,
+                    &options,
+                    (&atoms, &memory),
+                    &mut scratch,
+                    self.options.verify && !only_looks,
+                )
+                .map_err(|failure| Self::describe(&shown, failure))?;
                 if formatted == text {
                     return Ok(Done::Unchanged);
                 }
                 if !only_looks {
-                    fs::write_atomically(&target.path, &formatted)
-                        .map_err(|error| [b"Unable to write file \"", &shown[..], b"\":\n", &fs::describe(&error)].concat())?;
+                    fs::write_atomically(&target.path, &formatted).map_err(|error| {
+                        [
+                            b"Unable to write file \"",
+                            &shown[..],
+                            b"\":\n",
+                            &fs::describe(&error),
+                        ]
+                        .concat()
+                    })?;
                 }
                 Ok(Done::Different)
             })();
@@ -586,18 +793,41 @@ impl Run<'_> {
             others.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
             let count: usize = others.iter().map(|it| it.1).sum();
             let noun = if count == 1 { "file is" } else { "files are" };
-            let kinds: Vec<Vec<u8>> = others.iter().map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes()).collect();
-            let text = format!("{count} {noun} in a language that bun format does not support yet, and left as they are: ");
+            let kinds: Vec<Vec<u8>> = others
+                .iter()
+                .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
+                .collect();
+            let text = format!(
+                "{count} {noun} in a language that bun format does not support yet, and left as they are: "
+            );
             self.warn(&[text.as_bytes(), &kinds.join(&b", "[..])].concat());
         }
-        let count = |n: usize| if n == 1 { "the above file".to_owned() } else { format!("{n} files") };
+        let count = |n: usize| {
+            if n == 1 {
+                "the above file".to_owned()
+            } else {
+                format!("{n} files")
+            }
+        };
         if options.check {
             if failed > 0 {
-                self.log(format!("Error occurred when checking code style in {}.", count(failed)).as_bytes());
+                self.log(
+                    format!(
+                        "Error occurred when checking code style in {}.",
+                        count(failed)
+                    )
+                    .as_bytes(),
+                );
             } else if different == 0 {
                 self.log(b"All matched files use Prettier code style!");
             } else if only_looks {
-                self.warn(format!("Code style issues found in {}. Run bun format to fix.", count(different)).as_bytes());
+                self.warn(
+                    format!(
+                        "Code style issues found in {}. Run bun format to fix.",
+                        count(different)
+                    )
+                    .as_bytes(),
+                );
             } else {
                 self.warn(format!("Code style issues fixed in {}.", count(different)).as_bytes());
             }
@@ -612,7 +842,15 @@ impl Run<'_> {
                 ms: self.began.elapsed().as_secs_f64() * 1000.0,
             };
             let noun = |n: usize| if n == 1 { "file" } else { "files" };
-            pretty!(&mut self.out.stderr, colors, "Formatted {} {}<d>, {} unchanged {}<r>\n", different, noun(different), unchanged, took);
+            pretty!(
+                &mut self.out.stderr,
+                colors,
+                "Formatted {} {}<d>, {} unchanged {}<r>\n",
+                different,
+                noun(different),
+                unchanged,
+                took
+            );
         }
         if options.timing {
             let _ = writeln!(
@@ -655,7 +893,8 @@ impl Run<'_> {
                     self.out
                 }
                 None => {
-                    let mut out = self.fail(&[b"Can not find configure file for \"", &file[..], b"\"."].concat());
+                    let mut out = self
+                        .fail(&[b"Can not find configure file for \"", &file[..], b"\"."].concat());
                     out.exit_code = 1;
                     out
                 }
@@ -677,7 +916,9 @@ impl Run<'_> {
 
 /// Does what `bun format` does. `options.help` and `options.cwd` are for the caller to see to.
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
-    let as_oxfmt = options.as_oxfmt_reads_it().filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
+    let as_oxfmt = options
+        .as_oxfmt_reads_it()
+        .filter(|_| Configs::new(options, environment).flavor == Flavor::Oxfmt);
     let options = as_oxfmt.as_ref().unwrap_or(options);
     let run = Run {
         options,

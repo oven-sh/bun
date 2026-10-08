@@ -26,7 +26,9 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
         if index != last_index {
             // An empty line after an element is kept if the array breaks.
             let text = f.source_text().as_bytes();
-            match element.is_some_and(|it| is_line_after_element_empty(text, it.span().end as usize)) {
+            match element
+                .is_some_and(|it| is_line_after_element_empty(text, it.span().end as usize))
+            {
                 true => write!(f, soft_empty_line_or_space()),
                 false => write!(f, soft_line_break_or_space()),
             }
@@ -35,7 +37,12 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
 }
 
 fn skip(text: &[u8], at: usize, is_skipped: impl Fn(u8) -> bool) -> usize {
-    at + text.get(at..).unwrap_or_default().iter().take_while(|b| is_skipped(**b)).count()
+    at + text
+        .get(at..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|b| is_skipped(**b))
+        .count()
 }
 
 fn skip_spaces(text: &[u8], at: usize) -> usize {
@@ -45,7 +52,10 @@ fn skip_spaces(text: &[u8], at: usize) -> usize {
 /// Prettier's `skipInlineComment`
 fn skip_block_comment(text: &[u8], at: usize) -> usize {
     let rest = text.get(at..).unwrap_or_default();
-    match rest.strip_prefix(b"/*").and_then(|content| bun_core::strings::index_of(content, b"*/")) {
+    match rest
+        .strip_prefix(b"/*")
+        .and_then(|content| bun_core::strings::index_of(content, b"*/"))
+    {
         Some(end) => at + end + 4,
         None => at,
     }

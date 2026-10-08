@@ -63,13 +63,19 @@ impl File {
 
     /// The `.editorconfig` in `directory`, if there is one.
     pub(crate) fn read(directory: &[u8]) -> Option<File> {
-        Some(File::parse(directory, &fs::read(&paths::join(directory, b".editorconfig")).ok()?))
+        Some(File::parse(
+            directory,
+            &fs::read(&paths::join(directory, b".editorconfig")).ok()?,
+        ))
     }
 }
 
 /// The options of Prettier that `files` have for the file at `path`. `files`: from the farthest to
 /// the nearest.
-pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]) -> Vec<(&'static [u8], Vec<u8>)> {
+pub(crate) fn options_for<'f>(
+    files: impl Iterator<Item = &'f File>,
+    path: &[u8],
+) -> Vec<(&'static [u8], Vec<u8>)> {
     let mut properties: Vec<(&[u8], &[u8])> = Vec::new();
     for file in files {
         let Some(relative) = paths::inside(&file.directory, path) else {
@@ -82,8 +88,15 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
             }
         }
     }
-    let get = |key: &[u8]| properties.iter().find(|it| it.0 == key).map(|it| it.1).filter(|value| *value != b"unset");
-    let is_positive = |value: &&[u8]| bun_core::fmt::parse_decimal::<u32>(value).is_some_and(|n| n > 0);
+    let get = |key: &[u8]| {
+        properties
+            .iter()
+            .find(|it| it.0 == key)
+            .map(|it| it.1)
+            .filter(|value| *value != b"unset")
+    };
+    let is_positive =
+        |value: &&[u8]| bun_core::fmt::parse_decimal::<u32>(value).is_some_and(|n| n > 0);
     // `processMatches`
     let indent_style = get(b"indent_style");
     let mut indent_size = get(b"indent_size");
@@ -105,7 +118,14 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
         _ => None,
     };
     if let Some(use_tabs) = use_tabs {
-        options.push((b"useTabs", if use_tabs { b"true".to_vec() } else { b"false".to_vec() }));
+        options.push((
+            b"useTabs",
+            if use_tabs {
+                b"true".to_vec()
+            } else {
+                b"false".to_vec()
+            },
+        ));
     }
     if let Some(size) = indent_size.filter(|size| use_tabs == Some(false) && is_positive(size)) {
         options.push((b"tabWidth", size.to_vec()));

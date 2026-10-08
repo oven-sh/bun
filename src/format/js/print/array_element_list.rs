@@ -27,7 +27,9 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
             // One per line, if they do not fit on one line.
             return write_array_node(
                 self.elements.len(),
-                self.elements.iter().map(|e| (!matches!(e.kind(), ExprKind::Missing)).then_some(e)),
+                self.elements
+                    .iter()
+                    .map(|e| (!matches!(e.kind(), ExprKind::Missing)).then_some(e)),
                 f,
             );
         }
@@ -38,8 +40,11 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
         // a line break in an item of a fill puts the item on a line of its own.
         let last_with_own_line_comment = self.elements.last().filter(|last| {
             !f.is_quiet()
-                && (f.comments().comments_in_range(last.span().end, self.array.span().end).first())
-                    .is_some_and(|comment| comment.preceded_by_newline())
+                && (f
+                    .comments()
+                    .comments_in_range(last.span().end, self.array.span().end)
+                    .first())
+                .is_some_and(|comment| comment.preceded_by_newline())
         });
         let mut filler = f.fill();
         let mut previous_end = 0;
@@ -49,9 +54,16 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
         {
             filler.entry(
                 &format_with(|f| {
-                    if is_line_after_element_empty(f.source_text().as_bytes(), previous_end as usize) {
+                    if is_line_after_element_empty(
+                        f.source_text().as_bytes(),
+                        previous_end as usize,
+                    ) {
                         write!(f, empty_line());
-                    } else if f.comments().comments_before_iter(element.span().start).any(|comment| comment.is_line()) {
+                    } else if f
+                        .comments()
+                        .comments_before_iter(element.span().start)
+                        .any(|comment| comment.is_line())
+                    {
                         write!(f, hard_line_break());
                     } else {
                         write!(f, soft_line_break_or_space());
@@ -81,7 +93,9 @@ pub(crate) fn can_concisely_print_array_list<'a>(
         return false;
     };
     let comments = f.comments();
-    let mut comments_iter = comments.comments_before_iter(array_expression_span.end).peekable();
+    let mut comments_iter = comments
+        .comments_before_iter(array_expression_span.end)
+        .peekable();
 
     for item in list {
         match item.kind() {
@@ -92,8 +106,14 @@ pub(crate) fn can_concisely_print_array_list<'a>(
             } if matches!(operand.kind(), ExprKind::Number(_)) => {
                 // `-(/* comment */ 1)`
                 let span = item.span();
-                while comments_iter.next_if(|comment| comment.span.start <= span.start).is_some() {}
-                if comments_iter.peek().is_some_and(|it| span.contains(it.span)) {
+                while comments_iter
+                    .next_if(|comment| comment.span.start <= span.start)
+                    .is_some()
+                {}
+                if comments_iter
+                    .peek()
+                    .is_some_and(|it| span.contains(it.span))
+                {
                     return false;
                 }
             }
@@ -102,7 +122,11 @@ pub(crate) fn can_concisely_print_array_list<'a>(
     }
 
     // Not with a line comment behind an element.
-    !comments.comments_before_iter(array_expression_span.end).any(|comment| {
-        comment.is_line() && !comment.preceded_by_newline() && comment.span.start > first.span().start
-    })
+    !comments
+        .comments_before_iter(array_expression_span.end)
+        .any(|comment| {
+            comment.is_line()
+                && !comment.preceded_by_newline()
+                && comment.span.start > first.span().start
+        })
 }

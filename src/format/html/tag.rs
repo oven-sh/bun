@@ -33,7 +33,11 @@ impl<'o> Tags<'_, '_, 'o> {
     }
 
     pub(crate) fn closing_tag_start(self, id: Id, out: &mut Vec<u8>) {
-        if self.tree.last_child(id).is_some_and(|last| self.needs_to_borrow_parent_closing_tag_start_marker(last)) {
+        if self
+            .tree
+            .last_child(id)
+            .is_some_and(|last| self.needs_to_borrow_parent_closing_tag_start_marker(last))
+        {
             return;
         }
         self.closing_tag_prefix(id, out);
@@ -84,7 +88,9 @@ impl<'o> Tags<'_, '_, 'o> {
         let node = &self.tree[id];
         match node.kind {
             Kind::IeConditionalComment => out.extend_from_slice(b"<!"),
-            Kind::Element if node.has(Flags::HAS_HTM_COMPONENT_CLOSING_TAG) => out.extend_from_slice(b"<//"),
+            Kind::Element if node.has(Flags::HAS_HTM_COMPONENT_CLOSING_TAG) => {
+                out.extend_from_slice(b"<//")
+            }
             _ => {
                 out.extend_from_slice(b"</");
                 push_raw_name(node.raw_name(), out);
@@ -108,9 +114,14 @@ impl<'o> Tags<'_, '_, 'o> {
     }
 
     fn should_not_print_closing_tag(self, id: Id) -> bool {
-        !self.tree[id].flags.intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
+        !self.tree[id]
+            .flags
+            .intersects(Flags::IS_SELF_CLOSING | Flags::HAS_END_SPAN)
             && (self.tree.has_prettier_ignore(id)
-                || self.tree.parent(id).is_some_and(|parent| self.tree.should_preserve_content(parent, self.options)))
+                || self
+                    .tree
+                    .parent(id)
+                    .is_some_and(|parent| self.tree.should_preserve_content(parent, self.options)))
     }
 
     /// ```html
@@ -119,9 +130,13 @@ impl<'o> Tags<'_, '_, 'o> {
     /// ```
     pub(crate) fn needs_to_borrow_prev_closing_tag_end_marker(self, id: Id) -> bool {
         let node = &self.tree[id];
-        node.flags & (Flags::IS_LEADING_SPACE_SENSITIVE | Flags::HAS_LEADING_SPACES) == Flags::IS_LEADING_SPACE_SENSITIVE
+        node.flags & (Flags::IS_LEADING_SPACE_SENSITIVE | Flags::HAS_LEADING_SPACES)
+            == Flags::IS_LEADING_SPACE_SENSITIVE
             && node.kind != Kind::AngularControlFlowBlock
-            && self.tree.prev_of(id).is_some_and(|prev| prev.kind != Kind::DocType && !is_text_like(prev))
+            && self
+                .tree
+                .prev_of(id)
+                .is_some_and(|prev| prev.kind != Kind::DocType && !is_text_like(prev))
     }
 
     /// ```html
@@ -132,7 +147,9 @@ impl<'o> Tags<'_, '_, 'o> {
     /// ```
     pub(crate) fn needs_to_borrow_last_child_closing_tag_end_marker(self, id: Id) -> bool {
         self.tree.last_child(id).is_some_and(|last| {
-            self.tree[last].flags & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES) == Flags::IS_TRAILING_SPACE_SENSITIVE
+            self.tree[last].flags
+                & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES)
+                == Flags::IS_TRAILING_SPACE_SENSITIVE
                 && !is_text_like(&self.tree[self.tree.last_descendant(last)])
                 && !is_pre_like(&self.tree[id])
         })
@@ -145,7 +162,9 @@ impl<'o> Tags<'_, '_, 'o> {
     /// ```
     pub(crate) fn needs_to_borrow_parent_closing_tag_start_marker(self, id: Id) -> bool {
         self.tree.next(id).is_none()
-            && self.tree[id].flags & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES) == Flags::IS_TRAILING_SPACE_SENSITIVE
+            && self.tree[id].flags
+                & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES)
+                == Flags::IS_TRAILING_SPACE_SENSITIVE
             && is_text_like(&self.tree[self.tree.last_descendant(id)])
     }
 
@@ -156,8 +175,12 @@ impl<'o> Tags<'_, '_, 'o> {
     pub(crate) fn needs_to_borrow_next_opening_tag_start_marker(self, id: Id) -> bool {
         let node = &self.tree[id];
         is_text_like(node)
-            && node.flags & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES) == Flags::IS_TRAILING_SPACE_SENSITIVE
-            && self.tree.next_of(id).is_some_and(|next| !is_text_like(next))
+            && node.flags & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES)
+                == Flags::IS_TRAILING_SPACE_SENSITIVE
+            && self
+                .tree
+                .next_of(id)
+                .is_some_and(|next| !is_text_like(next))
     }
 
     /// ```html
@@ -166,17 +189,26 @@ impl<'o> Tags<'_, '_, 'o> {
     /// ```
     pub(crate) fn needs_to_borrow_parent_opening_tag_end_marker(self, id: Id) -> bool {
         self.tree.prev(id).is_none()
-            && self.tree[id].flags & (Flags::IS_LEADING_SPACE_SENSITIVE | Flags::HAS_LEADING_SPACES) == Flags::IS_LEADING_SPACE_SENSITIVE
+            && self.tree[id].flags & (Flags::IS_LEADING_SPACE_SENSITIVE | Flags::HAS_LEADING_SPACES)
+                == Flags::IS_LEADING_SPACE_SENSITIVE
     }
 
     pub(crate) fn opening_tag_end(self, id: Id, out: &mut Vec<u8>) {
-        if !self.tree.first_child(id).is_some_and(|first| self.needs_to_borrow_parent_opening_tag_end_marker(first)) {
+        if !self
+            .tree
+            .first_child(id)
+            .is_some_and(|first| self.needs_to_borrow_parent_opening_tag_end_marker(first))
+        {
             self.opening_tag_end_marker(id, out);
         }
     }
 
     pub(crate) fn opening_tag_start(self, id: Id, out: &mut Vec<u8>) {
-        if self.tree.prev(id).is_some_and(|prev| self.needs_to_borrow_next_opening_tag_start_marker(prev)) {
+        if self
+            .tree
+            .prev(id)
+            .is_some_and(|prev| self.needs_to_borrow_next_opening_tag_start_marker(prev))
+        {
             return;
         }
         self.opening_tag_prefix(id, out);
@@ -206,11 +238,18 @@ impl<'o> Tags<'_, '_, 'o> {
             Kind::Interpolation => out.extend_from_slice(b"{{"),
             Kind::DocType => {
                 // Only in `.html` and `.htm` files is the one of HTML5 written in lower case.
-                let is_html_file = self.options.filepath.is_some_and(|path| path.ends_with(b".html") || path.ends_with(b".htm"));
+                let is_html_file = self
+                    .options
+                    .filepath
+                    .is_some_and(|path| path.ends_with(b".html") || path.ends_with(b".htm"));
                 if &node.value[..] == b"html" && is_html_file {
                     return out.extend_from_slice(HTML5_DOCTYPE_START_MARKER);
                 }
-                let rest = self.options.original_text.get(node.span.start as usize..).unwrap_or_default();
+                let rest = self
+                    .options
+                    .original_text
+                    .get(node.span.start as usize..)
+                    .unwrap_or_default();
                 out.extend_from_slice(&rest[..rest.len().min(HTML5_DOCTYPE_START_MARKER.len())]);
             }
             Kind::AngularIcuExpression => out.push(b'{'),
@@ -251,17 +290,30 @@ impl<'o> Tags<'_, '_, 'o> {
             return b"";
         };
         let mut start = node.start_span.end as usize;
-        if self.tree.first_child(id).is_some_and(|first| self.needs_to_borrow_parent_opening_tag_end_marker(first)) {
-            start = start.saturating_sub(self.len_of(|tags, out| tags.opening_tag_end_marker(id, out)));
+        if self
+            .tree
+            .first_child(id)
+            .is_some_and(|first| self.needs_to_borrow_parent_opening_tag_end_marker(first))
+        {
+            start =
+                start.saturating_sub(self.len_of(|tags, out| tags.opening_tag_end_marker(id, out)));
         }
         let mut end = end_span.start as usize;
-        if self.tree.last_child(id).is_some_and(|last| self.needs_to_borrow_parent_closing_tag_start_marker(last)) {
+        if self
+            .tree
+            .last_child(id)
+            .is_some_and(|last| self.needs_to_borrow_parent_closing_tag_start_marker(last))
+        {
             end += self.len_of(|tags, out| tags.closing_tag_start_marker(id, out));
         } else if self.needs_to_borrow_last_child_closing_tag_end_marker(id)
             && let Some(last) = self.tree.last_child(id)
         {
-            end = end.saturating_sub(self.len_of(|tags, out| tags.closing_tag_end_marker(last, out)));
+            end =
+                end.saturating_sub(self.len_of(|tags, out| tags.closing_tag_end_marker(last, out)));
         }
-        self.options.original_text.get(start..end).unwrap_or_default()
+        self.options
+            .original_text
+            .get(start..end)
+            .unwrap_or_default()
     }
 }

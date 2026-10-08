@@ -127,7 +127,11 @@ fn matches_any_file(base_path: &[u8], matcher: &Matcher) -> bool {
     let mut pending = vec![(base_path.to_vec(), Vec::new())];
     while let Some((path, relative)) = pending.pop() {
         for entry in fs::list(&path).map_or_else(Vec::new, |it| it.entries) {
-            let relative = if relative.is_empty() { entry.name.clone() } else { paths::join(&relative, &entry.name) };
+            let relative = if relative.is_empty() {
+                entry.name.clone()
+            } else {
+                paths::join(&relative, &entry.name)
+            };
             if entry.is_directory {
                 if matcher.matches_partially(&relative) {
                     pending.push((paths::join(&path, &entry.name), relative));
@@ -142,13 +146,21 @@ fn matches_any_file(base_path: &[u8], matcher: &Matcher) -> bool {
 
 /// ESLint's `globSearch`. Adds the files to `found`. Returns the index of the first pattern that
 /// has matched no file with a configuration.
-fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>) -> Result<Option<usize>, Fatal> {
+fn search(
+    loader: &Loader,
+    pool: &Pool,
+    search: &Search,
+    found: &mut Vec<Target>,
+) -> Result<Option<usize>, Fatal> {
     let matchers: Vec<Matcher> = (search.patterns.iter())
         .map(|pattern| Matcher::new(&paths::relative(&search.base_path, pattern)))
         .collect();
     let is_matched: Vec<AtomicBool> = matchers.iter().map(|_| AtomicBool::new(false)).collect();
     let registry = loader.linter.registry();
-    let (mut all_found, mut failure) = (Guarded::new(std::mem::take(found)), Guarded::new(None::<Fatal>));
+    let (mut all_found, mut failure) = (
+        Guarded::new(std::mem::take(found)),
+        Guarded::new(None::<Fatal>),
+    );
     let mut level = Vec::new();
     if fs::kind(&search.base_path) == Some(fs::Kind::Directory) {
         let inherited = loader.for_directory(&search.base_path)?;
@@ -173,7 +185,10 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
             let own = match directory.relative.is_empty() {
                 true => Ok(Arc::clone(&directory.inherited)),
                 false => {
-                    let files = entries.iter().filter(|it| !it.is_directory).map(|it| &it.name[..]);
+                    let files = entries
+                        .iter()
+                        .filter(|it| !it.is_directory)
+                        .map(|it| &it.name[..]);
                     loader.for_listed_directory(&directory.path, files, &directory.inherited)
                 }
             };
@@ -190,22 +205,37 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                 // They start to count here.
                 ignores = loader.ignore_files_at(&directory.path, &own);
             } else if reads_ignore_files && !directory.relative.is_empty() {
-                for name in loader.ignore_file_names().iter().filter(|name| entries.iter().any(|it| it.name == **name)) {
-                    ignores = gitignore::with_file(ignores, &directory.path, &paths::join(&directory.path, name), true);
+                for name in loader
+                    .ignore_file_names()
+                    .iter()
+                    .filter(|name| entries.iter().any(|it| it.name == **name))
+                {
+                    ignores = gitignore::with_file(
+                        ignores,
+                        &directory.path,
+                        &paths::join(&directory.path, name),
+                        true,
+                    );
                 }
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
                 // oxlint follows links.
-                if entry.is_link && own.flavor == Flavor::Oxlint && fs::kind(&path) == Some(fs::Kind::Directory) {
-                    let is_loop = fs::real_path(&path).is_none_or(|real| real == directory.path || paths::inside(&real, &directory.path).is_some());
+                if entry.is_link
+                    && own.flavor == Flavor::Oxlint
+                    && fs::kind(&path) == Some(fs::Kind::Directory)
+                {
+                    let is_loop = fs::real_path(&path).is_none_or(|real| {
+                        real == directory.path || paths::inside(&real, &directory.path).is_some()
+                    });
                     if is_loop {
                         continue;
                     }
                     entry.is_directory = true;
                 }
-                if reads_ignore_files && gitignore::is_ignored(&ignores, &path, entry.is_directory) {
+                if reads_ignore_files && gitignore::is_ignored(&ignores, &path, entry.is_directory)
+                {
                     continue;
                 }
                 let relative = match directory.relative.is_empty() {
@@ -213,7 +243,9 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                     false => paths::join(&directory.relative, &entry.name),
                 };
                 if entry.is_directory {
-                    if matchers.iter().any(|it| it.matches_partially(&relative)) && !own.config.is_directory_ignored_in(&path) {
+                    if matchers.iter().any(|it| it.matches_partially(&relative))
+                        && !own.config.is_directory_ignored_in(&path)
+                    {
                         directories.push(Directory {
                             path,
                             relative,
@@ -227,14 +259,17 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                 let mut config = None;
                 for (matcher, is_matched) in matchers.iter().zip(&is_matched) {
                     // The rest only matters as long as it is not known to match something.
-                    if (matches && is_matched.load(Ordering::Relaxed)) || !matcher.matches(&relative) {
+                    if (matches && is_matched.load(Ordering::Relaxed))
+                        || !matcher.matches(&relative)
+                    {
                         continue;
                     }
                     matches = true;
-                    let config = config.get_or_insert_with(|| match own.config.is_file_ignored_in(&path) {
-                        true => FileConfig::Ignored,
-                        false => own.config.get_unless_ignored(registry, &path),
-                    });
+                    let config =
+                        config.get_or_insert_with(|| match own.config.is_file_ignored_in(&path) {
+                            true => FileConfig::Ignored,
+                            false => own.config.get_unless_ignored(registry, &path),
+                        });
                     if matches!(config, FileConfig::Matched(_)) {
                         is_matched.store(true, Ordering::Relaxed);
                     }
@@ -280,14 +315,17 @@ pub(crate) fn find_files(
         raw_patterns: Vec::new(),
     }];
     let mut add = |base_path: Vec<u8>, pattern: Vec<u8>, raw: &[u8]| {
-        let at = searches.iter().position(|it| it.base_path == base_path).unwrap_or_else(|| {
-            searches.push(Search {
-                base_path,
-                patterns: Vec::new(),
-                raw_patterns: Vec::new(),
+        let at = searches
+            .iter()
+            .position(|it| it.base_path == base_path)
+            .unwrap_or_else(|| {
+                searches.push(Search {
+                    base_path,
+                    patterns: Vec::new(),
+                    raw_patterns: Vec::new(),
+                });
+                searches.len() - 1
             });
-            searches.len() - 1
-        });
         searches[at].patterns.push(pattern);
         searches[at].raw_patterns.push(raw.to_vec());
     };
@@ -309,8 +347,14 @@ pub(crate) fn find_files(
                     status,
                 });
             }
-            Some((fs::Kind::Directory, _)) => add(path.clone(), paths::join(&path, b"**"), &pattern),
-            None if paths::is_glob(&pattern) => add(paths::resolve(cwd, &paths::glob_parent(&pattern)), path, &pattern),
+            Some((fs::Kind::Directory, _)) => {
+                add(path.clone(), paths::join(&path, b"**"), &pattern)
+            }
+            None if paths::is_glob(&pattern) => add(
+                paths::resolve(cwd, &paths::glob_parent(&pattern)),
+                path,
+                &pattern,
+            ),
             None => {
                 missing.get_or_insert(pattern);
             }
@@ -322,7 +366,11 @@ pub(crate) fn find_files(
         return Err(no_files_found(&missing));
     }
     let mut unmatched = None;
-    for (index, it) in searches.iter().enumerate().filter(|it| !it.1.patterns.is_empty()) {
+    for (index, it) in searches
+        .iter()
+        .enumerate()
+        .filter(|it| !it.1.patterns.is_empty())
+    {
         if let Some(pattern) = search(loader, pool, it, &mut found)? {
             unmatched.get_or_insert((index, pattern));
         }
@@ -331,7 +379,10 @@ pub(crate) fn find_files(
         && error_on_unmatched_pattern
     {
         let (search, raw) = (&searches[index], &searches[index].raw_patterns[pattern]);
-        let matcher = Matcher::new(&paths::relative(&search.base_path, &search.patterns[pattern]));
+        let matcher = Matcher::new(&paths::relative(
+            &search.base_path,
+            &search.patterns[pattern],
+        ));
         return Err(match matches_any_file(&search.base_path, &matcher) {
             true => all_files_ignored(raw),
             false => no_files_found(raw),

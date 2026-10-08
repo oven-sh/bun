@@ -2,9 +2,10 @@
 
 pub(crate) use super::es_syntax_data::FEATURES;
 use super::es_syntax_data::{
-    REGEXP_D_FLAG, REGEXP_LOOKBEHIND_ASSERTIONS, REGEXP_NAMED_CAPTURE_GROUPS, REGEXP_S_FLAG, REGEXP_U_FLAG,
-    REGEXP_UNICODE_PROPERTY_ESCAPES, REGEXP_UNICODE_PROPERTY_ESCAPES_2019, REGEXP_UNICODE_PROPERTY_ESCAPES_2020,
-    REGEXP_UNICODE_PROPERTY_ESCAPES_2021, REGEXP_UNICODE_PROPERTY_ESCAPES_2022, REGEXP_UNICODE_PROPERTY_ESCAPES_2023, REGEXP_V_FLAG,
+    REGEXP_D_FLAG, REGEXP_LOOKBEHIND_ASSERTIONS, REGEXP_NAMED_CAPTURE_GROUPS, REGEXP_S_FLAG,
+    REGEXP_U_FLAG, REGEXP_UNICODE_PROPERTY_ESCAPES, REGEXP_UNICODE_PROPERTY_ESCAPES_2019,
+    REGEXP_UNICODE_PROPERTY_ESCAPES_2020, REGEXP_UNICODE_PROPERTY_ESCAPES_2021,
+    REGEXP_UNICODE_PROPERTY_ESCAPES_2022, REGEXP_UNICODE_PROPERTY_ESCAPES_2023, REGEXP_V_FLAG,
     REGEXP_Y_FLAG,
 };
 use super::semver::Range;
@@ -38,7 +39,13 @@ const PATTERNS: [usize; 8] = [
     REGEXP_UNICODE_PROPERTY_ESCAPES_2022,
     REGEXP_UNICODE_PROPERTY_ESCAPES_2023,
 ];
-const FLAGS: [usize; 5] = [REGEXP_D_FLAG, REGEXP_S_FLAG, REGEXP_U_FLAG, REGEXP_V_FLAG, REGEXP_Y_FLAG];
+const FLAGS: [usize; 5] = [
+    REGEXP_D_FLAG,
+    REGEXP_S_FLAG,
+    REGEXP_U_FLAG,
+    REGEXP_V_FLAG,
+    REGEXP_Y_FLAG,
+];
 
 /// The features that are reported.
 pub(crate) struct Active {
@@ -61,19 +68,29 @@ impl Active {
             globals: Vec::new(),
         };
         for (index, feature) in FEATURES.iter().enumerate() {
-            let is_ignored = feature.ignore_names.iter().any(|name| ignores.iter().any(|it| **it == *name.as_bytes()));
-            let everywhere = Range::parse(feature.strict_mode.unwrap_or(feature.supported).as_bytes());
+            let is_ignored = feature
+                .ignore_names
+                .iter()
+                .any(|name| ignores.iter().any(|it| **it == *name.as_bytes()));
+            let everywhere =
+                Range::parse(feature.strict_mode.unwrap_or(feature.supported).as_bytes());
             if is_ignored || everywhere.is_some_and(|it| active.version.is_subset_of(&it)) {
                 continue;
             }
             active.bits[index / 64] |= 1 << (index % 64);
             if !feature.globals.members.is_empty() {
                 let bit = |name: &str| mention_bit(name.as_bytes());
-                let variables = feature.globals.members.iter().map(|it| (bit(it.0), it.1.members.iter().map(|it| bit(it.0)).collect()));
+                let variables = feature
+                    .globals
+                    .members
+                    .iter()
+                    .map(|it| (bit(it.0), it.1.members.iter().map(|it| bit(it.0)).collect()));
                 active.globals.push((index, variables.collect()));
             }
             for (class, methods) in feature.prototype {
-                active.methods.extend(methods.iter().map(|method| (*method, index, *class)));
+                active
+                    .methods
+                    .extend(methods.iter().map(|method| (*method, index, *class)));
             }
         }
         active
@@ -81,13 +98,21 @@ impl Active {
 
     #[inline]
     pub(crate) fn has(&self, feature: usize) -> bool {
-        self.bits.get(feature / 64).is_some_and(|word| word & (1 << (feature % 64)) != 0)
+        self.bits
+            .get(feature / 64)
+            .is_some_and(|word| word & (1 << (feature % 64)) != 0)
     }
 
     /// The features that are global variables or properties of them which the file mentions.
     pub(crate) fn globals_in<'s>(&'s self, file: &'s File) -> impl Iterator<Item = usize> + 's {
-        let is_mentioned = |it: &(u32, Vec<u32>)| file.mentions_bit(it.0) && (it.1.is_empty() || it.1.iter().any(|it| file.mentions_bit(*it)));
-        self.globals.iter().filter(move |it| it.1.iter().any(is_mentioned)).map(|it| it.0)
+        let is_mentioned = |it: &(u32, Vec<u32>)| {
+            file.mentions_bit(it.0)
+                && (it.1.is_empty() || it.1.iter().any(|it| file.mentions_bit(*it)))
+        };
+        self.globals
+            .iter()
+            .filter(move |it| it.1.iter().any(is_mentioned))
+            .map(|it| it.0)
     }
 
     /// One that is about the pattern of a regular expression.

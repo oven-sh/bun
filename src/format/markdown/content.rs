@@ -19,7 +19,10 @@ impl Content {
                 self.bytes.push(b'\n');
             }
             self.lines.push((self.bytes.len() as u32, segment.start));
-            self.bytes.extend_from_slice(text.get(segment.start as usize..segment.end as usize).unwrap_or_default());
+            self.bytes.extend_from_slice(
+                text.get(segment.start as usize..segment.end as usize)
+                    .unwrap_or_default(),
+            );
         }
     }
 
@@ -43,6 +46,8 @@ impl Content {
 
     /// The index of the line that `index` is on.
     pub(crate) fn line_of(&self, index: usize) -> usize {
-        self.lines.partition_point(|line| line.0 <= index as u32).saturating_sub(1)
+        self.lines
+            .partition_point(|line| line.0 <= index as u32)
+            .saturating_sub(1)
     }
 }

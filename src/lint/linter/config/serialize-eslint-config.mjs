@@ -46,7 +46,8 @@ function serializeLanguageOptions({ parser, parserOptions, ...rest }) {
     // A parser among the options of another one, as `vue-eslint-parser` has it.
     const { parser: inner, programs, ...options } = parserOptions;
     out.parserOptions = serialize(options);
-    if (inner !== undefined) out.parserOptions.parser = typeof inner === "string" ? inner : (inner && objectId(inner)) ?? serialize(inner);
+    if (inner !== undefined)
+      out.parserOptions.parser = typeof inner === "string" ? inner : ((inner && objectId(inner)) ?? serialize(inner));
     if (programs) out.parserOptions.programs = true;
   }
   return out;
@@ -57,12 +58,19 @@ export function serializeConfigObject(config) {
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
   const out = serialize(rest);
   if (plugins && typeof plugins === "object") {
-    out.plugins = Object.fromEntries(Object.entries(plugins).map(([prefix, plugin]) => [prefix, (plugin && objectId(plugin)) ?? null]));
+    out.plugins = Object.fromEntries(
+      Object.entries(plugins).map(([prefix, plugin]) => [prefix, (plugin && objectId(plugin)) ?? null]),
+    );
   }
-  if (languageOptions && typeof languageOptions === "object") out.languageOptions = serializeLanguageOptions(languageOptions);
-  if (processor !== undefined) out.processor = typeof processor === "string" ? processor : (processor && objectId(processor)) ?? "unknown";
+  if (languageOptions && typeof languageOptions === "object")
+    out.languageOptions = serializeLanguageOptions(languageOptions);
+  if (processor !== undefined)
+    out.processor = typeof processor === "string" ? processor : ((processor && objectId(processor)) ?? "unknown");
   // Only a file that does not call `defineConfig()` still has it.
-  if (extended !== undefined) out.extends = [extended].flat(Infinity).map(item => (typeof item === "string" ? item : serializeConfigObject(item)));
+  if (extended !== undefined)
+    out.extends = [extended]
+      .flat(Infinity)
+      .map(item => (typeof item === "string" ? item : serializeConfigObject(item)));
   return out;
 }
 

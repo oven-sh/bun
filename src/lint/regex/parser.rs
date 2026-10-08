@@ -241,18 +241,21 @@ impl Builder<'_> {
     /// so do the groups of one name that no number refers to: n groups and n backreferences of one name take room for 2 n.
     fn resolve_backreferences(&mut self) {
         let text = std::mem::take(&mut self.ast.text);
-        let text_of = |run: Run| text.get(run.start as usize..run.start as usize + run.len as usize);
-        let name_of = |nodes: &[NodeData], group: NodeId| match nodes.get(group.0 as usize).map(|it| it.data) {
+        let text_of =
+            |run: Run| text.get(run.start as usize..run.start as usize + run.len as usize);
+        let name_of = |nodes: &[NodeData], group: NodeId| match nodes
+            .get(group.0 as usize)
+            .map(|it| it.data)
+        {
             Some(Data::CapturingGroup { name, .. }) if name.start != Run::NONE.start => Some(name),
             _ => None,
         };
-        let is_by_name = |it: &NodeId| {
-            matches!(self.data(*it), Some(Data::Backreference { name, .. }) if name.start != Run::NONE.start)
-        };
+        let is_by_name = |it: &NodeId| matches!(self.data(*it), Some(Data::Backreference { name, .. }) if name.start != Run::NONE.start);
         let (mut with_name, mut names): (Vec<(Run, NodeId)>, Vec<Named>) = (Vec::new(), Vec::new());
         if self.backreferences.iter().any(is_by_name) {
             let all = self.capturing_groups.iter();
-            with_name.extend(all.filter_map(|&group| Some((name_of(&self.ast.nodes, group)?, group))));
+            with_name
+                .extend(all.filter_map(|&group| Some((name_of(&self.ast.nodes, group)?, group))));
             with_name.sort_by_key(|it| text_of(it.0));
             let mut first = 0;
             for same in with_name.chunk_by(|a, b| text_of(a.0) == text_of(b.0)) {
@@ -274,7 +277,10 @@ impl Builder<'_> {
                 continue;
             };
             let groups = if name.start == Run::NONE.start {
-                let group = (number as usize).checked_sub(1).and_then(|i| self.capturing_groups.get(i)).copied();
+                let group = (number as usize)
+                    .checked_sub(1)
+                    .and_then(|i| self.capturing_groups.get(i))
+                    .copied();
                 by_number.extend(group.map(|group| (group, reference)));
                 self.list(group.into_iter())
             } else {
@@ -283,7 +289,9 @@ impl Builder<'_> {
                         let named = &mut names[at];
                         named.references.push(reference);
                         let groups = &with_name[named.first..named.first + named.len];
-                        *named.groups.get_or_insert_with(|| self.list(groups.iter().map(|it| it.1)))
+                        *named
+                            .groups
+                            .get_or_insert_with(|| self.list(groups.iter().map(|it| it.1)))
                     }
                     Err(_) => Run::default(),
                 }
@@ -315,10 +323,18 @@ impl Builder<'_> {
         for same in by_number.chunk_by(|a, b| a.0 == b.0) {
             let group = same[0].0;
             let by_name = name_of(&self.ast.nodes, group)
-                .and_then(|name| names.binary_search_by_key(&text_of(name), |it| text_of(it.name)).ok())
+                .and_then(|name| {
+                    names
+                        .binary_search_by_key(&text_of(name), |it| text_of(it.name))
+                        .ok()
+                })
                 .map_or(&[][..], |at| &names[at].references);
             // Nodes are numbered in the order of the source.
-            let mut all: Vec<NodeId> = same.iter().map(|it| it.1).chain(by_name.iter().copied()).collect();
+            let mut all: Vec<NodeId> = same
+                .iter()
+                .map(|it| it.1)
+                .chain(by_name.iter().copied())
+                .collect();
             all.sort_by_key(|it| it.0);
             let list = self.list(all.into_iter());
             set_references(self, group, list);

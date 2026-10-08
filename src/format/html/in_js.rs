@@ -24,14 +24,20 @@ pub(crate) fn is_angular_component_template(e: Expr<'_>) -> bool {
 
 /// The parser for the text of the template `e`, if `embed` takes it for HTML.
 fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Option<Parser> {
-    if !f.options().embedded_html || !matches!(f.options().embedded_language_formatting, EmbeddedLanguageFormatting::Auto) {
+    if !f.options().embedded_html
+        || !matches!(
+            f.options().embedded_language_formatting,
+            EmbeddedLanguageFormatting::Auto
+        )
+    {
         return None;
     }
     let parent = e.ast_parent();
     let has_tag = matches!(parent, AstNodes::TaggedTemplateExpression(tagged)
         if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
             if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(_)) && call.callee().text() == b"html"));
-    let parser = if has_tag || crate::graphql::embed::has_language_comment(e, parent, b" HTML ", f) {
+    let parser = if has_tag || crate::graphql::embed::has_language_comment(e, parent, b" HTML ", f)
+    {
         Parser::Html
     } else if is_angular_component_template(e) {
         Parser::Angular
@@ -39,8 +45,11 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
         return None;
     };
     // These come first.
-    let is_in_another_language = crate::css::embed::is_embed_css(e) || crate::graphql::embed::is_embed_graphql(e, f);
-    (!is_in_another_language && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())).then_some(parser)
+    let is_in_another_language =
+        crate::css::embed::is_embed_css(e) || crate::graphql::embed::is_embed_graphql(e, f);
+    (!is_in_another_language
+        && (0..template.quasi_count()).all(|index| template.cooked(index).is_some()))
+    .then_some(parser)
 }
 
 fn is_blank(template: Template<'_>) -> bool {
@@ -59,7 +68,11 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
             text.extend_from_slice(counter.to_string().as_bytes());
             text.extend_from_slice(PLACEHOLDER_END);
         }
-        text.extend_from_slice(template.cooked(index).map_or(&[][..], |cooked| cooked.bytes()));
+        text.extend_from_slice(
+            template
+                .cooked(index)
+                .map_or(&[][..], |cooked| cooked.bytes()),
+        );
     }
     match strings::contains_char(&text, b'\r') {
         true => crate::css::normalize_end_of_line(&text).into_owned(),
@@ -72,7 +85,8 @@ fn line_around(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
     if options.html_whitespace_sensitivity == HtmlWhitespaceSensitivity::Ignore {
         return Some(LineMode::Hard);
     }
-    (text::starts_with_white_space(text) && text::trim_end(text).len() < text.len()).then_some(LineMode::SoftOrSpace)
+    (text::starts_with_white_space(text) && text::trim_end(text).len() < text.len())
+        .then_some(LineMode::SoftOrSpace)
 }
 
 /// What the label of the document of a template says.
@@ -115,8 +129,12 @@ struct Substitutions<'e> {
 /// `/^<\/(?=script\b)/i.test(text)`
 fn starts_with_end_of_script(text: &[u8]) -> bool {
     text.starts_with(b"</")
-        && text.get(2..8).is_some_and(|name| name.eq_ignore_ascii_case(b"script"))
-        && !text.get(8).is_some_and(|&byte| text::is_word_character(byte))
+        && text
+            .get(2..8)
+            .is_some_and(|name| name.eq_ignore_ascii_case(b"script"))
+        && !text
+            .get(8)
+            .is_some_and(|&byte| text::is_word_character(byte))
 }
 
 impl Substitutions<'_> {
@@ -125,10 +143,19 @@ impl Substitutions<'_> {
         let mut from = 0;
         while let Some(start) = text::index_of_from(text, PLACEHOLDER_START, from) {
             let digits_start = start + PLACEHOLDER_START.len();
-            let digits = text[digits_start..].iter().take_while(|byte| byte.is_ascii_digit()).count();
+            let digits = text[digits_start..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
             let end = digits_start + digits;
             if digits > 0 && text[end..].starts_with(&self.placeholder_end) {
-                let number = text[digits_start..end].iter().fold(0usize, |number, digit| number.saturating_mul(10).saturating_add(usize::from(digit - b'0')));
+                let number = text[digits_start..end]
+                    .iter()
+                    .fold(0usize, |number, digit| {
+                        number
+                            .saturating_mul(10)
+                            .saturating_add(usize::from(digit - b'0'))
+                    });
                 return Some((start, end + self.placeholder_end.len(), number));
             }
             from = digits_start;
@@ -137,7 +164,9 @@ impl Substitutions<'_> {
     }
 
     fn needs_escapes(&self, text: &[u8]) -> bool {
-        strings::index_of_any(text, b"\\`").is_some() || strings::contains(text, b"${") || (self.is_in_html && strings::contains(text, b"</"))
+        strings::index_of_any(text, b"\\`").is_some()
+            || strings::contains(text, b"${")
+            || (self.is_in_html && strings::contains(text, b"</"))
     }
 
     /// Writes `text`, which is between placeholders: `uncookTemplateElementValue`.
@@ -154,7 +183,12 @@ impl Substitutions<'_> {
                     match byte {
                         b'\\' | b'`' => with_escapes.push(b'\\'),
                         b'$' if text.get(index + 1) == Some(&b'{') => with_escapes.push(b'\\'),
-                        b'/' if self.is_in_html && index > 0 && starts_with_end_of_script(&text[index - 1..]) => with_escapes.push(b'\\'),
+                        b'/' if self.is_in_html
+                            && index > 0
+                            && starts_with_end_of_script(&text[index - 1..]) =>
+                        {
+                            with_escapes.push(b'\\')
+                        }
                         _ => {}
                     }
                     with_escapes.push(byte);
@@ -190,7 +224,11 @@ impl MapString for Substitutions<'_> {
 
 /// Writes the template `e` as HTML, if that is what Prettier takes it for: `printEmbedHtmlLike`. Returns whether it
 /// has. If the text cannot be parsed, it has not.
-pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_template<'a>(
+    e: Expr<'a>,
+    template: Template<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
     let Some(parser) = parser_of(e, template, f) else {
         return false;
     };
@@ -217,7 +255,11 @@ pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Fo
     };
     // In the order of the source, whatever the order of the placeholders: that of the comments.
     let expressions: SmallVec<[Interned; 8]> = (0..template.quasi_count().saturating_sub(1))
-        .map(|index| f.capture(&format_with(|f| write_embedded_template_expression(template, index, f))))
+        .map(|index| {
+            f.capture(&format_with(|f| {
+                write_embedded_template_expression(template, index, f)
+            }))
+        })
         .collect();
     let mut substitutions = Substitutions {
         expressions: &expressions,

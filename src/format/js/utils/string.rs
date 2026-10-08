@@ -39,7 +39,9 @@ pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
     !name.is_empty()
         && bun_lint::utils::text::code_points(name).all(|(at, c)| match u8::try_from(c) {
             Ok(b) if b.is_ascii() => {
-                b.is_ascii_alphabetic() || matches!(b, b'$' | b'_') || (at != 0 && b.is_ascii_digit())
+                b.is_ascii_alphabetic()
+                    || matches!(b, b'$' | b'_')
+                    || (at != 0 && b.is_ascii_digit())
             }
             _ => is_in(if at == 0 { START } else { PART }, c),
         })
@@ -56,7 +58,10 @@ pub(crate) fn is_simple_number(text: &[u8]) -> bool {
 
 /// `String(Number(text)) === text`, for a simple number.
 pub(crate) fn is_canonical_simple_number(text: &[u8]) -> bool {
-    let Some(number) = std::str::from_utf8(text).ok().and_then(|it| it.parse::<f64>().ok()) else {
+    let Some(number) = std::str::from_utf8(text)
+        .ok()
+        .and_then(|it| it.parse::<f64>().ok())
+    else {
         return false;
     };
     // Rust and JavaScript print the same digits. JavaScript changes notation at 1e21 and below 1e-6.
@@ -86,16 +91,24 @@ impl<'a> FormatLiteralStringToken<'a> {
     }
 
     fn raw_content(&self) -> &'a [u8] {
-        self.string.get(1..self.string.len().saturating_sub(1)).unwrap_or_default()
+        self.string
+            .get(1..self.string.len().saturating_sub(1))
+            .unwrap_or_default()
     }
 
     /// Prettier's `getPreferredQuote`.
     fn compute_string_information(&self, chosen_quote: QuoteStyle) -> StringInformation {
         let content = self.raw_content();
         let chosen_quote_count = bun_core::strings::count_char(content, chosen_quote.as_byte());
-        let alternate_quote_count = bun_core::strings::count_char(content, chosen_quote.other().as_byte());
+        let alternate_quote_count =
+            bun_core::strings::count_char(content, chosen_quote.other().as_byte());
         StringInformation {
-            current_quote: self.string.first().copied().and_then(QuoteStyle::from_byte).unwrap_or_default(),
+            current_quote: self
+                .string
+                .first()
+                .copied()
+                .and_then(QuoteStyle::from_byte)
+                .unwrap_or_default(),
             preferred_quote: match chosen_quote_count > alternate_quote_count {
                 true => chosen_quote.other(),
                 false => chosen_quote,
@@ -107,7 +120,11 @@ impl<'a> FormatLiteralStringToken<'a> {
     /// The text that is written for the literal.
     pub(crate) fn clean_text(&self, f: &Formatter<'a>) -> CleanedStringLiteralText<'a> {
         let options = f.options();
-        let chosen_quote_style = if self.jsx { options.jsx_quote_style } else { options.quote_style };
+        let chosen_quote_style = if self.jsx {
+            options.jsx_quote_style
+        } else {
+            options.quote_style
+        };
         let is_quote_needed = match options.quote_properties {
             QuoteProperties::AsNeeded => false,
             QuoteProperties::Preserve => true,
@@ -121,10 +138,11 @@ impl<'a> FormatLiteralStringToken<'a> {
         }
 
         let is_directive = self.parent_kind == StringLiteralParentKind::Directive;
-        let mut information = self.compute_string_information(match is_in_html_attribute(options) && is_directive {
-            true => options.in_html.quote_style,
-            false => chosen_quote_style,
-        });
+        let mut information =
+            self.compute_string_information(match is_in_html_attribute(options) && is_directive {
+                true => options.in_html.quote_style,
+                false => chosen_quote_style,
+            });
         if is_in_html_attribute(options) && !is_directive {
             information.preferred_quote = QuoteStyle::Single;
         }
@@ -132,7 +150,9 @@ impl<'a> FormatLiteralStringToken<'a> {
         let text = match self.parent_kind {
             StringLiteralParentKind::Expression => self.normalize_string_literal(&information),
             StringLiteralParentKind::Directive => self.normalize_directive(&information),
-            StringLiteralParentKind::ImportAttribute if !is_quote_needed && is_es5_identifier_name(content) => {
+            StringLiteralParentKind::ImportAttribute
+                if !is_quote_needed && is_es5_identifier_name(content) =>
+            {
                 Cow::Borrowed(content)
             }
             StringLiteralParentKind::ImportAttribute => self.normalize_string_literal(&information),
@@ -195,7 +215,12 @@ impl<'a> FormatLiteralStringToken<'a> {
     /// In the value of a JSX attribute, a quote is escaped as `&quot;` or `&apos;`.
     fn normalize_jsx_attribute(&self, preferred_quote: QuoteStyle) -> Cow<'a, [u8]> {
         let content = self.raw_content();
-        let current_quote = self.string.first().copied().and_then(QuoteStyle::from_byte).unwrap_or_default();
+        let current_quote = self
+            .string
+            .first()
+            .copied()
+            .and_then(QuoteStyle::from_byte)
+            .unwrap_or_default();
 
         let count = |quote: u8, entity: &[u8]| {
             let mut count = bun_core::strings::count_char(content, quote);
@@ -269,14 +294,23 @@ pub(crate) fn push_with_normalized_newlines(out: &mut Vec<u8>, text: &[u8]) {
 fn is_printable_ascii_without(text: &[u8], quote: u8) -> bool {
     #[inline]
     fn all<const N: usize>(block: &[u8; N], quote: u8) -> bool {
-        block.iter().fold(true, |all, &byte| all & matches!(byte, 0x20..=0x7E) & (byte != quote))
+        block.iter().fold(true, |all, &byte| {
+            all & matches!(byte, 0x20..=0x7E) & (byte != quote)
+        })
     }
     if let Some(last) = text.last_chunk::<16>() {
-        return text.as_chunks::<16>().0.iter().all(|block| all(block, quote)) && all(last, quote);
+        return text
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .all(|block| all(block, quote))
+            && all(last, quote);
     }
     match (text.first_chunk::<8>(), text.last_chunk::<8>()) {
         (Some(first), Some(last)) => all(first, quote) & all(last, quote),
-        _ => text.iter().all(|&byte| matches!(byte, 0x20..=0x7E) && byte != quote),
+        _ => text
+            .iter()
+            .all(|&byte| matches!(byte, 0x20..=0x7E) && byte != quote),
     }
 }
 
@@ -296,7 +330,10 @@ impl FormatLiteralStringToken<'_> {
 impl<'a> Format<'a> for FormatLiteralStringToken<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         match self.is_clean_ascii(f) {
-            true => f.write_text(self.string, Some(TextWidth::single(self.string.len() as u32))),
+            true => f.write_text(
+                self.string,
+                Some(TextWidth::single(self.string.len() as u32)),
+            ),
             false => self.clean_text(f).fmt(f),
         }
     }

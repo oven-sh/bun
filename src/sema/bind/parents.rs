@@ -149,7 +149,10 @@ pub fn bind_for_format_in<'r>(
 /// [`bind_for_format_in`] for a file whose lists are stored anywhere, like those that the parser
 /// still has. It reads nothing that `File::finish_nodes` computes. `None`: the file takes the binder,
 /// which takes a [`File`].
-pub fn try_bind_for_format_in<'r, S: Storage>(f: &FileIn<S>, recycled: &'r mut Recycled) -> Option<&'r BoundBuilder> {
+pub fn try_bind_for_format_in<'r, S: Storage>(
+    f: &FileIn<S>,
+    recycled: &'r mut Recycled,
+) -> Option<&'r BoundBuilder> {
     if is_for_the_binder(f) {
         return None;
     }
@@ -163,7 +166,11 @@ pub fn try_bind_for_format_in<'r, S: Storage>(f: &FileIn<S>, recycled: &'r mut R
     refilled(&mut b.param_fn, f.params.len(), FnId::NONE);
     refilled(&mut b.var_stmt, f.var_decls.len(), StmtId::NONE);
     refilled(&mut b.case_stmt, f.cases.len(), StmtId::NONE);
-    refilled(&mut b.class_owner, f.classes.len(), ClassOwner::Stmt(StmtId::NONE));
+    refilled(
+        &mut b.class_owner,
+        f.classes.len(),
+        ClassOwner::Stmt(StmtId::NONE),
+    );
     refilled(&mut b.enum_member_owner, f.enum_members.len(), EnumId::NONE);
     refilled(&mut b.fns, f.fns.len(), NO_FUNCTION);
     refilled(&mut b.class_scope, f.classes.len(), ScopeId::NONE);
@@ -249,7 +256,11 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
     macro_rules! decorators {
         ($modifiers:expr, $parent:expr) => {
             for modifier in $modifiers.iter() {
-                if let Some(Modifier { kind: ModifierKind::Decorator(e), .. }) = f.modifiers.get(modifier.idx()) {
+                if let Some(Modifier {
+                    kind: ModifierKind::Decorator(e),
+                    ..
+                }) = f.modifiers.get(modifier.idx())
+                {
                     set!(expr_parent[e] = $parent);
                 }
             }
@@ -281,11 +292,16 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
                     set!(prop_owner[p] = id);
                     set!(expr_parent[prop.value] = Parent::Prop(p));
                     if let PropKey::Computed(key) = prop.key {
-                        let names_a_function = !matches!(prop.kind, PropKind::Init | PropKind::Spread | PropKind::Shorthand);
-                        set!(expr_parent[key] = match names_a_function {
-                            true => Parent::MethodKey(p),
-                            false => Parent::PropKey(id, p),
-                        });
+                        let names_a_function = !matches!(
+                            prop.kind,
+                            PropKind::Init | PropKind::Spread | PropKind::Shorthand
+                        );
+                        set!(
+                            expr_parent[key] = match names_a_function {
+                                true => Parent::MethodKey(p),
+                                false => Parent::PropKey(id, p),
+                            }
+                        );
                     }
                 }
             };
@@ -388,7 +404,9 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
                 }
             }
             TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. } => tys!(args),
-            TypeNodeKind::Template { types, .. } | TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
+            TypeNodeKind::Template { types, .. }
+            | TypeNodeKind::Union(types)
+            | TypeNodeKind::Intersection(types) => {
                 tys!(types)
             }
             TypeNodeKind::Array(operand)
@@ -408,12 +426,20 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
                     }
                 }
             }
-            TypeNodeKind::Cond { check, extends, yes, no } => ty!(check, extends, yes, no),
+            TypeNodeKind::Cond {
+                check,
+                extends,
+                yes,
+                no,
+            } => ty!(check, extends, yes, no),
             TypeNodeKind::IndexedAccess { obj, index } => ty!(obj, index),
             // Not its default.
             TypeNodeKind::Infer(param) => {
                 set!(type_param_scope[param] = REACHED);
-                ty!(f.type_params.get(param.idx()).map_or(TypeNodeId::NONE, |it| it.constraint));
+                ty!(f
+                    .type_params
+                    .get(param.idx())
+                    .map_or(TypeNodeId::NONE, |it| it.constraint));
             }
             TypeNodeKind::Error
             | TypeNodeKind::Keyword(_)
@@ -438,7 +464,10 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
     }
     for (i, class) in f.classes.iter().enumerate() {
         let id = ClassId(i as u32);
-        decorators!(class.modifiers, Parent::Decorator(id, DecoratorOwner::Class(id)));
+        decorators!(
+            class.modifiers,
+            Parent::Decorator(id, DecoratorOwner::Class(id))
+        );
         set!(expr_parent[class.extends] = Parent::ClassExtends(id));
         for other in f.ids(class.other_extends) {
             set!(expr_parent[other] = Parent::ClassExtends(id));
@@ -454,7 +483,10 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
     for (i, member) in f.members.iter().enumerate() {
         let id = MemberId(i as u32);
         if let MemberOwner::Class(class) = member_owner[i] {
-            decorators!(member.modifiers, Parent::Decorator(class, DecoratorOwner::Member(id)));
+            decorators!(
+                member.modifiers,
+                Parent::Decorator(class, DecoratorOwner::Member(id))
+            );
         }
         if let PropKey::Computed(key) = member.key {
             set!(expr_parent[key] = Parent::MemberKey(id));
@@ -499,11 +531,19 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
                 exprs!(test);
                 stmts!(body);
             }
-            StmtKind::For { init, test, update, body } => {
+            StmtKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
                 exprs!(test, update);
                 stmts!(init, body);
             }
-            StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
+            StmtKind::ForIn { left, expr, body }
+            | StmtKind::ForOf {
+                left, expr, body, ..
+            } => {
                 exprs!(expr);
                 stmts!(left, body);
             }
@@ -525,7 +565,12 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
                     }
                 }
             }
-            StmtKind::Try { block, param, handler, finalizer } => {
+            StmtKind::Try {
+                block,
+                param,
+                handler,
+                finalizer,
+            } => {
                 set!(var_stmt[param] = id);
                 stmts!(block, handler, finalizer);
             }

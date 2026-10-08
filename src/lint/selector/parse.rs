@@ -156,9 +156,15 @@ fn class_named(name: &[u8]) -> Option<(TypeSet, bool)> {
         .union(TypeSet::where_(ends_with("Literal")))
         .union(TypeSet::of(&[NodeType::Identifier, NodeType::MetaProperty]));
     Some(match &name.to_ascii_lowercase()[..] {
-        b"statement" => (TypeSet::where_(ends_with("Statement")).union(declarations), false),
+        b"statement" => (
+            TypeSet::where_(ends_with("Statement")).union(declarations),
+            false,
+        ),
         b"declaration" => (declarations, false),
-        b"pattern" => (TypeSet::where_(ends_with("Pattern")).union(expressions), true),
+        b"pattern" => (
+            TypeSet::where_(ends_with("Pattern")).union(expressions),
+            true,
+        ),
         b"expression" => (expressions, true),
         b"function" => (
             TypeSet::of(&[
@@ -188,7 +194,10 @@ impl<'s> Parser<'s> {
     }
 
     fn literal(&mut self, token: &[u8], expected: Expected) -> bool {
-        let is_next = self.text.get(self.at..).is_some_and(|it| it.starts_with(token));
+        let is_next = self
+            .text
+            .get(self.at..)
+            .is_some_and(|it| it.starts_with(token));
         match is_next {
             true => self.at += token.len(),
             false => self.fail(expected),
@@ -388,7 +397,9 @@ impl<'s> Parser<'s> {
         let depth = self.depth;
         loop {
             let mark = self.mark();
-            let right = self.binary_op().and_then(|combinator| Some((combinator, self.sequence()?)));
+            let right = self
+                .binary_op()
+                .and_then(|combinator| Some((combinator, self.sequence()?)));
             let Some((combinator, right)) = right else {
                 self.reset::<()>(mark);
                 self.depth = depth;
@@ -432,15 +443,22 @@ impl<'s> Parser<'s> {
             .or_else(|| self.group(b":matches(", Expected::Matches))
             .or_else(|| self.group(b":is(", Expected::Is))
             .or_else(|| self.group(b":has(", Expected::Has))
-            .or_else(|| self.literal(b":first-child", Expected::FirstChild).then(|| self.op(Op::NthChild(1))))
-            .or_else(|| self.literal(b":last-child", Expected::LastChild).then(|| self.op(Op::NthChild(-1))))
+            .or_else(|| {
+                self.literal(b":first-child", Expected::FirstChild)
+                    .then(|| self.op(Op::NthChild(1)))
+            })
+            .or_else(|| {
+                self.literal(b":last-child", Expected::LastChild)
+                    .then(|| self.op(Op::NthChild(-1)))
+            })
             .or_else(|| self.nth(b":nth-child(", Expected::NthChild, 1))
             .or_else(|| self.nth(b":nth-last-child(", Expected::NthLastChild, -1))
             .or_else(|| self.class_name())
     }
 
     fn wildcard(&mut self) -> Option<Id> {
-        self.literal(b"*", Expected::Star).then(|| self.op(Op::Wildcard))
+        self.literal(b"*", Expected::Star)
+            .then(|| self.op(Op::Wildcard))
     }
 
     fn identifier(&mut self) -> Option<Id> {
@@ -481,7 +499,8 @@ impl<'s> Parser<'s> {
             return Some(self.since(start));
         }
         self.at = start;
-        self.class(b"><", false, Expected::GreaterLess).then(|| self.since(start))
+        self.class(b"><", false, Expected::GreaterLess)
+            .then(|| self.since(start))
     }
 
     /// `"!"? "="`: whether there is a `!`.
@@ -502,7 +521,10 @@ impl<'s> Parser<'s> {
         self.program.keys.push(Key::named(first));
         loop {
             let before = self.at;
-            let next = self.literal(b".", Expected::Dot).then(|| self.identifier_name()).flatten();
+            let next = self
+                .literal(b".", Expected::Dot)
+                .then(|| self.identifier_name())
+                .flatten();
             match next {
                 Some(name) => self.program.keys.push(Key::named(name)),
                 None => {
@@ -522,7 +544,13 @@ impl<'s> Parser<'s> {
             self.spaces();
             if let Some(name) = self.type_value() {
                 let js_type = JsType::named(name);
-                return Some(self.attribute(path, Test::Type { js_type, is_negated }));
+                return Some(self.attribute(
+                    path,
+                    Test::Type {
+                        js_type,
+                        is_negated,
+                    },
+                ));
             }
             if let Some(regex) = self.regex() {
                 return Some(self.attribute(path, Test::Regex { regex, is_negated }));
@@ -534,7 +562,11 @@ impl<'s> Parser<'s> {
         self.spaces();
         if let Some(operator) = self.attr_ops() {
             self.spaces();
-            if let Some(literal) = self.string().or_else(|| self.number()).or_else(|| self.path()) {
+            if let Some(literal) = self
+                .string()
+                .or_else(|| self.number())
+                .or_else(|| self.path())
+            {
                 let relation = match operator {
                     b"<" => Some(Relation::Less),
                     b"<=" => Some(Relation::LessOrEqual),
@@ -559,12 +591,30 @@ impl<'s> Parser<'s> {
     }
 
     fn string(&mut self) -> Option<Literal> {
-        self.quoted(b"\"", Expected::DoubleQuote, b"\\\"", Expected::InDoubleQuotes)
-            .or_else(|| self.quoted(b"'", Expected::SingleQuote, b"\\'", Expected::InSingleQuotes))
+        self.quoted(
+            b"\"",
+            Expected::DoubleQuote,
+            b"\\\"",
+            Expected::InDoubleQuotes,
+        )
+        .or_else(|| {
+            self.quoted(
+                b"'",
+                Expected::SingleQuote,
+                b"\\'",
+                Expected::InSingleQuotes,
+            )
+        })
     }
 
     /// The value is what `strUnescape` makes of what is between the quotes.
-    fn quoted(&mut self, quote: &[u8], open: Expected, special: &[u8], inside: Expected) -> Option<Literal> {
+    fn quoted(
+        &mut self,
+        quote: &[u8],
+        open: Expected,
+        special: &[u8],
+        inside: Expected,
+    ) -> Option<Literal> {
         let start = self.at;
         if !self.literal(quote, open) {
             return None;
@@ -588,7 +638,9 @@ impl<'s> Parser<'s> {
                     b"t" => value.push(b'\t'),
                     b"v" => value.push(0x0B),
                     // The `.` of `/\\(.)/g` does not match a line terminator.
-                    b"\n" | b"\r" | b"\xE2\x80\xA8" | b"\xE2\x80\xA9" => value.extend_from_slice(self.since(before)),
+                    b"\n" | b"\r" | b"\xE2\x80\xA8" | b"\xE2\x80\xA9" => {
+                        value.extend_from_slice(self.since(before))
+                    }
                     other => value.extend_from_slice(other),
                 }
             } else {
@@ -621,7 +673,8 @@ impl<'s> Parser<'s> {
     }
 
     fn path(&mut self) -> Option<Literal> {
-        self.identifier_name().map(|it| Literal::new(it.into(), false))
+        self.identifier_name()
+            .map(|it| Literal::new(it.into(), false))
     }
 
     /// `type`
@@ -661,7 +714,8 @@ impl<'s> Parser<'s> {
         match Regex::from_bytes(pattern, self.since(flags_start)) {
             Ok(regex) => Some(Box::new(regex)),
             Err(error) => {
-                self.error.get_or_insert_with(|| Error::new(error.message.into_bytes()));
+                self.error
+                    .get_or_insert_with(|| Error::new(error.message.into_bytes()));
                 None
             }
         }
@@ -747,7 +801,10 @@ impl<'s> Parser<'s> {
             self.spaces();
             if self.literal(b")", Expected::CloseParen) {
                 // No list is that long.
-                let index = std::str::from_utf8(digits).ok().and_then(|it| it.parse().ok()).unwrap_or(i32::MAX);
+                let index = std::str::from_utf8(digits)
+                    .ok()
+                    .and_then(|it| it.parse().ok())
+                    .unwrap_or(i32::MAX);
                 return Some(self.op(Op::NthChild(sign * index)));
             }
         }
@@ -791,7 +848,10 @@ impl<'s> Parser<'s> {
         message.extend_from_slice(text::utf16_len(before).to_string().as_bytes());
         message.extend_from_slice(b": Expected ");
         let count = self.expected.count_ones();
-        let descriptions = DESCRIPTIONS.iter().enumerate().filter(|it| self.expected & (1 << it.0) != 0);
+        let descriptions = DESCRIPTIONS
+            .iter()
+            .enumerate()
+            .filter(|it| self.expected & (1 << it.0) != 0);
         for (i, (_, description)) in descriptions.enumerate() {
             let separator: &[u8] = match (i as u32, count) {
                 (0, _) => b"",
@@ -825,12 +885,18 @@ fn push_escaped(out: &mut Vec<u8>, c: u32) {
         0x09 => out.extend_from_slice(b"\\t"),
         0x0A => out.extend_from_slice(b"\\n"),
         0x0D => out.extend_from_slice(b"\\r"),
-        0x01..=0x08 | 0x0B | 0x0C | 0x0E | 0x0F => out.extend_from_slice(format!("\\x0{c:X}").as_bytes()),
+        0x01..=0x08 | 0x0B | 0x0C | 0x0E | 0x0F => {
+            out.extend_from_slice(format!("\\x0{c:X}").as_bytes())
+        }
         0x10..=0x1F | 0x7F..=0x9F => out.extend_from_slice(format!("\\x{c:X}").as_bytes()),
         0x1_0000.. => {
             // The lead surrogate, in WTF-8.
             let lead = 0xD800 + ((c - 0x1_0000) >> 10);
-            out.extend_from_slice(&[0xED, 0x80 | ((lead >> 6) & 0x3F) as u8, 0x80 | (lead & 0x3F) as u8]);
+            out.extend_from_slice(&[
+                0xED,
+                0x80 | ((lead >> 6) & 0x3F) as u8,
+                0x80 | (lead & 0x3F) as u8,
+            ]);
         }
         _ => {
             let c = char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER);

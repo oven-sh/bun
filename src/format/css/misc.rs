@@ -6,15 +6,19 @@ use std::borrow::Cow;
 
 /// The units of `css-units-list`, as they are written.
 const CSS_UNITS: [&[u8]; 62] = [
-    b"em", b"rem", b"ex", b"rex", b"cap", b"rcap", b"ch", b"rch", b"ic", b"ric", b"lh", b"rlh", b"vw", b"svw", b"lvw",
-    b"dvw", b"vh", b"svh", b"lvh", b"dvh", b"vi", b"svi", b"lvi", b"dvi", b"vb", b"svb", b"lvb", b"dvb", b"vmin",
-    b"svmin", b"lvmin", b"dvmin", b"vmax", b"svmax", b"lvmax", b"dvmax", b"cm", b"mm", b"Q", b"in", b"pt", b"pc", b"px",
-    b"deg", b"grad", b"rad", b"turn", b"s", b"ms", b"Hz", b"kHz", b"dpi", b"dpcm", b"dppx", b"x", b"cqw", b"cqh", b"cqi",
+    b"em", b"rem", b"ex", b"rex", b"cap", b"rcap", b"ch", b"rch", b"ic", b"ric", b"lh", b"rlh",
+    b"vw", b"svw", b"lvw", b"dvw", b"vh", b"svh", b"lvh", b"dvh", b"vi", b"svi", b"lvi", b"dvi",
+    b"vb", b"svb", b"lvb", b"dvb", b"vmin", b"svmin", b"lvmin", b"dvmin", b"vmax", b"svmax",
+    b"lvmax", b"dvmax", b"cm", b"mm", b"Q", b"in", b"pt", b"pc", b"px", b"deg", b"grad", b"rad",
+    b"turn", b"s", b"ms", b"Hz", b"kHz", b"dpi", b"dpcm", b"dppx", b"x", b"cqw", b"cqh", b"cqi",
     b"cqb", b"cqmin", b"cqmax", b"fr",
 ];
 
 fn css_unit(unit: &[u8]) -> Option<&'static [u8]> {
-    CSS_UNITS.iter().find(|it| it.eq_ignore_ascii_case(unit)).copied()
+    CSS_UNITS
+        .iter()
+        .find(|it| it.eq_ignore_ascii_case(unit))
+        .copied()
 }
 
 /// `printUnit`
@@ -53,7 +57,10 @@ pub(crate) fn print_css_number(raw: &[u8], out: &mut Vec<u8>) {
         true => out.push(b'0'),
         false => out.extend_from_slice(integer),
     }
-    let fraction_len = fraction.iter().rposition(|&b| b != b'0').map_or(0, |at| at + 1);
+    let fraction_len = fraction
+        .iter()
+        .rposition(|&b| b != b'0')
+        .map_or(0, |at| at + 1);
     if fraction_len > 0 {
         out.push(b'.');
         out.extend_from_slice(&fraction[..fraction_len]);
@@ -108,9 +115,17 @@ fn make_string(raw_content: &[u8], enclosing_quote: u8, out: &mut Vec<u8>) {
 /// Prettier's `printString`. `raw` has its quotes.
 pub(crate) fn print_string(raw: &[u8], single_quote: bool, out: &mut Vec<u8>) {
     let content = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-    let (preferred, alternate) = if single_quote { (b'\'', b'"') } else { (b'"', b'\'') };
+    let (preferred, alternate) = if single_quote {
+        (b'\'', b'"')
+    } else {
+        (b'"', b'\'')
+    };
     let count = |quote: u8| bun_core::strings::count_char(content, quote);
-    let enclosing_quote = if count(preferred) > count(alternate) { alternate } else { preferred };
+    let enclosing_quote = if count(preferred) > count(alternate) {
+        alternate
+    } else {
+        preferred
+    };
     if raw.first() == Some(&enclosing_quote) {
         return out.extend_from_slice(raw);
     }
@@ -142,7 +157,13 @@ pub(crate) fn adjust_strings(value: &[u8], single_quote: bool) -> Cow<'_, [u8]> 
 
 /// `/(?:\d*\.\d+|\d+\.?)(?:e[+-]?\d+)?/i` at the start of `text`: the length of the match.
 fn number_len(text: &[u8]) -> Option<usize> {
-    let digits = |from: usize| text.get(from..).unwrap_or_default().iter().take_while(|b| b.is_ascii_digit()).count();
+    let digits = |from: usize| {
+        text.get(from..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+    };
     let integer = digits(0);
     let mut len = if text.get(integer) == Some(&b'.') && digits(integer + 1) > 0 {
         integer + 1 + digits(integer + 1)
@@ -173,7 +194,12 @@ pub(crate) fn adjust_numbers(value: &[u8]) -> Cow<'_, [u8]> {
     if name.first().is_some_and(|&b| is_word_start(b)) && name.iter().all(|&b| is_word_part(b)) {
         return Cow::Borrowed(value);
     }
-    let unit_len = |from: usize| value[from..].iter().take_while(|b| b.is_ascii_alphabetic()).count();
+    let unit_len = |from: usize| {
+        value[from..]
+            .iter()
+            .take_while(|b| b.is_ascii_alphabetic())
+            .count()
+    };
     let mut out = Vec::with_capacity(value.len());
     let mut at = 0;
     while let Some(&byte) = value.get(at) {
@@ -187,8 +213,14 @@ pub(crate) fn adjust_numbers(value: &[u8]) -> Cow<'_, [u8]> {
         let prefix = usize::from(matches!(byte, b'$' | b'@'));
         if value.get(at + prefix).is_some_and(|&b| is_word_start(b)) {
             let shortest = at + prefix + 1;
-            let longest = shortest + value[shortest..].iter().take_while(|&&b| is_word_part(b)).count();
-            let number_start = (shortest..=longest).rev().find(|&start| number_len(&value[start..]).is_some());
+            let longest = shortest
+                + value[shortest..]
+                    .iter()
+                    .take_while(|&&b| is_word_part(b))
+                    .count();
+            let number_start = (shortest..=longest)
+                .rev()
+                .find(|&start| number_len(&value[start..]).is_some());
             let end = match number_start {
                 Some(start) => {
                     let end = start + number_len(&value[start..]).unwrap_or(0);
@@ -206,7 +238,10 @@ pub(crate) fn adjust_numbers(value: &[u8]) -> Cow<'_, [u8]> {
             at += 1;
             continue;
         };
-        let (number, unit) = (&value[at..at + len], &value[at + len..at + len + unit_len(at + len)]);
+        let (number, unit) = (
+            &value[at..at + len],
+            &value[at + len..at + len + unit_len(at + len)],
+        );
         if unit.is_empty() || unit.eq_ignore_ascii_case(b"n") || css_unit(unit).is_some() {
             print_css_number(number, &mut out);
             match css_unit(unit) {
@@ -225,14 +260,18 @@ pub(crate) fn adjust_numbers(value: &[u8]) -> Cow<'_, [u8]> {
 /// `quoteAttributeValue`
 pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) -> Cow<'_, [u8]> {
     // `/^(?<value>.+?)\s+(?<flag>[a-z])$/i`, in which `.` is not a line break.
-    let flag = value.last().copied().filter(u8::is_ascii_alphabetic).and_then(|flag| {
-        let before = &value[..value.len() - 1];
-        let unflagged = text::trim_end(before);
-        let is_match = unflagged.len() < before.len()
-            && !unflagged.is_empty()
-            && bun_core::strings::index_of_any(unflagged, b"\n\r").is_none();
-        is_match.then_some((unflagged.len(), flag))
-    });
+    let flag = value
+        .last()
+        .copied()
+        .filter(u8::is_ascii_alphabetic)
+        .and_then(|flag| {
+            let before = &value[..value.len() - 1];
+            let unflagged = text::trim_end(before);
+            let is_match = unflagged.len() < before.len()
+                && !unflagged.is_empty()
+                && bun_core::strings::index_of_any(unflagged, b"\n\r").is_none();
+            is_match.then_some((unflagged.len(), flag))
+        });
     let unflagged = &value[..flag.map_or(value.len(), |(len, _)| len)];
     let has_quotes = bun_core::strings::index_of_any(unflagged, b"\"'").is_some();
     if has_quotes && flag.is_none() {
@@ -271,14 +310,18 @@ pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
 
 /// `lastLineHasInlineComment`
 pub(crate) fn last_line_has_inline_comment(value: &[u8]) -> bool {
-    let last_line_start = bun_core::strings::last_index_of_any(value, b"\n\r").map_or(0, |at| at + 1);
+    let last_line_start =
+        bun_core::strings::last_index_of_any(value, b"\n\r").map_or(0, |at| at + 1);
     text::includes(&value[last_line_start..], b"//")
 }
 
 // ───────────────────────────── `src/utilities` ─────────────────────────────
 
 fn skip_forward(text: &[u8], mut at: usize, set: &[u8]) -> usize {
-    while text.get(at).is_some_and(|b| bun_core::strings::contains_char(set, *b)) {
+    while text
+        .get(at)
+        .is_some_and(|b| bun_core::strings::contains_char(set, *b))
+    {
         at += 1;
     }
     at
@@ -303,8 +346,14 @@ pub(crate) fn has_newline(text: &[u8], index: usize) -> bool {
 /// `hasNewline(text, index, { backwards: true })`
 pub(crate) fn has_newline_backwards(text: &[u8], index: usize) -> bool {
     let before = text.get(..index).unwrap_or_default();
-    let end = before.iter().rposition(|b| !matches!(b, b' ' | b'\t')).map_or(0, |at| at + 1);
-    matches!(before[..end], [.., b'\n' | b'\r'] | [.., 0xE2, 0x80, 0xA8 | 0xA9])
+    let end = before
+        .iter()
+        .rposition(|b| !matches!(b, b' ' | b'\t'))
+        .map_or(0, |at| at + 1);
+    matches!(
+        before[..end],
+        [.., b'\n' | b'\r'] | [.., 0xE2, 0x80, 0xA8 | 0xA9]
+    )
 }
 
 /// `isNextLineEmpty(text, index)`
@@ -324,7 +373,8 @@ pub(crate) fn is_next_line_empty(text: &[u8], index: usize) -> bool {
         }
     }
     if text.get(at..).is_some_and(|rest| rest.starts_with(b"//")) {
-        at += bun_core::strings::index_of_any(&text[at..], b"\n\r").map_or(text.len() - at, |len| len as usize);
+        at += bun_core::strings::index_of_any(&text[at..], b"\n\r")
+            .map_or(text.len() - at, |len| len as usize);
     }
     at += newline_len(text.get(at..).unwrap_or_default());
     has_newline(text, at)

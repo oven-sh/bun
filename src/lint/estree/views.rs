@@ -79,7 +79,14 @@ pub(super) fn names() -> NodeTags {
         | NodeTags::IMPORT_SPEC
         | NodeTags::EXPORT_SPEC
         | NodeTags::TUPLE_ELEM
-        | [ExprTag::Ident, ExprTag::Dot, ExprTag::ImportMeta, ExprTag::NewTarget, ExprTag::AsConst].into()
+        | [
+            ExprTag::Ident,
+            ExprTag::Dot,
+            ExprTag::ImportMeta,
+            ExprTag::NewTarget,
+            ExprTag::AsConst,
+        ]
+        .into()
         | [
             StmtTag::Labeled,
             StmtTag::Break,
@@ -154,9 +161,43 @@ pub(super) fn all_types() -> NodeTags {
 pub(super) fn all_exprs() -> NodeTags {
     use ExprTag::*;
     [
-        Missing, Ident, PrivateIdentifier, This, Super, Null, True, False, Number, String, BigInt, Regex,
-        Template, TaggedTemplate, Array, Object, Fn, Class, Dot, Index, Call, New, Unary, Binary, Assign, Cond,
-        Spread, Await, Yield, As, Satisfies, AsConst, NonNull, Instantiation, Jsx, ImportCall, ImportMeta,
+        Missing,
+        Ident,
+        PrivateIdentifier,
+        This,
+        Super,
+        Null,
+        True,
+        False,
+        Number,
+        String,
+        BigInt,
+        Regex,
+        Template,
+        TaggedTemplate,
+        Array,
+        Object,
+        Fn,
+        Class,
+        Dot,
+        Index,
+        Call,
+        New,
+        Unary,
+        Binary,
+        Assign,
+        Cond,
+        Spread,
+        Await,
+        Yield,
+        As,
+        Satisfies,
+        AsConst,
+        NonNull,
+        Instantiation,
+        Jsx,
+        ImportCall,
+        ImportMeta,
         NewTarget,
     ]
     .into()
@@ -184,7 +225,9 @@ pub(super) fn is_declared(statement: Stmt) -> bool {
 /// The first token of `v`.
 pub(super) fn first_token<'a>(v: VNode<'a>) -> &'a [u8] {
     let written = v.file().slice(v.span());
-    written.get(..crate::tokens::token_len(written)).unwrap_or_default()
+    written
+        .get(..crate::tokens::token_len(written))
+        .unwrap_or_default()
 }
 
 /// ESTree's `directive`. typescript-estree also has directives at the start of a static block.
@@ -199,12 +242,20 @@ pub(super) fn directive<'a>(statement: Stmt<'a>) -> Option<&'a [u8]> {
         return None;
     }
     let text = |it: Stmt<'a>| match it.kind() {
-        StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized() => Some(e.span().shrink(1, 1)),
+        StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized() => {
+            Some(e.span().shrink(1, 1))
+        }
         _ => None,
     };
     let own = text(statement)?;
-    let before = block.body_statements()?.iter().take_while(|it| *it != statement);
-    before.map(text).all(|it| it.is_some()).then(|| statement.file().slice(own))
+    let before = block
+        .body_statements()?
+        .iter()
+        .take_while(|it| *it != statement);
+    before
+        .map(text)
+        .all(|it| it.is_some())
+        .then(|| statement.file().slice(own))
 }
 
 /// The module specifier in `v`, if it is a string.
@@ -234,7 +285,9 @@ pub(super) fn function_id<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
 
 pub(super) fn type_parameters<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
     let func = func_of(v)?;
-    func.type_params().first().map(|_| VNode::new(func, Part::TypeParams))
+    func.type_params()
+        .first()
+        .map(|_| VNode::new(func, Part::TypeParams))
 }
 
 pub(super) fn params<'a>(v: VNode<'a>) -> Option<Nodes<'a>> {
@@ -250,7 +303,9 @@ pub(super) fn return_type<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
 
 /// The keywords among `modifiers`.
 pub(super) fn keywords<'a>(modifiers: List<'a, Modifier<'a>>) -> Flags {
-    modifiers.iter().fold(Flags::empty(), |all, it| all | it.flag())
+    modifiers
+        .iter()
+        .fold(Flags::empty(), |all, it| all | it.flag())
 }
 
 pub(super) fn accessibility(keywords: Flags) -> Option<&'static str> {
@@ -320,9 +375,11 @@ pub(super) fn binding<'a>(v: VNode<'a>) -> Binding<'a> {
     let (param, is_outermost, is_annotated) = match (v.base, v.part) {
         (Node::Param(param), Part::Inner) => (param, !VNode::has_keywords(param), param.is_rest()),
         (Node::Pat(pat), _) => match pat.parent() {
-            Node::Param(param) if !param.is_rest() => {
-                (param, !VNode::has_keywords(param) && param.default().is_none(), true)
-            }
+            Node::Param(param) if !param.is_rest() => (
+                param,
+                !VNode::has_keywords(param) && param.default().is_none(),
+                true,
+            ),
             Node::VarDecl(declaration) => {
                 binding.ty = declaration.ty();
                 return binding;
@@ -346,7 +403,9 @@ pub(super) fn binding<'a>(v: VNode<'a>) -> Binding<'a> {
 /// The `e` of `e as T`, `<T>e`, `e satisfies T`.
 pub(super) fn asserted<'a>(v: VNode<'a>) -> Option<Expr<'a>> {
     match v.expr()?.kind() {
-        ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) => Some(expr),
+        ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) => {
+            Some(expr)
+        }
         _ => None,
     }
 }
@@ -365,7 +424,9 @@ pub(super) fn type_argument_list<'a>(v: VNode<'a>) -> Option<List<'a, TypeNode<'
     Some(match v.base {
         Node::Class(class) => class.extends_args(),
         Node::Expr(e) => match e.kind() {
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => call.type_args(),
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                call.type_args()
+            }
             ExprKind::Instantiation { type_args, .. } => type_args,
             ExprKind::Jsx(jsx) => jsx.type_args(),
             _ => return None,
@@ -383,7 +444,9 @@ pub(super) fn type_argument_list<'a>(v: VNode<'a>) -> Option<List<'a, TypeNode<'
 
 /// The field `typeArguments`.
 pub(super) fn type_arguments<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
-    type_argument_list(v)?.first().map(|_| v.with(Part::TypeArgs))
+    type_argument_list(v)?
+        .first()
+        .map(|_| v.with(Part::TypeArgs))
 }
 
 /// The `A.B` of `implements A.B<T>`.
@@ -418,8 +481,11 @@ pub(super) fn quasi<'a>(v: VNode<'a>) -> Option<Quasi<'a>> {
             let cooked = match Dialect::of(e.file()) {
                 // It only looks for `\u` and `\x`, also after a `\`.
                 Dialect::TypeScript => {
-                    let is_tagged = matches!(e.parent(), Node::Expr(it) if it.tag() == ExprTag::TaggedTemplate);
-                    template.text_of_scanner(i).filter(|_| !is_tagged || has_valid_escapes(template.raw(i)))
+                    let is_tagged =
+                        matches!(e.parent(), Node::Expr(it) if it.tag() == ExprTag::TaggedTemplate);
+                    template
+                        .text_of_scanner(i)
+                        .filter(|_| !is_tagged || has_valid_escapes(template.raw(i)))
                 }
                 Dialect::Espree => template.cooked(i),
             };
@@ -472,7 +538,8 @@ pub(super) fn jsx_text_value<'a>(e: Expr<'a>) -> Option<&'a [u8]> {
 
 /// `#isValidEscape` of typescript-estree
 fn has_valid_escapes(raw: &[u8]) -> bool {
-    let is_hex = |bytes: Option<&[u8]>| bytes.is_some_and(|it| it.iter().all(u8::is_ascii_hexdigit));
+    let is_hex =
+        |bytes: Option<&[u8]>| bytes.is_some_and(|it| it.iter().all(u8::is_ascii_hexdigit));
     let mut rest = raw;
     while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\\') {
         let is_valid = match rest.get(at + 1) {

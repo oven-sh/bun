@@ -10,7 +10,9 @@ fn can_follow(name: &[u8], next: &[u8]) -> bool {
     match name {
         b"if" | b"else if" => matches!(next, b"else if" | b"else"),
         b"for" => next == b"empty",
-        b"defer" | b"placeholder" | b"error" | b"loading" => matches!(next, b"placeholder" | b"error" | b"loading"),
+        b"defer" | b"placeholder" | b"error" | b"loading" => {
+            matches!(next, b"placeholder" | b"error" | b"loading")
+        }
         b"boundary" => next == b"error",
         _ => false,
     }
@@ -19,7 +21,10 @@ fn can_follow(name: &[u8], next: &[u8]) -> bool {
 impl Printer<'_, '_, '_, '_, '_> {
     /// `shouldCloseBlock`
     fn should_close_block(&self, id: Id) -> bool {
-        !self.tree.next_of(id).is_some_and(|next| next.kind == Kind::AngularControlFlowBlock && can_follow(&self.tree[id].name, &next.name))
+        !self.tree.next_of(id).is_some_and(|next| {
+            next.kind == Kind::AngularControlFlowBlock
+                && can_follow(&self.tree[id].name, &next.name)
+        })
     }
 
     pub(crate) fn print_angular_control_flow_block(&mut self, id: Id) {
@@ -53,7 +58,8 @@ impl Printer<'_, '_, '_, '_, '_> {
             return self.out.token(";");
         }
         // `isSwitchFallthroughCase`
-        let is_fallthrough = matches!(&node.name[..], b"case" | b"default") && node.end_span().is_some_and(|span| span.start == span.end);
+        let is_fallthrough = matches!(&node.name[..], b"case" | b"default")
+            && node.end_span().is_some_and(|span| span.start == span.end);
         if !is_fallthrough {
             self.out.token(" {");
             let should_print_close_bracket = self.should_close_block(id);
@@ -74,7 +80,9 @@ impl Printer<'_, '_, '_, '_, '_> {
     }
 
     fn print_angular_control_flow_block_parameters_or_embed(&mut self, block: Id, parameters: Id) {
-        if self.formats_embedded() && self.embed_angular_control_flow_block_parameters(block, parameters) {
+        if self.formats_embedded()
+            && self.embed_angular_control_flow_block_parameters(block, parameters)
+        {
             return;
         }
         self.print_angular_control_flow_block_parameters(parameters);
@@ -109,7 +117,9 @@ impl Printer<'_, '_, '_, '_, '_> {
         self.out.start_indent();
         self.out.line();
         self.with_cursor_marks(Target::LetInitializer(id), |printer| {
-            if !(printer.formats_embedded() && printer.embed_angular_let_declaration_initializer(id)) {
+            if !(printer.formats_embedded()
+                && printer.embed_angular_let_declaration_initializer(id))
+            {
                 printer.out.string(&node.value);
             }
         });
@@ -136,7 +146,9 @@ impl Printer<'_, '_, '_, '_, '_> {
                     if index > 0 {
                         printer.out.line();
                     }
-                    printer.with_cursor_marks(Target::Node(case), |printer| printer.print_angular_icu_case(case));
+                    printer.with_cursor_marks(Target::Node(case), |printer| {
+                        printer.print_angular_icu_case(case)
+                    });
                 }
             });
             self.out.end_indent();
@@ -160,7 +172,10 @@ impl Printer<'_, '_, '_, '_, '_> {
                     printer.out.line();
                 }
                 printer.print_node(child);
-                if is_text && node.has(Flags::HAS_TRAILING_SPACES) && printer.tree.next(child).is_some() {
+                if is_text
+                    && node.has(Flags::HAS_TRAILING_SPACES)
+                    && printer.tree.next(child).is_some()
+                {
                     printer.out.line();
                 }
             }

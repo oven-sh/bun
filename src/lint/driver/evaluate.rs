@@ -19,9 +19,15 @@ use bun_lint::options::Json;
 const MARKER: &[u8] = b"\x1e--bun-lint-configuration--\x1e";
 
 /// For `eslint.config.*` and `oxlint.config.ts`.
-pub(crate) const ESLINT: &str = concat!(include_str!("evaluate-track.js"), include_str!("evaluate-eslint.js"));
+pub(crate) const ESLINT: &str = concat!(
+    include_str!("evaluate-track.js"),
+    include_str!("evaluate-eslint.js")
+);
 /// For the configuration files of Prettier.
-pub(crate) const PRETTIER: &str = concat!(include_str!("evaluate-track.js"), include_str!("fmt/evaluate-prettier.js"));
+pub(crate) const PRETTIER: &str = concat!(
+    include_str!("evaluate-track.js"),
+    include_str!("fmt/evaluate-prettier.js")
+);
 
 /// FNV-1a.
 pub(crate) fn hash(parts: &[&[u8]]) -> u64 {
@@ -35,7 +41,9 @@ pub(crate) fn hash(parts: &[&[u8]]) -> u64 {
 /// Where the result for the file at `path` is kept: with the packages that it imports. `None` if
 /// there are none, and then it is quick to run.
 fn cache_file(path: &[u8]) -> Option<Vec<u8>> {
-    let has_packages = |directory: &&[u8]| fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory);
+    let has_packages = |directory: &&[u8]| {
+        fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory)
+    };
     let directory = paths::ancestors(paths::dirname(path)).find(has_packages)?;
     let name = format!("node_modules/.cache/bun-lint/{:016x}.json", hash(&[path]));
     Some(paths::join(directory, name.as_bytes()))
@@ -68,21 +76,37 @@ fn still_valid(version: &Json, kept: Json) -> Option<Json> {
     }
     let is_same_file = |(path, before): &(Vec<u8>, Json)| stamp(path) == *before;
     let is_same_variable = |(name, before): &(Vec<u8>, Json)| variable(name) == *before;
-    if !kept.get(b"files")?.as_object()?.iter().all(is_same_file) || !kept.get(b"environment")?.as_object()?.iter().all(is_same_variable) {
+    if !kept.get(b"files")?.as_object()?.iter().all(is_same_file)
+        || !kept
+            .get(b"environment")?
+            .as_object()?
+            .iter()
+            .all(is_same_variable)
+    {
         return None;
     }
     let Json::Object(entries) = kept else {
         return None;
     };
-    entries.into_iter().find(|it| it.0 == b"config").map(|it| it.1)
+    entries
+        .into_iter()
+        .find(|it| it.0 == b"config")
+        .map(|it| it.1)
 }
 
 /// What the script `source` makes of the configuration file at `path`. `keeps`: whether the result
 /// of an earlier run will do, and that of this one is kept.
-pub(crate) fn evaluate(environment: &Environment, source: &'static str, path: &[u8], keeps: bool) -> Result<Json, Fatal> {
+pub(crate) fn evaluate(
+    environment: &Environment,
+    source: &'static str,
+    path: &[u8],
+    keeps: bool,
+) -> Result<Json, Fatal> {
     let cache_file = if keeps { cache_file(path) } else { None };
     let version = version(environment, source);
-    let kept = cache_file.as_ref().and_then(|file| bun_lint::json::parse(&fs::read(file).ok()?));
+    let kept = cache_file
+        .as_ref()
+        .and_then(|file| bun_lint::json::parse(&fs::read(file).ok()?));
     if let Some(config) = kept.and_then(|kept| still_valid(&version, kept)) {
         return Ok(config);
     }
@@ -91,7 +115,17 @@ pub(crate) fn evaluate(environment: &Environment, source: &'static str, path: &[
         arguments: &[MARKER, path],
         cwd: paths::dirname(path),
     };
-    let fail = |why: &[u8]| Fatal([b"Cannot load the configuration file ", path, b":\n", why.trim_ascii_end()].concat());
+    let fail = |why: &[u8]| {
+        Fatal(
+            [
+                b"Cannot load the configuration file ",
+                path,
+                b":\n",
+                why.trim_ascii_end(),
+            ]
+            .concat(),
+        )
+    };
     let printed = (environment.run_script)(&script).map_err(|error| fail(&error))?;
     let json = strings::last_index_of(&printed, MARKER).map(|at| &printed[at + MARKER.len()..]);
     let Some(Json::Object(mut entries)) = json.and_then(bun_lint::json::parse) else {
@@ -104,16 +138,27 @@ pub(crate) fn evaluate(environment: &Environment, source: &'static str, path: &[
     let config = take(b"config").unwrap_or(Json::Null);
     if let Some(cache_file) = cache_file
         && take(b"uncacheable") == Some(Json::Bool(false))
-        && let (Some(Json::Array(files)), Some(Json::Array(names))) = (take(b"files"), take(b"environment"))
+        && let (Some(Json::Array(files)), Some(Json::Array(names))) =
+            (take(b"files"), take(b"environment"))
     {
         // Some file systems tell the time in seconds: what has just been written can be written
         // again without a trace.
         let now = bun_core::time::timestamp();
-        if files.iter().filter_map(Json::as_str).any(|file| fs::stamp(file).is_some_and(|it| it.1 + 2 > now)) {
+        if files
+            .iter()
+            .filter_map(Json::as_str)
+            .any(|file| fs::stamp(file).is_some_and(|it| it.1 + 2 > now))
+        {
             return Ok(config);
         }
-        let files = files.iter().filter_map(Json::as_str).map(|file| (file.to_vec(), stamp(file)));
-        let environment = names.iter().filter_map(Json::as_str).map(|name| (name.to_vec(), variable(name)));
+        let files = files
+            .iter()
+            .filter_map(Json::as_str)
+            .map(|file| (file.to_vec(), stamp(file)));
+        let environment = names
+            .iter()
+            .filter_map(Json::as_str)
+            .map(|name| (name.to_vec(), variable(name)));
         let kept = Json::Object(vec![
             (b"version".to_vec(), version),
             (b"files".to_vec(), Json::Object(files.collect())),

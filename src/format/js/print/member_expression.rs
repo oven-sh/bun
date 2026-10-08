@@ -11,7 +11,14 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         return;
     };
     match e.tag() {
-        ExprTag::Index => write!(f, [object, line_suffix_boundary(), FormatComputedMemberExpressionWithoutObject(e)]),
+        ExprTag::Index => write!(
+            f,
+            [
+                object,
+                line_suffix_boundary(),
+                FormatComputedMemberExpressionWithoutObject(e)
+            ]
+        ),
         _ => write_static_member_expression(e, object, f),
     }
 }
@@ -47,7 +54,10 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut For
             format_with(|f| {
                 if has_own_line_comment {
                     let comments = f.comments().comments_before(property_start);
-                    write!(f, [FormatLeadingComments::Comments(comments), soft_line_break()]);
+                    write!(
+                        f,
+                        [FormatLeadingComments::Comments(comments), soft_line_break()]
+                    );
                 }
             }),
             operator,
@@ -63,15 +73,25 @@ pub(crate) fn write_lookup_without_comments<'a>(member: Expr<'a>, f: &mut Format
     };
     // The member access ends with the name.
     let name = Span::new(start, member.span().end);
-    let byte_before = |count: u32| name.start.checked_sub(count).and_then(|at| f.source_text().byte_at(at));
+    let byte_before = |count: u32| {
+        name.start
+            .checked_sub(count)
+            .and_then(|at| f.source_text().byte_at(at))
+    };
     // As a rule nothing is between the operator and the name, and they are one piece of the source
     // text.
     let (operator, is_before_name) = match member.is_optional() {
-        true => ("?.", byte_before(1) == Some(b'.') && byte_before(2) == Some(b'?')),
+        true => (
+            "?.",
+            byte_before(1) == Some(b'.') && byte_before(2) == Some(b'?'),
+        ),
         false => (".", byte_before(1) == Some(b'.')),
     };
     match is_before_name {
-        true => write!(f, source_text(Span::new(name.start - operator.len() as u32, name.end))),
+        true => write!(
+            f,
+            source_text(Span::new(name.start - operator.len() as u32, name.end))
+        ),
         false => write!(f, [operator, source_text(name)]),
     }
 }
@@ -79,14 +99,21 @@ pub(crate) fn write_lookup_without_comments<'a>(member: Expr<'a>, f: &mut Format
 fn is_member(node: AstNodes<'_>) -> bool {
     matches!(
         node,
-        AstNodes::StaticMemberExpression(_) | AstNodes::ComputedMemberExpression(_) | AstNodes::PrivateFieldExpression(_)
+        AstNodes::StaticMemberExpression(_)
+            | AstNodes::ComputedMemberExpression(_)
+            | AstNodes::PrivateFieldExpression(_)
     )
 }
 
 /// Whether there is no line break between the object and the `.`, however long the line.
 ///
 /// `object_start`: where the elements of the object start in what is written.
-fn should_inline<'a>(e: Expr<'a>, object: Expr<'a>, object_start: usize, f: &Formatter<'a>) -> bool {
+fn should_inline<'a>(
+    e: Expr<'a>,
+    object: Expr<'a>,
+    object_start: usize,
+    f: &Formatter<'a>,
+) -> bool {
     let is_private = e.is_private_member();
     if is_private && never_breaks_before_private_name(f) {
         return true;
@@ -94,15 +121,16 @@ fn should_inline<'a>(e: Expr<'a>, object: Expr<'a>, object_start: usize, f: &For
 
     // What follows comes to this unless the member accesses and `!`s around `e` are in one of a few
     // kinds of nodes.
-    let is_wrapper = |node: Node<'a>| matches!(node, Node::Expr(it) if it.tag() == ExprTag::NonNull);
-    let is_member_or_wrapper =
-        |node: Node<'a>| matches!(node, Node::Expr(it) if matches!(it.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::NonNull));
+    let is_wrapper =
+        |node: Node<'a>| matches!(node, Node::Expr(it) if it.tag() == ExprTag::NonNull);
+    let is_member_or_wrapper = |node: Node<'a>| matches!(node, Node::Expr(it) if matches!(it.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::NonNull));
     let mut outer = e.parent();
     while is_wrapper(outer) {
         outer = outer.parent();
     }
     let is_in_member = is_member_or_wrapper(outer);
-    if !is_in_member && !is_private && object.tag() == ExprTag::Ident && !is_cast_target(object, f) {
+    if !is_in_member && !is_private && object.tag() == ExprTag::Ident && !is_cast_target(object, f)
+    {
         return true;
     }
     let mut steps = 0;
@@ -168,7 +196,10 @@ fn should_inline_in<'a>(
     let parent = e.as_chain_element().parent();
 
     let mut first_non_wrapper_parent = parent;
-    while matches!(first_non_wrapper_parent, AstNodes::TSNonNullExpression(_) | AstNodes::ChainExpression(_)) {
+    while matches!(
+        first_non_wrapper_parent,
+        AstNodes::TSNonNullExpression(_) | AstNodes::ChainExpression(_)
+    ) {
         first_non_wrapper_parent = first_non_wrapper_parent.parent();
     }
 
@@ -186,7 +217,8 @@ fn should_inline_in<'a>(
 
     // Babel, which reads JavaScript for Prettier, has no `ChainExpression`.
     let is_javascript = f.context().has_tree_of_babel() || has_no_chain_expression_in_the_way(f);
-    let is_transparent = |node: AstNodes<'a>| is_javascript && matches!(node, AstNodes::ChainExpression(_));
+    let is_transparent =
+        |node: AstNodes<'a>| is_javascript && matches!(node, AstNodes::ChainExpression(_));
 
     let mut first_non_member_parent = parent;
     while is_member(first_non_member_parent)
@@ -196,9 +228,9 @@ fn should_inline_in<'a>(
         first_non_member_parent = first_non_member_parent.parent();
     }
     match first_non_member_parent {
-        AstNodes::AssignmentExpression(assignment) => {
-            !assignment.left().is_some_and(|left| matches!(left.kind(), ExprKind::Ident(_)))
-        }
+        AstNodes::AssignmentExpression(assignment) => !assignment
+            .left()
+            .is_some_and(|left| matches!(left.kind(), ExprKind::Ident(_))),
         // `typeof a.b.c` has a `TSQualifiedName`.
         AstNodes::TSTypeQuery(_) => true,
         // Prettier's `shouldInlineNewExpressionCallee`: it is on the left edge of the callee.
@@ -242,7 +274,12 @@ fn is_member_chain_or_member_of_one(mut object: Expr<'_>) -> bool {
     loop {
         match object.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => object = obj,
-            ExprKind::Call(call) => return matches!(call.callee().kind(), ExprKind::Dot { .. } | ExprKind::Index { .. }),
+            ExprKind::Call(call) => {
+                return matches!(
+                    call.callee().kind(),
+                    ExprKind::Dot { .. } | ExprKind::Index { .. }
+                );
+            }
             _ => return false,
         }
     }

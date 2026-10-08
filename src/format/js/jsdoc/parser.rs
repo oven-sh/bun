@@ -89,7 +89,10 @@ impl<'a> NamePart<'a> {
         if !(self.0.starts_with(b"[") && self.0.ends_with(b"]")) {
             return self.0;
         }
-        let inner = trim(trim_end_matches(trim_start_matches(self.0, |c| c == '['), |c| c == ']'));
+        let inner = trim(trim_end_matches(
+            trim_start_matches(self.0, |c| c == '['),
+            |c| c == ']',
+        ));
         strings::split_once_char(inner, b'=').map_or(inner, |(name, _)| trim(name))
     }
 }
@@ -115,19 +118,28 @@ impl<'a> Tag<'a> {
     /// `@kind {type} comment`
     pub(super) fn type_comment(&self) -> (Option<TypePart<'a>>, CommentPart<'a>) {
         match find_type_range(self.body) {
-            Some((start, end)) => (Some(TypePart(&self.body[start..end])), CommentPart(&self.body[end..])),
+            Some((start, end)) => (
+                Some(TypePart(&self.body[start..end])),
+                CommentPart(&self.body[end..]),
+            ),
             None => (None, CommentPart(self.body)),
         }
     }
 
     /// `@kind {type} name comment`
-    pub(super) fn type_name_comment(&self) -> (Option<TypePart<'a>>, Option<NamePart<'a>>, CommentPart<'a>) {
+    pub(super) fn type_name_comment(
+        &self,
+    ) -> (Option<TypePart<'a>>, Option<NamePart<'a>>, CommentPart<'a>) {
         let (type_part, rest) = match find_type_range(self.body) {
             Some((start, end)) => (Some(TypePart(&self.body[start..end])), &self.body[end..]),
             None => (None, self.body),
         };
         match find_type_name_range(rest) {
-            Some((start, end)) => (type_part, Some(NamePart(&rest[start..end])), CommentPart(&rest[end..])),
+            Some((start, end)) => (
+                type_part,
+                Some(NamePart(&rest[start..end])),
+                CommentPart(&rest[end..]),
+            ),
             None => (type_part, None, CommentPart(rest)),
         }
     }
@@ -177,7 +189,9 @@ fn find_type_name_range(text: &[u8]) -> Option<(usize, usize)> {
         }
         index += len;
     }
-    start.filter(|_| bracket == 0).map(|start| (start, text.len()))
+    start
+        .filter(|_| bracket == 0)
+        .map(|start| (start, text.len()))
 }
 
 /// Where the first word of `text` is. A `{` ends it as well: `@kind{type}`.
@@ -243,8 +257,12 @@ pub(super) fn parse(text: &[u8]) -> (CommentPart<'_>, Vec<Tag<'_>>) {
                     backtick_count = 0;
                 }
             }
-            b'"' if backtick_count == 0 && !in_single_quotes => in_double_quotes = !in_double_quotes,
-            b'\'' if backtick_count == 0 && !in_double_quotes => in_single_quotes = !in_single_quotes,
+            b'"' if backtick_count == 0 && !in_single_quotes => {
+                in_double_quotes = !in_double_quotes
+            }
+            b'\'' if backtick_count == 0 && !in_double_quotes => {
+                in_single_quotes = !in_single_quotes
+            }
             b'\n' => {
                 in_double_quotes = false;
                 in_single_quotes = false;

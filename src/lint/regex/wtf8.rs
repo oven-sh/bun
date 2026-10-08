@@ -228,8 +228,16 @@ impl Utf16Index {
             return offset;
         }
         let after = ((offset - self.ascii) / Self::STEP + 1).min(self.marks.len());
-        let mark = self.marks.get(..after).unwrap_or_default().iter().rev().find(|it| it.0 as usize <= offset);
-        let (mut i, mut units) = mark.map_or((self.ascii, self.ascii), |it| (it.0 as usize, it.1 as usize));
+        let mark = self
+            .marks
+            .get(..after)
+            .unwrap_or_default()
+            .iter()
+            .rev()
+            .find(|it| it.0 as usize <= offset);
+        let (mut i, mut units) = mark.map_or((self.ascii, self.ascii), |it| {
+            (it.0 as usize, it.1 as usize)
+        });
         while i < offset {
             units += 1;
             i += unit_at(s, i).1;

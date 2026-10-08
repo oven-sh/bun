@@ -46,7 +46,9 @@ impl<'a> Func<'a> {
     pub fn flags(self) -> Flags {
         match self.file.has_synthetic_nodes() {
             true => match self.owner() {
-                Node::Member(member) => self.file.written_flags(self.raw().flags, member.modifiers()),
+                Node::Member(member) => self
+                    .file
+                    .written_flags(self.raw().flags, member.modifiers()),
                 _ => self.raw().flags,
             },
             false => self.raw().flags,
@@ -76,9 +78,9 @@ impl<'a> Func<'a> {
     #[inline]
     pub fn name(self) -> Option<Ident<'a>> {
         match self.kind() {
-            FnKind::Decl | FnKind::Expr => {
-                self.file.ident_if_some(self.raw().name, self.raw().name_pos)
-            }
+            FnKind::Decl | FnKind::Expr => self
+                .file
+                .ident_if_some(self.raw().name, self.raw().name_pos),
             _ => None,
         }
     }
@@ -202,7 +204,10 @@ impl<'a> Func<'a> {
     /// The position of the `<` of the type parameters, or of the `(`.
     pub(super) fn start_of_params(self) -> u32 {
         match self.type_params().first() {
-            Some(first) => self.file.end_of_token_before(first.span().start).saturating_sub(1),
+            Some(first) => self
+                .file
+                .end_of_token_before(first.span().start)
+                .saturating_sub(1),
             None => self.raw().anchor,
         }
     }
@@ -217,12 +222,13 @@ impl<'a> Func<'a> {
     pub fn estree_span(self) -> Span {
         match (self.owner(), self.kind()) {
             (Node::Stmt(statement), _) => statement.span_without_export(),
-            (Node::Member(member), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor)
-                if !member.is_signature() =>
-            {
+            (
+                Node::Member(member),
+                FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor,
+            ) if !member.is_signature() => self.span_from_params(),
+            (Node::Expr(_), FnKind::Method | FnKind::Getter | FnKind::Setter) => {
                 self.span_from_params()
             }
-            (Node::Expr(_), FnKind::Method | FnKind::Getter | FnKind::Setter) => self.span_from_params(),
             (owner, _) => owner.span(),
         }
     }
@@ -255,7 +261,11 @@ impl<'a> Func<'a> {
         if text.get(at as usize) == Some(&b',') {
             at = skip_trivia(text, at + 1);
         }
-        let close = if self.kind() == FnKind::IndexSignature { b']' } else { b')' };
+        let close = if self.kind() == FnKind::IndexSignature {
+            b']'
+        } else {
+            b')'
+        };
         (text.get(at as usize) == Some(&close)).then_some(at)
     }
 
@@ -268,7 +278,10 @@ impl<'a> Func<'a> {
         let open = match self.open_paren() {
             Some(open) => open,
             None => {
-                let first = self.params_with_this().next().map_or(close, |first| first.span().start);
+                let first = self
+                    .params_with_this()
+                    .next()
+                    .map_or(close, |first| first.span().start);
                 self.file.end_of_token_before(first).saturating_sub(1)
             }
         };
@@ -508,7 +521,9 @@ impl<'a> KeyKind<'a> {
     fn of_unnamed(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
         let rest = file.text().get(start as usize..)?;
         match rest.first()? {
-            b'#' => Some(KeyKind::Private(file.intern(rest.get(..crate::tokens::token_len(rest))?))),
+            b'#' => Some(KeyKind::Private(
+                file.intern(rest.get(..crate::tokens::token_len(rest))?),
+            )),
             _ => KeyKind::of_bigint(file, start),
         }
     }
@@ -530,10 +545,17 @@ impl<'a> Key<'a> {
                 let name = file.name(name);
                 match name_kind {
                     // The HIR does not tell for the keys of `with { "type": "json" }`.
-                    NameKind::Identifier if matches!(file.text().get(start as usize), Some(b'"' | b'\'')) => {
+                    NameKind::Identifier
+                        if matches!(file.text().get(start as usize), Some(b'"' | b'\'')) =>
+                    {
                         KeyKind::String(name)
                     }
-                    NameKind::Identifier if file.text().get(start as usize).is_some_and(u8::is_ascii_digit) => {
+                    NameKind::Identifier
+                        if file
+                            .text()
+                            .get(start as usize)
+                            .is_some_and(u8::is_ascii_digit) =>
+                    {
                         bigint().unwrap_or(KeyKind::Ident(name))
                     }
                     NameKind::Identifier | NameKind::Jsx => KeyKind::Ident(name),
@@ -686,7 +708,10 @@ fn ascii_name_len(text: &[u8]) -> Option<usize> {
         table
     };
     let is_part = |b: &u8| IS_PART[*b as usize];
-    if !text.first().is_some_and(|b| is_part(b) && !b.is_ascii_digit()) {
+    if !text
+        .first()
+        .is_some_and(|b| is_part(b) && !b.is_ascii_digit())
+    {
         return None;
     }
     let len = text.iter().take_while(|b| is_part(b)).count();
@@ -743,7 +768,8 @@ impl File<'_> {
 /// Where the identifier of JSX that starts at `at` ends. It can contain `-`.
 fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
     let rest = text.get(at as usize..).unwrap_or_default();
-    let is_part = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'-') || *b >= 0x80;
+    let is_part =
+        |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'-') || *b >= 0x80;
     at + rest.iter().take_while(|b| is_part(b)).count() as u32
 }
 
@@ -762,7 +788,8 @@ impl<'a> Class<'a> {
 
     #[inline]
     pub fn name(self) -> Option<Ident<'a>> {
-        self.file.ident_if_some(self.raw().name, self.raw().name_pos)
+        self.file
+            .ident_if_some(self.raw().name, self.raw().name_pos)
     }
 
     /// `ABSTRACT`, `AMBIENT`, `EXPORT`, `DEFAULT`
@@ -871,7 +898,9 @@ impl<'a> Class<'a> {
 
     /// The constructor, not its overloads.
     pub fn constructor(self) -> Option<Member<'a>> {
-        self.members().iter().find(|m| m.is_constructor() && m.func().is_some_and(Func::has_body))
+        self.members()
+            .iter()
+            .find(|m| m.is_constructor() && m.func().is_some_and(Func::has_body))
     }
 }
 
@@ -960,7 +989,9 @@ impl<'a> Member<'a> {
     pub fn constructor_keyword(self) -> Option<Ident<'a>> {
         let raw = self.raw();
         match (raw.kind, raw.key) {
-            (MemberKind::Constructor, hir::PropKey::Name(name)) => Some(self.file.ident(name, raw.name_pos)),
+            (MemberKind::Constructor, hir::PropKey::Name(name)) => {
+                Some(self.file.ident(name, raw.name_pos))
+            }
             _ => None,
         }
     }
@@ -1296,7 +1327,10 @@ impl<'a> Enum<'a> {
 
     /// The `{ .. }` around the members.
     pub fn body_span(self) -> Span {
-        Span::new(skip_trivia(self.file.text(), self.name().span().end), self.span().end)
+        Span::new(
+            skip_trivia(self.file.text(), self.name().span().end),
+            self.span().end,
+        )
     }
 }
 
@@ -1405,7 +1439,10 @@ impl<'a> Module<'a> {
         if !self.has_body() || self.nested().is_some() {
             return None;
         }
-        Some(Span::new(skip_trivia(self.file.text(), self.name_span().end), self.span().end))
+        Some(Span::new(
+            skip_trivia(self.file.text(), self.name_span().end),
+            self.span().end,
+        ))
     }
 
     /// The `C` of `namespace A.B.C { .. }`, whose body is what is between the braces. Itself, if its
@@ -1422,7 +1459,9 @@ impl<'a> Module<'a> {
     pub fn nested(self) -> Option<Module<'a>> {
         let only = self.body().first().filter(|_| self.body().len() == 1)?;
         match only.kind() {
-            super::StmtKind::Module(nested) if self.file.is_nested_namespace(only.id()) => Some(nested),
+            super::StmtKind::Module(nested) if self.file.is_nested_namespace(only.id()) => {
+                Some(nested)
+            }
             _ => None,
         }
     }
@@ -1445,12 +1484,14 @@ impl<'a> Import<'a> {
 
     #[inline]
     pub fn default(self) -> Option<Ident<'a>> {
-        self.file.ident_if_some(self.raw().default, self.raw().default_pos)
+        self.file
+            .ident_if_some(self.raw().default, self.raw().default_pos)
     }
 
     #[inline]
     pub fn namespace(self) -> Option<Ident<'a>> {
-        self.file.ident_if_some(self.raw().namespace, self.raw().namespace_pos)
+        self.file
+            .ident_if_some(self.raw().namespace, self.raw().namespace_pos)
     }
 
     /// `* as namespace`
@@ -1485,7 +1526,8 @@ impl<'a> Import<'a> {
     /// The `defer` of `import defer ..`, the `source` of `import source ..`.
     pub fn phase(self) -> Option<&'static str> {
         let raw = self.raw();
-        raw.is_deferred.then(|| self.file.phase_at(raw.clause_start))
+        raw.is_deferred
+            .then(|| self.file.phase_at(raw.clause_start))
     }
 
     /// `import "spec"`
@@ -1528,7 +1570,8 @@ impl<'a> ImportSpec<'a> {
     /// The name in the other module. It can be written as a string.
     #[inline]
     pub fn imported(self) -> Ident<'a> {
-        self.file.ident(self.raw().imported, self.raw().imported_pos)
+        self.file
+            .ident(self.raw().imported, self.raw().imported_pos)
     }
 
     #[inline]

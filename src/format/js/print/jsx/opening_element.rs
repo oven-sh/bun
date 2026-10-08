@@ -1,6 +1,6 @@
 use super::FormatJsxName;
-use crate::js::utils::array::is_next_line_empty;
 use crate::js::print::type_parameters::type_arguments;
+use crate::js::utils::array::is_next_line_empty;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -29,21 +29,28 @@ impl<'a> FormatOpeningElement<'a> {
         let span = self.jsx.opening_span();
         let comments = f.comments();
 
-        let last_attribute_has_comment =
-            attributes.last().is_some_and(|a| comments.has_comment_in_range(a.span().end, span.end));
+        let last_attribute_has_comment = attributes
+            .last()
+            .is_some_and(|a| comments.has_comment_in_range(a.span().end, span.end));
         let type_arguments_or_name_end = (self.jsx.type_args().angle_brackets_span())
             .or_else(|| self.jsx.tag().map(|it| it.span()))
             .map_or(span.start, |it| it.end);
-        let first_attribute_start_or_element_end = attributes.first().map_or(span.end, |a| a.span().start);
-        let name_has_comment =
-            comments.has_comment_in_range(type_arguments_or_name_end, first_attribute_start_or_element_end);
+        let first_attribute_start_or_element_end =
+            attributes.first().map_or(span.end, |a| a.span().start);
+        let name_has_comment = comments.has_comment_in_range(
+            type_arguments_or_name_end,
+            first_attribute_start_or_element_end,
+        );
 
         if self.jsx.is_self_closing() && attributes.is_empty() && !name_has_comment {
             OpeningElementLayout::Inline
         } else if attributes.len() == 1
             && !name_has_comment
             && !last_attribute_has_comment
-            && attributes.first().and_then(as_string_literal_attribute_value).is_some_and(|it| !has_line_break(it))
+            && attributes
+                .first()
+                .and_then(as_string_literal_attribute_value)
+                .is_some_and(|it| !has_line_break(it))
         {
             OpeningElementLayout::SingleStringAttribute
         } else {
@@ -79,7 +86,12 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
             for attribute in attributes {
                 // An empty line between two attributes is kept.
                 match previous.replace(attribute) {
-                    Some(previous) if is_next_line_empty(f.source_text().as_bytes(), previous.span().end as usize) => {
+                    Some(previous)
+                        if is_next_line_empty(
+                            f.source_text().as_bytes(),
+                            previous.span().end as usize,
+                        ) =>
+                    {
                         write!(f, empty_line());
                     }
                     Some(_) => write!(f, line_break),
@@ -123,16 +135,22 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
                         write!(f, [soft_line_break_or_space(), format_close]);
                     } else if last_attribute_has_comment {
                         write!(f, [soft_line_break(), format_close]);
-                    } else if (force_bracket_same_line && !attributes.is_empty()) || wants_bracket_same_line {
+                    } else if (force_bracket_same_line && !attributes.is_empty())
+                        || wants_bracket_same_line
+                    {
                         write!(f, format_close);
                     } else {
                         write!(f, [soft_line_break(), format_close]);
                     }
                 });
 
-                let has_multiline_string_attribute =
-                    attributes.iter().any(|it| as_string_literal_attribute_value(it).is_some_and(has_line_break));
-                write!(f, group(&format_inner).should_expand(has_multiline_string_attribute));
+                let has_multiline_string_attribute = attributes
+                    .iter()
+                    .any(|it| as_string_literal_attribute_value(it).is_some_and(has_line_break));
+                write!(
+                    f,
+                    group(&format_inner).should_expand(has_multiline_string_attribute)
+                );
             }
         }
     }

@@ -50,8 +50,14 @@ pub(crate) enum SeqItem<'t, 'a> {
 pub(crate) enum NodeKind<'t, 'a> {
     Alias,
     Scalar(ScalarType),
-    Map { flow: bool, items: Vec<Pair<'t, 'a>> },
-    Seq { flow: bool, items: Vec<SeqItem<'t, 'a>> },
+    Map {
+        flow: bool,
+        items: Vec<Pair<'t, 'a>>,
+    },
+    Seq {
+        flow: bool,
+        items: Vec<SeqItem<'t, 'a>>,
+    },
 }
 
 #[derive(Debug)]
@@ -147,7 +153,8 @@ impl Directives {
             self.tags = Self::default_tags();
             self.at_next_document = false;
         }
-        let mut parts = strings::split_any(text::trim(line), b" \t").filter(|part| !part.is_empty());
+        let mut parts =
+            strings::split_any(text::trim(line), b" \t").filter(|part| !part.is_empty());
         let name = parts.next().unwrap_or_default();
         let parts: Vec<&[u8]> = parts.collect();
         match name {
@@ -167,9 +174,12 @@ impl Directives {
                     b"1.2" => self.is_version_1_1 = false,
                     _ => {
                         // `/^\d+\.\d+$/`: only a warning.
-                        let is_number = |part: &[u8]| !part.is_empty() && part.iter().all(u8::is_ascii_digit);
-                        let is_valid = strings::index_of_char_usize(version, b'.')
-                            .is_some_and(|dot| is_number(&version[..dot]) && is_number(&version[dot + 1..]));
+                        let is_number =
+                            |part: &[u8]| !part.is_empty() && part.iter().all(u8::is_ascii_digit);
+                        let is_valid =
+                            strings::index_of_char_usize(version, b'.').is_some_and(|dot| {
+                                is_number(&version[..dot]) && is_number(&version[dot + 1..])
+                            });
                         if !is_valid {
                             return Err(SyntaxError);
                         }
@@ -200,7 +210,9 @@ impl Directives {
             return Err(SyntaxError);
         }
         match self.tags.iter().rev().find(|(it, _)| it == handle) {
-            Some((_, prefix)) if !prefix.is_empty() => Ok(Some([&prefix[..], &decode_uri_component(suffix)?].concat())),
+            Some((_, prefix)) if !prefix.is_empty() => {
+                Ok(Some([&prefix[..], &decode_uri_component(suffix)?].concat()))
+            }
             _ if handle == b"!" => Ok(Some(source.to_vec())),
             _ => Err(SyntaxError),
         }
@@ -251,7 +263,11 @@ struct Context<'a> {
 }
 
 /// `resolveEnd`, with `reqSpace`. Returns whether there is a comment, and the offset.
-fn resolve_end(end: Option<&[SourceToken]>, mut offset: u32, req_space: bool) -> Result<(bool, u32)> {
+fn resolve_end(
+    end: Option<&[SourceToken]>,
+    mut offset: u32,
+    req_space: bool,
+) -> Result<(bool, u32)> {
     let mut has_comment = false;
     let mut has_space = false;
     for token in end.unwrap_or_default() {
@@ -280,12 +296,18 @@ fn empty_scalar_position(mut offset: u32, before: Option<&[SourceToken]>) -> u32
     while i > 0 {
         i -= 1;
         let st = before[i];
-        if matches!(st.kind, TokenType::Space | TokenType::Comment | TokenType::Newline) {
+        if matches!(
+            st.kind,
+            TokenType::Space | TokenType::Comment | TokenType::Newline
+        ) {
             offset -= st.len();
             continue;
         }
         // An empty scalar is right behind the last node that is not empty, and the spaces after it.
-        for st in before[i + 1..].iter().take_while(|st| st.kind == TokenType::Space) {
+        for st in before[i + 1..]
+            .iter()
+            .take_while(|st| st.kind == TokenType::Space)
+        {
             offset += st.len();
         }
         break;
@@ -295,11 +317,13 @@ fn empty_scalar_position(mut offset: u32, before: Option<&[SourceToken]>) -> u32
 
 /// `containsNewline`
 fn contains_newline(key: Option<&Token>, text: &[u8]) -> bool {
-    let has_newline = |tokens: &[SourceToken]| tokens.iter().any(|st| st.kind == TokenType::Newline);
+    let has_newline =
+        |tokens: &[SourceToken]| tokens.iter().any(|st| st.kind == TokenType::Newline);
     match key {
         None => false,
         Some(Token::FlowScalar { token, end }) => {
-            strings::contains_char(token.source(text), b'\n') || end.as_deref().is_some_and(has_newline)
+            strings::contains_char(token.source(text), b'\n')
+                || end.as_deref().is_some_and(has_newline)
         }
         Some(Token::FlowCollection { items, .. }) => items.iter().any(|it| {
             has_newline(&it.start)
@@ -320,8 +344,16 @@ fn fold_lines(source: &[u8]) -> Cow<'_, [u8]> {
     let Some(first_newline) = strings::index_of_char_usize(source, b'\n') else {
         return Cow::Borrowed(source);
     };
-    let trim_end = |line: &[u8]| -> usize { line.iter().rposition(|b| !matches!(b, b' ' | b'\t')).map_or(0, |at| at + 1) };
-    let trim_start = |line: &[u8]| -> usize { line.iter().position(|b| !matches!(b, b' ' | b'\t')).unwrap_or(line.len()) };
+    let trim_end = |line: &[u8]| -> usize {
+        line.iter()
+            .rposition(|b| !matches!(b, b' ' | b'\t'))
+            .map_or(0, |at| at + 1)
+    };
+    let trim_start = |line: &[u8]| -> usize {
+        line.iter()
+            .position(|b| !matches!(b, b' ' | b'\t'))
+            .unwrap_or(line.len())
+    };
     let mut result = source[..trim_end(&source[..first_newline])].to_vec();
     let mut sep: &[u8] = b" ";
     let mut rest = &source[first_newline + 1..];
@@ -365,7 +397,11 @@ fn single_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
     let mut i = 0;
     while let Some(&byte) = folded.get(i) {
         result.push(byte);
-        i += if byte == b'\'' && folded.get(i + 1) == Some(&b'\'') { 2 } else { 1 };
+        i += if byte == b'\'' && folded.get(i + 1) == Some(&b'\'') {
+            2
+        } else {
+            1
+        };
     }
     Ok(Cow::Owned(result))
 }
@@ -434,8 +470,13 @@ fn double_quoted_value(source: &[u8]) -> Result<Cow<'_, [u8]>> {
                     b'u' => 4,
                     _ => 8,
                 };
-                let digits = source.get(i + 1..i + 1 + length).filter(|it| it.iter().all(u8::is_ascii_hexdigit)).ok_or(SyntaxError)?;
-                let code = digits.iter().fold(0u32, |code, &digit| code * 16 + (digit as char).to_digit(16).unwrap_or(0));
+                let digits = source
+                    .get(i + 1..i + 1 + length)
+                    .filter(|it| it.iter().all(u8::is_ascii_hexdigit))
+                    .ok_or(SyntaxError)?;
+                let code = digits.iter().fold(0u32, |code, &digit| {
+                    code * 16 + (digit as char).to_digit(16).unwrap_or(0)
+                });
                 if code > 0x10FFFF {
                     return Err(SyntaxError);
                 }
@@ -472,8 +513,11 @@ fn value_by_test(value: &[u8]) -> ScalarValue {
         _ => {}
     }
     let radix = |digits: &[u8], radix: u32| {
-        (!digits.is_empty() && digits.iter().all(|&b| (b as char).is_digit(radix)))
-            .then(|| digits.iter().fold(0f64, |all, &b| all * f64::from(radix) + f64::from((b as char).to_digit(radix).unwrap_or(0))))
+        (!digits.is_empty() && digits.iter().all(|&b| (b as char).is_digit(radix))).then(|| {
+            digits.iter().fold(0f64, |all, &b| {
+                all * f64::from(radix) + f64::from((b as char).to_digit(radix).unwrap_or(0))
+            })
+        })
     };
     if let Some(number) = value.strip_prefix(b"0o").and_then(|it| radix(it, 8)) {
         return ScalarValue::Number(number);
@@ -482,12 +526,21 @@ fn value_by_test(value: &[u8]) -> ScalarValue {
         return ScalarValue::Number(number);
     }
     // What is left are decimal numbers: `[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?`
-    let unsigned = value.strip_prefix(b"-").or_else(|| value.strip_prefix(b"+")).unwrap_or(value);
-    let looks_like_number = unsigned.first().is_some_and(|b| b.is_ascii_digit() || *b == b'.')
+    let unsigned = value
+        .strip_prefix(b"-")
+        .or_else(|| value.strip_prefix(b"+"))
+        .unwrap_or(value);
+    let looks_like_number = unsigned
+        .first()
+        .is_some_and(|b| b.is_ascii_digit() || *b == b'.')
         && unsigned.iter().any(u8::is_ascii_digit)
-        && unsigned.iter().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'-' | b'+'));
+        && unsigned
+            .iter()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'-' | b'+'));
     if looks_like_number
-        && let Some(number) = std::str::from_utf8(value).ok().and_then(|it| it.trim_start_matches('+').parse::<f64>().ok())
+        && let Some(number) = std::str::from_utf8(value)
+            .ok()
+            .and_then(|it| it.trim_start_matches('+').parse::<f64>().ok())
     {
         return ScalarValue::Number(number);
     }
@@ -517,14 +570,21 @@ fn is_base64(value: &[u8]) -> bool {
 /// The `test` of the tag `!!timestamp`.
 fn is_timestamp(value: &[u8]) -> bool {
     fn digits(text: &[u8], min: usize, max: usize) -> Option<&[u8]> {
-        let count = text.iter().take(max).take_while(|b| b.is_ascii_digit()).count();
+        let count = text
+            .iter()
+            .take(max)
+            .take_while(|b| b.is_ascii_digit())
+            .count();
         (count >= min).then(|| &text[count..])
     }
     fn skip(text: &[u8], byte: u8) -> Option<&[u8]> {
         text.strip_prefix(&[byte])
     }
     fn blanks(text: &[u8]) -> &[u8] {
-        &text[text.iter().take_while(|b| matches!(b, b' ' | b'\t')).count()..]
+        &text[text
+            .iter()
+            .take_while(|b| matches!(b, b' ' | b'\t'))
+            .count()..]
     }
     let date = (|| {
         let rest = skip(digits(value, 4, 4)?, b'-')?;
@@ -546,10 +606,12 @@ fn is_timestamp(value: &[u8]) -> bool {
         let rest = skip(digits(rest, 1, 2)?, b':')?;
         let rest = skip(digits(rest, 1, 2)?, b':')?;
         let rest = digits(rest, 1, 2)?;
-        Some(match skip(rest, b'.').and_then(|it| digits(it, 1, usize::MAX)) {
-            Some(rest) => rest,
-            None => rest,
-        })
+        Some(
+            match skip(rest, b'.').and_then(|it| digits(it, 1, usize::MAX)) {
+                Some(rest) => rest,
+                None => rest,
+            },
+        )
     })();
     let Some(rest) = time else {
         return false;
@@ -592,15 +654,22 @@ impl<'a> Context<'a> {
         let mut req_space = false;
         let mut tab: Option<SourceToken> = None;
         let mut start = None;
-        let next_is_flow_collection = matches!(next, Some(NextToken::Token(Token::FlowCollection { .. })));
+        let next_is_flow_collection =
+            matches!(next, Some(NextToken::Token(Token::FlowCollection { .. })));
         for &token in tokens {
             if req_space {
-                if !matches!(token.kind, TokenType::Space | TokenType::Newline | TokenType::Comma) {
+                if !matches!(
+                    token.kind,
+                    TokenType::Space | TokenType::Newline | TokenType::Comma
+                ) {
                     return Err(SyntaxError);
                 }
                 req_space = false;
             }
-            if tab.take().is_some() && at_newline && !matches!(token.kind, TokenType::Comment | TokenType::Newline) {
+            if tab.take().is_some()
+                && at_newline
+                && !matches!(token.kind, TokenType::Comment | TokenType::Newline)
+            {
                 return Err(SyntaxError);
             }
             match token.kind {
@@ -620,7 +689,11 @@ impl<'a> Context<'a> {
                         return Err(SyntaxError);
                     }
                     let len = (token.len() as usize - 1).max(1);
-                    props.comment_len += if props.comment_len == 0 { len } else { comment_sep_len + len };
+                    props.comment_len += if props.comment_len == 0 {
+                        len
+                    } else {
+                        comment_sep_len + len
+                    };
                     comment_sep_len = 0;
                     at_newline = false;
                 }
@@ -640,7 +713,11 @@ impl<'a> Context<'a> {
                     has_space = true;
                 }
                 TokenType::Anchor | TokenType::Tag => {
-                    let slot = if token.kind == TokenType::Anchor { &mut props.anchor } else { &mut props.tag };
+                    let slot = if token.kind == TokenType::Anchor {
+                        &mut props.anchor
+                    } else {
+                        &mut props.tag
+                    };
                     if slot.replace(token).is_some() {
                         return Err(SyntaxError);
                     }
@@ -654,7 +731,8 @@ impl<'a> Context<'a> {
                         return Err(SyntaxError);
                     }
                     props.found = Some(token);
-                    at_newline = matches!(indicator, TokenType::SeqItemInd | TokenType::ExplicitKeyInd);
+                    at_newline =
+                        matches!(indicator, TokenType::SeqItemInd | TokenType::ExplicitKeyInd);
                     has_space = false;
                 }
                 TokenType::Comma if is_flow => {
@@ -671,8 +749,13 @@ impl<'a> Context<'a> {
         if req_space {
             let is_separated = match next {
                 None => true,
-                Some(NextToken::Source(next)) => matches!(next.kind, TokenType::Space | TokenType::Newline | TokenType::Comma),
-                Some(NextToken::Token(Token::FlowScalar { token, .. })) => token.kind == TokenType::Scalar && token.len() == 0,
+                Some(NextToken::Source(next)) => matches!(
+                    next.kind,
+                    TokenType::Space | TokenType::Newline | TokenType::Comma
+                ),
+                Some(NextToken::Token(Token::FlowScalar { token, .. })) => {
+                    token.kind == TokenType::Scalar && token.len() == 0
+                }
                 Some(NextToken::Token(_)) => false,
             };
             if !is_separated {
@@ -681,7 +764,12 @@ impl<'a> Context<'a> {
         }
         if let Some(tab) = tab
             && ((at_newline && tab.indent <= parent_indent)
-                || matches!(next, Some(NextToken::Token(Token::BlockMap { .. } | Token::BlockSeq { .. }))))
+                || matches!(
+                    next,
+                    Some(NextToken::Token(
+                        Token::BlockMap { .. } | Token::BlockSeq { .. }
+                    ))
+                ))
         {
             return Err(SyntaxError);
         }
@@ -717,7 +805,9 @@ impl<'a> Context<'a> {
                     has_comment,
                 }
             }
-            Token::FlowScalar { .. } | Token::BlockScalar { .. } => self.compose_scalar(token, props.tag)?,
+            Token::FlowScalar { .. } | Token::BlockScalar { .. } => {
+                self.compose_scalar(token, props.tag)?
+            }
             Token::BlockMap { .. } | Token::BlockSeq { .. } | Token::FlowCollection { .. } => {
                 self.compose_collection(token, props)?
             }
@@ -731,9 +821,21 @@ impl<'a> Context<'a> {
         Ok(node)
     }
 
-    fn compose_empty_node<'t>(&mut self, offset: u32, before: Option<&[SourceToken]>, props: &Props) -> Result<Node<'t, 'a>> {
+    fn compose_empty_node<'t>(
+        &mut self,
+        offset: u32,
+        before: Option<&[SourceToken]>,
+        props: &Props,
+    ) -> Result<Node<'t, 'a>> {
         let offset = empty_scalar_position(offset, before);
-        let mut node = self.finish_scalar(ScalarType::Plain, Cow::Borrowed(b""), [offset; 3], false, true, props.tag)?;
+        let mut node = self.finish_scalar(
+            ScalarType::Plain,
+            Cow::Borrowed(b""),
+            [offset; 3],
+            false,
+            true,
+            props.tag,
+        )?;
         node.anchor = self.anchor_of(props.anchor)?;
         if props.comment_len > 0 {
             node.has_comment = true;
@@ -756,8 +858,13 @@ impl<'a> Context<'a> {
             Some(tag) => self.directives.tag_name(tag.source(self.text))?,
             None => None,
         };
-        match tag_name.as_deref().and_then(|name| name.strip_prefix(DEFAULT_PREFIX)) {
-            Some(b"timestamp") if !self.directives.is_version_1_1 && !is_timestamp(&value) => return Err(SyntaxError),
+        match tag_name
+            .as_deref()
+            .and_then(|name| name.strip_prefix(DEFAULT_PREFIX))
+        {
+            Some(b"timestamp") if !self.directives.is_version_1_1 && !is_timestamp(&value) => {
+                return Err(SyntaxError);
+            }
             Some(b"binary") if !is_base64(&value) => return Err(SyntaxError),
             _ => {}
         }
@@ -778,19 +885,37 @@ impl<'a> Context<'a> {
         })
     }
 
-    fn compose_scalar<'t>(&mut self, token: &'t Token, tag_token: Option<SourceToken>) -> Result<Node<'t, 'a>> {
+    fn compose_scalar<'t>(
+        &mut self,
+        token: &'t Token,
+        tag_token: Option<SourceToken>,
+    ) -> Result<Node<'t, 'a>> {
         match token {
-            Token::FlowScalar { token: source_token, end } => {
+            Token::FlowScalar {
+                token: source_token,
+                end,
+            } => {
                 let source = source_token.source(self.text);
                 let (kind, value) = match source_token.kind {
                     TokenType::Scalar => (ScalarType::Plain, plain_value(source)?),
-                    TokenType::SingleQuotedScalar => (ScalarType::QuoteSingle, single_quoted_value(source)?),
-                    TokenType::DoubleQuotedScalar => (ScalarType::QuoteDouble, double_quoted_value(source)?),
+                    TokenType::SingleQuotedScalar => {
+                        (ScalarType::QuoteSingle, single_quoted_value(source)?)
+                    }
+                    TokenType::DoubleQuotedScalar => {
+                        (ScalarType::QuoteDouble, double_quoted_value(source)?)
+                    }
                     _ => return Err(SyntaxError),
                 };
                 let (has_comment, offset) = resolve_end(end.as_deref(), source_token.end, true)?;
                 let range = [source_token.offset, source_token.end, offset];
-                self.finish_scalar(kind, value, range, has_comment, source_token.kind == TokenType::Scalar, tag_token)
+                self.finish_scalar(
+                    kind,
+                    value,
+                    range,
+                    has_comment,
+                    source_token.kind == TokenType::Scalar,
+                    tag_token,
+                )
             }
             Token::BlockScalar {
                 offset,
@@ -798,10 +923,21 @@ impl<'a> Context<'a> {
                 props,
                 source,
             } => {
-                let (kind, range, has_comment) = self.resolve_block_scalar(*offset, *indent, props, *source)?;
+                let (kind, range, has_comment) =
+                    self.resolve_block_scalar(*offset, *indent, props, *source)?;
                 // All that is asked of the value is what is in it apart from white space.
-                let value = self.text.get(source.0 as usize..source.1 as usize).unwrap_or_default();
-                self.finish_scalar(kind, Cow::Borrowed(value), range, has_comment, false, tag_token)
+                let value = self
+                    .text
+                    .get(source.0 as usize..source.1 as usize)
+                    .unwrap_or_default();
+                self.finish_scalar(
+                    kind,
+                    Cow::Borrowed(value),
+                    range,
+                    has_comment,
+                    false,
+                    tag_token,
+                )
             }
             _ => Err(SyntaxError),
         }
@@ -848,7 +984,11 @@ impl<'a> Context<'a> {
             }
             length += token.len();
         }
-        let kind = if header_source[0] == b'>' { ScalarType::BlockFolded } else { ScalarType::BlockLiteral };
+        let kind = if header_source[0] == b'>' {
+            ScalarType::BlockFolded
+        } else {
+            ScalarType::BlockLiteral
+        };
         let end = start + length + (source.1 - source.0);
         let range = [start, end, end];
 
@@ -863,7 +1003,10 @@ impl<'a> Context<'a> {
                 })
                 .collect(),
         };
-        let chomp_start = lines.iter().rposition(|(_, content)| !content.is_empty()).map_or(0, |at| at + 1);
+        let chomp_start = lines
+            .iter()
+            .rposition(|(_, content)| !content.is_empty())
+            .map_or(0, |at| at + 1);
         if chomp_start == 0 {
             return Ok((kind, range, has_comment));
         }
@@ -888,7 +1031,10 @@ impl<'a> Context<'a> {
             }
             break;
         }
-        if lines[content_start..chomp_start].iter().any(|&(indent, content)| !content.is_empty() && indent < trim_indent) {
+        if lines[content_start..chomp_start]
+            .iter()
+            .any(|&(indent, content)| !content.is_empty() && indent < trim_indent)
+        {
             return Err(SyntaxError);
         }
         Ok((kind, range, has_comment))
@@ -901,23 +1047,42 @@ impl<'a> Context<'a> {
         };
         if matches!(token, Token::BlockSeq { .. }) {
             let last_prop = match (props.anchor, props.tag) {
-                (Some(anchor), Some(tag)) => Some(if anchor.offset > tag.offset { anchor } else { tag }),
+                (Some(anchor), Some(tag)) => Some(if anchor.offset > tag.offset {
+                    anchor
+                } else {
+                    tag
+                }),
                 (anchor, tag) => anchor.or(tag),
             };
             if let Some(last_prop) = last_prop
-                && props.newline_after_prop.is_none_or(|nl| nl.offset < last_prop.offset)
+                && props
+                    .newline_after_prop
+                    .is_none_or(|nl| nl.offset < last_prop.offset)
             {
                 return Err(SyntaxError);
             }
         }
         let mut node = match token {
-            Token::BlockMap { offset, indent, items } => self.resolve_block_map(*offset, *indent, items)?,
-            Token::BlockSeq { offset, indent, items } => self.resolve_block_seq(*offset, *indent, items)?,
+            Token::BlockMap {
+                offset,
+                indent,
+                items,
+            } => self.resolve_block_map(*offset, *indent, items)?,
+            Token::BlockSeq {
+                offset,
+                indent,
+                items,
+            } => self.resolve_block_seq(*offset, *indent, items)?,
             _ => self.resolve_flow_collection(token)?,
         };
         node.has_tag = props.tag.is_some();
         // The tags of YAML 1.1 for collections, which both schemas know.
-        match (tag_name.as_deref().and_then(|name| name.strip_prefix(DEFAULT_PREFIX)), &mut node.kind) {
+        match (
+            tag_name
+                .as_deref()
+                .and_then(|name| name.strip_prefix(DEFAULT_PREFIX)),
+            &mut node.kind,
+        ) {
             (Some(b"set"), NodeKind::Map { items, .. }) => {
                 // `hasAllNullValues(true)`
                 let are_all_null = items.iter().all(|pair| {
@@ -954,12 +1119,15 @@ impl<'a> Context<'a> {
                     let keys: Vec<&Node<'t, 'a>> = items
                         .iter()
                         .filter_map(|item| match item {
-                            SeqItem::Pair(pair) if matches!(pair.key.kind, NodeKind::Scalar(_)) => Some(&pair.key),
+                            SeqItem::Pair(pair) if matches!(pair.key.kind, NodeKind::Scalar(_)) => {
+                                Some(&pair.key)
+                            }
                             _ => None,
                         })
                         .collect();
                     let is_same = |a: &Node<'t, 'a>, b: &Node<'t, 'a>| {
-                        a.value == b.value && (a.value != ScalarValue::String || a.source == b.source)
+                        a.value == b.value
+                            && (a.value != ScalarValue::String || a.source == b.source)
                     };
                     if (1..keys.len()).any(|i| keys[..i].iter().any(|key| is_same(key, keys[i]))) {
                         return Err(SyntaxError);
@@ -985,14 +1153,23 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn resolve_block_map<'t>(&mut self, map_offset: u32, map_indent: u32, items: &'t [Item]) -> Result<Node<'t, 'a>> {
+    fn resolve_block_map<'t>(
+        &mut self,
+        map_offset: u32,
+        map_indent: u32,
+        items: &'t [Item],
+    ) -> Result<Node<'t, 'a>> {
         let mut pairs = Vec::with_capacity(items.len());
         self.at_root = false;
         let mut offset = map_offset;
         let mut comment_end = None;
         for item in items {
             let Item {
-                start, key, sep, value, ..
+                start,
+                key,
+                sep,
+                value,
+                ..
             } = item;
             let (key, value) = (key.as_deref(), value.as_deref());
             let first_of_sep = sep.as_ref().and_then(|sep| sep.first()).copied();
@@ -1001,7 +1178,9 @@ impl<'a> Context<'a> {
                 &PropsOptions {
                     is_flow: false,
                     indicator: TokenType::ExplicitKeyInd,
-                    next: key.map(NextToken::Token).or_else(|| first_of_sep.map(NextToken::Source)),
+                    next: key
+                        .map(NextToken::Token)
+                        .or_else(|| first_of_sep.map(NextToken::Source)),
                     offset,
                     parent_indent: map_indent,
                     start_on_newline: true,
@@ -1010,7 +1189,8 @@ impl<'a> Context<'a> {
             let is_implicit_key = key_props.found.is_none();
             if is_implicit_key {
                 if let Some(key) = key
-                    && (matches!(key, Token::BlockSeq { .. }) || key.indent().is_some_and(|indent| indent != map_indent))
+                    && (matches!(key, Token::BlockSeq { .. })
+                        || key.indent().is_some_and(|indent| indent != map_indent))
                 {
                     return Err(SyntaxError);
                 }
@@ -1021,7 +1201,10 @@ impl<'a> Context<'a> {
                 if key_props.newline_after_prop.is_some() || contains_newline(key, self.text) {
                     return Err(SyntaxError);
                 }
-            } else if key_props.found.is_some_and(|found| found.indent != map_indent) {
+            } else if key_props
+                .found
+                .is_some_and(|found| found.indent != map_indent)
+            {
                 return Err(SyntaxError);
             }
 
@@ -1040,7 +1223,8 @@ impl<'a> Context<'a> {
                     next: value.map(NextToken::Token),
                     offset: key_node.range[2],
                     parent_indent: map_indent,
-                    start_on_newline: key.is_none_or(|key| matches!(key, Token::BlockScalar { .. })),
+                    start_on_newline: key
+                        .is_none_or(|key| matches!(key, Token::BlockScalar { .. })),
                 },
             )?;
             offset = value_props.end;
@@ -1080,10 +1264,18 @@ impl<'a> Context<'a> {
             flow: false,
             items: pairs,
         };
-        Ok(Self::collection(kind, [map_offset, offset, comment_end.unwrap_or(offset)]))
+        Ok(Self::collection(
+            kind,
+            [map_offset, offset, comment_end.unwrap_or(offset)],
+        ))
     }
 
-    fn resolve_block_seq<'t>(&mut self, seq_offset: u32, seq_indent: u32, items: &'t [Item]) -> Result<Node<'t, 'a>> {
+    fn resolve_block_seq<'t>(
+        &mut self,
+        seq_offset: u32,
+        seq_indent: u32,
+        items: &'t [Item],
+    ) -> Result<Node<'t, 'a>> {
         let mut nodes = Vec::with_capacity(items.len());
         self.at_root = false;
         self.at_key = false;
@@ -1120,7 +1312,10 @@ impl<'a> Context<'a> {
             flow: false,
             items: nodes,
         };
-        Ok(Self::collection(kind, [seq_offset, offset, comment_end.unwrap_or(offset)]))
+        Ok(Self::collection(
+            kind,
+            [seq_offset, offset, comment_end.unwrap_or(offset)],
+        ))
     }
 
     fn resolve_flow_collection<'t>(&mut self, token: &'t Token) -> Result<Node<'t, 'a>> {
@@ -1142,7 +1337,11 @@ impl<'a> Context<'a> {
         let mut offset = collection_offset + collection_start.len();
         for (i, item) in items.iter().enumerate() {
             let Item {
-                start, key, sep, value, ..
+                start,
+                key,
+                sep,
+                value,
+                ..
             } = item;
             let (key, value) = (key.as_deref(), value.as_deref());
             let first_of_sep = sep.as_ref().and_then(|sep| sep.first()).copied();
@@ -1151,15 +1350,20 @@ impl<'a> Context<'a> {
                 &PropsOptions {
                     is_flow: true,
                     indicator: TokenType::ExplicitKeyInd,
-                    next: key.map(NextToken::Token).or_else(|| first_of_sep.map(NextToken::Source)),
+                    next: key
+                        .map(NextToken::Token)
+                        .or_else(|| first_of_sep.map(NextToken::Source)),
                     offset,
                     parent_indent: *indent,
                     start_on_newline: false,
                 },
             )?;
             if props.found.is_none() {
-                if props.anchor.is_none() && props.tag.is_none() && sep.is_none() && value.is_none() {
-                    if (i == 0 && props.comma.is_some()) || (!(i == 0 && props.comma.is_some()) && i + 1 < items.len()) {
+                if props.anchor.is_none() && props.tag.is_none() && sep.is_none() && value.is_none()
+                {
+                    if (i == 0 && props.comma.is_some())
+                        || (!(i == 0 && props.comma.is_some()) && i + 1 < items.len())
+                    {
                         return Err(SyntaxError);
                     }
                     offset = props.end;
@@ -1179,13 +1383,16 @@ impl<'a> Context<'a> {
                 }
                 if props.comment_len > 0 {
                     // A comment right behind the comma belongs to the item before.
-                    let first = start.iter().find(|st| !matches!(st.kind, TokenType::Comma | TokenType::Space));
+                    let first = start
+                        .iter()
+                        .find(|st| !matches!(st.kind, TokenType::Comma | TokenType::Space));
                     let prev_item_comment_len = match first {
                         Some(st) if st.kind == TokenType::Comment => st.len() as usize - 1,
                         _ => 0,
                     };
                     if prev_item_comment_len > 0 {
-                        props.comment_len = props.comment_len.saturating_sub(prev_item_comment_len + 1);
+                        props.comment_len =
+                            props.comment_len.saturating_sub(prev_item_comment_len + 1);
                     }
                 }
             }
@@ -1225,7 +1432,11 @@ impl<'a> Context<'a> {
             )?;
             if let Some(found) = value_props.found {
                 if !is_map && props.found.is_none() {
-                    let before_found = sep.as_deref().unwrap_or_default().iter().take_while(|st| st.offset != found.offset);
+                    let before_found = sep
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .take_while(|st| st.offset != found.offset);
                     if before_found.clone().any(|st| st.kind == TokenType::Newline)
                         || i64::from(props.start) < i64::from(found.offset) - 1024
                     {
@@ -1237,13 +1448,17 @@ impl<'a> Context<'a> {
             }
             let value_node = match value {
                 Some(value) => Some(self.compose_node(value, &value_props)?),
-                None if value_props.found.is_some() => Some(self.compose_empty_node(value_props.end, sep.as_deref(), &value_props)?),
+                None if value_props.found.is_some() => {
+                    Some(self.compose_empty_node(value_props.end, sep.as_deref(), &value_props)?)
+                }
                 None => None,
             };
             if value_node.is_some() && is_block(value) {
                 return Err(SyntaxError);
             }
-            offset = value_node.as_ref().map_or(value_props.end, |node| node.range[2]);
+            offset = value_node
+                .as_ref()
+                .map_or(value_props.end, |node| node.range[2]);
             let end_range = value_node.as_ref().unwrap_or(&key_node).range;
             let range = [key_node.range[0], end_range[1], end_range[2]];
             let pair = Pair {
@@ -1261,7 +1476,11 @@ impl<'a> Context<'a> {
                 nodes.push(SeqItem::Node(Self::collection(kind, range)));
             }
         }
-        let expected_end = if is_map { TokenType::FlowMapEnd } else { TokenType::FlowSeqEnd };
+        let expected_end = if is_map {
+            TokenType::FlowMapEnd
+        } else {
+            TokenType::FlowSeqEnd
+        };
         let [close, rest @ ..] = &end[..] else {
             return Err(SyntaxError);
         };
@@ -1279,12 +1498,19 @@ impl<'a> Context<'a> {
                 items: nodes,
             },
         };
-        Ok(Self::collection(kind, [*collection_offset, close.end, end_offset]))
+        Ok(Self::collection(
+            kind,
+            [*collection_offset, close.end, end_offset],
+        ))
     }
 }
 
 /// `composeDoc`. Returns the document and whether it has a `---`.
-fn compose_doc<'t, 'a>(text: &'a [u8], directives: Directives, token: &'t Token) -> Result<(Document<'t, 'a>, bool)> {
+fn compose_doc<'t, 'a>(
+    text: &'a [u8],
+    directives: Directives,
+    token: &'t Token,
+) -> Result<(Document<'t, 'a>, bool)> {
     let Token::Document {
         offset,
         start,
@@ -1307,7 +1533,9 @@ fn compose_doc<'t, 'a>(text: &'a [u8], directives: Directives, token: &'t Token)
         &PropsOptions {
             is_flow: false,
             indicator: TokenType::DocStart,
-            next: value.map(NextToken::Token).or_else(|| first_of_end.map(NextToken::Source)),
+            next: value
+                .map(NextToken::Token)
+                .or_else(|| first_of_end.map(NextToken::Source)),
             offset: *offset,
             parent_indent: 0,
             start_on_newline: true,
@@ -1330,7 +1558,10 @@ fn compose_doc<'t, 'a>(text: &'a [u8], directives: Directives, token: &'t Token)
 }
 
 /// `[...new Composer(..).compose(tokens, true, text.length)]`
-pub(crate) fn compose<'t, 'a>(text: &'a [u8], tokens: &'t [Token]) -> Result<Vec<Document<'t, 'a>>> {
+pub(crate) fn compose<'t, 'a>(
+    text: &'a [u8],
+    tokens: &'t [Token],
+) -> Result<Vec<Document<'t, 'a>>> {
     let mut documents: Vec<Document<'t, 'a>> = Vec::new();
     let mut directives = Directives {
         is_explicit: false,

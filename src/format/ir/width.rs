@@ -28,7 +28,11 @@ fn emoji_len(chars: &[u32]) -> usize {
     let first = at(0);
     if matches!(first, 0x23 | 0x2A | 0x30..=0x39) {
         let mark = if at(1) == VARIATION_SELECTOR_16 { 2 } else { 1 };
-        return if at(mark) == COMBINING_ENCLOSING_KEYCAP { mark + 1 } else { 0 };
+        return if at(mark) == COMBINING_ENCLOSING_KEYCAP {
+            mark + 1
+        } else {
+            0
+        };
     }
     if is_regional_indicator(first) {
         return if is_regional_indicator(at(1)) { 2 } else { 0 };
@@ -69,12 +73,22 @@ fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
     // ASCII only takes a closer look next to other characters: `#` is an emoji before a keycap, or joined to one.
     while !rest.is_empty() {
         let ascii = bun_core::strings::first_non_ascii(rest).map_or(rest.len(), |at| at as usize);
-        let plain = if ascii == rest.len() { ascii } else { ascii.saturating_sub(1) };
-        width += rest[..plain].iter().filter(|&&byte| is_printable(byte)).count() as u32;
+        let plain = if ascii == rest.len() {
+            ascii
+        } else {
+            ascii.saturating_sub(1)
+        };
+        width += rest[..plain]
+            .iter()
+            .filter(|&&byte| is_printable(byte))
+            .count() as u32;
         rest = &rest[plain..];
         let mut len = ascii - plain;
         loop {
-            len += rest[len..].iter().take_while(|byte| !byte.is_ascii()).count();
+            len += rest[len..]
+                .iter()
+                .take_while(|byte| !byte.is_ascii())
+                .count();
             if len == rest.len() || !rest[..len].ends_with("\u{200D}".as_bytes()) {
                 break;
             }
@@ -94,7 +108,11 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
         match emoji_len(&chars[i..]) {
             0 => {}
             len => {
-                width += if len == 1 && is_in(NARROW_EMOJI, c) { 1 } else { 2 };
+                width += if len == 1 && is_in(NARROW_EMOJI, c) {
+                    1
+                } else {
+                    2
+                };
                 i += len;
                 continue;
             }
@@ -117,7 +135,12 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
 #[inline]
 fn all_bytes(text: &[u8], is_plain: impl Fn(u8) -> bool + Copy) -> bool {
     let (blocks, rest) = text.as_chunks::<64>();
-    let is_block_plain = |block: &[u8]| block.iter().fold(0, |odd, &byte| odd | u8::from(!is_plain(byte))) == 0;
+    let is_block_plain = |block: &[u8]| {
+        block
+            .iter()
+            .fold(0, |odd, &byte| odd | u8::from(!is_plain(byte)))
+            == 0
+    };
     blocks.iter().all(|block| is_block_plain(block)) && is_block_plain(rest)
 }
 
@@ -143,12 +166,18 @@ pub(crate) struct OddBlocks(Vec<u64>);
 
 impl OddBlocks {
     pub(crate) fn mark(&mut self, source: &[u8]) {
-        let is_plain =
-            |byte: u8| (is_printable(byte) & (byte != b'\\')) | (byte == b'\t') | (byte == b'\n') | (byte == b'\r');
+        let is_plain = |byte: u8| {
+            (is_printable(byte) & (byte != b'\\'))
+                | (byte == b'\t')
+                | (byte == b'\n')
+                | (byte == b'\r')
+        };
         self.0.clear();
         self.0.extend(source.chunks(BLOCK * 64).map(|blocks| {
             let (blocks, rest) = blocks.as_chunks::<BLOCK>();
-            let marks = blocks.iter().rev().fold(0, |marks, block| marks << 1 | u64::from(!all_bytes(block, is_plain)));
+            let marks = blocks.iter().rev().fold(0, |marks, block| {
+                marks << 1 | u64::from(!all_bytes(block, is_plain))
+            });
             marks | u64::from(!all_bytes(rest, is_plain)) << (blocks.len() % 64)
         }));
     }
@@ -157,7 +186,11 @@ impl OddBlocks {
     /// is long and has no backslash. It can be so without this saying so.
     #[inline]
     pub(crate) fn is_plain(&self, start: u32, end: u32) -> bool {
-        let is_odd = |block: usize| self.0.get(block / 64).is_none_or(|marks| marks >> (block % 64) & 1 != 0);
+        let is_odd = |block: usize| {
+            self.0
+                .get(block / 64)
+                .is_none_or(|marks| marks >> (block % 64) & 1 != 0)
+        };
         !(start as usize / BLOCK..=end as usize / BLOCK).any(is_odd)
     }
 }

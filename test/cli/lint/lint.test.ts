@@ -168,7 +168,9 @@ describe.concurrent("bun lint", () => {
     });
 
     test("files, directories and patterns", async () => {
-      expect(await Promise.all([listed(["a.js", "src/deep"]), listed(["src/*.{mjs,cjs}"]), listed(["**/f.js"])])).toEqual([
+      expect(
+        await Promise.all([listed(["a.js", "src/deep"]), listed(["src/*.{mjs,cjs}"]), listed(["**/f.js"])]),
+      ).toEqual([
         { files: ["<dir>/a.js", "<dir>/src/deep/f.js"], exitCode: 0 },
         { files: ["<dir>/src/b.mjs", "<dir>/src/c.cjs"], exitCode: 0 },
         { files: ["<dir>/src/deep/f.js"], exitCode: 0 },
@@ -361,9 +363,11 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(2);
     });
 
-    test("the rules of a plugin run, and their fixes are applied", async () => {
-      const files = {
-        "eslint.config.js": `
+    test(
+      "the rules of a plugin run, and their fixes are applied",
+      async () => {
+        const files = {
+          "eslint.config.js": `
           const noFoo = {
             meta: { type: "problem", fixable: "code", messages: { foo: "No {{name}}." } },
             create: context => ({
@@ -373,20 +377,25 @@ describe.concurrent("bun lint", () => {
             }),
           };
           export default [{ files: ["a.js"], plugins: { example: { rules: { "no-foo": noFoo } } }, rules: { "example/no-foo": "error", "no-debugger": "warn" } }];`,
-        "a.js": "debugger;\nfoo();\n",
-      };
-      const [plain, fixed] = await Promise.all([lint(files, ["-f", "unix", "a.js"]), lint(files, ["--fix", "a.js"], { reads: ["a.js"] })]);
-      expect(plain.stdout).toMatchInlineSnapshot(`
+          "a.js": "debugger;\nfoo();\n",
+        };
+        const [plain, fixed] = await Promise.all([
+          lint(files, ["-f", "unix", "a.js"]),
+          lint(files, ["--fix", "a.js"], { reads: ["a.js"] }),
+        ]);
+        expect(plain.stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:1:1: Unexpected 'debugger' statement. [Warning/no-debugger]
         <dir>/a.js:2:1: No foo. [Error/example/no-foo]
 
         2 problems"
       `);
-      expect(plain.exitCode).toBe(1);
-      expect(fixed.files).toEqual({ "a.js": "debugger;\nbar();\n" });
-      expect(fixed.exitCode).toBe(0);
-      // A debug build takes seconds to start the engine that the rules run in.
-    }, isDebug || isASAN ? 120_000 : undefined);
+        expect(plain.exitCode).toBe(1);
+        expect(fixed.files).toEqual({ "a.js": "debugger;\nbar();\n" });
+        expect(fixed.exitCode).toBe(0);
+        // A debug build takes seconds to start the engine that the rules run in.
+      },
+      isDebug || isASAN ? 120_000 : undefined,
+    );
 
     test("--rule, --global, --no-config-lookup", async () => {
       const { stdout } = await lint(
@@ -455,8 +464,16 @@ describe.concurrent("bun lint", () => {
 
     describe("like oxlint, with an .oxlintrc.json", () => {
       const rc = (more: object = {}) =>
-        JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error", eqeqeq: "warn" }, ...more });
-      const files = { ".oxlintrc.json": rc(), "a.js": "debugger;\nif (é == b) {}\n", "src/b.ts": "export const b = 1;\n" };
+        JSON.stringify({
+          categories: { correctness: "off" },
+          rules: { "no-debugger": "error", eqeqeq: "warn" },
+          ...more,
+        });
+      const files = {
+        ".oxlintrc.json": rc(),
+        "a.js": "debugger;\nif (é == b) {}\n",
+        "src/b.ts": "export const b = 1;\n",
+      };
 
       test("-f json is oxlint's: offsets and columns in bytes, plugin(rule)", async () => {
         const { raw, exitCode } = await lint(files, ["-f", "json", "--threads", "2"]);
@@ -489,7 +506,8 @@ describe.concurrent("bun lint", () => {
       test("--rules -f json", async () => {
         const { raw, exitCode } = await lint(files, ["--rules", "-f", "json"]);
         const rules = JSON.parse(raw);
-        const find = (scope: string, value: string) => rules.find((it: any) => it.scope === scope && it.value === value);
+        const find = (scope: string, value: string) =>
+          rules.find((it: any) => it.scope === scope && it.value === value);
         expect(find("eslint", "no-debugger")).toEqual({
           scope: "eslint",
           value: "no-debugger",
@@ -507,7 +525,9 @@ describe.concurrent("bun lint", () => {
         const [checkstyle, junit, gitlab, sarif] = await Promise.all(
           ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "a.js"])),
         );
-        expect(checkstyle.stdout).toMatchInlineSnapshot(`"<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="a.js"><error line="1" column="1" severity="error" message="Unexpected &apos;debugger&apos; statement." source="eslint(no-debugger)" /><error line="2" column="7" severity="warning" message="Expected &apos;===&apos; and instead saw &apos;==&apos;." source="eslint(eqeqeq)" /></file></checkstyle>"`);
+        expect(checkstyle.stdout).toMatchInlineSnapshot(
+          `"<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="a.js"><error line="1" column="1" severity="error" message="Unexpected &apos;debugger&apos; statement." source="eslint(no-debugger)" /><error line="2" column="7" severity="warning" message="Expected &apos;===&apos; and instead saw &apos;==&apos;." source="eslint(eqeqeq)" /></file></checkstyle>"`,
+        );
         expect(junit.stdout).toMatchInlineSnapshot(`
           "<?xml version="1.0" encoding="UTF-8"?>
           <testsuites name="Oxlint" tests="2" failures="1" errors="1">
@@ -548,7 +568,11 @@ describe.concurrent("bun lint", () => {
           lint(files, ["nothing.js"]),
           lint(files, ["--no-error-on-unmatched-pattern", "nothing.js"]),
         ]);
-        expect({ some: some.exitCode, none: none.exitCode, tolerated: tolerated.exitCode }).toEqual({ some: 0, none: 1, tolerated: 0 });
+        expect({ some: some.exitCode, none: none.exitCode, tolerated: tolerated.exitCode }).toEqual({
+          some: 0,
+          none: 1,
+          tolerated: 0,
+        });
         expect(none.stderr).toContain("No files found to lint. Please check your paths and ignore patterns.");
       });
 
@@ -559,7 +583,11 @@ describe.concurrent("bun lint", () => {
           lint({ ...warns, ".oxlintrc.json": rc({ options: { denyWarnings: true } }) }, []),
           lint({ ...warns, ".oxlintrc.json": rc({ options: { maxWarnings: 0 } }) }, []),
         ]);
-        expect({ plain: plain.exitCode, denied: denied.exitCode, limited: limited.exitCode }).toEqual({ plain: 0, denied: 1, limited: 1 });
+        expect({ plain: plain.exitCode, denied: denied.exitCode, limited: limited.exitCode }).toEqual({
+          plain: 0,
+          denied: 1,
+          limited: 1,
+        });
       });
 
       test("a file that is named is left out if --ignore-path has it", async () => {
@@ -754,7 +782,11 @@ describe.concurrent("bun lint", () => {
         lint(stale, ["--prune-suppressions"], { reads: ["eslint-suppressions.json"] }),
       ]);
       expect(plain.stderr).toContain("There are suppressions left that do not occur anymore.");
-      expect({ plain: plain.exitCode, passed: passed.exitCode, pruned: pruned.exitCode }).toEqual({ plain: 2, passed: 0, pruned: 0 });
+      expect({ plain: plain.exitCode, passed: passed.exitCode, pruned: pruned.exitCode }).toEqual({
+        plain: 2,
+        passed: 0,
+        pruned: 0,
+      });
       expect(JSON.parse(pruned.files["eslint-suppressions.json"]!)).toEqual(JSON.parse(suppressions(2, 1)));
     });
   });
@@ -1081,7 +1113,12 @@ describe.concurrent("bun lint", () => {
     });
 
     test("rules about a name do not listen in files that do not mention it", async () => {
-      const files = { "eslint.config.js": config({ "no-eval": "error" }), "a.js": "a();\n", "b.ts": "b<T>();\n", "c.tsx": "<c />;\n" };
+      const files = {
+        "eslint.config.js": config({ "no-eval": "error" }),
+        "a.js": "a();\n",
+        "b.ts": "b<T>();\n",
+        "c.tsx": "<c />;\n",
+      };
       const { stderr, exitCode } = await lint(files, ["--timing"]);
       expect(stderr).toContain("without a filter of the names they mention: 0 files");
       expect(exitCode).toBe(0);

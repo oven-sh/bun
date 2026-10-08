@@ -97,9 +97,11 @@ impl<'a> ExprFields<'a> for Expr<'a> {
     #[inline]
     fn expression(self) -> Option<Expr<'a>> {
         match self.tag() {
-            ExprTag::As | ExprTag::Satisfies | ExprTag::AsConst | ExprTag::NonNull | ExprTag::Instantiation => {
-                self.operand()
-            }
+            ExprTag::As
+            | ExprTag::Satisfies
+            | ExprTag::AsConst
+            | ExprTag::NonNull
+            | ExprTag::Instantiation => self.operand(),
             ExprTag::Index => self.index(),
             _ => None,
         }

@@ -108,7 +108,10 @@ fn link_len(text: &[u8]) -> usize {
     let Some(rest) = text.strip_prefix(b"{@link") else {
         return 0;
     };
-    let rest = rest.strip_prefix(b"code").or_else(|| rest.strip_prefix(b"plain")).unwrap_or(rest);
+    let rest = rest
+        .strip_prefix(b"code")
+        .or_else(|| rest.strip_prefix(b"plain"))
+        .unwrap_or(rest);
     if rest.first().is_some_and(|&next| is_identifier_part(next)) {
         return 0;
     }
@@ -154,14 +157,19 @@ fn parse_tags(comment: &[u8]) -> Tags {
     for (index, &start) in starts.iter().enumerate() {
         let end = starts.get(index + 1).copied().unwrap_or(text.len());
         let tag = &text[start + 1..end];
-        let name_len = tag.iter().take_while(|&&c| is_identifier_part(c) || c == b'-').count();
+        let name_len = tag
+            .iter()
+            .take_while(|&&c| is_identifier_part(c) || c == b'-')
+            .count();
         let (name, rest) = tag.split_at(name_len);
         tags.has_any = true;
         match name {
             b"deprecated" if tags.deprecated.is_none() => tags.deprecated = Some(tag_comment(rest)),
             b"inheritDoc" | b"inheritdoc" => tags.has_inherit_doc = true,
             b"typedef" | b"callback" => tags.has_typedef = true,
-            b"param" | b"arg" | b"argument" | b"return" | b"returns" => tags.has_parameter_or_return = true,
+            b"param" | b"arg" | b"argument" | b"return" | b"returns" => {
+                tags.has_parameter_or_return = true
+            }
             _ => {}
         }
     }
@@ -220,7 +228,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         // `getSingleVariableOfVariableStatement`
         let single_variable = |statement: Node| match hir.data(statement) {
             NodeData::Stmt(s) => match hir[s].kind {
-                StmtKind::Var(declarations) => declarations.iter().next().map_or(Node::NONE, |first| hir.node(first)),
+                StmtKind::Var(declarations) => declarations
+                    .iter()
+                    .next()
+                    .map_or(Node::NONE, |first| hir.node(first)),
                 _ => Node::NONE,
             },
             _ => Node::NONE,
@@ -239,7 +250,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             return Node::NONE;
         }
         let is_at_parent = match hir.kind(parent) {
-            Kind::PropertyAssignment | Kind::ExportAssignment | Kind::PropertyDeclaration | Kind::ReturnStatement => true,
+            Kind::PropertyAssignment
+            | Kind::ExportAssignment
+            | Kind::PropertyDeclaration
+            | Kind::ReturnStatement => true,
             Kind::ExpressionStatement => hir.kind(node) == Kind::PropertyAccessExpression,
             Kind::ModuleDeclaration => hir.kind(node) == Kind::ModuleDeclaration,
             _ => false,
@@ -258,7 +272,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         if great_grandparent.is_none() || great_grandparent == Node::FILE {
             return Node::NONE;
         }
-        if single_variable(great_grandparent).is_some() || single_initializer(great_grandparent) == node {
+        if single_variable(great_grandparent).is_some()
+            || single_initializer(great_grandparent) == node
+        {
             return great_grandparent;
         }
         Node::NONE
@@ -306,7 +322,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     /// `getJsDocTagsOfDeclarations(declarations, checker)`
-    fn js_doc_tags_of_declarations(&mut self, declarations: &[NodeRef], name: &[u8], depth: u32) -> Tags {
+    fn js_doc_tags_of_declarations(
+        &mut self,
+        declarations: &[NodeRef],
+        name: &[u8],
+        depth: u32,
+    ) -> Tags {
         // `getJsDocTagsFromDeclarations`
         let mut tags = Tags::default();
         for (index, &declaration) in declarations.iter().enumerate() {
@@ -324,7 +345,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
         // Those that a member inherits come first.
         for &declaration in declarations {
-            if let Some(mut inherited) = self.js_doc_tags_of_base_of_declaration(declaration, name, depth) {
+            if let Some(mut inherited) =
+                self.js_doc_tags_of_base_of_declaration(declaration, name, depth)
+            {
                 inherited.add(tags);
                 tags = inherited;
             }
@@ -333,7 +356,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     /// `findBaseOfDeclaration`
-    fn js_doc_tags_of_base_of_declaration(&mut self, declaration: NodeRef, name: &[u8], depth: u32) -> Option<Tags> {
+    fn js_doc_tags_of_base_of_declaration(
+        &mut self,
+        declaration: NodeRef,
+        name: &[u8],
+        depth: u32,
+    ) -> Option<Tags> {
         let (hir, at) = self.valid(declaration)?;
         let file = declaration.file;
         let parent = hir.parent(at);
@@ -341,7 +369,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Kind::Constructor => hir.parent(parent),
             _ => parent,
         };
-        if !matches!(hir.kind(container), Kind::ClassDeclaration | Kind::ClassExpression | Kind::InterfaceDeclaration) {
+        if !matches!(
+            hir.kind(container),
+            Kind::ClassDeclaration | Kind::ClassExpression | Kind::InterfaceDeclaration
+        ) {
             return None;
         }
         let is_static = hir.flags(at).contains(Flags::STATIC);
@@ -384,19 +415,25 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn deprecation_of_symbol(&mut self, symbol: SymbolRef) -> Option<&'c [u8]> {
         let declarations = self.declarations(symbol);
         let name = self.symbol_info(symbol).name;
-        let reason = self.js_doc_tags_of_declarations(declarations, name, 0).deprecated?;
+        let reason = self
+            .js_doc_tags_of_declarations(declarations, name, 0)
+            .deprecated?;
         Some(self.list(&reason))
     }
 
     /// The same of `signature.getJsDocTags()`.
     pub fn deprecation_of_signature(&mut self, signature: SigId) -> Option<&'c [u8]> {
         let declaration = self.signature_info(signature).declaration?;
-        let name = self.valid(declaration).map_or(Atom::NONE, |(hir, at)| hir.text(hir.name(at)));
+        let name = self
+            .valid(declaration)
+            .map_or(Atom::NONE, |(hir, at)| hir.text(hir.name(at)));
         let name: &[u8] = match name {
             Atom::NONE => b"",
             name => self.c.atoms().bytes(name),
         };
-        let reason = self.js_doc_tags_of_declarations(&[declaration], name, 0).deprecated?;
+        let reason = self
+            .js_doc_tags_of_declarations(&[declaration], name, 0)
+            .deprecated?;
         Some(self.list(&reason))
     }
 }

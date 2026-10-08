@@ -477,7 +477,12 @@ emit(
   const TONES = [0x1f3fb, 0x1f3fc, 0x1f3fd, 0x1f3fe, 0x1f3ff];
 
   const basic = has("Basic_Emoji");
-  emit("The code points that are a Basic_Emoji: a list as in `BINARY_TOGGLES`.", "EMOJI_BASIC", "u32", where(cp => checked(basic, cp)));
+  emit(
+    "The code points that are a Basic_Emoji: a list as in `BINARY_TOGGLES`.",
+    "EMOJI_BASIC",
+    "u32",
+    where(cp => checked(basic, cp)),
+  );
   emit(
     "The code points that are a Basic_Emoji when U+FE0F follows.",
     "EMOJI_BASIC_WITH_VARIATION_SELECTOR",
@@ -507,7 +512,9 @@ emit(
     "Bit `j` of entry `i` is set if the regional indicators `i` and `j` are an RGI_Emoji_Flag_Sequence.",
     "EMOJI_FLAGS",
     "u32",
-    letters.map(a => `0x${letters.reduce((mask, b, j) => (checked(flagged, a, b) ? mask | (1 << j) : mask), 0).toString(16)}`),
+    letters.map(
+      a => `0x${letters.reduce((mask, b, j) => (checked(flagged, a, b) ? mask | (1 << j) : mask), 0).toString(16)}`,
+    ),
   );
 
   const tagged = has("RGI_Emoji_Tag_Sequence");
@@ -541,7 +548,8 @@ emit(
   const data: number[] = [];
   for (const [shape, all] of groups) {
     const tones = shape.split(" ").filter(part => part === "*").length;
-    const sequences = all.length === 5 ** tones ? [shape.split(" ").map(part => (part === "*" ? -1 : Number(part)))] : all;
+    const sequences =
+      all.length === 5 ** tones ? [shape.split(" ").map(part => (part === "*" ? -1 : Number(part)))] : all;
     for (const cps of sequences) data.push(cps.length, ...cps.map(cp => (cp < 0 ? ANY_TONE : letter(cp))));
   }
   if (alphabet.length >= ANY_TONE) throw new Error("too many code points in RGI_Emoji_ZWJ_Sequence");

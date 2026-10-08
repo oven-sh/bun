@@ -117,7 +117,11 @@ fn single_line_pragma(
 
 /// `extractPragmas` for the `/* */` comment `text`. The last of two identical pragmas wins
 /// (`GetPragmaFromSourceFile`).
-fn multi_line_pragmas(text: &[u8], intern: &mut dyn FnMut(&[u8]) -> Atom, pragmas: &mut JsxPragmas) {
+fn multi_line_pragmas(
+    text: &[u8],
+    intern: &mut dyn FnMut(&[u8]) -> Atom,
+    pragmas: &mut JsxPragmas,
+) {
     let text = text.strip_suffix(b"*/").unwrap_or(text);
     let mut pos = 2;
     // `skipTo`

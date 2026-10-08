@@ -93,7 +93,9 @@ impl<'a> File<'a> {
     /// The one of [`File::globals_in_comments`] that is called `name`.
     pub fn global_in_comments(&'a self, name: &[u8]) -> Option<&'a CommentGlobal> {
         let variables = self.comment_variables()?;
-        variables.globals.get(*variables.global_by_name.get(name)? as usize)
+        variables
+            .globals
+            .get(*variables.global_by_name.get(name)? as usize)
     }
 
     /// The names in the `/* exported */` comments of the file.
@@ -103,6 +105,7 @@ impl<'a> File<'a> {
 
     /// Whether `name` is one of [`File::exported_in_comments`].
     pub fn is_exported_in_comments(&'a self, name: &[u8]) -> bool {
-        self.comment_variables().is_some_and(|it| it.is_exported.contains(name))
+        self.comment_variables()
+            .is_some_and(|it| it.is_exported.contains(name))
     }
 }

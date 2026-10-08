@@ -31,8 +31,7 @@ pub(crate) enum Format {
 }
 
 impl Format {
-    pub(crate) const NAMES: &'static str =
-        "stylish, pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif";
+    pub(crate) const NAMES: &'static str = "stylish, pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif";
 
     /// `is_oxlint`: the configuration is oxlint's, so the names are too.
     pub(crate) fn by_name(name: &[u8], is_oxlint: bool) -> Option<Format> {
@@ -56,7 +55,14 @@ impl Format {
 
     /// Whether it reads [`FileResult::text`].
     pub(crate) fn reads_text(self) -> bool {
-        matches!(self, Format::Json | Format::JsonWithMetadata | Format::Pretty | Format::Agent | Format::OxlintJson)
+        matches!(
+            self,
+            Format::Json
+                | Format::JsonWithMetadata
+                | Format::Pretty
+                | Format::Agent
+                | Format::OxlintJson
+        )
     }
 
     /// Whether it prints [`LintMessage::suppressions`](bun_lint::linter::LintMessage::suppressions).
@@ -66,7 +72,14 @@ impl Format {
 
     /// Whether it prints fixes or suggestions, or counts what can be fixed.
     pub(crate) fn reads_fixes(self) -> bool {
-        matches!(self, Format::Stylish | Format::Json | Format::JsonWithMetadata | Format::Pretty | Format::Agent)
+        matches!(
+            self,
+            Format::Stylish
+                | Format::Json
+                | Format::JsonWithMetadata
+                | Format::Pretty
+                | Format::Agent
+        )
     }
 }
 
@@ -106,7 +119,8 @@ pub(crate) fn format(format: Format, results: &[FileResult], meta: &Meta) -> Vec
         Format::Sarif => oxlint::write_sarif(&mut out, results, meta),
     }
     let is_for_people = matches!(format, Format::Stylish | Format::Pretty | Format::Unix);
-    if meta.github_annotations && is_for_people && results.iter().any(|it| !it.messages.is_empty()) {
+    if meta.github_annotations && is_for_people && results.iter().any(|it| !it.messages.is_empty())
+    {
         out.push(b'\n');
         excerpt::write_github(&mut out, results, meta);
     }

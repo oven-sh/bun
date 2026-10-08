@@ -101,7 +101,9 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 self.name_of_anonymous_symbol(*file, *declaration),
                 vec![(*file, *declaration)],
             ),
-            Found::Undeclared(undeclared) => (self.name_of_undeclared_symbol(undeclared), Vec::new()),
+            Found::Undeclared(undeclared) => {
+                (self.name_of_undeclared_symbol(undeclared), Vec::new())
+            }
             Found::Prototype(class) => (
                 self.qualified_by_parent(
                     Some(PropertyParent::Symbol(*class)),
@@ -185,10 +187,12 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             Declaration::Expression(e) => self.name_of_object_literal(file, e),
             Declaration::TypeNode(node) => self.name_of_type_literal(file, node),
             // `DeclarationNameToString`
-            Declaration::ThisParameter(function) => match hir[hir[hir[function].this_param].pat].kind {
-                PatKind::Ident(name) => self.c.atoms().text(name).to_string(),
-                _ => "(Missing)".to_owned(),
-            },
+            Declaration::ThisParameter(function) => {
+                match hir[hir[hir[function].this_param].pat].kind {
+                    PatKind::Ident(name) => self.c.atoms().text(name).to_string(),
+                    _ => "(Missing)".to_owned(),
+                }
+            }
             Declaration::Bound(_) => String::new(),
         }
     }

@@ -22,11 +22,19 @@ use std::time::Instant;
 
 /// The names of the rules that a configuration of oxlint turns on, as `(plugin, name)`.
 fn rules_of_config(path: &str) -> Vec<(Plugin, String)> {
-    let json = std::fs::read(path).ok().and_then(|it| bun_lint::json::parse(&it)).expect("the configuration");
-    let rules = json.get(b"rules").and_then(Json::as_object).unwrap_or_default();
+    let json = std::fs::read(path)
+        .ok()
+        .and_then(|it| bun_lint::json::parse(&it))
+        .expect("the configuration");
+    let rules = json
+        .get(b"rules")
+        .and_then(Json::as_object)
+        .unwrap_or_default();
     (rules.iter())
         .map(|(id, _)| match String::from_utf8_lossy(id).into_owned() {
-            id if id.starts_with("typescript/") => (Plugin::TypeScript, id["typescript/".len()..].to_owned()),
+            id if id.starts_with("typescript/") => {
+                (Plugin::TypeScript, id["typescript/".len()..].to_owned())
+            }
             id => (Plugin::Eslint, id),
         })
         .collect()
@@ -41,8 +49,13 @@ fn nanos_of<'a>(file: &'a File<'a>, rules: &[Enabled]) -> (u64, u64) {
 
 fn rules(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
-    let number = |name: &str, default: usize| flag(name).and_then(|n| n.parse().ok()).unwrap_or(default);
-    let (threads, repeat, top) = (number("--threads=", 8), number("--repeat=", 3), number("--top=", usize::MAX));
+    let number =
+        |name: &str, default: usize| flag(name).and_then(|n| n.parse().ok()).unwrap_or(default);
+    let (threads, repeat, top) = (
+        number("--threads=", 8),
+        number("--repeat=", 3),
+        number("--top=", usize::MAX),
+    );
     let only: Option<Vec<&str>> = flag("--rules=").map(|it| it.split(',').collect());
     let of_config = flag("--config=").map(rules_of_config);
     let mut paths = Vec::new();
@@ -50,18 +63,40 @@ fn rules(args: &[String]) {
         crate::collect(std::path::Path::new(arg), &mut paths);
     }
     let files: Vec<(String, Vec<u8>)> = (paths.iter())
-        .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
+        .filter_map(|path| {
+            Some((
+                path.to_string_lossy().into_owned(),
+                std::fs::read(path).ok()?,
+            ))
+        })
         .collect();
     let built: Vec<_> = crate::all_rules()
         .filter(|it| !it.meta.requires_types)
-        .filter(|it| only.as_ref().is_none_or(|only| only.contains(&it.meta.name)))
         .filter(|it| {
-            (of_config.as_ref()).is_none_or(|all| all.iter().any(|(plugin, name)| *plugin == it.meta.plugin && name == it.meta.name))
+            only.as_ref()
+                .is_none_or(|only| only.contains(&it.meta.name))
+        })
+        .filter(|it| {
+            (of_config.as_ref()).is_none_or(|all| {
+                all.iter()
+                    .any(|(plugin, name)| *plugin == it.meta.plugin && name == it.meta.name)
+            })
         })
         .map(|it| (it.build)(&Options::default()))
         .collect();
-    let enabled: Vec<Enabled> = built.iter().map(|rule| Enabled { rule: &**rule, severity: Severity::Error }).collect();
-    let zeros = || enabled.iter().map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
+    let enabled: Vec<Enabled> = built
+        .iter()
+        .map(|rule| Enabled {
+            rule: &**rule,
+            severity: Severity::Error,
+        })
+        .collect();
+    let zeros = || {
+        enabled
+            .iter()
+            .map(|_| AtomicU64::new(0))
+            .collect::<Vec<_>>()
+    };
     let (cold, warm, reports) = (zeros(), zeros(), zeros());
     let (together, front_end) = (AtomicU64::new(0), AtomicU64::new(0));
     let nodes: [AtomicU64; 4] = Default::default();
@@ -93,7 +128,12 @@ fn rules(args: &[String]) {
         let mut recycled = Recycled::of_this_thread();
         let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);
         front_end.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
-        for (count, len) in nodes.iter().zip([hir.exprs.len(), hir.stmts.len(), hir.types.len(), hir.pats.len()]) {
+        for (count, len) in nodes.iter().zip([
+            hir.exprs.len(),
+            hir.stmts.len(),
+            hir.types.len(),
+            hir.pats.len(),
+        ]) {
             count.fetch_add(len as u64, Relaxed);
         }
         // On a file of which nothing is computed yet, then once more: how long each takes, and how much is reported.
@@ -105,7 +145,10 @@ fn rules(args: &[String]) {
         if hir.has_errors || hir.has_parse_diagnostics {
             return;
         }
-        together.fetch_add((0..repeat).map(|_| measure(&enabled).0).min().unwrap_or(0), Relaxed);
+        together.fetch_add(
+            (0..repeat).map(|_| measure(&enabled).0).min().unwrap_or(0),
+            Relaxed,
+        );
         for (at, rule) in enabled.iter().enumerate() {
             let rule = std::slice::from_ref(rule);
             let (mut least_cold, mut least_warm, mut reported) = (u64::MAX, u64::MAX, 0);
@@ -123,11 +166,24 @@ fn rules(args: &[String]) {
     let ms = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e6;
     let mut table: Vec<usize> = (0..enabled.len()).collect();
     table.sort_by(|&a, &b| ms(&cold[b]).total_cmp(&ms(&cold[a])));
-    println!("     cold      warm   reports  rule (ms of CPU, {} files)", files.len());
+    println!(
+        "     cold      warm   reports  rule (ms of CPU, {} files)",
+        files.len()
+    );
     for &at in table.iter().take(top) {
         let meta = enabled[at].rule.meta();
-        let prefix = if meta.plugin == Plugin::Eslint { "" } else { "ts/" };
-        println!("{:9.1} {:9.1} {:9}  {prefix}{}", ms(&cold[at]), ms(&warm[at]), reports[at].load(Relaxed), meta.name);
+        let prefix = if meta.plugin == Plugin::Eslint {
+            ""
+        } else {
+            "ts/"
+        };
+        println!(
+            "{:9.1} {:9.1} {:9}  {prefix}{}",
+            ms(&cold[at]),
+            ms(&warm[at]),
+            reports[at].load(Relaxed),
+            meta.name
+        );
     }
     println!(
         "{} rules: together {:.1} ms, sum of cold {:.1} ms, sum of warm {:.1} ms; parse + bind {:.1} ms; {:?} expressions, statements, types, patterns",
@@ -156,7 +212,8 @@ fn positions(args: &[String]) {
                 expected.push((at as u32, line, column));
                 column += c.len_utf16() as u32;
             }
-            let is_break = matches!(c, '\n' | '\u{2028}' | '\u{2029}') || c == '\r' && characters.peek().is_none_or(|it| it.1 != '\n');
+            let is_break = matches!(c, '\n' | '\u{2028}' | '\u{2029}')
+                || c == '\r' && characters.peek().is_none_or(|it| it.1 != '\n');
             if is_break {
                 (line, column) = (line + 1, 0);
             }
@@ -165,7 +222,10 @@ fn positions(args: &[String]) {
         let orders: [(&str, Box<dyn Fn(usize) -> usize>); 3] = [
             ("forward", Box::new(|i| i)),
             ("backward", Box::new(|i| expected.len() - 1 - i)),
-            ("scattered", Box::new(|i| i.wrapping_mul(2_654_435_761) % expected.len())),
+            (
+                "scattered",
+                Box::new(|i| i.wrapping_mul(2_654_435_761) % expected.len()),
+            ),
         ];
         for (name, order) in &orders {
             crate::linter_cmd::with_file(path, &code, &language, |file| {
@@ -173,14 +233,23 @@ fn positions(args: &[String]) {
                 for i in 0..expected.len() {
                     let (offset, line, column) = expected[order(i)];
                     let position = file.position(offset);
-                    if (position.line, position.column) != (line, column) || file.offset(position) != offset {
+                    if (position.line, position.column) != (line, column)
+                        || file.offset(position) != offset
+                    {
                         wrong += 1;
                         if wrong <= 10 {
-                            println!("{path}: {offset}: {line}:{column} expected, {position:?}, which is at {}", file.offset(position));
+                            println!(
+                                "{path}: {offset}: {line}:{column} expected, {position:?}, which is at {}",
+                                file.offset(position)
+                            );
                         }
                     }
                 }
-                println!("{path}: {} positions {name}: {:.1} ms", expected.len(), started.elapsed().as_secs_f64() * 1e3);
+                println!(
+                    "{path}: {} positions {name}: {:.1} ms",
+                    expected.len(),
+                    started.elapsed().as_secs_f64() * 1e3
+                );
             });
         }
     }

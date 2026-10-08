@@ -37,11 +37,14 @@ describe.concurrent("bun format does what oxfmt does", () => {
         const after = readFileSync(join(root, name), "utf8");
         return after === text ? [] : [[name, after]];
       });
-      const named = (stdout + stderr).split("\n").flatMap(line => (line.startsWith("[warn] ") ? [line.slice(7)] : [line]));
+      const named = (stdout + stderr)
+        .split("\n")
+        .flatMap(line => (line.startsWith("[warn] ") ? [line.slice(7)] : [line]));
       expect({
         changed: Object.fromEntries(changed),
         listed: it.listed && it.listed.filter(name => named.includes(name)),
-        others: it.listed && texts.map(([name]) => name).filter(name => named.includes(name) && !it.listed.includes(name)),
+        others:
+          it.listed && texts.map(([name]) => name).filter(name => named.includes(name) && !it.listed.includes(name)),
         stdout: it.stdout === undefined ? undefined : stdout,
         exitCode,
       }).toEqual({

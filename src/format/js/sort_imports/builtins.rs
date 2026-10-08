@@ -73,17 +73,15 @@ static WITH_OR_WITHOUT_PREFIX: [&[u8]; 68] = [
 ];
 
 /// Those that only exist with `node:` before them. Sorted.
-static WITH_PREFIX: [&[u8]; 4] = [
-    b"sea",
-    b"sqlite",
-    b"test",
-    b"test/reporters",
-];
+static WITH_PREFIX: [&[u8]; 4] = [b"sea", b"sqlite", b"test", b"test/reporters"];
 
 /// Whether `specifier` is a module of Node.js, with or without `node:`.
 pub(super) fn is_builtin_module(specifier: &[u8]) -> bool {
     match specifier.strip_prefix(b"node:") {
-        Some(name) => WITH_OR_WITHOUT_PREFIX.binary_search(&name).is_ok() || WITH_PREFIX.binary_search(&name).is_ok(),
+        Some(name) => {
+            WITH_OR_WITHOUT_PREFIX.binary_search(&name).is_ok()
+                || WITH_PREFIX.binary_search(&name).is_ok()
+        }
         None => WITH_OR_WITHOUT_PREFIX.binary_search(&specifier).is_ok(),
     }
 }

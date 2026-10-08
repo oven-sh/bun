@@ -37,7 +37,9 @@ impl<'a> ObjectPatternLike<'a> {
         matches!(self, Self::ObjectPattern(..))
             && match parent {
                 AstNodes::FormalParameter(_) => true,
-                AstNodes::AssignmentPattern(_) => matches!(parent.parent(), AstNodes::FormalParameter(_)),
+                AstNodes::AssignmentPattern(_) => {
+                    matches!(parent.parent(), AstNodes::FormalParameter(_))
+                }
                 _ => false,
             }
     }
@@ -60,16 +62,22 @@ impl<'a> ObjectPatternLike<'a> {
                     }
                     _ => false,
                 };
-                !is_exempt && props.iter().any(|property| {
-                    !property.is_rest()
-                        && property.default().is_none()
-                        && matches!(property.value().kind(), PatKind::Object(_) | PatKind::Array(_))
-                })
+                !is_exempt
+                    && props.iter().any(|property| {
+                        !property.is_rest()
+                            && property.default().is_none()
+                            && matches!(
+                                property.value().kind(),
+                                PatKind::Object(_) | PatKind::Array(_)
+                            )
+                    })
             }
             Self::ObjectAssignmentTarget(_, props) => props.iter().any(|property| {
                 property.kind() == PropKind::Init
-                    && (property.value())
-                        .is_some_and(|it| matches!(it.kind(), ExprKind::Object(_) | ExprKind::Array(_)) && is_assignment_target(it))
+                    && (property.value()).is_some_and(|it| {
+                        matches!(it.kind(), ExprKind::Object(_) | ExprKind::Array(_))
+                            && is_assignment_target(it)
+                    })
             }),
         }
     }
@@ -78,7 +86,10 @@ impl<'a> ObjectPatternLike<'a> {
         match self {
             Self::ObjectPattern(..) => matches!(self.parent(), AstNodes::VariableDeclarator(_)),
             Self::ObjectAssignmentTarget(..) => {
-                matches!(self.parent(), AstNodes::AssignmentExpression(_) | AstNodes::VariableDeclarator(_))
+                matches!(
+                    self.parent(),
+                    AstNodes::AssignmentExpression(_) | AstNodes::VariableDeclarator(_)
+                )
             }
         }
     }
@@ -102,7 +113,9 @@ impl<'a> ObjectPatternLike<'a> {
         // Nothing can follow a rest element, not even a comma.
         let has_trailing_rest = match self {
             Self::ObjectPattern(_, props) => props.last().is_some_and(PatProp::is_rest),
-            Self::ObjectAssignmentTarget(_, props) => props.last().is_some_and(|it| it.kind() == PropKind::Spread),
+            Self::ObjectAssignmentTarget(_, props) => {
+                props.last().is_some_and(|it| it.kind() == PropKind::Spread)
+            }
         };
         let trailing_separator = match has_trailing_rest {
             true => TrailingSeparator::Disallowed,
@@ -135,9 +148,14 @@ impl<'a> Format<'a> for ObjectPatternLike<'a> {
 
         write!(f, "{");
         match self.layout(f) {
-            ObjectPatternLayout::Empty => write!(f, format_dangling_comments(self.span()).with_soft_block_indent()),
+            ObjectPatternLayout::Empty => write!(
+                f,
+                format_dangling_comments(self.span()).with_soft_block_indent()
+            ),
             ObjectPatternLayout::Inline => write!(f, format_properties),
-            ObjectPatternLayout::Group { expand } => write!(f, group(&format_properties).should_expand(expand)),
+            ObjectPatternLayout::Group { expand } => {
+                write!(f, group(&format_properties).should_expand(expand))
+            }
         }
         write!(f, "}");
     }

@@ -104,7 +104,9 @@ impl<'a> Program<'a> {
 
     #[inline]
     fn slice(&self, start: u32, end: u32) -> &'a [u8] {
-        self.text.get(start as usize..end.max(start) as usize).unwrap_or_default()
+        self.text
+            .get(start as usize..end.max(start) as usize)
+            .unwrap_or_default()
     }
 
     fn from(&self, start: u32) -> &'a [u8] {
@@ -117,7 +119,9 @@ impl<'a> Program<'a> {
 
     /// Whether `e` is all there is between the braces of a `{e}` in JSX.
     fn is_in_braces(&self, e: ExprId) -> bool {
-        self.jsx_expressions.binary_search_by_key(&e.0, |it| it.0.0).is_ok()
+        self.jsx_expressions
+            .binary_search_by_key(&e.0, |it| it.0.0)
+            .is_ok()
     }
 
     /// The end of `e` with the parentheses around it.
@@ -142,19 +146,33 @@ impl<'a> Program<'a> {
     }
 
     fn param_modifiers(&self, param: ParamId) -> Span<ModifierId> {
-        self.modifiers_of_params.get(param.idx()).copied().unwrap_or(Span::EMPTY)
+        self.modifiers_of_params
+            .get(param.idx())
+            .copied()
+            .unwrap_or(Span::EMPTY)
     }
 
     fn prop_modifiers(&self, prop: PropId) -> Span<ModifierId> {
         if self.modifiers_of_props.is_empty() {
             return Span::EMPTY;
         }
-        let found = self.modifiers_of_props.binary_search_by_key(&prop.0, |it| it.0.0);
-        found.ok().and_then(|at| self.modifiers_of_props.get(at)).map_or(Span::EMPTY, |it| it.1)
+        let found = self
+            .modifiers_of_props
+            .binary_search_by_key(&prop.0, |it| it.0.0);
+        found
+            .ok()
+            .and_then(|at| self.modifiers_of_props.get(at))
+            .map_or(Span::EMPTY, |it| it.1)
     }
 
     fn is_empty_statement(&self, id: u32) -> bool {
-        matches!(self.stmts.get(id as usize), Some(Stmt { kind: StmtKind::Empty, .. }))
+        matches!(
+            self.stmts.get(id as usize),
+            Some(Stmt {
+                kind: StmtKind::Empty,
+                ..
+            })
+        )
     }
 
     /// Whether the statement is a string that is not in parentheses.
@@ -165,7 +183,13 @@ impl<'a> Program<'a> {
     }
 
     fn is_import(&self, id: u32) -> bool {
-        matches!(self.stmts.get(id as usize), Some(Stmt { kind: StmtKind::Import(_), .. }))
+        matches!(
+            self.stmts.get(id as usize),
+            Some(Stmt {
+                kind: StmtKind::Import(_),
+                ..
+            })
+        )
     }
 
     /// The operator of `e`, if that is `&&`, `||` or `??`.
@@ -187,7 +211,11 @@ impl<'a> Program<'a> {
         let mut rest = vec![e];
         while let Some(next) = rest.pop() {
             match self.exprs.get(next.idx()).map(|it| it.kind) {
-                Some(ExprKind::Binary { op: it, left, right }) if it == op => rest.extend([right, left]),
+                Some(ExprKind::Binary {
+                    op: it,
+                    left,
+                    right,
+                }) if it == op => rest.extend([right, left]),
                 _ => out.push(next),
             }
         }
@@ -250,9 +278,16 @@ pub fn compare<'f>(
 ) -> Result<(), Difference> {
     if after.has_syntax_errors {
         let at = after.diagnostics.first().map_or(0, |it| it.start);
-        return Err(Difference::new("a syntax error", (before.text, 0), (after.text, at)));
+        return Err(Difference::new(
+            "a syntax error",
+            (before.text, 0),
+            (after.text, at),
+        ));
     }
-    let imports_can_move = options.sort_imports.as_deref().is_some_and(|it| it.is_applied_by_format());
+    let imports_can_move = options
+        .sort_imports
+        .as_deref()
+        .is_some_and(|it| it.is_applied_by_format());
     scratch.atoms.clear();
     scratch.operands.0.clear();
     scratch.operands.1.clear();
@@ -268,7 +303,8 @@ pub fn compare<'f>(
         imports_can_move,
         difference: None,
     };
-    let is_same_by_id = !imports_can_move && by_id.program().and_then(|()| by_id.all_nodes()).is_ok();
+    let is_same_by_id =
+        !imports_can_move && by_id.program().and_then(|()| by_id.all_nodes()).is_ok();
     let mut walk = Walk::<false> {
         a: before,
         b: after,
@@ -278,7 +314,11 @@ pub fn compare<'f>(
         imports_can_move,
         difference: None,
     };
-    match if is_same_by_id { Ok(()) } else { walk.program() } {
+    match if is_same_by_id {
+        Ok(())
+    } else {
+        walk.program()
+    } {
         Ok(()) => super::comments::compare(
             file,
             (before.text, before.comments),
@@ -286,8 +326,13 @@ pub fn compare<'f>(
             options.jsdoc.is_some(),
         ),
         Err(()) => {
-            let (what, at_before, at_after) = walk.difference.unwrap_or(("the programs differ", 0, 0));
-            Err(Difference::new(what, (before.text, at_before), (after.text, at_after)))
+            let (what, at_before, at_after) =
+                walk.difference.unwrap_or(("the programs differ", 0, 0));
+            Err(Difference::new(
+                what,
+                (before.text, at_before),
+                (after.text, at_after),
+            ))
         }
     }
 }
@@ -307,7 +352,14 @@ impl Walk<'_, '_, true> {
     /// Compares each expression, statement, type and pattern with the one that has the same id.
     fn all_nodes(&mut self) -> Same {
         let (a, b) = (self.a, self.b);
-        let lengths = |it: &Program<'_>| [it.exprs.len(), it.stmts.len(), it.types.len(), it.pats.len()];
+        let lengths = |it: &Program<'_>| {
+            [
+                it.exprs.len(),
+                it.stmts.len(),
+                it.types.len(),
+                it.pats.len(),
+            ]
+        };
         self.check(lengths(a) == lengths(b) && a.ids == b.ids, "")?;
         for (id, (x, y)) in (0..).map(ExprId).zip(a.exprs.iter().zip(b.exprs)) {
             self.expr_kind((id, x), (id, y))?;
@@ -319,7 +371,10 @@ impl Walk<'_, '_, true> {
         for (id, (x, y)) in (0..).map(TypeNodeId).zip(a.types.iter().zip(b.types)) {
             self.type_kind((id, x.kind), (id, y.kind))?;
         }
-        a.pats.iter().zip(b.pats).try_for_each(|(x, y)| self.pat_kind(x.kind, y.kind))
+        a.pats
+            .iter()
+            .zip(b.pats)
+            .try_for_each(|(x, y)| self.pat_kind(x.kind, y.kind))
     }
 }
 
@@ -338,7 +393,11 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// `Program::ids` are the same.
     #[inline]
     fn is_same_list<T>(a: IdList<T>, b: IdList<T>) -> Same {
-        if a.len == b.len && (a.start == b.start || a.len == 0) { Ok(()) } else { Err(()) }
+        if a.len == b.len && (a.start == b.start || a.len == 0) {
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     /// For a difference whose place is not known. The caller that knows one fills it in.
@@ -413,7 +472,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 
     fn entity_name(&mut self, a: Span<NameId>, b: Span<NameId>) -> Same {
-        let (xs, ys) = (self.a.names.get(a.range()).unwrap_or_default(), self.b.names.get(b.range()).unwrap_or_default());
+        let (xs, ys) = (
+            self.a.names.get(a.range()).unwrap_or_default(),
+            self.b.names.get(b.range()).unwrap_or_default(),
+        );
         self.check(xs.len() == ys.len(), "the number of names")?;
         for (x, y) in xs.iter().zip(ys) {
             if !self.is_same_atom(x.text, y.text) {
@@ -426,7 +488,12 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// Allowed: a name gets or loses its quotes, and a number is written in another way. The text of
     /// the name is the same then.
     fn name_kind(&mut self, a: NameKind, b: NameKind) -> Same {
-        let is_plain = |it| matches!(it, NameKind::Identifier | NameKind::StringLiteral | NameKind::NumericLiteral);
+        let is_plain = |it| {
+            matches!(
+                it,
+                NameKind::Identifier | NameKind::StringLiteral | NameKind::NumericLiteral
+            )
+        };
         self.check(a == b || (is_plain(a) && is_plain(b)), "the kind of a name")
     }
 
@@ -436,12 +503,18 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             // The tree has no name for a `bigint`.
             (PropKey::None, PropKey::None) => {
                 fn word(text: &[u8]) -> &[u8] {
-                    let len = text.iter().take_while(|it| it.is_ascii_alphanumeric() || **it == b'_').count();
+                    let len = text
+                        .iter()
+                        .take_while(|it| it.is_ascii_alphanumeric() || **it == b'_')
+                        .count();
                     text.get(..len).unwrap_or_default()
                 }
                 let (x, y) = (self.a.from(at.0), self.b.from(at.1));
                 let is_number = |text: &[u8]| text.first().is_some_and(u8::is_ascii_digit);
-                self.check((!is_number(x) && !is_number(y)) || word(x).eq_ignore_ascii_case(word(y)), "a key")
+                self.check(
+                    (!is_number(x) && !is_number(y)) || word(x).eq_ignore_ascii_case(word(y)),
+                    "a key",
+                )
             }
             (PropKey::Name(x), PropKey::Name(y)) => {
                 self.atom(x, y, "a key")?;
@@ -459,7 +532,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     #[inline]
     fn name_as_written(&mut self, at: (u32, u32)) -> Same {
         let is_plain = |program: &Program<'_>, at: u32| {
-            program.text.get(at as usize).is_some_and(|it| it.is_ascii_alphabetic() || matches!(it, b'_' | b'$'))
+            program
+                .text
+                .get(at as usize)
+                .is_some_and(|it| it.is_ascii_alphabetic() || matches!(it, b'_' | b'$'))
         };
         match is_plain(self.a, at.0) && is_plain(self.b, at.1) {
             true => Ok(()),
@@ -473,15 +549,22 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             Some(b'[') => skip_trivia(program.text, at + 1),
             _ => at,
         };
-        let (x, y) = (self.a.from(inside(self.a, at.0)), self.b.from(inside(self.b, at.1)));
+        let (x, y) = (
+            self.a.from(inside(self.a, at.0)),
+            self.b.from(inside(self.b, at.1)),
+        );
         // What is between the quotes is what is written without them. Allowed: `.5` is `"0.5"`.
         let is_without_quotes = |string: &[u8], other: &[u8]| {
             let content = string.get(1..string.len() - 1).unwrap_or_default();
             if let Some(number) = number_at_start(other) {
                 return *content == *format_trimmed_number(number);
             }
-            let is_part = |it: &u8| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$' | b'.') || !it.is_ascii();
-            other.strip_prefix(content).is_some_and(|rest| !rest.first().is_some_and(is_part))
+            let is_part = |it: &u8| {
+                it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$' | b'.') || !it.is_ascii()
+            };
+            other
+                .strip_prefix(content)
+                .is_some_and(|rest| !rest.first().is_some_and(is_part))
         };
         let is_same = match (string_at_start(x), string_at_start(y)) {
             (Some(x), Some(y)) => is_same_string(x, y),
@@ -501,11 +584,20 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         if a.is_empty() && b.is_empty() {
             return Ok(());
         }
-        const STAY: Flags = Flags::EXPORT.union(Flags::DEFAULT).union(Flags::ASYNC).union(Flags::ACCESSOR);
+        const STAY: Flags = Flags::EXPORT
+            .union(Flags::DEFAULT)
+            .union(Flags::ASYNC)
+            .union(Flags::ACCESSOR);
         /// Takes the keywords that `list` starts with and that can be put in order.
         fn take_keywords(list: &mut &[Modifier]) -> Flags {
             let mut all = Flags::empty();
-            while let [Modifier { kind: ModifierKind::Keyword(keyword), .. }, rest @ ..] = list
+            while let [
+                Modifier {
+                    kind: ModifierKind::Keyword(keyword),
+                    ..
+                },
+                rest @ ..,
+            ] = list
                 && !keyword.intersects(STAY)
             {
                 all |= *keyword;
@@ -517,11 +609,16 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         let mut ys = self.b.modifiers.get(b.range()).unwrap_or_default();
         self.check(xs.len() == ys.len(), "the number of modifiers")?;
         loop {
-            self.check(take_keywords(&mut xs) == take_keywords(&mut ys), "the modifiers")?;
+            self.check(
+                take_keywords(&mut xs) == take_keywords(&mut ys),
+                "the modifiers",
+            )?;
             match (xs.split_first(), ys.split_first()) {
                 (Some((x, rest)), Some((y, rest2))) => {
                     match (x.kind, y.kind) {
-                        (ModifierKind::Decorator(x), ModifierKind::Decorator(y)) => self.expr(x, y)?,
+                        (ModifierKind::Decorator(x), ModifierKind::Decorator(y)) => {
+                            self.expr(x, y)?
+                        }
                         (x, y) => self.check(x == y, "the modifiers")?,
                     }
                     (xs, ys) = (rest, rest2);
@@ -538,12 +635,18 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         let (a, b) = (self.a, self.b);
         self.diagnostics()?;
         self.body(a.body, b.body)?;
-        self.check(a.with_bodies.len() == b.with_bodies.len(), "the number of `with` statements")?;
+        self.check(
+            a.with_bodies.len() == b.with_bodies.len(),
+            "the number of `with` statements",
+        )?;
         self.module_specifiers()?;
         if self.imports_can_move {
             return self.moved_imports();
         }
-        self.check(a.import_attributes.len() == b.import_attributes.len(), "the number of import attributes")?;
+        self.check(
+            a.import_attributes.len() == b.import_attributes.len(),
+            "the number of import attributes",
+        )?;
         for (x, y) in a.import_attributes.iter().zip(b.import_attributes) {
             self.import_attributes(*x, *y)?;
         }
@@ -559,13 +662,19 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         const TRAILING_COMMA_NOT_ALLOWED: u32 = 1009;
         // Allowed: a comma after the last element of a list in brackets. Flow has it where TypeScript does not.
         let is_before_closing_bracket = |comma: u32| {
-            matches!(self.b.text.get(skip_trivia(self.b.text, comma + 1) as usize), Some(b')' | b']' | b'}' | b'>'))
+            matches!(
+                self.b
+                    .text
+                    .get(skip_trivia(self.b.text, comma + 1) as usize),
+                Some(b')' | b']' | b'}' | b'>')
+            )
         };
         let mut before: Vec<u32> = self.a.diagnostics.iter().map(|it| it.code).collect();
         for diagnostic in self.b.diagnostics {
             match before.iter().position(|&code| code == diagnostic.code) {
                 Some(at) => _ = before.swap_remove(at),
-                None if diagnostic.code == TRAILING_COMMA_NOT_ALLOWED && is_before_closing_bracket(diagnostic.start) => {}
+                None if diagnostic.code == TRAILING_COMMA_NOT_ALLOWED
+                    && is_before_closing_bracket(diagnostic.start) => {}
                 None => return self.differ("what the parser says", 0, diagnostic.start),
             }
         }
@@ -585,8 +694,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             places
         };
         for (x, y) in places(self.a).into_iter().zip(places(self.b)) {
-            if let (Some(p), Some(q)) = (string_at_start(self.a.from(x)), string_at_start(self.b.from(y)))
-                && !is_same_string(p, q)
+            if let (Some(p), Some(q)) = (
+                string_at_start(self.a.from(x)),
+                string_at_start(self.b.from(y)),
+            ) && !is_same_string(p, q)
             {
                 return self.differ("how a string is written", x, y);
             }
@@ -597,7 +708,13 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// `with { .. }`, `assert { .. }`
     fn import_attributes(&mut self, a: (u32, ExprId), b: (u32, ExprId)) -> Same {
         fn keyword(text: &[u8]) -> &[u8] {
-            text.get(..text.iter().take_while(|it| it.is_ascii_alphabetic()).count()).unwrap_or_default()
+            text.get(
+                ..text
+                    .iter()
+                    .take_while(|it| it.is_ascii_alphabetic())
+                    .count(),
+            )
+            .unwrap_or_default()
         }
         if keyword(self.a.from(a.0)) != keyword(self.b.from(b.0)) {
             return self.differ("the keyword of import attributes", a.0, b.0);
@@ -621,38 +738,87 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         let Some(import) = program.imports.get(import.idx()) else {
             return (out, None);
         };
-        let text = |atom: Atom| if atom.is_none() { &b"\x01"[..] } else { program.atoms.bytes(atom) };
-        for part in [text(import.spec), text(import.default), text(import.namespace)] {
+        let text = |atom: Atom| {
+            if atom.is_none() {
+                &b"\x01"[..]
+            } else {
+                program.atoms.bytes(atom)
+            }
+        };
+        for part in [
+            text(import.spec),
+            text(import.default),
+            text(import.namespace),
+        ] {
             out.extend_from_slice(part);
             out.push(0);
         }
-        out.extend([u8::from(import.type_only), u8::from(import.is_deferred), import.mode as u8]);
-        let mut names: Vec<Vec<u8>> = (program.import_specs.get(import.named.range()).unwrap_or_default().iter())
-            .map(|it| [text(it.imported), b"\0", text(it.local), b"\0", &[u8::from(it.type_only)]].concat())
-            .collect();
+        out.extend([
+            u8::from(import.type_only),
+            u8::from(import.is_deferred),
+            import.mode as u8,
+        ]);
+        let mut names: Vec<Vec<u8>> = (program
+            .import_specs
+            .get(import.named.range())
+            .unwrap_or_default()
+            .iter())
+        .map(|it| {
+            [
+                text(it.imported),
+                b"\0",
+                text(it.local),
+                b"\0",
+                &[u8::from(it.type_only)],
+            ]
+            .concat()
+        })
+        .collect();
         names.sort();
         out.extend(names.concat());
-        (out, program.import_attributes.iter().find(|it| (*start..loc.end).contains(&it.0)).copied())
+        (
+            out,
+            program
+                .import_attributes
+                .iter()
+                .find(|it| (*start..loc.end).contains(&it.0))
+                .copied(),
+        )
     }
 
     /// Allowed, if the formatter sorts imports: they, and the names in them, are in another order.
     fn moved_imports(&mut self) -> Same {
         let sorted = |program: &Program<'_>, ids: &[u32]| {
-            let mut all: Vec<_> = ids.iter().map(|&id| Self::import_as_text(program, id)).collect();
+            let mut all: Vec<_> = ids
+                .iter()
+                .map(|&id| Self::import_as_text(program, id))
+                .collect();
             all.sort_by(|x, y| x.0.cmp(&y.0));
             all
         };
-        let (xs, ys) = (sorted(self.a, &self.scratch.imports.0), sorted(self.b, &self.scratch.imports.1));
+        let (xs, ys) = (
+            sorted(self.a, &self.scratch.imports.0),
+            sorted(self.b, &self.scratch.imports.1),
+        );
         if !xs.iter().map(|it| &it.0).eq(ys.iter().map(|it| &it.0)) {
             return self.differ("the imports", 0, 0);
         }
         // The attributes of exports and of import types stay where they are.
-        let others = |program: &Program<'_>, imports: &[(Vec<u8>, Option<(u32, ExprId)>)]| -> Vec<Option<(u32, ExprId)>> {
-            (program.import_attributes.iter().map(|&it| Some(it))).filter(|it| !imports.iter().any(|import| import.1 == *it)).collect()
+        let others = |program: &Program<'_>,
+                      imports: &[(Vec<u8>, Option<(u32, ExprId)>)]|
+         -> Vec<Option<(u32, ExprId)>> {
+            (program.import_attributes.iter().map(|&it| Some(it)))
+                .filter(|it| !imports.iter().any(|import| import.1 == *it))
+                .collect()
         };
         let (more, more2) = (others(self.a, &xs), others(self.b, &ys));
         self.check(more.len() == more2.len(), "the number of import attributes")?;
-        for pair in xs.iter().map(|it| it.1).zip(ys.iter().map(|it| it.1)).chain(more.into_iter().zip(more2)) {
+        for pair in xs
+            .iter()
+            .map(|it| it.1)
+            .zip(ys.iter().map(|it| it.1))
+            .chain(more.into_iter().zip(more2))
+        {
             match pair {
                 (Some(x), Some(y)) => self.import_attributes(x, y)?,
                 (None, None) => {}
@@ -666,8 +832,17 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
 
     /// The statements of a program or of a function, which start with its directives.
     fn body(&mut self, a: IdList<StmtId>, b: IdList<StmtId>) -> Same {
-        let directives = |program: &Program<'_>, list| program.ids_of(list).iter().take_while(|&&it| program.is_directive(it)).count();
-        self.check(directives(self.a, a) == directives(self.b, b), "the number of directives")?;
+        let directives = |program: &Program<'_>, list| {
+            program
+                .ids_of(list)
+                .iter()
+                .take_while(|&&it| program.is_directive(it))
+                .count()
+        };
+        self.check(
+            directives(self.a, a) == directives(self.b, b),
+            "the number of directives",
+        )?;
         self.stmt_list(a, b)
     }
 
@@ -700,7 +875,8 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 (None, None) => return Ok(()),
                 (x, y) => {
                     let start = |program: &Program<'_>, id: Option<&u32>| {
-                        id.and_then(|&id| program.stmts.get(id as usize)).map_or(program.text.len() as u32, |it| it.start)
+                        id.and_then(|&id| program.stmts.get(id as usize))
+                            .map_or(program.text.len() as u32, |it| it.start)
                     };
                     let (before, after) = (start(self.a, x), start(self.b, y));
                     return self.differ("the number of statements", before, after);
@@ -718,9 +894,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         }
         let (x, y) = both!(self, stmts, a, b, "a statement is missing");
         if !self.stack.is_safe_to_recurse() {
-            return self.differ("the code is nested too deeply to compare it", x.start, y.start);
+            return self.differ(
+                "the code is nested too deeply to compare it",
+                x.start,
+                y.start,
+            );
         }
-        let result = self.modifiers(x.modifiers, y.modifiers).and_then(|()| self.stmt_kind(x.kind, y.kind));
+        let result = self
+            .modifiers(x.modifiers, y.modifiers)
+            .and_then(|()| self.stmt_kind(x.kind, y.kind));
         self.at(result, x.start, y.start)
     }
 
@@ -735,8 +917,13 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             | (ExportAssign(x), ExportAssign(y)) => self.expr(x, y),
             (Var(x), Var(y)) => {
                 self.check(x.len() == y.len(), "the number of declarations")?;
-                x.iter().zip(y.iter()).try_for_each(|(x, y)| self.var_decl(x, y))?;
-                let last = y.iter().next_back().and_then(|last| self.b.var_decls.get(last.idx()));
+                x.iter()
+                    .zip(y.iter())
+                    .try_for_each(|(x, y)| self.var_decl(x, y))?;
+                let last = y
+                    .iter()
+                    .next_back()
+                    .and_then(|last| self.b.var_decls.get(last.idx()));
                 self.no_comma_follows(last.map(|it| it.loc.end))
             }
             (Fn(x), Fn(y)) => self.func(x, y),
@@ -762,7 +949,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 let (i, j) = both!(self, enums, x, y, "an enum is missing");
                 self.atom(i.name, j.name, "the name of an enum")?;
                 self.check(i.flags == j.flags, "the modifiers of an enum")?;
-                self.check(i.members.len() == j.members.len(), "the number of members of an enum")?;
+                self.check(
+                    i.members.len() == j.members.len(),
+                    "the number of members of an enum",
+                )?;
                 for (m, n) in i.members.iter().zip(j.members.iter()) {
                     let (m, n) = both!(self, enum_members, m, n, "a member of an enum is missing");
                     let result = (self.atom(m.name, n.name, "the name of a member of an enum"))
@@ -777,14 +967,16 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             (Module(x), Module(y)) => {
                 let (i, j) = both!(self, modules, x, y, "a namespace is missing");
                 match (i.name, j.name) {
-                    (ModuleName::Ident(x), ModuleName::Ident(y)) | (ModuleName::String(x), ModuleName::String(y)) => {
+                    (ModuleName::Ident(x), ModuleName::Ident(y))
+                    | (ModuleName::String(x), ModuleName::String(y)) => {
                         self.atom(x, y, "the name of a namespace")?;
                         self.name_as_written((i.name_pos, j.name_pos))?;
                     }
                     (ModuleName::Global, ModuleName::Global) => {}
                     _ => return self.differ_somewhere("the kind of a namespace"),
                 }
-                let is_same = (i.flags, i.has_body, i.specifies_module) == (j.flags, j.has_body, j.specifies_module);
+                let is_same = (i.flags, i.has_body, i.specifies_module)
+                    == (j.flags, j.has_body, j.specifies_module);
                 self.check(is_same, "the keywords of a namespace")?;
                 self.stmt_list(i.body, j.body)
             }
@@ -849,7 +1041,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 // The parser says nothing about `for (async of a)`, which takes parentheses around the name.
                 let is_bare_async = matches!(self.b.stmts.get(left2.idx()), Some(Stmt { kind: Expr(e), .. })
                     if matches!(self.b.exprs.get(e.idx()), Some(it) if self.b.slice(it.pos, it.end) == b"async") && !self.b.is_parenthesized(*e));
-                self.check(is_await2 || !is_bare_async, "the parentheses around `async`")?;
+                self.check(
+                    is_await2 || !is_bare_async,
+                    "the parentheses around `async`",
+                )?;
                 self.stmt(left, left2)?;
                 self.expr(expr, expr2)?;
                 self.stmt(body, body2)
@@ -883,7 +1078,9 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.check(cases.len() == cases2.len(), "the number of cases")?;
                 for (c, d) in cases.iter().zip(cases2.iter()) {
                     let (c, d) = both!(self, cases, c, d, "a case is missing");
-                    let result = self.expr(c.test, d.test).and_then(|()| self.stmt_list(c.body, d.body));
+                    let result = self
+                        .expr(c.test, d.test)
+                        .and_then(|()| self.stmt_list(c.body, d.body));
                     self.at(result, c.pos, d.pos)?;
                 }
                 Ok(())
@@ -908,7 +1105,9 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.stmt(finalizer, finalizer2)
             }
             (Break(x), Break(y)) | (Continue(x), Continue(y)) => self.atom(x, y, "a label"),
-            (ExportAsNamespace(x), ExportAsNamespace(y)) => self.atom(x, y, "the name of a namespace"),
+            (ExportAsNamespace(x), ExportAsNamespace(y)) => {
+                self.atom(x, y, "the name of a namespace")
+            }
             (
                 Labeled { label, body },
                 Labeled {
@@ -924,18 +1123,25 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.atom(i.spec, j.spec, "a module specifier")?;
                 self.atom(i.default, j.default, "the name of a default import")?;
                 self.atom(i.namespace, j.namespace, "the name of a namespace import")?;
-                let is_same = (i.type_only, i.is_deferred, i.mode) == (j.type_only, j.is_deferred, j.mode);
+                let is_same =
+                    (i.type_only, i.is_deferred, i.mode) == (j.type_only, j.is_deferred, j.mode);
                 self.check(is_same, "the keywords of an import")?;
                 // Allowed: `import a, {} from "a"` is `import a from "a"`.
                 let has_braces = |it: &bun_sema::hir::Import| {
-                    it.has_named_imports && !(it.named.is_empty() && (it.default.is_some() || it.namespace.is_some()))
+                    it.has_named_imports
+                        && !(it.named.is_empty()
+                            && (it.default.is_some() || it.namespace.is_some()))
                 };
                 self.check(has_braces(&i) == has_braces(&j), "the braces of an import")?;
-                self.check(i.named.len() == j.named.len(), "the number of names of an import")?;
+                self.check(
+                    i.named.len() == j.named.len(),
+                    "the number of names of an import",
+                )?;
                 for (s, t) in i.named.iter().zip(j.named.iter()) {
                     let (s, t) = both!(self, import_specs, s, t, "a name of an import is missing");
-                    let is_same =
-                        self.is_same_atom(s.imported, t.imported) && self.is_same_atom(s.local, t.local) && s.type_only == t.type_only;
+                    let is_same = self.is_same_atom(s.imported, t.imported)
+                        && self.is_same_atom(s.local, t.local)
+                        && s.type_only == t.type_only;
                     if !is_same {
                         return self.differ("a name of an import", s.start, t.start);
                     }
@@ -949,21 +1155,30 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.check(i.flags == j.flags, "the modifiers of an import")?;
                 self.expr(i.expression, j.expression)?;
                 match (i.target, j.target) {
-                    (ImportEqualsTarget::Require(x), ImportEqualsTarget::Require(y)) => self.atom(x, y, "a module specifier"),
-                    (ImportEqualsTarget::Entity(x), ImportEqualsTarget::Entity(y)) => self.entity_name(x, y),
+                    (ImportEqualsTarget::Require(x), ImportEqualsTarget::Require(y)) => {
+                        self.atom(x, y, "a module specifier")
+                    }
+                    (ImportEqualsTarget::Entity(x), ImportEqualsTarget::Entity(y)) => {
+                        self.entity_name(x, y)
+                    }
                     _ => self.differ_somewhere("what is imported"),
                 }
             }
             (ExportNamed(x), ExportNamed(y)) => {
                 let (i, j) = both!(self, exports, x, y, "an export is missing");
                 self.atom(i.spec, j.spec, "a module specifier")?;
-                let is_same = (i.has_module_specifier, i.type_only, i.mode) == (j.has_module_specifier, j.type_only, j.mode);
+                let is_same = (i.has_module_specifier, i.type_only, i.mode)
+                    == (j.has_module_specifier, j.type_only, j.mode);
                 self.check(is_same, "the keywords of an export")?;
-                self.check(i.items.len() == j.items.len(), "the number of names of an export")?;
+                self.check(
+                    i.items.len() == j.items.len(),
+                    "the number of names of an export",
+                )?;
                 for (s, t) in i.items.iter().zip(j.items.iter()) {
                     let (s, t) = both!(self, export_specs, s, t, "a name of an export is missing");
-                    let is_same =
-                        self.is_same_atom(s.local, t.local) && self.is_same_atom(s.exported, t.exported) && s.type_only == t.type_only;
+                    let is_same = self.is_same_atom(s.local, t.local)
+                        && self.is_same_atom(s.exported, t.exported)
+                        && s.type_only == t.type_only;
                     if !is_same {
                         return self.differ("a name of an export", s.start, t.start);
                     }
@@ -995,7 +1210,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 if alias.is_some() {
                     self.name_as_written((alias_pos, alias_pos2))?;
                 }
-                self.check((type_only, mode) == (type_only2, mode2), "the keywords of an export")
+                self.check(
+                    (type_only, mode) == (type_only2, mode2),
+                    "the keywords of an export",
+                )
             }
             _ => self.differ_somewhere("the kind of a statement"),
         }
@@ -1005,14 +1223,19 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// one: `let a,`, `class A extends B, {}`. `end`: where the last element ends in the program after.
     fn no_comma_follows(&mut self, end: Option<u32>) -> Same {
         match end.map(|end| skip_trivia(self.b.text, end)) {
-            Some(next) if self.b.text.get(next as usize) == Some(&b',') => self.differ("a comma", u32::MAX, next),
+            Some(next) if self.b.text.get(next as usize) == Some(&b',') => {
+                self.differ("a comma", u32::MAX, next)
+            }
             _ => Ok(()),
         }
     }
 
     fn var_decl(&mut self, a: VarDeclId, b: VarDeclId) -> Same {
         let (x, y) = both!(self, var_decls, a, b, "a declaration is missing");
-        self.check((x.kind, x.flags) == (y.kind, y.flags), "the keyword of a declaration")?;
+        self.check(
+            (x.kind, x.flags) == (y.kind, y.flags),
+            "the keyword of a declaration",
+        )?;
         self.pat(x.pat, y.pat)?;
         self.ty(x.ty, y.ty)?;
         self.expr(x.init, y.init)
@@ -1045,9 +1268,14 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         for (p, q) in a.iter().zip(b.iter()) {
             let (p, q) = both!(self, pat_props, p, q, "a property of a pattern is missing");
             // `{ a }` and `{ a: a }` are the same tree.
-            let is_shorthand =
-                |program: &Program<'_>, it: &PatProp| program.pats.get(it.value.idx()).is_some_and(|value| value.pos == it.key_pos);
-            let is_same = p.is_rest == q.is_rest && is_shorthand(self.a, &p) == is_shorthand(self.b, &q);
+            let is_shorthand = |program: &Program<'_>, it: &PatProp| {
+                program
+                    .pats
+                    .get(it.value.idx())
+                    .is_some_and(|value| value.pos == it.key_pos)
+            };
+            let is_same =
+                p.is_rest == q.is_rest && is_shorthand(self.a, &p) == is_shorthand(self.b, &q);
             let result = (self.check(is_same, "the form of a property of a pattern"))
                 .and_then(|()| self.name_kind(p.name_kind, q.name_kind))
                 .and_then(|()| self.key(p.key, q.key, (p.key_pos, q.key_pos)))
@@ -1062,7 +1290,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         self.check(a.len() == b.len(), "the number of elements of a pattern")?;
         for (p, q) in a.iter().zip(b.iter()) {
             let (p, q) = both!(self, pat_elems, p, q, "an element of a pattern is missing");
-            self.check(p.is_rest == q.is_rest, "the `...` of an element of a pattern")?;
+            self.check(
+                p.is_rest == q.is_rest,
+                "the `...` of an element of a pattern",
+            )?;
             self.pat(p.pat, q.pat)?;
             self.expr(p.default, q.default)?;
         }
@@ -1073,7 +1304,9 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
 
     fn type_params(&mut self, a: Span<TypeParamId>, b: Span<TypeParamId>) -> Same {
         self.check(a.len() == b.len(), "the number of type parameters")?;
-        a.iter().zip(b.iter()).try_for_each(|(x, y)| self.type_param(x, y))
+        a.iter()
+            .zip(b.iter())
+            .try_for_each(|(x, y)| self.type_param(x, y))
     }
 
     fn type_param(&mut self, a: TypeParamId, b: TypeParamId) -> Same {
@@ -1103,7 +1336,11 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 
     fn func_parts(&mut self, x: &Func, y: &Func) -> Same {
-        self.check((function_kind(x), without_name_kind(x.flags)) == (function_kind(y), without_name_kind(y.flags)), "the kind of a function")?;
+        self.check(
+            (function_kind(x), without_name_kind(x.flags))
+                == (function_kind(y), without_name_kind(y.flags)),
+            "the kind of a function",
+        )?;
         self.atom(x.name, y.name, "the name of a function")?;
         self.type_params(x.type_params, y.type_params)?;
         self.param(x.this_param, y.this_param)?;
@@ -1120,15 +1357,28 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
 
     fn members(&mut self, a: Span<MemberId>, b: Span<MemberId>) -> Same {
         self.check(a.len() == b.len(), "the number of members")?;
-        a.iter().zip(b.iter()).try_for_each(|(x, y)| self.member(x, y))
+        a.iter()
+            .zip(b.iter())
+            .try_for_each(|(x, y)| self.member(x, y))
     }
 
     fn member(&mut self, a: MemberId, b: MemberId) -> Same {
         let (x, y) = both!(self, members, a, b, "a member is missing");
         let form = |it: &Member, program: &Program<'_>| {
             let is_constructor = it.kind == MemberKind::Constructor
-                || (it.kind == MemberKind::Method && program.fns.get(it.func.idx()).is_some_and(|it| function_kind(it) == FnKind::Constructor));
-            (if is_constructor { MemberKind::Constructor } else { it.kind }, without_name_kind(it.flags))
+                || (it.kind == MemberKind::Method
+                    && program
+                        .fns
+                        .get(it.func.idx())
+                        .is_some_and(|it| function_kind(it) == FnKind::Constructor));
+            (
+                if is_constructor {
+                    MemberKind::Constructor
+                } else {
+                    it.kind
+                },
+                without_name_kind(it.flags),
+            )
         };
         let result = (self.check(form(&x, self.a) == form(&y, self.b), "the kind of a member"))
             .and_then(|()| self.key(x.key, y.key, (x.name_pos, y.name_pos)))
@@ -1165,9 +1415,22 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// program after.
     fn no_member_ends_with_a_comma(&mut self, members: Span<MemberId>) -> Same {
         let ends_with_a_comma = |it: &&Member| {
-            it.kind == MemberKind::IndexSignature && it.loc.end.checked_sub(1).and_then(|last| self.b.text.get(last as usize)) == Some(&b',')
+            it.kind == MemberKind::IndexSignature
+                && it
+                    .loc
+                    .end
+                    .checked_sub(1)
+                    .and_then(|last| self.b.text.get(last as usize))
+                    == Some(&b',')
         };
-        match self.b.members.get(members.range()).unwrap_or_default().iter().find(ends_with_a_comma) {
+        match self
+            .b
+            .members
+            .get(members.range())
+            .unwrap_or_default()
+            .iter()
+            .find(ends_with_a_comma)
+        {
             Some(member) => self.differ("a comma", u32::MAX, member.loc.end - 1),
             None => Ok(()),
         }
@@ -1181,7 +1444,9 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         }
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         self.check(xs.len() == ys.len(), "the number of expressions in a list")?;
-        xs.iter().zip(ys).try_for_each(|(&x, &y)| self.expr(ExprId(x), ExprId(y)))
+        xs.iter()
+            .zip(ys)
+            .try_for_each(|(&x, &y)| self.expr(ExprId(x), ExprId(y)))
     }
 
     fn props(&mut self, a: Span<PropId>, b: Span<PropId>) -> Same {
@@ -1228,15 +1493,12 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     fn expr_kind(&mut self, (a, x): (ExprId, &Expr), (b, y): (ExprId, &Expr)) -> Same {
         use ExprKind::*;
         match (x.kind, y.kind) {
-            (Ident(x), Ident(y)) | (PrivateIdentifier(x), PrivateIdentifier(y)) | (NewTarget(x), NewTarget(y)) => {
-                self.atom(x, y, "a name")
-            }
+            (Ident(x), Ident(y))
+            | (PrivateIdentifier(x), PrivateIdentifier(y))
+            | (NewTarget(x), NewTarget(y)) => self.atom(x, y, "a name"),
             (
                 Dot {
-                    obj,
-                    name,
-                    chain,
-                    ..
+                    obj, name, chain, ..
                 },
                 Dot {
                     obj: obj2,
@@ -1262,23 +1524,35 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             | (ImportMeta, ImportMeta) => Ok(()),
             // Allowed: see `is_same_string`.
             (String(p), String(q)) => {
-                let is_template = |program: &Program<'_>, at: u32| program.text.get(at as usize) == Some(&b'`');
+                let is_template =
+                    |program: &Program<'_>, at: u32| program.text.get(at as usize) == Some(&b'`');
                 let is_a_template = is_template(self.a, x.pos);
-                self.check(is_a_template == is_template(self.b, y.pos), "the quotes of a template")?;
+                self.check(
+                    is_a_template == is_template(self.b, y.pos),
+                    "the quotes of a template",
+                )?;
                 match is_a_template {
                     // It can be text in JSX that starts with a `` ` ``.
-                    true if BY_ID => self.atom(p, q, "a string").and_then(|()| self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY))),
+                    true if BY_ID => self
+                        .atom(p, q, "a string")
+                        .and_then(|()| self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY))),
                     true => self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY)),
                     false => {
                         self.atom(p, q, "a string")?;
-                        self.check(is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)), "how a string is written")
+                        self.check(
+                            is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
+                            "how a string is written",
+                        )
                     }
                 }
             }
             // Allowed: see `is_same_number`.
             (Number(p), Number(q)) => {
                 self.number(p, q)?;
-                self.check(is_same_number(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)), "how a number is written")
+                self.check(
+                    is_same_number(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
+                    "how a number is written",
+                )
             }
             // Allowed: lower case.
             (BigInt(x), BigInt(y)) => self.bigint(x, y),
@@ -1332,7 +1606,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 },
             ) => {
                 self.check(op == op2, "an operator")?;
-                if !BY_ID && (self.a.logical_operator(right) == Some(op) || self.b.logical_operator(right2) == Some(op)) {
+                if !BY_ID
+                    && (self.a.logical_operator(right) == Some(op)
+                        || self.b.logical_operator(right2) == Some(op))
+                {
                     return self.logical_chain(a, b, op);
                 }
                 self.nested(left, left2)?;
@@ -1362,11 +1639,18 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.expr(yes, yes2)?;
                 self.nested(no, no2)
             }
-            (Spread(x), Spread(y)) | (Await(x), Await(y)) | (AsConst(x), AsConst(y)) => self.nested(x, y),
+            (Spread(x), Spread(y)) | (Await(x), Await(y)) | (AsConst(x), AsConst(y)) => {
+                self.nested(x, y)
+            }
             (NonNull(x), NonNull(y)) => {
                 if !self.a.non_null_ends.is_empty() || !self.b.non_null_ends.is_empty() {
-                    let count = |list: &[(ExprId, u32)], e: ExprId| list.iter().filter(|it| it.0 == e).count();
-                    self.check(count(self.a.non_null_ends, a) == count(self.b.non_null_ends, b), "the number of `!`")?;
+                    let count = |list: &[(ExprId, u32)], e: ExprId| {
+                        list.iter().filter(|it| it.0 == e).count()
+                    };
+                    self.check(
+                        count(self.a.non_null_ends, a) == count(self.b.non_null_ends, b),
+                        "the number of `!`",
+                    )?;
                 }
                 self.nested(x, y)
             }
@@ -1380,7 +1664,20 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.check(star == star2, "the `*` of `yield`")?;
                 self.nested(value, value2)
             }
-            (As { expr, ty }, As { expr: expr2, ty: ty2 }) | (Satisfies { expr, ty }, Satisfies { expr: expr2, ty: ty2 }) => {
+            (
+                As { expr, ty },
+                As {
+                    expr: expr2,
+                    ty: ty2,
+                },
+            )
+            | (
+                Satisfies { expr, ty },
+                Satisfies {
+                    expr: expr2,
+                    ty: ty2,
+                },
+            ) => {
                 self.nested(expr, expr2)?;
                 self.ty(ty, ty2)
             }
@@ -1399,12 +1696,26 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.jsx(x, y)
             }
             (ImportCall { args: p }, ImportCall { args: q }) => {
-                let first = |program: &Program<'_>, list: IdList<ExprId>| program.ids_of(list).first().map(|&it| ExprId(it));
+                let first = |program: &Program<'_>, list: IdList<ExprId>| {
+                    program.ids_of(list).first().map(|&it| ExprId(it))
+                };
                 let (specifier, specifier2) = (first(self.a, p), first(self.b, q));
-                let is_deferred = |program: &Program<'_>, e| program.deferred_import_calls.iter().any(|it| Some(it.0) == e);
-                self.check(is_deferred(self.a, specifier) == is_deferred(self.b, specifier2), "the phase of an import")?;
+                let is_deferred = |program: &Program<'_>, e| {
+                    program
+                        .deferred_import_calls
+                        .iter()
+                        .any(|it| Some(it.0) == e)
+                };
+                self.check(
+                    is_deferred(self.a, specifier) == is_deferred(self.b, specifier2),
+                    "the phase of an import",
+                )?;
                 let type_args = |program: &Program<'_>, e| {
-                    program.import_call_type_args.iter().find(|it| Some(it.0) == e).map_or(IdList::EMPTY, |it| it.1)
+                    program
+                        .import_call_type_args
+                        .iter()
+                        .find(|it| Some(it.0) == e)
+                        .map_or(IdList::EMPTY, |it| it.1)
                 };
                 self.type_list(type_args(self.a, specifier), type_args(self.b, specifier2))?;
                 self.expr_list(p, q)
@@ -1433,12 +1744,20 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     fn logical_chain(&mut self, a: ExprId, b: ExprId, op: BinOp) -> Same {
         self.has_stack_left()?;
         let (first, first2) = (self.scratch.operands.0.len(), self.scratch.operands.1.len());
-        self.a.operands_of_chain(a, op, &mut self.scratch.operands.0);
-        self.b.operands_of_chain(b, op, &mut self.scratch.operands.1);
+        self.a
+            .operands_of_chain(a, op, &mut self.scratch.operands.0);
+        self.b
+            .operands_of_chain(b, op, &mut self.scratch.operands.1);
         let count = self.scratch.operands.0.len() - first;
-        let mut result = self.check(count == self.scratch.operands.1.len() - first2, "the number of operands");
+        let mut result = self.check(
+            count == self.scratch.operands.1.len() - first2,
+            "the number of operands",
+        );
         for i in 0..count {
-            let (Some(&x), Some(&y)) = (self.scratch.operands.0.get(first + i), self.scratch.operands.1.get(first2 + i)) else {
+            let (Some(&x), Some(&y)) = (
+                self.scratch.operands.0.get(first + i),
+                self.scratch.operands.1.get(first2 + i),
+            ) else {
                 break;
             };
             result = result.and_then(|()| self.expr(x, y));
@@ -1449,13 +1768,21 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 
     fn number(&mut self, a: u32, b: u32) -> Same {
-        let bits = |program: &Program<'_>, at: u32| program.numbers.get(at as usize).map(|it| it.to_bits());
+        let bits = |program: &Program<'_>, at: u32| {
+            program.numbers.get(at as usize).map(|it| it.to_bits())
+        };
         self.check(bits(self.a, a) == bits(self.b, b), "a number")
     }
 
     fn bigint(&mut self, a: Atom, b: Atom) -> Same {
         let is_same = self.is_same_atom(a, b)
-            || (a.is_some() && b.is_some() && self.a.atoms.bytes(a).eq_ignore_ascii_case(self.b.atoms.bytes(b)));
+            || (a.is_some()
+                && b.is_some()
+                && self
+                    .a
+                    .atoms
+                    .bytes(a)
+                    .eq_ignore_ascii_case(self.b.atoms.bytes(b)));
         self.check(is_same, "a bigint")
     }
 
@@ -1465,7 +1792,9 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             return Ok(());
         }
         let parts = |text: &[u8]| {
-            let (pattern, flags) = text.split_at(bun_core::strings::last_index_of_char(text, b'/').map_or(text.len(), |it| it + 1));
+            let (pattern, flags) = text.split_at(
+                bun_core::strings::last_index_of_char(text, b'/').map_or(text.len(), |it| it + 1),
+            );
             let mut flags = flags.to_vec();
             flags.sort_unstable();
             (pattern.to_vec(), flags)
@@ -1476,7 +1805,11 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     // ───────────────────────────── templates ─────────────────────────────
 
     /// The source of each piece of text of the template at `start` whose substitutions are `exprs`.
-    fn template_texts<'p>(program: &'p Program<'p>, start: u32, exprs: &'p [u32]) -> impl Iterator<Item = &'p [u8]> {
+    fn template_texts<'p>(
+        program: &'p Program<'p>,
+        start: u32,
+        exprs: &'p [u32],
+    ) -> impl Iterator<Item = &'p [u8]> {
         let mut at = start + 1;
         (0..=exprs.len()).map(move |index| {
             let rest = program.from(at);
@@ -1497,7 +1830,11 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         })
     }
 
-    fn template(&mut self, (a, x, p): (ExprId, &Expr, IdList<ExprId>), (y, q): (&Expr, IdList<ExprId>)) -> Same {
+    fn template(
+        &mut self,
+        (a, x, p): (ExprId, &Expr, IdList<ExprId>),
+        (y, q): (&Expr, IdList<ExprId>),
+    ) -> Same {
         self.has_stack_left()?;
         self.expr_list(p, q)?;
         let (program, program2) = (self.a, self.b);
@@ -1508,16 +1845,24 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         }
         // Allowed: other line breaks. In a template, all of them stand for `\n`.
         fn with_one_kind_of_line_break(text: &[u8]) -> impl Iterator<Item = u8> {
-            (text.iter().zip(text.iter().skip(1).map(Some).chain([None]))).filter_map(|(&byte, next)| match (byte, next) {
-                (b'\r', Some(b'\n')) => None,
-                (b'\r', _) => Some(b'\n'),
-                _ => Some(byte),
-            })
+            (text.iter().zip(text.iter().skip(1).map(Some).chain([None]))).filter_map(
+                |(&byte, next)| match (byte, next) {
+                    (b'\r', Some(b'\n')) => None,
+                    (b'\r', _) => Some(b'\n'),
+                    _ => Some(byte),
+                },
+            )
         }
-        if texts().zip(texts2()).all(|(x, y)| with_one_kind_of_line_break(x).eq(with_one_kind_of_line_break(y))) {
+        if texts()
+            .zip(texts2())
+            .all(|(x, y)| with_one_kind_of_line_break(x).eq(with_one_kind_of_line_break(y)))
+        {
             return Ok(());
         }
-        self.check(!BY_ID && self.can_template_change(a, texts(), texts2()), "the text of a template")
+        self.check(
+            !BY_ID && self.can_template_change(a, texts(), texts2()),
+            "the text of a template",
+        )
     }
 
     /// Whether the formatter may make `after` of `before`, the texts of the template `e`.
@@ -1534,15 +1879,22 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             return true;
         }
         // Allowed: the columns of the table of a `` describe.each`..` `` are lined up.
-        let without_white_space = |text: &'t [u8]| text.iter().copied().filter(|it| !it.is_ascii_whitespace());
-        super::is_table(template) && before.flat_map(without_white_space).eq(after.flat_map(without_white_space))
+        let without_white_space =
+            |text: &'t [u8]| text.iter().copied().filter(|it| !it.is_ascii_whitespace());
+        super::is_table(template)
+            && before
+                .flat_map(without_white_space)
+                .eq(after.flat_map(without_white_space))
     }
 
     // ───────────────────────────── JSX ─────────────────────────────
 
     fn jsx(&mut self, a: JsxId, b: JsxId) -> Same {
         let (x, y) = both!(self, jsx, a, b, "an element is missing");
-        self.check((x.close_pos == u32::MAX) == (y.close_pos == u32::MAX), "the closing tag of an element")?;
+        self.check(
+            (x.close_pos == u32::MAX) == (y.close_pos == u32::MAX),
+            "the closing tag of an element",
+        )?;
         self.expr(x.tag, y.tag)?;
         self.expr(x.close_tag, y.close_tag)?;
         self.type_list(x.type_args, y.type_args)?;
@@ -1565,7 +1917,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
 
     fn jsx_attribute_value(&mut self, a: ExprId, b: ExprId) -> Same {
         let (Some(x), Some(y)) = (Self::jsx_string(self.a, a), Self::jsx_string(self.b, b)) else {
-            self.check(self.a.is_in_braces(a) == self.b.is_in_braces(b), "the braces of the value of an attribute")?;
+            self.check(
+                self.a.is_in_braces(a) == self.b.is_in_braces(b),
+                "the braces of the value of an attribute",
+            )?;
             return self.expr(a, b);
         };
         if x == y {
@@ -1573,7 +1928,9 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         }
         // Allowed: other quotes, what has to be escaped with them, and other line breaks.
         let value = |text: &[u8]| {
-            let content = text.get(1..text.len().saturating_sub(1)).unwrap_or_default();
+            let content = text
+                .get(1..text.len().saturating_sub(1))
+                .unwrap_or_default();
             let content = bun_core::strings::replace_owned(content, b"&apos;", b"'");
             let content = bun_core::strings::replace_owned(&content, b"\r\n", b"\n");
             bun_core::strings::replace_owned(&content, b"&quot;", b"\"")
@@ -1586,9 +1943,14 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         let (mut xs, mut ys) = (JsxChildren::new(self.a, a), JsxChildren::new(self.b, b));
         loop {
             match (xs.next(), ys.next()) {
-                (Some(JsxChild::Word(x)), Some(JsxChild::Word(y))) => self.check(x == y, "a word of the text of an element")?,
+                (Some(JsxChild::Word(x)), Some(JsxChild::Word(y))) => {
+                    self.check(x == y, "a word of the text of an element")?
+                }
                 (Some(JsxChild::Node(x)), Some(JsxChild::Node(y))) => {
-                    self.check(self.a.is_in_braces(x) == self.b.is_in_braces(y), "the braces of a child of an element")?;
+                    self.check(
+                        self.a.is_in_braces(x) == self.b.is_in_braces(y),
+                        "the braces of a child of an element",
+                    )?;
                     self.expr(x, y)?;
                 }
                 (None, None) => return Ok(()),
@@ -1605,7 +1967,9 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         }
         let (xs, ys) = (self.a.ids_of(a), self.b.ids_of(b));
         self.check(xs.len() == ys.len(), "the number of types in a list")?;
-        xs.iter().zip(ys).try_for_each(|(&x, &y)| self.ty(TypeNodeId(x), TypeNodeId(y)))
+        xs.iter()
+            .zip(ys)
+            .try_for_each(|(&x, &y)| self.ty(TypeNodeId(x), TypeNodeId(y)))
     }
 
     #[inline]
@@ -1618,7 +1982,11 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         self.at(result, x.pos, y.pos)
     }
 
-    fn type_kind(&mut self, (a, x): (TypeNodeId, TypeNodeKind), (b, y): (TypeNodeId, TypeNodeKind)) -> Same {
+    fn type_kind(
+        &mut self,
+        (a, x): (TypeNodeId, TypeNodeKind),
+        (b, y): (TypeNodeId, TypeNodeKind),
+    ) -> Same {
         use TypeNodeKind::*;
         match (x, y) {
             (Keyword(x), Keyword(y)) => self.check(x == y, "a type"),
@@ -1636,15 +2004,26 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             (StringLit(x), StringLit(y)) => {
                 self.atom(x, y, "a string")?;
                 let (x, y) = both!(self, types, a, b, "a type is missing");
-                self.check(is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)), "how a string is written")
+                self.check(
+                    is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
+                    "how a string is written",
+                )
             }
             (BoolLit(x), BoolLit(y)) => self.check(x == y, "a type"),
             (NumberLit(x), NumberLit(y)) => {
                 self.number(x, y)?;
                 let (x, y) = both!(self, types, a, b, "a type is missing");
-                let digits = |text: &'_ [u8]| -> Vec<u8> { text.iter().copied().filter(|it| *it != b'-' && !it.is_ascii_whitespace()).collect() };
+                let digits = |text: &'_ [u8]| -> Vec<u8> {
+                    text.iter()
+                        .copied()
+                        .filter(|it| *it != b'-' && !it.is_ascii_whitespace())
+                        .collect()
+                };
                 let (x, y) = (self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end));
-                self.check(x == y || is_same_number(&digits(x), &digits(y)), "how a number is written")
+                self.check(
+                    x == y || is_same_number(&digits(x), &digits(y)),
+                    "how a number is written",
+                )
             }
             (
                 BigIntLit { text, negative },
@@ -1676,9 +2055,14 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.type_list(types, types2)?;
                 let (xs, ys) = (self.a.ids_of(texts), self.b.ids_of(texts2));
                 self.check(xs.len() == ys.len(), "the text of a template")?;
-                xs.iter().zip(ys).try_for_each(|(&x, &y)| self.atom(Atom(x), Atom(y), "the text of a template"))
+                xs.iter()
+                    .zip(ys)
+                    .try_for_each(|(&x, &y)| self.atom(Atom(x), Atom(y), "the text of a template"))
             }
-            (Array(x), Array(y)) | (Keyof(x), Keyof(y)) | (Readonly(x), Readonly(y)) | (Unique(x), Unique(y)) => {
+            (Array(x), Array(y))
+            | (Keyof(x), Keyof(y))
+            | (Readonly(x), Readonly(y))
+            | (Unique(x), Unique(y)) => {
                 self.has_stack_left()?;
                 self.ty(x, y)
             }
@@ -1687,7 +2071,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.check(x.len() == y.len(), "the number of elements of a tuple")?;
                 for (e, g) in x.iter().zip(y.iter()) {
                     let (e, g) = both!(self, tuple_elems, e, g, "an element of a tuple is missing");
-                    let form = |it: &TupleElem| (it.member_type, it.optional, it.rest, it.has_dots, it.written == it.ty);
+                    let form = |it: &TupleElem| {
+                        (
+                            it.member_type,
+                            it.optional,
+                            it.rest,
+                            it.has_dots,
+                            it.written == it.ty,
+                        )
+                    };
                     self.check(form(&e) == form(&g), "the form of an element of a tuple")?;
                     self.atom(e.name, g.name, "the name of an element of a tuple")?;
                     self.ty(e.written, g.written)?;
@@ -1729,7 +2121,14 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             (Infer(x), Infer(y)) => self.type_param(x, y),
             (Mapped(x), Mapped(y)) => {
                 let (i, j) = both!(self, mapped, x, y, "a mapped type is missing");
-                let marks = |it: &bun_sema::hir::Mapped| (it.readonly, it.optional, it.is_readonly_with_plus, it.is_optional_with_plus);
+                let marks = |it: &bun_sema::hir::Mapped| {
+                    (
+                        it.readonly,
+                        it.optional,
+                        it.is_readonly_with_plus,
+                        it.is_optional_with_plus,
+                    )
+                };
                 self.check(marks(&i) == marks(&j), "the modifiers of a mapped type")?;
                 self.type_param(i.param, j.param)?;
                 self.ty(i.name_ty, j.name_ty)?;
@@ -1759,7 +2158,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     is_postfix: is_postfix2,
                 },
             ) => {
-                self.check((kind, is_postfix) == (kind2, is_postfix2), "the kind of a type")?;
+                self.check(
+                    (kind, is_postfix) == (kind2, is_postfix2),
+                    "the kind of a type",
+                )?;
                 self.has_stack_left()?;
                 self.ty(ty, ty2)
             }
@@ -1777,7 +2179,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     ..
                 },
             ) => {
-                self.check(has_type_arguments == has_type_arguments2, "the type arguments of `typeof`")?;
+                self.check(
+                    has_type_arguments == has_type_arguments2,
+                    "the type arguments of `typeof`",
+                )?;
                 self.type_list(args, args2)?;
                 self.expr(expr, expr2)
             }
@@ -1799,7 +2204,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     attributes: attributes2,
                 },
             ) => {
-                self.check((is_typeof, mode, attributes) == (is_typeof2, mode2, attributes2), "the form of an import type")?;
+                self.check(
+                    (is_typeof, mode, attributes) == (is_typeof2, mode2, attributes2),
+                    "the form of an import type",
+                )?;
                 self.atom(spec, spec2, "a module specifier")?;
                 self.entity_name(name, name2)?;
                 self.type_list(args, args2)
@@ -1818,7 +2226,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             }
             _ => {
                 // Allowed: no `|` or `&` before a type that is alone.
-                let (inner, inner2) = (self.a.without_lone_operator(a), self.b.without_lone_operator(b));
+                let (inner, inner2) = (
+                    self.a.without_lone_operator(a),
+                    self.b.without_lone_operator(b),
+                );
                 match BY_ID || (inner, inner2) == (a, b) {
                     true => self.differ_somewhere("the kind of a type"),
                     false => self.ty(inner, inner2),
@@ -1843,14 +2254,23 @@ fn string_at_start(text: &[u8]) -> Option<&[u8]> {
 
 /// The number that `text` starts with.
 fn number_at_start(text: &[u8]) -> Option<&[u8]> {
-    text.first().filter(|it| it.is_ascii_digit() || **it == b'.')?;
+    text.first()
+        .filter(|it| it.is_ascii_digit() || **it == b'.')?;
     let is_hexadecimal = matches!(text, [b'0', b'x' | b'X', ..]);
     let is_part = |at: usize, byte: u8| {
         byte.is_ascii_alphanumeric()
             || matches!(byte, b'.' | b'_')
-            || (matches!(byte, b'+' | b'-') && !is_hexadecimal && matches!(text.get(at.wrapping_sub(1)), Some(b'e' | b'E')))
+            || (matches!(byte, b'+' | b'-')
+                && !is_hexadecimal
+                && matches!(text.get(at.wrapping_sub(1)), Some(b'e' | b'E')))
     };
-    text.get(..text.iter().enumerate().take_while(|&(at, &byte)| is_part(at, byte)).count())
+    text.get(
+        ..text
+            .iter()
+            .enumerate()
+            .take_while(|&(at, &byte)| is_part(at, byte))
+            .count(),
+    )
 }
 
 /// Whether two strings, with their quotes, are written in the same way. Allowed: other quotes, a `\` before
@@ -1887,7 +2307,12 @@ fn is_same_string_but_for_quotes(a: &[u8], b: &[u8]) -> bool {
         (Some(x), Some(y)) => x == y || without_quote_escapes(x) == without_quote_escapes(y),
         // A name in JSX. Allowed: `a : b` is `a:b`.
         (None, None) => {
-            let without_white_space = |text: &'_ [u8]| -> Vec<u8> { text.iter().copied().filter(|it| !it.is_ascii_whitespace()).collect() };
+            let without_white_space = |text: &'_ [u8]| -> Vec<u8> {
+                text.iter()
+                    .copied()
+                    .filter(|it| !it.is_ascii_whitespace())
+                    .collect()
+            };
             without_white_space(a) == without_white_space(b)
         }
         _ => false,
@@ -1909,14 +2334,20 @@ fn without_name_kind(flags: Flags) -> Flags {
 /// Allowed: `"constructor"() {}` in a class is `constructor() {}`, which is what it means.
 fn function_kind(function: &Func) -> FnKind {
     match function.kind {
-        FnKind::Method if function.name == bun_sema::atom::known::constructor && !function.flags.intersects(NOT_OF_A_CONSTRUCTOR) => {
+        FnKind::Method
+            if function.name == bun_sema::atom::known::constructor
+                && !function.flags.intersects(NOT_OF_A_CONSTRUCTOR) =>
+        {
             FnKind::Constructor
         }
         kind => kind,
     }
 }
 
-const NOT_OF_A_CONSTRUCTOR: Flags = Flags::STATIC.union(Flags::COMPUTED_NAME).union(Flags::ASYNC).union(Flags::GENERATOR);
+const NOT_OF_A_CONSTRUCTOR: Flags = Flags::STATIC
+    .union(Flags::COMPUTED_NAME)
+    .union(Flags::ASYNC)
+    .union(Flags::GENERATOR);
 
 enum JsxChild<'p> {
     /// A run of what is not white space in JSX text.
@@ -1944,7 +2375,14 @@ impl<'p> JsxChildren<'p> {
             children: program.ids_of(element.children).iter(),
             text: &[],
             next: None,
-            rest: (element.opening_end, if element.close_pos == u32::MAX { element.opening_end } else { element.close_pos }),
+            rest: (
+                element.opening_end,
+                if element.close_pos == u32::MAX {
+                    element.opening_end
+                } else {
+                    element.close_pos
+                },
+            ),
         }
     }
 }
@@ -1956,7 +2394,11 @@ impl<'p> Iterator for JsxChildren<'p> {
         loop {
             self.text = self.text.trim_ascii_start();
             if !self.text.is_empty() {
-                let len = self.text.iter().take_while(|it| !it.is_ascii_whitespace()).count();
+                let len = self
+                    .text
+                    .iter()
+                    .take_while(|it| !it.is_ascii_whitespace())
+                    .count();
                 let (word, rest) = self.text.split_at(len);
                 self.text = rest;
                 return Some(JsxChild::Word(word));
@@ -1966,9 +2408,21 @@ impl<'p> Iterator for JsxChildren<'p> {
                 // space is white space to it.
                 let next = self.children.next().map(|&it| ExprId(it));
                 let span = match next {
-                    Some(child) => match self.program.jsx_expressions.binary_search_by_key(&child.0, |it| it.0.0) {
-                        Ok(at) => self.program.jsx_expressions.get(at).map_or((0, 0), |it| (it.1, it.2)),
-                        Err(_) => self.program.exprs.get(child.idx()).map_or((0, 0), |it| (it.pos, it.end)),
+                    Some(child) => match self
+                        .program
+                        .jsx_expressions
+                        .binary_search_by_key(&child.0, |it| it.0.0)
+                    {
+                        Ok(at) => self
+                            .program
+                            .jsx_expressions
+                            .get(at)
+                            .map_or((0, 0), |it| (it.1, it.2)),
+                        Err(_) => self
+                            .program
+                            .exprs
+                            .get(child.idx())
+                            .map_or((0, 0), |it| (it.pos, it.end)),
                     },
                     None if self.rest.0 < self.rest.1 => (self.rest.1, self.rest.1),
                     None => return None,

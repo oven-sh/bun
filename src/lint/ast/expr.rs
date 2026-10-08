@@ -144,9 +144,13 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Null => ExprKind::Null,
             hir::ExprKind::True => ExprKind::True,
             hir::ExprKind::False => ExprKind::False,
-            hir::ExprKind::Number(at) => {
-                ExprKind::Number(file.hir.numbers.get(at as usize).copied().unwrap_or(f64::NAN))
-            }
+            hir::ExprKind::Number(at) => ExprKind::Number(
+                file.hir
+                    .numbers
+                    .get(at as usize)
+                    .copied()
+                    .unwrap_or(f64::NAN),
+            ),
             hir::ExprKind::String(text) => match file.hir.text.get(raw.pos as usize) {
                 Some(b'"' | b'\'') if file.hir.jsx.is_empty() => ExprKind::String(file.name(text)),
                 _ => self.kind_of_string(raw, text),
@@ -168,7 +172,9 @@ impl<'a> Expr<'a> {
                 name,
                 name_pos,
                 chain,
-            } => match file.spells_private_names_apart() && file.hir.text.get(name_pos as usize) == Some(&b'#') {
+            } => match file.spells_private_names_apart()
+                && file.hir.text.get(name_pos as usize) == Some(&b'#')
+            {
                 true => self.kind_of_private_member(obj, name, name_pos, chain),
                 false => ExprKind::Dot {
                     obj: e(obj),
@@ -237,10 +243,18 @@ impl<'a> Expr<'a> {
     }
 
     #[inline(never)]
-    fn kind_of_private_member(self, obj: hir::ExprId, name: Atom, name_pos: u32, chain: Chain) -> ExprKind<'a> {
+    fn kind_of_private_member(
+        self,
+        obj: hir::ExprId,
+        name: Atom,
+        name_pos: u32,
+        chain: Chain,
+    ) -> ExprKind<'a> {
         ExprKind::Dot {
             obj: Expr::new(self.file, obj),
-            name: self.file.ident(self.file.private_name(name).atom(), name_pos),
+            name: self
+                .file
+                .ident(self.file.private_name(name).atom(), name_pos),
             chain,
         }
     }
@@ -269,7 +283,8 @@ impl<'a> Expr<'a> {
     /// The kind without what it holds. This is what a rule listens for.
     #[inline]
     pub fn tag(self) -> ExprTag {
-        self.try_raw().map_or(ExprTag::Missing, |raw| self.file.expr_tag(self.id, raw))
+        self.try_raw()
+            .map_or(ExprTag::Missing, |raw| self.file.expr_tag(self.id, raw))
     }
 
     /// It is text between the tags of a JSX element: ESLint's `JSXText`. Its kind is `String`, with
@@ -283,7 +298,8 @@ impl<'a> Expr<'a> {
     /// ESLint's `value` of a `JSXText`: the text as it is written, all whitespace included, with
     /// what `&amp;` and the like stand for. `None` if it is not [JSX text](Expr::is_jsx_text).
     pub fn jsx_text_value(self) -> Option<std::borrow::Cow<'a, [u8]>> {
-        self.is_jsx_text().then(|| super::entities::unescape(self.text()))
+        self.is_jsx_text()
+            .then(|| super::entities::unescape(self.text()))
     }
 
     /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`
@@ -297,7 +313,9 @@ impl<'a> Expr<'a> {
             return false;
         };
         match parent.kind() {
-            ExprKind::Dot { .. } => self.try_raw().is_some_and(|raw| self.file.is_in_jsx_tag_with_dots(raw.pos)),
+            ExprKind::Dot { .. } => self
+                .try_raw()
+                .is_some_and(|raw| self.file.is_in_jsx_tag_with_dots(raw.pos)),
             ExprKind::Jsx(jsx) => jsx.tag() == Some(self) || jsx.close_tag() == Some(self),
             _ => false,
         }
@@ -337,7 +355,9 @@ impl<'a> Expr<'a> {
                 pos,
                 end,
             }) if self.file.hir.text.get(pos as usize) != Some(&b'.') => {
-                let start = self.jsx_container_span().map_or(pos, |it| skip_trivia(self.file.hir.text, it.start + 1));
+                let start = self
+                    .jsx_container_span()
+                    .map_or(pos, |it| skip_trivia(self.file.hir.text, it.start + 1));
                 Span::new(start, end)
             }
             Some(&hir::Expr {
@@ -378,9 +398,13 @@ impl<'a> Expr<'a> {
                 && self.file.is_jsx_attribute_string(self.id) =>
             {
                 let text = self.file.hir.text;
-                let quote = text.get(end.wrapping_sub(1) as usize).copied().unwrap_or(b'"');
+                let quote = text
+                    .get(end.wrapping_sub(1) as usize)
+                    .copied()
+                    .unwrap_or(b'"');
                 let before = text.get(..pos as usize).unwrap_or_default();
-                let start = bun_core::strings::last_index_of_char(before, quote).map_or(pos, |it| it as u32);
+                let start = bun_core::strings::last_index_of_char(before, quote)
+                    .map_or(pos, |it| it as u32);
                 Span::new(start, end)
             }
             Some(raw) => Span::new(raw.pos, raw.end),
@@ -479,9 +503,9 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn as_call_like(self) -> Option<Call<'a>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Call(call) | hir::ExprKind::New(call) | hir::ExprKind::TaggedTemplate(call) => {
-                Some(Call::new(self.file, call))
-            }
+            hir::ExprKind::Call(call)
+            | hir::ExprKind::New(call)
+            | hir::ExprKind::TaggedTemplate(call) => Some(Call::new(self.file, call)),
             _ => None,
         }
     }
@@ -490,7 +514,9 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn callee(self) -> Option<Expr<'a>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Call(call) | hir::ExprKind::New(call) => Some(Call::new(self.file, call).callee()),
+            hir::ExprKind::Call(call) | hir::ExprKind::New(call) => {
+                Some(Call::new(self.file, call).callee())
+            }
             _ => None,
         }
     }
@@ -499,7 +525,9 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn object(self) -> Option<Expr<'a>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Dot { obj, .. } | hir::ExprKind::Index { obj, .. } => Some(Expr::new(self.file, obj)),
+            hir::ExprKind::Dot { obj, .. } | hir::ExprKind::Index { obj, .. } => {
+                Some(Expr::new(self.file, obj))
+            }
             _ => None,
         }
     }
@@ -517,10 +545,14 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn member_name(self) -> Option<Ident<'a>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Dot { name, name_pos, .. } => Some(match self.file.spells_private_names_apart() {
-                true if self.is_private_member() => self.file.ident(self.file.private_name(name).atom(), name_pos),
-                _ => self.file.ident(name, name_pos),
-            }),
+            hir::ExprKind::Dot { name, name_pos, .. } => {
+                Some(match self.file.spells_private_names_apart() {
+                    true if self.is_private_member() => self
+                        .file
+                        .ident(self.file.private_name(name).atom(), name_pos),
+                    _ => self.file.ident(name, name_pos),
+                })
+            }
             _ => None,
         }
     }
@@ -602,7 +634,9 @@ impl<'a> Expr<'a> {
             | hir::ExprKind::AsConst(operand)
             | hir::ExprKind::As { expr: operand, .. }
             | hir::ExprKind::Satisfies { expr: operand, .. }
-            | hir::ExprKind::Instantiation { expr: operand, .. } => Some(Expr::new(self.file, operand)),
+            | hir::ExprKind::Instantiation { expr: operand, .. } => {
+                Some(Expr::new(self.file, operand))
+            }
             _ => None,
         }
     }
@@ -671,7 +705,11 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn is_in_optional_chain(self) -> bool {
         let mut at = self;
-        while let Some(hir::Expr { kind: hir::ExprKind::NonNull(operand), .. }) = at.try_raw() {
+        while let Some(hir::Expr {
+            kind: hir::ExprKind::NonNull(operand),
+            ..
+        }) = at.try_raw()
+        {
             at = Expr::new(self.file, *operand);
             if at.is_parenthesized() {
                 return false;
@@ -718,13 +756,16 @@ impl<'a> Expr<'a> {
                     ExprKind::Array(_) | ExprKind::Spread(_) => parent,
                     _ => return false,
                 },
-                Node::Prop(prop) if prop.value() == Some(at) && !prop.is_jsx_attribute() => match prop.parent() {
-                    Node::Expr(object) => object,
-                    _ => return false,
-                },
+                Node::Prop(prop) if prop.value() == Some(at) && !prop.is_jsx_attribute() => {
+                    match prop.parent() {
+                        Node::Expr(object) => object,
+                        _ => return false,
+                    }
+                }
                 Node::Stmt(parent) => {
                     return match parent.kind() {
-                        super::StmtKind::ForIn { left, .. } | super::StmtKind::ForOf { left, .. } => {
+                        super::StmtKind::ForIn { left, .. }
+                        | super::StmtKind::ForOf { left, .. } => {
                             matches!(left.kind(), super::StmtKind::Expr(head) if head == at)
                         }
                         _ => false,
@@ -747,7 +788,9 @@ impl<'a> Expr<'a> {
     /// other. These are the ranges of those in this one, the innermost first: `x!`, `x!!`. The `!`
     /// of each is its last character. Empty for `x!`, as it almost always is, and for anything that
     /// is not a `NonNull`.
-    pub fn inner_non_null_spans(self) -> impl DoubleEndedIterator<Item = Span> + ExactSizeIterator + 'a {
+    pub fn inner_non_null_spans(
+        self,
+    ) -> impl DoubleEndedIterator<Item = Span> + ExactSizeIterator + 'a {
         let all = self.file.hir.non_null_ends;
         let ends = match all.is_empty() {
             true => all,
@@ -831,7 +874,8 @@ impl<'a> Expr<'a> {
         let first = args.first()?;
         let text = self.file.text();
         let dot = skip_trivia(text, self.span().start + "import".len() as u32);
-        (deferred.iter().any(|it| it.0 == first.id)).then(|| self.file.phase_at(skip_trivia(text, dot + 1)))
+        (deferred.iter().any(|it| it.0 == first.id))
+            .then(|| self.file.phase_at(skip_trivia(text, dot + 1)))
     }
 
     /// The operands of the comma operators: `a`, `b` and `c` of `a, b, c`, which ESLint has as
@@ -889,25 +933,50 @@ impl File<'_> {
         let Some(&bun_sema::bind::Parent::Prop(prop)) = self.bound.expr_parent.get(id.idx()) else {
             return false;
         };
-        let is_attribute = |it: &hir::Prop| it.name_kind == hir::NameKind::Jsx && it.kind != hir::PropKind::Spread;
+        let is_attribute =
+            |it: &hir::Prop| it.name_kind == hir::NameKind::Jsx && it.kind != hir::PropKind::Spread;
         self.hir.props.get(prop.idx()).is_some_and(is_attribute)
-            && self.hir.jsx_expressions.binary_search_by_key(&id.0, |it| it.0.0).is_err()
+            && self
+                .hir
+                .jsx_expressions
+                .binary_search_by_key(&id.0, |it| it.0.0)
+                .is_err()
     }
 
     fn is_jsx_text(&self, id: hir::ExprId) -> bool {
         if self.hir.jsx.is_empty()
-            || !matches!(self.hir.exprs.get(id.idx()), Some(hir::Expr { kind: hir::ExprKind::String(_), .. }))
+            || !matches!(
+                self.hir.exprs.get(id.idx()),
+                Some(hir::Expr {
+                    kind: hir::ExprKind::String(_),
+                    ..
+                })
+            )
         {
             return false;
         }
-        let Some(&bun_sema::bind::Parent::Expr(parent)) = self.bound.expr_parent.get(id.idx()) else {
+        let Some(&bun_sema::bind::Parent::Expr(parent)) = self.bound.expr_parent.get(id.idx())
+        else {
             return false;
         };
-        let Some(&hir::Expr { kind: hir::ExprKind::Jsx(jsx), .. }) = self.hir.exprs.get(parent.idx()) else {
+        let Some(&hir::Expr {
+            kind: hir::ExprKind::Jsx(jsx),
+            ..
+        }) = self.hir.exprs.get(parent.idx())
+        else {
             return false;
         };
-        let is_name = self.hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == id || it.close_tag == id);
-        !is_name && self.hir.jsx_expressions.binary_search_by_key(&id.0, |it| it.0.0).is_err()
+        let is_name = self
+            .hir
+            .jsx
+            .get(jsx.idx())
+            .is_some_and(|it| it.tag == id || it.close_tag == id);
+        !is_name
+            && self
+                .hir
+                .jsx_expressions
+                .binary_search_by_key(&id.0, |it| it.0.0)
+                .is_err()
     }
 }
 
@@ -1035,7 +1104,8 @@ impl<'a> Template<'a> {
     /// template allows.
     #[inline]
     pub fn cooked(self, i: usize) -> Option<Name<'a>> {
-        self.text_of_scanner(i).filter(|_| !has_invalid_escape(self.raw(i)))
+        self.text_of_scanner(i)
+            .filter(|_| !has_invalid_escape(self.raw(i)))
     }
 
     /// The same, where TypeScript's scanner leaves an invalid escape as it is written.
@@ -1083,14 +1153,17 @@ impl<'a> Template<'a> {
 /// Whether the text `raw` of a template has an escape that is not one: `\u` and `\x` without their
 /// digits, `\1` to `\9`, `\0` before a digit.
 fn has_invalid_escape(raw: &[u8]) -> bool {
-    let is_hex = |bytes: Option<&[u8]>| bytes.is_some_and(|it| !it.is_empty() && it.iter().all(u8::is_ascii_hexdigit));
+    let is_hex = |bytes: Option<&[u8]>| {
+        bytes.is_some_and(|it| !it.is_empty() && it.iter().all(u8::is_ascii_hexdigit))
+    };
     let mut rest = raw;
     while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\\') {
         let after = rest.get(at + 2..).unwrap_or_default();
         let is_valid = match rest.get(at + 1) {
             Some(b'x') => is_hex(after.get(..2)),
             Some(b'u') if after.first() == Some(&b'{') => {
-                let digits = bun_core::strings::index_of_char_usize(after, b'}').and_then(|end| after.get(1..end));
+                let digits = bun_core::strings::index_of_char_usize(after, b'}')
+                    .and_then(|end| after.get(1..end));
                 is_hex(digits)
                     && digits.is_some_and(|it| {
                         let digits = it.iter().skip_while(|b| **b == b'0').count();
@@ -1158,7 +1231,10 @@ impl<'a> Call<'a> {
 
     #[inline]
     pub fn callee(self) -> Expr<'a> {
-        Expr::new(self.file, self.raw().map_or(hir::ExprId::NONE, |c| c.callee))
+        Expr::new(
+            self.file,
+            self.raw().map_or(hir::ExprId::NONE, |c| c.callee),
+        )
     }
 
     #[inline]

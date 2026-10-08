@@ -9,13 +9,11 @@
 //! public for it.
 
 use super::estree::is_expression_statement;
-use super::{
-    is_type_definition, is_type_import, is_type_only_reference, is_variable_definition,
-};
+use super::{is_type_definition, is_type_import, is_type_only_reference, is_variable_definition};
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Handle, Key, KeyKind, Module,
-    ModuleName, Name, Node, Param, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
-    TypeTag, UnOp, VarDecl,
+    ModuleName, Name, Node, Param, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag,
+    TypeKind, TypeTag, UnOp, VarDecl,
 };
 use crate::semantic::{Declaration, Reference, ReferenceFlags, Scope, ScopeKind, Symbol};
 use crate::span::Span;
@@ -165,7 +163,10 @@ fn is_in_class_scope(class: Class, start: u32) -> bool {
 /// From the end of the name of `class` to its end.
 fn class_scope_range(class: Class) -> Span {
     let whole = class.span();
-    Span::new(class.name().map_or(whole.start, |name| name.span().end), whole.end)
+    Span::new(
+        class.name().map_or(whole.start, |name| name.span().end),
+        whole.end,
+    )
 }
 
 /// The `A` or the `B` of `namespace A.B {}`, which declare nothing in scope-manager.
@@ -252,7 +253,9 @@ impl Facts {
                     Some(&PatParent::Param(param)) => Some(Param::new(file, param)),
                     _ => None,
                 };
-                let is_this = pat.as_ident().is_some_and(|name| name.atom() == known::this);
+                let is_this = pat
+                    .as_ident()
+                    .is_some_and(|name| name.atom() == known::this);
                 match param.and_then(Param::func).map(Func::kind) {
                     Some(FnKind::IndexSignature) => 0,
                     _ if is_this || param.is_some_and(Param::is_parameter_property) => {
@@ -543,7 +546,11 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut Marker<'a>) {
 }
 
 /// Adds the children of `node` that are to be looked at to `pending`.
-fn mark_identifiers_of<'a>(node: Node<'a>, marks: &mut Marker<'a>, pending: &mut SmallVec<[Node<'a>; 16]>) {
+fn mark_identifiers_of<'a>(
+    node: Node<'a>,
+    marks: &mut Marker<'a>,
+    pending: &mut SmallVec<[Node<'a>; 16]>,
+) {
     match node {
         Node::Expr(e) => match e.kind() {
             ExprKind::Ident(name) => mark_identifier(name, node, marks),
@@ -646,7 +653,11 @@ fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut Marker<'a>
 fn exported_statement(declaration: Declaration<'_>) -> Option<Stmt<'_>> {
     let statement = match declaration {
         Declaration::Var(pat) => {
-            let statement = *pat.file().bound.var_stmt.get(declarator_of(pat)?.id().idx())?;
+            let statement = *pat
+                .file()
+                .bound
+                .var_stmt
+                .get(declarator_of(pat)?.id().idx())?;
             Node::Stmt(Stmt::some(pat.file(), statement)?)
         }
         Declaration::Fn(func) => func.owner(),
@@ -848,8 +859,7 @@ pub fn is_inside_of_storable_function<'a>(
 ) -> bool {
     let function = (walks.functions).find(id, |_, ancestor| as_estree_function(ancestor));
     function.is_some_and(|func| {
-        rhs_node.span().contains(func.owner().span())
-            && is_storable_function(func, rhs_node, walks)
+        rhs_node.span().contains(func.owner().span()) && is_storable_function(func, rhs_node, walks)
     })
 }
 
@@ -995,7 +1005,11 @@ fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
             let mut declarations = variable.symbol.declarations();
             if has_many_declarations {
                 let ranges = own_ranges.get_or_init(|| {
-                    Ranges::new(declarations.filter(|it| is_definition(*it)).filter_map(self_reference_range))
+                    Ranges::new(
+                        declarations
+                            .filter(|it| is_definition(*it))
+                            .filter_map(self_reference_range),
+                    )
                 });
                 return !ranges.contains_offset(start);
             }
@@ -1076,7 +1090,9 @@ impl<'a> VariableAnalysis<'a> {
 /// that the file does not declare, which are no [`Symbol`]s: see [`is_used_global_variable`].
 pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> VariableAnalysis<'a> {
     let mut analysis = VariableAnalysis::default();
-    analysis.used_variables.reserve(file.symbols().size_hint().1.unwrap_or(0));
+    analysis
+        .used_variables
+        .reserve(file.symbols().size_hint().1.unwrap_or(0));
     let mut marks = Marker {
         marks: eslint_used,
         unshared: Vec::new(),
@@ -1120,9 +1136,7 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
             marks.mark(symbol);
             is_marked = true;
         }
-        if is_marked
-            || is_used_variable_with(variable, facts)
-            || is_exported_with(variable, facts)
+        if is_marked || is_used_variable_with(variable, facts) || is_exported_with(variable, facts)
         {
             analysis.used_variables.push(variable);
         } else {

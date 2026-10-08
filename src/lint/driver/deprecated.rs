@@ -11,7 +11,10 @@ pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
     out.push(b'[');
     let rules = config.map_or(&[][..], |config| &config.rules[..]);
     let mut is_first = true;
-    for rule in rules.iter().filter(|it| it.severity != Severity::Off && it.entry.meta.is_deprecated) {
+    for rule in rules
+        .iter()
+        .filter(|it| it.severity != Severity::Off && it.entry.meta.is_deprecated)
+    {
         let id = RuleId::Known(rule.entry.meta).to_vec();
         let Ok(at) = data::DEPRECATED.binary_search_by(|it| it.0.as_bytes().cmp(&id[..])) else {
             continue;

@@ -1384,7 +1384,10 @@ impl<'a> Lexer<'a> {
         }
         // Prettier lets Babel recover from an invalid escape in a template without a tag.
         if self.is_babel
-            && matches!(start.checked_sub(1).and_then(|at| self.contents.get(at)), Some(b'`' | b'}'))
+            && matches!(
+                start.checked_sub(1).and_then(|at| self.contents.get(at)),
+                Some(b'`' | b'}')
+            )
         {
             return;
         }

@@ -82,7 +82,11 @@ impl<'a> TypeList<'a> {
 
     #[inline]
     pub fn get(self, i: usize) -> Option<Type<'a>> {
-        let id = self.ids.get(i).copied().or_else(|| self.one.filter(|_| i == 0))?;
+        let id = self
+            .ids
+            .get(i)
+            .copied()
+            .or_else(|| self.one.filter(|_| i == 0))?;
         Some(Type::new(self.file, id))
     }
 
@@ -219,7 +223,9 @@ pub enum TypeStructure<'a> {
         index_type: Type<'a>,
     },
     /// `ts.IndexType`: `keyof type`
-    Index { ty: Type<'a> },
+    Index {
+        ty: Type<'a>,
+    },
     /// `ts.MappedType`: `{ [typeParameter in constraintType as nameType]: templateType }`
     Mapped {
         type_parameter: Type<'a>,
@@ -236,7 +242,9 @@ pub enum TypeStructure<'a> {
         types: TypeList<'a>,
     },
     /// `ts.StringMappingType`: `Uppercase<type>`
-    StringMapping { ty: Type<'a> },
+    StringMapping {
+        ty: Type<'a>,
+    },
     /// `ts.SubstitutionType`
     Substitution {
         base_type: Type<'a>,
@@ -396,7 +404,9 @@ impl<'a> Type<'a> {
     /// `type.target === other.target`
     pub fn has_same_target_as(self, other: Type<'a>) -> bool {
         match (self.is_tuple_type(), other.is_tuple_type()) {
-            (true, true) => self.file.query(|q| q.is_related(Relation::SameTupleTarget, self.id, other.id)),
+            (true, true) => self
+                .file
+                .query(|q| q.is_related(Relation::SameTupleTarget, self.id, other.id)),
             (false, false) => self.target().is_some() && self.target() == other.target(),
             _ => false,
         }
@@ -478,12 +488,14 @@ impl<'a> Type<'a> {
     /// `type.isLiteral()`: a string, number or bigint literal type. Not `true` and `false`.
     #[inline]
     pub fn is_literal(self) -> bool {
-        self.flags().intersects(TypeFlags::STRING_OR_NUMBER_LITERAL | TypeFlags::BIG_INT_LITERAL)
+        self.flags()
+            .intersects(TypeFlags::STRING_OR_NUMBER_LITERAL | TypeFlags::BIG_INT_LITERAL)
     }
 
     /// `type.isClassOrInterface()`: the declared type of a class or an interface.
     pub fn is_class_or_interface(self) -> bool {
-        self.object_flags().intersects(ObjectFlags::CLASS_OR_INTERFACE)
+        self.object_flags()
+            .intersects(ObjectFlags::CLASS_OR_INTERFACE)
     }
 
     /// `type.isClass()`
@@ -535,27 +547,32 @@ impl<'a> Type<'a> {
 
     /// `checker.isTypeAssignableTo(type, target)`
     pub fn is_assignable_to(self, target: Type<'a>) -> bool {
-        self.file.query(|q| q.is_related(Relation::Assignable, self.id, target.id))
+        self.file
+            .query(|q| q.is_related(Relation::Assignable, self.id, target.id))
     }
 
     /// `isTypeIdenticalTo(type, other)`
     pub fn is_identical_to(self, other: Type<'a>) -> bool {
-        self.file.query(|q| q.is_related(Relation::Identical, self.id, other.id))
+        self.file
+            .query(|q| q.is_related(Relation::Identical, self.id, other.id))
     }
 
     /// `isTypeSubtypeOf(type, target)`
     pub fn is_subtype_of(self, target: Type<'a>) -> bool {
-        self.file.query(|q| q.is_related(Relation::Subtype, self.id, target.id))
+        self.file
+            .query(|q| q.is_related(Relation::Subtype, self.id, target.id))
     }
 
     /// `isTypeStrictSubtypeOf(type, target)`
     pub fn is_strict_subtype_of(self, target: Type<'a>) -> bool {
-        self.file.query(|q| q.is_related(Relation::StrictSubtype, self.id, target.id))
+        self.file
+            .query(|q| q.is_related(Relation::StrictSubtype, self.id, target.id))
     }
 
     /// `isTypeComparableTo(type, target)`
     pub fn is_comparable_to(self, target: Type<'a>) -> bool {
-        self.file.query(|q| q.is_related(Relation::Comparable, self.id, target.id))
+        self.file
+            .query(|q| q.is_related(Relation::Comparable, self.id, target.id))
     }
 
     /// The order in which TypeScript lists the constituents of a union. The numbers of types have
@@ -637,26 +654,38 @@ impl<'a> Type<'a> {
     /// `getIndexedAccessTypeOrUndefined(type, index)`. `in_expression`:
     /// `AccessFlags.ExpressionPosition`, which adds `undefined` under `noUncheckedIndexedAccess`.
     pub fn get_indexed_access_type(self, index: Type<'a>, in_expression: bool) -> Option<Type<'a>> {
-        let id = self.file.query(|q| q.indexed_access_type(self.id, index.id, in_expression))?;
+        let id = self
+            .file
+            .query(|q| q.indexed_access_type(self.id, index.id, in_expression))?;
         Some(Type::new(self.file, id))
     }
 
     /// `getAssignmentReducedType(type, assigned)`
     pub fn get_assignment_reduced_type(self, assigned: Type<'a>) -> Type<'a> {
-        Type::new(self.file, self.file.query(|q| q.assignment_reduced_type(self.id, assigned.id)))
+        Type::new(
+            self.file,
+            self.file
+                .query(|q| q.assignment_reduced_type(self.id, assigned.id)),
+        )
     }
 
     /// `getTypeWithDefault(type, defaultExpression)`
     pub fn get_type_with_default(self, default: impl Locate<'a>) -> Type<'a> {
         let default = default.locate(self.file).raw();
-        Type::new(self.file, self.file.query(|q| q.type_with_default(self.id, default)))
+        Type::new(
+            self.file,
+            self.file.query(|q| q.type_with_default(self.id, default)),
+        )
     }
 
     // ───────────────────────────── members ─────────────────────────────
 
     /// `type.getProperties()`, `checker.getPropertiesOfType(type)`
     pub fn get_properties(self) -> SymbolList<'a> {
-        SymbolList::new(self.file, self.file.query(|q| q.properties_of_type(self.id)))
+        SymbolList::new(
+            self.file,
+            self.file.query(|q| q.properties_of_type(self.id)),
+        )
     }
 
     /// `type.getProperty(name)`, `checker.getPropertyOfType(type, name)`
@@ -667,13 +696,17 @@ impl<'a> Type<'a> {
 
     /// `checker.getTypeOfPropertyOfType(type, name)`
     pub fn get_type_of_property(self, name: &[u8]) -> Option<Type<'a>> {
-        let id = self.file.query(|q| q.type_of_property_of_type(self.id, name))?;
+        let id = self
+            .file
+            .query(|q| q.type_of_property_of_type(self.id, name))?;
         Some(Type::new(self.file, id))
     }
 
     /// `getTypeOfPropertyOrIndexSignatureOfType(type, name)`
     pub fn get_type_of_property_or_index_signature(self, name: &[u8]) -> Option<Type<'a>> {
-        let id = self.file.query(|q| q.type_of_property_or_index_signature_of_type(self.id, name))?;
+        let id = self
+            .file
+            .query(|q| q.type_of_property_or_index_signature_of_type(self.id, name))?;
         Some(Type::new(self.file, id))
     }
 
@@ -691,12 +724,15 @@ impl<'a> Type<'a> {
             IndexKind::String => TypeId::STRING,
             IndexKind::Number => TypeId::NUMBER,
         };
-        self.get_index_infos().find(|info| info.key_type().id == key)
+        self.get_index_infos()
+            .find(|info| info.key_type().id == key)
     }
 
     /// `getApplicableIndexInfo(type, keyType)`: the index signature that a key of that type reads.
     pub fn get_applicable_index_info(self, key: Type<'a>) -> Option<IndexInfo<'a>> {
-        let info = self.file.query(|q| q.applicable_index_info(self.id, key.id))?;
+        let info = self
+            .file
+            .query(|q| q.applicable_index_info(self.id, key.id))?;
         Some(IndexInfo::new(self.file, info))
     }
 
@@ -712,7 +748,10 @@ impl<'a> Type<'a> {
 
     /// `checker.getSignaturesOfType(type, kind)`
     pub fn get_signatures(self, kind: SignatureKind) -> SignatureList<'a> {
-        SignatureList::new(self.file, self.file.query(|q| q.signatures_of_type(self.id, kind)))
+        SignatureList::new(
+            self.file,
+            self.file.query(|q| q.signatures_of_type(self.id, kind)),
+        )
     }
 
     /// `type.getCallSignatures()`
@@ -729,12 +768,18 @@ impl<'a> Type<'a> {
 
     /// `checker.typeToString(type)`
     pub fn to_text(self) -> Vec<u8> {
-        self.file.query(|q| q.type_to_string(self.id, None, TypeFormatFlags::DEFAULT))
+        self.file
+            .query(|q| q.type_to_string(self.id, None, TypeFormatFlags::DEFAULT))
     }
 
     /// `checker.typeToString(type, enclosingDeclaration, flags)`
-    pub fn to_text_with(self, enclosing: Option<super::TsNode<'a>>, flags: TypeFormatFlags) -> Vec<u8> {
+    pub fn to_text_with(
+        self,
+        enclosing: Option<super::TsNode<'a>>,
+        flags: TypeFormatFlags,
+    ) -> Vec<u8> {
         let enclosing = enclosing.map(|node| node.raw());
-        self.file.query(|q| q.type_to_string(self.id, enclosing, flags))
+        self.file
+            .query(|q| q.type_to_string(self.id, enclosing, flags))
     }
 }

@@ -85,19 +85,37 @@ impl<'s, 'a> Matcher<'s, 'a> {
         match self.program.tests.get(test as usize) {
             None => false,
             Some(Test::Exists) => !value.is_nullish(),
-            Some(Test::Regex { regex, is_negated: false }) => match value {
+            Some(Test::Regex {
+                regex,
+                is_negated: false,
+            }) => match value {
                 Val::Str(text) => regex.test(text),
                 Val::Short(_) => value.with_string(|text| regex.test(text)),
                 _ => false,
             },
-            Some(Test::Regex { regex, is_negated: true }) => !value.with_string(|text| regex.test(text)),
-            Some(Test::Type { js_type, is_negated }) => (*js_type == Some(value.js_type())) != *is_negated,
-            Some(Test::Equals { literal, is_negated }) => value.equals(literal) != *is_negated,
+            Some(Test::Regex {
+                regex,
+                is_negated: true,
+            }) => !value.with_string(|text| regex.test(text)),
+            Some(Test::Type {
+                js_type,
+                is_negated,
+            }) => (*js_type == Some(value.js_type())) != *is_negated,
+            Some(Test::Equals {
+                literal,
+                is_negated,
+            }) => value.equals(literal) != *is_negated,
             Some(Test::Compare { literal, relation }) => matches!(
                 (value.compare(literal), relation),
                 (Some(Ordering::Less), Relation::Less | Relation::LessOrEqual)
-                    | (Some(Ordering::Equal), Relation::LessOrEqual | Relation::GreaterOrEqual)
-                    | (Some(Ordering::Greater), Relation::Greater | Relation::GreaterOrEqual)
+                    | (
+                        Some(Ordering::Equal),
+                        Relation::LessOrEqual | Relation::GreaterOrEqual
+                    )
+                    | (
+                        Some(Ordering::Greater),
+                        Relation::Greater | Relation::GreaterOrEqual
+                    )
             ),
         }
     }
@@ -112,7 +130,8 @@ impl<'s, 'a> Matcher<'s, 'a> {
             current = current.get(key, self.dialect);
             if let Some(mut nodes) = current.elements() {
                 let rest = path.get(i + 1..).unwrap_or_default();
-                return nodes.any(|it| self.is_in_path(node, it.map_or(Val::Null, Val::Node), rest));
+                return nodes
+                    .any(|it| self.is_in_path(node, it.map_or(Val::Null, Val::Node), rest));
             }
         }
         matches!(current, Val::Node(found) if found == node)
@@ -123,7 +142,9 @@ impl<'s, 'a> Matcher<'s, 'a> {
         let dialect = self.dialect;
         let parent = self.parent(node);
         let entries = parent.map_or(&[][..], |it| it.node_type().fields()).iter();
-        let entries = entries.take_while(|it| it.is_child).filter(move |it| it.is_in(dialect));
+        let entries = entries
+            .take_while(|it| it.is_child)
+            .filter(move |it| it.is_in(dialect));
         entries.filter_map(move |it| match (it.get)(parent?) {
             Value::Nodes(list) => Some(list),
             _ => None,
@@ -132,10 +153,14 @@ impl<'s, 'a> Matcher<'s, 'a> {
 
     /// `sibling`
     fn has_sibling(&self, node: VNode<'a>, selector: Id, side: Side) -> bool {
-        let Some((list, at)) = self.lists_around(node).find_map(|it| Some((it, it.index_of(node)?))) else {
+        let Some((list, at)) = self
+            .lists_around(node)
+            .find_map(|it| Some((it, it.index_of(node)?)))
+        else {
             return false;
         };
-        let mut matches = |it: Option<VNode<'a>>| it.is_some_and(|it| self.matches_node(selector, it));
+        let mut matches =
+            |it: Option<VNode<'a>>| it.is_some_and(|it| self.matches_node(selector, it));
         match side {
             Side::Left => list.take(at).any(&mut matches),
             Side::Right => list.skip(at + 1).any(&mut matches),
@@ -144,7 +169,10 @@ impl<'s, 'a> Matcher<'s, 'a> {
 
     /// `adjacent`
     fn has_adjacent(&self, node: VNode<'a>, selector: Id, side: Side) -> bool {
-        let Some((list, at)) = self.lists_around(node).find_map(|it| Some((it, it.index_of(node)?))) else {
+        let Some((list, at)) = self
+            .lists_around(node)
+            .find_map(|it| Some((it, it.index_of(node)?)))
+        else {
             return false;
         };
         let neighbor = match side {
@@ -167,12 +195,22 @@ impl<'s, 'a> Matcher<'s, 'a> {
         })
     }
 
-    fn has(&self, selectors: &[Id], is_about_children: bool, node: VNode<'a>, node_type: NodeType) -> bool {
+    fn has(
+        &self,
+        selectors: &[Id],
+        is_about_children: bool,
+        node: VNode<'a>,
+        node_type: NodeType,
+    ) -> bool {
         let inside = Matcher {
             limit: Some(node),
             ..*self
         };
-        let matches = |it: VNode<'a>, node_type: NodeType| selectors.iter().any(|&id| inside.matches(id, it, node_type));
+        let matches = |it: VNode<'a>, node_type: NodeType| {
+            selectors
+                .iter()
+                .any(|&id| inside.matches(id, it, node_type))
+        };
         if matches(node, node_type) {
             return true;
         }
@@ -196,10 +234,18 @@ impl<'s, 'a> Matcher<'s, 'a> {
 
     #[inline]
     fn matches_node(&self, id: Id, node: VNode<'a>) -> bool {
-        matches!(self.program.ops.get(id as usize), Some(Op::Wildcard)) || self.matches(id, node, node.node_type())
+        matches!(self.program.ops.get(id as usize), Some(Op::Wildcard))
+            || self.matches(id, node, node.node_type())
     }
 
-    fn attribute(&self, path: &[Key], test: u32, first: Bound, node: VNode<'a>, node_type: NodeType) -> bool {
+    fn attribute(
+        &self,
+        path: &[Key],
+        test: u32,
+        first: Bound,
+        node: VNode<'a>,
+        node_type: NodeType,
+    ) -> bool {
         let rest = path.get(1..).unwrap_or_default();
         let value = match first {
             Bound::Entry(entry) => self.follow(Val::of_field(node, entry, self.dialect), rest),
@@ -219,15 +265,29 @@ impl<'s, 'a> Matcher<'s, 'a> {
         match program.ops.get(id as usize) {
             None => false,
             Some(Op::Wildcard) => true,
-            Some(Op::Identifier { node_type: wanted, .. }) => *wanted == Some(node_type),
-            Some(Op::All(list)) => list.of(&program.lists).iter().all(|&it| self.matches(it, node, node_type)),
-            Some(Op::Any(list)) => list.of(&program.lists).iter().any(|&it| self.matches(it, node, node_type)),
-            Some(Op::NotAny(list)) => !list.of(&program.lists).iter().any(|&it| self.matches(it, node, node_type)),
+            Some(Op::Identifier {
+                node_type: wanted, ..
+            }) => *wanted == Some(node_type),
+            Some(Op::All(list)) => list
+                .of(&program.lists)
+                .iter()
+                .all(|&it| self.matches(it, node, node_type)),
+            Some(Op::Any(list)) => list
+                .of(&program.lists)
+                .iter()
+                .any(|&it| self.matches(it, node, node_type)),
+            Some(Op::NotAny(list)) => !list
+                .of(&program.lists)
+                .iter()
+                .any(|&it| self.matches(it, node, node_type)),
             Some(Op::Attribute { path, test, first }) => {
                 self.attribute(path.of(&program.keys), *test, *first, node, node_type)
             }
             Some(&Op::Child(left, right)) => {
-                self.matches(right, node, node_type) && self.parent(node).is_some_and(|it| self.matches_node(left, it))
+                self.matches(right, node, node_type)
+                    && self
+                        .parent(node)
+                        .is_some_and(|it| self.matches_node(left, it))
             }
             Some(op) => self.matches_other(op, node, node_type),
         }
@@ -246,7 +306,9 @@ impl<'s, 'a> Matcher<'s, 'a> {
                 types.contains(node_type)
                     && !(excludes_names_of_meta_properties
                         && node_type == NodeType::Identifier
-                        && self.parent(node).is_some_and(|it| it.node_type() == NodeType::MetaProperty))
+                        && self
+                            .parent(node)
+                            .is_some_and(|it| it.node_type() == NodeType::MetaProperty))
             }
             Op::ExactNode => self.limit == Some(node),
             Op::Field(path) => {
@@ -257,7 +319,12 @@ impl<'s, 'a> Matcher<'s, 'a> {
             Op::Has {
                 selectors,
                 is_about_children,
-            } => self.has(selectors.of(&program.lists), is_about_children, node, node_type),
+            } => self.has(
+                selectors.of(&program.lists),
+                is_about_children,
+                node,
+                node_type,
+            ),
             Op::Descendant(left, right) => {
                 self.matches(right, node, node_type)
                     && std::iter::successors(self.parent(node), |it| self.parent(*it))

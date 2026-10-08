@@ -2,7 +2,8 @@
 
 use super::semicolon::OptionalSemicolon;
 use super::statements::{
-    CommentPlacement, comment_placements, expression_statement_needs_semicolon, follows_type_cast_comment,
+    CommentPlacement, comment_placements, expression_statement_needs_semicolon,
+    follows_type_cast_comment,
 };
 use crate::ir::element::TextWidth;
 use crate::js::format::FormatStatementBeforeAnother;
@@ -21,20 +22,38 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     write_hashbang(f);
     // Nothing that a comment could belong to: they are all Prettier's dangling comments of the
     // program, which have no empty lines between them.
-    if !file.body().is_empty() && file.body().iter().all(|it| matches!(it.kind(), StmtKind::Empty)) {
+    if !file.body().is_empty()
+        && file
+            .body()
+            .iter()
+            .all(|it| matches!(it.kind(), StmtKind::Empty))
+    {
         let comments = f.comments().unprinted_comments();
         let indent = DanglingIndentMode::None;
-        return write!(f, [FormatDanglingComments::Comments { comments, indent }, hard_line_break()]);
+        return write!(
+            f,
+            [
+                FormatDanglingComments::Comments { comments, indent },
+                hard_line_break()
+            ]
+        );
     }
     write!(f, FormatStatements(file.body()));
     let rest = f.comments().unprinted_comments();
-    write!(f, [FormatTrailingComments::Comments(rest), hard_line_break()]);
+    write!(
+        f,
+        [FormatTrailingComments::Comments(rest), hard_line_break()]
+    );
 }
 
 /// `#!/usr/bin/env bun`
 fn write_hashbang(f: &mut Formatter<'_>) {
     let source = f.source_text().as_bytes();
-    let start = if source.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
+    let start = if source.starts_with(b"\xEF\xBB\xBF") {
+        3
+    } else {
+        0
+    };
     let Some(rest) = source.get(start..).filter(|rest| rest.starts_with(b"#!")) else {
         return;
     };
@@ -55,26 +74,37 @@ fn write_hashbang(f: &mut Formatter<'_>) {
 /// `\n`, `\r\n`, `\r`, U+2028 or U+2029 at the start of `text`: what is after it.
 fn strip_line_terminator(text: &[u8]) -> Option<&[u8]> {
     match text {
-        [b'\r', b'\n', rest @ ..] | [b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
+        [b'\r', b'\n', rest @ ..]
+        | [b'\n' | b'\r', rest @ ..]
+        | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
         _ => None,
     }
 }
 
 fn trim_blanks_start(text: &[u8]) -> &[u8] {
-    let count = text.iter().take_while(|b| matches!(b, b' ' | b'\t')).count();
+    let count = text
+        .iter()
+        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .count();
     &text[count..]
 }
 
 /// Prettier's `isNextLineEmpty`: whether the line after the one that `position` is on is empty.
 /// Commas, semicolons and comments after `position` are passed over.
 pub(crate) fn is_next_line_empty(source: SourceText<'_>, position: u32) -> bool {
-    let mut rest = source.as_bytes().get(position as usize..).unwrap_or_default();
+    let mut rest = source
+        .as_bytes()
+        .get(position as usize..)
+        .unwrap_or_default();
     // Nearly always the line ends here.
     if let [b'\n', next_line @ ..] = rest {
         return strip_line_terminator(trim_blanks_start(next_line)).is_some();
     }
     loop {
-        let count = rest.iter().take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t')).count();
+        let count = rest
+            .iter()
+            .take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t'))
+            .count();
         rest = &rest[count..];
         let Some(comment) = rest.strip_prefix(b"/*") else {
             break;
@@ -128,8 +158,10 @@ fn is_next_line_empty_after<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool 
         return true;
     }
     // `a // comment\n\n;`
-    matches!(source.slice_range(span.start, span.end), [.., b'\n' | b'\r' | b' ' | b'\t' | b'/' | 0xA8 | 0xA9, b';'])
-        && ends_before_semicolon(statement)
+    matches!(
+        source.slice_range(span.start, span.end),
+        [.., b'\n' | b'\r' | b' ' | b'\t' | b'/' | 0xA8 | 0xA9, b';']
+    ) && ends_before_semicolon(statement)
         && is_next_line_empty(source, f.comments().without_semicolon(span).end)
 }
 
@@ -143,7 +175,12 @@ impl<'a> Format<'a> for FormatStatements<'a> {
         let mut previous: Option<Stmt<'a>> = None;
         let mut imports = ImportRun::new(f);
         let last_index = self.0.len().saturating_sub(1);
-        for (index, statement) in self.0.iter().enumerate().filter(|(_, it)| it.tag() != StmtTag::Empty) {
+        for (index, statement) in self
+            .0
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| it.tag() != StmtTag::Empty)
+        {
             let write_statement = |f: &mut Formatter<'a>| match index == last_index {
                 true => write!(f, statement),
                 false => write!(f, FormatStatementBeforeAnother(statement)),
@@ -169,8 +206,15 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 false => write!(f, hard_line_break()),
             }
             imports.before_statement(statement, f);
-            for (comment, _) in comments.iter().zip(&placements).filter(|(_, placement)| placement.leads()) {
-                write!(f, FormatLeadingComments::Comments(std::slice::from_ref(comment)));
+            for (comment, _) in comments
+                .iter()
+                .zip(&placements)
+                .filter(|(_, placement)| placement.leads())
+            {
+                write!(
+                    f,
+                    FormatLeadingComments::Comments(std::slice::from_ref(comment))
+                );
             }
             write_semicolon_before_type_cast_comment(statement, f);
             write_statement(f);
@@ -182,7 +226,10 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             && let Some(last) = self.0.last().filter(|last| last.tag() == StmtTag::Empty)
         {
             let end = last.ast_parent().span().end;
-            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));
+            write!(
+                f,
+                FormatTrailingComments::Comments(f.comments().comments_before(end))
+            );
         }
         imports.finish(f);
     }
@@ -212,12 +259,22 @@ fn write_more_trailing_comments<'a>(
     let mut is_after_line_comment = (f.comments().printed_comments().last())
         .is_some_and(|comment| comment.is_line() && comment.span.start >= previous.span().start);
     let mut has_line_suffix = is_after_line_comment;
-    for (comment, _) in comments.iter().zip(&placements).filter(|(_, placement)| !placement.leads()) {
+    for (comment, _) in comments
+        .iter()
+        .zip(&placements)
+        .filter(|(_, placement)| !placement.leads())
+    {
         f.comments_mut().increment_printed_count();
         if is_after_line_comment {
             write!(f, line_suffix(&format_args!(hard_line_break(), comment)));
         } else if comment.is_line() || has_line_suffix {
-            write!(f, [line_suffix(&format_args!(space(), comment)), expand_parent()]);
+            write!(
+                f,
+                [
+                    line_suffix(&format_args!(space(), comment)),
+                    expand_parent()
+                ]
+            );
         } else {
             write!(f, [space(), comment]);
         }
@@ -225,8 +282,15 @@ fn write_more_trailing_comments<'a>(
         is_after_line_comment = comment.is_line();
     }
 
-    let trailing_count = placements.iter().take_while(|placement| !placement.leads()).count();
-    match placements.iter().skip(trailing_count).all(|placement| placement.leads()) {
+    let trailing_count = placements
+        .iter()
+        .take_while(|placement| !placement.leads())
+        .count();
+    match placements
+        .iter()
+        .skip(trailing_count)
+        .all(|placement| placement.leads())
+    {
         true => SmallVec::new(),
         false => placements,
     }
@@ -236,7 +300,10 @@ fn write_more_trailing_comments<'a>(
 /// statement has to start with goes before a type cast comment, which has to stay next to its `(`.
 #[inline]
 fn write_semicolon_before_type_cast_comment<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    if !f.is_quiet() && f.comments().has_type_cast_comments() && f.options().semicolons.is_as_needed() {
+    if !f.is_quiet()
+        && f.comments().has_type_cast_comments()
+        && f.options().semicolons.is_as_needed()
+    {
         write_semicolon_before_type_cast_comment_of(statement, f);
     }
 }
@@ -249,7 +316,8 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
     let start = statement.span().start;
     if let [rest @ .., _] = f.comments().comments_before(start)
         && follows_type_cast_comment(start, f)
-        && (!f.comments().is_suppressed(start) || semicolon_is_before_cast_comment_of_ignored_statement(f))
+        && (!f.comments().is_suppressed(start)
+            || semicolon_is_before_cast_comment_of_ignored_statement(f))
         && expression_statement_needs_semicolon(statement, expression, f)
     {
         write!(f, [FormatLeadingComments::Comments(rest), ";"]);
@@ -270,7 +338,11 @@ pub(crate) fn write_directive<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     write!(
         f,
         [
-            FormatLiteralStringToken::new(expression.text(), false, StringLiteralParentKind::Directive),
+            FormatLiteralStringToken::new(
+                expression.text(),
+                false,
+                StringLiteralParentKind::Directive
+            ),
             OptionalSemicolon
         ]
     );

@@ -54,7 +54,9 @@ fn parse_media_feature(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> 
         if matches!(character, b'\'' | b'"') {
             match *modes.last().ok_or(ParseError)? {
                 Mode::Interpolation => modes.push(Mode::String(character)),
-                Mode::String(quote) if quote == character && (i == 0 || normalized[i - 1] != b'\\') => {
+                Mode::String(quote)
+                    if quote == character && (i == 0 || normalized[i - 1] != b'\\') =>
+                {
                     modes.pop();
                 }
                 _ => {}
@@ -71,7 +73,10 @@ fn parse_media_feature(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> 
             break;
         }
     }
-    let mut result = vec![leaf(MediaKind::Feature, text::trim(&normalized[..feature_end]))];
+    let mut result = vec![leaf(
+        MediaKind::Feature,
+        text::trim(&normalized[..feature_end]),
+    )];
     if let Some(value) = value {
         result.push(leaf(MediaKind::Colon, b":"));
         result.push(leaf(MediaKind::Value, value));
@@ -114,7 +119,9 @@ fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
         }
         if let Some((start, is_expression)) = element
             && local_level == 0
-            && (character == b')' || i + 1 == string.len() || text::starts_with_white_space(&string[i + 1..]))
+            && (character == b')'
+                || i + 1 == string.len()
+                || text::starts_with_white_space(&string[i + 1..]))
         {
             let value = &string[start..=i];
             let mut kind = is_expression.then_some(MediaKind::FeatureExpression);
@@ -142,7 +149,9 @@ fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
         if result[i].0.is_some() {
             continue;
         }
-        let kind_at = |result: &[(Option<MediaKind>, MediaNode<'_>)], at: usize| result.get(at).and_then(|it| it.0);
+        let kind_at = |result: &[(Option<MediaKind>, MediaNode<'_>)], at: usize| {
+            result.get(at).and_then(|it| it.0)
+        };
         if i > 0 {
             let previous_kind = result[i - 1].0;
             let previous_value = result[i - 1].1.value;

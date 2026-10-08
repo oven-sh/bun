@@ -17,8 +17,8 @@ mod output;
 use self::measure::Measure;
 use self::output::Out;
 use super::element::{
-    BestFitting, Condition, CursorMark, DedentMode, Flat, FlatFlags, FormatElement, Group, GroupId, Interned, LineMode,
-    PrintMode, Tag, TextWidth,
+    BestFitting, Condition, CursorMark, DedentMode, Flat, FlatFlags, FormatElement, Group, GroupId,
+    Interned, LineMode, PrintMode, Tag, TextWidth,
 };
 use super::formatter::{END_LINE_SUFFIX, REST_OF_INDENTED_LINE_GROUP, Storage, line_break};
 use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
@@ -87,7 +87,9 @@ struct Elements<'d> {
 impl<'d> Elements<'d> {
     #[inline]
     fn new(run: Run, pool: &'d [FormatElement]) -> Self {
-        let rest = pool.get(run.at as usize..run.end as usize).unwrap_or_default();
+        let rest = pool
+            .get(run.at as usize..run.end as usize)
+            .unwrap_or_default();
         Elements {
             rest: rest.iter(),
             end: run.at + rest.len() as u32,
@@ -122,7 +124,12 @@ impl<'d> Elements<'d> {
     /// Passes over the next `count` elements.
     #[inline]
     fn skip(&mut self, count: u32) {
-        self.rest = self.rest.as_slice().get(count as usize..).unwrap_or_default().iter();
+        self.rest = self
+            .rest
+            .as_slice()
+            .get(count as usize..)
+            .unwrap_or_default()
+            .iter();
     }
 
     /// The element at `index`, which is not behind, is the next.
@@ -279,8 +286,13 @@ impl<'d> Printer<'d> {
 
     /// The next element that stands for itself.
     fn peek(&self) -> Option<&'d FormatElement> {
-        first_of(self.elements.run(), self.pool)
-            .or_else(|| self.buffers.queue.iter().rev().find_map(|&run| first_of(run, self.pool)))
+        first_of(self.elements.run(), self.pool).or_else(|| {
+            self.buffers
+                .queue
+                .iter()
+                .rev()
+                .find_map(|&run| first_of(run, self.pool))
+        })
     }
 
     fn is_at_start_entry(&self) -> bool {
@@ -328,7 +340,10 @@ impl<'d> Printer<'d> {
     /// What has been found out about `interned`.
     #[inline]
     fn flat_of(&self, interned: Interned) -> Flat {
-        match (interned.start as usize).checked_sub(1).and_then(|before| self.pool.get(before)) {
+        match (interned.start as usize)
+            .checked_sub(1)
+            .and_then(|before| self.pool.get(before))
+        {
             Some(FormatElement::Skip(skip)) if skip.len == interned.len => skip.flat,
             _ => Flat::default(),
         }
@@ -338,7 +353,8 @@ impl<'d> Printer<'d> {
     #[inline]
     fn can_print_flat(&self, flat: Flat) -> bool {
         flat.flags.has(FlatFlags::MEASURED)
-            && (!flat.flags.has(FlatFlags::HAS_LINE_SUFFIX_BOUNDARY) || self.buffers.line_suffixes.is_empty())
+            && (!flat.flags.has(FlatFlags::HAS_LINE_SUFFIX_BOUNDARY)
+                || self.buffers.line_suffixes.is_empty())
     }
 
     // ───────────────────────────── indentation ─────────────────────────────
@@ -364,7 +380,11 @@ impl<'d> Printer<'d> {
         let mut depth = 0usize;
         loop {
             let Some(element) = self.next() else {
-                return if ENTRY { Err(PrintError::InvalidDocument) } else { Ok(()) };
+                return if ENTRY {
+                    Err(PrintError::InvalidDocument)
+                } else {
+                    Ok(())
+                };
             };
             match element {
                 FormatElement::Nop => {}
@@ -389,8 +409,12 @@ impl<'d> Printer<'d> {
                         self.has_empty_line = false;
                     }
                 }
-                FormatElement::SourceText(text) => self.print_text(self.source, text.range(), text.width),
-                FormatElement::OwnedText(text) => self.print_text(self.text, text.range(), text.width),
+                FormatElement::SourceText(text) => {
+                    self.print_text(self.source, text.range(), text.width)
+                }
+                FormatElement::OwnedText(text) => {
+                    self.print_text(self.text, text.range(), text.width)
+                }
                 FormatElement::Line(line_mode) => self.print_line(*line_mode),
                 FormatElement::IndentedLineGroup(id) => {
                     let fits = if self.mode.is_flat() && self.measured_group_fits {
@@ -413,8 +437,12 @@ impl<'d> Printer<'d> {
                 }
                 // `propagate_expand` has taken care of it.
                 FormatElement::ExpandParent => {}
-                FormatElement::LineSuffixBoundary => self.flush_line_suffixes(Some(line_break(LineMode::Hard))),
-                FormatElement::BestFitting(best_fitting) => self.print_best_fitting(*best_fitting)?,
+                FormatElement::LineSuffixBoundary => {
+                    self.flush_line_suffixes(Some(line_break(LineMode::Hard)))
+                }
+                FormatElement::BestFitting(best_fitting) => {
+                    self.print_best_fitting(*best_fitting)?
+                }
                 FormatElement::Interned(content) => self.print_next(*content),
                 FormatElement::Tag(tag) => match tag {
                     Tag::StartGroup(group) => {
@@ -429,12 +457,19 @@ impl<'d> Printer<'d> {
                             if let Some(id) = group.id() {
                                 self.insert_group_mode(id, PrintMode::Flat);
                             }
-                            if self.group_fits(group)? { PrintMode::Flat } else { PrintMode::Expanded }
+                            if self.group_fits(group)? {
+                                PrintMode::Flat
+                            } else {
+                                PrintMode::Expanded
+                            }
                         };
                         if let Some(id) = group.id() {
                             self.insert_group_mode(id, group_mode);
                         }
-                        if group_mode.is_flat() && self.can_print_flat(group.flat()) && group.end() < self.elements.end {
+                        if group_mode.is_flat()
+                            && self.can_print_flat(group.flat())
+                            && group.end() < self.elements.end
+                        {
                             let content = Run {
                                 at: self.elements.at(),
                                 end: group.end(),
@@ -481,7 +516,9 @@ impl<'d> Printer<'d> {
                             self.buffers.history.push(indention);
                         }
                     }
-                    Tag::StartDedent(DedentMode::Root) => self.buffers.indentions.push(Indention::default()),
+                    Tag::StartDedent(DedentMode::Root) => {
+                        self.buffers.indentions.push(Indention::default())
+                    }
                     Tag::StartAlign(align) => {
                         let next = self.indention().set_align(align.count());
                         self.buffers.indentions.push(next);
@@ -499,7 +536,9 @@ impl<'d> Printer<'d> {
                         }
                     }
                     Tag::StartIndentIfGroupBreaks(id) => {
-                        if self.group_mode(*id).ok_or(PrintError::InvalidDocument)? == PrintMode::Expanded {
+                        if self.group_mode(*id).ok_or(PrintError::InvalidDocument)?
+                            == PrintMode::Expanded
+                        {
                             self.indent();
                         }
                     }
@@ -559,7 +598,10 @@ impl<'d> Printer<'d> {
             self.print_line_break();
             self.has_empty_line = false;
         }
-        let is_empty_line = matches!(line_mode, LineMode::Empty | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty);
+        let is_empty_line = matches!(
+            line_mode,
+            LineMode::Empty | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty
+        );
         if is_empty_line && !self.has_empty_line {
             self.print_line_break();
             self.has_empty_line = true;
@@ -590,12 +632,18 @@ impl<'d> Printer<'d> {
                         self.out.token(token);
                         self.line_width += token.len();
                     }
-                    FormatElement::SourceText(text) => self.print_text(self.source, text.range(), text.width),
-                    FormatElement::OwnedText(text) => self.print_text(self.text, text.range(), text.width),
+                    FormatElement::SourceText(text) => {
+                        self.print_text(self.source, text.range(), text.width)
+                    }
+                    FormatElement::OwnedText(text) => {
+                        self.print_text(self.text, text.range(), text.width)
+                    }
                     FormatElement::Space
                     | FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty)
                     | FormatElement::Tag(
-                        Tag::StartIndentWithLine(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty)
+                        Tag::StartIndentWithLine(
+                            LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty,
+                        )
                         | Tag::EndIndentWithLine(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty),
                     ) => {
                         if self.line_width > 0 {
@@ -610,11 +658,20 @@ impl<'d> Printer<'d> {
                     }
                     FormatElement::Skip(skip) => elements.skip(skip.len),
                     FormatElement::Interned(interned) => {
-                        queue.push(std::mem::replace(&mut elements, Elements::new(Run::of(*interned), self.pool)));
+                        queue.push(std::mem::replace(
+                            &mut elements,
+                            Elements::new(Run::of(*interned), self.pool),
+                        ));
                     }
                     FormatElement::BestFitting(best_fitting) => {
-                        let flattest = self.variants_of(*best_fitting).first().ok_or(PrintError::InvalidDocument)?;
-                        queue.push(std::mem::replace(&mut elements, Elements::new(Run::of(*flattest), self.pool)));
+                        let flattest = self
+                            .variants_of(*best_fitting)
+                            .first()
+                            .ok_or(PrintError::InvalidDocument)?;
+                        queue.push(std::mem::replace(
+                            &mut elements,
+                            Elements::new(Run::of(*flattest), self.pool),
+                        ));
                     }
                     FormatElement::Tag(Tag::StartGroup(group)) => {
                         if let Some(id) = group.id() {
@@ -661,7 +718,9 @@ impl<'d> Printer<'d> {
             self.print_next(line_break);
         }
         let buffers = &mut *self.buffers;
-        buffers.indentions.extend(buffers.suffix_indentions.drain(..).rev());
+        buffers
+            .indentions
+            .extend(buffers.suffix_indentions.drain(..).rev());
         while let Some((content, mode)) = self.buffers.line_suffixes.pop() {
             self.push(FrameKind::LineSuffix, mode);
             self.print_next(END_LINE_SUFFIX);
@@ -681,7 +740,10 @@ impl<'d> Printer<'d> {
 
         self.measured_group_fits = true;
         for &variant in flatter {
-            if !matches!(self.pool.get(variant.start as usize), Some(FormatElement::Tag(Tag::StartEntry))) {
+            if !matches!(
+                self.pool.get(variant.start as usize),
+                Some(FormatElement::Tag(Tag::StartEntry))
+            ) {
                 return Err(PrintError::InvalidDocument);
             }
             if self.variant_fits(variant)? {

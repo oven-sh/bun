@@ -49,9 +49,13 @@ pub(super) struct Entry<'p> {
 /// `removeFileExtension`
 fn remove_file_extension(path: &[u8]) -> &[u8] {
     const EXTENSIONS_TO_REMOVE: [&[u8]; 12] = [
-        b".d.ts", b".d.mts", b".d.cts", b".mjs", b".mts", b".cjs", b".cts", b".ts", b".js", b".tsx", b".jsx", b".json",
+        b".d.ts", b".d.mts", b".d.cts", b".mjs", b".mts", b".cjs", b".cts", b".ts", b".js",
+        b".tsx", b".jsx", b".json",
     ];
-    EXTENSIONS_TO_REMOVE.iter().find_map(|extension| path.strip_suffix(*extension)).unwrap_or(path)
+    EXTENSIONS_TO_REMOVE
+        .iter()
+        .find_map(|extension| path.strip_suffix(*extension))
+        .unwrap_or(path)
 }
 
 fn flags_of_literal_member(kind: PropKind) -> SymbolFlags {
@@ -64,7 +68,11 @@ fn flags_of_literal_member(kind: PropKind) -> SymbolFlags {
 }
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
-    pub(super) fn intern_symbol(&mut self, key: Key<'c>, prop: Option<(&'c Prop<'c>, MapperId)>) -> SymbolRef {
+    pub(super) fn intern_symbol(
+        &mut self,
+        key: Key<'c>,
+        prop: Option<(&'c Prop<'c>, MapperId)>,
+    ) -> SymbolRef {
         if let Some(&id) = self.symbol_ids.get(&key) {
             if let Some(entry) = self.symbols.get_mut(id.0 as usize)
                 && entry.prop.is_none()
@@ -125,7 +133,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     #[inline]
     fn entry(&self, symbol: SymbolRef) -> Option<(Key<'c>, Option<(&'c Prop<'c>, MapperId)>)> {
-        self.symbols.get(symbol.0 as usize).map(|entry| (entry.key, entry.prop))
+        self.symbols
+            .get(symbol.0 as usize)
+            .map(|entry| (entry.key, entry.prop))
     }
 
     /// The symbol of the binder, if it is one.
@@ -202,7 +212,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let bytes: &'p [u8] = self.c.atoms().bytes(name);
                 return match bytes {
                     // `symbolName`: `#x`
-                    _ if bytes.starts_with(crate::atom::PRIVATE_NAME_PREFIX) => crate::atom::written_name(bytes),
+                    _ if bytes.starts_with(crate::atom::PRIVATE_NAME_PREFIX) => {
+                        crate::atom::written_name(bytes)
+                    }
                     [0xFE, rest @ ..] => self.list(&cat!(b"__", rest)),
                     _ => bytes,
                 };
@@ -214,7 +226,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     // ───────────────────────────── fields ─────────────────────────────
 
     pub fn symbol_info(&mut self, symbol: SymbolRef) -> SymbolInfo<'c> {
-        if let Some(known) = self.symbols.get(symbol.0 as usize).and_then(|entry| entry.info) {
+        if let Some(known) = self
+            .symbols
+            .get(symbol.0 as usize)
+            .and_then(|entry| entry.info)
+        {
             return known;
         }
         let info = self.symbol_info_uncached(symbol);
@@ -254,7 +270,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     info.flags |= SymbolFlags::TRANSIENT;
                     info.check_flags |= CheckFlags::INSTANTIATED;
                 }
-                let is_local = sym.file == self.file && !flags.intersects(SymFlags::MERGED | SymFlags::TRANSIENT);
+                let is_local = sym.file == self.file
+                    && !flags.intersects(SymFlags::MERGED | SymFlags::TRANSIENT);
                 info.local = (is_local && matches!(key, Key::Symbol(_))).then_some(sym.id);
                 if prop.is_none() && self.is_optional_declaration(sym) {
                     info.flags |= SymbolFlags::OPTIONAL;
@@ -270,7 +287,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                             let path = remove_file_extension(path);
                             info.name = self.list(&cat!(b"\"", path, b"\""));
                         }
-                        Some(&(file, Decl::Module(module))) if matches!(self.c.hir(file)[module].name, ModuleName::String(_)) => {
+                        Some(&(file, Decl::Module(module)))
+                            if matches!(self.c.hir(file)[module].name, ModuleName::String(_)) =>
+                        {
                             info.name = self.list(&cat!(b"\"", info.name, b"\""));
                         }
                         _ => {}
@@ -285,7 +304,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 info.flags = SymbolFlags::PROPERTY;
                 match source {
                     PropSource::Literal(file, p) => {
-                        info.flags |= flags_of_literal_member(self.c.hir(*file)[*p].kind) | SymbolFlags::TRANSIENT;
+                        info.flags |= flags_of_literal_member(self.c.hir(*file)[*p].kind)
+                            | SymbolFlags::TRANSIENT;
                     }
                     PropSource::Intersected(..) => {
                         info.flags |= SymbolFlags::TRANSIENT;
@@ -303,7 +323,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                         info.check_flags |= CheckFlags::REVERSE_MAPPED;
                     }
                     // `bindClassLikeDeclaration`
-                    PropSource::Type(_) if name == known::prototype => info.flags |= SymbolFlags::PROTOTYPE,
+                    PropSource::Type(_) if name == known::prototype => {
+                        info.flags |= SymbolFlags::PROTOTYPE
+                    }
                     _ => info.flags |= SymbolFlags::TRANSIENT,
                 }
             }
@@ -325,9 +347,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             Key::Anonymous(file, node) => {
                 (info.name, info.flags) = match self.c.hir(file).kind(node) {
-                    Kind::ObjectLiteralExpression | Kind::JsxAttributes => (&b"__object"[..], SymbolFlags::OBJECT_LITERAL),
+                    Kind::ObjectLiteralExpression | Kind::JsxAttributes => {
+                        (&b"__object"[..], SymbolFlags::OBJECT_LITERAL)
+                    }
                     Kind::ClassExpression => (&b"__class"[..], SymbolFlags::CLASS),
-                    Kind::FunctionExpression | Kind::ArrowFunction => (&b"__function"[..], SymbolFlags::FUNCTION),
+                    Kind::FunctionExpression | Kind::ArrowFunction => {
+                        (&b"__function"[..], SymbolFlags::FUNCTION)
+                    }
                     _ => (&b"__type"[..], SymbolFlags::TYPE_LITERAL),
                 };
             }
@@ -361,7 +387,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 info.flags = SymbolFlags::SIGNATURE | SymbolFlags::TRANSIENT;
             }
         }
-        if let Some(name) = self.symbols.get(symbol.0 as usize).map(|entry| entry.name).filter(|name| name.is_some()) {
+        if let Some(name) = self
+            .symbols
+            .get(symbol.0 as usize)
+            .map(|entry| entry.name)
+            .filter(|name| name.is_some())
+        {
             info.name = self.name_as_in_typescript(name);
             // `getUnresolvedSymbolForEntityName`
             if matches!(key, Key::Undeclared(_)) {
@@ -369,15 +400,20 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
         }
         if let Some((prop, _)) = prop {
-            let is_declared = matches!(key, Key::Symbol(_) | Key::Instantiated(..) | Key::LiteralMember(..))
-                || matches!(prop.source, PropSource::Literal(..));
+            let is_declared = matches!(
+                key,
+                Key::Symbol(_) | Key::Instantiated(..) | Key::LiteralMember(..)
+            ) || matches!(prop.source, PropSource::Literal(..));
             if !is_declared && prop.flags.contains(PropFlags::METHOD) {
                 // `createUnionOrIntersectionProperty` makes a property of methods.
                 match info.check_flags.contains(CheckFlags::SYNTHETIC_PROPERTY) {
                     true => {
-                        info.check_flags = (info.check_flags - CheckFlags::SYNTHETIC_PROPERTY) | CheckFlags::SYNTHETIC_METHOD;
+                        info.check_flags = (info.check_flags - CheckFlags::SYNTHETIC_PROPERTY)
+                            | CheckFlags::SYNTHETIC_METHOD;
                     }
-                    false => info.flags = (info.flags - SymbolFlags::PROPERTY) | SymbolFlags::METHOD,
+                    false => {
+                        info.flags = (info.flags - SymbolFlags::PROPERTY) | SymbolFlags::METHOD
+                    }
                 }
             }
             if prop.flags.contains(PropFlags::OPTIONAL) {
@@ -388,7 +424,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     (PropFlags::READONLY, CheckFlags::READONLY),
                     (PropFlags::READ_PARTIAL, CheckFlags::READ_PARTIAL),
                     (PropFlags::WRITE_PARTIAL, CheckFlags::WRITE_PARTIAL),
-                    (PropFlags::HAS_NON_UNIFORM_TYPE, CheckFlags::HAS_NON_UNIFORM_TYPE),
+                    (
+                        PropFlags::HAS_NON_UNIFORM_TYPE,
+                        CheckFlags::HAS_NON_UNIFORM_TYPE,
+                    ),
                     (PropFlags::HAS_LITERAL_TYPE, CheckFlags::HAS_LITERAL_TYPE),
                     (PropFlags::PRIVATE, CheckFlags::CONTAINS_PRIVATE),
                     (PropFlags::PROTECTED, CheckFlags::CONTAINS_PROTECTED),
@@ -405,8 +444,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// The `?` of the member or the parameter property that declares `sym`.
     fn is_optional_declaration(&mut self, sym: Sym) -> bool {
         match self.c.files().value_declaration(sym) {
-            Some((file, Decl::Member(member))) => self.c.hir(file)[member].flags.contains(Flags::OPTIONAL),
-            Some((file, Decl::ParameterProperty(parameter))) => self.c.hir(file)[parameter].flags.contains(Flags::OPTIONAL),
+            Some((file, Decl::Member(member))) => {
+                self.c.hir(file)[member].flags.contains(Flags::OPTIONAL)
+            }
+            Some((file, Decl::ParameterProperty(parameter))) => {
+                self.c.hir(file)[parameter].flags.contains(Flags::OPTIONAL)
+            }
             _ => false,
         }
     }
@@ -427,13 +470,20 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         out.extend(declarations.iter().map(|&it| self.node_of_declaration(it)));
     }
 
-    fn push_declarations_of_prop(&mut self, prop: &Prop, depth: u32, out: &mut SmallVec<[NodeRef; 4]>) {
+    fn push_declarations_of_prop(
+        &mut self,
+        prop: &Prop,
+        depth: u32,
+        out: &mut SmallVec<[NodeRef; 4]>,
+    ) {
         if depth > 64 {
             return;
         }
         match &prop.source {
             PropSource::Literal(file, property) => {
-                let declarations = self.c.declarations_of_member(*file, Decl::Property(*property));
+                let declarations = self
+                    .c
+                    .declarations_of_member(*file, Decl::Property(*property));
                 out.extend(declarations.iter().map(|&it| self.node_of_declaration(it)));
             }
             PropSource::Symbol(symbol) => self.push_declarations_of_sym(*symbol, out),
@@ -460,7 +510,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn declarations(&mut self, symbol: SymbolRef) -> &'c [NodeRef] {
-        if let Some(known) = self.symbols.get(symbol.0 as usize).and_then(|entry| entry.declarations) {
+        if let Some(known) = self
+            .symbols
+            .get(symbol.0 as usize)
+            .and_then(|entry| entry.declarations)
+        {
             return known;
         }
         let declarations = self.declarations_uncached(symbol);
@@ -476,13 +530,17 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let mut out: SmallVec<[NodeRef; 4]> = SmallVec::new();
         match key {
-            Key::Symbol(sym) | Key::Instantiated(sym, _) => self.push_declarations_of_sym(sym, &mut out),
+            Key::Symbol(sym) | Key::Instantiated(sym, _) => {
+                self.push_declarations_of_sym(sym, &mut out)
+            }
             Key::Property(..) | Key::LiteralMember(..) => {
                 if let Some((prop, _)) = prop {
                     self.push_declarations_of_prop(prop, 0, &mut out);
                 }
             }
-            Key::Index(_, (file, member)) => out.push(self.node_of_declaration((file, Decl::Member(member)))),
+            Key::Index(_, (file, member)) => {
+                out.push(self.node_of_declaration((file, Decl::Member(member))))
+            }
             Key::ThisParameter(file, function) => {
                 let hir = self.c.hir(file);
                 out.push(NodeRef {
@@ -492,7 +550,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             Key::Anonymous(file, node) => out.push(NodeRef { file, node }),
             Key::Parameter(signature, index) => {
-                if let Some((file, parameter)) = self.c.sig_params(signature).get(index as usize).and_then(|it| it.declaration) {
+                if let Some((file, parameter)) = self
+                    .c
+                    .sig_params(signature)
+                    .get(index as usize)
+                    .and_then(|it| it.declaration)
+                {
                     out.push(NodeRef {
                         file,
                         node: self.c.hir(file).node(parameter),
@@ -508,7 +571,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let (key, prop) = self.entry(symbol)?;
         match key {
             Key::Symbol(sym) | Key::Instantiated(sym, _) => {
-                let declaration = match self.c.files().flags(sym).intersects(SymFlags::CLASS_MEMBER) {
+                let declaration = match self.c.files().flags(sym).intersects(SymFlags::CLASS_MEMBER)
+                {
                     true => self.c.value_declaration_of_property(sym),
                     false => self.c.files().value_declaration(sym),
                 };
@@ -518,8 +582,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let declaration = self.c.value_declaration_of_prop(prop?.0)?;
                 Some(self.node_of_declaration(declaration))
             }
-            Key::Index(..) | Key::Prototype(_) | Key::SyntheticDefault(_) | Key::Undeclared(_) | Key::Unique(_) => None,
-            Key::ThisParameter(..) | Key::Anonymous(..) | Key::Parameter(..) => self.declarations(symbol).first().copied(),
+            Key::Index(..)
+            | Key::Prototype(_)
+            | Key::SyntheticDefault(_)
+            | Key::Undeclared(_)
+            | Key::Unique(_) => None,
+            Key::ThisParameter(..) | Key::Anonymous(..) | Key::Parameter(..) => {
+                self.declarations(symbol).first().copied()
+            }
         }
     }
 
@@ -547,7 +617,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     && self.c.hir(file)[declaration].default.is_some()
                 {
                     let origin = self.c.types().sig_origin(signature);
-                    let mapper = self.c.sig_decl(origin).map_or(MapperId::IDENTITY, |it| it.2);
+                    let mapper = self
+                        .c
+                        .sig_decl(origin)
+                        .map_or(MapperId::IDENTITY, |it| it.2);
                     let declared = self.c.type_of_param(file, declaration);
                     return self.c.instantiate(declared, mapper);
                 }
@@ -561,9 +634,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Key::Index(ty, declaration) => {
                 let infos = self.index_infos_of_type(ty);
                 let node = self.node_of_declaration((declaration.0, Decl::Member(declaration.1)));
-                infos.iter().find(|it| it.declaration == Some(node)).map_or(TypeId::ERROR, |it| it.ty)
+                infos
+                    .iter()
+                    .find(|it| it.declaration == Some(node))
+                    .map_or(TypeId::ERROR, |it| it.ty)
             }
-            Key::Property(..) | Key::LiteralMember(..) | Key::Undeclared(_) | Key::Unique(_) => TypeId::ERROR,
+            Key::Property(..) | Key::LiteralMember(..) | Key::Undeclared(_) | Key::Unique(_) => {
+                TypeId::ERROR
+            }
         }
     }
 
@@ -603,7 +681,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
         }
         let ty = self.type_of_symbol(symbol);
-        let is_optional = self.symbol_info(symbol).flags.contains(SymbolFlags::OPTIONAL);
+        let is_optional = self
+            .symbol_info(symbol)
+            .flags
+            .contains(SymbolFlags::OPTIONAL);
         self.c.remove_missing_type(ty, is_optional)
     }
 
@@ -628,10 +709,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
                 match self.c.resolve_alias(sym) {
                     AliasTarget::Symbol(target) => Some(self.symbol(target)),
-                    AliasTarget::Property(owner, name, _) => match self.c.get_property_of_type(owner, name) {
-                        Some((prop, mapper)) => Some(self.symbol_of_prop(prop, mapper)),
-                        None => Some(self.symbol(files.unknown_symbol)),
-                    },
+                    AliasTarget::Property(owner, name, _) => {
+                        match self.c.get_property_of_type(owner, name) {
+                            Some((prop, mapper)) => Some(self.symbol_of_prop(prop, mapper)),
+                            None => Some(self.symbol(files.unknown_symbol)),
+                        }
+                    }
                     AliasTarget::Unknown => Some(self.symbol(files.unknown_symbol)),
                 }
             }
@@ -655,7 +738,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let parent = match files.parent_of_symbol(sym) {
                     Some(parent) => parent,
                     None => match files.value_declaration(sym)? {
-                        (file, Decl::Member(member)) => self.c.symbol_of_member_owner(file, member)?,
+                        (file, Decl::Member(member)) => {
+                            self.c.symbol_of_member_owner(file, member)?
+                        }
                         _ => self.c.declaring_class_of_symbol(sym)?,
                     },
                 };
@@ -665,7 +750,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let class = self.c.declaring_class(prop?.0)?;
                 Some(self.symbol(class))
             }
-            (SymbolOp::Parent, Key::Prototype(parent) | Key::SyntheticDefault(parent)) => Some(self.symbol(parent)),
+            (SymbolOp::Parent, Key::Prototype(parent) | Key::SyntheticDefault(parent)) => {
+                Some(self.symbol(parent))
+            }
             _ => None,
         }
     }
@@ -676,7 +763,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let files = self.c.files();
         let symbols: Vec<Sym> = match table {
-            SymbolTable::ExportsOfModule => files.exports_of_module(sym).iter().map(|it| it.1).collect(),
+            SymbolTable::ExportsOfModule => {
+                files.exports_of_module(sym).iter().map(|it| it.1).collect()
+            }
             SymbolTable::Exports => files.each_export(sym).map(|it| it.1).collect(),
             SymbolTable::Members => files.members_in_table(sym).iter().map(|it| it.1).collect(),
         };
@@ -696,7 +785,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         match self.sym_of(symbol) {
             Some(sym) => {
                 let flags = self.c.files().flags(sym);
-                flags.contains(SymFlags::ENUM_MEMBER) || flags.contains(SymFlags::VARIABLE | SymFlags::CONST)
+                flags.contains(SymFlags::ENUM_MEMBER)
+                    || flags.contains(SymFlags::VARIABLE | SymFlags::CONST)
                     || flags.intersects(SymFlags::VARIABLE) && flags.contains(SymFlags::CONST)
             }
             None => false,
@@ -712,7 +802,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn declaration_modifier_flags_from_symbol(&mut self, symbol: SymbolRef) -> ModifierFlags {
         if let Some((prop, _)) = self.prop_of(symbol) {
-            let mut flags = self.c.get_declaration_modifier_flags_from_symbol_ex(prop, false);
+            let mut flags = self
+                .c
+                .get_declaration_modifier_flags_from_symbol_ex(prop, false);
             flags.remove(Flags::AMBIENT);
             return ModifierFlags::from(flags);
         }
@@ -728,7 +820,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn symbol_to_string(&mut self, symbol: SymbolRef) -> Vec<u8> {
         match self.entry(symbol) {
-            Some((Key::Symbol(sym) | Key::Instantiated(sym, _), None)) => self.c.symbol_to_string(sym),
+            Some((Key::Symbol(sym) | Key::Instantiated(sym, _), None)) => {
+                self.c.symbol_to_string(sym)
+            }
             Some((_, Some((prop, _)))) => self.c.prop_to_string(prop),
             _ => self.symbol_info(symbol).name.to_vec(),
         }
@@ -779,7 +873,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.c.type_of_property_of_type(ty, name)
     }
 
-    pub fn type_of_property_or_index_signature_of_type(&mut self, ty: TypeId, name: &[u8]) -> Option<TypeId> {
+    pub fn type_of_property_or_index_signature_of_type(
+        &mut self,
+        ty: TypeId,
+        name: &[u8],
+    ) -> Option<TypeId> {
         let name = self.property_name(name);
         self.c.type_of_property_or_index_signature_of_type(ty, name)
     }
@@ -797,21 +895,28 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     fn signature_info_uncached(&mut self, signature: SigId) -> SignatureInfo<'c> {
         let parameters = self.c.sig_params(signature);
-        let symbols: SmallVec<[SymbolRef; 4]> =
-            (0..parameters.len() as u32).map(|index| self.intern_symbol(Key::Parameter(signature, index), None)).collect();
+        let symbols: SmallVec<[SymbolRef; 4]> = (0..parameters.len() as u32)
+            .map(|index| self.intern_symbol(Key::Parameter(signature, index), None))
+            .collect();
         let type_parameters = self.c.sig_type_params(signature);
         // `getDefaultConstructSignatures` clones the signature of the base class.
-        let origin = self.c.default_construct_base_sig(signature).unwrap_or(signature);
+        let origin = self
+            .c
+            .default_construct_base_sig(signature)
+            .unwrap_or(signature);
         let origin = self.c.types().sig_origin(origin);
         let declaration = self.c.sig_decl(origin).map(|(file, function, _)| NodeRef {
             file,
             node: self.c.hir(file).node(function),
         });
-        let this_parameter = self.c.sig_this_parameter(signature).and_then(|(_, declaring)| {
-            let origin = self.c.types().sig_origin(declaring);
-            let (file, function, _) = self.c.sig_decl(origin)?;
-            Some(self.intern_symbol(Key::ThisParameter(file, function), None))
-        });
+        let this_parameter = self
+            .c
+            .sig_this_parameter(signature)
+            .and_then(|(_, declaring)| {
+                let origin = self.c.types().sig_origin(declaring);
+                let (file, function, _) = self.c.sig_decl(origin)?;
+                Some(self.intern_symbol(Key::ThisParameter(file, function), None))
+            });
         SignatureInfo {
             parameters: self.list(&symbols),
             type_parameters: self.list(&type_parameters),
@@ -826,7 +931,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.c.sig_return(signature)
     }
 
-    pub fn type_predicate_of_signature(&mut self, signature: SigId) -> Option<TypePredicateData<'p>> {
+    pub fn type_predicate_of_signature(
+        &mut self,
+        signature: SigId,
+    ) -> Option<TypePredicateData<'p>> {
         let predicate = self.c.sig_predicate(signature)?;
         Some(TypePredicateData {
             kind: match (predicate.param, predicate.asserts) {

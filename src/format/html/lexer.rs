@@ -56,7 +56,8 @@ impl Span {
     }
 
     pub(crate) fn of(self, text: &[u8]) -> &[u8] {
-        text.get(self.start as usize..self.end as usize).unwrap_or_default()
+        text.get(self.start as usize..self.end as usize)
+            .unwrap_or_default()
     }
 
     pub(crate) fn len(self) -> u32 {
@@ -113,7 +114,8 @@ pub(crate) struct Options {
 }
 
 /// `getTagContentType(tagName, prefix, hasParent, attrs)`, without the prefix, which nobody looks at.
-pub(crate) type GetTagContentType<'f> = &'f dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> ContentType;
+pub(crate) type GetTagContentType<'f> =
+    &'f dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> ContentType;
 
 /// What is thrown.
 enum Fail {
@@ -221,7 +223,9 @@ fn is_two_words(text: &[u8], first: &[u8], second: &[u8]) -> bool {
         return false;
     };
     let before = rest.len();
-    while let Some(len) = crate::css::text::white_space_len_at_start(rest).filter(|_| !matches!(rest[0], b'\n' | b'\r')) {
+    while let Some(len) = crate::css::text::white_space_len_at_start(rest)
+        .filter(|_| !matches!(rest[0], b'\n' | b'\r'))
+    {
         rest = &rest[len..];
     }
     rest.len() < before && rest.starts_with(second)
@@ -315,7 +319,9 @@ impl<'a> Tokenizer<'a, '_> {
     }
 
     fn peek_str(&self, chars: &[u8]) -> bool {
-        self.text.get(self.pos..).is_some_and(|rest| rest.starts_with(chars))
+        self.text
+            .get(self.pos..)
+            .is_some_and(|rest| rest.starts_with(chars))
     }
 
     fn attempt_str(&mut self, chars: &[u8]) -> bool {
@@ -357,7 +363,11 @@ impl<'a> Tokenizer<'a, '_> {
         }
     }
 
-    fn require_char_code_until(&mut self, predicate: impl FnMut(u32) -> bool, len: usize) -> Result<()> {
+    fn require_char_code_until(
+        &mut self,
+        predicate: impl FnMut(u32) -> bool,
+        len: usize,
+    ) -> Result<()> {
         let start = self.pos;
         self.attempt_char_code_until(predicate)?;
         if self.pos - start < len {
@@ -444,7 +454,9 @@ impl<'a> Tokenizer<'a, '_> {
     fn skip_plain_text(&mut self, end: End) {
         let rest = self.text.get(self.pos..).unwrap_or_default();
         let next = match end {
-            End::Text if self.options.tokenize_angular_blocks => strings::index_of_any(rest, b"<{&\0@}"),
+            End::Text if self.options.tokenize_angular_blocks => {
+                strings::index_of_any(rest, b"<{&\0@}")
+            }
             End::Text => strings::index_of_any(rest, b"<{&\0"),
             End::Quote(quote) => strings::index_of_any(rest, &[quote as u8, b'{', b'&']),
             End::TagStart | End::Name => return,
@@ -479,18 +491,43 @@ impl<'a> Tokenizer<'a, '_> {
         if self.attempt_char_code(60) {
             if self.attempt_char_code(33) {
                 if self.attempt_str(b"[CDATA[") {
-                    self.consume_delimited(start, TokenType::CdataStart, TokenType::CdataEnd, EndMarker::Str(b"]]>"))
+                    self.consume_delimited(
+                        start,
+                        TokenType::CdataStart,
+                        TokenType::CdataEnd,
+                        EndMarker::Str(b"]]>"),
+                    )
                 } else if self.attempt_str(b"--") {
-                    self.consume_delimited(start, TokenType::CommentStart, TokenType::CommentEnd, EndMarker::Str(b"-->"))
+                    self.consume_delimited(
+                        start,
+                        TokenType::CommentStart,
+                        TokenType::CommentEnd,
+                        EndMarker::Str(b"-->"),
+                    )
                 } else if self.attempt_str_case_insensitive(b"doctype") {
-                    self.consume_delimited(start, TokenType::DocTypeStart, TokenType::DocTypeEnd, EndMarker::GreaterThan)
+                    self.consume_delimited(
+                        start,
+                        TokenType::DocTypeStart,
+                        TokenType::DocTypeEnd,
+                        EndMarker::GreaterThan,
+                    )
                 } else {
-                    self.consume_delimited(start, TokenType::CommentStart, TokenType::CommentEnd, EndMarker::GreaterThan)
+                    self.consume_delimited(
+                        start,
+                        TokenType::CommentStart,
+                        TokenType::CommentEnd,
+                        EndMarker::GreaterThan,
+                    )
                 }
             } else if self.attempt_char_code(47) {
                 self.consume_tag_close(start)
             } else if self.peek() == 63 {
-                self.consume_delimited(start, TokenType::CommentStart, TokenType::CommentEnd, EndMarker::GreaterThan)
+                self.consume_delimited(
+                    start,
+                    TokenType::CommentStart,
+                    TokenType::CommentEnd,
+                    EndMarker::GreaterThan,
+                )
             } else {
                 self.consume_tag_open(start)
             }
@@ -498,11 +535,21 @@ impl<'a> Tokenizer<'a, '_> {
             self.consume_let_declaration(start)
         } else if blocks && self.is_block_start() {
             self.consume_block_start(start)
-        } else if blocks && !self.is_in_expansion_case() && !self.is_in_expansion_form() && self.attempt_char_code(125) {
+        } else if blocks
+            && !self.is_in_expansion_case()
+            && !self.is_in_expansion_form()
+            && self.attempt_char_code(125)
+        {
             self.begin_token_at(TokenType::BlockClose, start);
             self.end_token(Parts::None).map(|_| ())
         } else if !(blocks && self.tokenize_expansion_form()?) {
-            self.consume_with_interpolation(TokenType::Text, TokenType::Interpolation, End::Text, End::TagStart).map(|_| ())
+            self.consume_with_interpolation(
+                TokenType::Text,
+                TokenType::Interpolation,
+                End::Text,
+                End::TagStart,
+            )
+            .map(|_| ())
         } else {
             Ok(())
         }
@@ -614,7 +661,8 @@ impl<'a> Tokenizer<'a, '_> {
         let name_start = self.pos;
         let mut allow_digit = false;
         self.attempt_char_code_until(|code| {
-            if is_ascii_letter(code) || code == 36 || code == 95 || (allow_digit && is_digit(code)) {
+            if is_ascii_letter(code) || code == 36 || code == 95 || (allow_digit && is_digit(code))
+            {
                 allow_digit = true;
                 return false;
             }
@@ -682,7 +730,8 @@ impl<'a> Tokenizer<'a, '_> {
         self.begin_token(TokenType::ExpansionFormStart);
         self.require_char_code(123)?;
         self.end_token(Parts::None)?;
-        self.expansion_case_stack.push(TokenType::ExpansionFormStart);
+        self.expansion_case_stack
+            .push(TokenType::ExpansionFormStart);
         for _ in 0..2 {
             self.begin_token(TokenType::RawText);
             self.read_until(44)?;
@@ -702,7 +751,8 @@ impl<'a> Tokenizer<'a, '_> {
         self.require_char_code(123)?;
         self.end_token(Parts::None)?;
         self.skip_whitespace();
-        self.expansion_case_stack.push(TokenType::ExpansionCaseExpStart);
+        self.expansion_case_stack
+            .push(TokenType::ExpansionCaseExpStart);
         Ok(())
     }
 
@@ -723,8 +773,15 @@ impl<'a> Tokenizer<'a, '_> {
             // `String.fromCodePoint(parseInt(digits, radix))`
             let radix = if is_hex { 16 } else { 10 };
             let mut code: Option<u32> = None;
-            for digit in digits.iter().map_while(|&byte| (byte as char).to_digit(radix)) {
-                code = Some(code.unwrap_or(0).saturating_mul(radix).saturating_add(digit));
+            for digit in digits
+                .iter()
+                .map_while(|&byte| (byte as char).to_digit(radix))
+            {
+                code = Some(
+                    code.unwrap_or(0)
+                        .saturating_mul(radix)
+                        .saturating_add(digit),
+                );
             }
             if code.is_none_or(|code| code > 0x10FFFF) {
                 return Err(self.error(self.pos));
@@ -742,7 +799,9 @@ impl<'a> Tokenizer<'a, '_> {
         }
         self.advance()?;
         let entity = &self.text[start..self.pos];
-        if entity != b"&ngsp;" && bun_md::helpers::decode_entity_to_utf8(entity, &mut [0; 8]).is_none() {
+        if entity != b"&ngsp;"
+            && bun_md::helpers::decode_entity_to_utf8(entity, &mut [0; 8]).is_none()
+        {
             return Err(self.error(start));
         }
         self.end_token(Parts::None)?;
@@ -765,14 +824,21 @@ impl<'a> Tokenizer<'a, '_> {
                     pos
                 };
                 let pos = skip_whitespace(self.pos + 2);
-                let is_name = self.text.get(pos..pos + name.len()).is_some_and(|it| it.eq_ignore_ascii_case(name));
+                let is_name = self
+                    .text
+                    .get(pos..pos + name.len())
+                    .is_some_and(|it| it.eq_ignore_ascii_case(name));
                 is_name && self.peek_at(skip_whitespace(pos + name.len())) == 62
             }
         }
     }
 
     fn consume_raw_text(&mut self, consume_entities: bool, marker: EndMarker<'_>) -> Result<()> {
-        let kind = if consume_entities { TokenType::EscapableRawText } else { TokenType::RawText };
+        let kind = if consume_entities {
+            TokenType::EscapableRawText
+        } else {
+            TokenType::RawText
+        };
         let first = match marker {
             EndMarker::Str(chars) => chars[0],
             EndMarker::GreaterThan => b'>',
@@ -803,7 +869,13 @@ impl<'a> Tokenizer<'a, '_> {
     }
 
     /// A comment, a CDATA section or a document type.
-    fn consume_delimited(&mut self, start: usize, start_kind: TokenType, end_kind: TokenType, marker: EndMarker<'_>) -> Result<()> {
+    fn consume_delimited(
+        &mut self,
+        start: usize,
+        start_kind: TokenType,
+        end_kind: TokenType,
+        marker: EndMarker<'_>,
+    ) -> Result<()> {
         self.begin_token_at(start_kind, start);
         self.end_token(Parts::None)?;
         self.consume_raw_text(false, marker)?;
@@ -826,7 +898,10 @@ impl<'a> Tokenizer<'a, '_> {
             self.advance()?;
             (prefix, self.pos)
         } else {
-            (Span::new(name_or_prefix_start as u32, name_or_prefix_start as u32), name_or_prefix_start)
+            (
+                Span::new(name_or_prefix_start as u32, name_or_prefix_start as u32),
+                name_or_prefix_start,
+            )
         };
         self.require_char_code_until(end_predicate, usize::from(prefix.len() > 0))?;
         Ok(Parts::Name(prefix, self.span_from(name_start)))
@@ -858,7 +933,11 @@ impl<'a> Tokenizer<'a, '_> {
 
     /// What is in the `try` of `_consumeTagOpen`. `open_token`: the index of the first token, once it is
     /// there.
-    fn consume_tag_open_tokens(&mut self, start: usize, open_token: &mut Option<usize>) -> Result<()> {
+    fn consume_tag_open_tokens(
+        &mut self,
+        start: usize,
+        open_token: &mut Option<usize>,
+    ) -> Result<()> {
         if !is_ascii_letter(self.peek()) {
             return Err(self.error(start));
         }
@@ -888,7 +967,11 @@ impl<'a> Tokenizer<'a, '_> {
                 value: value.map(|value| value.of(text)),
             });
         }
-        let kind = if self.attempt_char_code(47) { TokenType::TagOpenEndVoid } else { TokenType::TagOpenEnd };
+        let kind = if self.attempt_char_code(47) {
+            TokenType::TagOpenEndVoid
+        } else {
+            TokenType::TagOpenEnd
+        };
         self.begin_token(kind);
         self.require_char_code(62)?;
         self.end_token(Parts::None)?;
@@ -912,24 +995,48 @@ impl<'a> Tokenizer<'a, '_> {
             }
             Err(fail) => return Err(fail),
         }
-        if self.options.can_self_close && self.tokens.last().is_some_and(|token| token.kind == TokenType::TagOpenEndVoid) {
+        if self.options.can_self_close
+            && self
+                .tokens
+                .last()
+                .is_some_and(|token| token.kind == TokenType::TagOpenEndVoid)
+        {
             return Ok(());
         }
-        let Some(Parts::Name(prefix, name)) = open_token.map(|token| self.tokens[token].parts) else {
+        let Some(Parts::Name(prefix, name)) = open_token.map(|token| self.tokens[token].parts)
+        else {
             return Ok(());
         };
         let text = self.text;
-        let content_type = (self.get_tag_content_type)(name.of(text), !self.full_name_stack.is_empty(), &self.attributes);
+        let content_type = (self.get_tag_content_type)(
+            name.of(text),
+            !self.full_name_stack.is_empty(),
+            &self.attributes,
+        );
         // `_handleFullNameStackForTagOpen`
-        if self.full_name_stack.last().is_none_or(|&last| self.is_same_name(last, (prefix, name))) {
+        if self
+            .full_name_stack
+            .last()
+            .is_none_or(|&last| self.is_same_name(last, (prefix, name)))
+        {
             self.full_name_stack.push((prefix, name));
         }
         if content_type == ContentType::ParsableData {
             return Ok(());
         }
         // `_consumeRawTextWithTagClose`
-        let full_name = Span::new(if prefix.len() > 0 { prefix.start } else { name.start }, name.end);
-        self.consume_raw_text(content_type == ContentType::EscapableRawText, EndMarker::TagClose(full_name.of(text)))?;
+        let full_name = Span::new(
+            if prefix.len() > 0 {
+                prefix.start
+            } else {
+                name.start
+            },
+            name.end,
+        );
+        self.consume_raw_text(
+            content_type == ContentType::EscapableRawText,
+            EndMarker::TagClose(full_name.of(text)),
+        )?;
         self.begin_token(TokenType::TagClose);
         self.require_char_code_until(|code| code == 62, 3)?;
         self.advance()?;
@@ -943,7 +1050,11 @@ impl<'a> Tokenizer<'a, '_> {
     }
 
     fn handle_full_name_stack_for_tag_close(&mut self, prefix: Span, name: Span) {
-        if self.full_name_stack.last().is_some_and(|&last| self.is_same_name(last, (prefix, name))) {
+        if self
+            .full_name_stack
+            .last()
+            .is_some_and(|&last| self.is_same_name(last, (prefix, name)))
+        {
             self.full_name_stack.pop();
         }
     }
@@ -963,7 +1074,11 @@ impl<'a> Tokenizer<'a, '_> {
                 } else if code == 93 {
                     open_brackets -= 1;
                 }
-                if open_brackets <= 0 { is_name_end(code) } else { is_new_line(code) }
+                if open_brackets <= 0 {
+                    is_name_end(code)
+                } else {
+                    is_new_line(code)
+                }
             })?
         } else {
             self.consume_prefix_and_name(is_name_end)?
@@ -977,11 +1092,17 @@ impl<'a> Tokenizer<'a, '_> {
         self.skip_whitespace();
         if self.attempt_char_code(61) {
             self.skip_whitespace();
-            let (text, interpolation) = (TokenType::AttrValueText, TokenType::AttrValueInterpolation);
+            let (text, interpolation) =
+                (TokenType::AttrValueText, TokenType::AttrValueInterpolation);
             let quote = self.peek();
             value = Some(if quote == 39 || quote == 34 {
                 self.consume_quote(quote)?;
-                let value = self.consume_with_interpolation(text, interpolation, End::Quote(quote), End::Quote(quote))?;
+                let value = self.consume_with_interpolation(
+                    text,
+                    interpolation,
+                    End::Quote(quote),
+                    End::Quote(quote),
+                )?;
                 self.consume_quote(quote)?;
                 value
             } else {
@@ -1052,7 +1173,12 @@ impl<'a> Tokenizer<'a, '_> {
         Ok(self.span_from(text_start))
     }
 
-    fn consume_interpolation(&mut self, kind: TokenType, start: usize, premature_end: End) -> Result<()> {
+    fn consume_interpolation(
+        &mut self,
+        kind: TokenType,
+        start: usize,
+        premature_end: End,
+    ) -> Result<()> {
         self.begin_token_at(kind, start);
         let mut in_quote = None;
         let mut in_comment = false;
@@ -1090,7 +1216,10 @@ fn trimmed(text: &[u8], span: Span) -> Span {
     let all = span.of(text);
     let without_start = crate::css::text::trim_start(all);
     let start = span.start + (all.len() - without_start.len()) as u32;
-    Span::new(start, start + crate::css::text::trim_end(without_start).len() as u32)
+    Span::new(
+        start,
+        start + crate::css::text::trim_end(without_start).len() as u32,
+    )
 }
 
 /// `tokenize`, from `start` on. Returns the tokens and where the errors are.
@@ -1117,7 +1246,10 @@ pub(crate) fn tokenize(
     let mut merged: Vec<Token> = Vec::with_capacity(tokenizer.tokens.len());
     for token in tokenizer.tokens {
         match merged.last_mut() {
-            Some(last) if last.kind == token.kind && matches!(token.kind, TokenType::Text | TokenType::AttrValueText) => {
+            Some(last)
+                if last.kind == token.kind
+                    && matches!(token.kind, TokenType::Text | TokenType::AttrValueText) =>
+            {
                 last.span.end = token.span.end;
             }
             _ => merged.push(token),

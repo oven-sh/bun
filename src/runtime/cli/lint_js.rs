@@ -111,7 +111,9 @@ fn decode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let range = start.to_int32() as u32 as usize..end.to_int32() as u32 as usize;
     match buffer.as_ref().and_then(|it| it.byte_slice().get(range)) {
         Some(bytes) => jsc::bun_string_jsc::create_utf8_for_js(global, bytes),
-        None => Err(global.throw_invalid_arguments(format_args!("Expected a part of an ArrayBuffer"))),
+        None => {
+            Err(global.throw_invalid_arguments(format_args!("Expected a part of an ArrayBuffer")))
+        }
     }
 }
 
@@ -122,14 +124,23 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
         const require = process.getBuiltinModule(\"node:module\").createRequire(process.cwd() + \"/\");\n\
         const load = specifier => import(specifier);\n"
         .to_vec();
-    PROGRAM.iter().for_each(|part| source.extend_from_slice(part.1.as_bytes()));
+    PROGRAM
+        .iter()
+        .for_each(|part| source.extend_from_slice(part.1.as_bytes()));
     source.extend_from_slice(b"\n})");
     let name = b"bun-lint-plugins.js";
     let mut exception = JSValue::UNDEFINED;
     // SAFETY: `global` is that of this thread's VM, whose lock is held, and the slices and
     // `exception` outlive the call.
     let program = unsafe {
-        Bun__REPL__evaluate(global, source.as_ptr(), source.len(), name.as_ptr(), name.len(), &raw mut exception)
+        Bun__REPL__evaluate(
+            global,
+            source.as_ptr(),
+            source.len(),
+            name.as_ptr(),
+            name.len(),
+            &raw mut exception,
+        )
     };
     if !exception.is_undefined() {
         return Err(message_of(global, exception));
@@ -151,7 +162,13 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
 
 /// Makes a VM for this thread.
 fn start_vm() -> Result<(), Vec<u8>> {
-    let failed = |what: &str| [b"Could not start JavaScript for the plugins: ", what.as_bytes()].concat();
+    let failed = |what: &str| {
+        [
+            b"Could not start JavaScript for the plugins: ",
+            what.as_bytes(),
+        ]
+        .concat()
+    };
     bun_ast::initialize_store();
     let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
         is_main_thread: false,
@@ -163,8 +180,11 @@ fn start_vm() -> Result<(), Vec<u8>> {
     // The threads that would transpile are the ones that lint, and wait for it.
     vm.transpiler_store.enabled = false;
     vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
-    vm.transpiler.options.env.behavior = bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
-    vm.transpiler.configure_defines().map_err(|error| failed(error.name()))?;
+    vm.transpiler.options.env.behavior =
+        bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
+    vm.transpiler
+        .configure_defines()
+        .map_err(|error| failed(error.name()))?;
     vm.load_extra_env_and_source_code_printer();
     vm.argv = bun_core::argv().iter().skip(1).map(Box::from).collect();
     vm.event_loop_mut().ensure_waker();

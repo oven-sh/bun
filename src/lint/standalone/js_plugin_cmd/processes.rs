@@ -53,7 +53,12 @@ impl Process {
         Ok((u32::from_le_bytes(kind), content))
     }
 
-    fn converse(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>> {
+    fn converse(
+        &mut self,
+        kind: u32,
+        content: &[u8],
+        serve: &mut Serve,
+    ) -> Result<Vec<u8>, Vec<u8>> {
         self.send(kind, |out| out.extend_from_slice(content))?;
         loop {
             match self.receive()? {
@@ -66,7 +71,8 @@ impl Process {
 
 impl Vm for Process {
     fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>> {
-        self.converse(kind, content, serve).inspect_err(|_| self.has_failed = true)
+        self.converse(kind, content, serve)
+            .inspect_err(|_| self.has_failed = true)
     }
 }
 
@@ -91,7 +97,10 @@ impl<'e> Processes<'e> {
     pub(crate) fn new(spawn: &'e Spawn<'e>, max: usize) -> Processes<'e> {
         Processes {
             spawn,
-            program: bun_lint::js_plugin::PROGRAM.iter().flat_map(|it| it.1.bytes()).collect(),
+            program: bun_lint::js_plugin::PROGRAM
+                .iter()
+                .flat_map(|it| it.1.bytes())
+                .collect(),
             max: max.max(1),
             state: Guarded::new(State::default()),
             is_idle: Condition::default(),

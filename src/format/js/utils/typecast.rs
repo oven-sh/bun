@@ -12,12 +12,17 @@ use smallvec::SmallVec;
 /// Whether `e` is in parentheses that stay.
 #[inline]
 pub(crate) fn is_cast_target<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    f.comments().has_type_cast_comments() && e.is_parenthesized() && !cast_parentheses(e, f).is_empty()
+    f.comments().has_type_cast_comments()
+        && e.is_parenthesized()
+        && !cast_parentheses(e, f).is_empty()
 }
 
 /// The parentheses around `e` that stay, from the outside in.
 fn cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
-    e.parens().rev().filter(|it| f.comments().is_cast_parenthesis(it.start)).collect()
+    e.parens()
+        .rev()
+        .filter(|it| f.comments().is_cast_parenthesis(it.start))
+        .collect()
 }
 
 /// If `e` is in parentheses that stay, writes them with the comments around them, and `e` in them
@@ -37,8 +42,8 @@ pub(crate) fn write_type_casts<'a>(
     let Some(&outermost) = parentheses.first() else {
         return false;
     };
-    let is_suppressed =
-        f.comments().is_suppressed(outermost.start) || f.comments().has_trailing_suppression_comment(outermost.end);
+    let is_suppressed = f.comments().is_suppressed(outermost.start)
+        || f.comments().has_trailing_suppression_comment(outermost.end);
     write!(f, format_leading_comments(outermost));
     match is_suppressed {
         true => write!(f, FormatSuppressedNode(outermost)),
@@ -90,7 +95,10 @@ impl<'a> Format<'a> for FormatParenthesizedExpression<'a, '_> {
         });
         match hugs {
             true => write!(f, ["(", content, ")"]),
-            false => write!(f, group(&format_args!("(", soft_block_indent(&content), ")"))),
+            false => write!(
+                f,
+                group(&format_args!("(", soft_block_indent(&content), ")"))
+            ),
         }
         f.comments_mut().restore_view_limit(previous_limit);
     }

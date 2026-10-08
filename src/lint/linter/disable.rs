@@ -315,10 +315,14 @@ impl Input<'_, '_> {
             let rule = message.rule_id.as_ref();
             // What disables all rules does not apply to one that has been enabled since.
             let for_all = match rule.and_then(|it| enabled_at.get(it)) {
-                Some(&since) => &active_for_all[active_for_all.partition_point(|&it| it <= since)..],
+                Some(&since) => {
+                    &active_for_all[active_for_all.partition_point(|&it| it <= since)..]
+                }
                 None => &active_for_all[..],
             };
-            let for_rule = rule.and_then(|it| active_for.get(it)).map_or(&[][..], |it| &it[..]);
+            let for_rule = rule
+                .and_then(|it| active_for.get(it))
+                .map_or(&[][..], |it| &it[..]);
             let was_suppressed = !message.suppressions.is_empty();
             let mut suppress = |it: u32| {
                 let source = switches[it as usize].source;
@@ -328,10 +332,14 @@ impl Input<'_, '_> {
                     .push(Suppression::directive(parent.justification));
             };
             // The last decides which comment is used.
-            let last = for_all.last().max(for_rule.last()).map(|&it| switches[it as usize].source);
+            let last = for_all
+                .last()
+                .max(for_rule.last())
+                .map(|&it| switches[it as usize].source);
             match self.wants_suppressions {
                 true => {
-                    let (mut all, mut one) = (for_all.iter().peekable(), for_rule.iter().peekable());
+                    let (mut all, mut one) =
+                        (for_all.iter().peekable(), for_rule.iter().peekable());
                     while let Some(&it) = match (all.peek(), one.peek()) {
                         (Some(a), Some(b)) if a < b => all.next(),
                         (_, Some(_)) => one.next(),
@@ -340,7 +348,11 @@ impl Input<'_, '_> {
                         suppress(it);
                     }
                 }
-                false => for_all.last().max(for_rule.last()).into_iter().for_each(|&it| suppress(it)),
+                false => for_all
+                    .last()
+                    .max(for_rule.last())
+                    .into_iter()
+                    .for_each(|&it| suppress(it)),
             }
             if let Some(last) = last
                 && !was_suppressed

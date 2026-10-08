@@ -28,13 +28,22 @@ pub fn before_parsing<'t>(text: &'t [u8], options: &FormatOptions) -> BeforePars
 /// The same for CSS, SCSS and Less, where the comment can follow front matter: Prettier's
 /// `language-css/pragma.js`. `front_matter_len`: the length of the front matter that `text` starts
 /// with, up to and including its last `---`.
-pub fn before_parsing_css<'t>(text: &'t [u8], front_matter_len: usize, options: &FormatOptions) -> BeforeParsing<'t> {
+pub fn before_parsing_css<'t>(
+    text: &'t [u8],
+    front_matter_len: usize,
+    options: &FormatOptions,
+) -> BeforeParsing<'t> {
     let (front_matter, content) = text.split_at(front_matter_len.min(text.len()));
-    if (options.require_pragma && !has_pragma(content)) || (options.check_ignore_pragma && has_ignore_pragma(content)) {
+    if (options.require_pragma && !has_pragma(content))
+        || (options.check_ignore_pragma && has_ignore_pragma(content))
+    {
         return BeforeParsing::LeaveAsItIs;
     }
     // Not if only a part of the file is formatted.
-    let is_whole_file = options.range_start.unwrap_or(0) == 0 && options.range_end.is_none_or(|end| end as usize >= utf16_len(text));
+    let is_whole_file = options.range_start.unwrap_or(0) == 0
+        && options
+            .range_end
+            .is_none_or(|end| end as usize >= utf16_len(text));
     if options.insert_pragma && !options.require_pragma && is_whole_file && !has_pragma(content) {
         let mut out = Vec::with_capacity(text.len() + 32);
         if !front_matter.is_empty() {
@@ -70,7 +79,10 @@ fn has_any_pragma(text: &[u8], names: [&[u8]; 2]) -> bool {
         return false;
     }
     let doc_block = DocBlock::parse(parts.doc_block);
-    doc_block.pragmas.iter().any(|(name, _)| names.contains(&name.as_slice()))
+    doc_block
+        .pragmas
+        .iter()
+        .any(|(name, _)| names.contains(&name.as_slice()))
 }
 
 /// Prettier's `isFlowFile`: whether it has Babel parse `text` as Flow, because `@flow` or `@noflow`
@@ -81,7 +93,10 @@ pub fn is_flow_file(text: &[u8], filepath: &[u8]) -> bool {
         return true;
     }
     let text = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text);
-    let text = match (text.starts_with(b"#!"), strings::index_of_any(text, b"\n\r")) {
+    let text = match (
+        text.starts_with(b"#!"),
+        strings::index_of_any(text, b"\n\r"),
+    ) {
         (false, _) => text,
         (true, None) => return false,
         (true, Some(end)) => &text[end..],
@@ -91,12 +106,16 @@ pub fn is_flow_file(text: &[u8], filepath: &[u8]) -> bool {
     let mut rest = text;
     loop {
         rest = match rest {
-            [b' ' | b'\t' | b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => rest,
+            [b' ' | b'\t' | b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => {
+                rest
+            }
             [b'/', b'*', comment @ ..] => match strings::index_of(comment, b"*/") {
                 Some(end) => &comment[end + 2..],
                 None => break,
             },
-            [b'/', b'/', comment @ ..] => &comment[strings::index_of_any(comment, b"\n\r").unwrap_or(comment.len())..],
+            [b'/', b'/', comment @ ..] => {
+                &comment[strings::index_of_any(comment, b"\n\r").unwrap_or(comment.len())..]
+            }
             _ => break,
         };
     }
@@ -105,8 +124,13 @@ pub fn is_flow_file(text: &[u8], filepath: &[u8]) -> bool {
     let mut comments = &text[..text.len() - rest.len()];
     while let Some(at) = strings::index_of_char_usize(comments, b'@') {
         comments = &comments[at + 1..];
-        if let Some(after) = comments.strip_prefix(b"no").unwrap_or(comments).strip_prefix(b"flow")
-            && !after.first().is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        if let Some(after) = comments
+            .strip_prefix(b"no")
+            .unwrap_or(comments)
+            .strip_prefix(b"flow")
+            && !after
+                .first()
+                .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
         {
             return true;
         }
@@ -174,7 +198,9 @@ pub(crate) fn trim_start(mut text: &[u8]) -> &[u8] {
 pub(crate) fn trim_end(mut text: &[u8]) -> &[u8] {
     loop {
         text = match text {
-            [rest @ .., b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' '] | [rest @ .., 0xC2, 0xA0] => rest,
+            [rest @ .., b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' '] | [rest @ .., 0xC2, 0xA0] => {
+                rest
+            }
             [rest @ .., 0xE1, 0x9A, 0x80]
             | [rest @ .., 0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF]
             | [rest @ .., 0xE2, 0x81, 0x9F]
@@ -217,11 +243,18 @@ impl<'t> Parts<'t> {
             Some(rest) => (&text[..3], rest),
             None => (&text[..0], text),
         };
-        let (shebang, text) = match (text.starts_with(b"#!"), strings::index_of_any(text, b"\n\r")) {
+        let (shebang, text) = match (
+            text.starts_with(b"#!"),
+            strings::index_of_any(text, b"\n\r"),
+        ) {
             (false, _) => (&text[..0], text),
             (true, None) => (text, &text[text.len()..]),
             (true, Some(end)) => {
-                let after = if text[end..].starts_with(b"\r\n") { end + 2 } else { end + 1 };
+                let after = if text[end..].starts_with(b"\r\n") {
+                    end + 2
+                } else {
+                    end + 1
+                };
                 (&text[..end], &text[after..])
             }
         };
@@ -310,10 +343,16 @@ impl<'t> Property<'t> {
 /// The index that `name` is as a property of an array, if it is one. `Object.keys` has those first,
 /// in ascending order.
 fn as_array_index(name: &[u8]) -> Option<u32> {
-    if name.len() > 10 || (name.len() > 1 && name[0] == b'0') || !name.iter().all(u8::is_ascii_digit) || name.is_empty() {
+    if name.len() > 10
+        || (name.len() > 1 && name[0] == b'0')
+        || !name.iter().all(u8::is_ascii_digit)
+        || name.is_empty()
+    {
         return None;
     }
-    let value = name.iter().fold(0u64, |value, digit| value * 10 + u64::from(digit - b'0'));
+    let value = name
+        .iter()
+        .fold(0u64, |value, digit| value * 10 + u64::from(digit - b'0'));
     u32::try_from(value).ok().filter(|index| *index != u32::MAX)
 }
 
@@ -321,7 +360,10 @@ impl DocBlock {
     /// `comment`: `/* .. */`, or nothing.
     fn parse(comment: &[u8]) -> DocBlock {
         // `/^\/\*\*?/` and `/\*\/$/`
-        let content = comment.strip_prefix(b"/**").or_else(|| comment.strip_prefix(b"/*")).unwrap_or(comment);
+        let content = comment
+            .strip_prefix(b"/**")
+            .or_else(|| comment.strip_prefix(b"/*"))
+            .unwrap_or(comment);
         let content = content.strip_suffix(b"*/").unwrap_or(content);
 
         // Without the `*` that the lines start with: `/(\r?\n|^) *\* ?/g`. The line breaks become `\n`.
@@ -338,7 +380,11 @@ impl DocBlock {
             };
             text.extend_from_slice(&rest[..end]);
             text.push(b'\n');
-            rest = &rest[if rest[end..].starts_with(b"\r\n") { end + 2 } else { end + 1 }..];
+            rest = &rest[if rest[end..].starts_with(b"\r\n") {
+                end + 2
+            } else {
+                end + 1
+            }..];
         }
 
         while let Some(joined) = join_continuation_lines(&text) {
@@ -356,7 +402,10 @@ impl DocBlock {
                 comments.extend_from_slice(line);
                 continue;
             };
-            let entry = (property.name.to_vec(), property.value_without_line_comment().to_vec());
+            let entry = (
+                property.name.to_vec(),
+                property.value_without_line_comment().to_vec(),
+            );
             match pragmas.iter().rposition(|(name, _)| name == property.name) {
                 Some(last) => pragmas.insert(last + 1, entry),
                 None => pragmas.push(entry),
@@ -371,10 +420,18 @@ impl DocBlock {
     fn print_with_format_pragma(&self) -> Vec<u8> {
         let comments = trim_start(&self.comments);
         let is_format = |(name, _): &&(Vec<u8>, Vec<u8>)| name == b"format";
-        let indexes = self.pragmas.iter().take_while(|(name, _)| as_array_index(name).is_some()).count();
+        let indexes = self
+            .pragmas
+            .iter()
+            .take_while(|(name, _)| as_array_index(name).is_some())
+            .count();
         let (before, after) = self.pragmas.split_at(indexes);
         let added = [(b"format".to_vec(), Vec::new())];
-        let format = if after.iter().any(|it| is_format(&it)) { &[][..] } else { &added[..] };
+        let format = if after.iter().any(|it| is_format(&it)) {
+            &[][..]
+        } else {
+            &added[..]
+        };
         let pragmas = (before.iter().chain(format))
             .chain(after.iter().filter(is_format))
             .chain(after.iter().filter(|it| !is_format(it)));
@@ -424,7 +481,9 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
     // A line can be the first of a match if the line break before it is not the end of a match.
     let mut line_start = 0;
     loop {
-        let Some(first_end) = strings::index_of_char_usize(&text[line_start..], b'\n').map(|at| line_start + at) else {
+        let Some(first_end) =
+            strings::index_of_char_usize(&text[line_start..], b'\n').map(|at| line_start + at)
+        else {
             break;
         };
         let matched = (|| {
@@ -434,7 +493,8 @@ fn join_continuation_lines(text: &[u8]) -> Option<Vec<u8>> {
                 return None;
             }
             let second_start = first_end + 1;
-            let second_end = second_start + strings::index_of_char_usize(&text[second_start..], b'\n')?;
+            let second_end =
+                second_start + strings::index_of_char_usize(&text[second_start..], b'\n')?;
             let second = &text[second_start..second_end];
             let second = &second[count_spaces(second)..];
             if second.len() < 2

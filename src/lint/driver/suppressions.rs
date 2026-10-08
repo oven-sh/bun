@@ -27,7 +27,11 @@ fn rule_of(message: &LintMessage) -> Option<Vec<u8>> {
 /// `countViolationsByRule`
 fn count_violations(messages: &[LintMessage]) -> ByRule {
     let mut counts: ByRule = Vec::new();
-    for rule in messages.iter().filter(|it| it.severity == Severity::Error).filter_map(rule_of) {
+    for rule in messages
+        .iter()
+        .filter(|it| it.severity == Severity::Error)
+        .filter_map(rule_of)
+    {
         match counts.iter_mut().find(|it| it.0 == rule) {
             Some(entry) => entry.1 += 1,
             None => counts.push((rule, 1)),
@@ -37,10 +41,13 @@ fn count_violations(messages: &[LintMessage]) -> ByRule {
 }
 
 fn entry<'e, T: Default>(entries: &'e mut Vec<(Vec<u8>, T)>, key: &[u8]) -> &'e mut T {
-    let at = entries.iter().position(|it| it.0 == key).unwrap_or_else(|| {
-        entries.push((key.to_vec(), T::default()));
-        entries.len() - 1
-    });
+    let at = entries
+        .iter()
+        .position(|it| it.0 == key)
+        .unwrap_or_else(|| {
+            entries.push((key.to_vec(), T::default()));
+            entries.len() - 1
+        });
     &mut entries[at].1
 }
 
@@ -51,14 +58,28 @@ impl Suppressions {
             return Ok(Suppressions::default());
         };
         let Some(Json::Object(files)) = bun_lint::json::parse(&text) else {
-            return Err(Fatal([b"Failed to parse suppressions file at ", path].concat()));
+            return Err(Fatal(
+                [b"Failed to parse suppressions file at ", path].concat(),
+            ));
         };
         let count = |value: &Json| match value.get(b"count") {
             Some(Json::Number(count)) => *count as u64,
             _ => 0,
         };
-        let by_rule = |rules: &Json| rules.as_object().unwrap_or_default().iter().map(|(rule, value)| (rule.clone(), count(value))).collect();
-        Ok(Suppressions(files.iter().map(|(file, rules)| (file.clone(), by_rule(rules))).collect()))
+        let by_rule = |rules: &Json| {
+            rules
+                .as_object()
+                .unwrap_or_default()
+                .iter()
+                .map(|(rule, value)| (rule.clone(), count(value)))
+                .collect()
+        };
+        Ok(Suppressions(
+            files
+                .iter()
+                .map(|(file, rules)| (file.clone(), by_rule(rules)))
+                .collect(),
+        ))
     }
 
     /// `save`: `stringify(suppressions, { space: 2 })` of `json-stable-stringify`.
@@ -78,11 +99,17 @@ impl Suppressions {
             out.extend_from_slice(if rules.is_empty() { b"}" } else { b"\n  }" });
         }
         out.extend_from_slice(if self.0.is_empty() { b"}" } else { b"\n}" });
-        fs::write_new(path, &out).map_err(|error| Fatal([b"Cannot write ", path, b": ", &fs::describe(&error)].concat()))
+        fs::write_new(path, &out)
+            .map_err(|error| Fatal([b"Cannot write ", path, b": ", &fs::describe(&error)].concat()))
     }
 
     /// `suppress`. `rules`: only these. `None`: all.
-    pub(crate) fn suppress(&mut self, results: &[FileResult], cwd: &[u8], rules: Option<&[Vec<u8>]>) {
+    pub(crate) fn suppress(
+        &mut self,
+        results: &[FileResult],
+        cwd: &[u8],
+        rules: Option<&[Vec<u8>]>,
+    ) {
         for result in results {
             let relative = paths::relative(cwd, &paths::from_native(&result.path));
             for (rule, count) in count_violations(&result.messages) {
@@ -110,7 +137,9 @@ impl Suppressions {
                 if *count <= tolerated {
                     // `suppressMessagesByRule`
                     let (mut hidden, shown): (Vec<_>, Vec<_>) =
-                        std::mem::take(&mut result.messages).into_iter().partition(|it| rule_of(it).as_ref() == Some(rule));
+                        std::mem::take(&mut result.messages)
+                            .into_iter()
+                            .partition(|it| rule_of(it).as_ref() == Some(rule));
                     for message in &mut hidden {
                         message.suppressions = vec![Suppression::file()];
                     }
@@ -122,7 +151,10 @@ impl Suppressions {
                     *entry(entry(&mut unused.0, &relative), rule) = tolerated - count;
                 }
             }
-            for (rule, tolerated) in suppressed.iter().filter(|it| !violations.iter().any(|violation| violation.0 == it.0)) {
+            for (rule, tolerated) in suppressed
+                .iter()
+                .filter(|it| !violations.iter().any(|violation| violation.0 == it.0))
+            {
                 *entry(entry(&mut unused.0, &relative), rule) = *tolerated;
             }
             if was_suppressed {
@@ -147,7 +179,8 @@ impl Suppressions {
                 });
             }
         }
-        self.0.retain(|it| !it.1.is_empty() && bun_sys::exists(&paths::resolve(cwd, &it.0)));
+        self.0
+            .retain(|it| !it.1.is_empty() && bun_sys::exists(&paths::resolve(cwd, &it.0)));
     }
 
     pub(crate) fn is_empty(&self) -> bool {

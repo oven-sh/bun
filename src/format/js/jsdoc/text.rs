@@ -61,14 +61,21 @@ pub(super) fn is_blank(text: &[u8]) -> bool {
 /// `str::lines`
 pub(super) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
     let has_last_line_break = text.ends_with(b"\n");
-    let count = if text.is_empty() { 0 } else { strings::count_char(text, b'\n') + usize::from(!has_last_line_break) };
-    strings::split(text, b"\n").take(count).enumerate().map(move |(index, line)| {
-        // A carriage return that no line feed follows is part of the line.
-        match index + 1 < count || has_last_line_break {
-            true => line.strip_suffix(b"\r").unwrap_or(line),
-            false => line,
-        }
-    })
+    let count = if text.is_empty() {
+        0
+    } else {
+        strings::count_char(text, b'\n') + usize::from(!has_last_line_break)
+    };
+    strings::split(text, b"\n")
+        .take(count)
+        .enumerate()
+        .map(move |(index, line)| {
+            // A carriage return that no line feed follows is part of the line.
+            match index + 1 < count || has_last_line_break {
+                true => line.strip_suffix(b"\r").unwrap_or(line),
+                false => line,
+            }
+        })
 }
 
 /// `text.split('\n')`
@@ -85,7 +92,8 @@ pub(super) fn split_whitespace(text: &[u8]) -> impl Iterator<Item = &[u8]> {
             return None;
         }
         let mut len = 0;
-        while let Some((_, char_len)) = first_char(&rest[len..]).filter(|it| !it.0.is_whitespace()) {
+        while let Some((_, char_len)) = first_char(&rest[len..]).filter(|it| !it.0.is_whitespace())
+        {
             len += char_len;
         }
         let (word, after) = rest.split_at(len);
@@ -103,7 +111,10 @@ pub(super) fn find_ascii_whitespace(text: &[u8]) -> Option<usize> {
 pub(super) fn str_width(text: &[u8]) -> usize {
     match text.is_ascii() {
         true => text.len(),
-        false => text.iter().map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0)).sum(),
+        false => text
+            .iter()
+            .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
+            .sum(),
     }
 }
 
@@ -126,7 +137,9 @@ pub(super) fn push_spaces(out: &mut Vec<u8>, n: usize) {
 
 /// The number that the ASCII digits `digits` are.
 pub(super) fn parse_index(digits: &[u8]) -> Option<usize> {
-    digits.iter().try_fold(0usize, |all, &digit| all.checked_mul(10)?.checked_add(usize::from(digit - b'0')))
+    digits.iter().try_fold(0usize, |all, &digit| {
+        all.checked_mul(10)?.checked_add(usize::from(digit - b'0'))
+    })
 }
 
 pub(super) fn push_number(out: &mut Vec<u8>, number: usize) {

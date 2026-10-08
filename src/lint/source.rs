@@ -41,7 +41,8 @@ impl<T: Copy> ByName<T> {
             return *self.others.entry(number).or_insert(found);
         }
         if at >= self.small.len() {
-            self.small.resize((at + 1).next_power_of_two().max(1024), None);
+            self.small
+                .resize((at + 1).next_power_of_two().max(1024), None);
         }
         if let Some(place) = self.small.get_mut(at) {
             *place = Some(found);
@@ -66,7 +67,10 @@ const BLOCK: usize = 1024;
 
 /// How many UTF-16 code units the characters of valid UTF-8 have that start in `bytes`.
 fn units_of_characters_starting_in(bytes: &[u8]) -> u32 {
-    bytes.iter().map(|&byte| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0)).sum()
+    bytes
+        .iter()
+        .map(|&byte| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0))
+        .sum()
 }
 
 /// For the line of an offset in a file of which few are asked for: then the lines in between are counted, and the starts of
@@ -85,7 +89,8 @@ pub(crate) struct NearbyLine {
 fn is_plain(text: &[u8]) -> bool {
     use bun_core::strings::{contains, contains_char};
     !contains_char(text, b'\r')
-        && (!contains_char(text, 0xE2) || !contains(text, "\u{2028}".as_bytes()) && !contains(text, "\u{2029}".as_bytes()))
+        && (!contains_char(text, 0xE2)
+            || !contains(text, "\u{2028}".as_bytes()) && !contains(text, "\u{2029}".as_bytes()))
 }
 
 impl<'a> File<'a> {
@@ -107,11 +112,18 @@ impl<'a> File<'a> {
         }
         nearby.looked_at.set(looked_at);
         let breaks = bun_core::strings::count_char(between, b'\n') as u32;
-        let lines_before = if offset >= known { lines_before + breaks } else { lines_before - breaks };
+        let lines_before = if offset >= known {
+            lines_before + breaks
+        } else {
+            lines_before - breaks
+        };
         nearby.known.set((offset, lines_before));
-        let start = bun_core::strings::last_index_of_char(&text[..offset as usize], b'\n').map_or(0, |at| at as u32 + 1);
+        let start = bun_core::strings::last_index_of_char(&text[..offset as usize], b'\n')
+            .map_or(0, |at| at as u32 + 1);
         // The line has been looked at up to here, and is once more for the column. The 256 above stand for a line of ordinary length.
-        nearby.looked_at.set(looked_at + (2 * (offset - start) as usize).saturating_sub(256));
+        nearby
+            .looked_at
+            .set(looked_at + (2 * (offset - start) as usize).saturating_sub(256));
         Some((lines_before + 1, start))
     }
 
@@ -131,13 +143,18 @@ impl<'a> File<'a> {
                 let mut units = Vec::with_capacity(text.len() / BLOCK + 2);
                 units.push(0);
                 for block in text.chunks(BLOCK) {
-                    units.push(units.last().copied().unwrap_or(0) + units_of_characters_starting_in(block));
+                    units.push(
+                        units.last().copied().unwrap_or(0) + units_of_characters_starting_in(block),
+                    );
                 }
                 units
             })
         });
         let block = offset as usize / BLOCK;
-        Some(units.as_ref()?.get(block)? + units_of_characters_starting_in(text.get(block * BLOCK..offset as usize)?))
+        Some(
+            units.as_ref()?.get(block)?
+                + units_of_characters_starting_in(text.get(block * BLOCK..offset as usize)?),
+        )
     }
 
     /// `text.length` in JavaScript of what is from `start` to `end`, both of which are where a character starts.
@@ -145,7 +162,8 @@ impl<'a> File<'a> {
         // While the lines are counted, so is what is looked at for a column.
         if end - start > FAR
             && self.lazy.lines.get().is_some()
-            && let (Some(before_start), Some(before_end)) = (self.units_before(start), self.units_before(end))
+            && let (Some(before_start), Some(before_end)) =
+                (self.units_before(start), self.units_before(end))
         {
             return before_end - before_start;
         }
@@ -168,7 +186,9 @@ impl<'a> File<'a> {
         if let Some((line, _)) = self.nearby_line(offset.min(self.text().len() as u32)) {
             return line;
         }
-        self.lines_index().starts.partition_point(|&start| start <= offset) as u32
+        self.lines_index()
+            .starts
+            .partition_point(|&start| start <= offset) as u32
     }
 
     /// Where the line `line`, counted from 1, starts and where it ends, before its line break. The first starts after a byte
@@ -179,7 +199,9 @@ impl<'a> File<'a> {
             return Span::empty(text.len() as u32);
         };
         let start = start.max(self.start_of_text());
-        let mut end = starts.get(line as usize).map_or(text.len(), |&next| next as usize);
+        let mut end = starts
+            .get(line as usize)
+            .map_or(text.len(), |&next| next as usize);
         if starts.get(line as usize).is_some() {
             let before = &text[start as usize..end];
             end -= match before {
@@ -211,13 +233,23 @@ impl<'a> File<'a> {
         let start = start.max(self.start_of_text());
         let offset = offset.max(start);
         if is_ascii {
-            return Position { line, column: offset - start };
+            return Position {
+                line,
+                column: offset - start,
+            };
         }
         let mut character = offset;
-        while character > start && text.get(character as usize).is_some_and(|byte| byte & 0xC0 == 0x80) {
+        while character > start
+            && text
+                .get(character as usize)
+                .is_some_and(|byte| byte & 0xC0 == 0x80)
+        {
             character -= 1;
         }
-        let is_between_surrogates = character < offset && text.get(character as usize).is_some_and(|&byte| byte >= 0xF0);
+        let is_between_surrogates = character < offset
+            && text
+                .get(character as usize)
+                .is_some_and(|&byte| byte >= 0xF0);
         let column = self.units_between(start, character) + u32::from(is_between_surrogates);
         Position { line, column }
     }
@@ -233,14 +265,22 @@ impl<'a> File<'a> {
         // Far into a line, it starts at the last block that begins before the column.
         if position.column > FAR
             && let Some(before_line) = self.units_before(line.start)
-            && let Some(Some([blocks @ .., _])) = self.lines_index().units.get().map(Option::as_deref)
+            && let Some(Some([blocks @ .., _])) =
+                self.lines_index().units.get().map(Option::as_deref)
         {
-            let block = blocks.partition_point(|&before| before <= before_line + position.column).saturating_sub(1);
+            let block = blocks
+                .partition_point(|&before| before <= before_line + position.column)
+                .saturating_sub(1);
             let mut first = (block * BLOCK) as u32;
-            while text.get(first as usize).is_some_and(|byte| byte & 0xC0 == 0x80) {
+            while text
+                .get(first as usize)
+                .is_some_and(|byte| byte & 0xC0 == 0x80)
+            {
                 first += 1;
             }
-            if first > line.start && let Some(&before) = blocks.get(block) {
+            if first > line.start
+                && let Some(&before) = blocks.get(block)
+            {
                 (at, units) = (first, before - before_line);
             }
         }
@@ -272,14 +312,20 @@ impl<'a> File<'a> {
     #[inline]
     pub fn mentions(&self, text: &str) -> bool {
         let bit = bun_sema::hir::mention_bit(text.as_bytes()) as usize;
-        self.hir.mentioned.get(bit / 64).is_none_or(|word| word >> (bit % 64) & 1 != 0)
+        self.hir
+            .mentioned
+            .get(bit / 64)
+            .is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
     /// [`File::mentions`] for a text whose [`mention_bit`] is known: a rule that looks for hundreds of names, which are not constants
     /// of the program, computes their bits once, in [`Rule::new`](crate::rule::Rule::new).
     #[inline]
     pub fn mentions_bit(&self, bit: u32) -> bool {
-        self.hir.mentioned.get(bit as usize / 64).is_none_or(|word| word >> (bit % 64) & 1 != 0)
+        self.hir
+            .mentioned
+            .get(bit as usize / 64)
+            .is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
     /// Whether the file may [mention](File::mentions) `use`, or a text that starts with `use` and an ASCII capital or digit: what

@@ -32,7 +32,8 @@ pub(super) fn glob_match(glob: &[u8], path: &[u8]) -> bool {
     let is_negated = negations % 2 == 1;
 
     let (mut brace_stack, mut is_invalid) = (BraceStack::new(), false);
-    let is_matched = state.glob_match_from(glob, path, negations, &mut brace_stack, &mut is_invalid);
+    let is_matched =
+        state.glob_match_from(glob, path, negations, &mut brace_stack, &mut is_invalid);
     if is_invalid || (is_negated && !is_matched && !is_valid(glob)) {
         return false;
     }
@@ -123,7 +124,8 @@ impl State {
             return;
         }
         let rest = path.get(self.path_index..).unwrap_or_default();
-        let mut path_index = self.path_index + bun_core::strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
+        let mut path_index = self.path_index
+            + bun_core::strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
         if is_end_invalid || path_index != path.len() {
             path_index += 1;
         }
@@ -171,12 +173,19 @@ impl State {
         let mut branch_state = *self;
         branch_state.glob_index = branch_index;
         branch_state.brace_depth = brace_stack.len();
-        let is_matched = branch_state.glob_match_from(glob, path, branch_index, brace_stack, is_invalid);
+        let is_matched =
+            branch_state.glob_match_from(glob, path, branch_index, brace_stack, is_invalid);
         brace_stack.pop();
         is_matched
     }
 
-    fn match_brace(&mut self, glob: &[u8], path: &[u8], brace_stack: &mut BraceStack, is_invalid: &mut bool) -> bool {
+    fn match_brace(
+        &mut self,
+        glob: &[u8],
+        path: &[u8],
+        brace_stack: &mut BraceStack,
+        is_invalid: &mut bool,
+    ) -> bool {
         let (mut brace_depth, mut is_matched) = (0usize, false);
         let open_brace_index = self.glob_index;
         let mut branch_index = 0;
@@ -191,11 +200,25 @@ impl State {
                 b'}' => {
                     brace_depth = brace_depth.saturating_sub(1);
                     if brace_depth == 0 {
-                        return self.match_brace_branch(glob, path, open_brace_index, branch_index, brace_stack, is_invalid) || is_matched;
+                        return self.match_brace_branch(
+                            glob,
+                            path,
+                            open_brace_index,
+                            branch_index,
+                            brace_stack,
+                            is_invalid,
+                        ) || is_matched;
                     }
                 }
                 b',' if brace_depth == 1 => {
-                    is_matched |= self.match_brace_branch(glob, path, open_brace_index, branch_index, brace_stack, is_invalid);
+                    is_matched |= self.match_brace_branch(
+                        glob,
+                        path,
+                        open_brace_index,
+                        branch_index,
+                        brace_stack,
+                        is_invalid,
+                    );
                     branch_index = self.glob_index + 1;
                 }
                 b'[' => {
@@ -236,7 +259,8 @@ impl State {
                     if is_globstar {
                         self.glob_index += 2;
                         let is_end_invalid = self.glob_index != glob.len();
-                        if (self.glob_index.saturating_sub(match_start) < 3 || glob.get(self.glob_index - 3) == Some(&b'/'))
+                        if (self.glob_index.saturating_sub(match_start) < 3
+                            || glob.get(self.glob_index - 3) == Some(&b'/'))
                             && (!is_end_invalid || glob.get(self.glob_index) == Some(&b'/'))
                         {
                             if is_end_invalid {
@@ -263,17 +287,26 @@ impl State {
                     let is_negated = matches!(glob.get(self.glob_index), Some(b'^' | b'!'));
                     self.glob_index += usize::from(is_negated);
                     let (mut is_first, mut is_match) = (true, false);
-                    while let Some(&low) = glob.get(self.glob_index).filter(|byte| is_first || **byte != b']') {
+                    while let Some(&low) = glob
+                        .get(self.glob_index)
+                        .filter(|byte| is_first || **byte != b']')
+                    {
                         let Some(low) = self.unescape(low, glob) else {
                             *is_invalid = true;
                             return false;
                         };
                         self.glob_index += 1;
-                        let is_range = glob.get(self.glob_index) == Some(&b'-') && glob.get(self.glob_index + 1).is_some_and(|byte| *byte != b']');
+                        let is_range = glob.get(self.glob_index) == Some(&b'-')
+                            && glob
+                                .get(self.glob_index + 1)
+                                .is_some_and(|byte| *byte != b']');
                         let high = match is_range {
                             true => {
                                 self.glob_index += 1;
-                                let Some(high) = glob.get(self.glob_index).and_then(|high| self.unescape(*high, glob)) else {
+                                let Some(high) = glob
+                                    .get(self.glob_index)
+                                    .and_then(|high| self.unescape(*high, glob))
+                                else {
                                     *is_invalid = true;
                                     return false;
                                 };
@@ -296,7 +329,9 @@ impl State {
                     }
                 }
                 (Some(b'{'), _) => {
-                    if let Some(&(_, branch_index)) = brace_stack.iter().find(|it| it.0 == self.glob_index) {
+                    if let Some(&(_, branch_index)) =
+                        brace_stack.iter().find(|it| it.0 == self.glob_index)
+                    {
                         self.glob_index = branch_index;
                         self.brace_depth += 1;
                         continue;

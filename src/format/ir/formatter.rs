@@ -1,11 +1,11 @@
 //! [`Format`], and the [`Formatter`] that it writes to.
 
 use super::document::Tracker;
-use super::width::OddBlocks;
 use super::element::{
-    BestFitting, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned, LabelId, LineMode, PrintMode,
-    Skip, Tag, Text, TextWidth,
+    BestFitting, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned, LabelId,
+    LineMode, PrintMode, Skip, Tag, Text, TextWidth,
 };
+use super::width::OddBlocks;
 use crate::js::comments::Comments;
 use crate::js::context::JsFormatContext;
 use crate::js::source_text::SourceText;
@@ -167,7 +167,14 @@ impl Storage {
         self.pool.clear();
         self.pool.push(FormatElement::Tag(Tag::EndLineSuffix));
         self.pool.extend(LineMode::ALL.map(FormatElement::Line));
-        self.pool.extend([Tag::StartIndentWithLine(LineMode::SoftOrSpace), Tag::EndIndent, Tag::EndGroup].map(FormatElement::Tag));
+        self.pool.extend(
+            [
+                Tag::StartIndentWithLine(LineMode::SoftOrSpace),
+                Tag::EndIndent,
+                Tag::EndGroup,
+            ]
+            .map(FormatElement::Tag),
+        );
         self.variants.clear();
         self.text.clear();
     }
@@ -193,8 +200,13 @@ impl Storage {
     /// whether it [will break](Storage::will_break).
     #[inline]
     pub(crate) fn summary_of(&self, interned: Interned) -> (Flat, bool) {
-        match (interned.start as usize).checked_sub(1).and_then(|before| self.pool.get(before)) {
-            Some(FormatElement::Skip(skip)) if skip.len == interned.len => (skip.flat, skip.will_break),
+        match (interned.start as usize)
+            .checked_sub(1)
+            .and_then(|before| self.pool.get(before))
+        {
+            Some(FormatElement::Skip(skip)) if skip.len == interned.len => {
+                (skip.flat, skip.will_break)
+            }
             _ => self.summary_of_part(interned),
         }
     }
@@ -219,14 +231,21 @@ impl Storage {
                     false
                 }
                 FormatElement::Line(mode)
-                | FormatElement::Tag(Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode)) => mode.will_break(),
+                | FormatElement::Tag(
+                    Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode),
+                ) => mode.will_break(),
                 FormatElement::ExpandParent => true,
                 FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
                     text.width.is_multiline() && !text.width.is_one_string()
                 }
                 FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
-                FormatElement::Interned(interned) => match (interned.start as usize).checked_sub(1).and_then(|at| self.pool.get(at)) {
-                    Some(FormatElement::Skip(it)) if it.len == interned.len => it.flat.flags.has(FlatFlags::EXPANDS),
+                FormatElement::Interned(interned) => match (interned.start as usize)
+                    .checked_sub(1)
+                    .and_then(|at| self.pool.get(at))
+                {
+                    Some(FormatElement::Skip(it)) if it.len == interned.len => {
+                        it.flat.flags.has(FlatFlags::EXPANDS)
+                    }
                     _ => depth >= 16 || self.part_expands(*interned, depth + 1),
                 },
                 _ => false,
@@ -249,7 +268,10 @@ impl Storage {
             }
             FormatElement::Interned(interned) => self.summary_of(*interned).1,
             // If even the flattest variant has something that forces a break, it breaks.
-            FormatElement::BestFitting(it) => self.variants(*it).first().is_some_and(|&flattest| self.summary_of(flattest).1),
+            FormatElement::BestFitting(it) => self
+                .variants(*it)
+                .first()
+                .is_some_and(|&flattest| self.summary_of(flattest).1),
             FormatElement::Token(_)
             | FormatElement::TokenIfBreaks(_)
             | FormatElement::IndentedLineGroup(_)
@@ -275,9 +297,9 @@ impl Storage {
                     ignore_depth = ignore_depth.saturating_sub(1);
                 }
                 FormatElement::Line(mode)
-                | FormatElement::Tag(Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode))
-                    if mode.will_break() =>
-                {
+                | FormatElement::Tag(
+                    Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode),
+                ) if mode.will_break() => {
                     return true;
                 }
                 element if ignore_depth == 0 && self.element_will_break(element) => return true,
@@ -301,7 +323,9 @@ impl Storage {
                 _ if ignore_depth != 0 => {}
                 FormatElement::Line(_)
                 | FormatElement::IndentedLineGroup(_)
-                | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_)) => return true,
+                | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_)) => {
+                    return true;
+                }
                 FormatElement::Interned(it) if self.may_directly_break(self.interned(*it)) => {
                     return true;
                 }
@@ -404,7 +428,11 @@ pub(crate) struct Formatter<'a> {
 
 impl<'a> Formatter<'a> {
     /// `source`: what [`FormatElement::SourceText`] is a range of.
-    pub(crate) fn new(context: JsFormatContext<'a>, source: &'a [u8], buffers: FormatterBuffers) -> Self {
+    pub(crate) fn new(
+        context: JsFormatContext<'a>,
+        source: &'a [u8],
+        buffers: FormatterBuffers,
+    ) -> Self {
         let FormatterBuffers {
             mut storage,
             mut tracker,
@@ -474,11 +502,15 @@ impl<'a> Formatter<'a> {
         let result = write(&mut inner);
         self.context.ran_out_of_stack |= inner.context.ran_out_of_stack;
         self.next_group_id.set(inner.next_group_id.get());
-        (self.storage, self.tracker, self.spare, self.cleaned) = (inner.storage, inner.tracker, inner.spare, inner.cleaned);
+        (self.storage, self.tracker, self.spare, self.cleaned) =
+            (inner.storage, inner.tracker, inner.spare, inner.cleaned);
 
         let (own, part) = (self.source.as_ptr_range(), source.as_ptr_range());
-        let offset = (own.start <= part.start && part.end <= own.end).then(|| (part.start.addr() - own.start.addr()) as u32);
-        let Storage { pool, text: owned, .. } = &mut self.storage;
+        let offset = (own.start <= part.start && part.end <= own.end)
+            .then(|| (part.start.addr() - own.start.addr()) as u32);
+        let Storage {
+            pool, text: owned, ..
+        } = &mut self.storage;
         let mut copy = None;
         for element in pool.get_mut(first..).unwrap_or_default() {
             if let FormatElement::SourceText(text) = element {
@@ -611,7 +643,10 @@ impl<'a> Formatter<'a> {
     /// whether `text` is a name, with or without the `.` or `?.` before it.
     #[cold]
     fn write_name_without_escapes(&mut self, text: &[u8]) -> bool {
-        if !matches!(text.first(), Some(b'\\' | b'#' | b'.' | b'?' | b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z' | 0x80..)) {
+        if !matches!(
+            text.first(),
+            Some(b'\\' | b'#' | b'.' | b'?' | b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z' | 0x80..)
+        ) {
             return false;
         }
         let name = crate::verify::without_unicode_escapes(text);
@@ -623,8 +658,7 @@ impl<'a> Formatter<'a> {
     /// Writes `text`, which can be anything but has no `\r`. It is not copied if it is part of
     /// the source text.
     pub(crate) fn write_text(&mut self, text: &[u8], width: Option<TextWidth>) {
-        let width = width
-            .unwrap_or_else(|| TextWidth::from_text_as(text, self.options().flavor));
+        let width = width.unwrap_or_else(|| TextWidth::from_text_as(text, self.options().flavor));
         let (source, part) = (self.source.as_ptr_range(), text.as_ptr_range());
         if source.start <= part.start && part.end <= source.end {
             self.write_element(FormatElement::SourceText(Text {
@@ -793,7 +827,10 @@ impl<'a> Formatter<'a> {
     /// Writes the elements at `range` without their soft line breaks.
     fn remove_soft_lines(&mut self, range: Interned, conditions: &mut Vec<PrintMode>) {
         let mut indices = range.range();
-        while let Some(&element) = indices.next().and_then(|index| self.storage.pool.get(index)) {
+        while let Some(&element) = indices
+            .next()
+            .and_then(|index| self.storage.pool.get(index))
+        {
             let cleaned = match element {
                 FormatElement::Skip(it) => {
                     if it.len > 0 {
@@ -812,21 +849,31 @@ impl<'a> Formatter<'a> {
                 _ if conditions.last() == Some(&PrintMode::Expanded) => continue,
                 FormatElement::TokenIfBreaks(_) => continue,
                 FormatElement::IndentedLineGroup(id) => {
-                    self.write_element(FormatElement::Tag(Tag::StartGroup(Group::new().with_id(Some(id)))));
+                    self.write_element(FormatElement::Tag(Tag::StartGroup(
+                        Group::new().with_id(Some(id)),
+                    )));
                     self.write_element(FormatElement::Tag(Tag::StartIndent));
                     self.write_element(FormatElement::Space);
                     self.write_element(FormatElement::Tag(Tag::EndIndent));
                     FormatElement::Tag(Tag::EndGroup)
                 }
-                FormatElement::Tag(tag @ (Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode))) if !mode.will_break() => {
-                    self.write_element(FormatElement::Tag(if tag.is_start() { Tag::StartIndent } else { Tag::EndIndent }));
+                FormatElement::Tag(
+                    tag @ (Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode)),
+                ) if !mode.will_break() => {
+                    self.write_element(FormatElement::Tag(if tag.is_start() {
+                        Tag::StartIndent
+                    } else {
+                        Tag::EndIndent
+                    }));
                     match mode {
                         LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => FormatElement::Space,
                         _ => continue,
                     }
                 }
                 FormatElement::Line(LineMode::Soft | LineMode::SoftEmpty) => continue,
-                FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => FormatElement::Space,
+                FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => {
+                    FormatElement::Space
+                }
                 FormatElement::Interned(interned) => {
                     FormatElement::Interned(self.clean_interned(interned, conditions))
                 }
@@ -850,9 +897,11 @@ impl<'a> Formatter<'a> {
             matches!(
                 element,
                 FormatElement::Line(
-                    LineMode::Soft | LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty
-                )
-                    | FormatElement::TokenIfBreaks(_)
+                    LineMode::Soft
+                        | LineMode::SoftOrSpace
+                        | LineMode::SoftOrSpaceEmpty
+                        | LineMode::SoftEmpty
+                ) | FormatElement::TokenIfBreaks(_)
                     | FormatElement::IndentedLineGroup(_)
                     | FormatElement::Tag(
                         Tag::StartConditionalContent(_)
@@ -947,7 +996,11 @@ impl Formatter<'_> {
 
     /// Makes what has been written since `reserved` was reserved a group.
     pub(crate) fn group_from(&mut self, reserved: usize, should_expand: bool) {
-        let mode = if should_expand { GroupMode::Expand } else { GroupMode::Flat };
+        let mode = if should_expand {
+            GroupMode::Expand
+        } else {
+            GroupMode::Flat
+        };
         if let Some(element @ FormatElement::Nop) = self.storage.pool.get_mut(reserved) {
             *element = FormatElement::Tag(Tag::StartGroup(Group::new().with_mode(mode)));
             self.tracker.use_reserved(reserved as u32, mode);
@@ -959,7 +1012,11 @@ impl Formatter<'_> {
 impl<'a> Formatter<'a> {
     /// Appends an element that stands for what `content` writes to `out`, and nothing to what is
     /// written so far.
-    pub(crate) fn write_into(&mut self, out: &mut Vec<FormatElement>, content: &(impl Format<'a> + ?Sized)) {
+    pub(crate) fn write_into(
+        &mut self,
+        out: &mut Vec<FormatElement>,
+        content: &(impl Format<'a> + ?Sized),
+    ) {
         out.extend(self.intern(content));
     }
 }
@@ -973,7 +1030,16 @@ impl<'a> Formatter<'a> {
         let source = self.source;
         let mut out = Vec::new();
         let options = PrinterOptions::new(self.options(), source);
-        if print(document, &self.storage, source, options, &mut PrinterBuffers::default(), &mut out).is_err() {
+        if print(
+            document,
+            &self.storage,
+            source,
+            options,
+            &mut PrinterBuffers::default(),
+            &mut out,
+        )
+        .is_err()
+        {
             out.clear();
         }
         out

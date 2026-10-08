@@ -132,13 +132,22 @@ struct Resolver<'t> {
 }
 
 impl<'t> Resolver<'t> {
-    fn new(file: &'t File, tree: &'t ScopeTree, variables: &'t Variables, capacity: usize) -> Resolver<'t> {
+    fn new(
+        file: &'t File,
+        tree: &'t ScopeTree,
+        variables: &'t Variables,
+        capacity: usize,
+    ) -> Resolver<'t> {
         Resolver {
             tree,
             variables,
             expr_symbol: file.bound.expr_symbol,
             pat_symbol: file.bound.pat_symbol,
-            unvisited: if scopes::is_javascript_mode(file) { &[] } else { &tree.unvisited },
+            unvisited: if scopes::is_javascript_mode(file) {
+                &[]
+            } else {
+                &tree.unvisited
+            },
             cursor: tree.cursor(),
             all: Vec::with_capacity(capacity),
             counts: vec![0; variables.list.len() + 2],
@@ -153,8 +162,14 @@ impl<'t> Resolver<'t> {
     #[inline]
     fn add_read(&mut self, id: ExprId, pos: u32, name: Atom) {
         let hazards = &self.variables.hazards;
-        if self.is_plain && (hazards.is_empty() || hazards.binary_search_by_key(&name.0, |it| it.0).is_err()) {
-            let symbol = self.expr_symbol.get(id.idx()).copied().unwrap_or(SymbolId::NONE);
+        if self.is_plain
+            && (hazards.is_empty() || hazards.binary_search_by_key(&name.0, |it| it.0).is_err())
+        {
+            let symbol = self
+                .expr_symbol
+                .get(id.idx())
+                .copied()
+                .unwrap_or(SymbolId::NONE);
             return self.add_simple_read(id, pos, name, symbol);
         }
         self.add(RawReference {
@@ -177,11 +192,20 @@ impl<'t> Resolver<'t> {
         }
         let from = self.cursor.seek(pos);
         let mut variable = self.variables.index_of_symbol(symbol);
-        match (self.variables.extents.get(variable as usize), self.counts.get_mut(variable as usize + 1)) {
-            (Some(extent), Some(count)) if extent.has(from, pos) => *count = (*count + 1) | HAS_READ,
+        match (
+            self.variables.extents.get(variable as usize),
+            self.counts.get_mut(variable as usize + 1),
+        ) {
+            (Some(extent), Some(count)) if extent.has(from, pos) => {
+                *count = (*count + 1) | HAS_READ
+            }
             _ => {
-                variable = self.variables.resolve(self.tree, from, name, pos, VALUE).unwrap_or(NONE);
-                let count = &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
+                variable = self
+                    .variables
+                    .resolve(self.tree, from, name, pos, VALUE)
+                    .unwrap_or(NONE);
+                let count =
+                    &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
                 *count = (*count + 1) | HAS_READ;
             }
         }
@@ -198,7 +222,8 @@ impl<'t> Resolver<'t> {
 
     #[inline(always)]
     fn count(&mut self, it: &RawReference) {
-        let is_modifying = it.flags.contains(ReferenceFlags::WRITE) && !it.flags.contains(ReferenceFlags::INIT);
+        let is_modifying =
+            it.flags.contains(ReferenceFlags::WRITE) && !it.flags.contains(ReferenceFlags::INIT);
         let marks = (u32::from(it.flags.contains(ReferenceFlags::READ)) * HAS_READ)
             | (u32::from(it.flags.contains(ReferenceFlags::WRITE)) * HAS_WRITE)
             | (u32::from(is_modifying) * HAS_MODIFYING_WRITE);
@@ -210,7 +235,12 @@ impl<'t> Resolver<'t> {
     #[inline(never)]
     fn add(&mut self, mut it: RawReference) {
         let (tree, variables) = (self.tree, self.variables);
-        if !self.unvisited.is_empty() && self.unvisited.iter().any(|range| (range.0..range.1).contains(&it.pos)) {
+        if !self.unvisited.is_empty()
+            && self
+                .unvisited
+                .iter()
+                .any(|range| (range.0..range.1).contains(&it.pos))
+        {
             return;
         }
         let last_visit = match self.moved.last() {
@@ -226,7 +256,9 @@ impl<'t> Resolver<'t> {
         let wants = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
             + u8::from(it.flags.contains(ReferenceFlags::TYPE)) * TYPE;
         let bound_to = match it.site {
-            ReferenceSite::Expr(e) if wants == VALUE && it.variable != BY_NAME => self.expr_symbol.get(e.idx()).copied(),
+            ReferenceSite::Expr(e) if wants == VALUE && it.variable != BY_NAME => {
+                self.expr_symbol.get(e.idx()).copied()
+            }
             ReferenceSite::Pat(p) => self.pat_symbol.get(p.idx()).copied(),
             ReferenceSite::Declaration(index) => {
                 it.from = variables.list[index as usize].scope;
@@ -235,7 +267,8 @@ impl<'t> Resolver<'t> {
             _ => None,
         };
         let hazards = &variables.hazards;
-        let is_hazard = !hazards.is_empty() && hazards.binary_search_by_key(&it.name.0, |it| it.0).is_ok();
+        let is_hazard =
+            !hazards.is_empty() && hazards.binary_search_by_key(&it.name.0, |it| it.0).is_ok();
         let trusted = match bound_to.filter(|_| !is_hazard) {
             Some(symbol) if symbol.is_some() => {
                 // What the binder found is what ESLint finds if it is declared around the
@@ -253,7 +286,9 @@ impl<'t> Resolver<'t> {
         };
         it.variable = match trusted {
             Some(index) => index,
-            None => variables.resolve(tree, it.from, it.name, it.pos, wants).unwrap_or(NONE),
+            None => variables
+                .resolve(tree, it.from, it.name, it.pos, wants)
+                .unwrap_or(NONE),
         };
         self.count(&it);
         self.all.push(it);
@@ -283,27 +318,52 @@ fn bit_of_name(name: Atom) -> u64 {
 }
 
 impl<'f> Collector<'f, '_> {
-    fn push(&mut self, site: ReferenceSite, pos: u32, name: Atom, flags: ReferenceFlags, write: ExprId) {
+    fn push(
+        &mut self,
+        site: ReferenceSite,
+        pos: u32,
+        name: Atom,
+        flags: ReferenceFlags,
+        write: ExprId,
+    ) {
         self.push_write(site, (pos, pos), name, flags, write);
     }
 
     /// `Referencer.visitPattern` makes the references of all the names of a pattern before it
     /// visits the defaults and the computed keys in it. `at`: where the name is, and the position
     /// that it is visited at. That is kept in `from` until the references are in order.
-    fn push_write(&mut self, site: ReferenceSite, at: (u32, u32), name: Atom, flags: ReferenceFlags, write: ExprId) {
+    fn push_write(
+        &mut self,
+        site: ReferenceSite,
+        at: (u32, u32),
+        name: Atom,
+        flags: ReferenceFlags,
+        write: ExprId,
+    ) {
         let made = self.make(site, at, name, flags, write);
         self.found.push(made);
     }
 
     #[inline]
-    fn make(&self, site: ReferenceSite, at: (u32, u32), name: Atom, flags: ReferenceFlags, write: ExprId) -> RawReference {
+    fn make(
+        &self,
+        site: ReferenceSite,
+        at: (u32, u32),
+        name: Atom,
+        flags: ReferenceFlags,
+        write: ExprId,
+    ) -> RawReference {
         RawReference {
             site,
             pos: at.0,
             name,
             variable: NONE,
             from: at.1,
-            write: if write.is_some() { self.without_casts(write) } else { write },
+            write: if write.is_some() {
+                self.without_casts(write)
+            } else {
+                write
+            },
             flags,
         }
     }
@@ -326,7 +386,11 @@ impl<'f> Collector<'f, '_> {
             return None;
         };
         match self.file.hir.stmts.get(owner.idx())?.kind {
-            StmtKind::ForIn { left, expr, .. } | StmtKind::ForOf { left, expr, .. } if left == s => Some(expr),
+            StmtKind::ForIn { left, expr, .. } | StmtKind::ForOf { left, expr, .. }
+                if left == s =>
+            {
+                Some(expr)
+            }
             _ => None,
         }
     }
@@ -347,52 +411,68 @@ impl<'f> Collector<'f, '_> {
         let mut iterated = None;
         loop {
             match bound.expr_parent.get(at.idx()) {
-                Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
-                    Some(ExprKind::Assign {
-                        op: None,
-                        target,
-                        value,
-                    }) if target == at => {
-                        // typescript-estree makes no pattern of a literal in parentheses.
-                        let is_literal_in_parentheses = !self.is_javascript
-                            && matches!(
-                                hir.exprs.get(at.idx()).map(|it| it.kind),
-                                Some(ExprKind::Array(_) | ExprKind::Object(_))
-                            )
-                            && hir.parens.binary_search_by_key(&at.0, |it| it.0.0).is_ok();
-                        // `visitExpressionTarget` looks through one.
-                        if wrappers <= 1 && !has_satisfies && !is_literal_in_parentheses && values.len() < 32 {
-                            is_assignment |= 1 << values.len();
+                Some(&Parent::Expr(parent)) => {
+                    match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+                        Some(ExprKind::Assign {
+                            op: None,
+                            target,
+                            value,
+                        }) if target == at => {
+                            // typescript-estree makes no pattern of a literal in parentheses.
+                            let is_literal_in_parentheses = !self.is_javascript
+                                && matches!(
+                                    hir.exprs.get(at.idx()).map(|it| it.kind),
+                                    Some(ExprKind::Array(_) | ExprKind::Object(_))
+                                )
+                                && hir.parens.binary_search_by_key(&at.0, |it| it.0.0).is_ok();
+                            // `visitExpressionTarget` looks through one.
+                            if wrappers <= 1
+                                && !has_satisfies
+                                && !is_literal_in_parentheses
+                                && values.len() < 32
+                            {
+                                is_assignment |= 1 << values.len();
+                            }
+                            values.push(value);
+                            targets.push(at);
+                            (at, wrappers, has_satisfies) = (parent, 0, false);
                         }
-                        values.push(value);
-                        targets.push(at);
-                        (at, wrappers, has_satisfies) = (parent, 0, false);
+                        Some(ExprKind::Assign {
+                            op: Some(_),
+                            target,
+                            value,
+                        }) if target == at && values.is_empty() && self.is_identifier(at, e) => {
+                            return Access::ReadWrite(value);
+                        }
+                        Some(ExprKind::Unary {
+                            op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                            ..
+                        }) if values.is_empty() && self.is_identifier(at, e) => {
+                            return Access::ReadWrite(ExprId::NONE);
+                        }
+                        Some(ExprKind::Array(_) | ExprKind::Spread(_)) => {
+                            (at, wrappers, has_satisfies) = (parent, 0, false)
+                        }
+                        Some(ExprKind::As { .. } | ExprKind::Satisfies { .. })
+                            if self.file.is_javascript() =>
+                        {
+                            at = parent
+                        }
+                        Some(ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::NonNull(_)) => {
+                            (at, wrappers) = (parent, wrappers + 1);
+                        }
+                        Some(ExprKind::Satisfies { .. }) => {
+                            (at, wrappers, has_satisfies) = (parent, wrappers + 1, true);
+                        }
+                        _ => break,
                     }
-                    Some(ExprKind::Assign {
-                        op: Some(_),
-                        target,
-                        value,
-                    }) if target == at && values.is_empty() && self.is_identifier(at, e) => {
-                        return Access::ReadWrite(value);
-                    }
-                    Some(ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    }) if values.is_empty() && self.is_identifier(at, e) => {
-                        return Access::ReadWrite(ExprId::NONE);
-                    }
-                    Some(ExprKind::Array(_) | ExprKind::Spread(_)) => (at, wrappers, has_satisfies) = (parent, 0, false),
-                    Some(ExprKind::As { .. } | ExprKind::Satisfies { .. }) if self.file.is_javascript() => at = parent,
-                    Some(ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::NonNull(_)) => {
-                        (at, wrappers) = (parent, wrappers + 1);
-                    }
-                    Some(ExprKind::Satisfies { .. }) => {
-                        (at, wrappers, has_satisfies) = (parent, wrappers + 1, true);
-                    }
-                    _ => break,
-                },
+                }
                 Some(&Parent::Prop(p)) => {
-                    let owner = bound.prop_owner.get(p.idx()).copied().unwrap_or(ExprId::NONE);
+                    let owner = bound
+                        .prop_owner
+                        .get(p.idx())
+                        .copied()
+                        .unwrap_or(ExprId::NONE);
                     let is_part_of_pattern = matches!(
                         hir.props.get(p.idx()).map(|it| it.kind),
                         Some(PropKind::Init | PropKind::Shorthand | PropKind::Spread)
@@ -419,8 +499,14 @@ impl<'f> Collector<'f, '_> {
             values.pop();
             targets.pop();
         }
-        let pattern = if iterated.is_some() { Some(&at) } else { targets.last() };
-        let start = pattern.and_then(|it| hir.exprs.get(it.idx())).map_or(0, |it| it.pos);
+        let pattern = if iterated.is_some() {
+            Some(&at)
+        } else {
+            targets.last()
+        };
+        let start = pattern
+            .and_then(|it| hir.exprs.get(it.idx()))
+            .map_or(0, |it| it.pos);
         // The values so far are innermost first. All but the outermost are defaults, which ESLint
         // lists outermost first, before the value itself.
         match (iterated, values.len()) {
@@ -452,7 +538,9 @@ impl<'f> Collector<'f, '_> {
         if self.is_javascript {
             for jsx in hir.jsx {
                 let mut at = jsx.close_tag;
-                while let Some(ExprKind::Dot { obj, .. }) = hir.exprs.get(at.idx()).map(|it| it.kind) {
+                while let Some(ExprKind::Dot { obj, .. }) =
+                    hir.exprs.get(at.idx()).map(|it| it.kind)
+                {
                     at = obj;
                 }
                 skipped.push(at);
@@ -468,11 +556,20 @@ impl<'f> Collector<'f, '_> {
         for &id in file.bound.type_query_operands {
             if let Some(e) = file.hir.exprs.get(id.idx())
                 && let ExprKind::Ident(name) = e.kind
-                && !matches!(file.bound.expr_parent.get(id.idx()), None | Some(Parent::None))
+                && !matches!(
+                    file.bound.expr_parent.get(id.idx()),
+                    None | Some(Parent::None)
+                )
                 && name != known::empty
                 && !(file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
             {
-                let mut read = self.make(ReferenceSite::Expr(id), (e.pos, e.pos), name, READ, ExprId::NONE);
+                let mut read = self.make(
+                    ReferenceSite::Expr(id),
+                    (e.pos, e.pos),
+                    name,
+                    READ,
+                    ExprId::NONE,
+                );
                 // From the type parameters of a function the binder does not see its parameters,
                 // as in TypeScript. ESLint does.
                 read.variable = BY_NAME;
@@ -502,30 +599,45 @@ impl<'f> Collector<'f, '_> {
             Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 None | Some(ExprKind::Jsx(_)) => false,
                 Some(ExprKind::Assign { target, .. }) => target != id,
-                Some(ExprKind::Unary { op, .. }) => !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec),
-                Some(kind) if can_be_part_of_target(kind) => match bound.expr_parent.get(parent.idx()) {
-                    Some(&Parent::Expr(around)) => {
-                        hir.exprs.get(around.idx()).is_some_and(|it| !can_be_part_of_target(it.kind))
+                Some(ExprKind::Unary { op, .. }) => !matches!(
+                    op,
+                    UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+                ),
+                Some(kind) if can_be_part_of_target(kind) => {
+                    match bound.expr_parent.get(parent.idx()) {
+                        Some(&Parent::Expr(around)) => hir
+                            .exprs
+                            .get(around.idx())
+                            .is_some_and(|it| !can_be_part_of_target(it.kind)),
+                        None | Some(Parent::None | Parent::Prop(_) | Parent::Stmt(_)) => false,
+                        Some(_) => true,
                     }
-                    None | Some(Parent::None | Parent::Prop(_) | Parent::Stmt(_)) => false,
-                    Some(_) => true,
-                },
+                }
                 Some(_) => true,
             },
             Some(&Parent::Stmt(s)) => !matches!(
                 hir.stmts.get(s.idx()).map(|it| it.kind),
-                None | Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) | StmtKind::Expr(_))
+                None | Some(
+                    StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) | StmtKind::Expr(_)
+                )
             ),
             // The value of a property of an object literal that is an argument, is returned, or
             // is what a variable is initialized with. The value of an attribute.
             Some(&Parent::Prop(p)) => {
-                let owner = bound.prop_owner.get(p.idx()).copied().unwrap_or(ExprId::NONE);
+                let owner = bound
+                    .prop_owner
+                    .get(p.idx())
+                    .copied()
+                    .unwrap_or(ExprId::NONE);
                 match bound.expr_parent.get(owner.idx()) {
                     Some(&Parent::Expr(around)) => matches!(
                         hir.exprs.get(around.idx()).map(|it| it.kind),
                         Some(ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Jsx(_))
                     ),
-                    Some(&Parent::Stmt(s)) => matches!(hir.stmts.get(s.idx()).map(|it| it.kind), Some(StmtKind::Return(_))),
+                    Some(&Parent::Stmt(s)) => matches!(
+                        hir.stmts.get(s.idx()).map(|it| it.kind),
+                        Some(StmtKind::Return(_))
+                    ),
                     Some(Parent::VarInit(_) | Parent::FnBody(_) | Parent::MemberInit(_)) => true,
                     _ => false,
                 }
@@ -538,7 +650,14 @@ impl<'f> Collector<'f, '_> {
     /// Passes on the references that the identifier `e` is, after those of `found`, which is
     /// sorted, that are before it. `false`, and nothing is done: it is before the last identifier.
     #[inline(never)]
-    fn identifier(&self, id: ExprId, e: &hir::Expr, name: Atom, skipped: &[ExprId], merge: &mut Merge) -> bool {
+    fn identifier(
+        &self,
+        id: ExprId,
+        e: &hir::Expr,
+        name: Atom,
+        skipped: &[ExprId],
+        merge: &mut Merge,
+    ) -> bool {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         let mut flags = READ;
@@ -559,7 +678,10 @@ impl<'f> Collector<'f, '_> {
                     | ExprKind::Satisfies { .. },
                 ) => self.access(id, &mut merge.values),
                 Some(ExprKind::Jsx(jsx)) => {
-                    let is_tag = hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == id || it.close_tag == id);
+                    let is_tag = hir
+                        .jsx
+                        .get(jsx.idx())
+                        .is_some_and(|it| it.tag == id || it.close_tag == id);
                     if is_tag && !is_component_name(file.atoms.bytes(name)) {
                         return true;
                     }
@@ -570,7 +692,9 @@ impl<'f> Collector<'f, '_> {
             Some(Parent::Prop(_)) => self.access(id, &mut merge.values),
             Some(&Parent::Stmt(s)) => match hir.stmts.get(s.idx()).map(|it| it.kind) {
                 // "this could be a type or a variable"
-                Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)) if !self.is_javascript => {
+                Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_))
+                    if !self.is_javascript =>
+                {
                     flags |= ReferenceFlags::TYPE;
                     Access::Read
                 }
@@ -581,7 +705,9 @@ impl<'f> Collector<'f, '_> {
         };
         let operands = bound.type_query_operands;
         if id.0 >= merge.next_operand {
-            merge.next_operand = operands.get(operands.partition_point(|it| it.0 <= id.0)).map_or(u32::MAX, |it| it.0);
+            merge.next_operand = operands
+                .get(operands.partition_point(|it| it.0 <= id.0))
+                .map_or(u32::MAX, |it| it.0);
         }
         if name == known::empty
             || (!skipped.is_empty() && skipped.binary_search(&id).is_ok())
@@ -595,18 +721,28 @@ impl<'f> Collector<'f, '_> {
         }
         if e.pos >= merge.next_jsdoc {
             let comments = hir.jsdoc_comments;
-            merge.next_jsdoc = comments.get(comments.partition_point(|it| it.0 <= e.pos)).map_or(u32::MAX, |it| it.0);
+            merge.next_jsdoc = comments
+                .get(comments.partition_point(|it| it.0 <= e.pos))
+                .map_or(u32::MAX, |it| it.0);
         }
         merge.last = e.pos;
         self.pass_on_before(e.pos, merge);
         let (site, here) = (ReferenceSite::Expr(id), (e.pos, e.pos));
         match access {
             Access::Read if flags == READ => merge.into.add_read(id, e.pos, name),
-            Access::Read => merge.into.add(self.make(site, here, name, flags, ExprId::NONE)),
-            Access::ReadWrite(value) => merge.into.add(self.make(site, here, name, READ | WRITE, value)),
+            Access::Read => merge
+                .into
+                .add(self.make(site, here, name, flags, ExprId::NONE)),
+            Access::ReadWrite(value) => {
+                merge
+                    .into
+                    .add(self.make(site, here, name, READ | WRITE, value))
+            }
             Access::Write(start) => {
                 for &value in &merge.values {
-                    merge.into.add(self.make(site, (e.pos, start), name, WRITE, value));
+                    merge
+                        .into
+                        .add(self.make(site, (e.pos, start), name, WRITE, value));
                 }
             }
         }
@@ -619,57 +755,87 @@ impl<'f> Collector<'f, '_> {
         'f: 't,
     {
         let exprs = self.file.hir.exprs;
-        let exprs = if exprs.len() < COUNT as usize { exprs } else { &[] };
+        let exprs = if exprs.len() < COUNT as usize {
+            exprs
+        } else {
+            &[]
+        };
         let skipped = self.unvisited_tags();
         let start = || Merge {
-            into: Resolver::new(self.file, tree, variables, exprs.len() / 3 + self.found.len()),
+            into: Resolver::new(
+                self.file,
+                tree,
+                variables,
+                exprs.len() / 3 + self.found.len(),
+            ),
             passed: 0,
             next_found: self.found.first().map_or(u32::MAX, |it| it.pos),
             last: 0,
-            next_jsdoc: self.file.hir.jsdoc_comments.first().map_or(u32::MAX, |it| it.0),
-            next_operand: self.file.bound.type_query_operands.first().map_or(u32::MAX, |it| it.0),
+            next_jsdoc: self
+                .file
+                .hir
+                .jsdoc_comments
+                .first()
+                .map_or(u32::MAX, |it| it.0),
+            next_operand: self
+                .file
+                .bound
+                .type_query_operands
+                .first()
+                .map_or(u32::MAX, |it| it.0),
             values: SmallVec::new(),
         };
         let mut merge = start();
         let is_simple = merge.into.is_plain && skipped.is_empty();
-        let hazards = variables.hazards.iter().fold(0, |set, &name| set | bit_of_name(name));
+        let hazards = variables
+            .hazards
+            .iter()
+            .fold(0, |set, &name| set | bit_of_name(name));
         // The parser stores nearly every file in source order.
         let bound = &self.file.bound;
         let with_parent_and_symbol = exprs.iter().zip(bound.expr_parent).zip(bound.expr_symbol);
-        let is_in_order = with_parent_and_symbol.enumerate().all(|(i, ((e, parent), &symbol))| {
-            let ExprKind::Ident(name) = e.kind else {
-                return true;
-            };
-            let id = ExprId(i as u32);
-            // In most places nothing but a value that is read can be.
-            let is_only_read = match *parent {
-                Parent::Expr(parent) => exprs.get(parent.idx()).is_some_and(|it| {
-                    !can_be_part_of_target(it.kind) && !matches!(it.kind, ExprKind::Unary { .. } | ExprKind::Jsx(_))
-                }),
-                Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
-                _ => true,
-            };
-            // Whether it is a reference, and what it resolves to, is as the binder says.
-            if is_simple
-                && (merge.last..merge.next_jsdoc).contains(&e.pos)
-                && id.0 < merge.next_operand
-                && name != known::empty
-                && hazards & bit_of_name(name) == 0
-                && (is_only_read || self.is_only_read(id))
-            {
-                if merge.next_found < e.pos {
-                    self.pass_on_before(e.pos, &mut merge);
+        let is_in_order = with_parent_and_symbol
+            .enumerate()
+            .all(|(i, ((e, parent), &symbol))| {
+                let ExprKind::Ident(name) = e.kind else {
+                    return true;
+                };
+                let id = ExprId(i as u32);
+                // In most places nothing but a value that is read can be.
+                let is_only_read = match *parent {
+                    Parent::Expr(parent) => exprs.get(parent.idx()).is_some_and(|it| {
+                        !can_be_part_of_target(it.kind)
+                            && !matches!(it.kind, ExprKind::Unary { .. } | ExprKind::Jsx(_))
+                    }),
+                    Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
+                    _ => true,
+                };
+                // Whether it is a reference, and what it resolves to, is as the binder says.
+                if is_simple
+                    && (merge.last..merge.next_jsdoc).contains(&e.pos)
+                    && id.0 < merge.next_operand
+                    && name != known::empty
+                    && hazards & bit_of_name(name) == 0
+                    && (is_only_read || self.is_only_read(id))
+                {
+                    if merge.next_found < e.pos {
+                        self.pass_on_before(e.pos, &mut merge);
+                    }
+                    merge.last = e.pos;
+                    merge.into.add_simple_read(id, e.pos, name, symbol);
+                    return true;
                 }
-                merge.last = e.pos;
-                merge.into.add_simple_read(id, e.pos, name, symbol);
-                return true;
-            }
-            self.identifier(id, e, name, &skipped, &mut merge)
-        });
+                self.identifier(id, e, name, &skipped, &mut merge)
+            });
         if !is_in_order {
             merge = start();
-            let identifiers = exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Ident(_)));
-            let mut in_order: Vec<u64> = identifiers.map(|(i, e)| u64::from(e.pos) << 32 | i as u64).collect();
+            let identifiers = exprs
+                .iter()
+                .enumerate()
+                .filter(|it| matches!(it.1.kind, ExprKind::Ident(_)));
+            let mut in_order: Vec<u64> = identifiers
+                .map(|(i, e)| u64::from(e.pos) << 32 | i as u64)
+                .collect();
             in_order.sort();
             for key in in_order {
                 if let Some(e) = exprs.get(key as u32 as usize)
@@ -697,7 +863,10 @@ impl<'f> Collector<'f, '_> {
             };
             // Nothing is written to a plain parameter.
             if let Some(&PatParent::Param(p)) = bound.pat_parent.get(i)
-                && hir.params.get(p.idx()).is_some_and(|it| it.default.is_none())
+                && hir
+                    .params
+                    .get(p.idx())
+                    .is_some_and(|it| it.default.is_none())
             {
                 continue;
             }
@@ -706,8 +875,12 @@ impl<'f> Collector<'f, '_> {
             let mut at = hir::PatId(i as u32);
             let root = loop {
                 let (outer, default) = match bound.pat_parent.get(at.idx()) {
-                    Some(&PatParent::Prop(outer, p)) => (outer, hir.pat_props.get(p.idx()).map(|it| it.default)),
-                    Some(&PatParent::Elem(outer, e)) => (outer, hir.pat_elems.get(e.idx()).map(|it| it.default)),
+                    Some(&PatParent::Prop(outer, p)) => {
+                        (outer, hir.pat_props.get(p.idx()).map(|it| it.default))
+                    }
+                    Some(&PatParent::Elem(outer, e)) => {
+                        (outer, hir.pat_elems.get(e.idx()).map(|it| it.default))
+                    }
                     Some(&root) => break root,
                     None => break PatParent::None,
                 };
@@ -723,19 +896,32 @@ impl<'f> Collector<'f, '_> {
                     values.reverse();
                     values.extend(declaration.init.some());
                     if let Some(&statement) = bound.var_stmt.get(d.idx())
-                        && !matches!(bound.stmt_parent.get(statement.idx()), Some(Parent::FnBody(_) | Parent::File))
+                        && !matches!(
+                            bound.stmt_parent.get(statement.idx()),
+                            Some(Parent::FnBody(_) | Parent::File)
+                        )
                     {
                         last = self.iterated_by(statement).unwrap_or(ExprId::NONE);
                     }
                 }
                 PatParent::Param(p) => {
-                    let function = bound.param_fn.get(p.idx()).copied().unwrap_or(hir::FnId::NONE);
-                    let scope = tree.of_fn.get(function.idx()).and_then(|&it| tree.scopes.get(it as usize));
+                    let function = bound
+                        .param_fn
+                        .get(p.idx())
+                        .copied()
+                        .unwrap_or(hir::FnId::NONE);
+                    let scope = tree
+                        .of_fn
+                        .get(function.idx())
+                        .and_then(|&it| tree.scopes.get(it as usize));
                     if scope.is_none_or(|it| it.kind != ScopeKind::Function) {
                         continue;
                     }
                     // typescript-estree drops the initializer of a rest parameter, which is an error.
-                    let param = hir.params.get(p.idx()).filter(|it| !it.flags.contains(hir::Flags::REST));
+                    let param = hir
+                        .params
+                        .get(p.idx())
+                        .filter(|it| !it.flags.contains(hir::Flags::REST));
                     values.extend(param.and_then(|it| it.default.some()));
                     values.reverse();
                 }
@@ -744,8 +930,14 @@ impl<'f> Collector<'f, '_> {
             if file.has_synthetic_nodes() && file.is_in_jsdoc(pat.pos) {
                 continue;
             }
-            let (site, flags) = (ReferenceSite::Pat(hir::PatId(i as u32)), WRITE | ReferenceFlags::INIT);
-            let (start, end) = hir.pats.get(at.idx()).map_or((pat.pos, pat.pos), |it| (it.pos, it.end));
+            let (site, flags) = (
+                ReferenceSite::Pat(hir::PatId(i as u32)),
+                WRITE | ReferenceFlags::INIT,
+            );
+            let (start, end) = hir
+                .pats
+                .get(at.idx())
+                .map_or((pat.pos, pat.pos), |it| (it.pos, it.end));
             for &value in &values {
                 self.push_write(site, (pat.pos, start), name, flags, value);
             }
@@ -765,17 +957,32 @@ impl<'f> Collector<'f, '_> {
             let id = hir::TypeNodeId(i as u32);
             match ty.kind {
                 _ if file.has_synthetic_nodes() && file.is_in_jsdoc(ty.pos) => {}
-                TypeNodeKind::Ref { name, .. } if bound.type_scope.get(i).is_some_and(|it| it.is_some()) => {
-                    if let Some(first) = hir.names.get(name.start as usize).filter(|_| !name.is_empty()) {
+                TypeNodeKind::Ref { name, .. }
+                    if bound.type_scope.get(i).is_some_and(|it| it.is_some()) =>
+                {
+                    if let Some(first) = hir
+                        .names
+                        .get(name.start as usize)
+                        .filter(|_| !name.is_empty())
+                    {
                         let flags = ReferenceFlags::READ | ReferenceFlags::TYPE;
-                        self.push(ReferenceSite::TypeName(id), first.pos(), first.text, flags, ExprId::NONE);
+                        self.push(
+                            ReferenceSite::TypeName(id),
+                            first.pos(),
+                            first.text,
+                            flags,
+                            ExprId::NONE,
+                        );
                     }
                 }
                 TypeNodeKind::Predicate { param, asserts, .. }
-                    if param != known::this && bound.type_scope.get(i).is_some_and(|it| it.is_some()) =>
+                    if param != known::this
+                        && bound.type_scope.get(i).is_some_and(|it| it.is_some()) =>
                 {
                     let pos = match asserts {
-                        true => crate::tokens::skip_trivia(hir.text, ty.pos + "asserts".len() as u32),
+                        true => {
+                            crate::tokens::skip_trivia(hir.text, ty.pos + "asserts".len() as u32)
+                        }
                         false => ty.pos,
                     };
                     self.push(ReferenceSite::Predicate(id), pos, param, READ, ExprId::NONE);
@@ -793,12 +1000,21 @@ impl<'f> Collector<'f, '_> {
                 for keyword in ["export", "as", "namespace"] {
                     pos = crate::tokens::skip_trivia(hir.text, pos + keyword.len() as u32);
                 }
-                self.push(ReferenceSite::ExportAsNamespace(id), pos, name, READ, ExprId::NONE);
+                self.push(
+                    ReferenceSite::ExportAsNamespace(id),
+                    pos,
+                    name,
+                    READ,
+                    ExprId::NONE,
+                );
             }
         }
         for (i, import) in hir.import_equals.iter().enumerate() {
             if let hir::ImportEqualsTarget::Entity(names) = import.target
-                && let Some(first) = hir.names.get(names.start as usize).filter(|_| !names.is_empty())
+                && let Some(first) = hir
+                    .names
+                    .get(names.start as usize)
+                    .filter(|_| !names.is_empty())
             {
                 let site = ReferenceSite::ImportEquals(hir::ImportEqualsId(i as u32));
                 self.push(site, first.pos(), first.text, READ, ExprId::NONE);
@@ -812,7 +1028,10 @@ impl<'f> Collector<'f, '_> {
         let start = self.found.len();
         for jsx in file.hir.jsx {
             // `eslint-scope` does not visit closing elements.
-            let tags = [Some(jsx.tag), (!self.is_javascript).then_some(jsx.close_tag)];
+            let tags = [
+                Some(jsx.tag),
+                (!self.is_javascript).then_some(jsx.close_tag),
+            ];
             for tag in tags.into_iter().flatten() {
                 let (name, pos) = match file.hir.exprs.get(tag.idx()) {
                     Some(hir::Expr {
@@ -826,7 +1045,13 @@ impl<'f> Collector<'f, '_> {
                         pos,
                         ..
                     }) if !self.is_javascript => {
-                        self.push(ReferenceSite::JsxName(tag), *pos, known::this, READ, ExprId::NONE);
+                        self.push(
+                            ReferenceSite::JsxName(tag),
+                            *pos,
+                            known::this,
+                            READ,
+                            ExprId::NONE,
+                        );
                         continue;
                     }
                     _ => continue,
@@ -839,7 +1064,13 @@ impl<'f> Collector<'f, '_> {
                         let parts = [(0, &text[..colon]), (colon + 1, &text[colon + 1..])];
                         for (offset, part) in parts {
                             let part = file.atoms.intern(part);
-                            self.push(ReferenceSite::JsxName(tag), pos + offset as u32, part, READ, ExprId::NONE);
+                            self.push(
+                                ReferenceSite::JsxName(tag),
+                                pos + offset as u32,
+                                part,
+                                READ,
+                                ExprId::NONE,
+                            );
                         }
                     }
                     None if is_component_name(text) => {
@@ -882,7 +1113,10 @@ impl<'f> Collector<'f, '_> {
     fn jsx_pragmas(&mut self, tree: &ScopeTree, variables: &Variables) {
         let file = self.file;
         let language = file.language();
-        let names = [(&language.jsx_pragma, false), (&language.jsx_fragment_name, true)];
+        let names = [
+            (&language.jsx_pragma, false),
+            (&language.jsx_fragment_name, true),
+        ];
         for (name, only_fragments) in names {
             let Some(name) = name else {
                 continue;
@@ -909,7 +1143,13 @@ impl<'f> Collector<'f, '_> {
             });
             if let Some(index) = found {
                 let pos = variables.list[index as usize].first_pos;
-                self.push(ReferenceSite::Declaration(index), pos, name, READ, ExprId::NONE);
+                self.push(
+                    ReferenceSite::Declaration(index),
+                    pos,
+                    name,
+                    READ,
+                    ExprId::NONE,
+                );
             }
         }
     }
@@ -972,7 +1212,11 @@ fn group_by(
 }
 
 impl References {
-    pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree, variables: &Variables) -> References {
+    pub(crate) fn new<'a>(
+        file: &'a File<'a>,
+        tree: &ScopeTree,
+        variables: &Variables,
+    ) -> References {
         let hir = &file.hir;
         let is_javascript = scopes::is_javascript_mode(file);
         let mut collector = Collector {
@@ -1010,7 +1254,9 @@ impl References {
         let mut visiting_order: Vec<u32> = Vec::new();
         if !is_visiting_order {
             let mut visits: Vec<u32> = all.iter().map(|it| it.pos).collect();
-            moved.iter().for_each(|&(index, visit)| visits[index as usize] = visit);
+            moved
+                .iter()
+                .for_each(|&(index, visit)| visits[index as usize] = visit);
             visiting_order.extend(0..all.len() as u32);
             visiting_order.sort_by_key(|&it| visits[it as usize]);
         }
@@ -1032,7 +1278,9 @@ impl References {
 
     fn group<'t>(indices: &'t [u32], starts: &[u32], from: usize, to: usize) -> &'t [u32] {
         match (starts.get(from), starts.get(to + 1)) {
-            (Some(&start), Some(&end)) => indices.get(start as usize..end as usize).unwrap_or_default(),
+            (Some(&start), Some(&end)) => indices
+                .get(start as usize..end as usize)
+                .unwrap_or_default(),
             _ => &[],
         }
     }
@@ -1040,7 +1288,12 @@ impl References {
     /// The references to the variable at `index` of `Variables::list`.
     #[inline]
     pub(crate) fn of_variable(&self, index: u32) -> &[u32] {
-        Self::group(&self.by_variable, &self.variable_starts, index as usize, index as usize)
+        Self::group(
+            &self.by_variable,
+            &self.variable_starts,
+            index as usize,
+            index as usize,
+        )
     }
 
     /// Indices into `all` in the order ESLint makes the references. Empty if that is the order of
@@ -1053,7 +1306,9 @@ impl References {
     /// Whether the variable at `index` of `Variables::list` has one of `marks`.
     #[inline]
     pub(crate) fn has_mark(&self, index: u32, marks: u32) -> bool {
-        self.marks.get(index as usize).is_some_and(|it| it & marks != 0)
+        self.marks
+            .get(index as usize)
+            .is_some_and(|it| it & marks != 0)
     }
 
     #[inline]
@@ -1079,8 +1334,12 @@ impl References {
     pub(crate) fn in_scopes(&self, first: u32, last: u32) -> &[u32] {
         let compute = || {
             let mut counts = vec![0u32; self.scope_count + 1];
-            self.all.iter().for_each(|it| counts[it.from as usize + 1] += 1);
-            group_by(&self.all, &self.visiting_order, counts, |it| it.from as usize)
+            self.all
+                .iter()
+                .for_each(|it| counts[it.from as usize + 1] += 1);
+            group_by(&self.all, &self.visiting_order, counts, |it| {
+                it.from as usize
+            })
         };
         let (by_scope, starts) = self.by_scope.get_or_init(compute);
         Self::group(by_scope, starts, first as usize, last as usize)
@@ -1088,6 +1347,8 @@ impl References {
 
     /// The first reference that is written at `pos`.
     pub(crate) fn at(&self, pos: u32) -> Option<&RawReference> {
-        self.all.get(self.all.partition_point(|it| it.pos < pos)).filter(|it| it.pos == pos)
+        self.all
+            .get(self.all.partition_point(|it| it.pos < pos))
+            .filter(|it| it.pos == pos)
     }
 }

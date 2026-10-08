@@ -46,9 +46,22 @@ pub(crate) enum Language {
 pub(crate) fn is_left_alone_by_oxfmt(path: &[u8]) -> bool {
     matches!(
         paths::basename(path),
-        b"package-lock.json" | b"pnpm-lock.yaml" | b"yarn.lock" | b"MODULE.bazel.lock" | b"bun.lock" | b"deno.lock" | b"composer.lock"
-            | b"Package.resolved" | b"Pipfile.lock" | b"flake.lock" | b"mcmod.info"
-            | b"Cargo.lock" | b"Gopkg.lock" | b"pdm.lock" | b"poetry.lock" | b"uv.lock"
+        b"package-lock.json"
+            | b"pnpm-lock.yaml"
+            | b"yarn.lock"
+            | b"MODULE.bazel.lock"
+            | b"bun.lock"
+            | b"deno.lock"
+            | b"composer.lock"
+            | b"Package.resolved"
+            | b"Pipfile.lock"
+            | b"flake.lock"
+            | b"mcmod.info"
+            | b"Cargo.lock"
+            | b"Gopkg.lock"
+            | b"pdm.lock"
+            | b"poetry.lock"
+            | b"uv.lock"
     )
 }
 
@@ -83,11 +96,21 @@ impl Kind {
                 _ => None,
             };
             let html = || bun_format::html::Parser::from_name(parser).map(Kind::Html);
-            return Some(json().or_else(css).or_else(html).or_else(other).unwrap_or(Kind::Script));
+            return Some(
+                json()
+                    .or_else(css)
+                    .or_else(html)
+                    .or_else(other)
+                    .unwrap_or(Kind::Script),
+            );
         }
         let name = paths::basename(path);
-        let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
-        if matches!(extension, b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx") {
+        let extension =
+            strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
+        if matches!(
+            extension,
+            b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
+        ) {
             return Some(Kind::Script);
         }
         let json = || bun_format::json::parser_for_path(path).map(Kind::Json);
@@ -96,9 +119,17 @@ impl Kind {
         let markdown = || bun_format::markdown::is_markdown_path(path).then_some(Kind::Markdown);
         let mdx = || bun_format::markdown::is_mdx_path(path).then_some(Kind::Mdx);
         let graphql = || bun_format::graphql::is_graphql_path(path).then_some(Kind::GraphQl);
-        let handlebars = || bun_format::handlebars::is_handlebars_path(path).then_some(Kind::Handlebars);
+        let handlebars =
+            || bun_format::handlebars::is_handlebars_path(path).then_some(Kind::Handlebars);
         let html = || bun_format::html::parser_for_path(path).map(Kind::Html);
-        json().or_else(css).or_else(yaml).or_else(markdown).or_else(mdx).or_else(graphql).or_else(handlebars).or_else(html)
+        json()
+            .or_else(css)
+            .or_else(yaml)
+            .or_else(markdown)
+            .or_else(mdx)
+            .or_else(graphql)
+            .or_else(handlebars)
+            .or_else(html)
     }
 }
 
@@ -114,11 +145,16 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
         None => {}
     }
     let name = paths::basename(path);
-    let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
+    let extension =
+        strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
     match extension {
-        b"mdx" | b"html" | b"htm" | b"xhtml" | b"vue" | b"hbs" | b"handlebars"
-        | b"es6" | b"jsm" | b"wxs" | b"mjml" => Language::Other,
-        _ if matches!(name, b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format") => {
+        b"mdx" | b"html" | b"htm" | b"xhtml" | b"vue" | b"hbs" | b"handlebars" | b"es6"
+        | b"jsm" | b"wxs" | b"mjml" => Language::Other,
+        _ if matches!(
+            name,
+            b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format"
+        ) =>
+        {
             Language::Other
         }
         _ => Language::Unknown,
@@ -150,7 +186,10 @@ const WEIGHTS: [u16; 256] = {
 /// `a` before `A` if nothing else differs, the bytes the other way around.
 fn collation_key(path: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(path.len() * 3 + 2);
-    key.extend(path.iter().flat_map(|byte| WEIGHTS[usize::from(*byte)].to_be_bytes()));
+    key.extend(
+        path.iter()
+            .flat_map(|byte| WEIGHTS[usize::from(*byte)].to_be_bytes()),
+    );
     key.extend_from_slice(&[0, 0]);
     key.extend(path.iter().map(|byte| !byte));
     key
@@ -185,9 +224,27 @@ impl Ignored {
                 return Err(Fatal([&file[..], b": File not found"].concat()));
             }
             match fs::read(&file) {
-                Ok(text) => files.extend(gitignore::with_text(None, paths::dirname(&file), &text, flavor == Flavor::Oxfmt).map(Some)),
+                Ok(text) => files.extend(
+                    gitignore::with_text(
+                        None,
+                        paths::dirname(&file),
+                        &text,
+                        flavor == Flavor::Oxfmt,
+                    )
+                    .map(Some),
+                ),
                 Err(error) if error.get_errno() == bun_sys::E::ENOENT => {}
-                Err(error) => return Err(Fatal([b"Unable to read '", &paths::relative(cwd, &file)[..], b"': ", &fs::describe(&error)].concat())),
+                Err(error) => {
+                    return Err(Fatal(
+                        [
+                            b"Unable to read '",
+                            &paths::relative(cwd, &file)[..],
+                            b"': ",
+                            &fs::describe(&error),
+                        ]
+                        .concat(),
+                    ));
+                }
             }
         }
         Ok(Ignored {
@@ -200,7 +257,8 @@ impl Ignored {
 
     /// `DirectoryIgnorer.shouldIgnore`
     fn is_in_ignored_directory(&self, path: &[u8]) -> bool {
-        strings::split(&paths::relative(&self.cwd, path), b"/").any(|name| self.directories.contains(&name))
+        strings::split(&paths::relative(&self.cwd, path), b"/")
+            .any(|name| self.directories.contains(&name))
     }
 
     fn is_negated(&self, path: &[u8]) -> bool {
@@ -214,12 +272,18 @@ impl Ignored {
     fn ignores_entry(&self, path: &[u8], name: &[u8], is_directory: bool) -> bool {
         (is_directory && self.directories.contains(&name))
             || self.is_negated(path)
-            || self.files.iter().any(|chain| gitignore::is_ignored(chain, path, is_directory))
+            || self
+                .files
+                .iter()
+                .any(|chain| gitignore::is_ignored(chain, path, is_directory))
     }
 
     /// Prettier's `isIgnored`, for any file.
     pub(crate) fn ignores_file(&self, path: &[u8], config: &Chain) -> bool {
-        self.files.iter().chain([config]).any(|chain| gitignore::is_file_ignored_anywhere(chain, path))
+        self.files
+            .iter()
+            .chain([config])
+            .any(|chain| gitignore::is_file_ignored_anywhere(chain, path))
     }
 }
 
@@ -250,8 +314,15 @@ fn search(
     let mut level = vec![Directory {
         path: base.to_vec(),
         is_first: true,
-        git: if reads_gitignore { gitignore::above_and_in(base, &[b".gitignore"]) } else { None },
-        is_ignored_by_configuration: gitignore::is_file_ignored_anywhere(configs.ignores_of(&above), &paths::join(base, b".")),
+        git: if reads_gitignore {
+            gitignore::above_and_in(base, &[b".gitignore"])
+        } else {
+            None
+        },
+        is_ignored_by_configuration: gitignore::is_file_ignored_anywhere(
+            configs.ignores_of(&above),
+            &paths::join(base, b"."),
+        ),
         above,
     }];
     while !level.is_empty() && failure.lock().is_none() {
@@ -264,7 +335,11 @@ fn search(
             let entries = std::mem::take(&mut listing.entries);
             let scope = match directory.is_first {
                 true => Ok(Arc::clone(&directory.above)),
-                false => configs.for_listed_directory(&directory.path, entries.iter().map(|it| &it.name[..]), &directory.above),
+                false => configs.for_listed_directory(
+                    &directory.path,
+                    entries.iter().map(|it| &it.name[..]),
+                    &directory.above,
+                ),
             };
             let scope = match scope {
                 Ok(scope) => scope,
@@ -274,20 +349,32 @@ fn search(
                 }
             };
             let of_config = configs.ignores_of(&scope);
-            let starts_over = !directory.is_first && !std::ptr::eq(configs.ignores_of(&directory.above), of_config);
+            let starts_over = !directory.is_first
+                && !std::ptr::eq(configs.ignores_of(&directory.above), of_config);
             let is_ignored_by_configuration = directory.is_ignored_by_configuration && !starts_over;
             let mut git = directory.git.clone();
-            if reads_gitignore && !directory.is_first && entries.iter().any(|it| it.name == b".gitignore") {
-                git = gitignore::with_file(git, &directory.path, &paths::join(&directory.path, b".gitignore"), true);
+            if reads_gitignore
+                && !directory.is_first
+                && entries.iter().any(|it| it.name == b".gitignore")
+            {
+                git = gitignore::with_file(
+                    git,
+                    &directory.path,
+                    &paths::join(&directory.path, b".gitignore"),
+                    true,
+                );
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
             // Links are not followed, and not formatted.
             for entry in entries.iter().filter(|it| !it.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
-                if ignored.ignores_entry(&path, &entry.name, entry.is_directory) || gitignore::is_ignored(&git, &path, entry.is_directory) {
+                if ignored.ignores_entry(&path, &entry.name, entry.is_directory)
+                    || gitignore::is_ignored(&git, &path, entry.is_directory)
+                {
                     continue;
                 }
-                let is_ignored_by_configuration = is_ignored_by_configuration || gitignore::is_ignored(of_config, &path, entry.is_directory);
+                let is_ignored_by_configuration = is_ignored_by_configuration
+                    || gitignore::is_ignored(of_config, &path, entry.is_directory);
                 let relative = paths::relative(&ignored.cwd, &path);
                 if entry.is_directory {
                     if enters(&relative) {
@@ -350,13 +437,22 @@ pub(crate) fn expand(
         match fs::link_kind_and_size(&path) {
             Some((fs::LinkKind::Link, _)) => {
                 if error_on_unmatched_pattern {
-                    expanded.push(Expanded::Error([b"Explicitly specified pattern \"", &pattern[..], b"\" is a symbolic link."].concat()));
+                    expanded.push(Expanded::Error(
+                        [
+                            b"Explicitly specified pattern \"",
+                            &pattern[..],
+                            b"\" is a symbolic link.",
+                        ]
+                        .concat(),
+                    ));
                 }
             }
             Some((fs::LinkKind::File, size)) => entries.push((Entry::File(path, size), pattern)),
             Some((fs::LinkKind::Directory, _)) => entries.push((Entry::Directory(path), pattern)),
             None => match pattern.strip_prefix(b"!") {
-                Some(negative) => ignored.negative.push(Glob::new(negative.strip_prefix(b"./").unwrap_or(negative))),
+                Some(negative) => ignored
+                    .negative
+                    .push(Glob::new(negative.strip_prefix(b"./").unwrap_or(negative))),
                 None => entries.push((Entry::Pattern, pattern)),
             },
         }
@@ -384,7 +480,10 @@ pub(crate) fn expand(
                         is_named: true,
                     }],
                 };
-                (found, b"Explicitly specified file was ignored due to negative glob patterns")
+                (
+                    found,
+                    b"Explicitly specified file was ignored due to negative glob patterns",
+                )
             }
             Entry::Directory(path) => {
                 let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, false)?;
@@ -402,9 +501,15 @@ pub(crate) fn expand(
                     written_base = (parent, base.clone());
                 }
                 let found = match fs::kind(&base) {
-                    Some(fs::Kind::Directory) => {
-                        search(configs, pool, ignored, &base, &|relative| glob.matches(relative), &|relative| glob.matches_partially(relative), false)?
-                    }
+                    Some(fs::Kind::Directory) => search(
+                        configs,
+                        pool,
+                        ignored,
+                        &base,
+                        &|relative| glob.matches(relative),
+                        &|relative| glob.matches_partially(relative),
+                        false,
+                    )?,
                     _ => Vec::new(),
                 };
                 (found, b"No files matching the pattern were found")
@@ -429,7 +534,9 @@ pub(crate) fn expand(
     }
     if expanded.is_empty() && !is_anything_ignored && error_on_unmatched_pattern {
         let patterns = patterns.join(&b' ');
-        expanded.push(Expanded::Error([b"No matching files. Patterns: ", &patterns[..]].concat()));
+        expanded.push(Expanded::Error(
+            [b"No matching files. Patterns: ", &patterns[..]].concat(),
+        ));
     }
     Ok(expanded)
 }
@@ -465,7 +572,9 @@ pub(crate) fn expand_as_oxfmt(
         }
     }
     // In the format of `.gitignore`, unlike Prettier's.
-    ignored.files.extend(gitignore::with_text(None, &cwd, &excluded.join(&b'\n'), true).map(Some));
+    ignored
+        .files
+        .extend(gitignore::with_text(None, &cwd, &excluded.join(&b'\n'), true).map(Some));
     let ignored = &*ignored;
     if !globs.is_empty() || targets.is_empty() {
         targets.push(cwd);
@@ -487,8 +596,17 @@ pub(crate) fn expand_as_oxfmt(
             continue;
         }
         if is_directory {
-            let matches = |relative: &[u8]| globs.is_empty() || globs.iter().any(|it| it.matches(relative));
-            found.append(&mut search(configs, pool, ignored, &path, &matches, &|_| true, true)?);
+            let matches =
+                |relative: &[u8]| globs.is_empty() || globs.iter().any(|it| it.matches(relative));
+            found.append(&mut search(
+                configs,
+                pool,
+                ignored,
+                &path,
+                &matches,
+                &|_| true,
+                true,
+            )?);
             continue;
         }
         let scope = configs.for_directory(paths::dirname(&path))?;
@@ -503,7 +621,9 @@ pub(crate) fn expand_as_oxfmt(
         }
     }
     // Nothing is said about a file that there is no parser for, and it does not count.
-    found.retain(|it| language_of(&it.path) != Language::Unknown && !is_left_alone_by_oxfmt(&it.path));
+    found.retain(|it| {
+        language_of(&it.path) != Language::Unknown && !is_left_alone_by_oxfmt(&it.path)
+    });
     found.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);
     if found.is_empty() && error_on_unmatched_pattern {

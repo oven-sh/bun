@@ -225,7 +225,11 @@ struct Group {
 impl<'a> Model<'a> {
     /// `None`: the file has no imports.
     pub(super) fn new(file: &'a File<'a>) -> Option<Model<'a>> {
-        let last_import = file.body().iter().rev().find(|it| it.tag() == StmtTag::Import)?;
+        let last_import = file
+            .body()
+            .iter()
+            .rev()
+            .find(|it| it.tag() == StmtTag::Import)?;
         let mut model = Model {
             file,
             text: file.text(),
@@ -304,7 +308,8 @@ impl<'a> Model<'a> {
             let line_start = self.line_starts[lines.start as usize - 1].max(self.text_start());
             let start_column = utf16_len(&self.text[line_start as usize..span.start as usize]);
             let comment = &mut self.comments[index];
-            (comment.start_line, comment.end_line, comment.start_column) = (lines.start, lines.end, start_column);
+            (comment.start_line, comment.end_line, comment.start_column) =
+                (lines.start, lines.end, start_column);
         }
     }
 
@@ -322,7 +327,9 @@ impl<'a> Model<'a> {
 
     #[inline]
     pub(super) fn list(&self, list: List) -> &[CommentId] {
-        self.lists.get(list.start as usize..(list.start + list.len) as usize).unwrap_or_default()
+        self.lists
+            .get(list.start as usize..(list.start + list.len) as usize)
+            .unwrap_or_default()
     }
 
     pub(super) fn new_list(&mut self, comments: impl IntoIterator<Item = CommentId>) -> List {
@@ -340,8 +347,10 @@ impl<'a> Model<'a> {
             return if a.is_empty() { b } else { a };
         }
         let start = self.lists.len() as u32;
-        self.lists.extend_from_within(a.start as usize..(a.start + a.len) as usize);
-        self.lists.extend_from_within(b.start as usize..(b.start + b.len) as usize);
+        self.lists
+            .extend_from_within(a.start as usize..(a.start + a.len) as usize);
+        self.lists
+            .extend_from_within(b.start as usize..(b.start + b.len) as usize);
         List {
             start,
             len: a.len + b.len,
@@ -351,16 +360,22 @@ impl<'a> Model<'a> {
     /// Without the delimiters.
     pub(super) fn comment_value(&self, comment: CommentId) -> &'a [u8] {
         let comment = self.comments[comment as usize];
-        self.file.slice(comment.span.shrink(2, if comment.is_block { 2 } else { 0 }))
+        self.file
+            .slice(comment.span.shrink(2, if comment.is_block { 2 } else { 0 }))
     }
 
     /// `declaration.specifiers`
     pub(super) fn specifiers_of(&self, declaration: &Declaration) -> &[u32] {
         let (start, len) = declaration.specifiers;
-        self.orders.get(start as usize..(start + len) as usize).unwrap_or_default()
+        self.orders
+            .get(start as usize..(start + len) as usize)
+            .unwrap_or_default()
     }
 
-    pub(super) fn new_specifiers(&mut self, specifiers: impl IntoIterator<Item = u32>) -> (u32, u32) {
+    pub(super) fn new_specifiers(
+        &mut self,
+        specifiers: impl IntoIterator<Item = u32>,
+    ) -> (u32, u32) {
         let start = self.orders.len() as u32;
         self.orders.extend(specifiers);
         (start, self.orders.len() as u32 - start)
@@ -382,11 +397,17 @@ impl<'a> Model<'a> {
         let text = self.file.slice(span);
         let text = text.strip_suffix(b";").unwrap_or(text).trim_ascii_end();
         if let Some((quote @ (b'"' | b'\''), before)) = text.split_last()
-            && let Some(value) = before.len().checked_sub(import.spec().bytes().len()).map(|at| before.split_at(at))
+            && let Some(value) = before
+                .len()
+                .checked_sub(import.spec().bytes().len())
+                .map(|at| before.split_at(at))
             && value.1 == import.spec().bytes()
             && value.0.last() == Some(quote)
         {
-            return Span::new(span.start + value.0.len() as u32 - 1, span.start + text.len() as u32);
+            return Span::new(
+                span.start + value.0.len() as u32 - 1,
+                span.start + text.len() as u32,
+            );
         }
         import.spec_span().unwrap_or_default()
     }
@@ -394,9 +415,18 @@ impl<'a> Model<'a> {
     fn attached_mut(&mut self, node: Node) -> Option<&mut Attached> {
         match node {
             Node::Interpreter => self.interpreter.as_mut().map(|it| &mut it.1),
-            Node::Directive(index) => self.directives.get_mut(index as usize).map(|it| &mut it.comments),
-            Node::Import(index) => self.declarations.get_mut(index as usize).map(|it| &mut it.comments),
-            Node::Specifier(index) => self.specifiers.get_mut(index as usize).map(|it| &mut it.comments),
+            Node::Directive(index) => self
+                .directives
+                .get_mut(index as usize)
+                .map(|it| &mut it.comments),
+            Node::Import(index) => self
+                .declarations
+                .get_mut(index as usize)
+                .map(|it| &mut it.comments),
+            Node::Specifier(index) => self
+                .specifiers
+                .get_mut(index as usize)
+                .map(|it| &mut it.comments),
             Node::Empty => Some(&mut self.empty),
             _ => None,
         }
@@ -404,13 +434,19 @@ impl<'a> Model<'a> {
 
     pub(super) fn comments_of(&self, node: Node, which: Which) -> List {
         match node {
-            Node::Interpreter => self.interpreter.map_or_else(List::default, |it| it.1.get(which)),
+            Node::Interpreter => self
+                .interpreter
+                .map_or_else(List::default, |it| it.1.get(which)),
             Node::Directive(index) => self.directives[index as usize].comments.get(which),
             Node::Import(index) => self.declarations[index as usize].comments.get(which),
             Node::Specifier(index) => self.specifiers[index as usize].comments.get(which),
             Node::Empty => self.empty.get(which),
             Node::NewLine | Node::NewLineLiteral => List::default(),
-            _ => self.deep.iter().find(|it| it.0 == node && it.1 == which).map_or_else(List::default, |it| it.2),
+            _ => self
+                .deep
+                .iter()
+                .find(|it| it.0 == node && it.1 == which)
+                .map_or_else(List::default, |it| it.2),
         }
     }
 
@@ -424,7 +460,11 @@ impl<'a> Model<'a> {
             *attached.get_mut(which) = all;
             return;
         }
-        match self.deep.iter_mut().find(|it| it.0 == node && it.1 == which) {
+        match self
+            .deep
+            .iter_mut()
+            .find(|it| it.0 == node && it.1 == which)
+        {
             Some(entry) => entry.2 = all,
             None => self.deep.push((node, which, all)),
         }
@@ -432,8 +472,14 @@ impl<'a> Model<'a> {
 
     fn group(&self, first: u32, after: u32) -> Option<Group> {
         (first < after).then(|| Group {
-            start: skip_whitespace_back(self.text, self.comments[first as usize].span.start as usize) as u32,
-            end: skip_whitespace(self.text, self.comments[after as usize - 1].span.end as usize) as u32,
+            start: skip_whitespace_back(
+                self.text,
+                self.comments[first as usize].span.start as usize,
+            ) as u32,
+            end: skip_whitespace(
+                self.text,
+                self.comments[after as usize - 1].span.end as usize,
+            ) as u32,
             first,
             after,
         })
@@ -443,7 +489,12 @@ impl<'a> Model<'a> {
     /// them.
     fn next_group_before(&self, cursor: &mut u32, end: u32) -> Option<Group> {
         let first = *cursor;
-        let mut group_end = self.comments.get(first as usize).filter(|comment| comment.span.start < end)?.span.end;
+        let mut group_end = self
+            .comments
+            .get(first as usize)
+            .filter(|comment| comment.span.start < end)?
+            .span
+            .end;
         *cursor += 1;
         while let Some(next) = self.comments.get(*cursor as usize)
             && next.span.start < end
@@ -459,13 +510,20 @@ impl<'a> Model<'a> {
         let mut cursor = 0;
         // What the comments after it trail.
         let mut previous: Option<Node> = self.interpreter.map(|_| Node::Interpreter);
-        let mut previous_end = self.interpreter.map_or_else(|| self.text_start(), |it| it.0.end);
+        let mut previous_end = self
+            .interpreter
+            .map_or_else(|| self.text_start(), |it| it.0.end);
         let (mut is_in_prologue, mut has_seen_other) = (true, false);
         for statement in self.file.body().iter() {
             let span = statement.span();
             let group = self.next_group_before(&mut cursor, span.start);
-            let start = group.map_or_else(|| skip_whitespace(self.text, previous_end as usize) as u32, |group| group.end);
-            let between = group.map(|group| self.new_list(group.first..group.after)).unwrap_or_default();
+            let start = group.map_or_else(
+                || skip_whitespace(self.text, previous_end as usize) as u32,
+                |group| group.end,
+            );
+            let between = group
+                .map(|group| self.new_list(group.first..group.after))
+                .unwrap_or_default();
             if let Some(previous) = previous.take() {
                 self.attach(previous, Which::Trailing, between);
             }
@@ -500,7 +558,11 @@ impl<'a> Model<'a> {
                 }
                 _ => {
                     has_seen_other = true;
-                    while self.comments.get(cursor as usize).is_some_and(|comment| comment.span.start < span.end) {
+                    while self
+                        .comments
+                        .get(cursor as usize)
+                        .is_some_and(|comment| comment.span.start < span.end)
+                    {
                         cursor += 1;
                     }
                 }
@@ -513,7 +575,14 @@ impl<'a> Model<'a> {
         }
     }
 
-    fn add_specifier(&mut self, kind: SpecifierKind, is_type: bool, imported: Ident<'a>, local: Ident<'a>, span: Span) {
+    fn add_specifier(
+        &mut self,
+        kind: SpecifierKind,
+        is_type: bool,
+        imported: Ident<'a>,
+        local: Ident<'a>,
+        span: Span,
+    ) {
         self.orders.push(self.specifiers.len() as u32);
         self.specifiers.push(Specifier {
             kind,
@@ -525,18 +594,35 @@ impl<'a> Model<'a> {
         });
     }
 
-    fn add_declaration(&mut self, statement: Stmt<'a>, import: Import<'a>, cursor: &mut u32) -> u32 {
+    fn add_declaration(
+        &mut self,
+        statement: Stmt<'a>,
+        import: Import<'a>,
+        cursor: &mut u32,
+    ) -> u32 {
         let span = statement.span();
         let index = self.declarations.len() as u32;
         let first = self.orders.len() as u32;
         if let Some(default) = import.default() {
-            self.add_specifier(SpecifierKind::Default, false, default, default, default.span());
+            self.add_specifier(
+                SpecifierKind::Default,
+                false,
+                default,
+                default,
+                default.span(),
+            );
         }
         if let (Some(namespace), Some(span)) = (import.namespace(), import.namespace_span()) {
             self.add_specifier(SpecifierKind::Namespace, false, namespace, namespace, span);
         }
         for named in import.named().iter() {
-            self.add_specifier(SpecifierKind::Named, named.is_type_only(), named.imported(), named.local(), named.span());
+            self.add_specifier(
+                SpecifierKind::Named,
+                named.is_type_only(),
+                named.imported(),
+                named.local(),
+                named.span(),
+            );
         }
         self.declarations.push(Declaration {
             import,
@@ -545,7 +631,9 @@ impl<'a> Model<'a> {
             is_type: import.is_type_only(),
             specifiers: (first, self.orders.len() as u32 - first),
             source: self.find_source(import, span),
-            has_attributes: import.attributes().is_some_and(|it| !it.entries().is_empty()),
+            has_attributes: import
+                .attributes()
+                .is_some_and(|it| !it.entries().is_empty()),
             comments: Attached::default(),
         });
         while let Some(group) = self.next_group_before(cursor, span.end) {
@@ -574,19 +662,38 @@ impl<'a> Model<'a> {
         let mut is_attached = false;
 
         // At first, specifiers are in the order of the source.
-        let (first, count) = (self.orders[declaration.specifiers.0 as usize..].first().copied().unwrap_or(0), declaration.specifiers.1);
+        let (first, count) = (
+            self.orders[declaration.specifiers.0 as usize..]
+                .first()
+                .copied()
+                .unwrap_or(0),
+            declaration.specifiers.1,
+        );
         for at in first..first + count {
             let specifier = self.specifiers[at as usize];
             if !is_in(specifier.span) {
-                is_attached |= self.attach_if_adjacent(Node::Specifier(at), specifier.span, group, list);
+                is_attached |=
+                    self.attach_if_adjacent(Node::Specifier(at), specifier.span, group, list);
                 continue;
             }
             is_attached = match specifier.kind == SpecifierKind::Named {
                 true => {
-                    self.attach_if_adjacent(Node::Imported(at), specifier.imported.span(), group, list)
-                        | (specifier.is_renamed() && self.attach_if_adjacent(Node::Local(at), specifier.local.span(), group, list))
+                    self.attach_if_adjacent(
+                        Node::Imported(at),
+                        specifier.imported.span(),
+                        group,
+                        list,
+                    ) | (specifier.is_renamed()
+                        && self.attach_if_adjacent(
+                            Node::Local(at),
+                            specifier.local.span(),
+                            group,
+                            list,
+                        ))
                 }
-                false => self.attach_if_adjacent(Node::Local(at), specifier.local.span(), group, list),
+                false => {
+                    self.attach_if_adjacent(Node::Local(at), specifier.local.span(), group, list)
+                }
             };
             if !is_attached {
                 self.attach(Node::Specifier(at), Which::Inner, list);
@@ -595,16 +702,26 @@ impl<'a> Model<'a> {
         }
         let source = self.source_span(&declaration);
         is_attached |= self.attach_if_adjacent(Node::Source(source.start), source, group, list);
-        for attribute in declaration.import.attributes().map(|it| it.entries()).into_iter().flatten() {
+        for attribute in declaration
+            .import
+            .attributes()
+            .map(|it| it.entries())
+            .into_iter()
+            .flatten()
+        {
             let span = attribute.span();
             if !is_in(span) {
-                is_attached |= self.attach_if_adjacent(Node::Attribute(span.start), span, group, list);
+                is_attached |=
+                    self.attach_if_adjacent(Node::Attribute(span.start), span, group, list);
                 continue;
             }
             let key = attribute_key_span(self.file, attribute);
             let value = attribute.value().map(|it| it.span());
-            is_attached = key.is_some_and(|key| self.attach_if_adjacent(Node::AttributeKey(span.start), key, group, list))
-                | value.is_some_and(|value| self.attach_if_adjacent(Node::AttributeValue(span.start), value, group, list));
+            is_attached = key.is_some_and(|key| {
+                self.attach_if_adjacent(Node::AttributeKey(span.start), key, group, list)
+            }) | value.is_some_and(|value| {
+                self.attach_if_adjacent(Node::AttributeValue(span.start), value, group, list)
+            });
             if !is_attached {
                 self.attach(Node::Attribute(span.start), Which::Inner, list);
             }
@@ -616,7 +733,9 @@ impl<'a> Model<'a> {
         // `adjustInnerComments`
         let is_after_comma = self.text.get((group.start as usize).wrapping_sub(1)) == Some(&b',');
         match (count > 0).then(|| first + count - 1) {
-            Some(last) if is_after_comma && self.specifiers[last as usize].span.start <= group.start => {
+            Some(last)
+                if is_after_comma && self.specifiers[last as usize].span.start <= group.start =>
+            {
                 self.attach(Node::Specifier(last), Which::Trailing, list);
             }
             _ => self.attach(Node::Import(index), Which::Inner, list),
@@ -634,7 +753,9 @@ impl<'a> Model<'a> {
             Node::Imported(index) => self.specifiers[index as usize].imported.span(),
             Node::Local(index) => self.specifiers[index as usize].local.span(),
             Node::Source(start) => {
-                let len = bun_lint::tokens::token_len(self.text.get(start as usize..).unwrap_or_default());
+                let len = bun_lint::tokens::token_len(
+                    self.text.get(start as usize..).unwrap_or_default(),
+                );
                 Span::new(start, start + len as u32)
             }
             Node::Attribute(start) => self.attribute_at(start)?.span(),
@@ -654,8 +775,16 @@ impl<'a> Model<'a> {
     }
 
     fn attribute_at(&self, start: u32) -> Option<Prop<'a>> {
-        let declaration = self.declarations.iter().find(|it| it.span.is_some_and(|span| span.contains_offset(start)))?;
-        declaration.import.attributes()?.entries().iter().find(|it| it.span().start == start)
+        let declaration = self
+            .declarations
+            .iter()
+            .find(|it| it.span.is_some_and(|span| span.contains_offset(start)))?;
+        declaration
+            .import
+            .attributes()?
+            .entries()
+            .iter()
+            .find(|it| it.span().start == start)
     }
 }
 
@@ -670,5 +799,6 @@ pub(super) fn utf16_len(text: &[u8]) -> u32 {
         return text.len() as u32;
     }
     // A character of four bytes is two code units, every other is one.
-    text.iter().filter(|byte| **byte & 0xC0 != 0x80).count() as u32 + text.iter().filter(|byte| **byte >= 0xF0).count() as u32
+    text.iter().filter(|byte| **byte & 0xC0 != 0x80).count() as u32
+        + text.iter().filter(|byte| **byte >= 0xF0).count() as u32
 }

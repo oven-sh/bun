@@ -244,7 +244,9 @@ impl<'a> Stmt<'a> {
                 body: s(body),
                 test: e(test),
             },
-            hir::StmtKind::Block(list) if file.is_with(raw) => Stmt::kind_of_with(List::ids(file, list)),
+            hir::StmtKind::Block(list) if file.is_with(raw) => {
+                Stmt::kind_of_with(List::ids(file, list))
+            }
             hir::StmtKind::Block(list) => StmtKind::Block(List::ids(file, list)),
             hir::StmtKind::Switch { expr, cases } => StmtKind::Switch {
                 expr: e(expr),
@@ -284,9 +286,7 @@ impl<'a> Stmt<'a> {
             },
             hir::StmtKind::ExportDefault(value) => StmtKind::ExportDefault(e(value)),
             hir::StmtKind::ExportAssign(value) => StmtKind::ExportAssign(e(value)),
-            hir::StmtKind::ExportAsNamespace(name) => {
-                StmtKind::ExportAsNamespace(file.name(name))
-            }
+            hir::StmtKind::ExportAsNamespace(name) => StmtKind::ExportAsNamespace(file.name(name)),
         }
     }
 
@@ -308,7 +308,11 @@ impl<'a> Stmt<'a> {
     /// load. It is not ESLint's code path analysis.
     #[inline]
     pub fn is_reached_by_binder(self) -> bool {
-        self.file.bound.stmt_flow.get(self.id.idx()).is_some_and(|flow| *flow != bun_sema::bind::UNREACHABLE)
+        self.file
+            .bound
+            .stmt_flow
+            .get(self.id.idx())
+            .is_some_and(|flow| *flow != bun_sema::bind::UNREACHABLE)
     }
 
     /// From its first token, which can be a decorator or a modifier such as `export`, to the end
@@ -317,9 +321,12 @@ impl<'a> Stmt<'a> {
     pub fn span(self) -> Span {
         match self.try_raw() {
             // The HIR positions the block after `finally` at the keyword.
-            Some(raw @ hir::Stmt { kind: hir::StmtKind::Block(_), .. })
-                if self.file.hir.text.get(raw.start as usize) == Some(&b'f') =>
-            {
+            Some(
+                raw @ hir::Stmt {
+                    kind: hir::StmtKind::Block(_),
+                    ..
+                },
+            ) if self.file.hir.text.get(raw.start as usize) == Some(&b'f') => {
                 Span::new(skip_trivia(self.file.hir.text, raw.loc.pos), raw.loc.end)
             }
             Some(raw) => Span::new(raw.start, raw.loc.end),
@@ -370,7 +377,10 @@ impl<'a> Stmt<'a> {
     /// declaration: from the `export`. It differs from [`Stmt::span`] where decorators come first:
     /// `@d export class C {}`.
     pub fn export_span(self) -> Option<Span> {
-        let export = self.modifiers().iter().find(|it| it.flag() == Flags::EXPORT)?;
+        let export = self
+            .modifiers()
+            .iter()
+            .find(|it| it.flag() == Flags::EXPORT)?;
         Some(Span::new(export.span().start, self.span().end))
     }
 
@@ -415,16 +425,24 @@ impl<'a> Stmt<'a> {
         let StmtKind::Try { block, handler, .. } = self.kind() else {
             return None;
         };
-        Some(Span::new(skip_trivia(self.file.text(), block.span().end), handler?.span().end))
+        Some(Span::new(
+            skip_trivia(self.file.text(), block.span().end),
+            handler?.span().end,
+        ))
     }
 
     /// The module specifier with its quotes: of an `Import`, of an `ExportNamed` or an
     /// `ExportStar` after `from`, of an `ImportEquals` in `require(..)`.
     pub fn module_specifier_span(self) -> Option<Span> {
         let text = self.file.text();
-        let is_at = |at: u32, token: &[u8]| text.get(at as usize..).is_some_and(|it| it.starts_with(token));
+        let is_at = |at: u32, token: &[u8]| {
+            text.get(at as usize..)
+                .is_some_and(|it| it.starts_with(token))
+        };
         // Past `token`, if it is at `at`.
-        let past = |at: u32, token: &[u8]| is_at(at, token).then(|| skip_trivia(text, at + token.len() as u32));
+        let past = |at: u32, token: &[u8]| {
+            is_at(at, token).then(|| skip_trivia(text, at + token.len() as u32))
+        };
         let start = match self.try_raw()?.kind {
             hir::StmtKind::Import(import) => {
                 let import = self.file.hir.imports.get(import.idx())?;
@@ -433,7 +451,12 @@ impl<'a> Stmt<'a> {
                     false => past(skip_trivia(text, import.clause_end), b"from")?,
                 }
             }
-            hir::StmtKind::ExportStar { alias, star_pos, alias_pos, .. } => {
+            hir::StmtKind::ExportStar {
+                alias,
+                star_pos,
+                alias_pos,
+                ..
+            } => {
                 let before = match alias.is_some() {
                     true => self.file.ident(alias, alias_pos).span().end,
                     false => star_pos + 1,
@@ -462,7 +485,9 @@ impl<'a> Stmt<'a> {
             _ => return None,
         };
         let rest = text.get(start as usize..)?;
-        let (&quote, inside) = rest.split_first().filter(|it| matches!(it.0, b'"' | b'\''))?;
+        let (&quote, inside) = rest
+            .split_first()
+            .filter(|it| matches!(it.0, b'"' | b'\''))?;
         // Nearly all are a path without an escape, on one line.
         let len = match bun_core::strings::index_of_any(inside, &[quote, b'\\', b'\n', b'\r']) {
             Some(at) if inside[at] == quote => at + 2,
@@ -474,7 +499,10 @@ impl<'a> Stmt<'a> {
     /// `with { type: "json" }` of an `Import`, an `ExportNamed` or an `ExportStar`.
     pub fn import_attributes(self) -> Option<ImportAttributes<'a>> {
         if self.file.hir.import_attributes.is_empty()
-            || !matches!(self.tag(), StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar)
+            || !matches!(
+                self.tag(),
+                StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar
+            )
         {
             return None;
         }
@@ -505,7 +533,9 @@ impl<'a> Stmt<'a> {
     /// The `for` or `with` statement that it is a wrapper in.
     #[inline]
     pub(crate) fn wrapped_in(self) -> Option<Stmt<'a>> {
-        self.file.wrapped_in(self.id).map(|parent| Stmt::new(self.file, parent))
+        self.file
+            .wrapped_in(self.id)
+            .map(|parent| Stmt::new(self.file, parent))
     }
 
     /// The label of a `Labeled`, a `Break` or a `Continue`, where it is written.
@@ -555,7 +585,9 @@ impl<'a> Stmt<'a> {
         }
         let siblings = match self.parent() {
             Node::File(file) => file.body(),
-            Node::Func(func) if func.kind() != super::FnKind::StaticBlock => func.body_statements()?,
+            Node::Func(func) if func.kind() != super::FnKind::StaticBlock => {
+                func.body_statements()?
+            }
             Node::Stmt(parent) => match parent.kind() {
                 StmtKind::Module(module) => module.innermost().body(),
                 _ => return None,
@@ -569,7 +601,11 @@ impl<'a> Stmt<'a> {
             Some((known, end)) if known == start => end,
             _ => {
                 let is_string = |it: &Stmt| matches!(it.kind(), StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized());
-                let end = siblings.iter().take_while(is_string).last().map_or(start, |it| it.span().end);
+                let end = siblings
+                    .iter()
+                    .take_while(is_string)
+                    .last()
+                    .map_or(start, |it| it.span().end);
                 self.file.lazy.directives.set(Some((start, end)));
                 end
             }
@@ -584,7 +620,11 @@ impl super::File<'_> {
     fn is_with(&self, raw: &hir::Stmt) -> bool {
         !self.hir.with_bodies.is_empty()
             && matches!(raw.kind, hir::StmtKind::Block(list) if list.len() == 2)
-            && self.hir.text.get(raw.start as usize..).is_some_and(|it| it.starts_with(b"with"))
+            && self
+                .hir
+                .text
+                .get(raw.start as usize..)
+                .is_some_and(|it| it.starts_with(b"with"))
     }
 
     /// The `for` or `with` statement that the statement `id` is a wrapper in.
@@ -593,7 +633,8 @@ impl super::File<'_> {
         if !matches!(self.hir.stmts.get(id.idx())?.kind, hir::StmtKind::Expr(_)) {
             return None;
         }
-        let Some(&bun_sema::bind::Parent::Stmt(parent)) = self.bound.stmt_parent.get(id.idx()) else {
+        let Some(&bun_sema::bind::Parent::Stmt(parent)) = self.bound.stmt_parent.get(id.idx())
+        else {
             return None;
         };
         let raw = self.hir.stmts.get(parent.idx())?;
@@ -716,7 +757,11 @@ impl<'a> Case<'a> {
     /// [`Stmt::is_reached_by_binder`].
     #[inline]
     pub fn falls_through_for_binder(self) -> bool {
-        self.file.bound.case_fallthrough.get(self.id.idx()).is_some_and(|flow| flow.is_some())
+        self.file
+            .bound
+            .case_fallthrough
+            .get(self.id.idx())
+            .is_some_and(|flow| flow.is_some())
     }
 
     /// The `Switch` statement.

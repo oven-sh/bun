@@ -2,9 +2,9 @@
 
 use super::vnode::{Part, VNode};
 use crate::ast::{
-    Case, EnumMember, ExportSpec, Expr, ExprKind, ImportSpec, JsxChild, JsxChildren, List, ListIter,
-    Member, Modifier, Node, Param, PatElem, PatProp, Prop, Stmt, StmtKind, TupleElem, TypeNode,
-    TypeParam, VarDecl,
+    Case, EnumMember, ExportSpec, Expr, ExprKind, ImportSpec, JsxChild, JsxChildren, List,
+    ListIter, Member, Modifier, Node, Param, PatElem, PatProp, Prop, Stmt, StmtKind, TupleElem,
+    TypeNode, TypeParam, VarDecl,
 };
 
 /// The value of a field.
@@ -39,10 +39,7 @@ pub enum Object<'a> {
         raw: &'a [u8],
     },
     /// The `regex` of a `Literal`
-    Regex {
-        pattern: &'a [u8],
-        flags: &'a [u8],
-    },
+    Regex { pattern: &'a [u8], flags: &'a [u8] },
 }
 
 impl<'a> Object<'a> {
@@ -53,12 +50,18 @@ impl<'a> Object<'a> {
                 ("cooked", cooked.map_or(Value::Null, Value::Str)),
                 ("raw", Value::Str(raw)),
             ],
-            Object::Regex { pattern, flags } => [("flags", Value::Str(flags)), ("pattern", Value::Str(pattern))],
+            Object::Regex { pattern, flags } => [
+                ("flags", Value::Str(flags)),
+                ("pattern", Value::Str(pattern)),
+            ],
         }
     }
 
     pub fn get(self, name: &[u8]) -> Value<'a> {
-        let found = self.entries().into_iter().find(|it| it.0.as_bytes() == name);
+        let found = self
+            .entries()
+            .into_iter()
+            .find(|it| it.0.as_bytes() == name);
         found.map_or(Value::Undefined, |it| it.1)
     }
 }
@@ -186,12 +189,18 @@ impl<'a> Nodes<'a> {
         Nodes(Inner::Params(this, params.iter()))
     }
 
-    pub(super) fn import_specifiers(statement: Stmt<'a>, named: List<'a, ImportSpec<'a>>) -> Nodes<'a> {
+    pub(super) fn import_specifiers(
+        statement: Stmt<'a>,
+        named: List<'a, ImportSpec<'a>>,
+    ) -> Nodes<'a> {
         Nodes(Inner::ImportSpecifiers(statement, 0, named.iter()))
     }
 
     /// The decorators among `modifiers`, which are those of `owner`.
-    pub(super) fn decorators(owner: impl Into<Node<'a>>, modifiers: List<'a, Modifier<'a>>) -> Nodes<'a> {
+    pub(super) fn decorators(
+        owner: impl Into<Node<'a>>,
+        modifiers: List<'a, Modifier<'a>>,
+    ) -> Nodes<'a> {
         Nodes(Inner::Decorators(owner.into(), modifiers.iter()))
     }
 
@@ -292,8 +301,12 @@ impl<'a> Iterator for Nodes<'a> {
                 };
                 *stage += 1;
                 match *stage {
-                    1 if import.default().is_some() => break Some(VNode::new(*statement, Part::DefaultSpecifier)),
-                    2 if import.namespace().is_some() => break Some(VNode::new(*statement, Part::NamespaceSpecifier)),
+                    1 if import.default().is_some() => {
+                        break Some(VNode::new(*statement, Part::DefaultSpecifier));
+                    }
+                    2 if import.namespace().is_some() => {
+                        break Some(VNode::new(*statement, Part::NamespaceSpecifier));
+                    }
                     1 | 2 => {}
                     _ => {
                         *stage = 2;
@@ -305,7 +318,9 @@ impl<'a> Iterator for Nodes<'a> {
                 let decorator = modifiers.find(|it| it.decorator().is_some())?;
                 Some(VNode::new(*owner, Part::Decorator(decorator.id().0)))
             }
-            Inner::Attributes(owner, entries) => Some(VNode::new(*owner, Part::Attribute(entries.next()?.id().0))),
+            Inner::Attributes(owner, entries) => {
+                Some(VNode::new(*owner, Part::Attribute(entries.next()?.id().0)))
+            }
             Inner::Quasis(owner, next, count) => {
                 if next >= count {
                     return None;
@@ -333,7 +348,9 @@ impl<'a> Iterator for Nodes<'a> {
             }
             Inner::JsxChildren(element, children) => match children.next()? {
                 JsxChild::Expr(child) => VNode::of_expr(child),
-                JsxChild::Whitespace(span) => Some(VNode::new(*element, Part::Whitespace(span.start))),
+                JsxChild::Whitespace(span) => {
+                    Some(VNode::new(*element, Part::Whitespace(span.start)))
+                }
             },
         })
     }

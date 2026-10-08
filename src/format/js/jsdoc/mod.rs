@@ -30,7 +30,10 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
         return false;
     };
     let content = f.source_text().text_for(&comment.span);
-    let Some(inner) = content.strip_prefix(b"/**").and_then(|rest| rest.strip_suffix(b"*/")) else {
+    let Some(inner) = content
+        .strip_prefix(b"/**")
+        .and_then(|rest| rest.strip_suffix(b"*/"))
+    else {
         return false;
     };
     // `/*****/` is none.
@@ -60,10 +63,14 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
     // An escape or a blank that is gone would end the comment early.
     let format = |content: &[u8], end: usize, f: &Formatter<'a>| {
         let after = f.file().text().get(end..).unwrap_or_default();
-        format_jsdoc_comment(content, after, &options, f.options(), available_width).filter(|formatted| match formatted {
-            FormattedJsdoc::SingleLine(text) | FormattedJsdoc::MultiLine(text) => !strings::contains(text, b"*/"),
-            FormattedJsdoc::Empty => true,
-        })
+        format_jsdoc_comment(content, after, &options, f.options(), available_width).filter(
+            |formatted| match formatted {
+                FormattedJsdoc::SingleLine(text) | FormattedJsdoc::MultiLine(text) => {
+                    !strings::contains(text, b"*/")
+                }
+                FormattedJsdoc::Empty => true,
+            },
+        )
     };
 
     // Comments that directly follow each other have been made one. Each is formatted by itself, and they go on
@@ -72,7 +79,8 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
         let mut formatted = Vec::new();
         let mut start = 0;
         while start < content.len() {
-            let end = strings::index_of(&content[start..], b"*//**").map_or(content.len(), |at| start + at + 2);
+            let end = strings::index_of(&content[start..], b"*//**")
+                .map_or(content.len(), |at| start + at + 2);
             match format(&content[start..end], comment.span.start as usize + end, f) {
                 Some(FormattedJsdoc::MultiLine(lines)) => formatted.push(lines),
                 _ => return false,

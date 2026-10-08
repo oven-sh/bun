@@ -127,7 +127,12 @@ fn report_of(json: &Json, offsets: &Offsets) -> Option<Report> {
     let suggested = |it: &Json| {
         let parts = it.as_array()?;
         let data = parts.get(2).and_then(Json::as_object).unwrap_or_default();
-        let data = data.iter().filter_map(|(key, value)| Some((std::str::from_utf8(key).ok()?.into(), value.as_str()?.to_vec())));
+        let data = data.iter().filter_map(|(key, value)| {
+            Some((
+                std::str::from_utf8(key).ok()?.into(),
+                value.as_str()?.to_vec(),
+            ))
+        });
         Some(Suggested {
             message_id: text_of(parts.first()),
             message: parts.get(1)?.as_str()?.to_vec(),
@@ -167,7 +172,12 @@ impl<'e> Host<'e> {
     /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
     /// is looked for from there. `alias`: the prefix of its rules, if it is not the name that the
     /// plugin has for itself.
-    pub fn load(&self, directory: &[u8], specifier: &[u8], alias: Option<&[u8]>) -> Result<Arc<Plugin>, Vec<u8>> {
+    pub fn load(
+        &self,
+        directory: &[u8],
+        specifier: &[u8],
+        alias: Option<&[u8]>,
+    ) -> Result<Arc<Plugin>, Vec<u8>> {
         let mut location = b"[".to_vec();
         for part in [Some(directory), Some(specifier), alias] {
             match part {
@@ -193,12 +203,19 @@ impl<'e> Host<'e> {
     }
 
     fn load_from(&self, location: Vec<u8>) -> Result<Arc<Plugin>, Vec<u8>> {
-        let known = |state: &State| state.plugins.iter().find(|it| it.location == location).map(|it| Arc::clone(&it.plugin));
+        let known = |state: &State| {
+            state
+                .plugins
+                .iter()
+                .find(|it| it.location == location)
+                .map(|it| Arc::clone(&it.plugin))
+        };
         if let Some(plugin) = known(&self.state.lock()) {
             return Ok(plugin);
         }
         let mut loaded = Err(OUT_OF_STEP.to_vec());
-        self.engine.with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
+        self.engine
+            .with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
         let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
         let mut state = self.state.lock();
         // Another thread was faster.
@@ -218,8 +235,16 @@ impl<'e> Host<'e> {
 
     /// Has `vm` load the plugin at `location`. `place`: its position among the plugins and the number of its first rule, once
     /// it has them. Returns the description of the plugin.
-    fn load_in(&self, vm: &mut dyn Vm, location: &[u8], place: Option<(usize, u32)>) -> Result<Vec<u8>, Vec<u8>> {
-        let place = place.map_or_else(|| "null,null".to_owned(), |(position, first_rule)| format!("{position},{first_rule}"));
+    fn load_in(
+        &self,
+        vm: &mut dyn Vm,
+        location: &[u8],
+        place: Option<(usize, u32)>,
+    ) -> Result<Vec<u8>, Vec<u8>> {
+        let place = place.map_or_else(
+            || "null,null".to_owned(),
+            |(position, first_rule)| format!("{position},{first_rule}"),
+        );
         let message = [b"[", location, b",", place.as_bytes(), b"]"].concat();
         let returned = vm.call(call::LOAD, &message, &mut |asked, _, out| {
             if asked == ask::START {
@@ -238,12 +263,21 @@ impl<'e> Host<'e> {
         let texts = crate::json::parse(texts);
         let mut state = self.state.lock();
         out.push(b'[');
-        for (i, text) in texts.as_ref().and_then(Json::as_array).unwrap_or_default().iter().enumerate() {
+        for (i, text) in texts
+            .as_ref()
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             if i > 0 {
                 out.push(b',');
             }
             let text = text.as_str().unwrap_or_default();
-            let known = state.selector_numbers.get(text).and_then(|&it| Some((it, state.selectors.get(it as usize)?.clone()?)));
+            let known = state
+                .selector_numbers
+                .get(text)
+                .and_then(|&it| Some((it, state.selectors.get(it as usize)?.clone()?)));
             let parsed = match known {
                 Some(known) => Ok(known),
                 None => Selector::parse(text).map(|selector| {
@@ -255,7 +289,11 @@ impl<'e> Host<'e> {
             };
             match parsed {
                 Ok((number, selector)) => {
-                    let counts = format!("[{number},{},{}]", selector.attribute_count(), selector.identifier_count());
+                    let counts = format!(
+                        "[{number},{},{}]",
+                        selector.attribute_count(),
+                        selector.identifier_count()
+                    );
                     out.extend_from_slice(counts.as_bytes());
                 }
                 Err(error) => write_json_string(out, error.message()),
@@ -267,12 +305,18 @@ impl<'e> Host<'e> {
     /// Given JSON, the numbers of selectors, these.
     fn selectors(&self, numbers: &[u8]) -> Vec<Option<Arc<Selector>>> {
         let numbers = crate::json::parse(numbers);
-        let numbers = numbers.as_ref().and_then(Json::as_array).unwrap_or_default();
+        let numbers = numbers
+            .as_ref()
+            .and_then(Json::as_array)
+            .unwrap_or_default();
         if numbers.is_empty() {
             return Vec::new();
         }
         let state = self.state.lock();
-        numbers.iter().map(|it| state.selectors.get(number(Some(it))? as usize)?.clone()).collect()
+        numbers
+            .iter()
+            .map(|it| state.selectors.get(number(Some(it))? as usize)?.clone())
+            .collect()
     }
 
     /// Runs the rules `enabled` on `file`. `wants_fixes`: whether anything reads [`Report::fix`] and
@@ -285,7 +329,8 @@ impl<'e> Host<'e> {
         wants_fixes: bool,
     ) -> Result<Vec<Report>, Failure> {
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        self.engine.with_vm(&mut |vm| outcome = self.run_in(vm, file, settings, enabled, wants_fixes))?;
+        self.engine
+            .with_vm(&mut |vm| outcome = self.run_in(vm, file, settings, enabled, wants_fixes))?;
         outcome
     }
 
@@ -303,8 +348,18 @@ impl<'e> Host<'e> {
         let (path, plugins) = (file.path(), self.state.lock().plugins.len());
         let mut message = Vec::with_capacity(24 + enabled.len() * 4 + path.len() + text.len());
         let is_espree = Dialect::of(file) == Dialect::Espree;
-        let flags = u32::from(wants_fixes) | (u32::from(has_mark) << 1) | (u32::from(is_espree) << 2);
-        wire::words(&mut message, &[flags, plugins as u32, settings.id, enabled.len() as u32, path.len() as u32]);
+        let flags =
+            u32::from(wants_fixes) | (u32::from(has_mark) << 1) | (u32::from(is_espree) << 2);
+        wire::words(
+            &mut message,
+            &[
+                flags,
+                plugins as u32,
+                settings.id,
+                enabled.len() as u32,
+                path.len() as u32,
+            ],
+        );
         for configured in enabled {
             wire::words(&mut message, &[configured.id]);
         }
@@ -316,7 +371,9 @@ impl<'e> Host<'e> {
             ask::START => schema::write_start(&self.cwd, out),
             ask::SETTINGS => out.extend_from_slice(&settings.json),
             ask::CONFIGURED => {
-                let position = std::str::from_utf8(details).ok().and_then(|it| it.parse::<usize>().ok());
+                let position = std::str::from_utf8(details)
+                    .ok()
+                    .and_then(|it| it.parse::<usize>().ok());
                 if let Some(configured) = position.and_then(|it| enabled.get(it)) {
                     out.extend_from_slice(&configured.json);
                 }
@@ -324,7 +381,8 @@ impl<'e> Host<'e> {
             ask::SELECTORS => self.describe_selectors(details, out),
             ask::AST | ask::MATCHES => {
                 let selectors = self.selectors(details);
-                let selectors: Vec<Option<&Selector>> = selectors.iter().map(Option::as_deref).collect();
+                let selectors: Vec<Option<&Selector>> =
+                    selectors.iter().map(Option::as_deref).collect();
                 match asked {
                     ask::AST => ids = Some(ast::write(file, &offsets, &selectors, out)),
                     _ => ast::write_only_matches(file, &offsets, &selectors, out),
@@ -354,13 +412,20 @@ impl<'e> Host<'e> {
                 result::DONE => {
                     let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
                     scopes::mark_used(file, part(1).iter().filter_map(|it| number(Some(it))));
-                    return Ok(part(0).iter().filter_map(|it| report_of(it, &offsets)).collect());
+                    return Ok(part(0)
+                        .iter()
+                        .filter_map(|it| report_of(it, &offsets))
+                        .collect());
                 }
                 result::FAILED => {
                     return Err(Failure {
                         rule: number(parts.first()),
                         line: number(parts.get(2)),
-                        message: parts.get(1).and_then(Json::as_str).unwrap_or_default().to_vec(),
+                        message: parts
+                            .get(1)
+                            .and_then(Json::as_str)
+                            .unwrap_or_default()
+                            .to_vec(),
                     });
                 }
                 result::NEEDS_PLUGINS if !parts.is_empty() => {
@@ -383,11 +448,23 @@ impl<'e> Host<'e> {
 /// `{ name, rules: [{ name, type, fixable, hasSuggestions, schema, defaultOptions }] }`. The rules are
 /// numbered from `first`, in that order.
 fn plugin_of(described: &Json, first: u32) -> Plugin {
-    let name = described.get(b"name").and_then(Json::as_str).unwrap_or_default();
-    let rules = described.get(b"rules").and_then(Json::as_array).unwrap_or_default();
+    let name = described
+        .get(b"name")
+        .and_then(Json::as_str)
+        .unwrap_or_default();
+    let rules = described
+        .get(b"rules")
+        .and_then(Json::as_array)
+        .unwrap_or_default();
     let rule = |(i, it): (usize, &Json)| {
         Arc::new(Rule {
-            id: [name, b"/", it.get(b"name").and_then(Json::as_str).unwrap_or_default()].concat().into(),
+            id: [
+                name,
+                b"/",
+                it.get(b"name").and_then(Json::as_str).unwrap_or_default(),
+            ]
+            .concat()
+            .into(),
             kind: match it.get(b"type").and_then(Json::as_str) {
                 Some(b"problem") => Some(Kind::Problem),
                 Some(b"suggestion") => Some(Kind::Suggestion),
@@ -401,7 +478,11 @@ fn plugin_of(described: &Json, first: u32) -> Plugin {
                 Some(Json::Bool(false)) => Schema::Any,
                 Some(schema) => Schema::Json(schema.clone()),
             },
-            default_options: it.get(b"defaultOptions").and_then(Json::as_array).unwrap_or_default().to_vec(),
+            default_options: it
+                .get(b"defaultOptions")
+                .and_then(Json::as_array)
+                .unwrap_or_default()
+                .to_vec(),
             index: first + i as u32,
         })
     };

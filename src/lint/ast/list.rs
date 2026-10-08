@@ -155,7 +155,11 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         }
         let mut before = self.iter();
         before.back = at;
-        Some(if before.hides { before.count() } else { at as usize })
+        Some(if before.hides {
+            before.count()
+        } else {
+            at as usize
+        })
     }
 
     /// The element before the one that starts at `start`.

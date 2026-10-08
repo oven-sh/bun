@@ -12,11 +12,17 @@ pub(super) enum ListMarker {
 
 /// The marker that `line` starts with, after spaces and tabs. `line` can go on behind the end of the line.
 pub(super) fn list_marker(line: &[u8]) -> Option<ListMarker> {
-    let bytes = &line[line.iter().take_while(|byte| matches!(byte, b' ' | b'\t')).count()..];
+    let bytes = &line[line
+        .iter()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count()..];
     match bytes.first()? {
         b'-' | b'*' | b'+' if bytes.get(1) == Some(&b' ') => Some(ListMarker::Unordered),
         b'0'..=b'9' => {
-            let digits = bytes.iter().take_while(|byte| byte.is_ascii_digit()).count();
+            let digits = bytes
+                .iter()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
             if bytes.get(digits + 1) != Some(&b' ') {
                 return None;
             }
@@ -38,7 +44,9 @@ pub(super) fn is_block_marker_token(word: &[u8]) -> bool {
     match word {
         [b'-' | b'+' | b'*'] | [b'>', ..] => true,
         [b'#', ..] => word.len() <= 6 && word.iter().all(|&byte| byte == b'#'),
-        [digits @ .., b'.' | b')' | b'-'] => !digits.is_empty() && digits.iter().all(u8::is_ascii_digit),
+        [digits @ .., b'.' | b')' | b'-'] => {
+            !digits.is_empty() && digits.iter().all(u8::is_ascii_digit)
+        }
         _ => false,
     }
 }

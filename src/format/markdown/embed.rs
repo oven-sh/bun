@@ -1,13 +1,17 @@
 //! Markdown in the templates of JavaScript: Prettier's `language-js/embed/markdown.js`.
 
 use crate::css::doc::{self, Alignment, Doc, Line};
-use crate::ir::element::{Align, Condition, DedentMode, Group, GroupMode, LineMode, PrintMode, TextWidth};
+use crate::ir::element::{
+    Align, Condition, DedentMode, Group, GroupMode, LineMode, PrintMode, TextWidth,
+};
 use crate::prelude::*;
 
 /// Prettier's `isEmbedMarkdown`, and what `embed` asks of every template. `e`: a template.
 fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
-    matches!(f.options().embedded_language_formatting, EmbeddedLanguageFormatting::Auto)
-        && template.quasi_count() == 1
+    matches!(
+        f.options().embedded_language_formatting,
+        EmbeddedLanguageFormatting::Auto
+    ) && template.quasi_count() == 1
         && matches!(e.ast_parent(), AstNodes::TaggedTemplateExpression(tagged)
             if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
                 if matches!(call.callee().kind(), ExprKind::Ident(_)) && matches!(call.callee().text(), b"md" | b"markdown")))
@@ -24,7 +28,9 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let ExprKind::TaggedTemplate(call) = e.kind() else {
         return false;
     };
-    let Some((quasi, ExprKind::Template(template))) = call.template().map(|quasi| (quasi, quasi.kind())) else {
+    let Some((quasi, ExprKind::Template(template))) =
+        call.template().map(|quasi| (quasi, quasi.kind()))
+    else {
         return false;
     };
     is_candidate(quasi, template, f) && !is_blank(template)
@@ -54,7 +60,9 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>) -> bool {
         }
         Doc::Array(parts) => parts.iter().all(|part| flatten(part, ops)),
         Doc::Indent(contents) => between(Tag::StartIndent, contents, Tag::EndIndent, ops),
-        Doc::Align(Alignment::Spaces(0), contents) | Doc::MarkAsRoot(contents) => flatten(contents, ops),
+        Doc::Align(Alignment::Spaces(0), contents) | Doc::MarkAsRoot(contents) => {
+            flatten(contents, ops)
+        }
         Doc::Align(Alignment::Spaces(width), contents) => match u8::try_from(*width) {
             Ok(width) => between(Tag::StartAlign(Align(width)), contents, Tag::EndAlign, ops),
             Err(_) => false,
@@ -64,12 +72,23 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>) -> bool {
             should_break,
             ..
         } => {
-            let mode = if *should_break { GroupMode::Expand } else { GroupMode::Flat };
-            between(Tag::StartGroup(Group::new().with_mode(mode)), contents, Tag::EndGroup, ops)
+            let mode = if *should_break {
+                GroupMode::Expand
+            } else {
+                GroupMode::Flat
+            };
+            between(
+                Tag::StartGroup(Group::new().with_mode(mode)),
+                contents,
+                Tag::EndGroup,
+                ops,
+            )
         }
         Doc::Fill(parts) => {
             ops.push(Op::Element(FormatElement::Tag(Tag::StartFill)));
-            let is_done = parts.iter().all(|part| between(Tag::StartEntry, part, Tag::EndEntry, ops));
+            let is_done = parts
+                .iter()
+                .all(|part| between(Tag::StartEntry, part, Tag::EndEntry, ops));
             ops.push(Op::Element(FormatElement::Tag(Tag::EndFill)));
             is_done
         }
@@ -79,8 +98,17 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>) -> bool {
             group_id: 0,
         } => {
             let start = |mode| Tag::StartConditionalContent(Condition::new(mode));
-            between(start(PrintMode::Expanded), break_contents, Tag::EndConditionalContent, ops)
-                && between(start(PrintMode::Flat), flat_contents, Tag::EndConditionalContent, ops)
+            between(
+                start(PrintMode::Expanded),
+                break_contents,
+                Tag::EndConditionalContent,
+                ops,
+            ) && between(
+                start(PrintMode::Flat),
+                flat_contents,
+                Tag::EndConditionalContent,
+                ops,
+            )
         }
         Doc::Line(line) => {
             ops.push(Op::Line(*line));
@@ -140,8 +168,13 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
             Op::Line(Line::Hard) => {
                 // Several in a row, with nothing written between them, are empty lines. The last says how far the
                 // next line is indented.
-                let run = ops[index..].iter().take_while(|op| matches!(op, Op::Line(Line::Hard) | Op::Element(_))).count();
-                let last = ops[index..index + run].iter().rposition(|op| matches!(op, Op::Line(Line::Hard)));
+                let run = ops[index..]
+                    .iter()
+                    .take_while(|op| matches!(op, Op::Line(Line::Hard) | Op::Element(_)))
+                    .count();
+                let last = ops[index..index + run]
+                    .iter()
+                    .rposition(|op| matches!(op, Op::Line(Line::Hard)));
                 let Some(last) = last else {
                     f.write_element(FormatElement::Line(LineMode::Hard));
                     continue;
@@ -158,7 +191,11 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
                         f.write_element(*element);
                     }
                 }
-                f.write_element(FormatElement::Line(if count == 2 { LineMode::Empty } else { LineMode::Hard }));
+                f.write_element(FormatElement::Line(if count == 2 {
+                    LineMode::Empty
+                } else {
+                    LineMode::Hard
+                }));
                 index += last + 1;
             }
         }
@@ -166,7 +203,11 @@ fn write_ops(ops: &[Op<'_>], f: &mut Formatter<'_>) {
 }
 
 /// Writes the template `e` as Markdown, if that is what Prettier takes it for. Returns whether it has.
-pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_template<'a>(
+    e: Expr<'a>,
+    template: Template<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
     if !is_candidate(e, template, f) {
         return false;
     }

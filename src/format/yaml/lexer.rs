@@ -39,7 +39,10 @@ fn is_flow_indicator(ch: Option<u8>) -> bool {
 }
 
 fn is_not_anchor_char(ch: Option<u8>) -> bool {
-    matches!(ch, None | Some(b' ' | b',' | b'[' | b']' | b'{' | b'}' | b'\n' | b'\r' | b'\t'))
+    matches!(
+        ch,
+        None | Some(b' ' | b',' | b'[' | b']' | b'{' | b'}' | b'\n' | b'\r' | b'\t')
+    )
 }
 
 fn is_tag_char(ch: u8) -> bool {
@@ -93,10 +96,12 @@ impl<'a> Lexer<'a> {
             while self.at(offset + indent) == Some(b' ') {
                 indent += 1;
             }
-            return (self.at(offset + indent) == Some(b'\n') || indent >= self.indent_next).then_some(offset + indent);
+            return (self.at(offset + indent) == Some(b'\n') || indent >= self.indent_next)
+                .then_some(offset + indent);
         }
         let rest = self.buffer.get(offset..).unwrap_or_default();
-        if (rest.starts_with(b"---") || rest.starts_with(b"...")) && is_empty(rest.get(3).copied()) {
+        if (rest.starts_with(b"---") || rest.starts_with(b"...")) && is_empty(rest.get(3).copied())
+        {
             return None;
         }
         Some(offset)
@@ -227,7 +232,10 @@ impl<'a> Lexer<'a> {
         if line.first() == Some(&b'%') {
             let mut dir_end = line.len();
             let mut from = 0;
-            while let Some(at) = line.get(from..).and_then(|rest| strings::index_of_char_usize(rest, b'#')) {
+            while let Some(at) = line
+                .get(from..)
+                .and_then(|rest| strings::index_of_char_usize(rest, b'#'))
+            {
                 let cs = from + at;
                 if matches!(line[cs - 1], b' ' | b'\t') {
                     dir_end = cs - 1;
@@ -259,7 +267,11 @@ impl<'a> Lexer<'a> {
             self.push_count(3);
             self.indent_value = 0;
             self.indent_next = 0;
-            return if is_doc_start { State::Doc } else { State::Stream };
+            return if is_doc_start {
+                State::Doc
+            } else {
+                State::Stream
+            };
         }
         self.indent_value = self.push_spaces(false);
         if self.indent_next > self.indent_value && !is_empty(self.char_at(1)) {
@@ -372,7 +384,11 @@ impl<'a> Lexer<'a> {
                 self.push_count(1);
                 self.flow_key = true;
                 self.flow_level -= 1;
-                if self.flow_level > 0 { State::Flow } else { State::Doc }
+                if self.flow_level > 0 {
+                    State::Flow
+                } else {
+                    State::Doc
+                }
             }
             Some(b'*') => {
                 self.push_until(is_not_anchor_char);
@@ -382,7 +398,9 @@ impl<'a> Lexer<'a> {
                 self.flow_key = true;
                 self.parse_quoted_scalar()
             }
-            Some(b':') if self.flow_key || is_empty(self.char_at(1)) || self.char_at(1) == Some(b',') => {
+            Some(b':')
+                if self.flow_key || is_empty(self.char_at(1)) || self.char_at(1) == Some(b',') =>
+            {
                 self.flow_key = false;
                 self.push_count(1);
                 self.push_spaces(true);
@@ -404,7 +422,11 @@ impl<'a> Lexer<'a> {
             }
         } else {
             while let Some(at) = end {
-                let backslashes = self.buffer[..at].iter().rev().take_while(|&&b| b == b'\\').count();
+                let backslashes = self.buffer[..at]
+                    .iter()
+                    .rev()
+                    .take_while(|&&b| b == b'\\')
+                    .count();
                 if backslashes % 2 == 0 {
                     break;
                 }
@@ -427,7 +449,11 @@ impl<'a> Lexer<'a> {
         }
         let end = end.unwrap_or(self.buffer.len());
         self.push_to_index(end + 1, false);
-        if self.flow_level > 0 { State::Flow } else { State::Doc }
+        if self.flow_level > 0 {
+            State::Flow
+        } else {
+            State::Doc
+        }
     }
 
     fn parse_block_scalar_header(&mut self) -> usize {
@@ -499,7 +525,10 @@ impl<'a> Lexer<'a> {
                 while i >= 0 && self.at(i as usize) == Some(b' ') {
                     i -= 1;
                 }
-                if i >= self.pos as isize && self.at(i as usize) == Some(b'\n') && i as usize + 1 + indent > last_char {
+                if i >= self.pos as isize
+                    && self.at(i as usize) == Some(b'\n')
+                    && i as usize + 1 + indent > last_char
+                {
                     after_nl = i as usize + 1;
                 } else {
                     break;

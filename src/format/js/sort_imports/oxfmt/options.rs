@@ -77,7 +77,9 @@ impl Modifier {
 }
 
 fn bits(modifiers: &[Modifier]) -> u8 {
-    modifiers.iter().fold(0, |bits, modifier| bits | modifier.bit())
+    modifiers
+        .iter()
+        .fold(0, |bits, modifier| bits | modifier.bit())
 }
 
 /// `type-external`: modifiers, sorted, and a selector.
@@ -91,10 +93,16 @@ impl GroupName {
     fn parse(name: &[u8]) -> Option<GroupName> {
         let mut parts: Vec<&[u8]> = bun_core::strings::split(name, b"-").collect();
         let selector = Selector::parse(parts.pop()?)?;
-        let mut modifiers = parts.into_iter().map(Modifier::parse).collect::<Option<Vec<Modifier>>>()?;
+        let mut modifiers = parts
+            .into_iter()
+            .map(Modifier::parse)
+            .collect::<Option<Vec<Modifier>>>()?;
         modifiers.sort_unstable();
         modifiers.dedup();
-        Some(GroupName { selector, modifiers })
+        Some(GroupName {
+            selector,
+            modifiers,
+        })
     }
 }
 
@@ -134,14 +142,23 @@ impl Options {
     /// `GroupMatcher::compute_group_index`
     pub(super) fn group_of(&self, source: &[u8], selectors: u16, modifiers: u8) -> usize {
         let custom = self.custom_groups.iter().find(|group| {
-            (group.element_name_pattern.is_empty() || group.element_name_pattern.iter().any(|pattern| glob_match(pattern, source)))
-                && group.selector.is_none_or(|selector| selectors & selector.bit() != 0)
+            (group.element_name_pattern.is_empty()
+                || group
+                    .element_name_pattern
+                    .iter()
+                    .any(|pattern| glob_match(pattern, source)))
+                && group
+                    .selector
+                    .is_none_or(|selector| selectors & selector.bit() != 0)
                 && group.modifiers & !modifiers == 0
         });
         if let Some(custom) = custom {
             return custom.group;
         }
-        let predefined = self.predefined_groups.iter().find(|group| selectors & group.0.bit() != 0 && group.1 & !modifiers == 0);
+        let predefined = self
+            .predefined_groups
+            .iter()
+            .find(|group| selectors & group.0.bit() != 0 && group.1 & !modifiers == 0);
         predefined.map_or(self.unknown_group, |group| group.2)
     }
 }
@@ -159,8 +176,17 @@ fn boolean(config: &Json, name: &str, default: bool) -> Result<bool, Vec<u8>> {
 }
 
 fn strings(value: &Json, name: &str) -> Result<Vec<Vec<u8>>, Vec<u8>> {
-    let items = value.as_array().ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))?;
-    items.iter().map(|item| item.as_str().map(<[u8]>::to_vec).ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))).collect()
+    let items = value
+        .as_array()
+        .ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))?;
+    items
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))
+        })
+        .collect()
 }
 
 fn shown(name: &[u8]) -> &bstr::BStr {
@@ -175,35 +201,65 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         Some(config @ Json::Object(_)) => config,
         _ => return Err(invalid("it has to be a boolean or an object")),
     };
-    let present = |name: &str| config.get(name.as_bytes()).filter(|value| !matches!(value, Json::Null));
+    let present = |name: &str| {
+        config
+            .get(name.as_bytes())
+            .filter(|value| !matches!(value, Json::Null))
+    };
 
     // The names in `groups`, and the markers between them.
     let mut groups: Vec<Vec<Vec<u8>>> = Vec::new();
     let mut newline_boundary_overrides: Vec<Option<bool>> = Vec::new();
     match present("groups") {
         None => {
-            let default: [&[&str]; 6] =
-                [&["builtin"], &["external"], &["internal", "subpath"], &["parent", "sibling", "index"], &["style"], &["unknown"]];
-            groups.extend(default.iter().map(|group| group.iter().map(|name| name.as_bytes().to_vec()).collect()));
+            let default: [&[&str]; 6] = [
+                &["builtin"],
+                &["external"],
+                &["internal", "subpath"],
+                &["parent", "sibling", "index"],
+                &["style"],
+                &["unknown"],
+            ];
+            groups.extend(
+                default
+                    .iter()
+                    .map(|group| group.iter().map(|name| name.as_bytes().to_vec()).collect()),
+            );
         }
         Some(value) => {
-            let items = value.as_array().ok_or_else(|| invalid("`groups` has to be an array"))?;
+            let items = value
+                .as_array()
+                .ok_or_else(|| invalid("`groups` has to be an array"))?;
             let is_marker = |item: &Json| matches!(item, Json::Object(_));
             if items.first().is_some_and(is_marker) {
-                return Err(invalid("`{ \"newlinesBetween\" }` marker cannot appear at the start of `groups`"));
+                return Err(invalid(
+                    "`{ \"newlinesBetween\" }` marker cannot appear at the start of `groups`",
+                ));
             }
             if items.last().is_some_and(is_marker) {
-                return Err(invalid("`{ \"newlinesBetween\" }` marker cannot appear at the end of `groups`"));
+                return Err(invalid(
+                    "`{ \"newlinesBetween\" }` marker cannot appear at the end of `groups`",
+                ));
             }
-            if items.iter().zip(items.iter().skip(1)).any(|pair| is_marker(pair.0) && is_marker(pair.1)) {
-                return Err(invalid("consecutive `{ \"newlinesBetween\" }` markers are not allowed in `groups`"));
+            if items
+                .iter()
+                .zip(items.iter().skip(1))
+                .any(|pair| is_marker(pair.0) && is_marker(pair.1))
+            {
+                return Err(invalid(
+                    "consecutive `{ \"newlinesBetween\" }` markers are not allowed in `groups`",
+                ));
             }
             let mut pending_override = None;
             for item in items {
                 let names = match item {
                     Json::Object(_) => {
                         let marker = item.get(b"newlinesBetween").and_then(Json::as_bool);
-                        pending_override = Some(marker.ok_or_else(|| invalid("a marker in `groups` has to be `{ \"newlinesBetween\": boolean }`"))?);
+                        pending_override = Some(marker.ok_or_else(|| {
+                            invalid(
+                                "a marker in `groups` has to be `{ \"newlinesBetween\": boolean }`",
+                            )
+                        })?);
                         continue;
                     }
                     Json::String(name) => vec![name.clone()],
@@ -224,19 +280,44 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         modifiers: Vec<Modifier>,
     }
     let mut definitions: Vec<Definition> = Vec::new();
-    for item in present("customGroups").map(|value| value.as_array().ok_or_else(|| invalid("`customGroups` has to be an array"))).transpose()?.unwrap_or_default() {
-        let field = |name: &str| item.get(name.as_bytes()).filter(|value| !matches!(value, Json::Null));
+    for item in present("customGroups")
+        .map(|value| {
+            value
+                .as_array()
+                .ok_or_else(|| invalid("`customGroups` has to be an array"))
+        })
+        .transpose()?
+        .unwrap_or_default()
+    {
+        let field = |name: &str| {
+            item.get(name.as_bytes())
+                .filter(|value| !matches!(value, Json::Null))
+        };
         definitions.push(Definition {
-            name: field("groupName").and_then(Json::as_str).unwrap_or_default().to_vec(),
-            element_name_pattern: field("elementNamePattern").map(|value| strings(value, "elementNamePattern")).transpose()?.unwrap_or_default(),
+            name: field("groupName")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_vec(),
+            element_name_pattern: field("elementNamePattern")
+                .map(|value| strings(value, "elementNamePattern"))
+                .transpose()?
+                .unwrap_or_default(),
             selector: match field("selector") {
                 None => None,
-                Some(value) => Some(value.as_str().and_then(Selector::parse).ok_or_else(|| invalid("unknown `selector` in `customGroups`"))?),
+                Some(value) => Some(
+                    value
+                        .as_str()
+                        .and_then(Selector::parse)
+                        .ok_or_else(|| invalid("unknown `selector` in `customGroups`"))?,
+                ),
             },
             modifiers: match field("modifiers") {
                 None => Vec::new(),
                 Some(value) => (strings(value, "modifiers")?.iter())
-                    .map(|name| Modifier::parse(name).ok_or_else(|| invalid("unknown modifier in `customGroups`")))
+                    .map(|name| {
+                        Modifier::parse(name)
+                            .ok_or_else(|| invalid("unknown modifier in `customGroups`"))
+                    })
                     .collect::<Result<_, _>>()?,
             },
         });
@@ -247,18 +328,31 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
 
     // `SortImportsOptions::validate`
     if partition_by_newline && newline_boundary_overrides.iter().any(Option::is_some) {
-        return Err(invalid("`partitionByNewline` and per-group `{ \"newlinesBetween\" }` markers cannot be used together"));
+        return Err(invalid(
+            "`partitionByNewline` and per-group `{ \"newlinesBetween\" }` markers cannot be used together",
+        ));
     }
     if partition_by_newline && newlines_between {
-        return Err(invalid("`partitionByNewline: true` and `newlinesBetween: true` cannot be used together"));
+        return Err(invalid(
+            "`partitionByNewline: true` and `newlinesBetween: true` cannot be used together",
+        ));
     }
     let is_predefined = |name: &[u8]| name == b"unknown" || GroupName::parse(name).is_some();
     for name in groups.iter().flatten().filter(|name| !is_predefined(name)) {
-        if !definitions.iter().any(|definition| definition.name == *name) {
-            return Err(invalid(&format!("unknown group name `{}` in `groups`", shown(name))));
+        if !definitions
+            .iter()
+            .any(|definition| definition.name == *name)
+        {
+            return Err(invalid(&format!(
+                "unknown group name `{}` in `groups`",
+                shown(name)
+            )));
         }
     }
-    if let Some(definition) = definitions.iter().find(|definition| is_predefined(&definition.name)) {
+    if let Some(definition) = definitions
+        .iter()
+        .find(|definition| is_predefined(&definition.name))
+    {
         return Err(invalid(&format!(
             "`customGroups` name `{}` conflicts with a predefined group name; predefined names and `unknown` cannot be used as `groupName`",
             shown(&definition.name)
@@ -268,7 +362,11 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
     // `GroupMatcher::new`
     let mut unknown_group = groups.len();
     let mut predefined: Vec<(GroupName, usize)> = Vec::new();
-    for (index, name) in groups.iter().enumerate().flat_map(|(index, names)| names.iter().map(move |name| (index, name))) {
+    for (index, name) in groups
+        .iter()
+        .enumerate()
+        .flat_map(|(index, names)| names.iter().map(move |name| (index, name)))
+    {
         match GroupName::parse(name) {
             _ if name == b"unknown" => unknown_group = index,
             Some(group) => predefined.push((group, index)),
@@ -284,7 +382,9 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         .into_iter()
         .filter_map(|definition| {
             Some(CustomGroup {
-                group: groups.iter().rposition(|names| names.contains(&definition.name))?,
+                group: groups
+                    .iter()
+                    .rposition(|names| names.contains(&definition.name))?,
                 element_name_pattern: definition.element_name_pattern,
                 selector: definition.selector,
                 modifiers: bits(&definition.modifiers),
@@ -292,8 +392,14 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         })
         .collect();
     let has_catch_all_group_for = |selector: Selector| {
-        predefined.iter().any(|group| group.0.selector == selector && group.0.modifiers.is_empty())
-            || custom_groups.iter().any(|group| group.selector == Some(selector) && group.element_name_pattern.is_empty() && group.modifiers == 0)
+        predefined
+            .iter()
+            .any(|group| group.0.selector == selector && group.0.modifiers.is_empty())
+            || custom_groups.iter().any(|group| {
+                group.selector == Some(selector)
+                    && group.element_name_pattern.is_empty()
+                    && group.modifiers == 0
+            })
     };
 
     Ok(Some(Options {
@@ -314,7 +420,10 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         regroups_side_effect: has_catch_all_group_for(Selector::SideEffect),
         regroups_side_effect_style: has_catch_all_group_for(Selector::SideEffectStyle),
         newline_boundary_overrides,
-        predefined_groups: predefined.into_iter().map(|(group, index)| (group.selector, bits(&group.modifiers), index)).collect(),
+        predefined_groups: predefined
+            .into_iter()
+            .map(|(group, index)| (group.selector, bits(&group.modifiers), index))
+            .collect(),
         custom_groups,
         unknown_group,
     }))

@@ -11,19 +11,20 @@
 //! typescript-estree's for TypeScript. [`Walk`] says what their nodes are in terms of the handles:
 //! only where they start and end, what is in them, and in which order Prettier visits that.
 
-use crate::js::print::binary_like_expression::should_flatten;
-use crate::js::utils::typescript::without_lone_operator;
 use crate::ir::element::{CursorMark, FormatElement};
 use crate::ir::formatter::Formatter;
+use crate::js::print::binary_like_expression::should_flatten;
+use crate::js::utils::typescript::without_lone_operator;
 use crate::prelude::{Format, if_group_breaks};
 use crate::{FormatError, FormatOptions, Scratch};
+use bun_core::strings;
 use bun_lint::ast::{
-    BinOp, Class, EntityName, Enum, EnumMember, ExportSpec, Expr, ExprKind, File, FnBody, Func, Ident, ImportEqualsTarget,
-    ImportSpec, Interface, Jsx, JsxChild, Key, KeyKind, List, Member, MemberKind, Modifier, Module, Param, Pat,
-    PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, TupleElem, TypeKind, TypeNode, TypeParam, VarDecl,
+    BinOp, Class, EntityName, Enum, EnumMember, ExportSpec, Expr, ExprKind, File, FnBody, Func,
+    Ident, ImportEqualsTarget, ImportSpec, Interface, Jsx, JsxChild, Key, KeyKind, List, Member,
+    MemberKind, Modifier, Module, Param, Pat, PatElem, PatKind, PatProp, Prop, PropKind, Stmt,
+    StmtKind, TupleElem, TypeKind, TypeNode, TypeParam, VarDecl,
 };
 use bun_lint::span::Span;
-use bun_core::strings;
 use bun_lint::tokens::{skip_trivia, skip_trivia_back};
 use smallvec::SmallVec;
 
@@ -33,7 +34,10 @@ pub enum Region {
     /// A node without children.
     Node(Span),
     /// What is between two nodes. `None`: the start or the end of the text.
-    Between { before: Option<Span>, after: Option<Span> },
+    Between {
+        before: Option<Span>,
+        after: Option<Span>,
+    },
 }
 
 // ───────────────────────────── the tree that Prettier sees ─────────────────────────────
@@ -121,7 +125,10 @@ enum Kind<'a> {
 }
 
 const fn leaf<'a>(span: Span) -> Item<'a> {
-    Item { span, kind: Kind::Leaf }
+    Item {
+        span,
+        kind: Kind::Leaf,
+    }
 }
 
 const fn unmarked_leaf<'a>(span: Span) -> Item<'a> {
@@ -144,7 +151,10 @@ impl<'a> Walk<'a> {
 
     /// Prettier's `__contentEnd`: `end`, or if a `;` is before it, where what is before that ends.
     fn content_end(&self, end: u32) -> u32 {
-        match end.checked_sub(1).and_then(|at| self.text().get(at as usize)) {
+        match end
+            .checked_sub(1)
+            .and_then(|at| self.text().get(at as usize))
+        {
             Some(b';') => skip_trivia_back(self.text(), end - 1),
             _ => end,
         }
@@ -176,7 +186,9 @@ impl<'a> Walk<'a> {
                 | StmtKind::Break(_)
                 | StmtKind::Continue(_)
                 | StmtKind::Debugger => return self.content_end(span.end),
-                StmtKind::Var(declarations) => return declarations.last().map_or(span.end, |last| last.span().end),
+                StmtKind::Var(declarations) => {
+                    return declarations.last().map_or(span.end, |last| last.span().end);
+                }
                 _ => return span.end,
             };
         }
@@ -185,7 +197,10 @@ impl<'a> Walk<'a> {
     fn statement(&self, statement: Stmt<'a>) -> Item<'a> {
         let is_export = statement.is_exported();
         Item {
-            span: Span::new(statement.span().start, self.statement_end(statement, is_export)),
+            span: Span::new(
+                statement.span().start,
+                self.statement_end(statement, is_export),
+            ),
             kind: Kind::Stmt(statement),
         }
     }
@@ -238,7 +253,9 @@ impl<'a> Walk<'a> {
     /// Prettier's `isTypeCastComment` holds.
     fn is_after_type_cast_comment(&self, at: u32) -> bool {
         let text = self.text();
-        let trivia = text.get(skip_trivia_back(text, at) as usize..at as usize).unwrap_or_default();
+        let trivia = text
+            .get(skip_trivia_back(text, at) as usize..at as usize)
+            .unwrap_or_default();
         let mut rest = trivia;
         let mut last_comment = None;
         while let Some((_, tail)) = rest.split_first() {
@@ -247,7 +264,12 @@ impl<'a> Walk<'a> {
                     Some(end) => (after.get(..end), after.get(end + 2..).unwrap_or_default()),
                     None => (None, &[][..]),
                 },
-                [b'/', b'/', after @ ..] => (None, after.get(strings::index_of_any(after, b"\r\n").unwrap_or(after.len())..).unwrap_or_default()),
+                [b'/', b'/', after @ ..] => (
+                    None,
+                    after
+                        .get(strings::index_of_any(after, b"\r\n").unwrap_or(after.len())..)
+                        .unwrap_or_default(),
+                ),
                 _ => (last_comment, tail),
             };
         }
@@ -258,7 +280,10 @@ impl<'a> Walk<'a> {
             let mut rest = content;
             while let Some(found) = strings::index_of(rest, tag) {
                 rest = rest.get(found + tag.len()..).unwrap_or_default();
-                if !rest.first().is_some_and(|&byte| byte.is_ascii_alphanumeric() || byte == b'_') {
+                if !rest
+                    .first()
+                    .is_some_and(|&byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                {
                     return true;
                 }
             }
@@ -273,7 +298,8 @@ impl<'a> Walk<'a> {
         let ExprKind::Binary { op, right, .. } = e.kind() else {
             return operands;
         };
-        let is_same = |it: Expr<'a>| matches!(it.kind(), ExprKind::Binary { op: other, .. } if other == op);
+        let is_same =
+            |it: Expr<'a>| matches!(it.kind(), ExprKind::Binary { op: other, .. } if other == op);
         if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || !is_same(right) {
             return operands;
         }
@@ -281,7 +307,11 @@ impl<'a> Walk<'a> {
         stack.push(right);
         while let Some(at) = stack.pop() {
             match at.kind() {
-                ExprKind::Binary { op: other, left, right } if other == op => stack.extend([right, left]),
+                ExprKind::Binary {
+                    op: other,
+                    left,
+                    right,
+                } if other == op => stack.extend([right, left]),
                 _ => operands.push(at),
             }
         }
@@ -290,8 +320,16 @@ impl<'a> Walk<'a> {
 
     /// What is in the `LogicalExpression` of the left side of `e` and the first `count` of
     /// `operands`.
-    fn logical_parts(&self, e: Expr<'a>, operands: &[Expr<'a>], count: usize, out: &mut Vec<Item<'a>>) {
-        let (ExprKind::Binary { op, left, .. }, Some(&last)) = (e.kind(), operands.get(count.wrapping_sub(1))) else {
+    fn logical_parts(
+        &self,
+        e: Expr<'a>,
+        operands: &[Expr<'a>],
+        count: usize,
+        out: &mut Vec<Item<'a>>,
+    ) {
+        let (ExprKind::Binary { op, left, .. }, Some(&last)) =
+            (e.kind(), operands.get(count.wrapping_sub(1)))
+        else {
             return;
         };
         out.push(match operands.get(count.wrapping_sub(2)) {
@@ -308,7 +346,9 @@ impl<'a> Walk<'a> {
     fn left_operand(&self, op: BinOp, left: Expr<'a>) -> Item<'a> {
         let item = self.expr(left);
         match (item.kind, left.kind()) {
-            (Kind::Expr(_), ExprKind::Binary { op: left_op, .. }) if left_op != BinOp::Comma && should_flatten(op, left_op) => {
+            (Kind::Expr(_), ExprKind::Binary { op: left_op, .. })
+                if left_op != BinOp::Comma && should_flatten(op, left_op) =>
+            {
                 Item {
                     span: item.span,
                     kind: Kind::FlattenedOperand(left),
@@ -428,7 +468,10 @@ impl<'a> Walk<'a> {
     /// Prettier's `locStart`: a node starts with its first decorator.
     fn with_decorators(span: Span, modifiers: List<'a, Modifier<'a>>) -> Span {
         let first = modifiers.iter().find(|it| it.decorator().is_some());
-        Span::new(first.map_or(span.start, |it| it.span().start.min(span.start)), span.end)
+        Span::new(
+            first.map_or(span.start, |it| it.span().start.min(span.start)),
+            span.end,
+        )
     }
 
     fn binding(&self, pat: Pat<'a>, ty: Option<TypeNode<'a>>, span: Span) -> Item<'a> {
@@ -522,14 +565,22 @@ impl<'a> Walk<'a> {
 
     fn member_parts(&self, member: Member<'a>, out: &mut Vec<Item<'a>>) {
         self.decorators(member.modifiers(), out);
-        let key = member.key().map(|key| self.key(key)).or_else(|| member.constructor_keyword().map(|it| leaf(it.span())));
+        let key = member
+            .key()
+            .map(|key| self.key(key))
+            .or_else(|| member.constructor_keyword().map(|it| leaf(it.span())));
         match (member.kind(), member.func()) {
             (MemberKind::StaticBlock, Some(func)) => {
                 if let FnBody::Block(statements) = func.body() {
                     out.extend(statements.iter().map(|it| self.statement(it)));
                 }
             }
-            (MemberKind::IndexSignature | MemberKind::CallSignature | MemberKind::ConstructSignature, Some(func)) => {
+            (
+                MemberKind::IndexSignature
+                | MemberKind::CallSignature
+                | MemberKind::ConstructSignature,
+                Some(func),
+            ) => {
                 self.function_parts(func, false, out);
             }
             (_, Some(func)) if member.is_signature() => {
@@ -603,7 +654,10 @@ impl<'a> Walk<'a> {
     }
 
     fn import_attributes(&self, statement: Stmt<'a>, out: &mut Vec<Item<'a>>) {
-        let entries = statement.import_attributes().into_iter().flat_map(|it| it.entries());
+        let entries = statement
+            .import_attributes()
+            .into_iter()
+            .flat_map(|it| it.entries());
         out.extend(entries.map(|it| Item {
             span: it.span(),
             kind: Kind::ImportAttribute(it),
@@ -644,7 +698,10 @@ impl<'a> Walk<'a> {
             }
             ExprKind::Template(template) => {
                 let count = template.quasi_count();
-                out.extend((0..count).map(|i| Self::template_element(template.quasi_span(i), i + 1 == count)));
+                out.extend(
+                    (0..count)
+                        .map(|i| Self::template_element(template.quasi_span(i), i + 1 == count)),
+                );
                 out.extend(template.exprs().iter().map(|it| self.expr(it)));
             }
             ExprKind::TaggedTemplate(call) => {
@@ -652,7 +709,12 @@ impl<'a> Walk<'a> {
                 out.extend(self.type_args(call.type_args()));
                 out.extend(call.template().map(|it| self.expr(it)));
             }
-            ExprKind::Array(elements) => out.extend(elements.iter().filter(|it| !it.is_missing()).map(|it| self.expr(it))),
+            ExprKind::Array(elements) => out.extend(
+                elements
+                    .iter()
+                    .filter(|it| !it.is_missing())
+                    .map(|it| self.expr(it)),
+            ),
             ExprKind::Object(props) => out.extend(props.iter().map(|it| Item {
                 span: it.span(),
                 kind: Kind::Prop(it),
@@ -672,7 +734,9 @@ impl<'a> Walk<'a> {
                 out.extend(self.type_args(call.type_args()));
                 out.extend(call.args().iter().map(|it| self.expr(it)));
             }
-            ExprKind::Unary { operand, .. } | ExprKind::Spread(operand) | ExprKind::Await(operand) => {
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Spread(operand)
+            | ExprKind::Await(operand) => {
                 out.push(self.expr(operand));
             }
             // `const` is a `TSTypeReference` with an `Identifier` in it.
@@ -691,14 +755,22 @@ impl<'a> Walk<'a> {
                 }
                 let operands = e.sequence();
                 match (operands.len(), e.kind()) {
-                    (1, ExprKind::Binary { op, left, right }) => out.extend([self.left_operand(op, left), self.expr(right)]),
+                    (1, ExprKind::Binary { op, left, right }) => {
+                        out.extend([self.left_operand(op, left), self.expr(right)])
+                    }
                     _ => out.extend(operands.iter().map(|&it| self.expr(it))),
                 }
             }
-            ExprKind::Assign { target, value, .. } => out.extend([self.expr(target), self.expr(value)]),
-            ExprKind::Cond { test, yes, no } => out.extend([self.expr(test), self.expr(yes), self.expr(no)]),
+            ExprKind::Assign { target, value, .. } => {
+                out.extend([self.expr(target), self.expr(value)])
+            }
+            ExprKind::Cond { test, yes, no } => {
+                out.extend([self.expr(test), self.expr(yes), self.expr(no)])
+            }
             ExprKind::Yield { value, .. } => out.extend(value.map(|it| self.expr(it))),
-            ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => out.extend([self.expr(expr), self.ty(ty)]),
+            ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
+                out.extend([self.expr(expr), self.ty(ty)])
+            }
             ExprKind::Instantiation { expr, type_args } => {
                 out.push(self.expr(expr));
                 out.extend(self.type_args(type_args));
@@ -730,7 +802,11 @@ impl<'a> Walk<'a> {
                     },
                 }));
             }
-            ExprKind::ImportCall { args } => out.extend(args.iter().filter(|it| !it.is_missing()).map(|it| self.expr(it))),
+            ExprKind::ImportCall { args } => out.extend(
+                args.iter()
+                    .filter(|it| !it.is_missing())
+                    .map(|it| self.expr(it)),
+            ),
         }
     }
 
@@ -739,7 +815,10 @@ impl<'a> Walk<'a> {
         let ExprKind::NonNull(operand) = e.kind() else {
             return;
         };
-        match inner.checked_sub(1).and_then(|at| e.inner_non_null_spans().nth(at)) {
+        match inner
+            .checked_sub(1)
+            .and_then(|at| e.inner_non_null_spans().nth(at))
+        {
             Some(span) => out.push(Item {
                 span,
                 kind: Kind::NonNull(e, inner - 1),
@@ -761,7 +840,10 @@ impl<'a> Walk<'a> {
             StmtKind::Empty | StmtKind::Debugger => {}
             StmtKind::Break(_) | StmtKind::Continue(_) => out.extend(Self::label(statement)),
             // Babel has a `DirectiveLiteral` in a `Directive`, which comes to the same.
-            StmtKind::Expr(e) | StmtKind::Throw(e) | StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
+            StmtKind::Expr(e)
+            | StmtKind::Throw(e)
+            | StmtKind::ExportDefault(e)
+            | StmtKind::ExportAssign(e) => {
                 out.push(self.expr(e));
             }
             StmtKind::Return(e) => out.extend(e.map(|it| self.expr(it))),
@@ -819,15 +901,22 @@ impl<'a> Walk<'a> {
                 out.extend(update.map(|it| self.expr(it)));
                 out.push(self.statement(body));
             }
-            StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
+            StmtKind::ForIn { left, expr, body }
+            | StmtKind::ForOf {
+                left, expr, body, ..
+            } => {
                 out.extend([self.head(left), self.expr(expr), self.statement(body)]);
             }
             // The order of Prettier's visitor keys.
             StmtKind::While { test, body } | StmtKind::DoWhile { body, test } => {
                 out.extend([self.statement(body), self.expr(test)]);
             }
-            StmtKind::Block(statements) => out.extend(statements.iter().map(|it| self.statement(it))),
-            StmtKind::With { object, body } => out.extend([self.expr(object), self.statement(body)]),
+            StmtKind::Block(statements) => {
+                out.extend(statements.iter().map(|it| self.statement(it)))
+            }
+            StmtKind::With { object, body } => {
+                out.extend([self.expr(object), self.statement(body)])
+            }
             StmtKind::Switch { expr, cases } => {
                 out.push(self.expr(expr));
                 out.extend(cases.iter().map(|it| Item {
@@ -835,7 +924,9 @@ impl<'a> Walk<'a> {
                     kind: Kind::Case(it),
                 }));
             }
-            StmtKind::Try { block, finalizer, .. } => {
+            StmtKind::Try {
+                block, finalizer, ..
+            } => {
                 out.push(self.statement(block));
                 out.extend(statement.catch_clause_span().map(|span| Item {
                     span,
@@ -868,7 +959,9 @@ impl<'a> Walk<'a> {
                 self.import_attributes(statement, out);
             }
             // In Babel's tree, `* as a` is an `ExportNamespaceSpecifier`.
-            StmtKind::ExportStar { alias: Some(alias), .. } if self.is_babel => {
+            StmtKind::ExportStar {
+                alias: Some(alias), ..
+            } if self.is_babel => {
                 let star = skip_trivia(self.text(), statement.span().start + "export".len() as u32);
                 out.push(Item {
                     span: Span::new(star, alias.span().end),
@@ -884,8 +977,14 @@ impl<'a> Walk<'a> {
             }
             StmtKind::ImportEquals(import) => {
                 out.push(leaf(import.name().span()));
-                match (import.target(), import.require_span(), statement.module_specifier_span()) {
-                    (ImportEqualsTarget::Entity(name), ..) => out.extend(self.entity_name(name, name.len())),
+                match (
+                    import.target(),
+                    import.require_span(),
+                    statement.module_specifier_span(),
+                ) {
+                    (ImportEqualsTarget::Entity(name), ..) => {
+                        out.extend(self.entity_name(name, name.len()))
+                    }
                     (_, Some(span), Some(specifier)) => out.push(Item {
                         span,
                         kind: Kind::LeafIn(specifier),
@@ -893,7 +992,9 @@ impl<'a> Walk<'a> {
                     _ => {}
                 }
             }
-            StmtKind::ExportAsNamespace(_) => out.extend(statement.namespace_export_name().map(|it| leaf(it.span()))),
+            StmtKind::ExportAsNamespace(_) => {
+                out.extend(statement.namespace_export_name().map(|it| leaf(it.span())))
+            }
         }
     }
 
@@ -907,13 +1008,18 @@ impl<'a> Walk<'a> {
                 kind: Kind::LeafIn(span.shrink(1, 1)),
             }),
             TypeKind::StringLit(_) | TypeKind::BoolLit(_) => out.push(leaf(span)),
-            TypeKind::NumberLit(_) | TypeKind::BigIntLit { .. } => out.push(match ty.text().starts_with(b"-") {
-                true => Item {
-                    span,
-                    kind: Kind::LeafIn(Span::new(skip_trivia(self.text(), span.start + 1), span.end)),
-                },
-                false => leaf(span),
-            }),
+            TypeKind::NumberLit(_) | TypeKind::BigIntLit { .. } => {
+                out.push(match ty.text().starts_with(b"-") {
+                    true => Item {
+                        span,
+                        kind: Kind::LeafIn(Span::new(
+                            skip_trivia(self.text(), span.start + 1),
+                            span.end,
+                        )),
+                    },
+                    false => leaf(span),
+                })
+            }
             TypeKind::Heritage { expr, args } | TypeKind::Typeof { expr, args } => {
                 out.push(self.expr(expr));
                 out.extend(self.type_args(args));
@@ -922,7 +1028,9 @@ impl<'a> Walk<'a> {
                 out.extend(self.entity_name(name, name.len()));
                 out.extend(self.type_args(args));
             }
-            TypeKind::Import { is_typeof: true, .. } => out.extend(ty.import_span().map(|span| Item {
+            TypeKind::Import {
+                is_typeof: true, ..
+            } => out.extend(ty.import_span().map(|span| Item {
                 span,
                 kind: Kind::ImportType(ty),
             })),
@@ -930,16 +1038,27 @@ impl<'a> Walk<'a> {
             TypeKind::Template(types) => {
                 if let Some(template) = ty.as_template() {
                     let count = template.quasi_count();
-                    out.extend((0..count).map(|i| Self::template_element(template.quasi_span(i), i + 1 == count)));
+                    out.extend(
+                        (0..count).map(|i| {
+                            Self::template_element(template.quasi_span(i), i + 1 == count)
+                        }),
+                    );
                 }
                 out.extend(types.iter().map(|it| self.ty(it)));
             }
-            TypeKind::Union(types) | TypeKind::Intersection(types) => out.extend(types.iter().map(|it| self.ty(it))),
-            TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) | TypeKind::Unique(operand) => {
+            TypeKind::Union(types) | TypeKind::Intersection(types) => {
+                out.extend(types.iter().map(|it| self.ty(it)))
+            }
+            TypeKind::Array(operand)
+            | TypeKind::Keyof(operand)
+            | TypeKind::Readonly(operand)
+            | TypeKind::Unique(operand) => {
                 out.push(self.ty(operand));
             }
             TypeKind::UniqueSymbol => out.extend(ty.unique_symbol_keyword_span().map(leaf)),
-            TypeKind::Tuple(elements) => out.extend(elements.iter().map(|it| self.tuple_element(it))),
+            TypeKind::Tuple(elements) => {
+                out.extend(elements.iter().map(|it| self.tuple_element(it)))
+            }
             TypeKind::Fn(func) => self.function_parts(func, false, out),
             TypeKind::Object(members) => out.extend(members.iter().map(|it| self.member(it))),
             TypeKind::Cond {
@@ -996,14 +1115,18 @@ impl<'a> Walk<'a> {
             Kind::Leaf | Kind::UnmarkedLeaf | Kind::JsxText(_) | Kind::Name => {}
             Kind::LeafIn(span) => out.push(leaf(span)),
             // Of a name that stands for two, the first is printed.
-            Kind::Leaves(first, second) if first == second => out.extend([leaf(first), unmarked_leaf(second)]),
+            Kind::Leaves(first, second) if first == second => {
+                out.extend([leaf(first), unmarked_leaf(second)])
+            }
             Kind::Leaves(first, second) => out.extend([leaf(first), leaf(second)]),
             Kind::Program => out.extend(self.file.body().iter().map(|it| self.statement(it))),
             Kind::Expr(e) if !self.is_babel && e.is_chain_root() => out.push(Item {
                 span: item.span,
                 kind: Kind::ChainElement(e),
             }),
-            Kind::Expr(e) | Kind::ChainElement(e) | Kind::FlattenedOperand(e) => self.expression_parts(e, out),
+            Kind::Expr(e) | Kind::ChainElement(e) | Kind::FlattenedOperand(e) => {
+                self.expression_parts(e, out)
+            }
             Kind::Parenthesized(e, depth) => out.push(match self.kept_parentheses(e).get(depth) {
                 Some(&span) => Item {
                     span,
@@ -1014,10 +1137,15 @@ impl<'a> Walk<'a> {
                     kind: Kind::Expr(e),
                 },
             }),
-            Kind::Logical(e, count) => self.logical_parts(e, &Self::operands_in_right_side(e), count, out),
+            Kind::Logical(e, count) => {
+                self.logical_parts(e, &Self::operands_in_right_side(e), count, out)
+            }
             Kind::NonNull(e, inner) => self.non_null_parts(e, inner, out),
             Kind::Stmt(statement) if statement.is_exported() => {
-                let span = Span::new(statement.span_without_export().start, self.statement_end(statement, false));
+                let span = Span::new(
+                    statement.span_without_export().start,
+                    self.statement_end(statement, false),
+                );
                 out.push(Item {
                     // The decorators of a class can be before the `export`.
                     span: match statement.kind() {
@@ -1027,8 +1155,12 @@ impl<'a> Walk<'a> {
                     kind: Kind::Declaration(statement),
                 });
             }
-            Kind::Stmt(statement) | Kind::Declaration(statement) => self.declaration_parts(statement, out),
-            Kind::Statements(statements) => out.extend(statements.iter().map(|it| self.statement(it))),
+            Kind::Stmt(statement) | Kind::Declaration(statement) => {
+                self.declaration_parts(statement, out)
+            }
+            Kind::Statements(statements) => {
+                out.extend(statements.iter().map(|it| self.statement(it)))
+            }
             Kind::CatchClause(statement) => {
                 if let StmtKind::Try { param, handler, .. } = statement.kind() {
                     out.extend(param.map(|it| self.binding(it.pat(), it.ty(), it.binding_span())));
@@ -1040,7 +1172,11 @@ impl<'a> Walk<'a> {
                 out.extend(case.body().iter().map(|it| self.statement(it)));
             }
             Kind::VarDecl(declaration) => {
-                out.push(self.binding(declaration.pat(), declaration.ty(), declaration.binding_span()));
+                out.push(self.binding(
+                    declaration.pat(),
+                    declaration.ty(),
+                    declaration.binding_span(),
+                ));
                 out.extend(declaration.init().map(|it| self.expr(it)));
             }
             Kind::Func(func, has_name) => self.function_parts(func, has_name, out),
@@ -1059,7 +1195,10 @@ impl<'a> Walk<'a> {
             Kind::ParameterPattern(param) => {
                 match param.default() {
                     Some(default) => {
-                        out.extend([self.binding(param.pat(), param.ty(), param.binding_span()), self.expr(default)]);
+                        out.extend([
+                            self.binding(param.pat(), param.ty(), param.binding_span()),
+                            self.expr(default),
+                        ]);
                     }
                     None => {
                         out.push(self.pattern(param.pat()));
@@ -1085,14 +1224,20 @@ impl<'a> Walk<'a> {
                             kind: Kind::PatProp(it),
                         }));
                     }
-                    PatKind::Array(elements) => out.extend(elements.iter().filter_map(|it| self.pattern_element(it))),
+                    PatKind::Array(elements) => {
+                        out.extend(elements.iter().filter_map(|it| self.pattern_element(it)))
+                    }
                 }
                 out.extend(ty.map(|ty| self.type_annotation(ty)));
-                if let Some(modifiers) = modifiers.filter(|_| !matches!(pat.kind(), PatKind::Object(_))) {
+                if let Some(modifiers) =
+                    modifiers.filter(|_| !matches!(pat.kind(), PatKind::Object(_)))
+                {
                     self.decorators(modifiers, out);
                 }
             }
-            Kind::PatternWithDefault(pat, default) => out.extend([self.pattern(pat), self.expr(default)]),
+            Kind::PatternWithDefault(pat, default) => {
+                out.extend([self.pattern(pat), self.expr(default)])
+            }
             Kind::RestPattern(pat) => out.push(self.pattern(pat)),
             Kind::PatProp(prop) if prop.is_rest() => out.push(self.pattern(prop.value())),
             Kind::PatProp(prop) => {
@@ -1119,10 +1264,15 @@ impl<'a> Walk<'a> {
             }
             Kind::ImportType(ty) => self.import_type_parts(ty, out),
             // `...a: T` is a `TSNamedTupleMember` in a `TSRestType`.
-            Kind::TupleElem(element) if element.is_rest() && element.name().is_some() => out.push(Item {
-                span: Span::new(element.name().map_or(item.span.start, |it| it.span().start), item.span.end),
-                kind: Kind::NamedTupleMember(element),
-            }),
+            Kind::TupleElem(element) if element.is_rest() && element.name().is_some() => {
+                out.push(Item {
+                    span: Span::new(
+                        element.name().map_or(item.span.start, |it| it.span().start),
+                        item.span.end,
+                    ),
+                    kind: Kind::NamedTupleMember(element),
+                })
+            }
             Kind::TupleElem(element) | Kind::NamedTupleMember(element) => {
                 out.extend(element.name().map(|it| leaf(it.span())));
                 out.push(self.ty(element.ty()));
@@ -1135,11 +1285,15 @@ impl<'a> Walk<'a> {
                 out.extend(self.module_name(module, count - 1));
                 out.extend(Self::nested_module(module, count - 1).map(|it| leaf(it.name_span())));
             }
-            Kind::InterfaceBody(interface) => out.extend(interface.members().iter().map(|it| self.member(it))),
-            Kind::EnumBody(declaration) => out.extend(declaration.members().iter().map(|it| Item {
-                span: it.span(),
-                kind: Kind::EnumMember(it),
-            })),
+            Kind::InterfaceBody(interface) => {
+                out.extend(interface.members().iter().map(|it| self.member(it)))
+            }
+            Kind::EnumBody(declaration) => {
+                out.extend(declaration.members().iter().map(|it| Item {
+                    span: it.span(),
+                    kind: Kind::EnumMember(it),
+                }))
+            }
             Kind::EnumMember(member) => {
                 out.extend(member.key().map(|key| self.key(key)));
                 out.extend(member.init().map(|it| self.expr(it)));
@@ -1226,7 +1380,10 @@ fn locate_items<'a>(file: &'a File<'a>, offset: u32) -> (Option<Item<'a>>, Optio
             if !has_before && span.end <= offset && before.is_none_or(|it| span.end > it.span.end) {
                 before = Some(child);
             }
-            if !has_after && span.start >= offset && after.is_none_or(|it| span.start < it.span.start) {
+            if !has_after
+                && span.start >= offset
+                && after.is_none_or(|it| span.start < it.span.start)
+            {
                 after = Some(child);
             }
         }
@@ -1291,12 +1448,19 @@ impl CursorRegion {
         ends_with_children_of: u32::MAX,
     };
 
-    fn new<'a>(offset: u32, (first, second, is_node): (Option<Item<'a>>, Option<Item<'a>>, bool)) -> CursorRegion {
+    fn new<'a>(
+        offset: u32,
+        (first, second, is_node): (Option<Item<'a>>, Option<Item<'a>>, bool),
+    ) -> CursorRegion {
         let marked = |item: Option<Item<'a>>| match item {
             None
             | Some(Item {
                 // The left side of a rebalanced expression has its operator.
-                kind: Kind::UnmarkedLeaf | Kind::JsxText(_) | Kind::FlattenedOperand(_) | Kind::Logical(..),
+                kind:
+                    Kind::UnmarkedLeaf
+                    | Kind::JsxText(_)
+                    | Kind::FlattenedOperand(_)
+                    | Kind::Logical(..),
                 ..
             }) => Extent::NOWHERE,
             Some(Item { span, kind }) => Extent {
@@ -1317,10 +1481,20 @@ impl CursorRegion {
         CursorRegion {
             extent: Span::new(
                 first.map_or(offset, |it| it.span.start.min(offset)),
-                second.or(first).map_or(offset, |it| it.span.end.max(offset)),
+                second
+                    .or(first)
+                    .map_or(offset, |it| it.span.end.max(offset)),
             ),
-            node: if is_node { marked(first) } else { Extent::NOWHERE },
-            before: if is_node { Extent::NOWHERE } else { marked(first) },
+            node: if is_node {
+                marked(first)
+            } else {
+                Extent::NOWHERE
+            },
+            before: if is_node {
+                Extent::NOWHERE
+            } else {
+                marked(first)
+            },
             after: marked(second),
             starts_with_children_of: element_of(first),
             // Prettier looks at the node after the cursor only if the one before it is no text.
@@ -1365,7 +1539,11 @@ impl CursorRegion {
 /// Calls `write`, which writes the node of ESTree at `span`. For a node that is not written by the
 /// `impl Format` of a handle: the body of an interface, the text of a template.
 #[inline]
-pub(crate) fn around_node<'a>(span: Span, f: &mut Formatter<'a>, write: impl FnOnce(&mut Formatter<'a>)) {
+pub(crate) fn around_node<'a>(
+    span: Span,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
     around_node_at(|| span, f, write);
 }
 
@@ -1402,7 +1580,9 @@ pub(crate) fn around_jsx_children<'a>(
     }
     let cursor = f.context().cursor;
     let mark = |mark: CursorMark, f: &mut Formatter<'a>| {
-        let mark = crate::prelude::format_with(move |f: &mut Formatter<'a>| f.write_element(FormatElement::Cursor(mark)));
+        let mark = crate::prelude::format_with(move |f: &mut Formatter<'a>| {
+            f.write_element(FormatElement::Cursor(mark))
+        });
         match in_group {
             true => if_group_breaks(&mark).fmt(f),
             false => mark.fmt(f),
@@ -1519,8 +1699,15 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
     let extract_common = |path: &mut Path, diagonal: i64| -> i64 {
         let start = (path.old_pos + 1) as usize;
         let new_start = (path.old_pos - diagonal + 1) as usize;
-        let (old_rest, new_rest) = (old.get(start..).unwrap_or_default(), new.get(new_start..).unwrap_or_default());
-        let count = old_rest.iter().zip(new_rest).take_while(|(a, b)| a == b).count() as i64;
+        let (old_rest, new_rest) = (
+            old.get(start..).unwrap_or_default(),
+            new.get(new_start..).unwrap_or_default(),
+        );
+        let count = old_rest
+            .iter()
+            .zip(new_rest)
+            .take_while(|(a, b)| a == b)
+            .count() as i64;
         path.old_pos += count;
         path.old_pos - diagonal
     };
@@ -1585,7 +1772,12 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
 /// many characters that are not blanks as before.
 fn bytes_before_cursor_by_count(old: &[u8], cursor: usize, new: &[u8]) -> usize {
     let is_blank = |byte: &&u8| byte.is_ascii_whitespace();
-    let mut count = old.get(..cursor).unwrap_or(old).iter().filter(|byte| !is_blank(byte)).count();
+    let mut count = old
+        .get(..cursor)
+        .unwrap_or(old)
+        .iter()
+        .filter(|byte| !is_blank(byte))
+        .count();
     for (at, byte) in new.iter().enumerate() {
         if count == 0 {
             return at;
@@ -1616,15 +1808,19 @@ fn resolve(
     formatted: &[u8],
     marks: Option<(u32, u32)>,
 ) -> usize {
-    let whole = (Span::new(0, source.len() as u32), Span::new(0, formatted.len() as u32));
+    let whole = (
+        Span::new(0, source.len() as u32),
+        Span::new(0, formatted.len() as u32),
+    );
     let (old_span, new_span) = match marks {
         // An empty text counts as none.
         Some((start, end)) if start < end && end as usize <= formatted.len() => {
             let old_span = match region {
                 Region::Node(span) => span,
-                Region::Between { before, after } => {
-                    Span::new(before.map_or(0, |it| it.end), after.map_or(source.len() as u32, |it| it.start))
-                }
+                Region::Between { before, after } => Span::new(
+                    before.map_or(0, |it| it.end),
+                    after.map_or(source.len() as u32, |it| it.start),
+                ),
             };
             (old_span, Span::new(start, end))
         }
@@ -1632,18 +1828,30 @@ fn resolve(
     };
     // Prettier does not print the name of a property as a node if it adds or removes its quotes, so
     // that it does not learn where it ends up.
-    let is_quote = |text: &[u8], at: Option<u32>| matches!(at.and_then(|at| text.get(at as usize)), Some(b'"' | b'\''));
-    let has_other_quotes = |old: Option<u32>, new: Option<u32>| is_quote(source, old) != is_quote(formatted, new);
+    let is_quote = |text: &[u8], at: Option<u32>| {
+        matches!(at.and_then(|at| text.get(at as usize)), Some(b'"' | b'\''))
+    };
+    let has_other_quotes =
+        |old: Option<u32>, new: Option<u32>| is_quote(source, old) != is_quote(formatted, new);
     let is_name_with_other_quotes = match region {
         Region::Node(_) => names.0 && has_other_quotes(Some(old_span.start), Some(new_span.start)),
         Region::Between { .. } => {
-            (names.0 && has_other_quotes(old_span.start.checked_sub(1), new_span.start.checked_sub(1)))
+            (names.0
+                && has_other_quotes(old_span.start.checked_sub(1), new_span.start.checked_sub(1)))
                 || (names.1 && has_other_quotes(Some(old_span.end), Some(new_span.end)))
         }
     };
-    let (old_span, new_span) = if is_name_with_other_quotes { whole } else { (old_span, new_span) };
-    let old_text = source.get(old_span.start as usize..old_span.end as usize).unwrap_or_default();
-    let new_text = formatted.get(new_span.start as usize..new_span.end as usize).unwrap_or_default();
+    let (old_span, new_span) = if is_name_with_other_quotes {
+        whole
+    } else {
+        (old_span, new_span)
+    };
+    let old_text = source
+        .get(old_span.start as usize..old_span.end as usize)
+        .unwrap_or_default();
+    let new_text = formatted
+        .get(new_span.start as usize..new_span.end as usize)
+        .unwrap_or_default();
     let new_start = count_units(formatted.get(..new_span.start as usize).unwrap_or_default());
     let cursor = (offset.bytes.saturating_sub(old_span.start) as usize).min(old_text.len());
     let (before_cursor, after_cursor) = old_text.split_at(cursor);
@@ -1672,7 +1880,9 @@ fn resolve(
 /// How many UTF-16 code units `text` is.
 fn count_units(text: &[u8]) -> usize {
     // Every byte that starts a character is one unit, and one that starts four bytes is two.
-    text.iter().map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0)).sum()
+    text.iter()
+        .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
+        .sum()
 }
 
 /// `options.cursor_offset`, which counts UTF-16 code units, as an offset in `source`. Prettier's
@@ -1724,10 +1934,15 @@ pub(crate) fn format_with<'a>(
     let source = file.text();
     let offset = offset_in(source, options).filter(|_| !source.trim_ascii().is_empty());
     let items = offset.map(|offset| locate_items(file, offset.bytes));
-    let cursor = offset.zip(items).map_or(CursorRegion::NONE, |(offset, items)| CursorRegion::new(offset.bytes, items));
+    let cursor = offset
+        .zip(items)
+        .map_or(CursorRegion::NONE, |(offset, items)| {
+            CursorRegion::new(offset.bytes, items)
+        });
 
     let start = out.len();
-    let [mut first, mut second] = crate::ir::run::format_with_marks(file, options, cursor, scratch, out, write)?;
+    let [mut first, mut second] =
+        crate::ir::run::format_with_marks(file, options, cursor, scratch, out, write)?;
     // Without a node on one side, the region goes to that end of the document.
     match items {
         Some((None, Some(_), _)) => first = Some(0),
@@ -1749,9 +1964,26 @@ pub(crate) fn format_with<'a>(
         return Ok(None);
     };
     let formatted = out.get(start..).unwrap_or_default();
-    let is_name = |item: Option<Item<'a>>| matches!(item, Some(Item { kind: Kind::Name, .. }));
-    let names = items.map_or((false, false), |(first, second, _)| (is_name(first), is_name(second)));
-    Ok(Some(resolve(source, offset, locate(file, offset.bytes), names, formatted, first.zip(second)) as u32))
+    let is_name = |item: Option<Item<'a>>| {
+        matches!(
+            item,
+            Some(Item {
+                kind: Kind::Name,
+                ..
+            })
+        )
+    };
+    let names = items.map_or((false, false), |(first, second, _)| {
+        (is_name(first), is_name(second))
+    });
+    Ok(Some(resolve(
+        source,
+        offset,
+        locate(file, offset.bytes),
+        names,
+        formatted,
+        first.zip(second),
+    ) as u32))
 }
 
 /// `options.cursor_offset` as an offset in `source`, for a language whose tree is looked at elsewhere.
@@ -1761,17 +1993,29 @@ pub(crate) fn cursor_offset_in_bytes(source: &[u8], options: &FormatOptions) -> 
 
 /// Where the cursor, which is at `offset` in `source`, is in `formatted`. `marks`: where the start and the end of `region`
 /// are in `formatted`, if the printer came by both.
-pub(crate) fn cursor_in_region(source: &[u8], offset: u32, region: Region, formatted: &[u8], marks: Option<(u32, u32)>) -> u32 {
+pub(crate) fn cursor_in_region(
+    source: &[u8],
+    offset: u32,
+    region: Region,
+    formatted: &[u8],
+    marks: Option<(u32, u32)>,
+) -> u32 {
     // HTML has a text end before the blanks at its end once it has been printed. Prettier does not ask whether the
     // cursor is still in a node that has been printed as it was.
     if let (Region::Node(span), Some((start, end))) = (region, marks)
         && offset > span.end
         && start < end
-        && let (Some(old), Some(new)) = (source.get(span.start as usize..span.end as usize), formatted.get(start as usize..end as usize))
+        && let (Some(old), Some(new)) = (
+            source.get(span.start as usize..span.end as usize),
+            formatted.get(start as usize..end as usize),
+        )
         && old == new
     {
-        let behind = source.get(span.start as usize..offset as usize).unwrap_or_default();
-        return (count_units(formatted.get(..start as usize).unwrap_or_default()) + count_units(behind)) as u32;
+        let behind = source
+            .get(span.start as usize..offset as usize)
+            .unwrap_or_default();
+        return (count_units(formatted.get(..start as usize).unwrap_or_default())
+            + count_units(behind)) as u32;
     }
     let offset = Offset {
         bytes: offset,
@@ -1783,7 +2027,11 @@ pub(crate) fn cursor_in_region(source: &[u8], offset: u32, region: Region, forma
 /// Where the cursor, which is at `options.cursor_offset` in `source`, is in `formatted`, which is what
 /// has become of all of `source`: what Prettier says if it does not learn where the part around the
 /// cursor ends up. For the languages whose trees are not looked at here.
-pub fn cursor_in_formatted_text(source: &[u8], options: &FormatOptions, formatted: &[u8]) -> Option<u32> {
+pub fn cursor_in_formatted_text(
+    source: &[u8],
+    options: &FormatOptions,
+    formatted: &[u8],
+) -> Option<u32> {
     let offset = offset_in(source, options).filter(|_| !source.trim_ascii().is_empty())?;
     let everything = Region::Between {
         before: None,

@@ -104,7 +104,11 @@ pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
                 continue;
             }
             let inner = std::iter::successors(Some(root), |it| match it.kind() {
-                ExprKind::Binary { op: BinOp::Comma, left, .. } if is_comma(left) && !left.is_parenthesized() => Some(left),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    ..
+                } if is_comma(left) && !left.is_parenthesized() => Some(left),
                 _ => None,
             });
             roots.extend(inner.skip(NEAR).map(|it| (it.id(), id)));
@@ -585,7 +589,10 @@ fn type_name_of_type(ty: TypeNode<'_>) -> &'static str {
         TypeKind::Infer(_) => "TSInferType",
         TypeKind::Mapped(_) => "TSMappedType",
         TypeKind::IndexedAccess { .. } => "TSIndexedAccessType",
-        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => "TSTypeOperator",
+        TypeKind::Keyof(_)
+        | TypeKind::Readonly(_)
+        | TypeKind::UniqueSymbol
+        | TypeKind::Unique(_) => "TSTypeOperator",
         TypeKind::Typeof { .. }
         | TypeKind::Import {
             is_typeof: true, ..

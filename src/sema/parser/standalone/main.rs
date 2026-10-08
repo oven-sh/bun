@@ -131,7 +131,10 @@ fn compare_one(
         }
         Err(why) => {
             let first = reference.diagnostics.first();
-            Outcome::Refused(why, first.map(|it| format!("{:?}", (it.kind, it.code, it.start))))
+            Outcome::Refused(
+                why,
+                first.map(|it| format!("{:?}", (it.kind, it.code, it.start))),
+            )
         }
         Ok(parsed) => {
             let outcome = if is_refused_by_reference {
@@ -159,10 +162,16 @@ fn compare_one(
 
 /// Parses `text` with the atoms of an interner that has seen nothing else, and with atoms of its
 /// own. Both number a text where it first occurs, so the results have to be the same.
-fn difference_with_own_atoms(text: &[u8], options: Options, scratch: &mut Scratch) -> Option<String> {
+fn difference_with_own_atoms(
+    text: &[u8],
+    options: Options,
+    scratch: &mut Scratch,
+) -> Option<String> {
     let session = Session::new();
     let interner = Interner::new_in(&session);
-    let shared = bun_sema_parser::parse(text, options, &interner, scratch).ok()?.file;
+    let shared = bun_sema_parser::parse(text, options, &interner, scratch)
+        .ok()?
+        .file;
     let Ok(own) = bun_sema_parser::parse_with_own_atoms(text, options, scratch) else {
         return Some("refused with its own atoms".to_owned());
     };
@@ -211,7 +220,10 @@ impl Totals {
             Outcome::Identical(other_order) => {
                 self.identical += 1;
                 if let Some(list) = other_order {
-                    self.other_order.entry(list).or_default().push(name.to_owned());
+                    self.other_order
+                        .entry(list)
+                        .or_default()
+                        .push(name.to_owned());
                 }
             }
             Outcome::BothRefuse(it, first) => self.both_refuse.push(format!(
@@ -228,7 +240,9 @@ impl Totals {
                     it.at,
                     it.by.file(),
                     it.by.line(),
-                    first.map_or_else(String::new, |it| format!(" the reference reports Some({it})"))
+                    first.map_or_else(String::new, |it| format!(
+                        " the reference reports Some({it})"
+                    ))
                 )),
             Outcome::Accepted(what) => self.accepted.push((name.to_owned(), what)),
             Outcome::Different(what) => self.different.push((name.to_owned(), what)),
@@ -246,7 +260,10 @@ impl Totals {
         }
         for (why, names) in &mut self.refused {
             names.sort();
-            for name in names.iter().take(if list { usize::MAX } else { 3.min(show) }) {
+            for name in names
+                .iter()
+                .take(if list { usize::MAX } else { 3.min(show) })
+            {
                 println!("REFUSED {why} {name}");
             }
         }
@@ -274,7 +291,11 @@ impl Totals {
         }
         for (list, names) in &mut self.other_order {
             names.sort();
-            println!("    identical, but numbered in another order: {list} {} (e.g. {})", names.len(), names[0]);
+            println!(
+                "    identical, but numbered in another order: {list} {} (e.g. {})",
+                names.len(),
+                names[0]
+            );
         }
     }
 }
@@ -349,7 +370,8 @@ fn inputs_of(args: &[String]) -> Vec<Input> {
         let lines = std::fs::read_to_string(arg).expect("the list of texts");
         for line in lines.lines() {
             let field = |name: &str| json_field(line, name);
-            let (Some(id), Some(path), Some(code)) = (field("id"), field("filename"), field("code"))
+            let (Some(id), Some(path), Some(code)) =
+                (field("id"), field("filename"), field("code"))
             else {
                 continue;
             };
@@ -390,7 +412,13 @@ fn compare(args: &[String]) {
             },
         };
         let outcome = SCRATCH.with_borrow_mut(|scratch| {
-            compare_one(input.path.as_bytes(), text, decorators, input.dialect, scratch)
+            compare_one(
+                input.path.as_bytes(),
+                text,
+                decorators,
+                input.dialect,
+                scratch,
+            )
         });
         totals.lock().unwrap().add(&input.id, outcome);
     });
@@ -436,22 +464,32 @@ fn fuzz(args: &[String]) {
     let option = |name: &str| args.iter().find_map(|arg| arg.strip_prefix(name));
     let script = args.iter().any(|arg| arg == "--script");
     let dialect = dialect_of(option("--dialect=").unwrap_or("tsc"), script).expect("a dialect");
-    fuzz::run(&files, how, option("--keep=").unwrap_or("fuzz-out"), &|path, text| {
-        thread_local! {
-            static SCRATCH: std::cell::RefCell<Scratch> = Default::default();
-        }
-        match SCRATCH.with_borrow_mut(|scratch| compare_one(path, text, false, dialect, scratch)) {
-            Outcome::Identical(_) => fuzz::Verdict::Identical,
-            Outcome::BothRefuse(..) | Outcome::Refused(..) => fuzz::Verdict::Refused,
-            Outcome::Accepted(what) => fuzz::Verdict::Wrong(format!("accepted: {what}")),
-            Outcome::Different(what) => fuzz::Verdict::Wrong(format!("different: {what}")),
-        }
-    });
+    fuzz::run(
+        &files,
+        how,
+        option("--keep=").unwrap_or("fuzz-out"),
+        &|path, text| {
+            thread_local! {
+                static SCRATCH: std::cell::RefCell<Scratch> = Default::default();
+            }
+            match SCRATCH
+                .with_borrow_mut(|scratch| compare_one(path, text, false, dialect, scratch))
+            {
+                Outcome::Identical(_) => fuzz::Verdict::Identical,
+                Outcome::BothRefuse(..) | Outcome::Refused(..) => fuzz::Verdict::Refused,
+                Outcome::Accepted(what) => fuzz::Verdict::Wrong(format!("accepted: {what}")),
+                Outcome::Different(what) => fuzz::Verdict::Wrong(format!("different: {what}")),
+            }
+        },
+    );
 }
 
 fn bench(args: &[String]) {
     let files = files_of(args);
-    let texts: Vec<Vec<u8>> = files.iter().filter_map(|it| std::fs::read(it).ok()).collect();
+    let texts: Vec<Vec<u8>> = files
+        .iter()
+        .filter_map(|it| std::fs::read(it).ok())
+        .collect();
     let bytes: usize = texts.iter().map(Vec::len).sum();
     let is_reference = args.iter().any(|arg| arg == "--reference");
     let is_lexer = args.iter().any(|arg| arg == "--lexer");

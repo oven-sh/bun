@@ -277,7 +277,8 @@ impl<'a> Lexer<'a> {
                     self.newline_before = true;
                     pos = next;
                     // How far a line is indented is hard to guess, so it is not asked byte by byte.
-                    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
+                    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>())
+                    {
                         let len = blank_run(u8x16::from_array(*chunk)) as usize;
                         pos += len;
                         if len < 16 {
@@ -478,7 +479,11 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn name(&mut self, start: usize) {
         self.has_escape = false;
-        let Some(chunk) = self.src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
+        let Some(chunk) = self
+            .src
+            .get(start..)
+            .and_then(|rest| rest.first_chunk::<16>())
+        else {
             return self.name_of_any_length(start);
         };
         let len = name_run(u8x16::from_array(*chunk));
@@ -595,7 +600,8 @@ impl<'a> Lexer<'a> {
                 }
                 false => {
                     is_identifier_part(c)
-                        || self.is_ecmascript && bun_core::lexer::is_recent_identifier_part(c as i32)
+                        || self.is_ecmascript
+                            && bun_core::lexer::is_recent_identifier_part(c as i32)
                 }
             };
             if !belongs {
@@ -870,7 +876,11 @@ impl<'a> Lexer<'a> {
                 _ => self.names.other(text, self.atoms),
             };
         }
-        let Some(chunk) = self.src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
+        let Some(chunk) = self
+            .src
+            .get(start..)
+            .and_then(|rest| rest.first_chunk::<16>())
+        else {
             return self.names.atom(text, self.atoms);
         };
         if len == 0 {
@@ -912,7 +922,10 @@ impl<'a> Lexer<'a> {
         let end = self.end_of_invalid_escape(pos);
         let digits = self.src.get(pos + 1..end)?;
         let (code, c) = match digits.first()? {
-            b'0'..=b'7' => (1487, u32::from_str_radix(core::str::from_utf8(digits).ok()?, 8).ok()?),
+            b'0'..=b'7' => (
+                1487,
+                u32::from_str_radix(core::str::from_utf8(digits).ok()?, 8).ok()?,
+            ),
             &c @ (b'8' | b'9') => (1488, u32::from(c)),
             _ => return None,
         };
@@ -1078,7 +1091,11 @@ impl<'a> Lexer<'a> {
                 // A line break is a line feed, however it is written.
                 Some(b'\r') => {
                     text.push(b'\n');
-                    pos += if src.get(pos + 1) == Some(&b'\n') { 2 } else { 1 };
+                    pos += if src.get(pos + 1) == Some(&b'\n') {
+                        2
+                    } else {
+                        1
+                    };
                 }
                 Some(&c) => {
                     is_ascii &= c < 0x80;
@@ -1202,7 +1219,11 @@ impl<'a> Lexer<'a> {
             if !self.flag(1489, start, end) {
                 return None;
             }
-            let text: Vec<u8> = src[start..end].iter().copied().filter(|&c| c != b'_').collect();
+            let text: Vec<u8> = src[start..end]
+                .iter()
+                .copied()
+                .filter(|&c| c != b'_')
+                .collect();
             self.number = core::str::from_utf8(&text).ok()?.parse().ok()?;
         }
         if self.is_at_start_of_name(end) {

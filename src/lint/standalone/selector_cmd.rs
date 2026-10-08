@@ -21,7 +21,9 @@ pub(crate) fn run(args: &[String]) {
         [command, path] if command == "parse" => parse(path),
         [command, path] if command == "match" => match_cases(path),
         [command, path, rest @ ..] if command == "bench" => bench(path, rest),
-        _ => println!("usage: bun-lint selector parse <selectors.json> | match <cases.jsonl> | bench <path> <selector>.."),
+        _ => println!(
+            "usage: bun-lint selector parse <selectors.json> | match <cases.jsonl> | bench <path> <selector>.."
+        ),
     }
 }
 
@@ -31,7 +33,12 @@ fn quoted(text: &[u8]) -> String {
 
 fn parse(path: &str) {
     let json = bun_lint::json::parse(&std::fs::read(path).expect("the selectors")).expect("JSON");
-    let sources: Vec<&[u8]> = json.as_array().unwrap_or_default().iter().filter_map(Json::as_str).collect();
+    let sources: Vec<&[u8]> = json
+        .as_array()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Json::as_str)
+        .collect();
     let mut valid = Vec::new();
     for (i, source) in sources.iter().enumerate() {
         match Selector::parse(source) {
@@ -72,7 +79,11 @@ impl<const COUNTS: bool> selector::OnNode for Probe<COUNTS> {
             if COUNTS {
                 EXAMINED.fetch_add(1, Relaxed);
             }
-            let matching = self.selectors.iter().enumerate().filter(|(_, selector)| selector.1.matches(it));
+            let matching = self
+                .selectors
+                .iter()
+                .enumerate()
+                .filter(|(_, selector)| selector.1.matches(it));
             cx.state.extend(matching.map(|(i, _)| (it, i)));
         });
     }
@@ -83,19 +94,32 @@ impl<const COUNTS: bool> Rule for Probe<COUNTS> {
     type State<'a> = Vec<(EsNode<'a>, usize)>;
 
     fn new(options: &Options) -> Self {
-        let sources = options.all().iter().enumerate().filter_map(|(i, it)| Some((i, it.as_str()?)));
-        let mut selectors: Vec<_> = sources.filter_map(|(i, it)| Some((i, Selector::parse(it).ok()?))).collect();
+        let sources = options
+            .all()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, it)| Some((i, it.as_str()?)));
+        let mut selectors: Vec<_> = sources
+            .filter_map(|(i, it)| Some((i, Selector::parse(it).ok()?)))
+            .collect();
         selectors.sort_by(|a, b| a.1.compare(&b.1));
         Probe { selectors }
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        selector::listen(on, self.selectors.iter().fold(NodeTags::EMPTY, |tags, it| tags | it.1.listens_to()));
+        selector::listen(
+            on,
+            self.selectors
+                .iter()
+                .fold(NodeTags::EMPTY, |tags, it| tags | it.1.listens_to()),
+        );
         on.finish(|rule, cx| {
             let mut found = std::mem::take(&mut cx.state);
             selector::sort_as_called(&mut found, |i| rule.selectors[i].1.is_exit());
             for (node, i) in found {
-                cx.report(node, FOUND).data("selector", rule.selectors[i].0).data("type", node.type_name());
+                cx.report(node, FOUND)
+                    .data("selector", rule.selectors[i].0)
+                    .data("type", node.type_name());
             }
         });
         Vec::new()
@@ -133,7 +157,9 @@ impl Utf16Offsets {
     }
 
     fn of(&self, offset: u32) -> u32 {
-        self.0.as_ref().map_or(offset, |units| units.get(offset as usize).copied().unwrap_or(offset))
+        self.0.as_ref().map_or(offset, |units| {
+            units.get(offset as usize).copied().unwrap_or(offset)
+        })
     }
 }
 
@@ -162,38 +188,60 @@ fn match_cases(path: &str) {
             continue;
         };
         let field = |name: &[u8]| case.get(name).and_then(Json::as_str);
-        let (Some(id), Some(filename), Some(code)) = (field(b"id"), field(b"filename"), field(b"code")) else {
+        let (Some(id), Some(filename), Some(code)) =
+            (field(b"id"), field(b"filename"), field(b"code"))
+        else {
             continue;
         };
-        let selectors = case.get(b"selectors").and_then(Json::as_array).unwrap_or_default();
+        let selectors = case
+            .get(b"selectors")
+            .and_then(Json::as_array)
+            .unwrap_or_default();
         let language = language_of(field(b"parser"), field(b"sourceType"));
-        let invalid = selectors.iter().filter_map(Json::as_str).find_map(|it| Selector::parse(it).err());
+        let invalid = selectors
+            .iter()
+            .filter_map(Json::as_str)
+            .find_map(|it| Selector::parse(it).err());
         let outcome = std::panic::catch_unwind(|| {
             if let Some(error) = invalid {
                 return Err(error.to_string());
             }
             let rule = (PROBE.build)(&Options::new(selectors));
-            crate::with_file(&String::from_utf8_lossy(filename), code, &language, |file| {
-                if file.has_parse_errors() {
-                    return Err("parse".to_owned());
-                }
-                let enabled = Enabled {
-                    rule: &*rule,
-                    severity: Severity::Error,
-                };
-                let offsets = Utf16Offsets::new(code);
-                let found = bun_lint::runner::run(file, &[enabled], false);
-                let found = found.iter().map(|it| {
-                    let message = String::from_utf8_lossy(&it.message);
-                    let (selector, node_type) = message.split_once(' ').unwrap_or_default();
-                    format!("[{selector},\"{node_type}\",{},{}]", offsets.of(it.span.start), offsets.of(it.span.end))
-                });
-                Ok(found.collect::<Vec<_>>().join(","))
-            })
+            crate::with_file(
+                &String::from_utf8_lossy(filename),
+                code,
+                &language,
+                |file| {
+                    if file.has_parse_errors() {
+                        return Err("parse".to_owned());
+                    }
+                    let enabled = Enabled {
+                        rule: &*rule,
+                        severity: Severity::Error,
+                    };
+                    let offsets = Utf16Offsets::new(code);
+                    let found = bun_lint::runner::run(file, &[enabled], false);
+                    let found = found.iter().map(|it| {
+                        let message = String::from_utf8_lossy(&it.message);
+                        let (selector, node_type) = message.split_once(' ').unwrap_or_default();
+                        format!(
+                            "[{selector},\"{node_type}\",{},{}]",
+                            offsets.of(it.span.start),
+                            offsets.of(it.span.end)
+                        )
+                    });
+                    Ok(found.collect::<Vec<_>>().join(","))
+                },
+            )
         });
         let _ = match outcome.unwrap_or_else(|_| Err("panic".to_owned())) {
             Ok(matches) => writeln!(stdout, "{{\"id\":{},\"matches\":[{matches}]}}", quoted(id)),
-            Err(error) => writeln!(stdout, "{{\"id\":{},\"error\":{}}}", quoted(id), quoted(error.as_bytes())),
+            Err(error) => writeln!(
+                stdout,
+                "{{\"id\":{},\"error\":{}}}",
+                quoted(id),
+                quoted(error.as_bytes())
+            ),
         };
     }
 }
@@ -210,21 +258,37 @@ fn cpu_nanos(started: std::time::Instant) -> u64 {
 
 fn bench(path: &str, rest: &[String]) {
     let flag = |name: &str| rest.iter().find_map(|it| it.strip_prefix(name));
-    let repeat: u32 = flag("--repeat=").and_then(|it| it.parse().ok()).unwrap_or(5);
-    let parser: &[u8] = if rest.iter().any(|it| it == "--espree") { b"espree" } else { b"typescript" };
+    let repeat: u32 = flag("--repeat=")
+        .and_then(|it| it.parse().ok())
+        .unwrap_or(5);
+    let parser: &[u8] = if rest.iter().any(|it| it == "--espree") {
+        b"espree"
+    } else {
+        b"typescript"
+    };
     let language = language_of(Some(parser), None);
     let mut paths = Vec::new();
     crate::collect(std::path::Path::new(path), &mut paths);
     let files: Vec<(String, Vec<u8>)> = (paths.iter())
-        .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
+        .filter_map(|path| {
+            Some((
+                path.to_string_lossy().into_owned(),
+                std::fs::read(path).ok()?,
+            ))
+        })
         .collect();
     // The first has next to nothing to listen for: what it takes is what running a rule and measuring take.
     let baseline = "DebuggerStatement".to_owned();
-    let selectors: Vec<&String> = std::iter::once(&baseline).chain(rest.iter().filter(|it| !it.starts_with("--"))).collect();
+    let selectors: Vec<&String> = std::iter::once(&baseline)
+        .chain(rest.iter().filter(|it| !it.starts_with("--")))
+        .collect();
     let rules: Vec<_> = (selectors.iter())
         .map(|it| {
             let options = [Json::String(it.as_bytes().to_vec().into())];
-            ((PROBE.build)(&Options::new(&options)), (COUNTING_PROBE.build)(&Options::new(&options)))
+            (
+                (PROBE.build)(&Options::new(&options)),
+                (COUNTING_PROBE.build)(&Options::new(&options)),
+            )
         })
         .collect();
     let started = std::time::Instant::now();
@@ -242,7 +306,8 @@ fn bench(path: &str, rest: &[String]) {
                 };
                 // The first run computes what the file keeps.
                 let (listened, examined) = (LISTENED.load(Relaxed), EXAMINED.load(Relaxed));
-                counts[i].2 += bun_lint::runner::run(file, &[enabled(&**counting)], false).len() as u64;
+                counts[i].2 +=
+                    bun_lint::runner::run(file, &[enabled(&**counting)], false).len() as u64;
                 let enabled = enabled(&**rule);
                 counts[i].0 += LISTENED.load(Relaxed) - listened;
                 counts[i].1 += EXAMINED.load(Relaxed) - examined;

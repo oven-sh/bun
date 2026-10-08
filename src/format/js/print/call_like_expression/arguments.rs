@@ -7,7 +7,9 @@ use crate::js::print::arrow_function_expression::{
 };
 use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
-use crate::js::utils::call_expression::{is_call_expression, is_next_line_empty, strip_chain_element_wrappers};
+use crate::js::utils::call_expression::{
+    is_call_expression, is_next_line_empty, strip_chain_element_wrappers,
+};
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::typecast::is_cast_target;
@@ -49,7 +51,8 @@ impl<'a> FormatArguments<'a> {
 
     /// No comma is allowed after the last argument of `import()`.
     fn trailing_commas(&self) -> Option<FormatTrailingCommas> {
-        (!matches!(self.parent, AstNodes::ImportExpression(_))).then_some(FormatTrailingCommas::Arguments)
+        (!matches!(self.parent, AstNodes::ImportExpression(_)))
+            .then_some(FormatTrailingCommas::Arguments)
     }
 }
 
@@ -67,7 +70,16 @@ impl<'a> Format<'a> for FormatArguments<'a> {
         let last_index = match self.len() {
             0 if f.is_quiet() => return write!(f, "()"),
             // `call/* comment1 */(/* comment2 */)`
-            0 => return write!(f, ["(", format_dangling_comments(self.parent.span()).with_soft_block_indent(), ")"]),
+            0 => {
+                return write!(
+                    f,
+                    [
+                        "(",
+                        format_dangling_comments(self.parent.span()).with_soft_block_indent(),
+                        ")"
+                    ]
+                );
+            }
             len => len - 1,
         };
 
@@ -78,18 +90,26 @@ impl<'a> Format<'a> for FormatArguments<'a> {
         let mut previous_end = None;
         for (index, argument) in self.iter().enumerate() {
             has |= kind(argument.tag());
-            has_empty_line = has_empty_line || previous_end.is_some_and(|end| is_empty_line_between(end, argument, f));
+            has_empty_line = has_empty_line
+                || previous_end.is_some_and(|end| is_empty_line_between(end, argument, f));
             previous_end = (index != last_index).then(|| argument.span().end);
         }
         let has_function = has & kind(ExprTag::Fn) != 0;
 
-        if has_function && has & kind(ExprTag::Array) != 0 && is_react_hook_with_deps_array(self, f.comments()) {
+        if has_function
+            && has & kind(ExprTag::Array) != 0
+            && is_react_hook_with_deps_array(self, f.comments())
+        {
             return write!(
                 f,
                 [
                     "(",
                     format_with(|f| {
-                        f.join_with(space()).entries_with_trailing_separator(self.iter(), ",", TrailingSeparator::Omit);
+                        f.join_with(space()).entries_with_trailing_separator(
+                            self.iter(),
+                            ",",
+                            TrailingSeparator::Omit,
+                        );
                     }),
                     ")"
                 ]
@@ -116,18 +136,17 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             && let Some(group_layout) = arguments_grouped_layout(self.args, f)
         {
             write_grouped_arguments(self, group_layout, f);
-        } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call, f)) {
-            let trailing_separator = FormatTrailingCommas::Arguments.trailing_separator(f.options());
+        } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call, f))
+        {
+            let trailing_separator =
+                FormatTrailingCommas::Arguments.trailing_separator(f.options());
             write!(
                 f,
                 [
                     "(",
                     soft_block_indent(&format_with(|f| {
-                        f.join_with(soft_line_break_or_space()).entries_with_trailing_separator(
-                            self.iter(),
-                            ",",
-                            trailing_separator,
-                        );
+                        f.join_with(soft_line_break_or_space())
+                            .entries_with_trailing_separator(self.iter(), ",", trailing_separator);
                     })),
                     ")",
                 ]
@@ -140,7 +159,8 @@ impl<'a> Format<'a> for FormatArguments<'a> {
                 [
                     "(",
                     soft_block_indent(&format_with(|f| {
-                        f.join_with(format_args!(",", soft_line_break_or_space())).entries(self.iter());
+                        f.join_with(format_args!(",", soft_line_break_or_space()))
+                            .entries(self.iter());
                         write!(f, self.trailing_commas());
                     })),
                     ")",
@@ -159,7 +179,11 @@ fn counts_line_breaks_between_arguments(f: &Formatter<'_>) -> bool {
 }
 
 /// Whether the arguments break because of what is between the one at `index` and the next.
-fn is_followed_by_empty_line<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Formatter<'a>) -> bool {
+fn is_followed_by_empty_line<'a>(
+    args: List<'a, Expr<'a>>,
+    index: usize,
+    f: &Formatter<'a>,
+) -> bool {
     match (args.get(index), args.get(index + 1)) {
         (Some(argument), Some(next)) => is_empty_line_between(argument.span().end, next, f),
         (Some(argument), None) => is_next_line_empty(f.source_text(), argument.span().end),
@@ -171,7 +195,12 @@ fn is_followed_by_empty_line<'a>(args: List<'a, Expr<'a>>, index: usize, f: &For
 #[inline]
 fn is_empty_line_between<'a>(end: u32, next: Expr<'a>, f: &Formatter<'a>) -> bool {
     match counts_line_breaks_between_arguments(f) {
-        true => bun_core::strings::count_char(f.source_text().bytes_range(end, next.span().start), b'\n') >= 2,
+        true => {
+            bun_core::strings::count_char(
+                f.source_text().bytes_range(end, next.span().start),
+                b'\n',
+            ) >= 2
+        }
         false => is_next_line_empty(f.source_text(), end),
     }
 }
@@ -282,7 +311,8 @@ fn has_embed_label_of_other_than_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> boo
 
 /// `label?.embed && label?.hug !== false`
 fn has_embed_label_with_hug<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    has_embed_label_of_other_than_html(e, f) || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed)
+    has_embed_label_of_other_than_html(e, f)
+        || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed)
 }
 
 /// Prettier's `shouldGroupFirst` and `shouldGroupLast`.
@@ -290,7 +320,11 @@ fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
-    if args.len() == 1 && args.first().is_some_and(|only| has_embed_label_with_hug(only, f)) {
+    if args.len() == 1
+        && args
+            .first()
+            .is_some_and(|only| has_embed_label_with_hug(only, f))
+    {
         return Some(GroupedCallArgumentLayout::GroupedLastArgument);
     }
     if args.len() == 2 {
@@ -300,13 +334,15 @@ fn arguments_grouped_layout<'a>(
             return should_group_last_argument_impl(args, first, second, f)
                 .then_some(GroupedCallArgumentLayout::GroupedLastArgument);
         }
-        should_group_first_argument(first?, second, f).then_some(GroupedCallArgumentLayout::GroupedFirstArgument)
+        should_group_first_argument(first?, second, f)
+            .then_some(GroupedCallArgumentLayout::GroupedFirstArgument)
     } else {
         let mut iter = args.iter();
         let last = as_expression(iter.next_back()?)?;
         let penultimate = iter.next_back().and_then(as_expression);
-        (can_group_expression_argument(last, f) && should_group_last_argument_impl(args, penultimate, last, f))
-            .then_some(GroupedCallArgumentLayout::GroupedLastArgument)
+        (can_group_expression_argument(last, f)
+            && should_group_last_argument_impl(args, penultimate, last, f))
+        .then_some(GroupedCallArgumentLayout::GroupedLastArgument)
     }
 }
 
@@ -325,9 +361,15 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
     if !f.is_quiet() {
         let first_end = first.span().end;
         if f.comments().has_comment_before(first.span().start)
-            || f.comments().comments_in_range(first_end, second.span().start).iter().any(|comment| {
-                comment.followed_by_newline() || !f.source_text().bytes_contain(first_end, comment.span.start, b',')
-            })
+            || f.comments()
+                .comments_in_range(first_end, second.span().start)
+                .iter()
+                .any(|comment| {
+                    comment.followed_by_newline()
+                        || !f
+                            .source_text()
+                            .bytes_contain(first_end, comment.span.start, b',')
+                })
         {
             return false;
         }
@@ -342,7 +384,9 @@ fn should_group_last_argument_impl<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     let args_len = args.len();
-    let previous_end = args.get(args_len.wrapping_sub(2)).map(|previous| previous.span().end);
+    let previous_end = args
+        .get(args_len.wrapping_sub(2))
+        .map(|previous| previous.span().end);
 
     // Not if the one before is of the same kind.
     if let Some(penultimate) = penultimate
@@ -352,9 +396,15 @@ fn should_group_last_argument_impl<'a>(
             (AstNodes::ObjectExpression(_), AstNodes::ObjectExpression(_))
                 | (AstNodes::ArrayExpression(_), AstNodes::ArrayExpression(_))
                 | (AstNodes::TSAsExpression(_), AstNodes::TSAsExpression(_))
-                | (AstNodes::TSSatisfiesExpression(_), AstNodes::TSSatisfiesExpression(_))
+                | (
+                    AstNodes::TSSatisfiesExpression(_),
+                    AstNodes::TSSatisfiesExpression(_)
+                )
                 | (AstNodes::TSTypeAssertion(_), AstNodes::TSTypeAssertion(_))
-                | (AstNodes::ArrowFunctionExpression(_), AstNodes::ArrowFunctionExpression(_))
+                | (
+                    AstNodes::ArrowFunctionExpression(_),
+                    AstNodes::ArrowFunctionExpression(_)
+                )
                 | (AstNodes::Function(_), AstNodes::Function(_))
         )
     {
@@ -366,18 +416,29 @@ fn should_group_last_argument_impl<'a>(
         let last_span = last.span();
         // A comment at the end of the line of the argument before, or before the comma, trails that.
         let has_comment_before_last = match previous_end {
-            Some(previous_end) => f.comments().comments_in_range(previous_end, last_span.start).iter().any(|comment| {
-                comment.preceded_by_newline()
-                    || (!comment.followed_by_newline()
-                        && !f.source_text().bytes_contain(comment.span.end, last_span.start, b','))
-            }),
+            Some(previous_end) => f
+                .comments()
+                .comments_in_range(previous_end, last_span.start)
+                .iter()
+                .any(|comment| {
+                    comment.preceded_by_newline()
+                        || (!comment.followed_by_newline()
+                            && !f.source_text().bytes_contain(
+                                comment.span.end,
+                                last_span.start,
+                                b',',
+                            ))
+                }),
             None => f.comments().has_comment_before(last_span.start),
         };
         if has_comment_before_last
             || f.comments()
                 .comments_after(last_span.end)
                 .first()
-                .is_some_and(|c| !f.source_text().bytes_contain(last_span.end, c.span.start, b')'))
+                .is_some_and(|c| {
+                    !f.source_text()
+                        .bytes_contain(last_span.end, c.span.start, b')')
+                })
         {
             return false;
         }
@@ -406,7 +467,9 @@ fn is_simple_ts_type(ty: TypeNode<'_>) -> bool {
         _ => ty,
     };
     let extracted_generic_type = match extracted_array_type.kind() {
-        TypeKind::Ref { args, .. } if args.len() == 1 => args.first().unwrap_or(extracted_array_type),
+        TypeKind::Ref { args, .. } if args.len() == 1 => {
+            args.first().unwrap_or(extracted_array_type)
+        }
         _ => extracted_array_type,
     };
     match extracted_generic_type.kind() {
@@ -433,7 +496,9 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
         ExprKind::Call(call) if call.args().len() > 1 && is_call_expression(argument, f) => false,
         ExprKind::New(call) if call.args().len() > 1 => false,
         ExprKind::ImportCall { args } if args.len() > 1 => false,
-        ExprKind::Binary { op, left, right } if op != BinOp::Comma => is_simple(left) && is_simple(right),
+        ExprKind::Binary { op, left, right } if op != BinOp::Comma => {
+            is_simple(left) && is_simple(right)
+        }
         ExprKind::Regex(_) => true,
         _ => SimpleArgument::new(argument).is_simple(),
     }
@@ -445,12 +510,18 @@ fn can_group_expression_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> b
         return false;
     }
     match argument.kind() {
-        ExprKind::Object(props) => !props.is_empty() || f.comments().has_comment_in_span(argument.span()),
-        ExprKind::Array(elements) => !elements.is_empty() || f.comments().has_comment_in_span(argument.span()),
+        ExprKind::Object(props) => {
+            !props.is_empty() || f.comments().has_comment_in_span(argument.span())
+        }
+        ExprKind::Array(elements) => {
+            !elements.is_empty() || f.comments().has_comment_in_span(argument.span())
+        }
         ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. } => {
             can_group_expression_argument(expr, f)
         }
-        ExprKind::Fn(func) if func.is_arrow() => can_group_arrow_function_expression_argument(func, false, f),
+        ExprKind::Fn(func) if func.is_arrow() => {
+            can_group_arrow_function_expression_argument(func, false, f)
+        }
         ExprKind::Fn(_) => true,
         _ => false,
     }
@@ -470,9 +541,17 @@ fn can_group_arrow_function_expression_argument<'a>(
     }
     match expression.kind() {
         ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_) => true,
-        ExprKind::Fn(inner) if inner.is_arrow() => can_group_arrow_function_expression_argument(inner, true, f),
+        ExprKind::Fn(inner) if inner.is_arrow() => {
+            can_group_arrow_function_expression_argument(inner, true, f)
+        }
         ExprKind::Cond { .. } => !is_arrow_recursion,
-        _ => !is_arrow_recursion && matches!(strip_chain_element_wrappers(expression).kind(), ExprKind::Call(_)),
+        _ => {
+            !is_arrow_recursion
+                && matches!(
+                    strip_chain_element_wrappers(expression).kind(),
+                    ExprKind::Call(_)
+                )
+        }
     }
 }
 
@@ -493,7 +572,8 @@ fn write_grouped_arguments<'a>(
     let mut grouped_breaks = false;
     let mut has_cached = false;
     let is_grouped = |index: usize| {
-        (group_layout.is_grouped_first() && index == 0) || (group_layout.is_grouped_last() && index == last_index)
+        (group_layout.is_grouped_first() && index == 0)
+            || (group_layout.is_grouped_last() && index == last_index)
     };
 
     // All arguments are formatted first, to see which of them break.
@@ -513,7 +593,11 @@ fn write_grouped_arguments<'a>(
                     cache_mode: FunctionCacheMode::Cache,
                 }))
             }
-            Some(function) if is_grouped_argument && function.is_arrow() && !is_written_the_same_when_grouped(function, f) => {
+            Some(function)
+                if is_grouped_argument
+                    && function.is_arrow()
+                    && !is_written_the_same_when_grouped(function, f) =>
+            {
                 Some(ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
                     ..FormatJsArrowFunctionExpressionOptions::default()
@@ -548,13 +632,20 @@ fn write_grouped_arguments<'a>(
         }))
     };
 
-    let most_expanded = entry(f, &format_with(|f| format_all_elements_broken_out(node, &elements, true, f)));
+    let most_expanded = entry(
+        f,
+        &format_with(|f| format_all_elements_broken_out(node, &elements, true, f)),
+    );
 
     // A function that is grouped is formatted again, without the soft line breaks in its
     // signature. Its body is taken from the cache, so that this is not quadratic for nested calls.
     let mut grouped = elements;
     if has_cached {
-        let grouped_index = if group_layout.is_grouped_first() { 0 } else { last_index };
+        let grouped_index = if group_layout.is_grouped_first() {
+            0
+        } else {
+            last_index
+        };
         let Some(argument) = node.args.get(grouped_index) else {
             return;
         };
@@ -584,7 +675,10 @@ fn write_grouped_arguments<'a>(
         }
 
         let element = match group_layout.is_grouped_first() {
-            true => f.intern(&format_args!(FormatGroupedFirstArgument { argument }, (last_index != 0).then_some(","))),
+            true => f.intern(&format_args!(
+                FormatGroupedFirstArgument { argument },
+                (last_index != 0).then_some(",")
+            )),
             false => f.intern(&FormatGroupedLastArgument {
                 argument,
                 expands_parameters: argument.as_fn().is_some_and(expands_parameters_of),
@@ -630,13 +724,14 @@ fn write_grouped_arguments<'a>(
             &format_args!(
                 "(",
                 format_with(|f| {
-                    f.join_with(soft_line_break_or_space()).entries(grouped.iter().map(|&element| {
-                        format_with(move |f: &mut Formatter<'a>| {
-                            if let Some(element) = element {
-                                f.write_element(element);
-                            }
-                        })
-                    }));
+                    f.join_with(soft_line_break_or_space())
+                        .entries(grouped.iter().map(|&element| {
+                            format_with(move |f: &mut Formatter<'a>| {
+                                if let Some(element) = element {
+                                    f.write_element(element);
+                                }
+                            })
+                        }));
                 }),
                 ")",
             ),
@@ -777,12 +872,19 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
 }
 
 /// `useMemo(() => {}, [a, b])`, `useImperativeHandle(ref, () => {}, [a, b])`
-fn is_react_hook_with_deps_array<'a>(arguments: &FormatArguments<'a>, comments: &Comments<'a>) -> bool {
+fn is_react_hook_with_deps_array<'a>(
+    arguments: &FormatArguments<'a>,
+    comments: &Comments<'a>,
+) -> bool {
     if arguments.len() > 3 || arguments.len() < 2 {
         return false;
     }
     let mut args = arguments.iter();
-    if arguments.len() == 3 && !args.next().is_some_and(|first| matches!(first.kind(), ExprKind::Ident(_))) {
+    if arguments.len() == 3
+        && !args
+            .next()
+            .is_some_and(|first| matches!(first.kind(), ExprKind::Ident(_)))
+    {
         return false;
     }
     let (Some(callback), Some(deps)) = (args.next(), args.next()) else {
@@ -800,9 +902,13 @@ fn is_react_hook_with_deps_array<'a>(arguments: &FormatArguments<'a>, comments: 
     // Not if there is a comment that is not in the callback or the array. One in an empty array is
     // a comment of the array.
     let is_empty = matches!(deps.kind(), ExprKind::Array(elements) if elements.is_empty());
-    !comments.comments_before(arguments.parent.span().end).iter().any(|comment| {
-        !callback.span().contains(comment.span) && (is_empty || !deps.span().contains(comment.span))
-    })
+    !comments
+        .comments_before(arguments.parent.span().end)
+        .iter()
+        .any(|comment| {
+            !callback.span().contains(comment.span)
+                && (is_empty || !deps.span().contains(comment.span))
+        })
 }
 
 /// Prettier's `isDecoratedFunction`:
@@ -833,13 +939,16 @@ fn is_decorated_function(argument: Expr<'_>) -> bool {
         return false;
     }
     // The decorator is `a` or `a.b`.
-    let is_valid_decorator = callee.callee().is_some_and(|decorator| match decorator.as_ast_nodes() {
-        AstNodes::IdentifierReference(_) => true,
-        AstNodes::StaticMemberExpression(member) => {
-            member.object().is_some_and(|object| matches!(object.kind(), ExprKind::Ident(_)))
-        }
-        _ => false,
-    });
+    let is_valid_decorator =
+        callee
+            .callee()
+            .is_some_and(|decorator| match decorator.as_ast_nodes() {
+                AstNodes::IdentifierReference(_) => true,
+                AstNodes::StaticMemberExpression(member) => member
+                    .object()
+                    .is_some_and(|object| matches!(object.kind(), ExprKind::Ident(_))),
+                _ => false,
+            });
     if !is_valid_decorator {
         return false;
     }

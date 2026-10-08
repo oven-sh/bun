@@ -17,12 +17,20 @@ fn is_html_white_space(byte: u8) -> bool {
 
 /// `htmlWhitespace.trimStart(text)`
 fn trim_start(text: &[u8]) -> &[u8] {
-    &text[text.iter().take_while(|byte| is_html_white_space(**byte)).count()..]
+    &text[text
+        .iter()
+        .take_while(|byte| is_html_white_space(**byte))
+        .count()..]
 }
 
 /// `htmlWhitespace.trimEnd(text)`
 fn trim_end(text: &[u8]) -> &[u8] {
-    &text[..text.len() - text.iter().rev().take_while(|byte| is_html_white_space(**byte)).count()]
+    &text[..text.len()
+        - text
+            .iter()
+            .rev()
+            .take_while(|byte| is_html_white_space(**byte))
+            .count()]
 }
 
 fn count_new_lines(text: &[u8]) -> usize {
@@ -189,8 +197,13 @@ impl<'a> Printer<'a> {
     /// `isVoidElement`
     fn is_void_element(&self, tag: &[u8], children: &[NodeId], is_self_closing: bool) -> bool {
         let is_void_tag = || is_void_tag(&text::to_lower_case(tag)) && !starts_with_upper_case(tag);
-        let is_glimmer_component = || !tag.starts_with(b":") && (starts_with_upper_case(tag) || strings::contains_char(tag, b'.'));
-        is_self_closing || is_void_tag() || (is_glimmer_component() && self.are_white_space(children))
+        let is_glimmer_component = || {
+            !tag.starts_with(b":")
+                && (starts_with_upper_case(tag) || strings::contains_char(tag, b'.'))
+        };
+        is_self_closing
+            || is_void_tag()
+            || (is_glimmer_component() && self.are_white_space(children))
     }
 
     /// `isPrettierIgnoreNode`
@@ -200,7 +213,11 @@ impl<'a> Printer<'a> {
 
     /// What is ignored is printed as it is written.
     fn ignored(&mut self, node: Node) {
-        self.verbatim(self.source.get(node.start as usize..node.end as usize).unwrap_or_default());
+        self.verbatim(
+            self.source
+                .get(node.start as usize..node.end as usize)
+                .unwrap_or_default(),
+        );
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -217,21 +234,29 @@ impl<'a> Printer<'a> {
     fn children(&mut self, nodes: &'a [NodeId], parent: Parent, outer: Option<(Call, u8)>) {
         for (index, &id) in nodes.iter().enumerate() {
             let node = self.tree.node(id);
-            if self.is_prettier_ignore(id) || (index >= 2 && self.is_prettier_ignore(nodes[index - 2])) {
+            if self.is_prettier_ignore(id)
+                || (index >= 2 && self.is_prettier_ignore(nodes[index - 2]))
+            {
                 self.ignored(node);
                 continue;
             }
             match node.kind {
                 Kind::Text { chars } => self.text_node(self.text(chars), nodes, index, parent),
                 Kind::Element { .. } => {
-                    let follows_element = index > 0 && matches!(self.tree.kind(nodes[index - 1]), Kind::Element { .. });
+                    let follows_element = index > 0
+                        && matches!(self.tree.kind(nodes[index - 1]), Kind::Element { .. });
                     self.element(node, follows_element);
                 }
                 Kind::BlockStatement { call, .. } => {
-                    let outer = outer.filter(|outer| nodes.len() == 1 && self.is_else_if(call, outer.0));
+                    let outer =
+                        outer.filter(|outer| nodes.len() == 1 && self.is_else_if(call, outer.0));
                     self.block_statement(node, outer.map(|outer| outer.1));
                 }
-                Kind::Mustache { call, is_trusting, strip } => self.mustache(call, is_trusting, strip, false),
+                Kind::Mustache {
+                    call,
+                    is_trusting,
+                    strip,
+                } => self.mustache(call, is_trusting, strip, false),
                 Kind::MustacheComment { value } => self.mustache_comment(node, self.text(value)),
                 Kind::Comment { value } => {
                     self.token("<!--");
@@ -248,7 +273,11 @@ impl<'a> Printer<'a> {
         let is_tilde = |at: Option<usize>| at.and_then(|at| self.source.get(at)) == Some(&b'~');
         let strips_left = is_tilde(self.positions.moved(self.source, node.start as usize, 2));
         let strips_right = is_tilde(self.positions.moved(self.source, node.end as usize, -3));
-        let dashes = if strings::contains(value, b"}}") { "--" } else { "" };
+        let dashes = if strings::contains(value, b"}}") {
+            "--"
+        } else {
+            ""
+        };
         self.token(if strips_left { "{{~!" } else { "{{!" });
         self.token(dashes);
         self.verbatim(value);
@@ -259,7 +288,10 @@ impl<'a> Printer<'a> {
     /// Prettier's `printEmbedFrontMatter`, or `printFrontMatter` where that does not apply.
     fn print_front_matter(&mut self, raw: &[u8]) {
         let formatted = crate::markdown::front_matter::parse(raw).and_then(|front_matter| {
-            if matches!(self.options.embedded_language_formatting, EmbeddedLanguageFormatting::Off) {
+            if matches!(
+                self.options.embedded_language_formatting,
+                EmbeddedLanguageFormatting::Off
+            ) {
                 return None;
             }
             let language = &raw[front_matter.explicit_language.0..front_matter.explicit_language.1];
@@ -267,7 +299,9 @@ impl<'a> Printer<'a> {
             let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
             let value = match text::trim(&raw[front_matter.value.0..front_matter.value.1]) {
                 b"" if is_yaml || is_toml => Doc::EMPTY,
-                value if is_yaml => doc::strip_trailing_hardline(doc::clean(crate::yaml::document(value, self.options).ok()?)),
+                value if is_yaml => doc::strip_trailing_hardline(doc::clean(
+                    crate::yaml::document(value, self.options).ok()?,
+                )),
                 _ => return None,
             };
             Some((language, value))
@@ -290,26 +324,36 @@ impl<'a> Printer<'a> {
     // ───────────────────────────── elements ─────────────────────────────
 
     /// `embed`: the style sheet that is all that a `<style>` has.
-    fn embedded_style_sheet(&self, attributes: &[NodeId], children: &[NodeId]) -> Option<Doc<'static>> {
+    fn embedded_style_sheet(
+        &self,
+        attributes: &[NodeId],
+        children: &[NodeId],
+    ) -> Option<Doc<'static>> {
         let [child] = children else {
             return None;
         };
         let Kind::Text { chars } = self.tree.kind(*child) else {
             return None;
         };
-        if matches!(self.options.embedded_language_formatting, EmbeddedLanguageFormatting::Off) {
+        if matches!(
+            self.options.embedded_language_formatting,
+            EmbeddedLanguageFormatting::Off
+        ) {
             return None;
         }
-        let language = attributes.iter().find_map(|attribute| match self.tree.kind(*attribute) {
-            Kind::Attr { name, value } if self.text(name) == b"lang" => Some(value),
-            _ => None,
-        });
+        let language = attributes
+            .iter()
+            .find_map(|attribute| match self.tree.kind(*attribute) {
+                Kind::Attr { name, value } if self.text(name) == b"lang" => Some(value),
+                _ => None,
+            });
         if let Some(language) = language
             && !matches!(self.tree.kind(language), Kind::Text { chars } if matches!(self.text(chars), b"" | b"css"))
         {
             return None;
         }
-        let document = crate::css::document(self.text(chars), crate::css::Parser::Css, self.options).ok()?;
+        let document =
+            crate::css::document(self.text(chars), crate::css::Parser::Css, self.options).ok()?;
         (!document.is_empty_text()).then_some(document)
     }
 
@@ -324,7 +368,8 @@ impl<'a> Printer<'a> {
         else {
             return;
         };
-        let (tag, attributes, children) = (self.text(tag), self.list(attributes), self.list(children));
+        let (tag, attributes, children) =
+            (self.text(tag), self.list(attributes), self.list(children));
         let is_void = self.is_void_element(tag, children, is_self_closing);
 
         if !self.is_white_space_sensitive && follows_element {
@@ -361,15 +406,27 @@ impl<'a> Printer<'a> {
         }
 
         let is_style = tag == b"style";
-        let is_empty = children.is_empty() || ((!self.is_white_space_sensitive || is_style) && self.are_white_space(children));
+        let is_empty = children.is_empty()
+            || ((!self.is_white_space_sensitive || is_style) && self.are_white_space(children));
         if is_empty {
             // Nothing is between the tags.
         } else if is_style || !self.is_white_space_sensitive {
             self.start_indent();
             self.out.line(Line::Soft);
-            match is_style.then(|| self.embedded_style_sheet(attributes, children)).flatten() {
+            match is_style
+                .then(|| self.embedded_style_sheet(attributes, children))
+                .flatten()
+            {
                 Some(style_sheet) => self.out.document(&style_sheet),
-                None => self.children(children, if is_style { Parent::Style } else { self.parent_of(tag) }, None),
+                None => self.children(
+                    children,
+                    if is_style {
+                        Parent::Style
+                    } else {
+                        self.parent_of(tag)
+                    },
+                    None,
+                ),
             }
             self.out.end_indent();
             self.out.line(Line::Soft);
@@ -386,7 +443,11 @@ impl<'a> Printer<'a> {
     }
 
     fn parent_of(&self, tag: &[u8]) -> Parent {
-        if tag == b"pre" { Parent::Pre } else { Parent::Element }
+        if tag == b"pre" {
+            Parent::Pre
+        } else {
+            Parent::Element
+        }
     }
 
     /// An attribute, a modifier or a comment in a tag.
@@ -424,7 +485,9 @@ impl<'a> Printer<'a> {
         let is_class = name.eq_ignore_ascii_case(b"class");
         let quote = match node.kind {
             // There is no value.
-            Kind::Text { chars } if chars.is_empty() && node.start == node.end => return self.out.text(name),
+            Kind::Text { chars } if chars.is_empty() && node.start == node.end => {
+                return self.out.text(name);
+            }
             Kind::Text { .. } => self.preferred_quote_of(&[value]),
             Kind::Concat { parts } => self.preferred_quote_of(self.list(parts)),
             _ => "",
@@ -438,23 +501,40 @@ impl<'a> Printer<'a> {
             self.start_indent();
         }
         match node.kind {
-            Kind::Text { chars } => self.text_in_attribute(self.text(chars), is_class, false, false),
+            Kind::Text { chars } => {
+                self.text_in_attribute(self.text(chars), is_class, false, false)
+            }
             Kind::Concat { parts } => {
                 let parts = self.list(parts);
                 let tree = self.tree;
-                let is_mustache = |index: Option<usize>| index.and_then(|index| parts.get(index)).is_some_and(|part| matches!(tree.kind(*part), Kind::Mustache { .. }));
+                let is_mustache = |index: Option<usize>| {
+                    index
+                        .and_then(|index| parts.get(index))
+                        .is_some_and(|part| matches!(tree.kind(*part), Kind::Mustache { .. }))
+                };
                 for (index, part) in parts.iter().enumerate() {
                     match self.tree.kind(*part) {
                         Kind::Text { chars } => {
-                            let (follows, precedes) = (is_mustache(index.checked_sub(1)), is_mustache(Some(index + 1)));
+                            let (follows, precedes) = (
+                                is_mustache(index.checked_sub(1)),
+                                is_mustache(Some(index + 1)),
+                            );
                             self.text_in_attribute(self.text(chars), is_class, follows, precedes);
                         }
-                        Kind::Mustache { call, is_trusting, strip } => self.mustache(call, is_trusting, strip, true),
+                        Kind::Mustache {
+                            call,
+                            is_trusting,
+                            strip,
+                        } => self.mustache(call, is_trusting, strip, true),
                         _ => {}
                     }
                 }
             }
-            Kind::Mustache { call, is_trusting, strip } => self.mustache(call, is_trusting, strip, false),
+            Kind::Mustache {
+                call,
+                is_trusting,
+                strip,
+            } => self.mustache(call, is_trusting, strip, false),
             _ => {}
         }
         if is_grouped {
@@ -465,7 +545,13 @@ impl<'a> Printer<'a> {
     }
 
     /// `follows_mustache`, `precedes_mustache`: in a `ConcatStatement`.
-    fn text_in_attribute(&mut self, chars: &[u8], is_class: bool, follows_mustache: bool, precedes_mustache: bool) {
+    fn text_in_attribute(
+        &mut self,
+        chars: &[u8],
+        is_class: bool,
+        follows_mustache: bool,
+        precedes_mustache: bool,
+    ) {
         if !is_class {
             return self.with_literal_lines(chars, true);
         }
@@ -476,7 +562,9 @@ impl<'a> Printer<'a> {
         let has_classes = !classes.is_empty();
         // `.replaceAll(/\s+/g, " ")`
         while !classes.is_empty() {
-            let len = (0..classes.len()).find(|at| white_space_len_at_start(&classes[*at..]).is_some()).unwrap_or(classes.len());
+            let len = (0..classes.len())
+                .find(|at| white_space_len_at_start(&classes[*at..]).is_some())
+                .unwrap_or(classes.len());
             self.escaped(&classes[..len]);
             classes = &classes[len..];
             if !classes.is_empty() {
@@ -526,14 +614,20 @@ impl<'a> Printer<'a> {
         if (is_first || is_last) && is_white_space_only {
             return;
         }
-        let kind_at = |index: Option<usize>| index.and_then(|index| siblings.get(index)).map_or(Kind::Nothing, |node| self.tree.kind(*node));
+        let kind_at = |index: Option<usize>| {
+            index
+                .and_then(|index| siblings.get(index))
+                .map_or(Kind::Nothing, |node| self.tree.kind(*node))
+        };
         let (previous, next) = (kind_at(index.checked_sub(1)), kind_at(Some(index + 1)));
-        let is_block_or_element = |kind: Kind| matches!(kind, Kind::BlockStatement { .. } | Kind::Element { .. });
+        let is_block_or_element =
+            |kind: Kind| matches!(kind, Kind::BlockStatement { .. } | Kind::Element { .. });
         let is_mustache = |kind: Kind| matches!(kind, Kind::Mustache { .. });
 
         let line_breaks = count_new_lines(chars);
         // `countLeadingNewLines`, `countTrailingNewLines`
-        let mut leading_line_breaks = count_new_lines(&chars[..chars.len() - text::trim_start(chars).len()]);
+        let mut leading_line_breaks =
+            count_new_lines(&chars[..chars.len() - text::trim_start(chars).len()]);
         let mut trailing_line_breaks = count_new_lines(&chars[text::trim_end(chars).len()..]);
         if is_white_space_only && line_breaks > 0 {
             leading_line_breaks = line_breaks.min(2);
@@ -563,7 +657,11 @@ impl<'a> Printer<'a> {
         } else {
             let has_leading = chars.first().is_some_and(|byte| is_html_white_space(*byte));
             let has_trailing = chars.last().is_some_and(|byte| is_html_white_space(*byte));
-            self.fill(has_leading && leading_space, words, has_trailing && trailing_space);
+            self.fill(
+                has_leading && leading_space,
+                words,
+                has_trailing && trailing_space,
+            );
         }
         self.hard_lines(trailing_line_breaks);
     }
@@ -591,7 +689,8 @@ impl<'a> Printer<'a> {
             if index > 0 {
                 self.out.hard_line();
             }
-            self.out.text(line.get(min_indentation..).unwrap_or_default());
+            self.out
+                .text(line.get(min_indentation..).unwrap_or_default());
         }
     }
 
@@ -600,7 +699,11 @@ impl<'a> Printer<'a> {
     /// The name of the helper, if it is a variable.
     fn head_name(&self, call: Call) -> Option<&'a [u8]> {
         match self.tree.kind(call.path) {
-            Kind::Path { head: Head::Var, name, .. } => Some(self.text(name)),
+            Kind::Path {
+                head: Head::Var,
+                name,
+                ..
+            } => Some(self.text(name)),
             _ => None,
         }
     }
@@ -827,11 +930,22 @@ impl<'a> Printer<'a> {
                 self.token(")");
                 self.out.end_group();
             }
-            Kind::Path { head, name, tail } => self.path(if head == Head::This { &b"this"[..] } else { self.text(name) }, tail),
+            Kind::Path { head, name, tail } => self.path(
+                if head == Head::This {
+                    &b"this"[..]
+                } else {
+                    self.text(name)
+                },
+                tail,
+            ),
             Kind::String { value } => {
                 let mut value = self.text(value);
-                let (double, single) = (strings::count_char(value, b'"'), strings::count_char(value, b'\''));
-                let quote = preferred_quote(double, single, self.single_quote != needs_opposite_quote);
+                let (double, single) = (
+                    strings::count_char(value, b'"'),
+                    strings::count_char(value, b'\''),
+                );
+                let quote =
+                    preferred_quote(double, single, self.single_quote != needs_opposite_quote);
                 self.token(quote);
                 while let Some(at) = strings::index_of_char_usize(value, quote.as_bytes()[0]) {
                     self.verbatim(&value[..at]);
@@ -852,11 +966,16 @@ impl<'a> Printer<'a> {
 
     /// `String(Number(token))`
     fn number(&mut self, token: &[u8]) {
-        let is_as_printed = token.len() <= 15 && token.iter().all(u8::is_ascii_digit) && (token.len() == 1 || token[0] != b'0');
+        let is_as_printed = token.len() <= 15
+            && token.iter().all(u8::is_ascii_digit)
+            && (token.len() == 1 || token[0] != b'0');
         if is_as_printed {
             return self.out.text(token);
         }
-        let value = std::str::from_utf8(token).ok().and_then(|it| it.parse::<f64>().ok()).unwrap_or(f64::NAN);
+        let value = std::str::from_utf8(token)
+            .ok()
+            .and_then(|it| it.parse::<f64>().ok())
+            .unwrap_or(f64::NAN);
         self.out.text(&bun_sema::atom::number_to_string(value));
     }
 
@@ -892,6 +1011,10 @@ impl<'a> Printer<'a> {
 
 /// `getPreferredQuote`, for a text that has so many quotes.
 fn preferred_quote(double: usize, single: usize, prefers_single: bool) -> &'static str {
-    let is_single = if prefers_single { single <= double } else { double > single };
+    let is_single = if prefers_single {
+        single <= double
+    } else {
+        double > single
+    };
     if is_single { "'" } else { "\"" }
 }

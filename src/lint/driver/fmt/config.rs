@@ -130,7 +130,8 @@ pub(crate) fn glob_of_oxc(pattern: &[u8]) -> Glob {
     let mut rest = pattern;
     while let Some(open) = strings::index_of_char_usize(rest, b'{') {
         let close = strings::index_of_char_usize(&rest[open..], b'}').map(|it| open + it);
-        match close.filter(|&close| strings::index_of_any(&rest[open + 1..close], b",{").is_none()) {
+        match close.filter(|&close| strings::index_of_any(&rest[open + 1..close], b",{").is_none())
+        {
             Some(close) => {
                 without_single_braces.extend_from_slice(&rest[..open]);
                 without_single_braces.extend_from_slice(&rest[open + 1..close]);
@@ -158,7 +159,11 @@ fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
         _ => Vec::new(),
     };
     let pattern = |text: &&[u8]| Pattern {
-        glob: if is_oxfmt { glob_of_oxc(text) } else { Glob::new(text) },
+        glob: if is_oxfmt {
+            glob_of_oxc(text)
+        } else {
+            Glob::new(text)
+        },
         has_slash: strings::contains_char(text, b'/'),
     };
     all.iter().map(pattern).collect()
@@ -166,7 +171,9 @@ fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
 
 /// The object `before` with the keys of the object `after`, both as JSON. `after` if one is no object.
 fn merged_objects(before: &[u8], after: &[u8]) -> Vec<u8> {
-    let (Some(Json::Object(mut entries)), Some(Json::Object(added))) = (bun_lint::json::parse(before), bun_lint::json::parse(after)) else {
+    let (Some(Json::Object(mut entries)), Some(Json::Object(added))) =
+        (bun_lint::json::parse(before), bun_lint::json::parse(after))
+    else {
         return after.to_vec();
     };
     for (name, value) in added {
@@ -186,18 +193,33 @@ fn settings(json: &Json) -> Settings {
             Json::Bool(value) => if *value { &b"true"[..] } else { b"false" }.to_vec(),
             // `Infinity` is not JSON. A YAML file can have it.
             Json::Number(number) if *number >= 65535.0 => b"65535".to_vec(),
-            Json::Number(number) => bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *number).to_vec(),
+            Json::Number(number) => {
+                bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *number).to_vec()
+            }
             // What is about the order of imports, as JSON.
-            Json::Array(_) | Json::Object(_) if name == b"plugins" || name.starts_with(b"importOrder") || name.ends_with(b"ortImports") => {
+            Json::Array(_) | Json::Object(_)
+                if name == b"plugins"
+                    || name.starts_with(b"importOrder")
+                    || name.ends_with(b"ortImports") =>
+            {
                 let mut text = Vec::new();
                 write_json(&mut text, value);
                 text
             }
-            Json::Object(_) if name == b"sortPackageJson" || name == b"experimentalSortPackageJson" => {
+            Json::Object(_)
+                if name == b"sortPackageJson" || name == b"experimentalSortPackageJson" =>
+            {
                 let name = &b"sortPackageJson".to_vec();
                 let sorts_scripts = value.get(b"sortScripts").and_then(Json::as_bool) == Some(true);
                 settings.push((name.clone(), b"true".to_vec()));
-                settings.push((b"sortPackageJson.sortScripts".to_vec(), if sorts_scripts { b"true".to_vec() } else { b"false".to_vec() }));
+                settings.push((
+                    b"sortPackageJson.sortScripts".to_vec(),
+                    if sorts_scripts {
+                        b"true".to_vec()
+                    } else {
+                        b"false".to_vec()
+                    },
+                ));
                 continue;
             }
             // On, and each of its properties by itself.
@@ -233,8 +255,13 @@ impl Override {
         [false, true].into_iter().any(|with_slashes| {
             // With patterns without slashes, what is excluded is matched against the name too,
             // whatever it looks like: micromatch's `basename`.
-            let matches = |it: &Pattern| it.glob.matches(if with_slashes { relative } else { name });
-            self.files.iter().filter(|it| it.has_slash == with_slashes).any(matches) && !self.excluded.iter().any(matches)
+            let matches =
+                |it: &Pattern| it.glob.matches(if with_slashes { relative } else { name });
+            self.files
+                .iter()
+                .filter(|it| it.has_slash == with_slashes)
+                .any(matches)
+                && !self.excluded.iter().any(matches)
         })
     }
 }
@@ -243,7 +270,9 @@ impl Override {
 fn check_print_width(value: &[u8]) -> Result<(), Fatal> {
     match bun_core::fmt::parse_decimal::<u32>(value) {
         Some(1..=320) => Ok(()),
-        _ => Err(Fatal(b"Invalid printWidth: The line width should be between 1 and 320".to_vec())),
+        _ => Err(Fatal(
+            b"Invalid printWidth: The line width should be between 1 and 320".to_vec(),
+        )),
     }
 }
 
@@ -253,10 +282,17 @@ fn is_name_of_oxfmt(name: &[u8]) -> bool {
 
 impl Config {
     fn new(path: &[u8], json: &Json, is_oxfmt: bool) -> Config {
-        let overrides = json.get(b"overrides").and_then(Json::as_array).unwrap_or_default();
-        let ignored: Vec<&[u8]> = (json.get(b"ignorePatterns").and_then(Json::as_array).unwrap_or_default().iter())
-            .filter_map(Json::as_str)
-            .collect();
+        let overrides = json
+            .get(b"overrides")
+            .and_then(Json::as_array)
+            .unwrap_or_default();
+        let ignored: Vec<&[u8]> = (json
+            .get(b"ignorePatterns")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter())
+        .filter_map(Json::as_str)
+        .collect();
         Config {
             path: path.to_vec(),
             settings: settings(json),
@@ -284,7 +320,10 @@ pub(crate) struct Resolved {
 
 /// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
 fn read_tsconfig(path: &[u8], settings: &mut Settings, depth: u32) {
-    let Some(json) = fs::read(path).ok().and_then(|text| bun_lint::json::parse(&text)) else {
+    let Some(json) = fs::read(path)
+        .ok()
+        .and_then(|text| bun_lint::json::parse(&text))
+    else {
         return;
     };
     let extended: Vec<&[u8]> = match json.get(b"extends") {
@@ -294,9 +333,17 @@ fn read_tsconfig(path: &[u8], settings: &mut Settings, depth: u32) {
     };
     let directory = paths::dirname(path);
     for name in extended.into_iter().filter(|_| depth < 16) {
-        let candidates = |base: Vec<u8>| [base.clone(), [&base[..], b".json"].concat(), paths::join(&base, b"tsconfig.json")];
+        let candidates = |base: Vec<u8>| {
+            [
+                base.clone(),
+                [&base[..], b".json"].concat(),
+                paths::join(&base, b"tsconfig.json"),
+            ]
+        };
         let found = match name.starts_with(b".") || paths::is_absolute(name) {
-            true => candidates(paths::resolve(directory, name)).into_iter().find(|it| fs::is_file(it)),
+            true => candidates(paths::resolve(directory, name))
+                .into_iter()
+                .find(|it| fs::is_file(it)),
             // A package.
             false => paths::ancestors(directory)
                 .flat_map(|it| candidates(paths::join(&paths::join(it, b"node_modules"), name)))
@@ -306,8 +353,17 @@ fn read_tsconfig(path: &[u8], settings: &mut Settings, depth: u32) {
             read_tsconfig(&found, settings, depth + 1);
         }
     }
-    for name in [&b"jsx"[..], b"jsxFactory", b"jsxFragmentFactory", b"reactNamespace"] {
-        if let Some(value) = json.get(b"compilerOptions").and_then(|it| it.get(name)).and_then(Json::as_str) {
+    for name in [
+        &b"jsx"[..],
+        b"jsxFactory",
+        b"jsxFragmentFactory",
+        b"reactNamespace",
+    ] {
+        if let Some(value) = json
+            .get(b"compilerOptions")
+            .and_then(|it| it.get(name))
+            .and_then(Json::as_str)
+        {
             let name = [b"tsconfig.", name].concat();
             settings.retain(|it| it.0 != name);
             settings.push((name, value.to_vec()));
@@ -351,14 +407,19 @@ impl<'c> Configs<'c> {
             Ok(scope) => scope.config.as_ref().is_some_and(|it| it.is_oxfmt),
             // The name of the one that cannot be used tells.
             Err(_) => paths::ancestors(&environment.cwd)
-                .find_map(|directory| NAMES.iter().position(|name| fs::is_file(&paths::join(directory, name))))
+                .find_map(|directory| {
+                    NAMES
+                        .iter()
+                        .position(|name| fs::is_file(&paths::join(directory, name)))
+                })
                 .is_some_and(|at| at < NAMES_OF_OXFMT),
         };
         if let Some(path) = &options.config {
             let path = paths::resolve(&environment.cwd, &paths::from_native(path));
             // A name that does not tell is of the tool that the project uses.
             let name = paths::basename(&path);
-            is_oxfmt = is_name_of_oxfmt(name) || (is_oxfmt && !strings::contains(name, b"prettier") && name != b"package.json");
+            is_oxfmt = is_name_of_oxfmt(name)
+                || (is_oxfmt && !strings::contains(name, b"prettier") && name != b"package.json");
             configs.named = Some(match configs.load(&path, is_oxfmt) {
                 Ok(Some(config)) => Ok(config),
                 Ok(None) => Ok(Arc::new(Config::new(&path, &Json::Null, is_oxfmt))),
@@ -370,7 +431,9 @@ impl<'c> Configs<'c> {
             // What was found on the way was found as Prettier finds it.
             configs.by_directory.get_mut().clear();
             if options.editorconfig {
-                configs.editorconfig_of_oxfmt = paths::ancestors(&environment.cwd).find_map(editorconfig::File::read).map(Arc::new);
+                configs.editorconfig_of_oxfmt = paths::ancestors(&environment.cwd)
+                    .find_map(editorconfig::File::read)
+                    .map(Arc::new);
             }
         }
         configs
@@ -383,7 +446,11 @@ impl<'c> Configs<'c> {
         }
         if self.flavor == Flavor::Oxfmt {
             let scope = self.for_directory(&self.environment.cwd)?;
-            let widths = self.config_of(&scope)?.into_iter().flat_map(|it| &it.settings).filter(|it| it.0 == b"printWidth");
+            let widths = self
+                .config_of(&scope)?
+                .into_iter()
+                .flat_map(|it| &it.settings)
+                .filter(|it| it.0 == b"printWidth");
             for (_, width) in widths {
                 check_print_width(width)?;
             }
@@ -403,23 +470,44 @@ impl<'c> Configs<'c> {
     fn load(&self, path: &[u8], is_oxfmt: bool) -> Result<Option<Arc<Config>>, Fatal> {
         let name = paths::basename(path);
         let read = || {
-            fs::read(path).map_err(|error| Fatal([b"Cannot read the configuration file ", path, b": ", &fs::describe(&error)].concat()))
+            fs::read(path).map_err(|error| {
+                Fatal(
+                    [
+                        b"Cannot read the configuration file ",
+                        path,
+                        b": ",
+                        &fs::describe(&error),
+                    ]
+                    .concat(),
+                )
+            })
         };
-        let run = || evaluate::evaluate(self.environment, evaluate::PRETTIER, path, self.options.config_cache);
+        let run = || {
+            evaluate::evaluate(
+                self.environment,
+                evaluate::PRETTIER,
+                path,
+                self.options.config_cache,
+            )
+        };
         let json = if name == b"package.json" {
             let text = read()?;
             // Most have no such word in them.
             if !strings::contains(&text, b"\"prettier\"") {
                 return Ok(None);
             }
-            match bun_lint::json::parse(&text).as_ref().and_then(|it| it.get(b"prettier")) {
+            match bun_lint::json::parse(&text)
+                .as_ref()
+                .and_then(|it| it.get(b"prettier"))
+            {
                 None | Some(Json::Null | Json::Bool(false)) => return Ok(None),
                 // The name of a package.
                 Some(Json::String(_)) => run()?,
                 Some(config) => config.clone(),
             }
         } else if name.ends_with(b".json") || name.ends_with(b".jsonc") {
-            bun_lint::json::parse(&read()?).ok_or_else(|| Fatal([b"JSON Error in \"", path, b"\""].concat()))?
+            bun_lint::json::parse(&read()?)
+                .ok_or_else(|| Fatal([b"JSON Error in \"", path, b"\""].concat()))?
         } else if name == b".prettierrc" {
             // YAML, which JSON is a part of.
             match bun_lint::json::parse(&read()?) {
@@ -434,23 +522,49 @@ impl<'c> Configs<'c> {
         }
         // What the plugins that sort imports do is built in.
         let is_built_in = |it: &Json| {
-            it.as_str().is_some_and(|name| name.ends_with(b"/prettier-plugin-sort-imports") || name == b"prettier-plugin-organize-imports")
+            it.as_str().is_some_and(|name| {
+                name.ends_with(b"/prettier-plugin-sort-imports")
+                    || name == b"prettier-plugin-organize-imports"
+            })
         };
-        if json.get(b"plugins").and_then(Json::as_array).is_some_and(|it| !it.iter().all(is_built_in)) {
-            self.warn(&[b"Plugins are not supported: \"plugins\" in ", path, b" has no effect."]);
+        if json
+            .get(b"plugins")
+            .and_then(Json::as_array)
+            .is_some_and(|it| !it.iter().all(is_built_in))
+        {
+            self.warn(&[
+                b"Plugins are not supported: \"plugins\" in ",
+                path,
+                b" has no effect.",
+            ]);
         }
         Ok(Some(Arc::new(Config::new(path, &json, is_oxfmt))))
     }
 
     /// What counts in `directory`, whose entries are `names`, and whose parent has `above`.
-    fn scope<'n>(&self, directory: &[u8], names: impl Iterator<Item = &'n [u8]>, above: Option<&Scope>) -> Found {
-        let count = if self.flavor == Flavor::Oxfmt { NAMES_OF_OXFMT } else { NAMES.len() };
-        let (mut candidates, mut has_editorconfig, mut is_project_root) = (Vec::new(), false, false);
+    fn scope<'n>(
+        &self,
+        directory: &[u8],
+        names: impl Iterator<Item = &'n [u8]>,
+        above: Option<&Scope>,
+    ) -> Found {
+        let count = if self.flavor == Flavor::Oxfmt {
+            NAMES_OF_OXFMT
+        } else {
+            NAMES.len()
+        };
+        let (mut candidates, mut has_editorconfig, mut is_project_root) =
+            (Vec::new(), false, false);
         for name in names.filter(|name| matches!(name.first(), Some(b'.' | b'p' | b'o'))) {
             match name {
                 b".editorconfig" => has_editorconfig = true,
                 b".git" | b".hg" => is_project_root = true,
-                name => candidates.extend(NAMES.iter().position(|it| *it == name).filter(|at| *at < count)),
+                name => candidates.extend(
+                    NAMES
+                        .iter()
+                        .position(|it| *it == name)
+                        .filter(|at| *at < count),
+                ),
             }
         }
         let mut config = above.and_then(|it| it.config.clone());
@@ -460,10 +574,23 @@ impl<'c> Configs<'c> {
             if let [first, second, ..] = candidates[..]
                 && second < NAMES_OF_OXFMT
             {
-                return Err(Fatal([b"Both '", NAMES[first], b"' and '", NAMES[second], b"' found in ", directory, b"."].concat()));
+                return Err(Fatal(
+                    [
+                        b"Both '",
+                        NAMES[first],
+                        b"' and '",
+                        NAMES[second],
+                        b"' found in ",
+                        directory,
+                        b".",
+                    ]
+                    .concat(),
+                ));
             }
             for at in candidates {
-                if let Some(found) = self.load(&paths::join(directory, NAMES[at]), at < NAMES_OF_OXFMT)? {
+                if let Some(found) =
+                    self.load(&paths::join(directory, NAMES[at]), at < NAMES_OF_OXFMT)?
+                {
                     config = Some(found);
                     break;
                 }
@@ -471,21 +598,35 @@ impl<'c> Configs<'c> {
         }
         if self.flavor == Flavor::Oxfmt {
             let editorconfigs = self.editorconfig_of_oxfmt.iter().map(Arc::clone).collect();
-            return Ok(Arc::new(Scope { config, editorconfigs }));
+            return Ok(Arc::new(Scope {
+                config,
+                editorconfigs,
+            }));
         }
-        let own = if has_editorconfig && self.options.editorconfig { editorconfig::File::read(directory) } else { None };
+        let own = if has_editorconfig && self.options.editorconfig {
+            editorconfig::File::read(directory)
+        } else {
+            None
+        };
         let starts_over = is_project_root || own.as_ref().is_some_and(|it| it.is_root);
         let mut editorconfigs = match (starts_over, above) {
             (false, Some(above)) => above.editorconfigs.clone(),
             _ => Vec::new(),
         };
         editorconfigs.extend(own.map(Arc::new));
-        Ok(Arc::new(Scope { config, editorconfigs }))
+        Ok(Arc::new(Scope {
+            config,
+            editorconfigs,
+        }))
     }
 
     /// What counts for the files in `directory`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
-        let directory = if self.options.disable_nested_config { &self.environment.cwd[..] } else { directory };
+        let directory = if self.options.disable_nested_config {
+            &self.environment.cwd[..]
+        } else {
+            directory
+        };
         let mut missing: Vec<&[u8]> = Vec::new();
         let mut above: Option<Found> = None;
         for ancestor in paths::ancestors(directory) {
@@ -504,12 +645,17 @@ impl<'c> Configs<'c> {
                 Some(Ok(above)) => self.scope(directory, names, Some(above)),
                 None => self.scope(directory, names, None),
                 // A configuration file that cannot be used does not matter below a nearer one.
-                Some(Err(error)) => self.scope(directory, names, None).and_then(|scope| match scope.config {
-                    Some(_) => Ok(scope),
-                    None => Err(error.clone()),
-                }),
+                Some(Err(error)) => {
+                    self.scope(directory, names, None)
+                        .and_then(|scope| match scope.config {
+                            Some(_) => Ok(scope),
+                            None => Err(error.clone()),
+                        })
+                }
             };
-            self.by_directory.lock().insert(directory.to_vec(), found.clone());
+            self.by_directory
+                .lock()
+                .insert(directory.to_vec(), found.clone());
             above = Some(found);
         }
         above.unwrap_or_else(|| Err(Fatal(b"The path of a directory is empty.".to_vec())))
@@ -526,17 +672,25 @@ impl<'c> Configs<'c> {
             return Ok(Arc::clone(above));
         }
         let found = self.scope(directory, names, Some(above));
-        self.by_directory.lock().insert(directory.to_vec(), found.clone());
+        self.by_directory
+            .lock()
+            .insert(directory.to_vec(), found.clone());
         found
     }
 
     /// `ignorePatterns` of the configuration file for what has `scope`.
     pub(crate) fn ignores_of<'s>(&'s self, scope: &'s Scope) -> &'s Chain {
-        self.config_of(scope).ok().flatten().map_or(&None, |it| &it.ignores)
+        self.config_of(scope)
+            .ok()
+            .flatten()
+            .map_or(&None, |it| &it.ignores)
     }
 
     /// The configuration file for what has `scope`.
-    pub(crate) fn config_of<'s>(&'s self, scope: &'s Scope) -> Result<Option<&'s Arc<Config>>, Fatal> {
+    pub(crate) fn config_of<'s>(
+        &'s self,
+        scope: &'s Scope,
+    ) -> Result<Option<&'s Arc<Config>>, Fatal> {
         match &self.named {
             _ if !self.options.config_lookup => Ok(None),
             Some(named) => named.as_ref().map(Some).map_err(Fatal::clone),
@@ -549,9 +703,16 @@ impl<'c> Configs<'c> {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";
         let may_be_set = self.options.format.iter().any(|it| it.0 == b"parser")
             || self.config_of(scope).ok().flatten().is_some_and(|config| {
-                config.settings.iter().any(is_about_parser) || config.overrides.iter().any(|it| it.settings.iter().any(is_about_parser))
+                config.settings.iter().any(is_about_parser)
+                    || config
+                        .overrides
+                        .iter()
+                        .any(|it| it.settings.iter().any(is_about_parser))
             });
-        may_be_set && self.options_for(scope, path).is_ok_and(|it| it.options.parser.is_some())
+        may_be_set
+            && self
+                .options_for(scope, path)
+                .is_ok_and(|it| it.options.parser.is_some())
     }
 
     /// Prettier's `getOptionsForFile`: how to format the file at `path`, which has `scope`.
@@ -563,8 +724,15 @@ impl<'c> Configs<'c> {
             false => Vec::new(),
         };
         // oxfmt does not know `max_line_length = off`.
-        let counts = |it: &&(&[u8], Vec<u8>)| self.flavor == Flavor::Prettier || (it.0, &it.1[..]) != (b"printWidth", b"65535");
-        from_files.extend(from_editorconfig.iter().filter(counts).map(|it| (it.0, &it.1[..])));
+        let counts = |it: &&(&[u8], Vec<u8>)| {
+            self.flavor == Flavor::Prettier || (it.0, &it.1[..]) != (b"printWidth", b"65535")
+        };
+        from_files.extend(
+            from_editorconfig
+                .iter()
+                .filter(counts)
+                .map(|it| (it.0, &it.1[..])),
+        );
         if let Some(config) = config {
             if config.is_oxfmt && !from_files.iter().any(|it| it.0 == b"printWidth") {
                 from_files.push((b"printWidth", b"100"));
@@ -597,35 +765,49 @@ impl<'c> Configs<'c> {
         let mut organizes_imports = false;
         let mut sort_imports: Option<Vec<u8>> = None;
         for (name, value) in all {
-            organizes_imports |= name.starts_with(b"organizeImports") || (name == b"plugins" && strings::contains(value, b"prettier-plugin-organize-imports"));
+            organizes_imports |= name.starts_with(b"organizeImports")
+                || (name == b"plugins"
+                    && strings::contains(value, b"prettier-plugin-organize-imports"));
             match name {
                 // An override of oxfmt changes the keys that it has.
                 name if self.flavor == Flavor::Oxfmt && name.ends_with(b"ortImports") => {
-                    let merged = sort_imports.as_deref().map_or_else(|| value.to_vec(), |before| merged_objects(before, value));
+                    let merged = sort_imports
+                        .as_deref()
+                        .map_or_else(|| value.to_vec(), |before| merged_objects(before, value));
                     sort.set(name, &merged);
                     sort_imports = Some(merged);
                 }
                 name if sort.set(name, value) => {}
-                b"insertFinalNewline" if self.flavor == Flavor::Oxfmt => resolved.omits_final_newline = value == b"false",
-                b"sortPackageJson" | b"sortPackageJson.sortScripts" if self.flavor == Flavor::Oxfmt => {
+                b"insertFinalNewline" if self.flavor == Flavor::Oxfmt => {
+                    resolved.omits_final_newline = value == b"false"
+                }
+                b"sortPackageJson" | b"sortPackageJson.sortScripts"
+                    if self.flavor == Flavor::Oxfmt =>
+                {
                     let _ = resolved.options.set(name, value);
                 }
                 b"experimentalSortPackageJson" if self.flavor == Flavor::Oxfmt => {
                     let _ = resolved.options.set(b"sortPackageJson", value);
                 }
-                b"printWidth" if self.flavor == Flavor::Oxfmt && check_print_width(value).is_err() => {
+                b"printWidth"
+                    if self.flavor == Flavor::Oxfmt && check_print_width(value).is_err() =>
+                {
                     check_print_width(value)?;
                 }
                 name if name == b"jsdoc" || name.starts_with(b"jsdoc.") => {
                     if resolved.options.set(name, value).is_err() {
-                        return Err(Fatal([b"Invalid ", name, b" value: ", value, b"."].concat()));
+                        return Err(Fatal(
+                            [b"Invalid ", name, b" value: ", value, b"."].concat(),
+                        ));
                     }
                 }
                 b"sortTailwindcss" | b"experimentalTailwindcss" if value != b"false" => {
                     self.warn(&[name, b" is not supported yet, and has no effect."]);
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
-                    return Err(Fatal([b"Invalid ", name, b" value: ", value, b"."].concat()));
+                    return Err(Fatal(
+                        [b"Invalid ", name, b" value: ", value, b"."].concat(),
+                    ));
                 }
                 _ => {}
             }
@@ -645,13 +827,17 @@ impl<'c> Configs<'c> {
         if let Some(known) = self.tsconfigs.lock().get(directory) {
             return Arc::clone(known);
         }
-        let nearest = paths::ancestors(directory).map(|it| paths::join(it, b"tsconfig.json")).find(|it| fs::is_file(it));
+        let nearest = paths::ancestors(directory)
+            .map(|it| paths::join(it, b"tsconfig.json"))
+            .find(|it| fs::is_file(it));
         let mut settings = Settings::new();
         if let Some(path) = nearest {
             read_tsconfig(&path, &mut settings, 0);
         }
         let settings = Arc::new(settings);
-        self.tsconfigs.lock().insert(directory.to_vec(), Arc::clone(&settings));
+        self.tsconfigs
+            .lock()
+            .insert(directory.to_vec(), Arc::clone(&settings));
         settings
     }
 

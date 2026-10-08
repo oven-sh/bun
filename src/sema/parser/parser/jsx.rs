@@ -161,12 +161,7 @@ impl Parser<'_> {
                 return (Atom::NONE, start, false);
             }
             // The text has no blanks around the colon.
-            let text = [
-                self.lx.text_of(name),
-                b":",
-                self.lx.text_of(self.lx.atom),
-            ]
-            .concat();
+            let text = [self.lx.text_of(name), b":", self.lx.text_of(self.lx.atom)].concat();
             name = self.atom(&text);
             end = self.lx.end;
             self.next();

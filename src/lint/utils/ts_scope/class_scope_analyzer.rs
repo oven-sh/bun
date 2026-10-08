@@ -283,7 +283,9 @@ impl<'a> ClassMemberUsage<'a> {
             return self.places.get(&(class, key)).map(|&it| it as usize);
         }
         let first = members.first_member as usize;
-        let keys = self.keys.get(first..first + members.member_count as usize)?;
+        let keys = self
+            .keys
+            .get(first..first + members.member_count as usize)?;
         Some(first + keys.iter().position(|it| *it == key)?)
     }
 
@@ -367,7 +369,9 @@ impl<'a> ClassMemberUsage<'a> {
             }
             if is_plain {
                 member.name.name_span = match candidate.node {
-                    MemberNode::Member(it) => it.key().map_or_else(Span::default, |key| key.span(file)),
+                    MemberNode::Member(it) => {
+                        it.key().map_or_else(Span::default, |key| key.span(file))
+                    }
                     MemberNode::ParameterProperty(it) => estree_span(Node::Pat(it.pat())),
                 };
             }
@@ -375,8 +379,12 @@ impl<'a> ClassMemberUsage<'a> {
             self.keys.push(candidate.key);
         }
         if self.members.len() - first > FEW_MEMBERS {
-            let (class, keys) = (self.classes.len() as u32, self.keys.iter().enumerate().skip(first));
-            self.places.extend(keys.map(|(i, &key)| ((class, key), i as u32)));
+            let (class, keys) = (
+                self.classes.len() as u32,
+                self.keys.iter().enumerate().skip(first),
+            );
+            self.places
+                .extend(keys.map(|(i, &key)| ((class, key), i as u32)));
         }
         self.classes.push(ClassScopeResult {
             class,
@@ -456,12 +464,17 @@ impl Names {
         }
         let is_literal = |name: &[u8]| {
             matches!(name, b"true" | b"false" | b"null" | b"Infinity")
-                || !name.first().is_some_and(|&c| c.is_ascii_alphabetic() || matches!(c, b'_' | b'$' | b'#' | 0x80..))
+                || !name.first().is_some_and(|&c| {
+                    c.is_ascii_alphabetic() || matches!(c, b'_' | b'$' | b'#' | 0x80..)
+                })
         };
         Names {
             bits,
             sorted,
-            has_literal: usage.members.iter().any(|it| is_literal(&it.name.code_name)),
+            has_literal: usage
+                .members
+                .iter()
+                .any(|it| is_literal(&it.name.code_name)),
             has_public: usage.keys.iter().any(|key| !key.is_private),
         }
     }
@@ -792,7 +805,11 @@ pub fn analyze_class_member_usage<'a>(
     let mut usage = ClassMemberUsage::default();
     let mut candidates = Vec::new();
     for id in 0..file.hir.classes.len() {
-        usage.add_class(Class::new(file, hir::ClassId(id as u32)), &is_tracked, &mut candidates);
+        usage.add_class(
+            Class::new(file, hir::ClassId(id as u32)),
+            &is_tracked,
+            &mut candidates,
+        );
     }
     if usage.members.is_empty() {
         return usage;
@@ -805,7 +822,13 @@ pub fn analyze_class_member_usage<'a>(
     };
     let tag_of = |e: hir::ExprId| file.hir.exprs.get(e.idx()).map(|it| it.kind.tag());
     for e in file.exprs_of_kind(ExprTag::Dot) {
-        let Some(hir::ExprKind::Dot { obj, name, name_pos, .. }) = e.try_raw().map(|it| it.kind) else {
+        let Some(hir::ExprKind::Dot {
+            obj,
+            name,
+            name_pos,
+            ..
+        }) = e.try_raw().map(|it| it.kind)
+        else {
             continue;
         };
         if !names.contains(name) {
@@ -853,14 +876,15 @@ pub fn analyze_class_member_usage<'a>(
             continue;
         }
         let index = Expr::new(file, index);
-        let name = match index.kind() {
-            ExprKind::String(name) => Some(name.atom()).filter(|it| names.contains(*it)),
-            ExprKind::Template(_) => extract_computed_name(index)
-                .and_then(|it| analyzer.name_of_literal(&it.code_name)),
-            _ if names.has_literal => extract_computed_name(index)
-                .and_then(|it| analyzer.name_of_literal(&it.code_name)),
-            _ => None,
-        };
+        let name =
+            match index.kind() {
+                ExprKind::String(name) => Some(name.atom()).filter(|it| names.contains(*it)),
+                ExprKind::Template(_) => extract_computed_name(index)
+                    .and_then(|it| analyzer.name_of_literal(&it.code_name)),
+                _ if names.has_literal => extract_computed_name(index)
+                    .and_then(|it| analyzer.name_of_literal(&it.code_name)),
+                _ => None,
+            };
         if let Some(name) = name {
             let at = e.span().end.saturating_sub(1);
             analyzer.member_expression(e, Expr::new(file, obj), name, at);

@@ -62,8 +62,18 @@ impl Host for Tester<'_> {
         match case.place {
             Place::Nowhere => Some(context.verify(case.path, case.code, &config).messages),
             Place::Project(_) => {
-                let mut result = context.verify_text(case.path.to_vec(), case.path, case.code.to_vec(), &config, &|_| ());
-                if !context.modules.complete(&|count, work| (0..count).for_each(work)).is_empty() {
+                let mut result = context.verify_text(
+                    case.path.to_vec(),
+                    case.path,
+                    case.code.to_vec(),
+                    &config,
+                    &|_| (),
+                );
+                if !context
+                    .modules
+                    .complete(&|count, work| (0..count).for_each(work))
+                    .is_empty()
+                {
                     // Or it is read from the disk.
                     result.text = Some(case.code.to_vec());
                     context.lint_again(&mut result).ok()?;
@@ -80,7 +90,11 @@ impl Host for Tester<'_> {
                     config: &config,
                     text: Some(case.code.to_vec()),
                 };
-                Some(typed::lint(&context, &environment, &[file], &|_| ()).pop()??.messages)
+                Some(
+                    typed::lint(&context, &environment, &[file], &|_| ())
+                        .pop()??
+                        .messages,
+                )
             }
         }
     }
@@ -96,9 +110,16 @@ pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
     bun_lint_conformance::run_from_command_line(
         args,
         &Tester {
-            linter: Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES])),
+            linter: Linter::new(Registry::new(&[
+                bun_lint_eslint::RULES,
+                bun_lint_typescript::RULES,
+                bun_lint_plugins::RULES,
+            ])),
             environment,
-            js_plugins: js_plugin::Host::with_engine(environment.js_engine, &crate::paths::to_native(environment.cwd.clone())),
+            js_plugins: js_plugin::Host::with_engine(
+                environment.js_engine,
+                &crate::paths::to_native(environment.cwd.clone()),
+            ),
         },
     )
 }

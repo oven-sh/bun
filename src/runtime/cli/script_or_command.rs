@@ -43,7 +43,8 @@ pub(crate) fn is_package_script(command: &[u8]) -> bool {
     };
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
-    if running.is_some_and(|running| running_package_scripts(running).any(|it| it == (command, dir)))
+    if running
+        .is_some_and(|running| running_package_scripts(running).any(|it| it == (command, dir)))
     {
         return false;
     }

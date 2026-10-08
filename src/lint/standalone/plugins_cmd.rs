@@ -10,10 +10,21 @@ use bun_lint_graph::{Graph, Store, with_file};
 fn cycles(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let threads: usize = flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(1);
-    let options = args.iter().find(|it| it.starts_with('[')).and_then(|it| bun_lint::json::parse(it.as_bytes()));
+    let options = args
+        .iter()
+        .find(|it| it.starts_with('['))
+        .and_then(|it| bun_lint::json::parse(it.as_bytes()));
     let mut rule = vec![Json::Number(1.0)];
-    rule.extend_from_slice(options.as_ref().and_then(Json::as_array).unwrap_or_default());
-    let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(vec![(b"import/no-cycle".to_vec(), Json::Array(rule))]))]);
+    rule.extend_from_slice(
+        options
+            .as_ref()
+            .and_then(Json::as_array)
+            .unwrap_or_default(),
+    );
+    let config = Json::Object(vec![(
+        b"rules".to_vec(),
+        Json::Object(vec![(b"import/no-cycle".to_vec(), Json::Array(rule))]),
+    )]);
     let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
     config.language.parser = bun_lint::language::Parser::TypeScript;
     config.language.experimental_decorators = true;
@@ -21,37 +32,60 @@ fn cycles(args: &[String]) {
     config.language.is_oxlint = args.iter().any(|it| it == "--oxlint");
     config.skips_unknown_rules = true;
     let mut paths = Vec::new();
-    for arg in args.iter().filter(|a| !a.starts_with("--") && !a.starts_with('[')) {
+    for arg in args
+        .iter()
+        .filter(|a| !a.starts_with("--") && !a.starts_with('['))
+    {
         crate::collect(&std::fs::canonicalize(arg).expect("a path"), &mut paths);
     }
-    let paths: Vec<String> = paths.iter().map(|it| it.to_string_lossy().into_owned()).collect();
+    let paths: Vec<String> = paths
+        .iter()
+        .map(|it| it.to_string_lossy().into_owned())
+        .collect();
     let started = std::time::Instant::now();
     let store = Store::new(paths.first().map_or(&b"/"[..], |it| it.as_bytes()));
     let graph = Graph::new(&store);
     let lint = |path: &str| {
         let text = std::fs::read(path).unwrap_or_default();
-        let linted = with_file(path.as_bytes(), &text, &config.language, Some(&graph), |file| {
-            linter().lint(file, &config, &LintOptions::default()).messages
-        });
+        let linted = with_file(
+            path.as_bytes(),
+            &text,
+            &config.language,
+            Some(&graph),
+            |file| {
+                linter()
+                    .lint(file, &config, &LintOptions::default())
+                    .messages
+            },
+        );
         linted.unwrap_or_default()
     };
     bun_sema_standalone::for_each_parallel(threads, paths.len(), |at| {
         lint(&paths[at]);
     });
     let collected = started.elapsed();
-    let again = graph.complete(&|count, work| bun_sema_standalone::for_each_parallel(threads, count, work));
+    let again =
+        graph.complete(&|count, work| bun_sema_standalone::for_each_parallel(threads, count, work));
     let completed = started.elapsed();
     let found = std::sync::Mutex::new(Vec::new());
     bun_sema_standalone::for_each_parallel(threads, again.len(), |at| {
         let path = String::from_utf8_lossy(&again[at]).into_owned();
         let messages = lint(&path);
-        found.lock().unwrap().extend(messages.into_iter().map(|it| (path.clone(), it)));
+        found
+            .lock()
+            .unwrap()
+            .extend(messages.into_iter().map(|it| (path.clone(), it)));
     });
     let mut found = found.into_inner().unwrap();
     found.sort_by(|a, b| (&a.0, a.1.line, a.1.column).cmp(&(&b.0, b.1.line, b.1.column)));
     if args.iter().any(|it| it == "--json") {
         for (path, message) in &found {
-            println!("{path}:{}:{}: {}", message.line, message.column, String::from_utf8_lossy(&message.message));
+            println!(
+                "{path}:{}:{}: {}",
+                message.line,
+                message.column,
+                String::from_utf8_lossy(&message.message)
+            );
         }
     }
     eprintln!(
@@ -69,6 +103,8 @@ fn cycles(args: &[String]) {
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("cycles") => cycles(&args[1..]),
-        _ => println!("usage: bun-lint plugins cycles <paths..> [--threads=n] [--json] [--oxlint] [options]"),
+        _ => println!(
+            "usage: bun-lint plugins cycles <paths..> [--threads=n] [--json] [--oxlint] [options]"
+        ),
     }
 }

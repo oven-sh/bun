@@ -11,19 +11,19 @@ mod driver_cmd;
 mod format_cmd;
 mod js_plugin_cmd;
 mod linter_cmd;
-mod plugins_cmd;
 mod parser_cmd;
 mod perf_cmd;
+mod plugins_cmd;
 mod regex_cmd;
 mod selector_cmd;
 mod semantic_cmd;
 mod tokens_cmd;
 mod types_cmd;
-mod utils_eslint_cmd;
-mod utils_tsscope_cmd;
-mod utils_ts_cmd;
 mod utils_core_cmd;
+mod utils_eslint_cmd;
 mod utils_small_cmd;
+mod utils_ts_cmd;
+mod utils_tsscope_cmd;
 
 use bun_lint::context::Severity;
 use bun_lint::language::LanguageOptions;
@@ -37,7 +37,10 @@ fn text(bytes: &[u8]) -> String {
 }
 
 fn all_rules() -> impl Iterator<Item = &'static RuleEntry> {
-    bun_lint_eslint::RULES.iter().chain(bun_lint_typescript::RULES).chain(bun_lint_plugins::RULES)
+    bun_lint_eslint::RULES
+        .iter()
+        .chain(bun_lint_typescript::RULES)
+        .chain(bun_lint_plugins::RULES)
 }
 
 pub(crate) use linter_cmd::with_file;
@@ -54,14 +57,22 @@ fn run_one(args: &[String]) {
         return println!("no such rule: {rule}");
     };
     let code = std::fs::read(path).expect("the file");
-    let options = rest.first().and_then(|it| bun_lint::json::parse(it.as_bytes()));
-    let options = options.as_ref().and_then(Json::as_array).unwrap_or_default();
+    let options = rest
+        .first()
+        .and_then(|it| bun_lint::json::parse(it.as_bytes()));
+    let options = options
+        .as_ref()
+        .and_then(Json::as_array)
+        .unwrap_or_default();
     let outcome = lint(entry, path, &code, options, &Json::Null, &Json::Null);
     if outcome.has_parse_errors {
         println!("the parser rejects the code");
     }
     for it in &outcome.messages {
-        println!("{path}:{}:{}: {} ({})", it.line, it.column, it.message, it.message_id);
+        println!(
+            "{path}:{}:{}: {} ({})",
+            it.line, it.column, it.message, it.message_id
+        );
     }
     if let Some(output) = outcome.output {
         println!("──── after fixes\n{}", text(&output));
@@ -72,13 +83,20 @@ fn run_one(args: &[String]) {
 fn collect(path: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
     const EXTENSIONS: [&str; 8] = ["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
     if path.is_dir() {
-        let is_skipped = matches!(path.file_name().and_then(|it| it.to_str()), Some("node_modules" | ".git"));
+        let is_skipped = matches!(
+            path.file_name().and_then(|it| it.to_str()),
+            Some("node_modules" | ".git")
+        );
         if let (false, Ok(entries)) = (is_skipped, std::fs::read_dir(path)) {
             let mut paths: Vec<_> = entries.flatten().map(|it| it.path()).collect();
             paths.sort();
             paths.iter().for_each(|it| collect(it, into));
         }
-    } else if path.extension().and_then(|it| it.to_str()).is_some_and(|it| EXTENSIONS.contains(&it)) {
+    } else if path
+        .extension()
+        .and_then(|it| it.to_str())
+        .is_some_and(|it| EXTENSIONS.contains(&it))
+    {
         into.push(path.to_owned());
     }
 }
@@ -95,11 +113,21 @@ fn bench(args: &[String]) {
         collect(std::path::Path::new(arg), &mut paths);
     }
     let files: Vec<(String, Vec<u8>)> = (paths.iter())
-        .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
+        .filter_map(|path| {
+            Some((
+                path.to_string_lossy().into_owned(),
+                std::fs::read(path).ok()?,
+            ))
+        })
         .collect();
     let bytes: usize = files.iter().map(|it| it.1.len()).sum();
     let built: Vec<_> = all_rules()
-        .filter(|it| !it.meta.requires_types && only.as_ref().is_none_or(|only| only.contains(&it.meta.name)))
+        .filter(|it| {
+            !it.meta.requires_types
+                && only
+                    .as_ref()
+                    .is_none_or(|only| only.contains(&it.meta.name))
+        })
         .map(|it| (it.build)(&Options::default()))
         .collect();
     let rules: Vec<_> = (built.iter())
@@ -140,10 +168,18 @@ fn bench(args: &[String]) {
     }
     if is_per_rule {
         let mut table: Vec<(f64, &str)> = (alone.iter().zip(&rules))
-            .map(|(nanos, rule)| (nanos.load(Relaxed) as f64 / 1e6 / repeat as f64, rule.rule.meta().name))
+            .map(|(nanos, rule)| {
+                (
+                    nanos.load(Relaxed) as f64 / 1e6 / repeat as f64,
+                    rule.rule.meta().name,
+                )
+            })
             .collect();
         table.sort_by(|a, b| b.0.total_cmp(&a.0));
-        println!("sum of the rules alone: {:.1} ms", table.iter().map(|it| it.0).sum::<f64>());
+        println!(
+            "sum of the rules alone: {:.1} ms",
+            table.iter().map(|it| it.0).sum::<f64>()
+        );
         for (ms, name) in table {
             println!("{ms:9.1} ms  {name}");
         }
@@ -193,6 +229,8 @@ fn main() {
         Some("utils-ts") => utils_ts_cmd::run(&args[1..]),
         Some("utils-core") => utils_core_cmd::run(&args[1..]),
         Some("utils-small") => utils_small_cmd::run(&args[1..]),
-        _ => println!("usage: bun-lint conformance <fixtures> | bun-lint run <rule> <file> [options]"),
+        _ => println!(
+            "usage: bun-lint conformance <fixtures> | bun-lint run <rule> <file> [options]"
+        ),
     }
 }

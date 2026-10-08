@@ -199,7 +199,9 @@ impl<'a> Node<'a> {
         match parent.copied().unwrap_or(Parent::None) {
             Parent::None | Parent::File => Node::File(file),
             Parent::Expr(e) => Node::Expr(Expr::new(file, e)),
-            Parent::Prop(p) if file.is_import_attribute(p) => file.parents().of_import_attribute(file, p),
+            Parent::Prop(p) if file.is_import_attribute(p) => {
+                file.parents().of_import_attribute(file, p)
+            }
             Parent::Stmt(s) => {
                 let statement = Stmt::new(file, s);
                 Node::Stmt(match statement.tag() {
@@ -231,7 +233,9 @@ impl<'a> Node<'a> {
                 };
                 // From the `C` of `namespace A.B.C` to the `A`.
                 match bound.stmt_parent.get(module.stmt.idx()) {
-                    Some(&Parent::Module(outer)) if file.is_nested_namespace(module.stmt) => m = outer,
+                    Some(&Parent::Module(outer)) if file.is_nested_namespace(module.stmt) => {
+                        m = outer
+                    }
                     _ => break Node::Stmt(Stmt::new(file, module.stmt)),
                 }
             },
@@ -251,7 +255,8 @@ impl<'a> Node<'a> {
             }
             _ => Node::File(file),
         };
-        let unpack = |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
+        let unpack =
+            |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
         match self {
             Node::File(_) => self,
             Node::Expr(e) => e.parent(),
@@ -268,7 +273,11 @@ impl<'a> Node<'a> {
                 },
             },
             Node::PatProp(p) => owner_of_pattern(p.value().id()),
-            Node::PatElem(e) => owner_of_pattern(hir.pat_elems.get(e.id().idx()).map_or(hir::PatId::NONE, |it| it.pat)),
+            Node::PatElem(e) => owner_of_pattern(
+                hir.pat_elems
+                    .get(e.id().idx())
+                    .map_or(hir::PatId::NONE, |it| it.pat),
+            ),
             Node::Func(f) => f.owner(),
             Node::Class(c) => c.owner(),
             Node::Param(p) => match p.func() {
@@ -277,11 +286,15 @@ impl<'a> Node<'a> {
             },
             Node::Member(m) => match bound.member_owner.get(m.id().idx()) {
                 Some(&MemberOwner::Class(c)) => Node::Class(Class::new(file, c)),
-                Some(&MemberOwner::Interface(i)) => stmt(hir.interfaces.get(i.idx()).map(|i| i.stmt)),
+                Some(&MemberOwner::Interface(i)) => {
+                    stmt(hir.interfaces.get(i.idx()).map(|i| i.stmt))
+                }
                 Some(&MemberOwner::TypeLiteral(t)) => Node::Type(TypeNode::new(file, t)),
                 Some(MemberOwner::None) | None => Node::File(file),
             },
-            Node::Prop(p) if file.is_import_attribute(p.id()) => file.parents().of_import_attribute(file, p.id()),
+            Node::Prop(p) if file.is_import_attribute(p.id()) => {
+                file.parents().of_import_attribute(file, p.id())
+            }
             Node::Prop(p) => match bound.prop_owner.get(p.id().idx()) {
                 Some(&owner) if owner.is_some() => Node::Expr(Expr::new(file, owner)),
                 _ => Node::File(file),
@@ -352,12 +365,20 @@ impl<'a> Expr<'a> {
                     return Node::Prop(Prop::new(file, p));
                 }
                 Some(&Parent::Stmt(s))
-                    if !matches!(file.hir.stmts.get(s.idx()), None | Some(hir::Stmt { kind: hir::StmtKind::Expr(_), .. })) =>
+                    if !matches!(
+                        file.hir.stmts.get(s.idx()),
+                        None | Some(hir::Stmt {
+                            kind: hir::StmtKind::Expr(_),
+                            ..
+                        })
+                    ) =>
                 {
                     return Node::Stmt(Stmt::new(file, s));
                 }
                 Some(&Parent::FnBody(f)) if is_in_no_type => return Node::Func(Func::new(file, f)),
-                Some(&Parent::MemberInit(m)) if is_in_no_type => return Node::Member(Member::new(file, m)),
+                Some(&Parent::MemberInit(m)) if is_in_no_type => {
+                    return Node::Member(Member::new(file, m));
+                }
                 _ => {}
             }
         }
@@ -368,9 +389,10 @@ impl<'a> Expr<'a> {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         // Few files have a `typeof` in a type.
-        let in_type_query =
-            !bound.type_query_operands.is_empty() && bound.type_query_operands.binary_search(&self.id).is_ok();
-        if let Some(Some(ty)) = in_type_query.then(|| file.parents().of_type_query_operand(self.id)) {
+        let in_type_query = !bound.type_query_operands.is_empty()
+            && bound.type_query_operands.binary_search(&self.id).is_ok();
+        if let Some(Some(ty)) = in_type_query.then(|| file.parents().of_type_query_operand(self.id))
+        {
             return Node::Type(TypeNode::new(file, ty));
         }
         let mut id = self.id;
@@ -400,7 +422,13 @@ impl<'a> Stmt<'a> {
         match file.bound.stmt_parent.get(self.id.idx()) {
             Some(&Parent::FnBody(f)) => Node::Func(Func::new(file, f)),
             Some(&Parent::Stmt(parent))
-                if matches!(file.hir.stmts.get(parent.idx()), Some(hir::Stmt { kind: hir::StmtKind::Block(_), .. })) =>
+                if matches!(
+                    file.hir.stmts.get(parent.idx()),
+                    Some(hir::Stmt {
+                        kind: hir::StmtKind::Block(_),
+                        ..
+                    })
+                ) =>
             {
                 Node::Stmt(Stmt::new(file, parent))
             }
@@ -412,9 +440,9 @@ impl<'a> Stmt<'a> {
         match Node::of_parent(self.file, parent) {
             // The binder records the `switch` for what is in a clause.
             Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.kind() {
-                StmtKind::Switch { cases, .. } => {
-                    cases.around(self.span().start).map_or(Node::Stmt(parent), Node::Case)
-                }
+                StmtKind::Switch { cases, .. } => cases
+                    .around(self.span().start)
+                    .map_or(Node::Stmt(parent), Node::Case),
                 _ => Node::Stmt(parent),
             },
             parent => parent,
@@ -472,7 +500,10 @@ impl Parents {
         let mut at = id;
         while let Some(&Packed { tag: Tag::Type, id }) = self.types.get(at.idx()) {
             at = hir::TypeNodeId(id);
-            if matches!(hir.types.get(at.idx()).map(|it| it.kind), Some(hir::TypeNodeKind::JSDoc { .. })) {
+            if matches!(
+                hir.types.get(at.idx()).map(|it| it.kind),
+                Some(hir::TypeNodeKind::JSDoc { .. })
+            ) {
                 return true;
             }
         }
@@ -489,7 +520,9 @@ impl Parents {
     fn of_import_attribute<'a>(&self, file: &'a File<'a>, prop: hir::PropId) -> Node<'a> {
         let at = file.hir.props.get(prop.idx()).map_or(0, |it| it.pos);
         let after = file.hir.import_attributes.partition_point(|it| it.0 <= at);
-        let owner = after.checked_sub(1).and_then(|it| self.import_attributes.get(it));
+        let owner = after
+            .checked_sub(1)
+            .and_then(|it| self.import_attributes.get(it));
         owner.map_or(Node::File(file), |it| it.unpack(file))
     }
 
@@ -504,19 +537,36 @@ impl Parents {
         let mut own = |start: u32, end: u32, owner: Packed| {
             let first = all.partition_point(|it| it.0 < start);
             let within = all[first..].partition_point(|it| it.0 < end);
-            for it in owners[first..first + within].iter_mut().filter(|it| matches!(it.tag, Tag::File)) {
+            for it in owners[first..first + within]
+                .iter_mut()
+                .filter(|it| matches!(it.tag, Tag::File))
+            {
                 *it = owner;
             }
         };
         for (i, it) in hir.types.iter().enumerate() {
             if matches!(it.kind, hir::TypeNodeKind::Import { .. }) {
-                own(it.pos, it.end, Packed { tag: Tag::Type, id: i as u32 });
+                own(
+                    it.pos,
+                    it.end,
+                    Packed {
+                        tag: Tag::Type,
+                        id: i as u32,
+                    },
+                );
             }
         }
         for (i, it) in hir.stmts.iter().enumerate() {
             use hir::StmtKind::{ExportNamed, ExportStar, Import};
             if matches!(it.kind, Import(_) | ExportNamed(_) | ExportStar { .. }) {
-                own(it.start, it.loc.end, Packed { tag: Tag::Stmt, id: i as u32 });
+                own(
+                    it.start,
+                    it.loc.end,
+                    Packed {
+                        tag: Tag::Stmt,
+                        id: i as u32,
+                    },
+                );
             }
         }
         owners
@@ -546,10 +596,7 @@ impl Parents {
                 slots.fill(parent);
             }
         };
-        let packed = |tag: Tag, id: usize| Packed {
-            tag,
-            id: id as u32,
-        };
+        let packed = |tag: Tag, id: usize| Packed { tag, id: id as u32 };
 
         for (i, ty) in hir.types.iter().enumerate() {
             use hir::TypeNodeKind as K;
@@ -565,9 +612,11 @@ impl Parents {
                 K::Template { types, .. } | K::Union(types) | K::Intersection(types) => {
                     list!(types, parent)
                 }
-                K::Array(t) | K::Keyof(t) | K::Readonly(t) | K::Unique(t) | K::JSDoc { ty: t, .. } => {
-                    one(t, parent)
-                }
+                K::Array(t)
+                | K::Keyof(t)
+                | K::Readonly(t)
+                | K::Unique(t)
+                | K::JSDoc { ty: t, .. } => one(t, parent),
                 K::Predicate { ty, .. } => one(ty, parent),
                 K::Tuple(elements) => {
                     if let Some(slots) = tuple_elems.get_mut(elements.range()) {
@@ -579,7 +628,9 @@ impl Parents {
                     extends,
                     yes,
                     no,
-                } => [check, extends, yes, no].into_iter().for_each(|t| one(t, parent)),
+                } => [check, extends, yes, no]
+                    .into_iter()
+                    .for_each(|t| one(t, parent)),
                 K::IndexedAccess { obj, index } => {
                     one(obj, parent);
                     one(index, parent);
@@ -669,10 +720,18 @@ impl Parents {
             let (ty, type_args) = match e.kind {
                 K::As { ty, .. } | K::Satisfies { ty, .. } => (ty, hir::IdList::EMPTY),
                 K::Instantiation { type_args, .. } => (hir::TypeNodeId::NONE, type_args),
-                K::Call(c) | K::New(c) | K::TaggedTemplate(c) => {
-                    (hir::TypeNodeId::NONE, hir.calls.get(c.idx()).map_or(hir::IdList::EMPTY, |call| call.type_args))
-                }
-                K::Jsx(j) => (hir::TypeNodeId::NONE, hir.jsx.get(j.idx()).map_or(hir::IdList::EMPTY, |jsx| jsx.type_args)),
+                K::Call(c) | K::New(c) | K::TaggedTemplate(c) => (
+                    hir::TypeNodeId::NONE,
+                    hir.calls
+                        .get(c.idx())
+                        .map_or(hir::IdList::EMPTY, |call| call.type_args),
+                ),
+                K::Jsx(j) => (
+                    hir::TypeNodeId::NONE,
+                    hir.jsx
+                        .get(j.idx())
+                        .map_or(hir::IdList::EMPTY, |jsx| jsx.type_args),
+                ),
                 _ => continue,
             };
             if ty.is_none() && type_args.len == 0 {
@@ -708,7 +767,10 @@ impl File<'_> {
     #[inline]
     pub(super) fn is_in_type_that_is_an_error(&self, id: hir::TypeNodeId) -> bool {
         let is_error = |it: &hir::TypeNode| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. });
-        *self.lazy.has_types_that_are_errors.get_or_init(|| self.hir.types.iter().any(is_error))
+        *self
+            .lazy
+            .has_types_that_are_errors
+            .get_or_init(|| self.hir.types.iter().any(is_error))
             && self.parents().is_in_error(&self.hir, id)
     }
 }

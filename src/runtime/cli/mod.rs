@@ -338,22 +338,20 @@ pub(crate) mod add_command;
 pub(crate) mod audit_command;
 #[path = "check_command.rs"]
 pub(crate) mod check_command;
-#[path = "format_command.rs"]
-pub(crate) mod format_command;
-#[path = "lint_command.rs"]
-pub(crate) mod lint_command;
-#[path = "lint_js.rs"]
-pub(crate) mod lint_js;
-#[path = "script_or_command.rs"]
-pub(crate) mod script_or_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
 pub(crate) mod filter_arg;
 #[path = "filter_run.rs"]
 pub(crate) mod filter_run;
+#[path = "format_command.rs"]
+pub(crate) mod format_command;
 #[path = "link_command.rs"]
 pub(crate) mod link_command;
+#[path = "lint_command.rs"]
+pub(crate) mod lint_command;
+#[path = "lint_js.rs"]
+pub(crate) mod lint_js;
 #[path = "multi_run.rs"]
 pub(crate) mod multi_run;
 #[path = "outdated_command.rs"]
@@ -391,6 +389,8 @@ pub(crate) mod publish_command;
 pub(crate) mod remove_command;
 #[path = "scan_command.rs"]
 pub(crate) mod scan_command;
+#[path = "script_or_command.rs"]
+pub(crate) mod script_or_command;
 mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;

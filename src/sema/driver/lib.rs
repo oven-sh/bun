@@ -2283,7 +2283,9 @@ fn check_with_references(
         .collect();
     let mut is_left_out: Vec<bool> = (has_named.iter().enumerate())
         // What is only read is read from its sources, by the program that reads it.
-        .map(|(index, has)| !has || reads_sources && !reports_references && Some(index) != root_index)
+        .map(|(index, has)| {
+            !has || reads_sources && !reports_references && Some(index) != root_index
+        })
         .collect();
     let mut pending: Vec<usize> = (0..count)
         .filter(|&index| has_named[index] && !reads_sources)
@@ -2728,7 +2730,10 @@ fn check_named_files(
         n => n,
     };
     project.options.current_directory = match project.config_path.as_slice() {
-        config_path if request.plan_options.current_directory_is_of_the_project && !config_path.is_empty() => {
+        config_path
+            if request.plan_options.current_directory_is_of_the_project
+                && !config_path.is_empty() =>
+        {
             dirname::<Posix>(config_path).to_vec()
         }
         _ => host::from_native(request.cwd),

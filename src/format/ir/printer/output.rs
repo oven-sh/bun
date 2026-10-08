@@ -50,7 +50,11 @@ impl<'o> Out<'o> {
     #[inline(always)]
     fn block<const N: usize>(&mut self, block: &[u8; N], len: usize) {
         loop {
-            if let Some(next) = self.buffer.get_mut(self.len..).and_then(|rest| rest.first_chunk_mut()) {
+            if let Some(next) = self
+                .buffer
+                .get_mut(self.len..)
+                .and_then(|rest| rest.first_chunk_mut())
+            {
                 *next = *block;
                 self.len += len;
                 return;
@@ -73,7 +77,9 @@ impl<'o> Out<'o> {
     #[inline(always)]
     pub(super) fn part(&mut self, text: &[u8], range: std::ops::Range<usize>) {
         if range.len() <= BLOCK
-            && let Some(block) = text.get(range.start..).and_then(|rest| rest.first_chunk::<BLOCK>())
+            && let Some(block) = text
+                .get(range.start..)
+                .and_then(|rest| rest.first_chunk::<BLOCK>())
         {
             return self.block(block, range.len());
         }
@@ -84,7 +90,9 @@ impl<'o> Out<'o> {
     fn long_part(&mut self, text: &[u8], range: std::ops::Range<usize>) {
         const LONG: usize = 4 * BLOCK;
         if range.len() <= LONG
-            && let Some(block) = text.get(range.start..).and_then(|rest| rest.first_chunk::<LONG>())
+            && let Some(block) = text
+                .get(range.start..)
+                .and_then(|rest| rest.first_chunk::<LONG>())
         {
             return self.block(block, range.len());
         }

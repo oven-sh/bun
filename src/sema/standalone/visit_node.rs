@@ -37,7 +37,8 @@ impl Checker<'_, '_> {
             if (hir.is_expression_node(node)
                 || hir.kind(node) == Kind::Identifier
                 || hir.is_declaration_name(node))
-                && let Some(kind) = self.visited_kind(file, node, &|decl| symbols.get(&decl).copied())
+                && let Some(kind) =
+                    self.visited_kind(file, node, &|decl| symbols.get(&decl).copied())
             {
                 if !hir.is_missing(node) {
                     // `GetSourceTextOfNodeFromSourceFile`: a node that starts with a missing

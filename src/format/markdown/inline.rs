@@ -7,7 +7,8 @@
 use super::ast::{Kind, Node, NodeId, ReferenceType, Str, Tree};
 use super::content::Content;
 use super::strings::{
-    CharacterClass, character_reference, classify, first_char, last_char, normalize_identifier, push_lowercase, unescape,
+    CharacterClass, character_reference, classify, first_char, last_char, normalize_identifier,
+    push_lowercase, unescape,
 };
 use rustc_hash::FxHashSet;
 
@@ -53,7 +54,11 @@ fn parse_label(bytes: &[u8], start: usize) -> Option<usize> {
 
 /// micromark's `factoryWhitespace`: where the white space and the line endings at `index` end.
 fn skip_whitespace(bytes: &[u8], mut index: usize) -> usize {
-    while bytes.get(index).copied().is_some_and(is_space_or_line_ending) {
+    while bytes
+        .get(index)
+        .copied()
+        .is_some_and(is_space_or_line_ending)
+    {
         index += 1;
     }
     index
@@ -67,7 +72,11 @@ fn skip_spaces(bytes: &[u8], mut index: usize) -> usize {
 }
 
 /// micromark's `factoryDestination`. Returns where the string in it is, and where it ends.
-fn parse_destination(bytes: &[u8], start: usize, max_balance: usize) -> Option<((usize, usize), usize)> {
+fn parse_destination(
+    bytes: &[u8],
+    start: usize,
+    max_balance: usize,
+) -> Option<((usize, usize), usize)> {
     let mut index = start;
     if bytes.get(index) == Some(&b'<') {
         index += 1;
@@ -89,7 +98,9 @@ fn parse_destination(bytes: &[u8], start: usize, max_balance: usize) -> Option<(
     loop {
         let byte = bytes.get(index).copied();
         match byte {
-            None | Some(b')' | b' ' | b'\t' | b'\n') if balance == 0 => return Some(((start, index), index)),
+            None | Some(b')' | b' ' | b'\t' | b'\n') if balance == 0 => {
+                return Some(((start, index), index));
+            }
             Some(b'(') if balance < max_balance => {
                 balance += 1;
                 index += 1;
@@ -120,7 +131,11 @@ fn parse_title(bytes: &[u8], start: usize) -> Option<(Option<(usize, usize)>, us
             return Some(((index > start + 1).then_some((start + 1, index)), index + 1));
         }
         index += 1;
-        if byte == b'\\' && bytes.get(index).is_some_and(|&next| next == marker || next == b'\\') {
+        if byte == b'\\'
+            && bytes
+                .get(index)
+                .is_some_and(|&next| next == marker || next == b'\\')
+        {
             index += 1;
         }
     }
@@ -145,7 +160,8 @@ pub(crate) fn parse_definition(bytes: &[u8], line_start: usize) -> Option<Defini
     if bytes.get(label_end) != Some(&b':') {
         return None;
     }
-    let (destination, destination_end) = parse_destination(bytes, skip_whitespace(bytes, label_end + 1), usize::MAX)?;
+    let (destination, destination_end) =
+        parse_destination(bytes, skip_whitespace(bytes, label_end + 1), usize::MAX)?;
     let at_line_end = |index: usize| matches!(bytes.get(index), None | Some(b'\n'));
 
     // The title is on the same line or the next, and nothing follows it.
@@ -180,7 +196,11 @@ pub(crate) fn push_title(raw: &[u8], out: &mut Vec<u8>) {
         if index > 0 {
             stripped.push(b'\n');
         }
-        stripped.extend_from_slice(if index > 0 { &line[skip_spaces(line, 0)..] } else { line });
+        stripped.extend_from_slice(if index > 0 {
+            &line[skip_spaces(line, 0)..]
+        } else {
+            line
+        });
     }
     unescape(&stripped, out);
 }
@@ -189,12 +209,18 @@ pub(crate) fn push_title(raw: &[u8], out: &mut Vec<u8>) {
 
 /// micromark's `autolink`: `<https://a.b>`, `<a@b.c>`. Returns where it ends and whether it is an address.
 fn parse_autolink(bytes: &[u8], start: usize) -> Option<(usize, bool)> {
-    let is_atext = |byte: u8| byte.is_ascii_alphanumeric() || b"#$%&'*+-/=?^_`{|}~.".contains(&byte);
+    let is_atext =
+        |byte: u8| byte.is_ascii_alphanumeric() || b"#$%&'*+-/=?^_`{|}~.".contains(&byte);
     let mut index = start + 1;
     // A scheme of two to 32 characters.
     if bytes.get(index)?.is_ascii_alphabetic() {
-        let is_scheme = |byte: &&u8| matches!(byte, b'+' | b'-' | b'.') || byte.is_ascii_alphanumeric();
-        let len = 1 + bytes[index + 1..].iter().take(31).take_while(is_scheme).count();
+        let is_scheme =
+            |byte: &&u8| matches!(byte, b'+' | b'-' | b'.') || byte.is_ascii_alphanumeric();
+        let len = 1 + bytes[index + 1..]
+            .iter()
+            .take(31)
+            .take_while(is_scheme)
+            .count();
         if len >= 2 && bytes.get(index + len) == Some(&b':') {
             let mut url = index + len + 1;
             loop {
@@ -207,14 +233,20 @@ fn parse_autolink(bytes: &[u8], start: usize) -> Option<(usize, bool)> {
             }
         }
     }
-    let name = bytes[index..].iter().take_while(|&&byte| is_atext(byte)).count();
+    let name = bytes[index..]
+        .iter()
+        .take_while(|&&byte| is_atext(byte))
+        .count();
     if name == 0 || bytes.get(index + name) != Some(&b'@') {
         return None;
     }
     index += name + 1;
     loop {
         // A label: up to 63 letters, digits and dashes, which does not start or end with a dash.
-        let len = bytes[index..].iter().take_while(|&&byte| byte == b'-' || byte.is_ascii_alphanumeric()).count();
+        let len = bytes[index..]
+            .iter()
+            .take_while(|&&byte| byte == b'-' || byte.is_ascii_alphanumeric())
+            .count();
         let label = &bytes[index..index + len];
         if len == 0 || len > 63 || label[0] == b'-' || label[len - 1] == b'-' {
             return None;
@@ -230,7 +262,9 @@ fn parse_autolink(bytes: &[u8], start: usize) -> Option<(usize, bool)> {
 
 /// micromark's `htmlText`: where the tag, comment, instruction, declaration or CDATA section at `start` ends.
 fn parse_html(bytes: &[u8], start: usize) -> Option<usize> {
-    let find = |from: usize, needle: &[u8]| Some(from + bun_core::strings::index_of(bytes.get(from..)?, needle)? + needle.len());
+    let find = |from: usize, needle: &[u8]| {
+        Some(from + bun_core::strings::index_of(bytes.get(from..)?, needle)? + needle.len())
+    };
     let mut index = start + 1;
     match *bytes.get(index)? {
         b'!' => match *bytes.get(index + 1)? {
@@ -261,14 +295,20 @@ fn parse_html(bytes: &[u8], start: usize) -> Option<usize> {
             if !bytes.get(index)?.is_ascii_alphabetic() {
                 return None;
             }
-            while bytes.get(index).is_some_and(|&byte| byte == b'-' || byte.is_ascii_alphanumeric()) {
+            while bytes
+                .get(index)
+                .is_some_and(|&byte| byte == b'-' || byte.is_ascii_alphanumeric())
+            {
                 index += 1;
             }
             index = skip_whitespace(bytes, index);
             (bytes.get(index) == Some(&b'>')).then_some(index + 1)
         }
         byte if byte.is_ascii_alphabetic() => {
-            while bytes.get(index).is_some_and(|&byte| byte == b'-' || byte.is_ascii_alphanumeric()) {
+            while bytes
+                .get(index)
+                .is_some_and(|&byte| byte == b'-' || byte.is_ascii_alphanumeric())
+            {
                 index += 1;
             }
             if !matches!(bytes.get(index)?, b'/' | b'>' | b' ' | b'\t' | b'\n') {
@@ -283,10 +323,9 @@ fn parse_html(bytes: &[u8], start: usize) -> Option<usize> {
                     byte if byte == b':' || byte == b'_' || byte.is_ascii_alphabetic() => {}
                     _ => return None,
                 }
-                while bytes
-                    .get(index)
-                    .is_some_and(|&byte| matches!(byte, b'-' | b'.' | b':' | b'_') || byte.is_ascii_alphanumeric())
-                {
+                while bytes.get(index).is_some_and(|&byte| {
+                    matches!(byte, b'-' | b'.' | b':' | b'_') || byte.is_ascii_alphanumeric()
+                }) {
                     index += 1;
                 }
                 // `tagOpenAttributeNameAfter`
@@ -350,9 +389,14 @@ fn is_whitespace_at(bytes: &[u8], index: usize) -> bool {
 fn is_trail(bytes: &[u8], mut index: usize) -> bool {
     loop {
         match bytes.get(index) {
-            Some(b'!' | b'"' | b'\'' | b')' | b'*' | b',' | b'.' | b':' | b';' | b'?' | b'_' | b'~') => index += 1,
+            Some(
+                b'!' | b'"' | b'\'' | b')' | b'*' | b',' | b'.' | b':' | b';' | b'?' | b'_' | b'~',
+            ) => index += 1,
             Some(b'&') => {
-                let letters = bytes[index + 1..].iter().take_while(|byte| byte.is_ascii_alphabetic()).count();
+                let letters = bytes[index + 1..]
+                    .iter()
+                    .take_while(|byte| byte.is_ascii_alphabetic())
+                    .count();
                 if letters == 0 || bytes.get(index + 1 + letters) != Some(&b';') {
                     return false;
                 }
@@ -360,7 +404,9 @@ fn is_trail(bytes: &[u8], mut index: usize) -> bool {
             }
             Some(b']') => {
                 index += 1;
-                if matches!(bytes.get(index), None | Some(b'(' | b'[')) || is_whitespace_at(bytes, index) {
+                if matches!(bytes.get(index), None | Some(b'(' | b'['))
+                    || is_whitespace_at(bytes, index)
+                {
                     return true;
                 }
             }
@@ -389,7 +435,9 @@ fn parse_domain(bytes: &[u8], start: usize) -> Option<usize> {
             None => break,
             Some(&byte) => {
                 let class = class_at(bytes, index);
-                if class == CharacterClass::Whitespace || (byte != b'-' && class == CharacterClass::Punctuation) {
+                if class == CharacterClass::Whitespace
+                    || (byte != b'-' && class == CharacterClass::Punctuation)
+                {
                     break;
                 }
                 has_data = true;
@@ -415,8 +463,8 @@ fn parse_path(bytes: &[u8], start: usize) -> usize {
                 index += 1;
             }
             Some(
-                &byte @ (b'!' | b'"' | b'&' | b'\'' | b')' | b'*' | b',' | b'.' | b':' | b';' | b'<' | b'?' | b']' | b'_'
-                | b'~'),
+                &byte @ (b'!' | b'"' | b'&' | b'\'' | b')' | b'*' | b',' | b'.' | b':' | b';'
+                | b'<' | b'?' | b']' | b'_' | b'~'),
             ) => {
                 if is_trail(bytes, index) {
                     return index;
@@ -437,7 +485,10 @@ fn is_gfm_atext(byte: u8) -> bool {
 
 /// `tokenizeEmailAutolink`
 fn parse_email_literal(bytes: &[u8], start: usize) -> Option<usize> {
-    let name = bytes[start..].iter().take_while(|&&byte| is_gfm_atext(byte)).count();
+    let name = bytes[start..]
+        .iter()
+        .take_while(|&&byte| is_gfm_atext(byte))
+        .count();
     if name == 0 || bytes.get(start + name) != Some(&b'@') {
         return None;
     }
@@ -445,8 +496,12 @@ fn parse_email_literal(bytes: &[u8], start: usize) -> Option<usize> {
     let (mut has_data, mut has_dot) = (false, false);
     loop {
         match bytes.get(index) {
-            Some(b'.') if bytes.get(index + 1).is_some_and(u8::is_ascii_alphanumeric) => has_dot = true,
-            Some(&byte) if byte == b'-' || byte == b'_' || byte.is_ascii_alphanumeric() => has_data = true,
+            Some(b'.') if bytes.get(index + 1).is_some_and(u8::is_ascii_alphanumeric) => {
+                has_dot = true
+            }
+            Some(&byte) if byte == b'-' || byte == b'_' || byte.is_ascii_alphanumeric() => {
+                has_data = true
+            }
             _ => break,
         }
         index += 1;
@@ -466,7 +521,10 @@ fn parse_www_literal(bytes: &[u8], start: usize) -> Option<usize> {
 /// `tokenizeProtocolAutolink`
 fn parse_protocol_literal(bytes: &[u8], start: usize) -> Option<usize> {
     let rest = &bytes[start..];
-    let len = [&b"https://"[..], b"http://"].into_iter().find(|it| rest.len() >= it.len() && rest[..it.len()].eq_ignore_ascii_case(it))?.len();
+    let len = [&b"https://"[..], b"http://"]
+        .into_iter()
+        .find(|it| rest.len() >= it.len() && rest[..it.len()].eq_ignore_ascii_case(it))?
+        .len();
     let after = start + len;
     let first = *bytes.get(after)?;
     if is_ascii_control(first) || class_at(bytes, after) != CharacterClass::Other {
@@ -480,9 +538,15 @@ fn parse_protocol_literal(bytes: &[u8], start: usize) -> Option<usize> {
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum Item {
     /// Characters that stand for themselves.
-    Data { start: usize, end: usize },
+    Data {
+        start: usize,
+        end: usize,
+    },
     /// `\*`, `&amp;`
-    Encoded { start: usize, end: usize },
+    Encoded {
+        start: usize,
+        end: usize,
+    },
     /// `*`, `_` or `~`, one or more of them.
     Sequence {
         marker: u8,
@@ -522,7 +586,11 @@ pub(crate) struct Context<'c> {
 
 impl Context<'_> {
     fn new_node(&mut self, kind: Kind, start: usize, end: usize) -> NodeId {
-        self.tree.add(kind, self.content.source(start), self.content.source_end(end))
+        self.tree.add(
+            kind,
+            self.content.source(start),
+            self.content.source_end(end),
+        )
     }
 
     fn set_value(&mut self, node: NodeId, value: Str) {
@@ -535,7 +603,9 @@ impl Context<'_> {
     fn raw(&mut self, start: usize, end: usize) -> Str {
         let (source_start, source_end) = (self.content.source(start), self.content.source_end(end));
         let bytes = &self.content.bytes[start..end];
-        if (source_end - source_start) as usize == end - start && !(self.has.nul && bun_core::strings::contains_char(bytes, 0)) {
+        if (source_end - source_start) as usize == end - start
+            && !(self.has.nul && bun_core::strings::contains_char(bytes, 0))
+        {
             return Str::source(source_start, source_end);
         }
         self.tree.owned(|out| push_without_nul(bytes, out))
@@ -655,7 +725,11 @@ impl Context<'_> {
     /// Whether `paragraph` is where the `[x]` of a task is looked for: the first thing in a list item, but
     /// for definitions.
     fn is_first_content_of_item(&self, paragraph: NodeId) -> bool {
-        let Some(node) = self.tree.get(paragraph).filter(|node| node.kind == Kind::Paragraph) else {
+        let Some(node) = self
+            .tree
+            .get(paragraph)
+            .filter(|node| node.kind == Kind::Paragraph)
+        else {
             return false;
         };
         if self.tree.kind(node.parent) != Some(Kind::ListItem) {
@@ -671,7 +745,11 @@ impl Context<'_> {
         true
     }
 
-    fn tokenize(&mut self, parent: NodeId, is_first_in_item: bool) -> (Vec<Item>, Option<FirstResolver>) {
+    fn tokenize(
+        &mut self,
+        parent: NodeId,
+        is_first_in_item: bool,
+    ) -> (Vec<Item>, Option<FirstResolver>) {
         let content = self.content;
         let bytes = &content.bytes[..];
         let mut items: Vec<Item> = std::mem::take(&mut self.spare_items);
@@ -679,8 +757,13 @@ impl Context<'_> {
         let mut label_starts: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
         // Letters and digits only matter where a link can start that is not marked as one.
         let can_have_email = self.has.at && bun_core::strings::contains_char(bytes, b'@');
-        let can_have_url = (self.has.scheme && bun_core::strings::contains(bytes, b"://")) || (self.has.www && has_www(bytes));
-        let is_special = if can_have_email || can_have_url { &IS_SPECIAL_OR_ATEXT } else { &IS_SPECIAL };
+        let can_have_url = (self.has.scheme && bun_core::strings::contains(bytes, b"://"))
+            || (self.has.www && has_www(bytes));
+        let is_special = if can_have_email || can_have_url {
+            &IS_SPECIAL_OR_ATEXT
+        } else {
+            &IS_SPECIAL
+        };
         let mut first_resolver = None;
         let mut next_wiki_link_end = 0;
         let mut has_no_liquid_end = [false; 2];
@@ -705,7 +788,10 @@ impl Context<'_> {
             && matches!(value, b' ' | b'\t' | b'\n' | b'x' | b'X')
             && (after == b'\n' || (is_space(after) && skip_spaces(bytes, 3) < bytes.len()))
         {
-            let item = self.tree.get(parent).map_or(super::ast::NONE, |node| node.parent);
+            let item = self
+                .tree
+                .get(parent)
+                .map_or(super::ast::NONE, |node| node.parent);
             if let Some(item) = self.tree.get_mut(item) {
                 item.checked = if matches!(value, b'x' | b'X') { 2 } else { 1 };
             }
@@ -714,7 +800,10 @@ impl Context<'_> {
 
         loop {
             let rest = &bytes[index.min(bytes.len())..];
-            index += rest.iter().take_while(|&&byte| !is_special[usize::from(byte)]).count();
+            index += rest
+                .iter()
+                .take_while(|&&byte| !is_special[usize::from(byte)])
+                .count();
             let Some(&byte) = bytes.get(index) else {
                 break;
             };
@@ -722,12 +811,21 @@ impl Context<'_> {
                 b'\n' => {
                     // The white space before it is not part of the text. Two spaces or more are a break.
                     let data = &bytes[data_start..index];
-                    let blanks = data.iter().rev().take_while(|&&byte| is_space(byte)).count();
+                    let blanks = data
+                        .iter()
+                        .rev()
+                        .take_while(|&&byte| is_space(byte))
+                        .count();
                     let suffix_start = index - blanks;
                     flush!(suffix_start);
-                    let is_break = blanks >= 2 && !bun_core::strings::contains_char(&bytes[suffix_start..index], b'\t');
+                    let is_break = blanks >= 2
+                        && !bun_core::strings::contains_char(&bytes[suffix_start..index], b'\t');
                     if is_break {
-                        items.push(Item::Node(self.new_node(Kind::Break, suffix_start, index + 1)));
+                        items.push(Item::Node(self.new_node(
+                            Kind::Break,
+                            suffix_start,
+                            index + 1,
+                        )));
                     } else {
                         items.push(Item::Data {
                             start: index,
@@ -777,7 +875,11 @@ impl Context<'_> {
                     match end {
                         Some(end) => {
                             flush!(index);
-                            let kind = if byte == b'`' { Kind::InlineCode } else { Kind::InlineMath };
+                            let kind = if byte == b'`' {
+                                Kind::InlineCode
+                            } else {
+                                Kind::InlineMath
+                            };
                             let node = self.new_node(kind, index, end);
                             let value = self.code_value(index + size, end - size, parent);
                             if let Some(node) = self.tree.get_mut(node) {
@@ -827,7 +929,9 @@ impl Context<'_> {
                     if byte == b'*'
                         || !can_have_email
                         || !label_starts.is_empty()
-                        || index.checked_sub(1).is_some_and(|before| bytes[before] == b'/' || is_gfm_atext(bytes[before]))
+                        || index.checked_sub(1).is_some_and(|before| {
+                            bytes[before] == b'/' || is_gfm_atext(bytes[before])
+                        })
                         || parse_email_literal(bytes, index).is_none() =>
                 {
                     flush!(index);
@@ -836,10 +940,12 @@ impl Context<'_> {
                     // Next to another marker, it can open and close.
                     let is_marker = |byte: Option<&u8>| matches!(byte, Some(b'*' | b'_' | b'~'));
                     let open = after == CharacterClass::Other
-                        || (after == CharacterClass::Punctuation && before != CharacterClass::Other)
+                        || (after == CharacterClass::Punctuation
+                            && before != CharacterClass::Other)
                         || is_marker(bytes.get(end));
                     let close = before == CharacterClass::Other
-                        || (before == CharacterClass::Punctuation && after != CharacterClass::Other)
+                        || (before == CharacterClass::Punctuation
+                            && after != CharacterClass::Other)
                         || is_marker(index.checked_sub(1).and_then(|before| bytes.get(before)));
                     let (can_open, can_close) = match byte {
                         b'*' => (open, close),
@@ -878,9 +984,11 @@ impl Context<'_> {
                         start: index,
                         end,
                         can_open: after == CharacterClass::Other
-                            || (after == CharacterClass::Punctuation && before != CharacterClass::Other),
+                            || (after == CharacterClass::Punctuation
+                                && before != CharacterClass::Other),
                         can_close: before == CharacterClass::Other
-                            || (before == CharacterClass::Punctuation && after != CharacterClass::Other),
+                            || (before == CharacterClass::Punctuation
+                                && after != CharacterClass::Other),
                     });
                     first_resolver.get_or_insert(FirstResolver::Strikethrough);
                     index = end;
@@ -899,7 +1007,10 @@ impl Context<'_> {
                     data_start = index;
                 }
                 b'[' => {
-                    if let Some((node, end)) = self.wiki_link(index, &mut next_wiki_link_end).or_else(|| self.footnote_call(index)) {
+                    if let Some((node, end)) = self
+                        .wiki_link(index, &mut next_wiki_link_end)
+                        .or_else(|| self.footnote_call(index))
+                    {
                         flush!(index);
                         items.push(Item::Node(node));
                         index = end;
@@ -953,7 +1064,10 @@ impl Context<'_> {
                         }
                     }
                 }
-                b'{' => match self.es_comment(index).or_else(|| self.liquid(index, &mut has_no_liquid_end)) {
+                b'{' => match self
+                    .es_comment(index)
+                    .or_else(|| self.liquid(index, &mut has_no_liquid_end))
+                {
                     Some((node, end)) => {
                         flush!(index);
                         items.push(Item::Node(node));
@@ -965,22 +1079,37 @@ impl Context<'_> {
                 // No literal autolinks in what can still become the text of a link.
                 _ if is_gfm_atext(byte) && label_starts.is_empty() => {
                     let previous = index.checked_sub(1).map(|before| bytes[before]);
-                    let end = (can_have_email && previous.is_none_or(|it| it != b'/' && !is_gfm_atext(it)))
-                        .then(|| parse_email_literal(bytes, index).map(|end| (end, &b"mailto:"[..])))
-                        .flatten()
-                        .or_else(|| match byte {
-                            b'h' | b'H' if can_have_url && previous.is_none_or(|it| !it.is_ascii_alphabetic()) => {
-                                parse_protocol_literal(bytes, index).map(|end| (end, &b""[..]))
-                            }
-                            b'w' | b'W'
-                                if can_have_url
-                                    && previous
-                                    .is_none_or(|it| matches!(it, b'(' | b'*' | b'_' | b'[' | b']' | b'~' | b' ' | b'\t' | b'\n')) =>
-                            {
-                                parse_www_literal(bytes, index).map(|end| (end, &b"http://"[..]))
-                            }
-                            _ => None,
-                        });
+                    let end = (can_have_email
+                        && previous.is_none_or(|it| it != b'/' && !is_gfm_atext(it)))
+                    .then(|| parse_email_literal(bytes, index).map(|end| (end, &b"mailto:"[..])))
+                    .flatten()
+                    .or_else(|| match byte {
+                        b'h' | b'H'
+                            if can_have_url
+                                && previous.is_none_or(|it| !it.is_ascii_alphabetic()) =>
+                        {
+                            parse_protocol_literal(bytes, index).map(|end| (end, &b""[..]))
+                        }
+                        b'w' | b'W'
+                            if can_have_url
+                                && previous.is_none_or(|it| {
+                                    matches!(
+                                        it,
+                                        b'(' | b'*'
+                                            | b'_'
+                                            | b'['
+                                            | b']'
+                                            | b'~'
+                                            | b' '
+                                            | b'\t'
+                                            | b'\n'
+                                    )
+                                }) =>
+                        {
+                            parse_www_literal(bytes, index).map(|end| (end, &b"http://"[..]))
+                        }
+                        _ => None,
+                    });
                     match end {
                         Some((end, prefix)) => {
                             flush!(index);
@@ -1006,7 +1135,11 @@ impl Context<'_> {
             }
         }
         // White space at the end is not part of the text.
-        let blanks = bytes[data_start..].iter().rev().take_while(|&&byte| is_space(byte)).count();
+        let blanks = bytes[data_start..]
+            .iter()
+            .rev()
+            .take_while(|&&byte| is_space(byte))
+            .count();
         flush!(bytes.len() - blanks);
         (items, first_resolver)
     }
@@ -1033,7 +1166,10 @@ impl Context<'_> {
         }
         // In a table, `\|` is a pipe.
         let code = &bytes[start..end];
-        if !self.is_mdx && self.tree.kind(parent) == Some(Kind::TableCell) && bun_core::strings::contains(code, b"\\|") {
+        if !self.is_mdx
+            && self.tree.kind(parent) == Some(Kind::TableCell)
+            && bun_core::strings::contains(code, b"\\|")
+        {
             return self.tree.owned(|out| {
                 let mut rest = code;
                 while let Some(at) = bun_core::strings::index_of(rest, b"\\|") {
@@ -1060,7 +1196,11 @@ impl Context<'_> {
             *next_end = len.map_or(bytes.len(), |len| target_start + len);
         }
         let target_end = *next_end;
-        if !bytes[target_end..].starts_with(b"]]") || bytes[target_start..target_end].iter().all(|&byte| is_space(byte)) {
+        if !bytes[target_end..].starts_with(b"]]")
+            || bytes[target_start..target_end]
+                .iter()
+                .all(|&byte| is_space(byte))
+        {
             return None;
         }
         let end = target_end + 2;
@@ -1086,13 +1226,20 @@ impl Context<'_> {
                 return None;
             }
         }
-        (index > 0 && self.footnotes.contains(&normalize_identifier(&label[..index]))).then_some(start + 2 + index)
+        (index > 0
+            && self
+                .footnotes
+                .contains(&normalize_identifier(&label[..index])))
+        .then_some(start + 2 + index)
     }
 
     fn footnote_call(&mut self, start: usize) -> Option<(NodeId, usize)> {
         let label_end = self.footnote_label_end(start)?;
         let node = self.new_node(Kind::FootnoteReference, start, label_end + 1);
-        let (label, identifier) = (self.decoded(start + 2, label_end), self.identifier(start + 2, label_end));
+        let (label, identifier) = (
+            self.decoded(start + 2, label_end),
+            self.identifier(start + 2, label_end),
+        );
         if let Some(node) = self.tree.get_mut(node) {
             (node.value, node.identifier) = (label, identifier);
         }
@@ -1105,17 +1252,24 @@ impl Context<'_> {
             return None;
         }
         let bytes = &self.content.bytes;
-        let skip = |from: usize| from + bytes[from..].iter().take_while(|byte| byte.is_ascii_whitespace()).count();
+        let skip = |from: usize| {
+            from + bytes[from..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count()
+        };
         let open = skip(start + 1);
         if !bytes[open..].starts_with(b"/*") {
             return None;
         }
         let value_start = open + 2;
-        let line_end = bun_core::strings::index_of_char_usize(&bytes[value_start..], b'\n').map_or(bytes.len(), |at| value_start + at);
+        let line_end = bun_core::strings::index_of_char_usize(&bytes[value_start..], b'\n')
+            .map_or(bytes.len(), |at| value_start + at);
         // The last `*/` on the line that `}` follows.
         let mut limit = line_end;
         loop {
-            let close = value_start + bun_core::strings::last_index_of(&bytes[value_start..limit], b"*/")?;
+            let close =
+                value_start + bun_core::strings::last_index_of(&bytes[value_start..limit], b"*/")?;
             let brace = skip(close + 2);
             if bytes.get(brace) == Some(&b'}') {
                 let value = &bytes[value_start..close];
@@ -1163,7 +1317,9 @@ pub(crate) fn has_html_comment(html: &[u8]) -> bool {
         }
         // An optional dash, something that is neither `>` nor a dash, then no two dashes in a row before `-->`.
         let first = start + usize::from(html.get(start) == Some(&b'-'));
-        if html.get(first).is_some_and(|byte| !matches!(byte, b'>' | b'-'))
+        if html
+            .get(first)
+            .is_some_and(|byte| !matches!(byte, b'>' | b'-'))
             && let Some(dashes) = bun_core::strings::index_of(&html[first..], b"--")
             && html[first + dashes + 2..].starts_with(b">")
         {
@@ -1202,7 +1358,10 @@ fn find_math_end(bytes: &[u8], start: usize) -> Option<usize> {
 fn find_closing_run(bytes: &[u8], mut from: usize, marker: u8, size: usize) -> Option<usize> {
     loop {
         from += bun_core::strings::index_of_char_usize(bytes.get(from..)?, marker)?;
-        let run = bytes[from..].iter().take_while(|&&byte| byte == marker).count();
+        let run = bytes[from..]
+            .iter()
+            .take_while(|&&byte| byte == marker)
+            .count();
         from += run;
         if run == size {
             return Some(from);
@@ -1212,9 +1371,14 @@ fn find_closing_run(bytes: &[u8], mut from: usize, marker: u8, size: usize) -> O
 
 enum LabelEnd {
     /// A link, an image or a reference, which is the last item now. `end`: where it ends.
-    Matched { end: usize, is_link: bool },
+    Matched {
+        end: usize,
+        is_link: bool,
+    },
     /// `![^a]`: an exclamation mark and a footnote call.
-    FootnoteCall { end: usize },
+    FootnoteCall {
+        end: usize,
+    },
     No,
 }
 
@@ -1223,7 +1387,10 @@ impl Context<'_> {
 
     /// `(destination "title")` at `start`
     #[allow(clippy::type_complexity)]
-    fn parse_resource(&self, start: usize) -> Option<(Option<(usize, usize)>, Option<(usize, usize)>, usize)> {
+    fn parse_resource(
+        &self,
+        start: usize,
+    ) -> Option<(Option<(usize, usize)>, Option<(usize, usize)>, usize)> {
         let bytes = &self.content.bytes;
         let mut index = skip_whitespace(bytes, start + 1);
         if bytes.get(index) == Some(&b')') {
@@ -1300,21 +1467,31 @@ impl Context<'_> {
         let (target, end) = match bytes.get(close + 1) {
             Some(b'(') => match self.parse_resource(close + 1) {
                 Some((destination, title, end)) => (Target::Resource(destination, title), end),
-                None if is_defined => (Target::Reference(ReferenceType::Shortcut, own_label), close + 1),
+                None if is_defined => (
+                    Target::Reference(ReferenceType::Shortcut, own_label),
+                    close + 1,
+                ),
                 None => return no(self, items),
             },
             Some(b'[') => {
                 let full = parse_label(bytes, close + 1)
                     .filter(|&end| self.is_defined(&bytes[close + 2..end - 1]));
                 match full {
-                    Some(end) => (Target::Reference(ReferenceType::Full, (close + 2, end - 1)), end),
-                    None if is_defined && bytes.get(close + 2) == Some(&b']') => {
-                        (Target::Reference(ReferenceType::Collapsed, own_label), close + 3)
-                    }
+                    Some(end) => (
+                        Target::Reference(ReferenceType::Full, (close + 2, end - 1)),
+                        end,
+                    ),
+                    None if is_defined && bytes.get(close + 2) == Some(&b']') => (
+                        Target::Reference(ReferenceType::Collapsed, own_label),
+                        close + 3,
+                    ),
                     None => return no(self, items),
                 }
             }
-            _ if is_defined => (Target::Reference(ReferenceType::Shortcut, own_label), close + 1),
+            _ if is_defined => (
+                Target::Reference(ReferenceType::Shortcut, own_label),
+                close + 1,
+            ),
             _ => return no(self, items),
         };
 
@@ -1342,15 +1519,21 @@ impl Context<'_> {
         match target {
             Target::Resource(destination, title) => {
                 let url = destination.map_or(Str::EMPTY, |it| self.decoded(it.0, it.1));
-                let title = title.map_or(Str::NO, |it| self.tree.owned(|out| push_title(&bytes[it.0..it.1], out)));
+                let title = title.map_or(Str::NO, |it| {
+                    self.tree.owned(|out| push_title(&bytes[it.0..it.1], out))
+                });
                 if let Some(node) = self.tree.get_mut(node) {
                     (node.value, node.second) = (url, title);
                 }
             }
             Target::Reference(reference_type, label) => {
-                let (identifier, label) = (self.identifier(label.0, label.1), self.decoded(label.0, label.1));
+                let (identifier, label) = (
+                    self.identifier(label.0, label.1),
+                    self.decoded(label.0, label.1),
+                );
                 if let Some(node) = self.tree.get_mut(node) {
-                    (node.reference_type, node.identifier, node.value) = (reference_type, identifier, label);
+                    (node.reference_type, node.identifier, node.value) =
+                        (reference_type, identifier, label);
                 }
             }
         }
@@ -1367,7 +1550,10 @@ impl Context<'_> {
             self.is_nested_too_deeply = true;
             return;
         }
-        let mut child = self.tree.get(node).map_or(super::ast::NONE, |node| node.first_child);
+        let mut child = self
+            .tree
+            .get(node)
+            .map_or(super::ast::NONE, |node| node.first_child);
         while let Some(&Node {
             kind,
             value,
@@ -1377,10 +1563,17 @@ impl Context<'_> {
         }) = self.tree.get(child)
         {
             match kind {
-                Kind::Text | Kind::InlineCode | Kind::Html | Kind::InlineMath | Kind::WikiLink | Kind::LiquidNode => {
+                Kind::Text
+                | Kind::InlineCode
+                | Kind::Html
+                | Kind::InlineMath
+                | Kind::WikiLink
+                | Kind::LiquidNode => {
                     out.extend_from_slice(self.tree.str(self.text, value));
                 }
-                Kind::Image | Kind::ImageReference => out.extend_from_slice(self.tree.str(&[], third)),
+                Kind::Image | Kind::ImageReference => {
+                    out.extend_from_slice(self.tree.str(&[], third))
+                }
                 _ => self.push_text_of(child, out),
             }
             child = next;
@@ -1393,7 +1586,10 @@ impl Context<'_> {
 
     /// micromark's `resolveAll` of what can be in a span.
     fn resolve_all(&mut self, items: Vec<Item>, first: FirstResolver) -> Vec<Item> {
-        if !items.iter().any(|item| matches!(item, Item::Sequence { .. })) {
+        if !items
+            .iter()
+            .any(|item| matches!(item, Item::Sequence { .. }))
+        {
             return items;
         }
         match first {
@@ -1479,7 +1675,9 @@ impl Context<'_> {
                         ..
                     }) if open_marker == marker => {
                         // Not if one of them can both open and close, and together they are a multiple of three.
-                        !((can_close || closer_can_open) && close_len % 3 != 0 && (end - start + close_len) % 3 == 0)
+                        !((can_close || closer_can_open)
+                            && close_len % 3 != 0
+                            && (end - start + close_len) % 3 == 0)
                     }
                     _ => false,
                 });
@@ -1499,10 +1697,18 @@ impl Context<'_> {
                 };
                 // The sequences between the two stand for themselves.
                 openers.truncate(opener);
-                let used = if open_end - open_start > 1 && close_len > 1 { 2 } else { 1 };
+                let used = if open_end - open_start > 1 && close_len > 1 {
+                    2
+                } else {
+                    1
+                };
                 let inner = done.split_off(open + 1);
                 done.pop();
-                let kind = if used == 2 { Kind::Strong } else { Kind::Emphasis };
+                let kind = if used == 2 {
+                    Kind::Strong
+                } else {
+                    Kind::Emphasis
+                };
                 let group = self.group(kind, open_end - used, close_start + used, inner);
                 if open_end - used > open_start {
                     openers.push(done.len());
@@ -1545,7 +1751,10 @@ impl Context<'_> {
                 index += 1;
                 continue;
             }
-            let count = items[index..].iter().take_while(|item| !matches!(item, Item::Node(_))).count();
+            let count = items[index..]
+                .iter()
+                .take_while(|item| !matches!(item, Item::Node(_)))
+                .count();
             let run = &items[index..index + count];
             index += count;
             let range = |item: &Item| match *item {
@@ -1557,7 +1766,10 @@ impl Context<'_> {
             };
             let (start, end) = (range(&run[0]).0, range(&run[count - 1]).1);
             let is_plain = run.iter().all(|item| !matches!(item, Item::Encoded { .. }))
-                && run.iter().zip(&run[1..]).all(|(item, next)| range(item).1 == range(next).0);
+                && run
+                    .iter()
+                    .zip(&run[1..])
+                    .all(|(item, next)| range(item).1 == range(next).0);
             let value = match is_plain {
                 true => self.raw(start, end),
                 false => {
@@ -1601,7 +1813,12 @@ impl Context<'_> {
         else {
             return;
         };
-        let rest = self.tree.str(self.text, value).get(1..).unwrap_or_default().to_vec();
+        let rest = self
+            .tree
+            .str(self.text, value)
+            .get(1..)
+            .unwrap_or_default()
+            .to_vec();
         if rest.is_empty() {
             return self.tree.detach(head);
         }
@@ -1619,10 +1836,7 @@ impl Context<'_> {
 fn into_data(items: &mut [Item], markers: &[u8]) {
     for item in items {
         if let Item::Sequence {
-            marker,
-            start,
-            end,
-            ..
+            marker, start, end, ..
         } = *item
             && markers.contains(&marker)
         {

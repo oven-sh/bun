@@ -22,7 +22,9 @@ fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
     let body = strings::last_index_of(text, OUTPUT).map_or(text, |at| &text[at + OUTPUT.len()..]);
     let body = body.strip_suffix(END).unwrap_or(body);
     let lines: Vec<&[u8]> = strings::split(body, b"\n").collect();
-    let is_rule = |line: &[u8], len: usize| line.len() == len && !line.is_empty() && trim_bytes(line, b"-").is_empty();
+    let is_rule = |line: &[u8], len: usize| {
+        line.len() == len && !line.is_empty() && trim_bytes(line, b"-").is_empty()
+    };
     let is_header = |at: usize| {
         matches!(lines.get(at..at + 3), Some([above, options, below])
             if options.starts_with(b"{") && options.ends_with(b"}") && is_rule(above, options.len()) && is_rule(below, options.len()))
@@ -32,7 +34,9 @@ fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
         // The line break at the end of the output is followed by one more.
         let end = headers.get(i + 1).map_or(lines.len() - 1, |&next| next);
         // What oxfmt makes of its own output, where that is something else, is not compared.
-        let end = (at + 3..end).find(|&line| lines[line] == SECOND_PASS).unwrap_or(end);
+        let end = (at + 3..end)
+            .find(|&line| lines[line] == SECOND_PASS)
+            .unwrap_or(end);
         (lines[at + 1], lines[at + 3..end].join(&b"\n"[..]))
     });
     outputs.collect()
@@ -58,9 +62,13 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
 /// Prints `FAIL <judge> <input> <options>` for each output that is not the expected one, and how
 /// many are, as Prettier prints them and, in the flavor of oxfmt, as oxfmt prints them.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
-    let (mut as_prettier, mut as_oxfmt, mut other_options) = (Count::default(), Count::default(), 0);
+    let (mut as_prettier, mut as_oxfmt, mut other_options) =
+        (Count::default(), Count::default(), 0);
     let snapshots = bundle.paths().filter(|it| it.ends_with(b".prettier.snap"));
-    for snapshot in snapshots.skip(flags.first % flags.every).step_by(flags.every) {
+    for snapshot in snapshots
+        .skip(flags.first % flags.every)
+        .step_by(flags.every)
+    {
         let name = &snapshot[..snapshot.len() - b".prettier.snap".len()];
         let (Some(input), true) = (bundle.read(name), flags.wants(name)) else {
             continue;
@@ -81,11 +89,25 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     Err(Failure::Other) => b"<the formatter failed>".to_vec(),
                 };
                 // The library that writes oxfmt's snapshots makes `\n` of every `\r\n`.
-                let actual = if flavor == b"oxfmt" { strings::replace_owned(&actual, b"\r\n", b"\n") } else { actual };
+                let actual = if flavor == b"oxfmt" {
+                    strings::replace_owned(&actual, b"\r\n", b"\n")
+                } else {
+                    actual
+                };
                 count.add(actual == expected);
                 if actual != expected {
-                    output_line!("FAIL {} {} {}", BStr::new(flavor), BStr::new(name), BStr::new(line));
-                    flags.write_report(&[flavor, b" ", name, b" ", line].concat(), &expected, &actual, input);
+                    output_line!(
+                        "FAIL {} {} {}",
+                        BStr::new(flavor),
+                        BStr::new(name),
+                        BStr::new(line)
+                    );
+                    flags.write_report(
+                        &[flavor, b" ", name, b" ", line].concat(),
+                        &expected,
+                        &actual,
+                        input,
+                    );
                 }
             }
         }

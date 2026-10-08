@@ -1,16 +1,24 @@
 //! The kinds of tags.
 
-use super::embedded::{embedded_options, format_embedded_js, format_type_via_formatter, is_js_ts_lang, update_template_depth};
+use super::embedded::{
+    embedded_options, format_embedded_js, format_type_via_formatter, is_js_ts_lang,
+    update_template_depth,
+};
 use super::normalize::{
-    append_trailing_dot, capitalize_first, normalize_markdown_emphasis, normalize_type, normalize_type_preserve_quotes,
-    normalize_type_return, strip_jsdoc_stars_preserve_newlines, strip_optional_type_suffix,
+    append_trailing_dot, capitalize_first, normalize_markdown_emphasis, normalize_type,
+    normalize_type_preserve_quotes, normalize_type_return, strip_jsdoc_stars_preserve_newlines,
+    strip_optional_type_suffix,
 };
 use super::parser::Tag;
 use super::serialize::{
-    JsdocFormatter, format_default_value, is_known_tag, is_named_generic_tag, should_preserve_description_verbatim,
-    should_skip_description_formatting, strip_default_is_suffix,
+    JsdocFormatter, format_default_value, is_known_tag, is_named_generic_tag,
+    should_preserve_description_verbatim, should_skip_description_formatting,
+    strip_default_is_suffix,
 };
-use super::text::{find_ascii_whitespace, is_blank, lines, split_lines, split_whitespace, str_width, trim, trim_start, trim_start_matches};
+use super::text::{
+    find_ascii_whitespace, is_blank, lines, split_lines, split_whitespace, str_width, trim,
+    trim_start, trim_start_matches,
+};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -54,7 +62,11 @@ fn split_dash(text: &[u8]) -> (bool, &[u8]) {
 /// Appends `. Default is `value``.
 fn push_default(out: &mut Vec<u8>, value: &[u8]) {
     if !out.is_empty() {
-        out.extend_from_slice(if matches!(out.last(), Some(b'.' | b'!' | b'?')) { b" " } else { b". " });
+        out.extend_from_slice(if matches!(out.last(), Some(b'.' | b'!' | b'?')) {
+            b" "
+        } else {
+            b". "
+        });
     }
     out.extend_from_slice(b"Default is `");
     out.extend_from_slice(value);
@@ -95,7 +107,11 @@ impl JsdocFormatter<'_> {
 
     fn push_raw_code_lines(&mut self, code: &[u8], indent: &[u8]) {
         for line in lines(code) {
-            let content = if self.options.keep_unparsable_example_indent { line } else { trim(line) };
+            let content = if self.options.keep_unparsable_example_indent {
+                line
+            } else {
+                trim(line)
+            };
             let out = self.content_lines.begin_line();
             if !content.is_empty() {
                 out.extend_from_slice(indent);
@@ -113,7 +129,11 @@ impl JsdocFormatter<'_> {
             && first_line.starts_with(b"```")
         {
             if let Some(closing) = strings::last_index_of(rest, b"\n```") {
-                return self.format_example_fenced_block(first_line, &rest[..closing], trim(&rest[closing + 1..]));
+                return self.format_example_fenced_block(
+                    first_line,
+                    &rest[..closing],
+                    trim(&rest[closing + 1..]),
+                );
             }
             if trim(rest) == b"```" {
                 return self.format_example_fenced_block(first_line, b"", trim(rest));
@@ -130,7 +150,12 @@ impl JsdocFormatter<'_> {
         }
     }
 
-    fn format_example_fenced_block(&mut self, lang_line: &[u8], inner_code: &[u8], closing_fence: &[u8]) {
+    fn format_example_fenced_block(
+        &mut self,
+        lang_line: &[u8],
+        inner_code: &[u8],
+        closing_fence: &[u8],
+    ) {
         let indent = self.code_indent();
         let effective_width = self.wrap_width.saturating_sub(self.code_indent_width());
         self.content_lines.push([indent, lang_line].concat());
@@ -153,9 +178,17 @@ impl JsdocFormatter<'_> {
         if !has_no_space_before_type || type_str.starts_with(b"{") {
             tag_line.push(b' ');
         }
-        tag_line.extend_from_slice(if self.options.bracket_spacing { b"{ " } else { b"{" });
+        tag_line.extend_from_slice(if self.options.bracket_spacing {
+            b"{ "
+        } else {
+            b"{"
+        });
         tag_line.extend_from_slice(type_str);
-        tag_line.extend_from_slice(if self.options.bracket_spacing { b" }" } else { b"}" });
+        tag_line.extend_from_slice(if self.options.bracket_spacing {
+            b" }"
+        } else {
+            b"}"
+        });
     }
 
     /// Pushes `description`, broken into lines and indented.
@@ -165,7 +198,12 @@ impl JsdocFormatter<'_> {
     }
 
     /// The same without an empty line at the start, for where there is one already.
-    fn push_wrapped_desc_after_blank_line(&mut self, description: &[u8], indent: &[u8], width: usize) {
+    fn push_wrapped_desc_after_blank_line(
+        &mut self,
+        description: &[u8],
+        indent: &[u8],
+        width: usize,
+    ) {
         let wrapped = self.wrap_text(description, width, 0);
         self.push_indented_desc(indent, wrapped.strip_prefix(b"\n").unwrap_or(&wrapped));
     }
@@ -220,7 +258,11 @@ impl JsdocFormatter<'_> {
                 // The formatter gets a type over several lines with its line breaks, so that it keeps them.
                 let formatter_input: Vec<u8> = match was_multiline {
                     true => {
-                        let stripped = strip_jsdoc_stars_preserve_newlines(if is_multiline { type_to_normalize } else { raw_inner });
+                        let stripped = strip_jsdoc_stars_preserve_newlines(if is_multiline {
+                            type_to_normalize
+                        } else {
+                            raw_inner
+                        });
                         strings::replace_owned(&stripped, b"*", b" any ")
                     }
                     false => normalized_type.to_vec(),
@@ -238,7 +280,9 @@ impl JsdocFormatter<'_> {
                         normalized_type = Cow::Owned(formatter_input);
                     }
                     Some(formatted) => normalized_type = Cow::Owned(formatted),
-                    None if was_multiline && input_has_line_break => normalized_type = Cow::Owned(formatter_input),
+                    None if was_multiline && input_has_line_break => {
+                        normalized_type = Cow::Owned(formatter_input)
+                    }
                     None => {}
                 }
             }
@@ -287,7 +331,8 @@ impl JsdocFormatter<'_> {
         }
 
         // The default of `@template [T=Value]` is syntax.
-        let default_value_for_desc = default_value.filter(|_| self.options.add_default_to_description && normalized_kind != b"template");
+        let default_value_for_desc = default_value
+            .filter(|_| self.options.add_default_to_description && normalized_kind != b"template");
         let desc_raw = match default_value_for_desc {
             Some(_) => trim(strip_default_is_suffix(desc_raw)),
             None => desc_raw,
@@ -312,18 +357,33 @@ impl JsdocFormatter<'_> {
         if first_text_line.starts_with(b"```") {
             self.content_lines.push(tag_line);
             self.content_lines.push_empty();
-            self.push_wrapped_desc_after_blank_line(desc_raw, Self::CONTINUATION_INDENT, self.indented_width());
+            self.push_wrapped_desc_after_blank_line(
+                desc_raw,
+                Self::CONTINUATION_INDENT,
+                self.indented_width(),
+            );
             return;
         }
         let (has_dash, first_text) = split_dash(first_text_line);
-        let first_text = if should_capitalize { capitalize_first(first_text) } else { Cow::Borrowed(first_text) };
+        let first_text = if should_capitalize {
+            capitalize_first(first_text)
+        } else {
+            Cow::Borrowed(first_text)
+        };
         if first_text.is_empty() && default_value_for_desc.is_none() && rest_of_desc.is_none() {
             self.content_lines.push(tag_line);
             return;
         }
         let separator: &[u8] = if has_dash { b" - " } else { b" " };
         let remaining_desc = match rest_of_desc {
-            Some(rest) => dedent_lines(rest, if first_text_line.is_empty() { usize::MAX } else { 0 }),
+            Some(rest) => dedent_lines(
+                rest,
+                if first_text_line.is_empty() {
+                    usize::MAX
+                } else {
+                    0
+                },
+            ),
             None => Vec::new(),
         };
         let has_remaining = !is_blank(&remaining_desc);
@@ -341,7 +401,9 @@ impl JsdocFormatter<'_> {
             let mut description = first_text.into_owned();
             match default_value_for_desc {
                 Some(value) => push_default(&mut description, value),
-                None if self.options.description_with_dot => description = append_trailing_dot(&description).into_owned(),
+                None if self.options.description_with_dot => {
+                    description = append_trailing_dot(&description).into_owned()
+                }
                 None => {}
             }
             self.content_lines.push([prefix, description].concat());
@@ -363,7 +425,11 @@ impl JsdocFormatter<'_> {
         }
         if let Some(value) = default_value_for_desc {
             // Even where there is nothing before it.
-            full_desc.extend_from_slice(if matches!(full_desc.last(), Some(b'.' | b'!' | b'?')) { b" " } else { b". " });
+            full_desc.extend_from_slice(if matches!(full_desc.last(), Some(b'.' | b'!' | b'?')) {
+                b" "
+            } else {
+                b". "
+            });
             full_desc.extend_from_slice(b"Default is `");
             full_desc.extend_from_slice(value);
             full_desc.push(b'`');
@@ -397,12 +463,19 @@ impl JsdocFormatter<'_> {
                 false => normalize_type_return(raw_type, self.quote_style()),
             };
             // `@type{import('...')}` stays as it is.
-            if !(preserve_quotes && has_no_space_before_type && !normalized_type.starts_with(b"{")) {
-                let star_stripped = strings::contains_char(raw_type, b'\n').then(|| strip_jsdoc_stars_preserve_newlines(raw_type));
+            if !(preserve_quotes && has_no_space_before_type && !normalized_type.starts_with(b"{"))
+            {
+                let star_stripped = strings::contains_char(raw_type, b'\n')
+                    .then(|| strip_jsdoc_stars_preserve_newlines(raw_type));
                 let type_options = embedded_options(self.format_options, self.wrap_width);
-                let formatted = format_type_via_formatter(star_stripped.as_deref().unwrap_or(&normalized_type), &type_options);
+                let formatted = format_type_via_formatter(
+                    star_stripped.as_deref().unwrap_or(&normalized_type),
+                    &type_options,
+                );
                 match (formatted, star_stripped) {
-                    (Some(formatted), Some(stripped)) if !strings::contains_char(&formatted, b'\n') => {
+                    (Some(formatted), Some(stripped))
+                        if !strings::contains_char(&formatted, b'\n') =>
+                    {
                         normalized_type = Cow::Owned(stripped);
                     }
                     (Some(formatted), _) => normalized_type = Cow::Owned(formatted),
@@ -420,12 +493,18 @@ impl JsdocFormatter<'_> {
             self.content_lines.push(tag_line);
             return;
         }
-        let desc_text = if should_capitalize { capitalize_first(desc_text) } else { Cow::Borrowed(desc_text) };
+        let desc_text = if should_capitalize {
+            capitalize_first(desc_text)
+        } else {
+            Cow::Borrowed(desc_text)
+        };
 
         // A type over several lines: one word stays on its last line, more go on a line of their own.
         if let Some(last_line_break) = strings::last_index_of_char(&tag_line, b'\n') {
             let last_line_width = str_width(&tag_line[last_line_break + 1..]);
-            if !strings::contains_char(&desc_text, b' ') && last_line_width + 1 + str_width(&desc_text) <= self.wrap_width {
+            if !strings::contains_char(&desc_text, b' ')
+                && last_line_width + 1 + str_width(&desc_text) <= self.wrap_width
+            {
                 tag_line.push(b' ');
                 tag_line.extend_from_slice(&desc_text);
                 self.content_lines.push(tag_line);
@@ -456,15 +535,22 @@ impl JsdocFormatter<'_> {
     /// Pushes lines as they are. One with nothing but white space is empty.
     fn push_raw_lines(&mut self, text: &[u8]) {
         for line in split_lines(text) {
-            self.content_lines.push(if is_blank(line) { b"" } else { line });
+            self.content_lines
+                .push(if is_blank(line) { b"" } else { line });
         }
     }
 
-    pub(super) fn format_generic_tag(&mut self, normalized_kind: &[u8], tag: &Tag<'_>, should_capitalize: bool) {
+    pub(super) fn format_generic_tag(
+        &mut self,
+        normalized_kind: &[u8],
+        tag: &Tag<'_>,
+        should_capitalize: bool,
+    ) {
         let tag_line = [b"@", normalized_kind].concat();
         let raw_with_whitespace = tag.comment().parsed_preserving_whitespace();
         let has_leading_blank_line = starts_with_blank_line(&raw_with_whitespace);
-        let desc_starts_on_new_line = trim_start_matches(&raw_with_whitespace, |c| c == ' ').starts_with(b"\n");
+        let desc_starts_on_new_line =
+            trim_start_matches(&raw_with_whitespace, |c| c == ' ').starts_with(b"\n");
 
         let parsed = tag.comment().parsed();
         let desc_normalized = normalize_markdown_emphasis(trim(&parsed));
@@ -511,7 +597,11 @@ impl JsdocFormatter<'_> {
             } else if skip_formatting {
                 self.push_wrapped_desc_after_blank_line(raw_desc, b"", self.wrap_width);
             } else {
-                self.push_wrapped_desc_after_blank_line(&desc_text, Self::CONTINUATION_INDENT, self.indented_width());
+                self.push_wrapped_desc_after_blank_line(
+                    &desc_text,
+                    Self::CONTINUATION_INDENT,
+                    self.indented_width(),
+                );
             }
             return;
         }
@@ -529,7 +619,8 @@ impl JsdocFormatter<'_> {
             if description.is_empty() {
                 self.content_lines.push([&prefix[..], &desc_text].concat());
             } else {
-                self.content_lines.push([&prefix[..], &desc_text[..space]].concat());
+                self.content_lines
+                    .push([&prefix[..], &desc_text[..space]].concat());
                 self.push_wrapped_desc(description);
             }
             return;
@@ -545,7 +636,9 @@ impl JsdocFormatter<'_> {
         }
         let fits_on_one_line = prefix_len + str_width(&desc_text) <= self.wrap_width;
         // Anything else is broken into lines, which makes one space of line breaks and of several spaces.
-        let is_plain_one_liner = fits_on_one_line && !strings::contains_char(&desc_text, b'\n') && !strings::contains(&desc_text, b"  ");
+        let is_plain_one_liner = fits_on_one_line
+            && !strings::contains_char(&desc_text, b'\n')
+            && !strings::contains(&desc_text, b"  ");
         if skip_wrapping && is_raw_multiline {
             self.content_lines.push([&prefix[..], raw_desc].concat());
         } else if is_plain_one_liner || (skip_wrapping && fits_on_one_line) {
@@ -555,7 +648,9 @@ impl JsdocFormatter<'_> {
         } else if skip_wrapping {
             // `@deprecated` gets no capital letter, but it is broken into lines.
             self.push_desc_behind(&prefix, raw_desc);
-        } else if prefix_len + split_whitespace(&desc_text).next().map_or(0, str_width) > self.wrap_width {
+        } else if prefix_len + split_whitespace(&desc_text).next().map_or(0, str_width)
+            > self.wrap_width
+        {
             self.content_lines.push(tag_line);
             self.push_wrapped_desc(&desc_text);
         } else {

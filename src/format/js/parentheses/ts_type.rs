@@ -37,7 +37,9 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool
             function_like_type_needs_parentheses(ty, parent, func.return_type())
         }
         TypeKind::Infer(param) => match effective_parent(ty.ast_parent()) {
-            AstNodes::TSIntersectionType(_) | AstNodes::TSUnionType(_) => param.constraint().is_some(),
+            AstNodes::TSIntersectionType(_) | AstNodes::TSUnionType(_) => {
+                param.constraint().is_some()
+            }
             AstNodes::TSRestType(_) => false,
             parent => operator_type_or_higher_needs_parens(ty, parent),
         },
@@ -46,7 +48,9 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool
                 return false;
             }
             match effective_parent(ty.ast_parent()) {
-                AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => member_count(parent) > 1,
+                AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => {
+                    member_count(parent) > 1
+                }
                 parent => operator_type_or_higher_needs_parens(ty, parent),
             }
         }
@@ -56,13 +60,21 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool
             }
             // `<A extends (B extends C ? D : E)>() => {}`
             AstNodes::TSTypeParameter(param) => param.constraint() == Some(ty),
-            AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => member_count(parent) > 1,
+            AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => {
+                member_count(parent) > 1
+            }
             parent => operator_type_or_higher_needs_parens(ty, parent),
         },
-        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => {
+        TypeKind::Keyof(_)
+        | TypeKind::Readonly(_)
+        | TypeKind::UniqueSymbol
+        | TypeKind::Unique(_) => {
             operator_type_or_higher_needs_parens(ty, effective_parent(ty.ast_parent()))
         }
-        TypeKind::Typeof { .. } | TypeKind::Import { is_typeof: true, .. } => {
+        TypeKind::Typeof { .. }
+        | TypeKind::Import {
+            is_typeof: true, ..
+        } => {
             match effective_parent(ty.ast_parent()) {
                 AstNodes::TSArrayType(_) => true,
                 // `(typeof a)[0]` means the same as `typeof a[0]`, unlike in an expression.
@@ -93,12 +105,16 @@ fn function_like_type_needs_parentheses<'a>(
                 return false;
             }
             let return_type = match return_type.map(TypeNode::kind) {
-                Some(TypeKind::Predicate { ty: Some(asserted), .. }) => Some(asserted),
+                Some(TypeKind::Predicate {
+                    ty: Some(asserted), ..
+                }) => Some(asserted),
                 _ => return_type,
             };
             matches!(return_type.map(TypeNode::kind), Some(TypeKind::Infer(param)) if param.constraint().is_some())
         }
-        AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => member_count(parent) > 1,
+        AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => {
+            member_count(parent) > 1
+        }
         _ => operator_type_or_higher_needs_parens(ty, parent),
     }
 }
@@ -106,9 +122,10 @@ fn function_like_type_needs_parentheses<'a>(
 /// Whether `parent` is an operator that binds more tightly than any that `ty` can be.
 fn operator_type_or_higher_needs_parens<'a>(ty: TypeNode<'a>, parent: AstNodes<'a>) -> bool {
     match parent {
-        AstNodes::TSArrayType(_) | AstNodes::TSTypeOperator(_) | AstNodes::TSRestType(_) | AstNodes::TSOptionalType(_) => {
-            true
-        }
+        AstNodes::TSArrayType(_)
+        | AstNodes::TSTypeOperator(_)
+        | AstNodes::TSRestType(_)
+        | AstNodes::TSOptionalType(_) => true,
         AstNodes::TSIndexedAccessType(indexed) => {
             matches!(indexed.kind(), TypeKind::IndexedAccess { obj, .. } if obj == ty)
         }

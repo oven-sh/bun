@@ -18,11 +18,18 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 fn is_declared(statement: Stmt<'_>) -> bool {
-    statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT)
+    statement
+        .modifiers()
+        .iter()
+        .any(|it| it.flag() == Flags::AMBIENT)
 }
 
 /// `interface A<T> extends B { .. }`
-pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface: Interface<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_interface_declaration<'a>(
+    statement: Stmt<'a>,
+    interface: Interface<'a>,
+    f: &mut Formatter<'a>,
+) {
     if f.file().is_flow() && super::flow::is_opaque_type(statement, f) {
         return super::flow::write_opaque_type(statement, interface, f);
     }
@@ -39,17 +46,28 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
             let is_member = match first.kind() {
                 TypeKind::Ref { name, args } => name.len() > 1 && args.is_empty(),
                 TypeKind::Heritage { expr, args } => {
-                    matches!(expr.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. }) && args.is_empty()
+                    matches!(expr.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+                        && args.is_empty()
                 }
                 _ => false,
             };
             // A comment after `extends` on its line leads the type. All others trail what is before.
             is_member || {
-                let previous_end = type_params.angle_brackets_span().unwrap_or_else(|| id.span()).end;
-                let comments = f.comments().comments_in_range(previous_end, first.span().start);
-                comments.iter().any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
+                let previous_end = type_params
+                    .angle_brackets_span()
+                    .unwrap_or_else(|| id.span())
+                    .end;
+                let comments = f
+                    .comments()
+                    .comments_in_range(previous_end, first.span().start);
+                comments
+                    .iter()
+                    .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
                     || comments.first().is_some_and(|comment| {
-                        f.source_text().all_bytes_match(previous_end, comment.span.start, |b| b.is_ascii_whitespace())
+                        f.source_text()
+                            .all_bytes_match(previous_end, comment.span.start, |b| {
+                                b.is_ascii_whitespace()
+                            })
                     })
             }
         });
@@ -64,9 +82,14 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
                 group_id: None,
                 is_type_or_interface_decl: true,
             };
-            type_parameters(type_params, Node::Stmt(statement)).with_options(options).write_without_comments(f);
+            type_parameters(type_params, Node::Stmt(statement))
+                .with_options(options)
+                .write_without_comments(f);
             if !extends.is_empty() {
-                write_trailing_comments_of(AstNodes::TSTypeParameterDeclaration(Node::Stmt(statement)), f);
+                write_trailing_comments_of(
+                    AstNodes::TSTypeParameterDeclaration(Node::Stmt(statement)),
+                    f,
+                );
             }
         }
     });
@@ -75,13 +98,27 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
         let Some(first_extend) = extends.first() else {
             return;
         };
-        if f.comments().has_leading_own_line_comment(first_extend.span().start) {
-            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(first_extend.span().start)));
+        if f.comments()
+            .has_leading_own_line_comment(first_extend.span().start)
+        {
+            write!(
+                f,
+                FormatTrailingComments::Comments(
+                    f.comments().comments_before(first_extend.span().start)
+                )
+            );
         }
 
         let heritage = FormatClassImplements(extends);
         if extends.len() > 1 {
-            write!(f, [soft_line_break_or_space(), "extends", group(&soft_line_indent_or_space(&heritage))]);
+            write!(
+                f,
+                [
+                    soft_line_break_or_space(),
+                    "extends",
+                    group(&soft_line_indent_or_space(&heritage))
+                ]
+            );
         } else {
             let format_extends = format_args!("extends", space(), heritage);
             match group_mode {
@@ -92,7 +129,14 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
     });
 
     let content = format_with(|f| {
-        write!(f, [is_declared(statement).then_some("declare "), "interface", space()]);
+        write!(
+            f,
+            [
+                is_declared(statement).then_some("declare "),
+                "interface",
+                space()
+            ]
+        );
 
         if !extends.is_empty() && group_mode {
             write!(f, group(&format_args!(format_id, indent(&format_extends))));
@@ -103,7 +147,10 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
         // The comments on the line of the `{` stay before it. All others are in the body.
         if !f.is_quiet() {
             let comments = f.comments().comments_before(body_span.start);
-            if !comments.iter().any(|comment| comment.preceded_by_newline() || comment.followed_by_newline()) {
+            if !comments
+                .iter()
+                .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
+            {
                 write!(f, [space(), FormatLeadingComments::Comments(comments)]);
             }
         }
@@ -113,7 +160,13 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
             match interface.members().is_empty() {
                 true => write!(f, format_dangling_comments(body_span).with_block_indent()),
                 false => {
-                    write!(f, block_indent(&format_with(|f| write_ts_interface_signatures(interface.members(), f))));
+                    write!(
+                        f,
+                        block_indent(&format_with(|f| write_ts_interface_signatures(
+                            interface.members(),
+                            f
+                        )))
+                    );
                 }
             }
             write!(f, "}");
@@ -124,7 +177,11 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
 
 /// `type A = B`. Prettier's `printTypeAlias`, with what its `printAssignment` does if the right side
 /// is a type.
-pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Alias<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_type_alias_declaration<'a>(
+    statement: Stmt<'a>,
+    alias: Alias<'a>,
+    f: &mut Formatter<'a>,
+) {
     if f.file().is_flow() && super::flow::write_what_is_no_type_alias(statement, alias, f) {
         return;
     }
@@ -132,7 +189,11 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
     let ty = without_lone_operator(alias.ty());
 
     // The comments before the `;` of an export are behind it: see `Comments::without_semicolon`.
-    let is_exported = !f.is_quiet() && matches!(statement.as_ast_nodes(), AstNodes::ExportNamedDeclaration(_));
+    let is_exported = !f.is_quiet()
+        && matches!(
+            statement.as_ast_nodes(),
+            AstNodes::ExportNamedDeclaration(_)
+        );
     let view_limit = is_exported.then(|| {
         let end = f.comments().without_semicolon(statement.span()).end;
         f.comments_mut().limit_comments_up_to(end)
@@ -154,7 +215,14 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
         match type_alias_comments_stay_behind_operator(f) {
             true => write_comments_after_type_alias_left_side(alias, f),
             false => {
-                write!(f, FormatTrailingComments::Comments(comments_before_type_alias_operator(id.span().end, ty, f)));
+                write!(
+                    f,
+                    FormatTrailingComments::Comments(comments_before_type_alias_operator(
+                        id.span().end,
+                        ty,
+                        f
+                    ))
+                );
             }
         }
     }
@@ -170,7 +238,9 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
             // The comments before a union are written with it.
             TypeKind::Union(types) => {
                 let is_indented = layout == AssignmentLikeLayout::BreakAfterOperator;
-                around_node(ty.span(), f, |f| write_ts_union_type_in(ty, types, is_indented, f));
+                around_node(ty.span(), f, |f| {
+                    write_ts_union_type_in(ty, types, is_indented, f)
+                });
                 write_trailing_comments_of(ty.as_ast_nodes(), f);
             }
             _ => write!(f, ty),
@@ -182,11 +252,17 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
     match layout {
         // A line comment that has been written after the `=` stays there.
         AssignmentLikeLayout::BreakAfterOperator
-            if type_alias_comments_stay_behind_operator(f) && !matches!(ty.kind(), TypeKind::Cond { .. }) =>
+            if type_alias_comments_stay_behind_operator(f)
+                && !matches!(ty.kind(), TypeKind::Cond { .. }) =>
         {
-            write!(f, [line_suffix_boundary(), soft_line_indent_or_space(&right)]);
+            write!(
+                f,
+                [line_suffix_boundary(), soft_line_indent_or_space(&right)]
+            );
         }
-        AssignmentLikeLayout::BreakAfterOperator => write!(f, group(&soft_line_indent_or_space(&right))),
+        AssignmentLikeLayout::BreakAfterOperator => {
+            write!(f, group(&soft_line_indent_or_space(&right)))
+        }
         AssignmentLikeLayout::BreakLeftHandSide => write!(f, [space(), group(&right)]),
         _ => {
             let group_id = f.group_id("assignment_like");
@@ -221,13 +297,22 @@ fn type_alias_comments_stay_behind_operator(f: &Formatter<'_>) -> bool {
 
 /// What oxc's `AssignmentLike::write_left` does after the left side of a type alias.
 fn write_comments_after_type_alias_left_side<'a>(alias: Alias<'a>, f: &mut Formatter<'a>) {
-    let left_end = alias.type_params().angle_brackets_span().map_or_else(|| alias.name().span().end, |it| it.end);
+    let left_end = alias
+        .type_params()
+        .angle_brackets_span()
+        .map_or_else(|| alias.name().span().end, |it| it.end);
     let declared = alias.ty();
     let end_of_line_comments = f.comments().end_of_line_comments_after(left_end);
     let comments = if end_of_line_comments.is_empty() {
         let comments = f.comments().comments_before_character(left_end, b'=');
-        if comments.iter().any(|comment| comment.preceded_by_newline()) { &[] } else { comments }
-    } else if matches!(declared.kind(), TypeKind::Object(_)) || end_of_line_comments.last().is_some_and(|it| it.is_block()) {
+        if comments.iter().any(|comment| comment.preceded_by_newline()) {
+            &[]
+        } else {
+            comments
+        }
+    } else if matches!(declared.kind(), TypeKind::Object(_))
+        || end_of_line_comments.last().is_some_and(|it| it.is_block())
+    {
         &[]
     } else {
         end_of_line_comments
@@ -237,7 +322,9 @@ fn write_comments_after_type_alias_left_side<'a>(alias: Alias<'a>, f: &mut Forma
     // `type A = /* 1 */ | C` is `type A /* 1 */ = C`.
     if let TypeKind::Union(types) | TypeKind::Intersection(types) = declared.kind()
         && types.len() == 1
-        && !types.first().is_some_and(|only| only.tag() == declared.tag() || only.is_parenthesized())
+        && !types
+            .first()
+            .is_some_and(|only| only.tag() == declared.tag() || only.is_parenthesized())
         && let comments @ [comment] = f.comments().comments_before(declared.span().start)
         && !comment.preceded_by_newline()
     {
@@ -248,20 +335,29 @@ fn write_comments_after_type_alias_left_side<'a>(alias: Alias<'a>, f: &mut Forma
 /// Of the comments that are left between the name of a type alias, which ends at `start`, and the
 /// first `=` after it, those that trail the left side. All others lead the type (Prettier's
 /// `handleAssignmentLikeComments`, for which the `=` of a default type is as good as any).
-fn comments_before_type_alias_operator<'a>(start: u32, ty: TypeNode<'a>, f: &Formatter<'a>) -> &'a [Comment] {
+fn comments_before_type_alias_operator<'a>(
+    start: u32,
+    ty: TypeNode<'a>,
+    f: &Formatter<'a>,
+) -> &'a [Comment] {
     let comments = f.comments().comments_before_character(start, b'=');
     let is_object = matches!(ty.kind(), TypeKind::Object(_));
     let count = comments
         .iter()
         .take_while(|comment| {
-            !comment.preceded_by_newline() && !(comment.followed_by_newline() && (is_object || comment.is_block()))
+            !comment.preceded_by_newline()
+                && !(comment.followed_by_newline() && (is_object || comment.is_block()))
         })
         .count();
     &comments[..count]
 }
 
 /// Prettier's `chooseLayout` for the type alias `alias`, whose type is `ty`.
-fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) -> AssignmentLikeLayout {
+fn type_alias_layout<'a>(
+    alias: Alias<'a>,
+    ty: TypeNode<'a>,
+    f: &Formatter<'a>,
+) -> AssignmentLikeLayout {
     let is_generic = |ty: TypeNode<'a>| match ty.kind() {
         TypeKind::Fn(func) => func.kind() == FnKind::FunctionType && !func.type_params().is_empty(),
         TypeKind::Ref { args, .. } => !args.is_empty(),
@@ -270,7 +366,11 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
     let should_break_after_operator = match ty.kind() {
         TypeKind::Union(types) if !should_hug_type(ty, types, f) => !union_breaks_one_per_line(f),
         TypeKind::Union(_) if type_alias_comments_stay_behind_operator(f) => false,
-        _ if type_alias_comments_stay_behind_operator(f) && f.comments().has_comment_before(ty.span().start) => true,
+        _ if type_alias_comments_stay_behind_operator(f)
+            && f.comments().has_comment_before(ty.span().start) =>
+        {
+            true
+        }
         TypeKind::Cond { check, extends, .. }
             if f.options().experimental_ternaries || is_generic(check) || is_generic(extends) =>
         {
@@ -280,8 +380,7 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
         TypeKind::StringLit(_) if f.file().is_javascript() => true,
         _ => {
             !f.is_quiet()
-                && f
-                    .comments()
+                && f.comments()
                     .comments_before_iter(ty.span().start)
                     .any(|comment| comment.followed_by_newline() || comment.is_indentable_block())
         }
@@ -291,16 +390,27 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
     }
     // Prettier's `isComplexTypeAliasParams`.
     let params = alias.type_params();
-    if params.len() > 1 && params.iter().any(|param| param.constraint().is_some() || param.default().is_some()) {
+    if params.len() > 1
+        && params
+            .iter()
+            .any(|param| param.constraint().is_some() || param.default().is_some())
+    {
         return AssignmentLikeLayout::BreakLeftHandSide;
     }
     AssignmentLikeLayout::Fluid
 }
 
 /// `enum A { B, C = 1 }`
-pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: Enum<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_enum_declaration<'a>(
+    statement: Stmt<'a>,
+    declaration: Enum<'a>,
+    f: &mut Formatter<'a>,
+) {
     let node = AstNodes::TSEnumDeclaration(statement);
-    let is_const = statement.modifiers().iter().any(|it| it.flag() == Flags::CONST);
+    let is_const = statement
+        .modifiers()
+        .iter()
+        .any(|it| it.flag() == Flags::CONST);
     write!(
         f,
         [
@@ -316,7 +426,9 @@ pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: En
     if f.file().is_flow() {
         super::flow::write_explicit_type_of_enum(declaration, f);
     }
-    around_node(declaration.body_span(), f, |f| write_ts_enum_body(declaration, f));
+    around_node(declaration.body_span(), f, |f| {
+        write_ts_enum_body(declaration, f)
+    });
 }
 
 fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
@@ -324,23 +436,35 @@ fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
     let members = declaration.members();
     if members.is_empty() {
         // Prettier's `printObject`: the group of an enum breaks, with nothing in it as well.
-        write!(f, [format_dangling_comments(declaration.body_span()).with_soft_block_indent(), expand_parent()]);
+        write!(
+            f,
+            [
+                format_dangling_comments(declaration.body_span()).with_soft_block_indent(),
+                expand_parent()
+            ]
+        );
     } else {
         let is_consistent = f.options().quote_properties.is_consistent();
         if is_consistent {
-            let quote_needed = members
-                .iter()
-                .any(|member| member.key().is_some_and(|key| key_requires_quotes(key, AstNodes::TSEnumMember(member), f)));
+            let quote_needed = members.iter().any(|member| {
+                member
+                    .key()
+                    .is_some_and(|key| key_requires_quotes(key, AstNodes::TSEnumMember(member), f))
+            });
             f.context_mut().push_quote_needed(quote_needed);
         }
         write!(
             f,
             block_indent(&format_with(|f| {
-                let trailing_separator = match members.last().is_some_and(super::flow::is_unknown_members_mark) {
+                let trailing_separator = match members
+                    .last()
+                    .is_some_and(super::flow::is_unknown_members_mark)
+                {
                     true => TrailingSeparator::Disallowed,
                     false => FormatTrailingCommas::ES5.trailing_separator(f.options()),
                 };
-                f.join_nodes_with_soft_line().entries_with_trailing_separator(members.iter(), ",", trailing_separator);
+                f.join_nodes_with_soft_line()
+                    .entries_with_trailing_separator(members.iter(), ",", trailing_separator);
             }))
         );
         if is_consistent {
@@ -357,9 +481,15 @@ pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter
     }
     if let Some(key) = member.key() {
         // `["a"]` is `"a"`. Only a template keeps its brackets.
-        let is_computed = key.is_computed() && f.source_text().text_for(&key.inner_span(f.file())).starts_with(b"`");
+        let is_computed = key.is_computed()
+            && f.source_text()
+                .text_for(&key.inner_span(f.file()))
+                .starts_with(b"`");
         let key = FormatKey::new(key, AstNodes::TSEnumMember(member));
-        write!(f, [is_computed.then_some("["), key, is_computed.then_some("]")]);
+        write!(
+            f,
+            [is_computed.then_some("["), key, is_computed.then_some("]")]
+        );
     }
     if let Some(init) = member.init() {
         write!(f, [space(), "=", space(), init]);
@@ -367,7 +497,11 @@ pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter
 }
 
 /// `namespace A.B { .. }`, `declare module "a" { .. }`, `declare global { .. }`
-pub(crate) fn write_ts_module_declaration<'a>(statement: Stmt<'a>, module: Module<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_module_declaration<'a>(
+    statement: Stmt<'a>,
+    module: Module<'a>,
+    f: &mut Formatter<'a>,
+) {
     let node = statement.as_ast_nodes();
     let innermost = module.innermost();
     let body_span = innermost.body_span();
@@ -379,7 +513,13 @@ pub(crate) fn write_ts_module_declaration<'a>(statement: Stmt<'a>, module: Modul
     match module.name() {
         ModuleName::Global => {
             let comments_before_global = f.comments().comments_before(module.name_span().start);
-            write!(f, [FormatLeadingComments::Comments(comments_before_global), "global"]);
+            write!(
+                f,
+                [
+                    FormatLeadingComments::Comments(comments_before_global),
+                    "global"
+                ]
+            );
         }
         ModuleName::String(name) => write!(
             f,
@@ -393,7 +533,11 @@ pub(crate) fn write_ts_module_declaration<'a>(statement: Stmt<'a>, module: Modul
             ]
         ),
         ModuleName::Ident(name) => {
-            let keyword = if module.uses_module_keyword() { "module" } else { "namespace" };
+            let keyword = if module.uses_module_keyword() {
+                "module"
+            } else {
+                "namespace"
+            };
             write!(f, [keyword, space(), identifier(name, node)]);
         }
     }
@@ -407,21 +551,29 @@ pub(crate) fn write_ts_module_declaration<'a>(statement: Stmt<'a>, module: Modul
     if let Some(view_limit) = view_limit {
         f.comments_mut().restore_view_limit(view_limit);
         let following = body_span.map_or(0, |it| it.start);
-        write!(f, format_trailing_comments(statement.span(), innermost.name_span(), following));
+        write!(
+            f,
+            format_trailing_comments(statement.span(), innermost.name_span(), following)
+        );
     }
 
     let Some(span) = body_span else {
         return write!(f, OptionalSemicolon);
     };
     write!(f, space());
-    format_node(span, || node, f, |f| {
-        write!(f, "{");
-        match is_empty_block(innermost.body()) {
-            true => write!(f, format_dangling_comments(span).with_block_indent()),
-            false => write!(f, block_indent(&FormatStatements(innermost.body()))),
-        }
-        write!(f, "}");
-    });
+    format_node(
+        span,
+        || node,
+        f,
+        |f| {
+            write!(f, "{");
+            match is_empty_block(innermost.body()) {
+                true => write!(f, format_dangling_comments(span).with_block_indent()),
+                false => write!(f, block_indent(&FormatStatements(innermost.body()))),
+            }
+            write!(f, "}");
+        },
+    );
 }
 
 /// `import a = require("a")`, `import a = b.c`
@@ -443,20 +595,36 @@ pub(crate) fn write_ts_import_equals_declaration<'a>(
             space()
         ]
     );
-    match (import.target(), import.require_span(), statement.module_specifier_span()) {
+    match (
+        import.target(),
+        import.require_span(),
+        statement.module_specifier_span(),
+    ) {
         (ImportEqualsTarget::Entity(name), ..) => write!(f, entity_name(name, node)),
         (ImportEqualsTarget::Require(_), Some(require_span), Some(span)) => {
-            format_node(require_span, || node, f, |f| {
-                let expression = FormatModuleSpecifier {
-                    span,
-                    parent: node,
-                    call_span: require_span,
-                };
-                match f.comments().has_comment_in_span(require_span) {
-                    true => write!(f, group(&format_args!("require(", soft_block_indent(&expression), ")"))),
-                    false => write!(f, ["require(", expression, ")"]),
-                }
-            });
+            format_node(
+                require_span,
+                || node,
+                f,
+                |f| {
+                    let expression = FormatModuleSpecifier {
+                        span,
+                        parent: node,
+                        call_span: require_span,
+                    };
+                    match f.comments().has_comment_in_span(require_span) {
+                        true => write!(
+                            f,
+                            group(&format_args!(
+                                "require(",
+                                soft_block_indent(&expression),
+                                ")"
+                            ))
+                        ),
+                        false => write!(f, ["require(", expression, ")"]),
+                    }
+                },
+            );
         }
         _ => {}
     }
@@ -469,7 +637,12 @@ pub(crate) fn write_ts_export_assignment<'a>(expression: Expr<'a>, f: &mut Forma
 }
 
 /// `export as namespace a`
-pub(crate) fn write_ts_namespace_export_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    let id = statement.namespace_export_name().map(|it| identifier(it, AstNodes::TSNamespaceExportDeclaration(statement)));
+pub(crate) fn write_ts_namespace_export_declaration<'a>(
+    statement: Stmt<'a>,
+    f: &mut Formatter<'a>,
+) {
+    let id = statement
+        .namespace_export_name()
+        .map(|it| identifier(it, AstNodes::TSNamespaceExportDeclaration(statement)));
     write!(f, ["export as namespace ", id, OptionalSemicolon]);
 }

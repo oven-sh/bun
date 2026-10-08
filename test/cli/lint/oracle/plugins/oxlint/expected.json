@@ -1,0 +1,85 @@
+{
+ "no-cycle/place": [
+  "a.ts:1:19 import(no-cycle)",
+  "a.ts:3:24 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/every-import": [
+  "a.ts:1:19 import(no-cycle)",
+  "a.ts:2:19 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)",
+  "c.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/dynamic-import": [],
+ "no-cycle/tsx-for-js": [],
+ "no-cycle/ts-for-js": [
+  "a.ts:1:19 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/tsx-for-jsx": [],
+ "no-cycle/declaration-file": [],
+ "no-cycle/js-before-ts": [],
+ "no-cycle/index": [
+  "a.ts:1:19 import(no-cycle)",
+  "dir/index.tsx:1:19 import(no-cycle)"
+ ],
+ "no-cycle/paths": [
+  "src/a.ts:1:19 import(no-cycle)",
+  "src/b.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/export-type-from": [],
+ "no-cycle/export-inline-type-from": [],
+ "no-cycle/export-type-star": [
+  "a.ts:1:20 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/export-type-star-as": [],
+ "no-cycle/side-effect": [
+  "a.ts:1:8 import(no-cycle)",
+  "b.ts:1:8 import(no-cycle)"
+ ],
+ "no-cycle/no-names": [
+  "a.ts:1:16 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/types-and-star": [],
+ "no-cycle/types-and-values": [
+  "a.ts:1:24 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/inline-types": [
+  "a.ts:2:27 import(no-cycle)",
+  "c.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/ignore-types-off": [
+  "a.ts:1:24 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/self": [
+  "a.ts:1:24 import(no-cycle)",
+  "b.ts:1:15 import(no-cycle)",
+  "f.ts:1:20 import(no-cycle)",
+  "h.ts:1:8 import(no-cycle)"
+ ],
+ "no-cycle/require": [],
+ "no-cycle/syntax-error": [],
+ "no-cycle/import-type-in-a-type": [],
+ "no-cycle/max-depth-1": [
+  "a.ts:2:19 import(no-cycle)"
+ ],
+ "no-cycle/max-depth-2": [
+  "a.ts:2:19 import(no-cycle)",
+  "b.ts:2:19 import(no-cycle)"
+ ],
+ "no-cycle/max-depth-3": [
+  "a.ts:1:19 import(no-cycle)",
+  "a.ts:2:19 import(no-cycle)",
+  "b.ts:1:19 import(no-cycle)",
+  "b.ts:2:19 import(no-cycle)",
+  "c.ts:1:19 import(no-cycle)",
+  "d.ts:1:19 import(no-cycle)"
+ ],
+ "no-cycle/comments": [
+  "b.ts:1:19 import(no-cycle)"
+ ]
+}

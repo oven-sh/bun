@@ -8,12 +8,38 @@
 //!    connected components are computed. Then the files that the rule may have something to say about, which are few, are linted
 //!    again with only such rules, and [`Modules::is_complete`] is true.
 //!
-//! The model is `ExportMap.imports` of eslint-plugin-import.
+//! The model is `ExportMap.imports` of eslint-plugin-import, or the module records of oxlint: [`Flavor`].
 
-use crate::ast::{ExprKind, ExprTag, File, StmtKind};
+use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind};
 use crate::options::Json;
+use crate::span::Span;
 use crate::utils::text::find_line_break;
 use smallvec::SmallVec;
+
+/// Whose notion of what a module imports. All files of a run have the same.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Flavor {
+    EslintPluginImport,
+    Oxlint,
+}
+
+impl Flavor {
+    /// oxlint does not take `import("m")` for an import.
+    pub fn ignores_dynamic_imports(self) -> bool {
+        self == Flavor::Oxlint
+    }
+
+    /// oxlint resolves as Node.js does, with the extensions of JavaScript before those of TypeScript. For `./a.js` it also finds
+    /// `./a.ts`, but not `./a.tsx`, and it finds no `./a.d.ts` for `./a`.
+    pub fn resolves_as_node(self) -> bool {
+        self == Flavor::Oxlint
+    }
+
+    /// For oxlint a module that imports itself is a cycle.
+    pub fn counts_self_imports(self) -> bool {
+        self == Flavor::Oxlint
+    }
+}
 
 /// A file, among those that the files which are linted import, directly or not.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -33,10 +59,12 @@ pub enum RequestKind {
 #[derive(Copy, Clone, Debug)]
 pub struct Request<'a> {
     pub specifier: &'a [u8],
+    /// Where the specifier is.
+    pub span: Span,
     /// The line that the specifier starts in, from 1.
     pub line: u32,
     pub kind: RequestKind,
-    /// `import type`, `import { type A, type B }`, `export type * from`
+    /// `import type`, `import { type A, type B }`, `export type * from`. What else counts depends on the [`Flavor`].
     pub is_only_importing_types: bool,
 }
 
@@ -71,12 +99,13 @@ pub trait Modules: Sync {
     ///
     /// `is_always_checked`: it is linted again whatever it imports. Otherwise only if it is in a cycle of modules that import
     /// values from each other.
-    fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool);
+    fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor);
 
     /// The file at `path`.
     fn find(&self, path: &[u8]) -> Option<ModuleId>;
 
-    /// What `specifier` means in the file at `from`, as TypeScript resolves it. `None` if there is no such file.
+    /// What `specifier` means in the file at `from`, as TypeScript resolves it, or else as the [`Flavor`] has it. `None` if there is
+    /// no such file.
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved>;
 
     /// Absolute, with symbolic links followed.
@@ -105,18 +134,20 @@ impl<'a> File<'a> {
     }
 }
 
-/// What eslint-plugin-import takes for the imports of a module, in its order: every `import("m")`, then the `import`s and the
-/// `export .. from`s at the top level.
-pub fn requests_of<'a>(file: &'a File<'a>) -> Vec<Request<'a>> {
+/// The imports of a module: every `import("m")`, then the `import`s and the `export .. from`s at the top level, which is the order
+/// of eslint-plugin-import.
+pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
     // With the offset in place of the line.
     let mut requests = Vec::new();
     for e in file.exprs_of_kind(ExprTag::ImportCall) {
-        if let ExprKind::ImportCall { args } = e.kind()
+        if !flavor.ignores_dynamic_imports()
+            && let ExprKind::ImportCall { args } = e.kind()
             && let Some(source) = args.first()
             && let Some(specifier) = source.as_string()
         {
             requests.push(Request {
                 specifier: specifier.bytes(),
+                span: source.span(),
                 line: source.span().start,
                 kind: RequestKind::Dynamic,
                 is_only_importing_types: false,
@@ -124,6 +155,15 @@ pub fn requests_of<'a>(file: &'a File<'a>) -> Vec<Request<'a>> {
         }
     }
     requests.sort_unstable_by_key(|it| it.line);
+    match flavor {
+        Flavor::EslintPluginImport => add_static_requests(file, &mut requests),
+        Flavor::Oxlint => add_static_requests_of_oxlint(file, &mut requests),
+    }
+    set_lines(file.text(), &mut requests);
+    requests
+}
+
+fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {
     for stmt in file.body() {
         let (specifier, is_only_importing_types) = match stmt.kind() {
             StmtKind::Import(import) => {
@@ -140,14 +180,56 @@ pub fn requests_of<'a>(file: &'a File<'a>) -> Vec<Request<'a>> {
         if let (Some(specifier), Some(span)) = (specifier, stmt.module_specifier_span()) {
             requests.push(Request {
                 specifier: specifier.bytes(),
+                span,
                 line: span.start,
                 kind: RequestKind::Static,
                 is_only_importing_types,
             });
         }
     }
-    set_lines(file.text(), &mut requests);
-    requests
+}
+
+/// oxlint's `requested_modules`, in the order of the source. Whether only types are imported it decides for all the statements
+/// with the same specifier at once: there are names that are imported or exported again, and all of them are types. `import "m"`,
+/// `import {} from "m"` and `export * from "m"` have no names.
+fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {
+    let first = requests.len();
+    // For each request: the specifier, whether the statement has names, and whether one of them is a value.
+    let mut names: SmallVec<[(Name<'a>, bool, bool); 32]> = SmallVec::new();
+    for stmt in file.body() {
+        let (specifier, types, values) = match stmt.kind() {
+            StmtKind::Import(import) => {
+                let whole = usize::from(import.default().is_some()) + usize::from(import.namespace().is_some());
+                let types = import.named().iter().filter(|it| it.is_type_only()).count();
+                let all = whole + import.named().len();
+                (Some(import.spec()), if import.is_type_only() { all } else { types }, if import.is_type_only() { 0 } else { all - types })
+            }
+            StmtKind::ExportNamed(export) => {
+                let types = export.items().iter().filter(|it| it.is_type_only()).count();
+                let all = export.items().len();
+                (export.spec(), if export.is_type_only() { all } else { types }, if export.is_type_only() { 0 } else { all - types })
+            }
+            StmtKind::ExportStar { spec, alias, type_only } => {
+                let names = usize::from(alias.is_some());
+                (spec, if type_only { names } else { 0 }, if type_only { 0 } else { names })
+            }
+            _ => continue,
+        };
+        if let (Some(specifier), Some(span)) = (specifier, stmt.module_specifier_span()) {
+            names.push((specifier, types + values > 0, values > 0));
+            requests.push(Request {
+                specifier: specifier.bytes(),
+                span,
+                line: span.start,
+                kind: RequestKind::Static,
+                is_only_importing_types: false,
+            });
+        }
+    }
+    for (request, &(specifier, ..)) in requests[first..].iter_mut().zip(&names) {
+        let mut same = names.iter().filter(|it| it.0 == specifier);
+        request.is_only_importing_types = same.clone().any(|it| it.1) && !same.any(|it| it.2);
+    }
 }
 
 /// Replaces the offset that is in [`Request::line`] by the line. It reads the text up to the last of them, which for most files is

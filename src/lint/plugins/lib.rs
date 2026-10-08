@@ -7,6 +7,7 @@
 //! - `oxc`: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 
 mod n;
+mod oxlint;
 
 bun_lint::rules! {
     import_no_cycle::NoCycle,

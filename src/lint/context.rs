@@ -31,6 +31,8 @@ pub struct Diagnostic {
     pub start_position: Option<Position>,
     /// The end that is reported in place of that of `span`: [`Report::end_at`].
     pub end_position: Option<Position>,
+    /// [`Report::comments_apply_at`]
+    pub comments_apply_at: Option<Span>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
 }
@@ -100,6 +102,7 @@ impl<'a, R: Rule> Cx<'a, R> {
                 has_no_end: false,
                 start_position: None,
                 end_position: None,
+                comments_apply_at: None,
                 fix: None,
                 suggestions: Vec::new(),
             }),
@@ -149,6 +152,15 @@ impl<'a> Report<'a> {
     pub fn end_at(mut self, end: Position) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.end_position = Some(end);
+        }
+        self
+    }
+
+    /// For a port of a rule of oxlint whose diagnostic has several labels. oxlint prints where the first is, which is what is
+    /// reported. Whether a comment disables the rule there it decides by the primary label: `primary`.
+    pub fn comments_apply_at(mut self, primary: impl Spanned) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.comments_apply_at = Some(primary.span());
         }
         self
     }

@@ -4,7 +4,6 @@
 use crate::linter_cmd::{CaseOutcome, linter};
 use bun_lint::context::Severity;
 use bun_lint::linter::{Again, LintOptions, LintResult, ResolvedConfig, RuleId};
-use bun_lint::modules::{Import, ModuleId, Modules, Request, RequestKind, Resolved};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
@@ -65,48 +64,8 @@ pub(crate) fn lint_case(
     CaseOutcome { messages, output }
 }
 
-/// The graph as oxlint has it, to tell what that explains of a difference: without what is imported with `import()`, and with
-/// `export type { A } from` as an import of types.
-struct WithoutDynamicImports<'g, 'h>(&'g Graph<'h>);
-
-impl Modules for WithoutDynamicImports<'_, '_> {
-    fn is_complete(&self) -> bool {
-        self.0.is_complete()
-    }
-    fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool) {
-        let text = std::fs::read(String::from_utf8_lossy(path).as_ref()).unwrap_or_default();
-        let lines: Vec<&[u8]> = bun_core::strings::split(&text, b"\n").collect();
-        let mut kept: Vec<Request> = requests.iter().filter(|it| it.kind != RequestKind::Dynamic).copied().collect();
-        for request in &mut kept {
-            // The statement starts in the line of the specifier, or in one before.
-            let before = lines.get(..request.line as usize).unwrap_or_default().iter().rev();
-            let start = before.map(|it| it.trim_ascii_start()).find(|it| it.starts_with(b"import") || it.starts_with(b"export"));
-            request.is_only_importing_types |= start.is_some_and(|it| it.starts_with(b"export type"));
-        }
-        self.0.record(path, &kept, is_always_checked);
-    }
-    fn find(&self, path: &[u8]) -> Option<ModuleId> {
-        self.0.find(path)
-    }
-    fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved> {
-        self.0.resolve(from, specifier, is_require)
-    }
-    fn path(&self, module: ModuleId) -> &[u8] {
-        self.0.path(module)
-    }
-    fn imports(&self, module: ModuleId) -> &[Import] {
-        self.0.imports(module)
-    }
-    fn component(&self, module: ModuleId) -> u32 {
-        self.0.component(module)
-    }
-    fn package_json(&self, path: &[u8]) -> Option<&Json> {
-        self.0.package_json(path)
-    }
-}
-
-/// `bun-lint plugins cycles <paths..> [--threads=n] [--json] [--without-dynamic] [options as JSON]`: `import/no-cycle` alone on all
-/// the files in `paths`, as the command line does it, with the time that each step takes.
+/// `bun-lint plugins cycles <paths..> [--threads=n] [--json] [--oxlint] [options as JSON]`: `import/no-cycle` alone on all the files
+/// in `paths`, as the command line does it, with the time that each step takes. `--oxlint`: as with a configuration of oxlint.
 fn cycles(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let threads: usize = flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(1);
@@ -115,10 +74,9 @@ fn cycles(args: &[String]) {
     rule.extend_from_slice(options.as_ref().and_then(Json::as_array).unwrap_or_default());
     let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(vec![(b"import/no-cycle".to_vec(), Json::Array(rule))]))]);
     let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
-    // As with a configuration of oxlint.
     config.language.parser = bun_lint::language::Parser::TypeScript;
     config.language.experimental_decorators = true;
-    config.language.refuses_what_parser_refuses = false;
+    config.language.refuses_what_parser_refuses = !args.iter().any(|it| it == "--oxlint");
     config.skips_unknown_rules = true;
     let mut paths = Vec::new();
     for arg in args.iter().filter(|a| !a.starts_with("--") && !a.starts_with('[')) {
@@ -128,11 +86,9 @@ fn cycles(args: &[String]) {
     let started = std::time::Instant::now();
     let store = Store::new(paths.first().map_or(&b"/"[..], |it| it.as_bytes()));
     let graph = Graph::new(&store);
-    let without_dynamic = WithoutDynamicImports(&graph);
-    let modules: &dyn Modules = if args.iter().any(|it| it == "--without-dynamic") { &without_dynamic } else { &graph };
     let lint = |path: &str| {
         let text = std::fs::read(path).unwrap_or_default();
-        let linted = with_file(path.as_bytes(), &text, &config.language, Some(modules), |file| {
+        let linted = with_file(path.as_bytes(), &text, &config.language, Some(&graph), |file| {
             linter().lint(file, &config, &LintOptions::default()).messages
         });
         linted.unwrap_or_default()
@@ -171,6 +127,6 @@ fn cycles(args: &[String]) {
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("cycles") => cycles(&args[1..]),
-        _ => println!("usage: bun-lint plugins cycles <paths..> [--threads=n] [--json] [options]"),
+        _ => println!("usage: bun-lint plugins cycles <paths..> [--threads=n] [--json] [--oxlint] [options]"),
     }
 }

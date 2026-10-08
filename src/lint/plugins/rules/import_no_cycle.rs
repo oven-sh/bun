@@ -1,5 +1,6 @@
 use bun_core::strings;
-use bun_lint::modules::{Declaration, ModuleId, Modules, Request, RequestKind, requests_of, set_lines};
+use crate::oxlint;
+use bun_lint::modules::{Declaration, Flavor, ModuleId, Modules, Request, RequestKind, requests_of, set_lines};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashSet;
@@ -21,6 +22,8 @@ pub struct NoCycle {
 
 const DETECTED: Message = Message::new("", "Dependency cycle detected.");
 const VIA: Message = Message::new("", "Dependency cycle via {{route}}");
+/// The message of oxlint.
+const DETECTED_BY_OXLINT: Message = Message::new("", "Dependency cycle detected");
 
 /// What `moduleVisitor` calls its visitor with.
 struct Check<'a> {
@@ -55,14 +58,22 @@ impl Rule for NoCycle {
         let Some(modules) = file.modules().filter(|_| file.path() != b"<text>") else {
             return;
         };
+        let flavor = oxlint::flavor_of_modules(file);
         if modules.is_complete() {
-            return on.finish(Self::check);
+            return on.finish(if flavor == Flavor::Oxlint { Self::check_as_oxlint } else { Self::check });
         }
-        let mut requests = requests_of(file);
+        let mut requests = requests_of(file, flavor);
+        if flavor == Flavor::Oxlint {
+            if !self.ignore_types {
+                requests.iter_mut().for_each(|it| it.is_only_importing_types = false);
+            }
+            return modules.record(file.path(), &requests, false, flavor);
+        }
         let checks = if self.commonjs || self.amd { self.checks(file) } else { Vec::new() };
         let known = requests.len();
         requests.extend(checks.iter().filter(|it| it.is_require).map(|it| Request {
             specifier: it.specifier,
+            span: it.importer,
             line: it.importer.start,
             kind: RequestKind::Other,
             is_only_importing_types: false,
@@ -70,7 +81,7 @@ impl Rule for NoCycle {
         set_lines(file.text(), &mut requests[known..]);
         // Where the components do not tell.
         let is_always_checked = requests.len() > known || self.disable_scc || !self.ignore_types;
-        modules.record(file.path(), &requests, is_always_checked);
+        modules.record(file.path(), &requests, is_always_checked, flavor);
     }
 }
 
@@ -117,6 +128,26 @@ impl Settings {
         };
         !is_valid || self.ignore.iter().any(|it| it.test(path))
     }
+}
+
+/// A module may export its own names again, under a name: `export { a as b } from "./me"`, `export * as me from "./me"`, and
+/// `import { a } from "./me"; export { a }`.
+fn oxlint_allows_self_reference<'a>(file: &'a File<'a>, specifier: &[u8]) -> bool {
+    let is_it = |spec: Option<Name<'a>>| spec.is_some_and(|it| it.bytes() == specifier);
+    let is_exported = |local: Name<'a>| {
+        file.body().iter().any(|stmt| {
+            matches!(stmt.kind(), StmtKind::ExportNamed(export) if export.spec().is_none() && export.items().iter().any(|it| it.local().name() == local))
+        })
+    };
+    file.body().iter().any(|stmt| match stmt.kind() {
+        StmtKind::ExportNamed(export) => is_it(export.spec()) && !export.items().is_empty(),
+        StmtKind::ExportStar { spec, alias, .. } => is_it(spec) && alias.is_some(),
+        StmtKind::Import(import) => {
+            is_it(Some(import.spec()))
+                && (import.default().is_some_and(|it| is_exported(it.name())) || import.named().iter().any(|it| is_exported(it.local().name())))
+        }
+        _ => false,
+    })
 }
 
 /// `/^\w/.test(name) || /^@[^/]+\/?[^/]+/.test(name)`
@@ -210,7 +241,78 @@ impl Search<'_> {
     }
 }
 
+fn is_in_node_modules(path: &[u8]) -> bool {
+    strings::contains(path, b"/node_modules/")
+}
+
+/// oxlint's `ModuleGraphVisitor` with a `max_depth`: whether it gets from `start` to `needle`. It goes depth first, by the order of
+/// the specifiers, to no module twice, and gives up altogether the first time that it is too deep.
+fn oxlint_finds_within(modules: &dyn Modules, start: ModuleId, needle: ModuleId, max_depth: usize) -> bool {
+    // The specifier, the module, and whether it is followed.
+    let entries_of = |module: ModuleId| {
+        let mut entries: Vec<(&[u8], ModuleId, bool)> = Vec::new();
+        for import in modules.imports(module) {
+            let is_followed = !is_in_node_modules(modules.path(import.module));
+            entries.extend(import.declarations.iter().map(|it| (&it.specifier[..], import.module, is_followed && !it.is_only_importing_types)));
+        }
+        entries.sort_unstable();
+        entries.dedup();
+        entries.into_iter()
+    };
+    let mut traversed = FxHashSet::default();
+    let mut stack = vec![entries_of(start)];
+    while let Some(entries) = stack.last_mut() {
+        let Some((_, module, is_followed)) = entries.next() else {
+            stack.pop();
+            continue;
+        };
+        if stack.len() - 1 > max_depth {
+            return false;
+        }
+        if !is_followed || !traversed.insert(module) {
+            continue;
+        }
+        if module == needle {
+            return true;
+        }
+        stack.push(entries_of(module));
+    }
+    false
+}
+
 impl NoCycle {
+    /// oxlint's rule: one report for each specifier that leads back to the file, at the first place that has it.
+    fn check_as_oxlint<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        let Some(modules) = file.modules() else {
+            return;
+        };
+        let Some(me) = modules.find(file.path()) else {
+            return;
+        };
+        let requests = requests_of(file, Flavor::Oxlint);
+        for (at, request) in requests.iter().enumerate() {
+            if requests[..at].iter().any(|it| it.specifier == request.specifier) || self.ignore_types && request.is_only_importing_types {
+                continue;
+            }
+            let Some(imported) = modules.resolve(file.path(), request.specifier, false).map(|it| it.module) else {
+                continue;
+            };
+            let leads_back = if is_in_node_modules(modules.path(imported)) {
+                false
+            } else if imported == me {
+                !oxlint_allows_self_reference(file, request.specifier)
+            } else if self.max_depth == usize::MAX {
+                modules.component(imported) == modules.component(me)
+            } else {
+                oxlint_finds_within(modules, imported, me, self.max_depth.saturating_sub(1))
+            };
+            if leads_back {
+                cx.report(request.span, DETECTED_BY_OXLINT);
+            }
+        }
+    }
+
     /// What `moduleVisitor` visits, in the order of the source.
     fn checks<'a>(&self, file: &'a File<'a>) -> Vec<Check<'a>> {
         let mut checks = Vec::new();

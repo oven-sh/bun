@@ -18,7 +18,7 @@
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
-use bun_lint::modules::{Declaration, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of};
+use bun_lint::modules::{Declaration, Flavor, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, bind_for_lint};
 use bun_sema::config::{Project, find_config, load_overriding, without_config};
@@ -32,6 +32,7 @@ use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// What a [`Graph`] borrows from. It costs nothing until a rule asks for something.
 pub struct Store {
@@ -59,7 +60,7 @@ impl Store {
 struct Recorded<'h> {
     path: Vec<u8>,
     /// What each request resolves to.
-    requests: Vec<(&'h [u8], Declaration, RequestKind)>,
+    requests: Vec<(Cow<'h, [u8]>, Declaration, RequestKind)>,
     is_always_checked: bool,
     /// The path that it is linted under, if it is one of the files that are linted.
     linted_as: Option<Vec<u8>>,
@@ -73,16 +74,24 @@ struct Complete {
     components: Vec<u32>,
 }
 
+struct ProjectResolver<'h> {
+    resolver: Resolver<'h>,
+    /// `baseUrl`, which TypeScript 7 no longer has, and which the resolvers of ESLint and oxlint know.
+    base_url: Option<Vec<u8>>,
+}
+
 pub struct Graph<'h> {
     store: &'h Store,
     /// By the path of the `tsconfig.json`. Empty: there is none.
-    resolvers: ShardedMap<Vec<u8>, Resolver<'h>>,
+    resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     loading: Guarded<()>,
     /// The path of the `tsconfig.json` for the files of a directory.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
     /// The closest `package.json`, by directory.
     packages: ShardedMap<Vec<u8>, Option<Json>>,
     recorded: Guarded<Vec<Recorded<'h>>>,
+    /// [`Flavor::Oxlint`]
+    follows_oxlint: AtomicBool,
     complete: OnceLock<Complete>,
 }
 
@@ -150,6 +159,7 @@ impl<'h> Graph<'h> {
             configs: ShardedMap::default(),
             packages: ShardedMap::default(),
             recorded: Guarded::new(Vec::new()),
+            follows_oxlint: AtomicBool::new(false),
             complete: OnceLock::new(),
         }
     }
@@ -170,7 +180,7 @@ impl<'h> Graph<'h> {
     }
 
     /// The resolver for the files in `directory`.
-    fn resolver(&self, directory: &[u8]) -> &Resolver<'h> {
+    fn resolver(&self, directory: &[u8]) -> &ProjectResolver<'h> {
         let config = match self.configs.get_ref(directory) {
             Some(config) => config,
             None => {
@@ -187,15 +197,64 @@ impl<'h> Graph<'h> {
             return resolver;
         }
         let store: &'h Store = self.store;
-        let project = store.session.keep(self.load_project(config, directory));
-        self.resolvers.insert_ref(config.clone(), Resolver::new(&store.session, store.disk(), &project.options))
+        let mut project = self.load_project(config, directory);
+        let base_url = project.raw_compiler_options.iter().find(|it| it.0 == b"baseUrl").and_then(|it| it.1.as_str()).map(<[u8]>::to_vec);
+        if let Some(base_url) = &base_url {
+            project.options.paths_base_dir.clone_from(base_url);
+        }
+        let project = store.session.keep(project);
+        let resolver = Resolver::new(&store.session, store.disk(), &project.options);
+        self.resolvers.insert_ref(config.clone(), ProjectResolver { resolver, base_url })
+    }
+
+    fn flavor(&self) -> Flavor {
+        if self.follows_oxlint.load(Ordering::Relaxed) { Flavor::Oxlint } else { Flavor::EslintPluginImport }
     }
 
     /// The path, and whether it was found in a `node_modules`.
-    fn resolve_path(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<(&'h [u8], bool)> {
+    fn resolve_path(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<(Cow<'h, [u8]>, bool)> {
         let mode = if is_require { ResolutionMode::Require } else { ResolutionMode::Import };
-        let found = self.resolver(directory_of(from)).resolve_module_name(specifier, from, mode)?;
-        Some((found.file_name, found.is_external_library_import))
+        let ProjectResolver { resolver, base_url } = self.resolver(directory_of(from));
+        let from_base_url = || {
+            let base_url = base_url.as_ref().filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"))?;
+            resolver.resolve_module_name(&join(base_url, specifier), from, mode)
+        };
+        let found = resolver.resolve_module_name(specifier, from, mode).or_else(from_base_url)?;
+        let path = match self.flavor().resolves_as_node() {
+            true => self.as_node_finds(specifier, found.file_name)?,
+            false => Cow::Borrowed(found.file_name),
+        };
+        Some((path, found.is_external_library_import))
+    }
+
+    /// `found`: what TypeScript finds for `specifier`. Which of the files with that name and another extension does oxlint find?
+    fn as_node_finds(&self, specifier: &[u8], found: &'h [u8]) -> Option<Cow<'h, [u8]>> {
+        const EXTENSIONS: [&[u8]; 8] = [b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx"];
+        let Some(extension) = EXTENSIONS.iter().find(|it| found.ends_with(it)) else {
+            return Some(Cow::Borrowed(found));
+        };
+        let stem = &found[..found.len() - extension.len()];
+        let is_declaration = stem.ends_with(b".d") && extension.ends_with(b"ts");
+        if is_declaration && specifier.ends_with(&found[stem.len() - 2..]) {
+            return Some(Cow::Borrowed(found));
+        }
+        let stem = if is_declaration { &stem[..stem.len() - 2] } else { stem };
+        let written = EXTENSIONS.iter().find(|it| specifier.ends_with(it));
+        let tried: &[&[u8]] = match written.copied() {
+            Some(b".js") => &[b".js", b".ts"],
+            Some(b".mjs") => &[b".mjs", b".mts"],
+            Some(b".cjs") => &[b".cjs", b".cts"],
+            Some(_) => written.map_or(&[], std::slice::from_ref),
+            None => &EXTENSIONS,
+        };
+        let disk = self.store.disk();
+        tried.iter().find_map(|it| {
+            if !is_declaration && it == extension {
+                return Some(Cow::Borrowed(found));
+            }
+            let path = [stem, it].concat();
+            disk.is_file(&path).then_some(Cow::Owned(path))
+        })
     }
 
     fn make_record(&self, path: Vec<u8>, requests: &[Request], is_always_checked: bool, linted_as: Option<Vec<u8>>) -> Recorded<'h> {
@@ -227,7 +286,7 @@ impl<'h> Graph<'h> {
         };
         with_file(path, &text, &language, None, |file| {
             // As eslint-plugin-import: nothing is known of a file that cannot be parsed.
-            let requests = if file.has_parse_errors() { Vec::new() } else { requests_of(file) };
+            let requests = if file.has_parse_errors() { Vec::new() } else { requests_of(file, self.flavor()) };
             self.make_record(path.to_vec(), &requests, false, None)
         })
     }
@@ -248,7 +307,7 @@ impl<'h> Graph<'h> {
                 let module = all.intern(&record.path);
                 let mut imports: Vec<Import> = Vec::new();
                 for (target, declaration, kind) in record.requests {
-                    let target = all.intern(target);
+                    let target = all.intern(&target);
                     let existing = imports.iter_mut().find(|it| it.module == target);
                     match (kind, existing) {
                         (RequestKind::Other, _) => {}
@@ -285,7 +344,12 @@ impl<'h> Graph<'h> {
         all.find_components();
         let mut sizes = vec![0u32; all.paths.len()];
         all.components.iter().for_each(|&it| sizes[it as usize] += 1);
-        let is_checked = |at: usize| is_always_checked[at] || sizes[all.components[at] as usize] > 1;
+        let counts_self_imports = self.flavor().counts_self_imports();
+        let imports_itself = |at: usize| {
+            let is_value = |it: &Import| !it.declarations.iter().all(|it| it.is_only_importing_types);
+            counts_self_imports && all.imports[at].iter().any(|it| it.module.0 as usize == at && is_value(it))
+        };
+        let is_checked = |at: usize| is_always_checked[at] || sizes[all.components[at] as usize] > 1 || imports_itself(at);
         let again = linted_as.into_iter().enumerate().filter_map(|(at, path)| path.filter(|_| is_checked(at))).collect();
         let _ = self.complete.set(all);
         again
@@ -362,7 +426,8 @@ impl Modules for Graph<'_> {
         self.complete.get().is_some()
     }
 
-    fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool) {
+    fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor) {
+        self.follows_oxlint.store(flavor == Flavor::Oxlint, Ordering::Relaxed);
         let real = self.store.disk().realpath(&from_native(path));
         let record = self.make_record(real, requests, is_always_checked, Some(path.to_vec()));
         self.recorded.lock().push(record);
@@ -376,7 +441,7 @@ impl Modules for Graph<'_> {
         let from = self.store.disk().realpath(&from_native(from));
         let (path, is_external) = self.resolve_path(&from, specifier, is_require)?;
         Some(Resolved {
-            module: *self.complete.get()?.ids.get(path)?,
+            module: *self.complete.get()?.ids.get(&path[..])?,
             is_external,
         })
     }

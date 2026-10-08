@@ -1529,8 +1529,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         global_this,
                     )),
                 );
-                // HTTPRequestBody has no Drop
-                // impl, so a bare `drop(old)` would leak the S3 Blob.Store ref.
                 old.detach();
                 break 'prepare_body;
             }
@@ -1539,8 +1537,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 global_this.create_error_instance(format_args!("Failed to start s3 stream")),
             )
             .to_js();
-            // HTTPRequestBody has no Drop impl, so a bare `drop(body)` would
-            // leak the S3 Blob.Store ref.
             body.detach();
             return Ok(rejected_value);
         }

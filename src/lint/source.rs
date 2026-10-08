@@ -18,6 +18,12 @@ impl<'a> File<'a> {
         })
     }
 
+    /// Where ESLint's text starts: it has no byte order mark. So a line and a column do not count it either.
+    #[inline]
+    fn start_of_text(&self) -> u32 {
+        if self.has_bom() { 3 } else { 0 }
+    }
+
     /// ESLint's `sourceCode.lines.length`.
     pub fn line_count(&self) -> u32 {
         self.lines_index().starts.len() as u32
@@ -28,12 +34,14 @@ impl<'a> File<'a> {
         self.lines_index().starts.partition_point(|&start| start <= offset) as u32
     }
 
-    /// Where the line `line`, counted from 1, starts and where it ends, before its line break.
+    /// Where the line `line`, counted from 1, starts and where it ends, before its line break. The first starts after a byte
+    /// order mark.
     pub fn line_span(&self, line: u32) -> Span {
         let (starts, text) = (&self.lines_index().starts, self.text());
         let Some(&start) = starts.get((line as usize).wrapping_sub(1)) else {
             return Span::empty(text.len() as u32);
         };
+        let start = start.max(self.start_of_text());
         let mut end = starts.get(line as usize).map_or(text.len(), |&next| next as usize);
         if starts.get(line as usize).is_some() {
             let before = &text[start as usize..end];
@@ -57,7 +65,8 @@ impl<'a> File<'a> {
         let text = self.text();
         let offset = offset.min(text.len() as u32);
         let line = self.line_of(offset);
-        let start = self.lines_index().starts[line as usize - 1];
+        let start = self.lines_index().starts[line as usize - 1].max(self.start_of_text());
+        let offset = offset.max(start);
         if self.lines_index().is_ascii {
             return Position { line, column: offset - start };
         }

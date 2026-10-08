@@ -8,7 +8,8 @@ const UNUSED: Message = Message::new("unused", "'{{name}}:' is defined but never
 #[derive(Default)]
 pub struct Labels<'a> {
     all: Vec<Stmt<'a>>,
-    used: Vec<Stmt<'a>>,
+    /// Where the labeled statements start that something jumps to.
+    used: Vec<u32>,
 }
 
 /// Whether the label of `statement` can be removed: no comment is lost, `body` does not become a
@@ -59,12 +60,13 @@ impl Rule for NoUnusedLabels {
                 |it| matches!(it.kind(), StmtKind::Labeled { label, .. } if label == name),
             );
             if let Some(target) = target {
-                cx.state.used.push(target);
+                cx.state.used.push(target.span().start);
             }
         });
         on.finish(|_, cx| {
+            cx.state.used.sort_unstable();
             for &statement in &cx.state.all {
-                if cx.state.used.contains(&statement) {
+                if cx.state.used.binary_search(&statement.span().start).is_ok() {
                     continue;
                 }
                 let (StmtKind::Labeled { body, .. }, Some(label)) = (statement.kind(), statement.label()) else {

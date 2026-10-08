@@ -1,10 +1,9 @@
-use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::directives::match_directives_pattern;
-use bun_lint::utils::ts_scope::{UsedMarks, get_rhs_node, is_read_for_itself};
-use bun_lint::utils::{
-    ast_utils, estree_span, get_node_by_range_index, is_assignment_target, text,
+use bun_lint::utils::ts_scope::{
+    get_rhs_node, has_rest_sibling, is_defined_in_array_pattern, is_read_for_itself,
+    is_referenced_in_array_pattern,
 };
+use bun_lint::utils::{estree_span, get_node_by_range_index};
 
 /// Disallow unused variables.
 pub struct NoUnusedVars {
@@ -55,49 +54,17 @@ struct Pattern {
 
 impl Pattern {
     fn new(options: Object, key: &str) -> Option<Pattern> {
-        let source = options.str(key).filter(|it| !it.is_empty())?;
+        options.str(key).filter(|source| !source.is_empty())?;
+        let regex = options.regex(key, "u")?;
         Some(Pattern {
-            regex: options.regex(key, "u")?,
-            text: regexp_to_string(source),
+            text: regex.to_string(),
+            regex,
         })
     }
 
     fn test(&self, name: Name) -> bool {
         self.regex.test(name.bytes())
     }
-}
-
-/// `String(new RegExp(source, "u"))`
-// TODO(api): replace by regex::Regex::to_string
-fn regexp_to_string(source: &str) -> String {
-    let mut text = String::with_capacity(source.len() + 3);
-    text.push('/');
-    let (mut is_escaped, mut in_class) = (false, false);
-    for c in source.chars() {
-        match c {
-            '/' if !is_escaped && !in_class => text.push_str("\\/"),
-            '\n' | '\r' | '\u{2028}' | '\u{2029}' => {
-                if !is_escaped {
-                    text.push('\\');
-                }
-                text.push_str(match c {
-                    '\n' => "n",
-                    '\r' => "r",
-                    '\u{2028}' => "u2028",
-                    _ => "u2029",
-                });
-            }
-            _ => text.push(c),
-        }
-        match c {
-            '[' if !is_escaped => in_class = true,
-            ']' if !is_escaped => in_class = false,
-            _ => {}
-        }
-        is_escaped = !is_escaped && c == '\\';
-    }
-    text.push_str("/u");
-    text
 }
 
 /// What a message calls a variable, which decides the pattern that it names.
@@ -109,99 +76,39 @@ enum VariableType {
     Variable,
 }
 
-// ───────────────────────────── comments ─────────────────────────────
-
-/// `value` without what follows ` -- ` in a comment that configures ESLint.
-fn without_justification(value: &[u8]) -> &[u8] {
-    let is_space = |c: Option<u32>| c.is_some_and(text::is_js_whitespace);
-    let mut from = 0;
-    while let Some(found) = value.get(from..).and_then(|rest| strings::index_of(rest, b"--")) {
-        let start = from + found;
-        let mut end = start;
-        while value.get(end) == Some(&b'-') {
-            end += 1;
-        }
-        let (before, after) = (value.get(..start).unwrap_or_default(), value.get(end..).unwrap_or_default());
-        if is_space(text::last_code_point(before)) && is_space(text::first_code_point(after)) {
-            return before;
-        }
-        from = end;
-    }
-    value
-}
-
-/// The label of a block comment that configures ESLint, and what follows it.
-// TODO(api): replace by what `linter` provides for `/* global */` comments
-fn directive<'a>(comment: Token<'a>) -> Option<(&'static str, &'a [u8])> {
-    if comment.kind() != TokenKind::Block {
-        return None;
-    }
-    let value = text::trim(without_justification(comment.comment_value()));
-    let label = match_directives_pattern(value)?;
-    Some((label, text::trim(value.get(label.len()..).unwrap_or_default())))
-}
-
-/// ESLint's `parseStringConfig`: calls `visit` with each `name` or `name: setting` of `value`.
-fn for_each_string_config<'t>(value: &'t [u8], mut visit: impl FnMut(&'t [u8], Option<&'t [u8]>)) {
-    fn is_space(c: u8) -> bool {
-        matches!(c, b'\t'..=b'\r' | b' ')
-    }
-    let skip = |mut at: usize, set: fn(u8) -> bool| {
-        while value.get(at).is_some_and(|c| set(*c)) {
-            at += 1;
-        }
-        at
-    };
-    let mut at = 0;
-    loop {
-        let start = skip(at, |c| is_space(c) || c == b',');
-        if start >= value.len() {
-            return;
-        }
-        at = skip(start, |c| !is_space(c) && c != b',' && c != b':');
-        let name = value.get(start..at).unwrap_or_default();
-        let colon = skip(at, is_space);
-        let mut setting = None;
-        if value.get(colon) == Some(&b':') {
-            let start = skip(colon + 1, is_space);
-            let end = skip(start, |c| !is_space(c) && c != b',' && c != b':');
-            setting = value.get(start..end);
-            at = skip(end, |c| !is_space(c) && c != b',');
-        }
-        if !name.is_empty() {
-            visit(name, setting);
-        }
-    }
-}
-
 // ───────────────────────────── variables ─────────────────────────────
 
 /// ESLint's `Variable`.
 #[derive(Copy, Clone)]
 enum Variable<'a> {
-    /// What the file declares. The references in the scope `inner` are not to it: ESLint has a
-    /// second variable for the name of a class inside the class.
+    /// What the file declares.
     Declared {
         symbol: Symbol<'a>,
-        inner: Option<Scope<'a>>,
+        /// One of the declarations is a class.
+        is_class: bool,
     },
     /// What a `/* global name */` comment declares.
     Global { file: &'a File<'a>, name: &'a [u8] },
 }
 
+/// Whether `scope` is in a class that `symbol` is the name of. There the name is a second variable
+/// in ESLint.
+fn is_in_class_named<'a>(symbol: Symbol<'a>, scope: Scope<'a>) -> bool {
+    symbol.declarations().any(|def| match def {
+        Declaration::Class(class) => class.scope().is_some_and(|inner| inner.contains(scope)),
+        _ => false,
+    })
+}
+
 impl<'a> Variable<'a> {
     fn references(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let (declared, global) = match self {
-            Variable::Declared { symbol, inner } => {
-                let is_outside = move |it: &Reference<'a>| {
-                    !inner.is_some_and(|inner| inner.contains(it.scope()))
-                };
+            Variable::Declared { symbol, is_class } => {
+                let is_outside =
+                    move |it: &Reference<'a>| !is_class || !is_in_class_named(symbol, it.scope());
                 (Some(symbol.references().filter(is_outside)), None)
             }
-            Variable::Global { file, name } => {
-                let has_name = move |it: &Reference<'a>| it.name().bytes() == name;
-                (None, Some(file.unresolved_references().filter(has_name)))
-            }
+            Variable::Global { file, name } => (None, Some(file.unresolved_references_to(name))),
         };
         declared.into_iter().flatten().chain(global.into_iter().flatten())
     }
@@ -213,12 +120,6 @@ fn declarator(pat: Pat<'_>) -> Option<VarDecl<'_>> {
         Node::VarDecl(declaration) => Some(declaration),
         _ => None,
     })
-}
-
-fn is_catch_parameter(pat: Pat) -> bool {
-    declarator(pat).is_some_and(
-        |it| matches!(it.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Try),
-    )
 }
 
 /// The range of ESLint's `def.name`.
@@ -234,63 +135,6 @@ fn identifier_span(reference: Reference) -> Span {
     match reference.node() {
         Node::Pat(pat) => estree_span(Node::Pat(pat)),
         _ => reference.span(),
-    }
-}
-
-/// Whether the parent of the identifier `pat` is an `ArrayPattern`.
-fn is_array_pattern_element(pat: Pat) -> bool {
-    matches!(pat.parent(), Node::PatElem(it) if !it.is_rest() && it.default().is_none())
-}
-
-fn is_defined_in_array_pattern(def: Declaration) -> bool {
-    match def {
-        Declaration::Var(pat) | Declaration::Param(pat) => is_array_pattern_element(pat),
-        _ => false,
-    }
-}
-
-fn is_referenced_in_array_pattern(reference: Reference) -> bool {
-    match reference.node() {
-        Node::Pat(pat) => is_array_pattern_element(pat),
-        Node::Expr(e) => matches!(
-            e.parent(),
-            Node::Expr(parent) if parent.tag() == ExprTag::Array && is_assignment_target(parent)
-        ),
-        _ => false,
-    }
-}
-
-/// Whether the last property of the object pattern that `prop` is in is a rest element.
-fn is_followed_by_rest(prop: PatProp) -> bool {
-    matches!(
-        prop.parent(),
-        Node::Pat(object) if matches!(
-            object.kind(),
-            PatKind::Object(props) if props.last().is_some_and(PatProp::is_rest)
-        )
-    )
-}
-
-/// ESLint's `hasRestSibling`, of the parent of the identifier `node`.
-fn has_rest_sibling(node: Node) -> bool {
-    match (node, node.parent()) {
-        (Node::Pat(_), Node::PatProp(prop)) => {
-            !prop.is_rest() && prop.default().is_none() && is_followed_by_rest(prop)
-        }
-        // A computed key.
-        (Node::Expr(e), Node::PatProp(prop)) => {
-            prop.default() != Some(e) && is_followed_by_rest(prop)
-        }
-        (Node::Expr(_), Node::Prop(prop)) if prop.kind() != PropKind::Spread => {
-            match prop.parent().as_expr().map(|object| (object, object.kind())) {
-                Some((object, ExprKind::Object(props))) => {
-                    props.last().is_some_and(|last| last.kind() == PropKind::Spread)
-                        && is_assignment_target(object)
-                }
-                _ => false,
-            }
-        }
-        _ => false,
     }
 }
 
@@ -374,17 +218,40 @@ fn is_used_variable(variable: Variable) -> bool {
     })
 }
 
+/// Whether ESLint has `func` as the `value` of a `Property` or a `MethodDefinition` whose `kind` is
+/// `"set"`. An abstract setter is a `TSAbstractMethodDefinition`, one of an interface or a type
+/// literal a `TSMethodSignature`.
+fn is_setter(func: Func) -> bool {
+    func.kind() == FnKind::Setter
+        && !matches!(
+            func.owner(),
+            Node::Member(it) if it.is_signature() || it.flags().contains(Flags::ABSTRACT)
+        )
+}
+
+/// Whether `pat` is where the parameter `symbol` is written first: `function (a, b, a) {}`
+fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
+    let first = symbol.declarations().find_map(|def| match def {
+        Declaration::Param(it) => Some(it),
+        _ => None,
+    });
+    first == Some(pat)
+}
+
 /// ESLint's `isAfterLastUsedArg`, for a parameter `symbol` of `func`.
 fn is_after_last_used_arg<'a>(func: Func<'a>, symbol: Symbol<'a>) -> bool {
     let (mut is_after, mut is_last) = (false, true);
-    for param in func.params() {
+    for param in func.params_with_this() {
         param.pat().for_each_binding(&mut |pat| {
             let Some(it) = pat.symbol() else {
                 return;
             };
             if it == symbol {
                 is_after = true;
-            } else if is_after && (it.references().next().is_some() || it.is_marked_used()) {
+            } else if is_after
+                && (it.references().next().is_some() || it.is_marked_used())
+                && is_first_parameter_named(it, pat)
+            {
                 is_last = false;
             }
         });
@@ -466,7 +333,9 @@ impl<'a> Estree<'a> {
                         Estree::AssignmentPattern(Holder::Param(it))
                     }
                     Node::Param(it) => Estree::above_param(it),
-                    Node::VarDecl(_) if is_catch_parameter(pat) => Estree::CatchClause,
+                    Node::VarDecl(_) if Declaration::Var(pat).is_catch_parameter() => {
+                        Estree::CatchClause
+                    }
                     Node::VarDecl(it) => Estree::VariableDeclarator(it),
                     _ => Estree::Other,
                 }
@@ -963,12 +832,15 @@ impl NoUnusedVars {
         cx: &Cx<'a, Self>,
         variable: Variable<'a>,
         is_marked_as_used: bool,
-        (name, at): (Name<'a>, Span),
+        (name, def): (Name<'a>, Declaration<'a>),
         kind: VariableType,
     ) {
         if !self.report_used_ignore_pattern || !(is_marked_as_used || is_used_variable(variable)) {
             return;
         }
+        let Some(at) = name_span(def) else {
+            return;
+        };
         let additional = match self.description(kind) {
             (description, Some(pattern)) => {
                 format!(". Used {description} must not match {}", pattern.text)
@@ -997,36 +869,29 @@ impl NoUnusedVars {
         let Some(def) = symbol.declarations().find(|it| !matches!(it, Declaration::Other)) else {
             return;
         };
-        let mut inner = None;
         let mut kind = match def {
             Declaration::Param(_) => VariableType::Parameter,
-            Declaration::Var(pat) if is_catch_parameter(pat) => VariableType::CatchClause,
+            Declaration::Var(_) if def.is_catch_parameter() => VariableType::CatchClause,
             // The name of a function expression.
             Declaration::Fn(func) if func.kind() != FnKind::Decl => return,
-            Declaration::Class(class) => {
-                // The name of a class expression.
-                if !matches!(class.owner(), Node::Stmt(_)) {
-                    return;
-                }
-                inner = class.scope();
-                VariableType::Variable
-            }
+            // The name of a class expression.
+            Declaration::Class(class) if !matches!(class.owner(), Node::Stmt(_)) => return,
             Declaration::Module(module) if !matches!(module.name(), ModuleName::Ident(_)) => return,
             _ => VariableType::Variable,
-        };
-        let Some(at) = name_span(def) else {
-            return;
         };
         let name = symbol.name();
 
         if self.vars == Vars::Local && symbol.scope().kind() == ScopeKind::Global {
             return;
         }
-        let is_marked_as_used = symbol.is_marked_used() || cx.state.contains(symbol);
+        let is_marked_as_used = symbol.is_marked_used();
         if is_marked_as_used && !self.report_used_ignore_pattern {
             return;
         }
-        let variable = Variable::Declared { symbol, inner };
+        let variable = Variable::Declared {
+            symbol,
+            is_class: symbol.declarations().any(|it| matches!(it, Declaration::Class(_))),
+        };
 
         if let Some(pattern) = &self.destructured_array_ignore_pattern
             && pattern.test(name)
@@ -1034,7 +899,7 @@ impl NoUnusedVars {
                 || variable.references().any(is_referenced_in_array_pattern))
         {
             let kind = VariableType::ArrayDestructure;
-            return self.report_if_used(cx, variable, is_marked_as_used, (name, at), kind);
+            return self.report_if_used(cx, variable, is_marked_as_used, (name, def), kind);
         }
 
         if self.ignore_class_with_static_init_block
@@ -1052,7 +917,7 @@ impl NoUnusedVars {
             VariableType::Parameter
                 if self.args == Args::None
                     || function.is_some_and(|func| {
-                        matches!(func.kind(), FnKind::Setter | FnKind::IndexSignature)
+                        is_setter(func) || func.kind() == FnKind::IndexSignature
                     }) =>
             {
                 return;
@@ -1060,16 +925,8 @@ impl NoUnusedVars {
             _ => {}
         }
         if self.description(kind).1.is_some_and(|pattern| pattern.test(name)) {
-            return self.report_if_used(cx, variable, is_marked_as_used, (name, at), kind);
+            return self.report_if_used(cx, variable, is_marked_as_used, (name, def), kind);
         }
-        if self.args == Args::AfterUsed
-            && let Declaration::Param(pat) = def
-            && let Estree::Function(func) = Estree::Identifier(pat).parent()
-            && !is_after_last_used_arg(func, symbol)
-        {
-            return;
-        }
-
         if is_marked_as_used
             || is_used_variable(variable)
             || is_exported(def)
@@ -1078,6 +935,16 @@ impl NoUnusedVars {
         {
             return;
         }
+        if self.args == Args::AfterUsed
+            && let Declaration::Param(pat) = def
+            && let Estree::Function(func) = Estree::Identifier(pat).parent()
+            && !is_after_last_used_arg(func, symbol)
+        {
+            return;
+        }
+        let Some(at) = name_span(def) else {
+            return;
+        };
 
         // The last assignment in the function that declares the variable, if there is one.
         let scope = symbol.scope().variable_scope();
@@ -1109,41 +976,23 @@ impl NoUnusedVars {
     /// Reports the names in `/* global a, b */` comments that nothing refers to.
     fn check_global_comments<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        if !strings::contains(file.text(), b"global") {
-            return;
-        }
-        // The name, the first comment that has it, and whether the last one turns it off.
-        let mut globals: Vec<(&'a [u8], Token<'a>, bool)> = Vec::new();
-        for comment in file.comments() {
-            let Some(("global" | "globals", value)) = directive(comment) else {
+        for global in file.globals_in_comments() {
+            let name: &'a [u8] = &global.name;
+            let Some(&comment) = global.comments.first() else {
                 continue;
             };
-            for_each_string_config(value, |name, setting| {
-                let is_off = match setting {
-                    None => false,
-                    Some(b"off") => true,
-                    Some(
-                        b"true" | b"writeable" | b"writable" | b"false" | b"readable" | b"readonly",
-                    ) => false,
-                    Some(_) => return,
-                };
-                match globals.iter_mut().find(|it| it.0 == name) {
-                    Some(known) => known.2 = is_off,
-                    None => globals.push((name, comment, is_off)),
-                }
-            });
-        }
-        for (name, comment, is_off) in globals {
             // What a script declares as well is checked as that.
-            if is_off || file.scope().get_bytes(name).is_some() {
+            if global.setting == Global::Off
+                || file.scope().get_bytes(name).is_some()
+                || file.exported_in_comments().iter().any(|it| **it == *name)
+            {
                 continue;
             }
             let variable = Variable::Global { file, name };
             if is_used_variable(variable) || self.has_rest_spread_sibling(variable) {
                 continue;
             }
-            let at = ast_utils::get_name_location_in_global_directive_comment(&comment, name);
-            cx.report(at, UNUSED_VAR)
+            cx.report(file.name_in_global_comment(comment, name), UNUSED_VAR)
                 .data("varName", name)
                 .data("action", "defined")
                 .data("additional", "");
@@ -1154,14 +1003,12 @@ impl NoUnusedVars {
 impl Rule for NoUnusedVars {
     const META: Meta =
         Meta::eslint("no-unused-vars", Kind::Problem).has_suggestions().recommended();
-    /// What `/* exported */` comments name.
-    // TODO(api): replace by `Symbol::is_marked_used`, once `linter` applies these comments
-    type State<'a> = UsedMarks;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         NoUnusedVars {
-            vars: match options.str(0).or(object.str("vars")) {
+            vars: match options.str(0).or_else(|| object.str("vars")) {
                 Some("local") => Vars::Local,
                 _ => Vars::All,
             },
@@ -1186,13 +1033,10 @@ impl Rule for NoUnusedVars {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> UsedMarks {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.symbols(Self::check);
         if self.vars == Vars::All {
             on.finish(Self::check_global_comments);
         }
-        let mut exported = UsedMarks::default();
-        exported.mark_exported_variables(file);
-        exported
     }
 }

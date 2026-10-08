@@ -40,11 +40,15 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         _ => None,
     };
     let function_type = function_type.unwrap_or_else(|| function_node.type_at_location());
-    let call_signatures = get_call_signatures_of_type(function_type);
+    let has_return_type = function_node.return_type().is_some();
+    let call_signatures = match has_return_type || any_type != AnyType::Safe {
+        true => get_call_signatures_of_type(function_type),
+        false => Vec::new(),
+    };
     let any_or_unknown = TypeFlags::ANY | TypeFlags::UNKNOWN;
 
     // What an explicit annotation says is intentional, even if it is unsafe.
-    if function_node.return_type().is_some() {
+    if has_return_type {
         for signature in &call_signatures {
             let signature_return_type = signature.get_return_type();
             if return_node_type == signature_return_type

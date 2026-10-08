@@ -25,5 +25,16 @@ impl Rule for NoCaller {
                 cx.report(e, UNEXPECTED).data("prop", prop);
             }
         });
+        // What a class implements and what an interface extends is a `MemberExpression` too.
+        on.types([TypeTag::Ref], |_, ty, cx| {
+            if let TypeKind::Ref { name, .. } = ty.kind()
+                && let (Some(object), Some(property)) = (name.get(0), name.get(1))
+                && object.name().is("arguments")
+                && property.name().is_any(&["callee", "caller"])
+                && utils::estree_type_name(Node::Type(ty)) != "TSTypeReference"
+            {
+                cx.report(object.span().to(property.span()), UNEXPECTED).data("prop", property.bytes());
+            }
+        });
     }
 }

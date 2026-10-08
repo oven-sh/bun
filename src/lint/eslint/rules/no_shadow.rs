@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::utils::{ast_utils, ts_utils};
+use bun_lint::utils::ts_utils;
 
 /// Disallow variable declarations from shadowing variables declared in the outer scope.
 pub struct NoShadow(Checker);
@@ -44,7 +44,7 @@ pub struct Checker {
     ignore_function_type_parameter_name_value_shadow: bool,
 }
 
-/// ESLint's `Variable`, if it has a definition.
+/// ESLint's `Variable`, if it has `identifiers`.
 #[derive(Copy, Clone)]
 struct Variable<'a> {
     symbol: Symbol<'a>,
@@ -53,26 +53,61 @@ struct Variable<'a> {
     definition: Declaration<'a>,
     /// The range of `identifiers[0]`.
     identifier: Span,
+    /// `isValueVariable`
+    is_value: bool,
+    /// ESLint's `isDuplicatedClassNameVariable`: the name of a class declaration, in the scope of
+    /// the class.
+    is_duplicated_class_name: bool,
+}
+
+/// The class of `class A<A> {}`, given the type parameter. For ESLint the two are one variable of the
+/// scope of the class, here the class is only in the scope around it.
+fn class_declaration_with_the_name_of<'a>(definition: Declaration<'a>, name: Name<'a>) -> Option<Class<'a>> {
+    match definition {
+        Declaration::TypeParam(type_parameter) => match type_parameter.parent() {
+            Node::Class(class)
+                if matches!(class.owner(), Node::Stmt(_)) && class.name().is_some_and(|it| it.name() == name) =>
+            {
+                Some(class)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 impl<'a> Variable<'a> {
     fn new(symbol: Symbol<'a>) -> Option<Self> {
-        let definition = symbol.declarations().find(|it| it.name_span().is_some())?;
+        let mut definition = symbol.declarations().find(|it| it.name_span().is_some())?;
+        // The name of an enum member in quotes is not an identifier.
+        let mut with_identifier = symbol.declarations().find(|it| match it {
+            Declaration::EnumMember(member) => {
+                member.key().is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)))
+            }
+            _ => it.name_span().is_some(),
+        })?;
+        let class = class_declaration_with_the_name_of(definition, symbol.name());
+        if let Some(class) = class {
+            definition = Declaration::Class(class);
+            with_identifier = definition;
+        }
         // typescript-estree has the `?` and the type annotation as parts of the identifier. Those
         // of a rest parameter belong to the `RestElement`.
-        let identifier = match definition {
+        let identifier = match with_identifier {
             Declaration::Var(pat) | Declaration::Param(pat) => match pat.parent() {
                 Node::Param(param) if !param.is_rest() => param.binding_span(),
                 Node::VarDecl(declarator) => declarator.binding_span(),
                 _ => pat.span(),
             },
-            _ => definition.name_span()?,
+            _ => with_identifier.name_span()?,
         };
         Some(Variable {
             symbol,
             scope: symbol.scope(),
             definition,
             identifier,
+            is_value: class.is_some() || symbol.is_value_variable(),
+            is_duplicated_class_name: class.is_some(),
         })
     }
 }
@@ -253,6 +288,8 @@ fn enclosing_module_name(definition: Declaration<'_>) -> Option<Name<'_>> {
         _ => None,
     })?;
     match module.name() {
+        // `namespace A.B` has a `TSQualifiedName`.
+        ModuleName::Ident(_) if module.nested().is_some() => None,
         ModuleName::Ident(name) | ModuleName::String(name) => Some(name.name()),
         ModuleName::Global => None,
     }
@@ -308,8 +345,13 @@ impl Checker {
         if variable.identifier.end >= shadowed.identifier.start {
             return false;
         }
-        let is_function = matches!(shadowed.definition, Declaration::Fn(func)
-            if func.kind() == FnKind::Decl && func.has_body());
+        // The `node` of the definition of a parameter is the function.
+        let function = match shadowed.definition {
+            Declaration::Fn(func) => Some(func),
+            Declaration::Param(pat) => Node::Pat(pat).enclosing_function(),
+            _ => None,
+        };
+        let is_function = function.is_some_and(|func| func.kind() == FnKind::Decl && func.has_body());
         let is_type =
             matches!(shadowed.definition, Declaration::Interface(_) | Declaration::TypeAlias(_));
         match self.hoist {
@@ -334,9 +376,9 @@ impl Checker {
                 }),
                 Dialect::TypeScriptEslint => ts_utils::is_type_import(shadowed.definition),
             };
-            !is_type_import && shadowed.symbol.is_value_variable()
+            !is_type_import && shadowed.is_value
         });
-        variable.symbol.is_value_variable() != is_shadowed_value
+        variable.is_value != is_shadowed_value
     }
 
     /// ESLint's `isFunctionTypeParameterNameValueShadow`.
@@ -344,6 +386,7 @@ impl Checker {
         &self,
         variable: Variable,
         shadowed: Option<Variable>,
+        is_global_value: bool,
     ) -> bool {
         if !self.ignore_function_type_parameter_name_value_shadow {
             return false;
@@ -352,7 +395,7 @@ impl Checker {
         match self.dialect {
             Dialect::Eslint => definitions.any(is_defined_by_function_without_body),
             Dialect::TypeScriptEslint => {
-                shadowed.is_none_or(|shadowed| shadowed.symbol.is_value_variable())
+                shadowed.map_or(is_global_value, |shadowed| shadowed.is_value)
                     && definitions.all(is_defined_by_function_without_body)
             }
         }
@@ -405,12 +448,13 @@ impl Checker {
     }
 
     /// `shadowed`: what the name of `symbol` means around its scope. `None`: with `builtinGlobals`,
-    /// a global variable.
+    /// a global variable, which is a value or only a type of a library of TypeScript.
     fn check_variable<'a, R: Rule>(
         &self,
         cx: &Cx<'a, R>,
         symbol: Symbol<'a>,
         shadowed: Option<Symbol<'a>>,
+        is_global_value: bool,
     ) {
         let name = symbol.name();
         if name.is("this") || self.allow.iter().any(|it| **it == *name.bytes()) {
@@ -422,16 +466,17 @@ impl Checker {
         let shadowed = match shadowed {
             Some(shadowed) => match Variable::new(shadowed) {
                 Some(shadowed) => Some(shadowed),
-                // `arguments`, which hides what is further out.
+                // `arguments` or an enum member in quotes, which hide what is further out.
                 None => return,
             },
             None => None,
         };
         let file = cx.file();
         if is_global_augmentation(variable.scope)
+            || variable.is_duplicated_class_name
             || self.is_declare_in_dts_file(file, variable)
             || self.is_type_value_shadow(variable, shadowed)
-            || self.is_function_type_parameter_name_value_shadow(variable, shadowed)
+            || self.is_function_type_parameter_name_value_shadow(variable, shadowed, is_global_value)
             || self.is_generic_of_a_static_method_shadow(variable, shadowed)
         {
             return;
@@ -470,11 +515,13 @@ impl Checker {
                 }
                 let name = symbol.name();
                 let shadowed = upper.resolve_name(name);
-                let is_candidate = shadowed.is_some()
-                    || (self.builtin_globals && ast_utils::is_configured_global(file, name.bytes()));
+                let global = match shadowed {
+                    None if self.builtin_globals => file.global(name.bytes()),
+                    _ => None,
+                };
                 // What TypeScript merges from several namespaces is listed in the scope of each.
-                if is_candidate && symbol.scope() == scope {
-                    self.check_variable(cx, symbol, shadowed);
+                if (shadowed.is_some() || global.is_some()) && symbol.scope() == scope {
+                    self.check_variable(cx, symbol, shadowed, global.is_none_or(|it| it.is_value));
                 }
             }
         }

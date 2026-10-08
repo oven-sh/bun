@@ -18,8 +18,8 @@ fn is_operand_of_mutation_unary_operator(e: Expr) -> bool {
     ))
 }
 
-/// ESLint's `isArgumentOfWellKnownMutationFunction`. `scope` is that of the import.
-fn is_argument_of_well_known_mutation_function<'a>(id: Expr<'a>, scope: Scope<'a>) -> bool {
+/// ESLint's `isArgumentOfWellKnownMutationFunction`.
+fn is_argument_of_well_known_mutation_function(id: Expr) -> bool {
     let Node::Expr(parent) = id.parent() else {
         return false;
     };
@@ -30,7 +30,10 @@ fn is_argument_of_well_known_mutation_function<'a>(id: Expr<'a>, scope: Scope<'a
         return false;
     }
     let callee = call.callee();
-    let Some(object) = ast_utils::member_object(callee).and_then(Expr::as_ident) else {
+    let Some(object_node) = ast_utils::member_object(callee) else {
+        return false;
+    };
+    let Some(object) = object_node.as_ident() else {
         return false;
     };
     let Some(property) = ast_utils::get_static_property_name(callee) else {
@@ -47,18 +50,18 @@ fn is_argument_of_well_known_mutation_function<'a>(id: Expr<'a>, scope: Scope<'a
         _ => false,
     };
     is_well_known
-        && match scope.resolve_name(object) {
+        && match Node::Expr(object_node).scope().resolve_name(object) {
             Some(variable) => variable.scope().kind() == ScopeKind::Global,
             None => ast_utils::is_configured_global(id.file(), object.bytes()),
         }
 }
 
 /// ESLint's `isMemberWrite`.
-fn is_member_write<'a>(id: Expr<'a>, scope: Scope<'a>) -> bool {
+fn is_member_write(id: Expr) -> bool {
     matches!(id.parent(), Node::Expr(parent)
         if ast_utils::member_object(parent) == Some(id)
             && (utils::is_assignment_target(parent) || is_operand_of_mutation_unary_operator(parent)))
-        || is_argument_of_well_known_mutation_function(id, scope)
+        || is_argument_of_well_known_mutation_function(id)
 }
 
 /// ESLint's `getWriteNode`.
@@ -88,8 +91,7 @@ impl Rule for NoImportAssign {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.stmts([StmtTag::Import], |_, stmt, cx| {
-            let node = Node::Stmt(stmt);
-            for variable in node.declared_symbols() {
+            for variable in Node::Stmt(stmt).declared_symbols() {
                 let should_check_members =
                     variable.declarations().any(|it| matches!(it, Declaration::ImportNamespace(_)));
                 // `[a = 0] = b` writes to `a` twice.
@@ -100,9 +102,7 @@ impl Rule for NoImportAssign {
                     }
                     let message = if reference.is_write() {
                         READONLY
-                    } else if should_check_members
-                        && reference.expr().is_some_and(|id| is_member_write(id, node.scope()))
-                    {
+                    } else if should_check_members && reference.expr().is_some_and(is_member_write) {
                         READONLY_MEMBER
                     } else {
                         continue;

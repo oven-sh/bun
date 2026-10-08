@@ -513,11 +513,7 @@ impl<'a, 'r> Offsets<'a, 'r> {
     /// ESLint's `getTokenIndent`.
     fn indent_of(&self, i: usize) -> &'a [u8] {
         let token = self.token(i);
-        let mut start = self.file.line_span(token.line).start;
-        if token.line == 1 && self.file.has_bom() {
-            start += 3;
-        }
-        self.file.slice(Span::new(start, token.start))
+        self.file.slice(Span::new(self.file.line_span(token.line).start, token.start))
     }
 
     #[inline]

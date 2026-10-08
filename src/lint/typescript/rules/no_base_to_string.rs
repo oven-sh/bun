@@ -3,6 +3,7 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, get_type_name, is_symbol_from_default_library, matches_type_or_base_type,
 };
 use bun_lint::types::{SyntaxKind, TsNode, Type, TypeFlags, tsutils};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 /// Require `.toString()` and `.toLocaleString()` to only be called on objects which provide useful information when stringified.
@@ -27,8 +28,20 @@ enum Usefulness {
     Sometimes,
 }
 
-/// The array and tuple types that are being looked into.
-type Visited<'a> = SmallVec<[Type<'a>; 4]>;
+/// What is kept while the certainty of one expression is collected.
+#[derive(Default)]
+struct Walk<'a> {
+    /// The array and tuple types that are being looked into.
+    visited: SmallVec<[Type<'a>; 4]>,
+    /// The array and tuple types that [`NoBaseToString::is_always_on_every_path`] was asked about.
+    is_always: FxHashMap<Type<'a>, bool>,
+    /// While it is asked: the array and tuple types that it has come across.
+    assumed: Option<FxHashSet<Type<'a>>>,
+    /// Those of them that are still to be looked into.
+    pending: Vec<Type<'a>>,
+    /// Since it was asked, something was not [`Usefulness::Always`].
+    found_other: bool,
+}
 
 /// Upstream has no bound.
 const MAX_DEPTH: u32 = 100;
@@ -145,10 +158,10 @@ impl NoBaseToString {
         self.ignored_type_names.iter().any(|it| it == name)
     }
 
-    fn collect_tuple_certainty<'a>(&self, ty: Type<'a>, visited: &mut Visited<'a>, depth: u32) -> Usefulness {
+    fn collect_tuple_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
         let mut certainty = Usefulness::Always;
         for t in ty.get_type_arguments() {
-            match self.collect_to_string_certainty(t, visited, depth) {
+            match self.collect_to_string_certainty(t, walk, depth) {
                 Usefulness::Never => return Usefulness::Never,
                 Usefulness::Sometimes => certainty = Usefulness::Sometimes,
                 Usefulness::Always => {}
@@ -157,36 +170,79 @@ impl NoBaseToString {
         certainty
     }
 
-    fn collect_array_certainty<'a>(&self, ty: Type<'a>, visited: &mut Visited<'a>, depth: u32) -> Usefulness {
+    fn collect_array_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
         match ty.get_number_index_type() {
-            Some(elem_type) => self.collect_to_string_certainty(elem_type, visited, depth),
+            Some(elem_type) => self.collect_to_string_certainty(elem_type, walk, depth),
             None => Usefulness::Always,
         }
     }
 
-    fn collect_join_certainty<'a>(&self, ty: Type<'a>, visited: &mut Visited<'a>, depth: u32) -> Usefulness {
+    fn collect_elements_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
+        match ty.is_tuple_type() {
+            true => self.collect_tuple_certainty(ty, walk, depth),
+            false => self.collect_array_certainty(ty, walk, depth),
+        }
+    }
+
+    fn collect_join_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
         if depth > MAX_DEPTH {
             return Usefulness::Always;
         }
         let depth = depth + 1;
         if ty.is_union() {
-            return collect_union_type_certainty(ty, |t| self.collect_join_certainty(t, visited, depth));
+            return collect_union_type_certainty(ty, |t| self.collect_join_certainty(t, walk, depth));
         }
         if ty.is_intersection() {
-            return collect_intersection_type_certainty(ty, |t| self.collect_join_certainty(t, visited, depth));
+            return collect_intersection_type_certainty(ty, |t| self.collect_join_certainty(t, walk, depth));
         }
         if ty.is_tuple_type() {
-            return self.collect_tuple_certainty(ty, visited, depth);
+            return self.collect_tuple_certainty(ty, walk, depth);
         }
         if ty.is_array_type() {
-            return self.collect_array_certainty(ty, visited, depth);
+            return self.collect_array_certainty(ty, walk, depth);
         }
         Usefulness::Always
     }
 
-    fn collect_to_string_certainty<'a>(&self, ty: Type<'a>, visited: &mut Visited<'a>, depth: u32) -> Usefulness {
+    /// Whether the array or tuple type `ty` is `Always` whatever is in `visited`.
+    ///
+    /// Upstream looks into the types of a cycle once for every path that leads to them, which does
+    /// not end where a dozen of them refer to each other. This looks into every type once and takes
+    /// those inside it for `Always`. If nothing else turns up, every path finds the same.
+    fn is_always_on_every_path<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> bool {
+        let mut assumed = FxHashSet::default();
+        assumed.insert(ty);
+        walk.assumed = Some(assumed);
+        walk.pending.push(ty);
+        walk.found_other = false;
+        while !walk.found_other
+            && let Some(t) = walk.pending.pop()
+        {
+            self.collect_elements_certainty(t, walk, depth);
+        }
+        walk.pending.clear();
+        let assumed = walk.assumed.take().unwrap_or_default();
+        if walk.found_other {
+            walk.is_always.insert(ty, false);
+            return false;
+        }
+        walk.is_always.extend(assumed.into_iter().map(|t| (t, true)));
+        true
+    }
+
+    fn collect_to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
+        let certainty = self.to_string_certainty(ty, walk, depth);
+        walk.found_other |= certainty != Usefulness::Always;
+        certainty
+    }
+
+    fn to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
+        if depth > MAX_DEPTH {
+            walk.found_other = true;
+            return Usefulness::Always;
+        }
         // A self referencing array or tuple type is not reported.
-        if depth > MAX_DEPTH || visited.contains(&ty) {
+        if walk.assumed.is_none() && walk.visited.contains(&ty) {
             return Usefulness::Always;
         }
         let depth = depth + 1;
@@ -199,7 +255,7 @@ impl NoBaseToString {
 
         if flags.intersects(TypeFlags::TYPE_PARAMETER) {
             return match ty.get_constraint() {
-                Some(constraint) => self.collect_to_string_certainty(constraint, visited, depth),
+                Some(constraint) => self.collect_to_string_certainty(constraint, walk, depth),
                 // An unconstrained generic means `unknown`.
                 None if self.check_unknown => Usefulness::Sometimes,
                 None => Usefulness::Always,
@@ -224,20 +280,31 @@ impl NoBaseToString {
         }
 
         if ty.is_intersection() {
-            return collect_intersection_type_certainty(ty, |t| self.collect_to_string_certainty(t, visited, depth));
+            return collect_intersection_type_certainty(ty, |t| self.collect_to_string_certainty(t, walk, depth));
         }
         if ty.is_union() {
-            return collect_union_type_certainty(ty, |t| self.collect_to_string_certainty(t, visited, depth));
+            return collect_union_type_certainty(ty, |t| self.collect_to_string_certainty(t, walk, depth));
         }
 
-        let is_tuple = ty.is_tuple_type();
-        if is_tuple || ty.is_array_type() {
-            visited.push(ty);
-            let certainty = match is_tuple {
-                true => self.collect_tuple_certainty(ty, visited, depth),
-                false => self.collect_array_certainty(ty, visited, depth),
-            };
-            visited.pop();
+        if ty.is_tuple_type() || ty.is_array_type() {
+            let is_always = walk.is_always.get(&ty).copied();
+            if is_always == Some(true) {
+                return Usefulness::Always;
+            }
+            if let Some(assumed) = &mut walk.assumed {
+                if is_always == Some(false) {
+                    walk.found_other = true;
+                } else if assumed.insert(ty) {
+                    walk.pending.push(ty);
+                }
+                return Usefulness::Always;
+            }
+            if is_always.is_none() && self.is_always_on_every_path(ty, walk, depth) {
+                return Usefulness::Always;
+            }
+            walk.visited.push(ty);
+            let certainty = self.collect_elements_certainty(ty, walk, depth);
+            walk.visited.pop();
             return certainty;
         }
 
@@ -262,7 +329,7 @@ impl NoBaseToString {
             return;
         }
         let ty = ty.unwrap_or_else(|| node.ty());
-        let certainty = self.collect_to_string_certainty(ty, &mut Visited::new(), 0);
+        let certainty = self.collect_to_string_certainty(ty, &mut Walk::default(), 0);
         Self::report(node, BASE_TO_STRING, certainty, cx);
     }
 
@@ -317,7 +384,7 @@ impl NoBaseToString {
         }
         if is_join {
             let ty = get_constrained_type_at_location(object);
-            let certainty = self.collect_join_certainty(ty, &mut Visited::new(), 0);
+            let certainty = self.collect_join_certainty(ty, &mut Walk::default(), 0);
             Self::report(object, BASE_ARRAY_JOIN, certainty, cx);
         } else {
             self.check_expression(object, None, cx);

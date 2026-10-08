@@ -20,6 +20,14 @@ fn safely_shadows_undefined(symbol: Symbol) -> bool {
         && symbol.references().all(|reference| !reference.is_write())
 }
 
+/// ESLint's `def.name`: typescript-eslint has the type annotation as a part of the `Identifier`.
+fn name_span(declaration: Declaration) -> Option<Span> {
+    match declaration {
+        Declaration::Var(pat) | Declaration::Param(pat) => Some(utils::estree_span(Node::Pat(pat))),
+        _ => declaration.name_span(),
+    }
+}
+
 impl NoShadowRestrictedNames {
     fn is_restricted(&self, name: Name) -> bool {
         match name.bytes() {
@@ -44,7 +52,7 @@ impl NoShadowRestrictedNames {
         }
         Self::report_once(at, name, cx);
         for declaration in symbol.into_iter().flat_map(Symbol::declarations) {
-            if let Some(other) = declaration.name_span() {
+            if let Some(other) = name_span(declaration) {
                 Self::report_once(other, name, cx);
             }
         }
@@ -61,15 +69,7 @@ impl NoShadowRestrictedNames {
         {
             return;
         }
-        Self::report(pat.span(), name, pat.symbol(), cx);
-    }
-
-    fn check_ident<'a>(&self, ident: Option<Ident<'a>>, symbol: Option<Symbol<'a>>, cx: &mut Cx<'a, Self>) {
-        if let Some(ident) = ident
-            && self.is_restricted(ident.name())
-        {
-            Self::report(ident.span(), ident.name(), symbol, cx);
-        }
+        Self::report(utils::estree_span(Node::Pat(pat)), name, pat.symbol(), cx);
     }
 }
 
@@ -87,18 +87,32 @@ impl Rule for NoShadowRestrictedNames {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<u32> {
         on.pats([PatTag::Ident], Self::check_pat);
         on.funcs(|rule, func, cx| {
-            if func.has_body() {
-                rule.check_ident(func.name(), func.symbol(), cx);
+            if let Some(name) = func.name()
+                && rule.is_restricted(name.name())
+                && func.has_body()
+            {
+                Self::report(name.span(), name.name(), func.symbol(), cx);
             }
         });
-        on.classes(|rule, class, cx| rule.check_ident(class.name(), class.symbol(), cx));
+        on.classes(|rule, class, cx| {
+            if let Some(name) = class.name()
+                && rule.is_restricted(name.name())
+            {
+                Self::report(name.span(), name.name(), class.symbol(), cx);
+            }
+        });
         on.stmts([StmtTag::Import], |rule, stmt, cx| {
-            if let StmtKind::Import(import) = stmt.kind() {
-                rule.check_ident(import.default(), None, cx);
-                rule.check_ident(import.namespace(), None, cx);
+            let StmtKind::Import(import) = stmt.kind() else {
+                return;
+            };
+            let named = import.named().iter().map(ImportSpec::local);
+            for local in import.default().into_iter().chain(import.namespace()).chain(named) {
+                if rule.is_restricted(local.name()) {
+                    let symbol = Node::Stmt(stmt).scope().get_name(local.name());
+                    Self::report(local.span(), local.name(), symbol, cx);
+                }
             }
         });
-        on.import_specs(|rule, spec, cx| rule.check_ident(Some(spec.local()), None, cx));
         Vec::new()
     }
 }

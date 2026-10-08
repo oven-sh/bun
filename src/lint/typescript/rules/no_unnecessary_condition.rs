@@ -131,107 +131,46 @@ fn to_static_value(ty: Type<'_>) -> Option<StaticValue<'_>> {
     })
 }
 
-// TODO(api): replace what follows, up to `boolean_comparison`, by utils::eslint_utils::StaticValue::{strict_equals, loose_equals, compare}
-
-/// `ToNumber`, of what is not a `bigint`.
-fn to_number(value: &StaticValue<'_>) -> f64 {
-    value.to_js_number().unwrap_or(f64::NAN)
+/// `None` if a `bigint` in a string is too long to be compared.
+fn boolean_comparison<'a>(left: &StaticValue<'a>, operator: BinOp, right: &StaticValue<'a>) -> Option<bool> {
+    Some(match operator {
+        BinOp::NotEq => !left.js_loose_equals(right)?,
+        BinOp::NotEqEq => !left.js_strict_equals(right)?,
+        BinOp::EqEq => left.js_loose_equals(right)?,
+        BinOp::EqEqEq => left.js_strict_equals(right)?,
+        BinOp::Lt => left.js_compare(right)? == Some(Ordering::Less),
+        BinOp::Le => matches!(left.js_compare(right)?, Some(Ordering::Less | Ordering::Equal)),
+        BinOp::Gt => left.js_compare(right)? == Some(Ordering::Greater),
+        BinOp::Ge => matches!(left.js_compare(right)?, Some(Ordering::Greater | Ordering::Equal)),
+        _ => return None,
+    })
 }
 
-/// `StringToBigInt`
-fn string_to_big_int(text: &[u8]) -> Option<i128> {
-    let (is_negative, digits, radix) = match text::trim(text) {
-        [] => return Some(0),
-        [b'0', b'x' | b'X', digits @ ..] => (false, digits, 16),
-        [b'0', b'o' | b'O', digits @ ..] => (false, digits, 8),
-        [b'0', b'b' | b'B', digits @ ..] => (false, digits, 2),
-        [b'-', digits @ ..] => (true, digits, 10),
-        [b'+', digits @ ..] => (false, digits, 10),
-        digits => (false, digits, 10),
+/// The same for two `bigint` literal types, one of which is too long for a [`StaticValue`].
+fn big_int_comparison(left: Type, operator: BinOp, right: Type) -> Option<bool> {
+    let (
+        Literal::BigInt { negative: is_left_negative, base10: left },
+        Literal::BigInt { negative: is_right_negative, base10: right },
+    ) = (get_value_of_literal_type(left)?, get_value_of_literal_type(right)?)
+    else {
+        return None;
     };
-    if !digits.iter().all(|digit| char::from(*digit).is_digit(radix)) {
-        return None;
-    }
-    let value = i128::from_str_radix(std::str::from_utf8(digits).ok()?, radix).ok()?;
-    Some(if is_negative { -value } else { value })
-}
-
-/// How the mathematical values of `a` and `b` compare.
-fn compare_big_int_with_number(a: i128, b: f64) -> Option<Ordering> {
-    if b.is_nan() {
-        return None;
-    }
-    // Every `i128` is between these.
-    if b >= 1.8e38 {
-        return Some(Ordering::Less);
-    }
-    if b <= -1.8e38 {
-        return Some(Ordering::Greater);
-    }
-    let floor = b.floor();
-    let rest = if b > floor { Ordering::Less } else { Ordering::Equal };
-    Some(a.cmp(&(floor as i128)).then(rest))
-}
-
-/// `a === b`
-fn strict_equals(a: &StaticValue<'_>, b: &StaticValue<'_>) -> bool {
-    use StaticValue::{BigInt, Bool, Null, Number, String, Undefined};
-    match (a, b) {
-        (Undefined, Undefined) | (Null, Null) => true,
-        (Bool(a), Bool(b)) => a == b,
-        (Number(a), Number(b)) => a == b,
-        (String(a), String(b)) => a == b,
-        (BigInt(a), BigInt(b)) => a == b,
-        _ => false,
-    }
-}
-
-/// `a == b`
-fn loose_equals(a: &StaticValue<'_>, b: &StaticValue<'_>) -> bool {
-    use StaticValue::{BigInt, Bool, Number, String};
-    match (a, b) {
-        _ if a.is_nullish() || b.is_nullish() => a.is_nullish() && b.is_nullish(),
-        (Bool(_), _) => loose_equals(&Number(to_number(a)), b),
-        (_, Bool(_)) => loose_equals(a, &Number(to_number(b))),
-        (Number(number), String(_)) => *number == to_number(b),
-        (String(_), Number(number)) => to_number(a) == *number,
-        (BigInt(big_int), String(text)) | (String(text), BigInt(big_int)) => {
-            string_to_big_int(text) == Some(*big_int)
-        }
-        (BigInt(big_int), Number(number)) | (Number(number), BigInt(big_int)) => {
-            compare_big_int_with_number(*big_int, *number) == Some(Ordering::Equal)
-        }
-        _ => strict_equals(a, b),
-    }
-}
-
-/// `IsLessThan`, both ways at once. `None` if one is `NaN`, so that `<`, `<=`, `>` and `>=` are all
-/// false.
-fn compare(a: &StaticValue<'_>, b: &StaticValue<'_>) -> Option<Ordering> {
-    use StaticValue::{BigInt, String};
-    match (a, b) {
-        (String(a), String(b)) => Some(text::compare(a, b)),
-        (BigInt(a), String(b)) => string_to_big_int(b).map(|b| a.cmp(&b)),
-        (String(a), BigInt(b)) => string_to_big_int(a).map(|a| a.cmp(b)),
-        (BigInt(a), BigInt(b)) => Some(a.cmp(b)),
-        (BigInt(a), _) => compare_big_int_with_number(*a, to_number(b)),
-        (_, BigInt(b)) => compare_big_int_with_number(*b, to_number(a)).map(Ordering::reverse),
-        _ => to_number(a).partial_cmp(&to_number(b)),
-    }
-}
-
-fn boolean_comparison(left: &StaticValue<'_>, operator: BinOp, right: &StaticValue<'_>) -> bool {
-    match operator {
-        BinOp::NotEq => !loose_equals(left, right),
-        BinOp::NotEqEq => !strict_equals(left, right),
-        BinOp::EqEq => loose_equals(left, right),
-        BinOp::EqEqEq => strict_equals(left, right),
-        BinOp::Lt => compare(left, right) == Some(Ordering::Less),
-        BinOp::Le => matches!(compare(left, right), Some(Ordering::Less | Ordering::Equal)),
-        BinOp::Gt => compare(left, right) == Some(Ordering::Greater),
-        BinOp::Ge => matches!(compare(left, right), Some(Ordering::Greater | Ordering::Equal)),
-        _ => false,
-    }
+    let magnitudes = left.len().cmp(&right.len()).then_with(|| left.cmp(right));
+    let ordering = match (is_left_negative, is_right_negative) {
+        (false, false) => magnitudes,
+        (true, true) => magnitudes.reverse(),
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+    };
+    Some(match operator {
+        BinOp::EqEq | BinOp::EqEqEq => ordering.is_eq(),
+        BinOp::NotEq | BinOp::NotEqEq => ordering.is_ne(),
+        BinOp::Lt => ordering.is_lt(),
+        BinOp::Le => ordering.is_le(),
+        BinOp::Gt => ordering.is_gt(),
+        BinOp::Ge => ordering.is_ge(),
+        _ => return None,
+    })
 }
 
 fn is_only_used_for_truthiness(mut node: Expr<'_>) -> bool {
@@ -480,11 +419,11 @@ fn check_if_bool_expression_is_necessary_conditional<'a>(
     let left_type = get_constrained_type_at_location(left);
     let right_type = get_constrained_type_at_location(right);
 
-    if let Some(left_static_value) = to_static_value(left_type)
-        && let Some(right_static_value) = to_static_value(right_type)
-    {
-        let condition_is_true =
-            boolean_comparison(&left_static_value, operator, &right_static_value);
+    let condition_is_true = match (to_static_value(left_type), to_static_value(right_type)) {
+        (Some(left), Some(right)) => boolean_comparison(&left, operator, &right),
+        _ => big_int_comparison(left_type, operator, right_type),
+    };
+    if let Some(condition_is_true) = condition_is_true {
         cx.report(node, COMPARISON_BETWEEN_LITERAL_TYPES)
             .data("left", left_type.to_text())
             .data("operator", bin_op_text(operator))

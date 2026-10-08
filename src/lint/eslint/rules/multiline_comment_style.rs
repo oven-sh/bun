@@ -77,11 +77,7 @@ fn leading_whitespace(line: &[u8]) -> &[u8] {
 
 /// The range of a line of ESLint's text, which has no byte order mark.
 fn line_span(file: &File, line: u32) -> Span {
-    let span = file.line_span(line);
-    match line == 1 && file.has_bom() {
-        true => Span::new(span.start + 3, span.end),
-        false => span,
-    }
+    file.line_span(line)
 }
 
 fn is_starred_comment_line(line: &[u8]) -> bool {

@@ -36,16 +36,6 @@ fn is_module_exports(pattern: Expr<'_>) -> bool {
     }
 }
 
-// TODO(api): replace by utils::text::is_identifier_es5
-fn is_identifier_es5(name: &[u8]) -> bool {
-    text::is_identifier_es5(name)
-        && text::code_points(name).all(|(at, c)| match c {
-            0x1885 | 0x1886 => at > 0,
-            0xB7 | 0x387 | 0x1369..=0x1371 | 0x19DA | 0x2118 | 0x212E | 0x309B | 0x309C => false,
-            _ => true,
-        })
-}
-
 /// ESLint's `isPropertyCall`: `node` is a call of `object_name.function_name`.
 fn is_property_call(node: Node<'_>, object_name: &str, function_name: &str) -> bool {
     node.as_expr().and_then(Expr::as_call).is_some_and(|call| {
@@ -154,7 +144,7 @@ impl FuncNameMatching {
         };
         // Upstream does not pass the ECMAScript version here.
         if let Some(name) = name
-            && is_identifier_es5(&name)
+            && text::is_identifier_es5(&name)
             && self.should_warn(&name, func_name.bytes())
         {
             self.report(cx, assignment, name, func_name, is_prop);
@@ -166,7 +156,7 @@ impl FuncNameMatching {
         let KeyKind::Ident(property_name) = key.kind() else {
             let is_identifier: fn(&[u8]) -> bool = match cx.language().ecma_version >= 2015 {
                 true => text::is_identifier_es6,
-                false => is_identifier_es5,
+                false => text::is_identifier_es5,
             };
             if let Some(value) = string_literal_key(key, cx.file())
                 && is_identifier(value.bytes())

@@ -34,10 +34,7 @@ impl NoMixedSpacesAndTabs {
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         for number in 1..=file.line_count() {
-            let mut line = file.line_span(number);
-            if number == 1 && file.has_bom() {
-                line.start += 3;
-            }
+            let line = file.line_span(number);
             let Some(len) = self.mixed_indentation(file.slice(line)) else {
                 continue;
             };

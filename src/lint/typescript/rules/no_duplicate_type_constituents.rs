@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_intrinsic_error_type;
 use bun_lint::types::{Type, TypeFlags};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow duplicate constituents of union or intersection types.
@@ -48,13 +49,47 @@ fn is_same_type_param<'a>(a: TypeParam<'a>, b: TypeParam<'a>) -> bool {
         && all_same(a.default().into_iter(), b.default().into_iter(), is_same_ast_node)
 }
 
+fn is_same_expr<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
+    is_same_source(a.file(), a.span(), b.span())
+}
+
+fn is_same_key<'a>(file: &'a File<'a>, a: Option<Key<'a>>, b: Option<Key<'a>>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => is_same_source(file, a.span(file), b.span(file)),
+        _ => false,
+    }
+}
+
+fn is_same_pat_prop<'a>(a: PatProp<'a>, b: PatProp<'a>) -> bool {
+    a.is_rest() == b.is_rest()
+        && a.is_shorthand() == b.is_shorthand()
+        && is_same_key(a.file(), a.key(), b.key())
+        && is_same_pat(a.value(), b.value())
+        && all_same(a.default().into_iter(), b.default().into_iter(), is_same_expr)
+}
+
+fn is_same_pat_elem<'a>(a: PatElem<'a>, b: PatElem<'a>) -> bool {
+    a.is_rest() == b.is_rest()
+        && all_same(a.pat().into_iter(), b.pat().into_iter(), is_same_pat)
+        && all_same(a.default().into_iter(), b.default().into_iter(), is_same_expr)
+}
+
+fn is_same_pat<'a>(a: Pat<'a>, b: Pat<'a>) -> bool {
+    match (a.kind(), b.kind()) {
+        (PatKind::Missing, PatKind::Missing) => true,
+        (PatKind::Ident(a), PatKind::Ident(b)) => a == b,
+        (PatKind::Object(a), PatKind::Object(b)) => all_same(a.iter(), b.iter(), is_same_pat_prop),
+        (PatKind::Array(a), PatKind::Array(b)) => all_same(a.iter(), b.iter(), is_same_pat_elem),
+        _ => false,
+    }
+}
+
 fn is_same_param<'a>(a: Param<'a>, b: Param<'a>) -> bool {
     a.flags() == b.flags()
-        && is_same_source(a.file(), a.pat().span(), b.pat().span())
+        && is_same_pat(a.pat(), b.pat())
         && all_same(a.ty().into_iter(), b.ty().into_iter(), is_same_ast_node)
-        && all_same(a.default().into_iter(), b.default().into_iter(), |a, b| {
-            is_same_source(a.file(), a.span(), b.span())
-        })
+        && all_same(a.default().into_iter(), b.default().into_iter(), is_same_expr)
 }
 
 fn is_same_func<'a>(a: Func<'a>, b: Func<'a>) -> bool {
@@ -66,15 +101,9 @@ fn is_same_func<'a>(a: Func<'a>, b: Func<'a>) -> bool {
 }
 
 fn is_same_member<'a>(a: Member<'a>, b: Member<'a>) -> bool {
-    let file = a.file();
-    let is_same_key = match (a.key(), b.key()) {
-        (None, None) => true,
-        (Some(a), Some(b)) => is_same_source(file, a.span(file), b.span(file)),
-        _ => false,
-    };
     a.kind() == b.kind()
         && a.flags() == b.flags()
-        && is_same_key
+        && is_same_key(a.file(), a.key(), b.key())
         && all_same(a.ty().into_iter(), b.ty().into_iter(), is_same_ast_node)
         && all_same(a.func().into_iter(), b.func().into_iter(), is_same_func)
 }
@@ -225,16 +254,98 @@ fn report<'a>(
     report.fix(|fixer| removed.iter().map(|&span| fixer.remove(span)).collect::<Vec<Fix>>());
 }
 
+/// The name of a type that is nothing but a name.
+fn as_plain_name(node: TypeNode<'_>) -> Option<Ident<'_>> {
+    match node.kind() {
+        TypeKind::Ref { name, args } if name.len() == 1 && args.is_empty() => name.get(0),
+        _ => None,
+    }
+}
+
+/// Whether [`Index::key`] tells `node` from everything that is not the same for
+/// [`is_same_ast_node`].
+fn is_plain(node: TypeNode) -> bool {
+    matches!(
+        node.tag(),
+        TypeTag::Keyword
+            | TypeTag::StringLit
+            | TypeTag::NumberLit
+            | TypeTag::BigIntLit
+            | TypeTag::BoolLit
+            | TypeTag::UniqueSymbol
+    ) || as_plain_name(node).is_some()
+}
+
+/// The constituents of a union of many, which is not searched one by one.
+#[derive(Default)]
+struct Index<'a> {
+    by_key: FxHashMap<(TypeTag, &'a [u8]), TypeNode<'a>>,
+    by_type: FxHashMap<Type<'a>, TypeNode<'a>>,
+    /// Those that are not [plain](is_plain).
+    not_plain: Vec<TypeNode<'a>>,
+}
+
+impl<'a> Index<'a> {
+    /// Two with the same key are the same for [`is_same_ast_node`].
+    fn key(node: TypeNode<'a>) -> (TypeTag, &'a [u8]) {
+        (node.tag(), as_plain_name(node).map_or_else(|| node.text(), Ident::bytes))
+    }
+
+    fn insert(&mut self, node: TypeNode<'a>, ty: Type<'a>) {
+        self.by_key.insert(Self::key(node), node);
+        self.by_type.insert(ty, node);
+        if !is_plain(node) {
+            self.not_plain.push(node);
+        }
+    }
+}
+
 struct Constituents<'a> {
     /// `Union` or `Intersection`
     tag: TypeTag,
     /// The union is the type of an optional parameter.
     is_of_optional_parameter: bool,
-    /// Upstream's `uniqueConstituents` and `cachedTypeMap`.
+    /// Upstream's `uniqueConstituents` and `cachedTypeMap`, while they are few.
     unique: SmallVec<[(TypeNode<'a>, Type<'a>); 8]>,
+    index: Option<Box<Index<'a>>>,
 }
 
 impl<'a> Constituents<'a> {
+    const MANY: usize = 32;
+
+    fn find_same_ast_node(&self, node: TypeNode<'a>) -> Option<TypeNode<'a>> {
+        let is_same = |it: &TypeNode<'a>| is_same_ast_node(*it, node);
+        match &self.index {
+            None => self.unique.iter().map(|it| it.0).find(is_same),
+            Some(index) => {
+                let same_key = index.by_key.get(&Index::key(node)).copied();
+                same_key.or_else(|| index.not_plain.iter().copied().find(is_same))
+            }
+        }
+    }
+
+    fn find_same_type(&self, ty: Type<'a>) -> Option<TypeNode<'a>> {
+        match &self.index {
+            None => self.unique.iter().find(|it| it.1 == ty).map(|it| it.0),
+            Some(index) => index.by_type.get(&ty).copied(),
+        }
+    }
+
+    fn push(&mut self, node: TypeNode<'a>, ty: Type<'a>) {
+        if let Some(index) = &mut self.index {
+            index.insert(node, ty);
+            return;
+        }
+        self.unique.push((node, ty));
+        if self.unique.len() == Self::MANY {
+            let mut index = Box::<Index<'a>>::default();
+            for (node, ty) in self.unique.drain(..) {
+                index.insert(node, ty);
+            }
+            self.index = Some(index);
+        }
+    }
+
     fn check_duplicate_recursively(
         &mut self,
         constituent_node: TypeNode<'a>,
@@ -249,9 +360,7 @@ impl<'a> Constituents<'a> {
         };
 
         // The syntax is compared first, which is cheaper than to ask for the type.
-        if let Some(&(previous, _)) =
-            self.unique.iter().find(|it| is_same_ast_node(it.0, constituent_node))
-        {
+        if let Some(previous) = self.find_same_ast_node(constituent_node) {
             report_duplicate(previous);
             return;
         }
@@ -259,7 +368,7 @@ impl<'a> Constituents<'a> {
         if is_intrinsic_error_type(ty) || ty.is_unresolved() {
             return;
         }
-        if let Some(&(previous, _)) = self.unique.iter().find(|it| it.1 == ty) {
+        if let Some(previous) = self.find_same_type(ty) {
             report_duplicate(previous);
             return;
         }
@@ -267,7 +376,7 @@ impl<'a> Constituents<'a> {
         if self.is_of_optional_parameter && ty.has_flags(TypeFlags::UNDEFINED) {
             report(cx, UNNECESSARY, constituent_node, None);
         }
-        self.unique.push((constituent_node, ty));
+        self.push(constituent_node, ty);
 
         if constituent_node.tag() == self.tag
             && let TypeKind::Union(types) | TypeKind::Intersection(types) = constituent_node.kind()
@@ -299,6 +408,7 @@ impl NoDuplicateTypeConstituents {
             tag,
             is_of_optional_parameter,
             unique: SmallVec::new(),
+            index: None,
         };
         for ty in types {
             constituents.check_duplicate_recursively(ty, cx);

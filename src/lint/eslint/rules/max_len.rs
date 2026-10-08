@@ -213,10 +213,7 @@ impl MaxLen {
         // No line that is not longer is reported.
         let limit = self.max_comment_length.map_or(self.max_length, |it| it.min(self.max_length));
         for number in 1..=file.line_count() {
-            let mut line = file.line_span(number);
-            if number == 1 && file.has_bom() {
-                line.start = line.end.min(3);
-            }
+            let line = file.line_span(number);
             let text = file.slice(line);
             let is_short = text.len() <= limit && (self.tab_width <= 1 || !strings::contains_char(text, b'\t'));
             if !is_short && compute_line_length(text, self.tab_width) > limit {

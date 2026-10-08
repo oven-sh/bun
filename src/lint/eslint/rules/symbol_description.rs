@@ -15,15 +15,16 @@ impl Rule for SymbolDescription {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        // typescript-eslint always has the variable, from the default library.
-        if file.is_javascript() && !ast_utils::is_configured_global(file, b"Symbol") {
+        if !ast_utils::is_configured_global(file, b"Symbol") {
             return;
         }
         on.exprs([ExprTag::Call], |_, e, cx| {
             if let ExprKind::Call(call) = e.kind()
                 && call.args().is_empty()
                 && call.callee().is_ident("Symbol")
-                && call.callee().symbol().is_none()
+                && call.callee().reference().is_some_and(|it| it.symbol().is_none())
+                // A script can add declarations to the global variable, such as `interface Symbol {}`.
+                && cx.file().scope().get("Symbol").is_none()
             {
                 cx.report(e, EXPECTED);
             }

@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_scope::{
-    SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, is_type_only_reference,
+    SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, has_rest_sibling,
+    is_defined_in_array_pattern, is_referenced_in_array_pattern, is_type_only_reference,
     is_used_global_variable,
 };
 use bun_lint::utils::ts_utils::is_definition_file;
@@ -139,66 +140,6 @@ fn is_named_by_identifier(def: Declaration) -> bool {
     }
 }
 
-/// Whether the parent of the identifier `pat` is an `ArrayPattern`.
-fn is_array_pattern_element(pat: Pat) -> bool {
-    matches!(pat.parent(), Node::PatElem(it) if !it.is_rest() && it.default().is_none())
-}
-
-// TODO(api): replace by utils::ts_scope::is_defined_in_array_pattern
-fn is_defined_in_array_pattern(def: Declaration) -> bool {
-    match def {
-        Declaration::Var(pat) | Declaration::Param(pat) => is_array_pattern_element(pat),
-        _ => false,
-    }
-}
-
-// TODO(api): replace by utils::ts_scope::is_referenced_in_array_pattern
-fn is_referenced_in_array_pattern(reference: Reference) -> bool {
-    match reference.node() {
-        Node::Pat(pat) => is_array_pattern_element(pat),
-        Node::Expr(id) => matches!(
-            id.parent(),
-            Node::Expr(parent) if parent.tag() == ExprTag::Array && parent.is_assignment_target()
-        ),
-        _ => false,
-    }
-}
-
-/// Whether the last property of the object pattern that `property` is in is a rest element.
-fn is_followed_by_rest(property: PatProp) -> bool {
-    matches!(
-        property.parent(),
-        Node::Pat(object) if matches!(
-            object.kind(),
-            PatKind::Object(properties) if properties.last().is_some_and(PatProp::is_rest)
-        )
-    )
-}
-
-/// Upstream's `hasRestSibling`, of the parent of the identifier `id`.
-// TODO(api): replace by utils::ts_scope::has_rest_sibling
-fn has_rest_sibling(id: Node) -> bool {
-    match (id, id.parent()) {
-        (Node::Pat(_), Node::PatProp(property)) => {
-            !property.is_rest() && property.default().is_none() && is_followed_by_rest(property)
-        }
-        // A computed key.
-        (Node::Expr(key), Node::PatProp(property)) => {
-            property.default() != Some(key) && is_followed_by_rest(property)
-        }
-        (Node::Expr(_), Node::Prop(property)) if property.kind() != PropKind::Spread => {
-            match property.parent().as_expr().map(|object| (object, object.kind())) {
-                Some((object, ExprKind::Object(properties))) => {
-                    properties.last().is_some_and(|last| last.kind() == PropKind::Spread)
-                        && object.is_assignment_target()
-                }
-                _ => false,
-            }
-        }
-        _ => false,
-    }
-}
-
 /// The function, if `isFunction(def.name.parent)`: the name is all of one of its parameters.
 fn function_of_plain_parameter(def: Declaration<'_>) -> Option<Func<'_>> {
     let Declaration::Param(pat) = def else {
@@ -211,6 +152,15 @@ fn function_of_plain_parameter(def: Declaration<'_>) -> Option<Func<'_>> {
         return None;
     }
     param.func().filter(|function| function.has_body())
+}
+
+/// Whether `pat` is where the parameter `symbol` is written first: `function (a, b, a) {}`
+fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
+    let first = symbol.declarations().find_map(|def| match def {
+        Declaration::Param(it) => Some(it),
+        _ => None,
+    });
+    first == Some(pat)
 }
 
 /// Whether no parameter of `function` after `variable` is used.
@@ -229,6 +179,7 @@ fn is_after_last_used_arg<'a>(
                 is_posterior = true;
             } else if is_posterior
                 && (it.references().next().is_some() || analysis.is_eslint_used(Variable::new(it)))
+                && is_first_parameter_named(it, pat)
             {
                 is_last = false;
             }
@@ -416,8 +367,15 @@ impl NoUnusedVars {
             return;
         };
         let name = unused_var.name();
+        // As many columns as the name is long, however it is written.
+        let start = cx.position(id.start);
+        let end = Position {
+            line: start.line,
+            column: start.column + text::utf16_len(name.bytes()),
+        };
         let report = cx
-            .report(Span::new(id.start, id.start + name.bytes().len() as u32), message)
+            .report(id, message)
+            .end_at(end)
             .data("varName", name)
             .data("action", action)
             .data("additional", additional);

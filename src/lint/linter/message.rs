@@ -77,25 +77,20 @@ pub struct LintMessage {
     pub suppressions: Vec<Suppression>,
 }
 
-/// Converts offsets to what ESLint reports. ESLint does not count a byte order mark.
+/// Converts offsets to what ESLint reports.
 pub(crate) struct Locator<'a> {
     file: &'a File<'a>,
-    has_bom: bool,
 }
 
 impl<'a> Locator<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
-        Locator {
-            file,
-            has_bom: file.text().starts_with(b"\xEF\xBB\xBF"),
-        }
+        Locator { file }
     }
 
     /// The line, and the column from 1.
     pub(crate) fn position(&self, offset: u32) -> (u32, u32) {
         let at = self.file.position(offset);
-        let bom = u32::from(self.has_bom && at.line == 1 && at.column > 0);
-        (at.line, at.column + 1 - bom)
+        (at.line, at.column + 1)
     }
 
     /// A message of the linter itself at `span`: `createLintingProblem`.

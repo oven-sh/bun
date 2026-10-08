@@ -25,17 +25,23 @@ impl Rule for NoNonNullAssertedOptionalChain {
             let ExprKind::NonNull(operand) = e.kind() else {
                 return;
             };
-            // `(x?.y)!` is reported at the chain, `x?.y!` at the assertion.
-            let at = if operand.is_chain_root() {
-                operand
-            } else if e.is_chain_root() {
-                e
-            } else {
-                return;
+            let remove_assertion = |at: Expr<'a>, assertion: Expr<'a>| {
+                let end = assertion.span().end;
+                cx.report(at, NO_NON_NULL_OPTIONAL_CHAIN)
+                    .suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(Span::new(end.saturating_sub(1), end)));
             };
-            let end = e.span().end;
-            cx.report(at, NO_NON_NULL_OPTIONAL_CHAIN)
-                .suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(Span::new(end.saturating_sub(1), end)));
+            // `(x?.y)!` is reported at the chain, `x?.y!` at the assertion. `(x?.y!)!` is both, at the
+            // same place, the outer one first.
+            let is_operand_of_assertion =
+                |it: Expr<'a>| matches!(it.parent(), Node::Expr(parent) if parent.tag() == ExprTag::NonNull);
+            if operand.is_chain_root() {
+                remove_assertion(operand, e);
+                if operand.tag() == ExprTag::NonNull {
+                    remove_assertion(operand, operand);
+                }
+            } else if e.is_chain_root() && !is_operand_of_assertion(e) {
+                remove_assertion(e, e);
+            }
         });
     }
 }

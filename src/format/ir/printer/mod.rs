@@ -17,7 +17,7 @@ mod output;
 use self::measure::Measure;
 use self::output::Out;
 use super::element::{
-    BestFitting, Condition, DedentMode, Flat, FlatFlags, FormatElement, Group, GroupId, Interned, LineMode,
+    BestFitting, Condition, CursorMark, DedentMode, Flat, FlatFlags, FormatElement, Group, GroupId, Interned, LineMode,
     PrintMode, Tag, TextWidth,
 };
 use super::formatter::{END_LINE_SUFFIX, HARD_LINE_BREAK, Storage};
@@ -108,6 +108,8 @@ pub(crate) struct PrinterBuffers {
     /// What a [`Measure`] puts on top of `queue` and `frames`, which it leaves as they are.
     measure_queue: Vec<Run>,
     measure_frames: Vec<Frame>,
+    /// Where the [`FormatElement::Cursor`]s of the last document are in its text.
+    pub(crate) marks: [Option<u32>; 2],
 }
 
 struct Printer<'d> {
@@ -127,6 +129,10 @@ struct Printer<'d> {
     run: Run,
     /// That of the last of `buffers.frames`.
     mode: PrintMode,
+    /// `buffers.marks[i]` is after the pending indentation and space, if those are printed.
+    is_mark_pending: [bool; 2],
+    /// The length of `out` before anything is printed.
+    start: usize,
     buffers: &'d mut PrinterBuffers,
 }
 
@@ -151,6 +157,8 @@ pub(crate) fn print(
     buffers.suffix_indentions.clear();
     buffers.line_suffixes.clear();
     buffers.group_modes.clear();
+    buffers.marks = [None; 2];
+    let start = out.len();
     let mut printer = Printer {
         options,
         pool: &storage.pool,
@@ -165,9 +173,12 @@ pub(crate) fn print(
         line_width: 0,
         run: Run::of(root),
         mode: PrintMode::Expanded,
+        is_mark_pending: [false; 2],
+        start,
         buffers,
     };
     let result = printer.print_all();
+    printer.pull_marks_back();
     printer.out.finish();
     result
 }
@@ -296,6 +307,7 @@ impl<'d> Printer<'d> {
             };
             match self.pool.get(index as usize).ok_or(PrintError::InvalidDocument)? {
                 FormatElement::Nop => {}
+                FormatElement::Cursor(mark) => self.note_mark(*mark),
                 FormatElement::Skip(skip) => self.run.at = self.run.at.saturating_add(skip.len),
                 FormatElement::Space => {
                     if self.line_width > 0 {
@@ -336,6 +348,7 @@ impl<'d> Printer<'d> {
                     // Not if the line is empty.
                     if self.line_width > 0 {
                         self.out.trim_trailing_whitespace();
+                        self.pull_marks_back();
                         self.print_line_break();
                         self.has_empty_line = false;
                     }
@@ -513,6 +526,7 @@ impl<'d> Printer<'d> {
                     FormatElement::Line(LineMode::Hard | LineMode::Empty) | FormatElement::Tag(Tag::StartLineSuffix) => {
                         return Err(PrintError::InvalidDocument);
                     }
+                    FormatElement::Cursor(mark) => self.note_mark(*mark),
                     FormatElement::Nop
                     | FormatElement::Line(LineMode::Soft)
                     | FormatElement::ExpandParent
@@ -678,6 +692,46 @@ impl<'d> Printer<'d> {
             self.out.byte(b' ');
             self.pending_space = false;
             self.line_width += 1;
+            if self.is_mark_pending != [false; 2] {
+                self.move_pending_marks();
+            }
+        }
+    }
+
+    /// The text of the document ends here, for now.
+    #[inline]
+    fn position(&self) -> u32 {
+        self.out.len().saturating_sub(self.start) as u32
+    }
+
+    #[cold]
+    fn note_mark(&mut self, mark: CursorMark) {
+        let index = match mark {
+            CursorMark::RegionStart => 0,
+            CursorMark::RegionEnd if self.buffers.marks[1].is_some() => return,
+            CursorMark::RegionEnd => 1,
+        };
+        self.buffers.marks[index] = Some(self.position());
+        self.is_mark_pending[index] = self.pending_space || !self.pending_indent.is_empty();
+    }
+
+    /// What was pending has been printed.
+    #[cold]
+    fn move_pending_marks(&mut self) {
+        for index in 0..2 {
+            if std::mem::take(&mut self.is_mark_pending[index]) {
+                self.buffers.marks[index] = Some(self.position());
+            }
+        }
+    }
+
+    /// Prettier's `trim`: what was pending or at the end of the line is not printed after all.
+    #[inline]
+    fn pull_marks_back(&mut self) {
+        if self.buffers.marks != [None; 2] {
+            let end = self.position();
+            self.buffers.marks = self.buffers.marks.map(|mark| mark.map(|at| at.min(end)));
+            self.is_mark_pending = [false; 2];
         }
     }
 
@@ -691,6 +745,9 @@ impl<'d> Printer<'d> {
         }
         self.out.repeat(b' ', align);
         self.line_width += width + align;
+        if !self.pending_space {
+            self.move_pending_marks();
+        }
     }
 
     /// Prints the part of `text` at `range`.
@@ -733,7 +790,7 @@ fn first_of(run: Run, pool: &[FormatElement]) -> Option<&FormatElement> {
     let mut elements = pool.get(run.at as usize..run.end as usize)?.iter();
     while let Some(element) = elements.next() {
         match element {
-            FormatElement::Nop => {}
+            FormatElement::Nop | FormatElement::Cursor(_) => {}
             FormatElement::Skip(skip) => {
                 if skip.len > 0 {
                     elements.nth(skip.len as usize - 1);

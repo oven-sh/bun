@@ -149,6 +149,7 @@ impl Storage {
             | FormatElement::LineSuffixBoundary
             | FormatElement::Space
             | FormatElement::Nop
+            | FormatElement::Cursor(_)
             | FormatElement::Skip(_)
             | FormatElement::Tag(_) => false,
         }
@@ -208,7 +209,7 @@ impl Storage {
                     skip(&mut elements, it.len);
                     continue;
                 }
-                FormatElement::Nop => continue,
+                FormatElement::Nop | FormatElement::Cursor(_) => continue,
                 FormatElement::Tag(Tag::StartLabelled(actual)) => *actual == label,
                 FormatElement::Interned(it) => self.has_label(self.interned(*it), label),
                 _ => false,

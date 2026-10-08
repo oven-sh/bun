@@ -45,10 +45,37 @@ impl<'a> Formatter<'a> {
     /// Calls `write`. If there is no comment in `span`, with [`Formatter::is_quiet`] set.
     #[inline]
     fn in_scope(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+        if self.context().cursor.is_active() {
+            return self.in_scope_with_cursor(span, write);
+        }
         let outer = self.context().is_quiet;
         self.context_mut().is_quiet = outer || self.has_no_comments_in(span);
         write(self);
         self.context_mut().is_quiet = outer;
+    }
+
+    #[cold]
+    fn in_scope_with_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+        let cursor = self.context().cursor;
+        let outer = self.context().is_quiet;
+        // What the region is in, and the nodes before and after it, are not quiet, so that this is called for them.
+        self.context_mut().is_quiet = outer || (!cursor.overlaps(span) && self.has_no_comments_in(span));
+        cursor.enter(span, self);
+        write(self);
+        cursor.exit(span, self);
+        self.context_mut().is_quiet = outer;
+    }
+
+    /// Calls `write`, which writes the node at `span` and is not called [in a scope](Formatter::in_scope).
+    #[inline]
+    fn around_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+        let cursor = self.context().cursor;
+        if !cursor.is_active() {
+            return write(self);
+        }
+        cursor.enter(span, self);
+        write(self);
+        cursor.exit(span, self);
     }
 }
 
@@ -164,7 +191,7 @@ pub(crate) fn format_node<'a>(
     let is_suppressed = f.comments().is_suppressed(span.start);
     format_leading_comments(span).fmt(f);
     if is_suppressed {
-        FormatSuppressedNode(span).fmt(f);
+        f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
     } else {
         f.in_scope(span, write);
     }
@@ -184,7 +211,7 @@ pub(crate) fn format_node_without_comments<'a>(
         return write(f);
     }
     format_leading_comments(span).fmt(f);
-    FormatSuppressedNode(span).fmt(f);
+    f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
     write_trailing_comments_in(span, parent, f);
 }
 
@@ -292,14 +319,14 @@ impl<'a> FormatExpr<'a> {
         // ESTree's `Expression`, as opposed to the `ChainElement` in a `ChainExpression`.
         if !self.is_in_chain_expression && f.comments().has_trailing_suppression_comment(span.end) {
             format_leading_comments(span).fmt(f);
-            FormatSuppressedNode(span).fmt(f);
+            f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
             return write_trailing_comments_of(node, f);
         }
 
         // The comments of a JSX element are written with its parentheses.
         if matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)) {
             if !format_type_cast_comment_node(&self, false, f) {
-                self.write_in_parentheses(false, f);
+                f.around_cursor(span, |f| self.write_in_parentheses(false, f));
             }
             return;
         }
@@ -333,12 +360,14 @@ impl<'a> FormatExpr<'a> {
             };
             // Prettier's `printIgnored`: a class expression with decorators is on lines of its own.
             let is_decorated_class = matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
-            write!(f, needs_parentheses.then_some("("));
-            match is_decorated_class {
-                true => write!(f, soft_block_indent(&FormatSuppressedNode(span))),
-                false => write!(f, FormatSuppressedNode(span)),
-            }
-            write!(f, needs_parentheses.then_some(")"));
+            f.around_cursor(span, |f| {
+                write!(f, needs_parentheses.then_some("("));
+                match is_decorated_class {
+                    true => write!(f, soft_block_indent(&FormatSuppressedNode(span))),
+                    false => write!(f, FormatSuppressedNode(span)),
+                }
+                write!(f, needs_parentheses.then_some(")"));
+            });
         } else {
             f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
         }
@@ -527,13 +556,13 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
         _ => span.end < statement.span().end,
     };
     if f.options().semicolons.is_always() {
-        return write!(f, [FormatSuppressedNode(span), has_semicolon.then_some(";")]);
+        return f.around_cursor(span, |f| write!(f, [FormatSuppressedNode(span), has_semicolon.then_some(";")]));
     }
     let needs_leading_semicolon = matches!(
         statement.kind(),
         StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
     );
-    write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(span)]);
+    f.around_cursor(span, |f| write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(span)]));
 }
 
 /// `ExportNamedDeclaration.declaration`, `ExportDefaultDeclaration.declaration`: the statement
@@ -663,7 +692,7 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
         format_leading_comments(span).fmt(f);
     }
     if is_suppressed {
-        FormatSuppressedNode(span).fmt(f);
+        f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
     } else {
         f.in_scope(span, |f| write_type_in_parentheses(ty, f));
     }

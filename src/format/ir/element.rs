@@ -36,7 +36,19 @@ pub(crate) enum FormatElement {
     Interned(Interned),
     /// Several ways to write the same thing. The printer picks the first that fits.
     BestFitting(BestFitting),
+    /// Prettier's `cursor`: the printer notes where in the text this is. It has no width and no
+    /// effect on anything.
+    Cursor(CursorMark),
     Tag(Tag),
+}
+
+/// An end of the part of the text that the cursor is in. See `cursor.rs`.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum CursorMark {
+    /// Of several that are printed, the last counts.
+    RegionStart,
+    /// Of several that are printed, the first counts.
+    RegionEnd,
 }
 
 /// See [`FormatElement::Skip`].

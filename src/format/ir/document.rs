@@ -109,7 +109,7 @@ impl Pass<'_> {
                         self.state.last_space = index;
                         self.state.is_space_pending = true;
                     }
-                    FormatElement::Line(LineMode::Soft) | FormatElement::Nop => {}
+                    FormatElement::Line(LineMode::Soft) | FormatElement::Nop | FormatElement::Cursor(_) => {}
                     FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => {
                         self.state.last_line = index;
                         self.state.is_space_pending = true;

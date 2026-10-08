@@ -93,7 +93,7 @@ impl FitsEndPredicate for SingleEntryPredicate {
                 self.depth = self.depth.checked_sub(1).ok_or(PrintError::InvalidDocument)?;
                 self.is_done = self.depth == 0;
             }
-            FormatElement::Interned(_) | FormatElement::Skip(_) | FormatElement::Nop => {}
+            FormatElement::Interned(_) | FormatElement::Skip(_) | FormatElement::Nop | FormatElement::Cursor(_) => {}
             _ if self.depth == 0 => return Err(PrintError::InvalidDocument),
             _ => {}
         }
@@ -253,7 +253,7 @@ impl<'d> Printer<'d> {
     fn fits_element(&mut self, measure: &mut Measure, element: &'d FormatElement) -> PrintResult<Fits> {
         let mode = measure.mode;
         match element {
-            FormatElement::Nop => {}
+            FormatElement::Nop | FormatElement::Cursor(_) => {}
             FormatElement::Skip(skip) => measure.run.at = measure.run.at.saturating_add(skip.len),
             FormatElement::Space => {
                 if measure.line_width > 0 {

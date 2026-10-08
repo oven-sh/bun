@@ -1,6 +1,7 @@
 //! From a file to its formatted text.
 
 use super::formatter::Formatter;
+use crate::cursor::CursorRegion;
 use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
 
@@ -30,7 +31,19 @@ pub(crate) fn format_with<'a>(
     out: &mut Vec<u8>,
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<(), FormatError> {
-    let root = write_document(file, options, scratch, write)?;
+    format_with_marks(file, options, CursorRegion::NONE, scratch, out, write).map(|_| ())
+}
+
+/// The same. Returns where the ends of `cursor` are in what is appended to `out`.
+pub(crate) fn format_with_marks<'a>(
+    file: &'a File<'a>,
+    options: &FormatOptions,
+    cursor: CursorRegion,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+    write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
+) -> Result<[Option<u32>; 2], FormatError> {
+    let root = write_document(file, options, cursor, scratch, write)?;
     out.reserve(file.text().len() + file.text().len() / 8);
     super::printer::print(
         root,
@@ -40,7 +53,8 @@ pub(crate) fn format_with<'a>(
         &mut scratch.printer,
         out,
     )
-    .map_err(|_| FormatError::InvalidDocument)
+    .map_err(|_| FormatError::InvalidDocument)?;
+    Ok(scratch.printer.marks)
 }
 
 /// The document of `file`, for debugging.
@@ -49,13 +63,14 @@ pub fn dump_document<'a>(
     options: &FormatOptions,
     scratch: &mut Scratch,
 ) -> Result<String, FormatError> {
-    let root = write_document(file, options, scratch, crate::js::format_file)?;
+    let root = write_document(file, options, CursorRegion::NONE, scratch, crate::js::format_file)?;
     Ok(super::debug::dump(root, &scratch.formatter.storage, file.text()))
 }
 
 fn write_document<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
+    cursor: CursorRegion,
     scratch: &mut Scratch,
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<super::element::Interned, FormatError> {
@@ -69,7 +84,8 @@ fn write_document<'a>(
         comments
     });
     let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| comments);
-    let context = crate::js::context::JsFormatContext::new(file, options.clone(), comments);
+    let mut context = crate::js::context::JsFormatContext::new(file, options.clone(), comments);
+    context.cursor = cursor;
     let buffers = std::mem::take(&mut scratch.formatter);
     let mut formatter = Formatter::new(context, buffers);
     write(file, &mut formatter);

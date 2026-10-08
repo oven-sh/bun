@@ -19,6 +19,11 @@ impl<'o> Out<'o> {
         Out { buffer, len }
     }
 
+    #[inline]
+    pub(super) fn len(&self) -> usize {
+        self.len
+    }
+
     /// Leaves the vector with what has been written.
     pub(super) fn finish(&mut self) {
         self.buffer.truncate(self.len);

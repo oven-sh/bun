@@ -26,6 +26,7 @@ fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usiz
         let text = |bytes: &[u8]| format!("{:?}", bstr::BStr::new(bytes));
         let _ = match element {
             FormatElement::Nop | FormatElement::Skip(_) => writeln!(out, "nop"),
+            FormatElement::Cursor(_) => writeln!(out, "cursor"),
             FormatElement::Space => writeln!(out, "\" \""),
             FormatElement::Line(LineMode::Soft) => writeln!(out, "softline"),
             FormatElement::Line(LineMode::SoftOrSpace) => writeln!(out, "line"),

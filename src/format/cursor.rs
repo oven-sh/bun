@@ -12,6 +12,8 @@
 //! only where they start and end, what is in them, and in which order Prettier visits that.
 
 use crate::js::utils::typescript::without_lone_operator;
+use crate::ir::element::{CursorMark, FormatElement};
+use crate::ir::formatter::Formatter;
 use crate::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::{
     Class, EntityName, Enum, EnumMember, ExportSpec, Expr, ExprKind, File, FnBody, Func, Ident, ImportEqualsTarget,
@@ -42,6 +44,9 @@ struct Item<'a> {
 #[derive(Copy, Clone)]
 enum Kind<'a> {
     Leaf,
+    /// A leaf that Prettier does not print as a node of its own, so that it does not learn where it
+    /// ends up: the second name of `import { a }`, the text in a JSX element.
+    UnmarkedLeaf,
     /// Its only child is a leaf.
     LeafIn(Span),
     /// Its children are two leaves.
@@ -102,6 +107,13 @@ enum Kind<'a> {
 
 const fn leaf<'a>(span: Span) -> Item<'a> {
     Item { span, kind: Kind::Leaf }
+}
+
+const fn unmarked_leaf<'a>(span: Span) -> Item<'a> {
+    Item {
+        span,
+        kind: Kind::UnmarkedLeaf,
+    }
 }
 
 struct Walk<'a> {
@@ -441,6 +453,7 @@ impl<'a> Walk<'a> {
                 span,
                 kind: Kind::JsxContainer(e),
             },
+            (None, _) if e.is_jsx_text() => unmarked_leaf(e.span()),
             (None, _) => self.expr(e),
         }
     }
@@ -566,7 +579,7 @@ impl<'a> Walk<'a> {
                 });
                 out.extend(jsx.children_with_whitespace().map(|child| match child {
                     JsxChild::Expr(child) => self.jsx_child(child),
-                    JsxChild::Whitespace(span) => leaf(span),
+                    JsxChild::Whitespace(span) => unmarked_leaf(span),
                 }));
                 out.extend(jsx.closing_span().map(|span| match jsx.is_fragment() {
                     true => leaf(span),
@@ -827,8 +840,10 @@ impl<'a> Walk<'a> {
     /// Appends the children of `item` to `out`, in the order of Prettier's visitor keys.
     fn children(&self, item: Item<'a>, out: &mut Vec<Item<'a>>) {
         match item.kind {
-            Kind::Leaf => {}
+            Kind::Leaf | Kind::UnmarkedLeaf => {}
             Kind::LeafIn(span) => out.push(leaf(span)),
+            // Of a name that stands for two, the first is printed.
+            Kind::Leaves(first, second) if first == second => out.extend([leaf(first), unmarked_leaf(second)]),
             Kind::Leaves(first, second) => out.extend([leaf(first), leaf(second)]),
             Kind::Program => out.extend(self.file.body().iter().map(|it| self.statement(it))),
             Kind::Expr(e) if !self.is_babel && e.is_chain_root() => out.push(Item {
@@ -991,6 +1006,17 @@ impl<'a> Walk<'a> {
 
 /// Prettier's `getCursorLocation`. `offset`: of the cursor in the text of `file`.
 pub fn locate<'a>(file: &'a File<'a>, offset: u32) -> Region {
+    match locate_items(file, offset) {
+        (Some(node), None, true) => Region::Node(node.span),
+        (before, after, _) => Region::Between {
+            before: before.map(|it| it.span),
+            after: after.map(|it| it.span),
+        },
+    }
+}
+
+/// The node that the cursor is in and `true`, or the nodes before and after the cursor.
+fn locate_items<'a>(file: &'a File<'a>, offset: u32) -> (Option<Item<'a>>, Option<Item<'a>>, bool) {
     let walk = Walk {
         file,
         is_babel: file.is_javascript(),
@@ -1015,29 +1041,105 @@ pub fn locate<'a>(file: &'a File<'a>, offset: u32) -> Region {
         children.clear();
         walk.children(last, &mut children);
         if children.is_empty() {
-            return Region::Node(last.span);
+            return (Some(last), None, true);
         }
     }
 
-    let (mut before, mut after): (Option<Span>, Option<Span>) = (None, None);
+    let (mut before, mut after): (Option<Item<'a>>, Option<Item<'a>>) = (None, None);
     while let Some(item) = containing.pop() {
         let (has_before, has_after) = (before.is_some(), after.is_some());
         children.clear();
         walk.children(item, &mut children);
-        for child in &children {
+        for &child in &children {
             let span = child.span;
-            if !has_before && span.end <= offset && before.is_none_or(|it| span.end > it.end) {
-                before = Some(span);
+            if !has_before && span.end <= offset && before.is_none_or(|it| span.end > it.span.end) {
+                before = Some(child);
             }
-            if !has_after && span.start >= offset && after.is_none_or(|it| span.start < it.start) {
-                after = Some(span);
+            if !has_after && span.start >= offset && after.is_none_or(|it| span.start < it.span.start) {
+                after = Some(child);
             }
         }
         if before.is_some() && after.is_some() {
             break;
         }
     }
-    Region::Between { before, after }
+    (before, after, false)
+}
+
+// ───────────────────────────── where the region ends up ─────────────────────────────
+
+/// What tells, while the document is written, where the ends of the region are in it. Prettier's
+/// `callPluginPrintFunction` puts `cursor` around what is printed for a node, within its comments.
+///
+/// The nodes here are not those of ESTree, so what is compared is where they start and end. Of
+/// several that qualify, the printer takes the innermost.
+#[derive(Copy, Clone)]
+pub(crate) struct CursorRegion {
+    /// Everything that overlaps this is written on the paths that call `enter` and `exit`.
+    extent: Span,
+    /// The cursor is in this node.
+    node: Span,
+    /// The region starts where this node ends.
+    before: Span,
+    /// The region ends where this node starts.
+    after: Span,
+}
+
+/// No node is there.
+const NOWHERE: Span = Span::new(u32::MAX, u32::MAX);
+
+impl CursorRegion {
+    pub(crate) const NONE: CursorRegion = CursorRegion {
+        extent: NOWHERE,
+        node: NOWHERE,
+        before: NOWHERE,
+        after: NOWHERE,
+    };
+
+    fn new<'a>(offset: u32, (first, second, is_node): (Option<Item<'a>>, Option<Item<'a>>, bool)) -> CursorRegion {
+        let marked = |item: Option<Item<'a>>| match item {
+            Some(item) if !matches!(item.kind, Kind::UnmarkedLeaf) => item.span,
+            _ => NOWHERE,
+        };
+        CursorRegion {
+            extent: Span::new(
+                first.map_or(offset, |it| it.span.start.min(offset)),
+                second.or(first).map_or(offset, |it| it.span.end.max(offset)),
+            ),
+            node: if is_node { marked(first) } else { NOWHERE },
+            before: if is_node { NOWHERE } else { marked(first) },
+            after: marked(second),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_active(&self) -> bool {
+        self.extent.start != u32::MAX
+    }
+
+    pub(crate) fn overlaps(&self, span: Span) -> bool {
+        span.start <= self.extent.end && self.extent.start <= span.end
+    }
+
+    /// Before what is at `span` is written, after the comments that lead it.
+    pub(crate) fn enter(&self, span: Span, f: &mut Formatter<'_>) {
+        if span == self.node {
+            f.write_element(FormatElement::Cursor(CursorMark::RegionStart));
+        }
+        if span.start == self.after.start && span.end <= self.after.end {
+            f.write_element(FormatElement::Cursor(CursorMark::RegionEnd));
+        }
+    }
+
+    /// After what is at `span` is written, before the comments that trail it.
+    pub(crate) fn exit(&self, span: Span, f: &mut Formatter<'_>) {
+        if span == self.node {
+            f.write_element(FormatElement::Cursor(CursorMark::RegionEnd));
+        }
+        if span.end == self.before.end && span.start >= self.before.start {
+            f.write_element(FormatElement::Cursor(CursorMark::RegionStart));
+        }
+    }
 }
 
 // ───────────────────────────── where the cursor is afterwards ─────────────────────────────
@@ -1287,16 +1389,19 @@ fn resolve(source: &[u8], offset: u32, region: Region, formatted: &[u8], marks: 
     let old_text = source.get(old_span.start as usize..old_span.end as usize).unwrap_or_default();
     let new_text = formatted.get(new_span.start as usize..new_span.end as usize).unwrap_or_default();
     let cursor = (offset.saturating_sub(old_span.start) as usize).min(old_text.len());
-    if old_text == new_text {
-        return new_span.start + cursor as u32;
-    }
+    let (before_cursor, after_cursor) = old_text.split_at(cursor);
 
+    // Prettier compares with the text that it parses, in which every line break is `\n`.
     let mut old_units = Vec::with_capacity(old_text.len() + 1);
-    push_units(&old_text[..cursor], true, &mut old_units);
-    old_units.push(CURSOR);
-    push_units(&old_text[cursor..], true, &mut old_units);
+    push_units(before_cursor, true, &mut old_units);
+    let units_before = old_units.len();
+    push_units(after_cursor, true, &mut old_units);
     let mut new_units = Vec::with_capacity(new_text.len());
     push_units(new_text, false, &mut new_units);
+    if old_units == new_units {
+        return new_span.start + units_to_bytes(new_text, units_before) as u32;
+    }
+    old_units.insert(units_before, CURSOR);
 
     const MAX_DIFFERENCES: i64 = 1500;
     let bytes = match units_before_cursor(&old_units, &new_units, MAX_DIFFERENCES) {
@@ -1312,23 +1417,72 @@ fn count_units(text: &[u8]) -> usize {
     text.iter().map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0)).sum()
 }
 
+/// `options.cursor_offset`, which counts UTF-16 code units, as an offset in `source`. Prettier's
+/// `normalizeInputAndOptions`: `None` if it is not in the text, of which a byte order mark is no
+/// part.
+fn offset_in(source: &[u8], options: &FormatOptions) -> Option<u32> {
+    let units = options.cursor_offset? as usize;
+    let offset = units_to_bytes(source, units);
+    if count_units(source.get(..offset)?) != units || (units == 0 && source.starts_with(b"\xEF\xBB\xBF")) {
+        return None;
+    }
+    // After `\r\n` has become `\n`, an offset between the two is behind it.
+    let is_in_line_break = offset > 0 && source.get(offset - 1..=offset) == Some(b"\r\n");
+    Some((offset + usize::from(is_in_line_break)) as u32)
+}
+
 /// Appends the formatted text of `file` to `out`. Returns where the cursor, which is at
 /// `options.cursor_offset` in the text of `file`, is in what is appended, in UTF-16 code units like
-/// the option. `None` without the option, and if the text is blank.
+/// the option. `None` without the option, if it is not in the text, and if the text is blank.
 pub fn format_with_cursor<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<Option<u32>, FormatError> {
-    let start = out.len();
-    crate::format(file, options, scratch, out)?;
+    format_with(file, options, scratch, out, false, crate::js::format_file)
+}
+
+/// The same for the document that `write` writes: Prettier's `coreFormat`.
+///
+/// `is_aligned`: its `addAlignmentSize > 0`. Of what is printed, the blanks at both ends are left
+/// out, and a line break ends it.
+pub(crate) fn format_with<'a>(
+    file: &'a File<'a>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+    is_aligned: bool,
+    write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
+) -> Result<Option<u32>, FormatError> {
     let source = file.text();
-    let Some(offset) = options.cursor_offset.filter(|_| !source.trim_ascii().is_empty()) else {
+    let offset = offset_in(source, options).filter(|_| !source.trim_ascii().is_empty());
+    let items = offset.map(|offset| locate_items(file, offset));
+    let cursor = offset.zip(items).map_or(CursorRegion::NONE, |(offset, items)| CursorRegion::new(offset, items));
+
+    let start = out.len();
+    let [mut first, mut second] = crate::ir::run::format_with_marks(file, options, cursor, scratch, out, write)?;
+    // Without a node on one side, the region goes to that end of the document.
+    match items {
+        Some((None, Some(_), _)) => first = Some(0),
+        Some((Some(_), None, false)) => second = Some((out.len() - start) as u32),
+        _ => {}
+    }
+    if is_aligned {
+        let printed = out.get(start..).unwrap_or_default();
+        let leading = printed.len() - printed.trim_ascii_start().len();
+        let end = printed.trim_ascii_end().len().max(leading);
+        let trimmed = |mark: u32| mark.clamp(leading as u32, end as u32) - leading as u32;
+        (first, second) = (first.map(trimmed), second.map(trimmed));
+        out.truncate(start + end);
+        out.drain(start..start + leading);
+        out.extend_from_slice(options.line_ending.resolve(source).as_bytes());
+    }
+
+    let Some(offset) = offset else {
         return Ok(None);
     };
-    let offset = units_to_bytes(source, offset as usize) as u32;
     let formatted = out.get(start..).unwrap_or_default();
-    let new_offset = resolve(source, offset, locate(file, offset), formatted, None) as usize;
+    let new_offset = resolve(source, offset, locate(file, offset), formatted, first.zip(second)) as usize;
     Ok(Some(count_units(formatted.get(..new_offset).unwrap_or(formatted)) as u32))
 }

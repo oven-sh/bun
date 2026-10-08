@@ -2,6 +2,7 @@
 
 use super::comments::{Comment, Comments};
 use super::source_text::SourceText;
+use crate::cursor::CursorRegion;
 use crate::ir::element::FormatElement;
 use crate::options::FormatOptions;
 use bun_lint::ast::File;
@@ -21,6 +22,7 @@ pub(crate) struct JsFormatContext<'a> {
     quote_needed_stack: Vec<bool>,
     /// See `Formatter::is_quiet`.
     pub(crate) is_quiet: bool,
+    pub(crate) cursor: CursorRegion,
 }
 
 impl<'a> JsFormatContext<'a> {
@@ -32,6 +34,7 @@ impl<'a> JsFormatContext<'a> {
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),
             is_quiet: false,
+            cursor: CursorRegion::NONE,
         }
     }
 

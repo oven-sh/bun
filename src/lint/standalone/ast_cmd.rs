@@ -67,7 +67,7 @@ struct Input {
 
 fn read_inputs(path: &str) -> Vec<Input> {
     let text = std::fs::read(path).expect("the inputs");
-    let lines = text.split(|b| *b == b'\n').filter(|line| !line.is_empty());
+    let lines = bun_core::strings::split(&text, b"\n").filter(|line| !line.is_empty());
     let inputs = lines.filter_map(|line| {
         let json = bun_lint::json::parse(line)?;
         let field = |name: &[u8]| json.get(name).and_then(Json::as_str).map(<[u8]>::to_vec);

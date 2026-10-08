@@ -104,9 +104,6 @@ slices! {
         with_bodies: (u32, u32),
         import_attributes: (u32, hir::ExprId),
         deferred_import_calls: (hir::ExprId, u32),
-        import_call_type_args: (hir::ExprId, hir::IdList<hir::TypeNodeId>),
-        specifier_expressions: hir::ExprId,
-        exports_from_expressions: (hir::StmtId, hir::ExprId),
         jsdoc_comments: (u32, u32),
         diagnostics: hir::Diagnostic,
     }
@@ -115,19 +112,15 @@ slices! {
 slices! {
     /// The same for the side tables of a `bind::Bound`.
     Bound of bind::Bound<'_> {
-        scopes: bind::Scope,
         ids: u32,
         expr_symbol: bind::SymbolId,
         expr_parent: bind::Parent,
         stmt_parent: bind::Parent,
-        stmt_scope: bind::ScopeId,
         type_scope: bind::ScopeId,
         pat_parent: bind::PatParent,
         pat_symbol: bind::SymbolId,
         prop_owner: hir::ExprId,
-        member_symbol: bind::SymbolId,
         member_owner: bind::MemberOwner,
-        member_scope: bind::ScopeId,
         param_fn: hir::FnId,
         type_param_symbol: bind::SymbolId,
         type_param_scope: bind::ScopeId,
@@ -137,24 +130,13 @@ slices! {
         class_owner: bind::ClassOwner,
         class_scope: bind::ScopeId,
         interface_symbol: bind::SymbolId,
-        interface_scope: bind::ScopeId,
-        enum_scope: bind::ScopeId,
-        module_scope: bind::ScopeId,
         alias_symbol: bind::SymbolId,
-        alias_scope: bind::ScopeId,
         enum_symbol: bind::SymbolId,
         enum_member_symbol: bind::SymbolId,
         enum_member_owner: hir::EnumId,
         module_symbol: bind::SymbolId,
         var_stmt: hir::StmtId,
         case_stmt: hir::StmtId,
-        import_scope: bind::ScopeId,
-        export_scope: bind::ScopeId,
-        free_idents: (hir::ExprId, bind::ScopeId),
-        alias_idents: (hir::ExprId, bind::ScopeId),
-        arguments_objects: hir::ExprId,
-        unused_labels: hir::StmtId,
-        hoisted_vars: (hir::PatId, bind::ScopeId),
         type_query_operands: hir::ExprId,
     }
 }
@@ -474,6 +456,14 @@ pub trait Handle<'a>: Copy {
     #[doc(hidden)]
     fn from_raw(file: &'a File<'a>, id: u32) -> Self;
 
+    /// `None` if the file has no such node.
+    #[doc(hidden)]
+    fn try_from_raw(file: &'a File<'a>, id: u32) -> Option<Self>;
+
+    /// Whether the file has the node that it refers to.
+    #[doc(hidden)]
+    fn exists(self) -> bool;
+
     /// It is synthesized from a JSDoc comment: lists leave it out.
     #[doc(hidden)]
     #[inline]
@@ -556,6 +546,14 @@ macro_rules! handle {
             #[inline]
             fn from_raw(file: &'a $crate::ast::File<'a>, id: u32) -> Self {
                 $name::new(file, ::bun_sema::hir::$id(id))
+            }
+            #[inline]
+            fn try_from_raw(file: &'a $crate::ast::File<'a>, id: u32) -> Option<Self> {
+                $name::some(file, ::bun_sema::hir::$id(id))
+            }
+            #[inline]
+            fn exists(self) -> bool {
+                self.try_raw().is_some()
             }
             #[inline]
             fn is_synthetic(self) -> bool {

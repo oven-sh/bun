@@ -958,6 +958,15 @@ impl<'a> Prop<'a> {
         Expr::some(self.file, self.raw().value)
     }
 
+    /// `async`, and keywords that are errors here. `get`, `set` and `*` are not modifiers.
+    pub fn modifiers(self) -> List<'a, Modifier<'a>> {
+        let all = self.file.hir.modifiers_of_props;
+        match all.binary_search_by_key(&self.id.0, |it| it.0.0) {
+            Ok(at) => List::run(self.file, all[at].1),
+            Err(_) => List::empty(self.file),
+        }
+    }
+
     /// The function of a method or an accessor.
     pub fn func(self) -> Option<Func<'a>> {
         match self.kind() {

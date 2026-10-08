@@ -524,12 +524,6 @@ impl<'a> EntityName<'a> {
             _ => Span::default(),
         }
     }
-
-    /// The first of the HIR nodes of the names.
-    #[inline]
-    pub(crate) fn first_id(self) -> hir::NameId {
-        hir::NameId(self.names.start)
-    }
 }
 
 handle! {

@@ -281,7 +281,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
-use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
+use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
@@ -2492,49 +2492,6 @@ where
             || self.server().terminated()
     }
 
-    fn do_render_head_response_after_s3_size_resolved(
-        pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
-    ) {
-        // SAFETY: `pair` is the live stack-local threaded through the
-        // synchronous cork call.
-        let pair = unsafe { &*pair };
-        let this = pair.this;
-        this.render_metadata();
-
-        if let Some(resp) = this.resp.get() {
-            // SAFETY: FFI handle
-            resp.write_header_int(b"content-length", pair.size as u64);
-        }
-        this.end_without_body(this.should_close_connection());
-        // `end_without_body` released the base ref; the caller
-        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
-    }
-
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
-    fn on_s3_size_resolved_thunk(
-        result: S3::simple_request::S3StatResult<'_>,
-        this: *mut c_void,
-    ) -> JsResult<()> {
-        let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
-        stat_ref.ctx().on_s3_size_resolved(result);
-        Ok(())
-    }
-
-    pub(crate) fn on_s3_size_resolved(&self, result: S3::simple_request::S3StatResult<'_>) {
-        if let Some(resp) = self.resp.get() {
-            let size = match result {
-                S3::simple_request::S3StatResult::Failure(_)
-                | S3::simple_request::S3StatResult::NotFound(_) => 0,
-                S3::simple_request::S3StatResult::Success(stat) => stat.size,
-            };
-            let mut pair = HeaderResponseSizePair { this: self, size };
-            resp.run_corked_with_type(
-                |p| Self::do_render_head_response_after_s3_size_resolved(p),
-                &raw mut pair,
-            );
-        }
-    }
-
     fn do_render_head_response(
         pair: *mut HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
     ) {
@@ -2640,36 +2597,21 @@ where
             }
 
             Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
-                    // we need to read the size asynchronously
-                    // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    // Ref for the S3 stat; adopted and released by
-                    // `on_s3_size_resolved_thunk`.
-                    this.ref_();
-
-                    let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.get().as_ref().unwrap().data
-                    else {
-                        unreachable!()
-                    };
-                    let credentials = s3.get_credentials();
-                    let path = s3.path();
-                    let _ = S3::client::stat(
-                        credentials,
-                        this.script_context(),
-                        path,
-                        Self::on_s3_size_resolved_thunk,
-                        this.as_ctx_ptr().cast::<c_void>(),
-                        s3.request_payer,
-                    ); // TODO: properly propagate exception upwards
-                    return;
-                }
                 // Size the blob *before* `render_metadata()`: it re-fetches the
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
-                blob.resolve_size();
-                let blob_size = blob.size.get();
+                //
+                // An S3 object has no bytes in memory. GET sends an empty body
+                // for it, so HEAD states that length and asks S3 nothing. Not
+                // through `resolve_size()`: that writes the 0 into the
+                // Response's blob.
+                let blob_size = if shim::blob_is_s3(blob) {
+                    0
+                } else {
+                    blob.resolve_size();
+                    blob.size.get()
+                };
                 this.render_metadata();
 
                 if blob_size == crate::webcore::blob::MAX_SIZE {
@@ -4603,11 +4545,6 @@ request_ctx_exports! {
 struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
     pub stream: WebCore::ReadableStream,
-}
-
-struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
-    pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
-    pub(crate) size: usize,
 }
 
 struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {

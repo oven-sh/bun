@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_scope::{
-    get_rhs_node, has_rest_sibling, is_defined_in_array_pattern, is_read_for_itself,
+    Walks, get_rhs_node, has_rest_sibling, is_defined_in_array_pattern, is_read_for_itself,
     is_referenced_in_array_pattern,
 };
 use bun_lint::utils::{estree_span, get_node_by_range_index};
@@ -223,13 +223,13 @@ fn is_for_in_of_ref(reference: Reference) -> bool {
 
 /// ESLint's `isUsedVariable`, but for `eslintUsed`.
 fn is_used_variable(variable: Variable) -> bool {
-    let (mut rhs, mut functions) = (None, None);
+    let (mut rhs, mut functions, mut walks) = (None, None, Walks::default());
     variable.references().any(|reference| {
         if is_for_in_of_ref(reference) {
             return true;
         }
-        let is_for_itself = is_read_for_itself(reference, rhs);
-        rhs = get_rhs_node(reference, rhs);
+        let is_for_itself = is_read_for_itself(reference, rhs, &mut walks);
+        rhs = get_rhs_node(reference, rhs, &mut walks);
         reference.is_read() && !is_for_itself && !is_self_reference(variable, reference, &mut functions)
     })
 }

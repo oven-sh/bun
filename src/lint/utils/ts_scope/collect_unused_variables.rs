@@ -15,11 +15,12 @@ use super::{
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Handle, Key, KeyKind, Module,
     ModuleName, Name, Node, Param, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
-    UnOp, VarDecl,
+    TypeTag, UnOp, VarDecl,
 };
 use crate::semantic::{Declaration, Reference, ReferenceFlags, Scope, ScopeKind, Symbol};
 use crate::span::Span;
 use crate::tokens::TokenKind;
+use crate::utils::ancestor_memo::AncestorMemo;
 use crate::utils::directives::match_directives_pattern;
 use crate::utils::estree_compat::is_assignment_target;
 use crate::utils::text::{code_points, is_js_whitespace, trim};
@@ -28,6 +29,7 @@ use bun_sema::atom::known;
 use bun_sema::bind::PatParent;
 use bun_sema::hir;
 use smallvec::{SmallVec, smallvec};
+use std::cell::OnceCell;
 
 // ───────────────────────────── eslintUsed ─────────────────────────────
 
@@ -157,9 +159,13 @@ pub struct Variable<'a> {
 
 /// Whether the name that is written at `start` is in the scope of `class`: after its name.
 fn is_in_class_scope(class: Class, start: u32) -> bool {
+    class_scope_range(class).contains_offset(start)
+}
+
+/// From the end of the name of `class` to its end.
+fn class_scope_range(class: Class) -> Span {
     let whole = class.span();
-    let after_name = class.name().map_or(whole.start, |name| name.span().end);
-    after_name <= start && start < whole.end
+    Span::new(class.name().map_or(whole.start, |name| name.span().end), whole.end)
 }
 
 /// The `A` or the `B` of `namespace A.B {}`, which declare nothing in scope-manager.
@@ -280,7 +286,12 @@ impl Facts {
             Declaration::EnumMember(_) => declared | both | Self::MARKED,
             // Few files have a mapped type, and those that do have few.
             Declaration::TypeParam(param) => {
-                match (param.file().hir.mapped.iter()).any(|it| it.param == param.id()) {
+                let mapped = &param.file().hir.mapped;
+                let is_of_mapped_type = match mapped.len() {
+                    0..=8 => mapped.iter().any(|it| it.param == param.id()),
+                    _ => matches!(param.parent(), Node::Type(ty) if ty.tag() == TypeTag::Mapped),
+                };
+                match is_of_mapped_type {
                     true => declared | Self::TYPE | Self::MARKED,
                     false => declared | Self::TYPE,
                 }
@@ -357,9 +368,16 @@ impl<'a> Variable<'a> {
     /// `variable.references`
     pub fn references(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let is_class = is_class(self.symbol);
-        self.symbol
-            .references()
-            .filter(move |it| !is_class || self.has_reference_at(it.ident().start()))
+        // With few declarations it takes less to ask each of them.
+        let classes = (is_class && self.class.is_none() && self.symbol.declaration_count() > 8)
+            .then(|| Ranges::of_classes(self.symbol));
+        self.symbol.references().filter(move |it| {
+            let start = it.ident().start();
+            match &classes {
+                Some(classes) => !classes.contains_offset(start),
+                None => !is_class || self.has_reference_at(start),
+            }
+        })
     }
 
     /// Whether a reference to the symbol that is written at `start` is one to this variable.
@@ -731,16 +749,25 @@ fn as_estree_function(node: Node<'_>) -> Option<Func<'_>> {
         .filter(|func| func.has_body() && func.kind() != FnKind::StaticBlock)
 }
 
+/// What the walks up from the references to a variable have found, for those that start far below:
+/// the operands of `a = a + a + ..`, of `a = 1, a = 2, ..`.
+#[derive(Default)]
+pub struct Walks<'a> {
+    /// The function around a node.
+    functions: AncestorMemo<'a, Func<'a>>,
+    /// `is_in_loop`
+    loops: AncestorMemo<'a, bool>,
+    /// `is_storable_function`, for the functions inside this `rhs_node`.
+    storable: (Option<Expr<'a>>, AncestorMemo<'a, bool>),
+}
+
 /// ESLint's `isInLoop`: there is a loop around `node` in its function.
-fn is_in_loop(node: Node) -> bool {
-    for ancestor in node.ancestors() {
-        match ancestor {
-            Node::Stmt(statement) if statement.is_loop() => return true,
-            _ if as_estree_function(ancestor).is_some() => return false,
-            _ => {}
-        }
-    }
-    false
+fn is_in_loop<'a>(node: Node<'a>, walks: &mut Walks<'a>) -> bool {
+    let found = walks.loops.find(node, |_, ancestor| match ancestor {
+        Node::Stmt(statement) if statement.is_loop() => Some(true),
+        _ => as_estree_function(ancestor).map(|_| false),
+    });
+    found == Some(true)
 }
 
 /// ESLint's and typescript-eslint's `getRhsNode`. If `reference` is the left side of an assignment
@@ -749,6 +776,7 @@ fn is_in_loop(node: Node) -> bool {
 pub fn get_rhs_node<'a>(
     reference: Reference<'a>,
     prev_rhs_node: Option<Expr<'a>>,
+    walks: &mut Walks<'a>,
 ) -> Option<Expr<'a>> {
     if let Some(previous) = prev_rhs_node
         && previous.span().contains_offset(reference.ident().start())
@@ -768,60 +796,71 @@ pub fn get_rhs_node<'a>(
         Some(symbol) => symbol.scope().variable_scope() == scope,
         None => scope.kind() == ScopeKind::Global,
     };
-    (is_in_scope_of_variable && !is_in_loop(Node::Expr(id))).then_some(value)
+    (is_in_scope_of_variable && !is_in_loop(Node::Expr(id), walks)).then_some(value)
 }
 
 /// ESLint's and typescript-eslint's `isStorableFunction`: the function `func_node`, which is inside
 /// `rhs_node`, can be called later. It is assigned, passed to a call, or in a statement.
-pub fn is_storable_function<'a>(func_node: Func<'a>, rhs_node: Expr<'a>) -> bool {
+pub fn is_storable_function<'a>(
+    func_node: Func<'a>,
+    rhs_node: Expr<'a>,
+    walks: &mut Walks<'a>,
+) -> bool {
     let within = rhs_node.span();
-    let mut node = func_node.owner();
-    loop {
-        let parent = node.parent();
+    if walks.storable.0 != Some(rhs_node) {
+        walks.storable = (Some(rhs_node), AncestorMemo::default());
+    }
+    let found = walks.storable.1.find(func_node.owner(), |node, parent| {
         if matches!(parent, Node::File(_)) || !within.contains(parent.span()) {
-            return false;
+            return Some(false);
         }
         match parent {
-            Node::Stmt(_) => return true,
+            Node::Stmt(_) => Some(true),
             // ESTree has the `BlockStatement` of the body between the two.
             Node::Func(body_of) if matches!(node, Node::Stmt(_)) => {
-                if body_of.kind() != FnKind::StaticBlock {
-                    return true;
-                }
+                (body_of.kind() != FnKind::StaticBlock).then_some(true)
             }
             Node::Expr(e) => match e.kind() {
                 ExprKind::Binary {
                     op: BinOp::Comma,
                     right,
                     ..
-                } if Node::Expr(right) != node => return false,
+                } if Node::Expr(right) != node => Some(false),
                 ExprKind::Call(call) | ExprKind::New(call) => {
-                    return Node::Expr(call.callee()) != node;
+                    Some(Node::Expr(call.callee()) != node)
                 }
-                ExprKind::Assign { .. } if !is_assignment_target(e) => return true,
-                ExprKind::TaggedTemplate(_) | ExprKind::Yield { .. } => return true,
-                _ => {}
+                ExprKind::Assign { .. } if !is_assignment_target(e) => Some(true),
+                ExprKind::TaggedTemplate(_) | ExprKind::Yield { .. } => Some(true),
+                _ => None,
             },
-            _ => {}
+            _ => None,
         }
-        node = parent;
-    }
+    });
+    found == Some(true)
 }
 
 /// ESLint's and typescript-eslint's `isInsideOfStorableFunction`: `id` is in a function inside
 /// `rhs_node` that can be called later.
-pub fn is_inside_of_storable_function<'a>(id: Node<'a>, rhs_node: Expr<'a>) -> bool {
-    id.ancestors()
-        .find_map(as_estree_function)
-        .is_some_and(|func| {
-            rhs_node.span().contains(func.owner().span()) && is_storable_function(func, rhs_node)
-        })
+pub fn is_inside_of_storable_function<'a>(
+    id: Node<'a>,
+    rhs_node: Expr<'a>,
+    walks: &mut Walks<'a>,
+) -> bool {
+    let function = (walks.functions).find(id, |_, ancestor| as_estree_function(ancestor));
+    function.is_some_and(|func| {
+        rhs_node.span().contains(func.owner().span())
+            && is_storable_function(func, rhs_node, walks)
+    })
 }
 
 /// ESLint's and typescript-eslint's `isReadForItself`: the variable is read only to compute its
 /// own next value. `a += 1` and `a++` whose value is not used, and the `a` on the right of
 /// `a = a + 1`, for which `rhs_node` is what [`get_rhs_node`] returned for the reference before.
-pub fn is_read_for_itself<'a>(reference: Reference<'a>, rhs_node: Option<Expr<'a>>) -> bool {
+pub fn is_read_for_itself<'a>(
+    reference: Reference<'a>,
+    rhs_node: Option<Expr<'a>>,
+    walks: &mut Walks<'a>,
+) -> bool {
     if !reference.is_read() {
         return false;
     }
@@ -845,7 +884,7 @@ pub fn is_read_for_itself<'a>(reference: Reference<'a>, rhs_node: Option<Expr<'a
     is_self_update
         || rhs_node.is_some_and(|rhs| {
             rhs.span().contains_offset(reference.ident().start())
-                && !is_inside_of_storable_function(reference.node(), rhs)
+                && !is_inside_of_storable_function(reference.node(), rhs, walks)
         })
 }
 
@@ -856,14 +895,14 @@ fn has_use<'a>(
     references: impl Iterator<Item = Reference<'a>>,
     counts: impl Fn(Reference<'a>) -> bool,
 ) -> bool {
-    let mut rhs_node = None;
+    let (mut rhs_node, mut walks) = (None, Walks::default());
     for reference in references {
         let flags = reference.flags();
         // Only what is written to is on the left of an assignment or the operand of an update, and
         // without an assignment before there is no right side to be in.
         if flags.contains(ReferenceFlags::WRITE) || rhs_node.is_some() {
-            let is_for_itself = is_read_for_itself(reference, rhs_node);
-            rhs_node = get_rhs_node(reference, rhs_node);
+            let is_for_itself = is_read_for_itself(reference, rhs_node, &mut walks);
+            rhs_node = get_rhs_node(reference, rhs_node, &mut walks);
             if is_for_itself {
                 continue;
             }
@@ -902,14 +941,65 @@ pub fn get_self_reference_ranges(variable: Variable) -> SmallVec<[Span; 2]> {
     variable.defs().filter_map(self_reference_range).collect()
 }
 
+/// Ranges, to ask whether an offset is in one of them, in the logarithm of their number.
+struct Ranges {
+    /// By where they start. Each ends where the last of those up to it ends.
+    sorted: Vec<Span>,
+}
+
+impl Ranges {
+    fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
+        let mut sorted: Vec<Span> = ranges.collect();
+        sorted.sort_unstable_by_key(|it| it.start);
+        let mut end = 0;
+        for range in &mut sorted {
+            end = end.max(range.end);
+            range.end = end;
+        }
+        Ranges { sorted }
+    }
+
+    /// Where the name of a class is the other variable: in the classes that `symbol` is the name of.
+    fn of_classes(symbol: Symbol) -> Ranges {
+        Ranges::new(symbol.declarations().filter_map(|it| match it {
+            Declaration::Class(class) => Some(class_scope_range(class)),
+            _ => None,
+        }))
+    }
+
+    fn contains_offset(&self, offset: u32) -> bool {
+        let before = self.sorted.partition_point(|it| it.start <= offset);
+        (before.checked_sub(1).and_then(|it| self.sorted.get(it))).is_some_and(|it| offset < it.end)
+    }
+}
+
 fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
     let is_split = facts.has(Facts::CLASS);
-    let references = (variable.symbol.references())
-        .filter(|it| !is_split || variable.has_reference_at(it.ident().start()));
+    // With few declarations it takes less to ask each of them.
+    let has_many_declarations = variable.symbol.declaration_count() > 8;
+    let (classes, own_ranges) = (OnceCell::new(), OnceCell::new());
+    let is_in_a_class = |start: u32| {
+        (classes.get_or_init(|| Ranges::of_classes(variable.symbol))).contains_offset(start)
+    };
+    let references = variable.symbol.references().filter(|it| {
+        let start = it.ident().start();
+        match (is_split, variable.class) {
+            (false, _) => true,
+            (true, None) if has_many_declarations => !is_in_a_class(start),
+            (true, _) => variable.has_reference_at(start),
+        }
+    });
     has_use(references, |reference| {
         let is_from_outside = || {
             let start = reference.ident().start();
-            !variable.symbol.declarations().any(|it| {
+            let mut declarations = variable.symbol.declarations();
+            if has_many_declarations {
+                let ranges = own_ranges.get_or_init(|| {
+                    Ranges::new(declarations.filter(|it| is_definition(*it)).filter_map(self_reference_range))
+                });
+                return !ranges.contains_offset(start);
+            }
+            !declarations.any(|it| {
                 self_reference_range(it).is_some_and(|range| range.contains_offset(start))
                     && is_definition(it)
             })

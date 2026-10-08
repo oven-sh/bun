@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
     SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, has_rest_sibling,
     is_defined_in_array_pattern, is_referenced_in_array_pattern, is_type_only_reference,
@@ -354,8 +355,10 @@ enum VariableType {
     Variable,
 }
 
-pub struct State {
+pub struct State<'a> {
     is_definition_file: bool,
+    /// That a node is in a `declare namespace`.
+    declared: AncestorMemo<'a, ()>,
 }
 
 // ───────────────────────────── ambient declarations ─────────────────────────────
@@ -787,7 +790,7 @@ impl NoUnusedVars {
         };
         if cx.state.is_definition_file
             || is_declared_module(Node::Stmt(node))
-            || Node::Stmt(node).ancestors().any(is_declared_module)
+            || (cx.state.declared.find(Node::Stmt(node), |_, it| is_declared_module(it).then_some(()))).is_some()
         {
             mark_ambient_declarations(module.innermost().body());
         }
@@ -876,7 +879,7 @@ impl Rule for NoUnusedVars {
         .has_suggestions()
         .recommended()
         .extends_base_rule("no-unused-vars");
-    type State<'a> = State;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -905,13 +908,16 @@ impl Rule for NoUnusedVars {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         on.stmts([StmtTag::Module], Self::check_module);
         on.finish(Self::check_program);
         let is_definition_file = is_definition_file(file.path());
         if is_definition_file {
             mark_ambient_declarations(file.body());
         }
-        State { is_definition_file }
+        State {
+            is_definition_file,
+            declared: AncestorMemo::default(),
+        }
     }
 }

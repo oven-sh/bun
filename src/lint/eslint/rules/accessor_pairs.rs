@@ -1,4 +1,6 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 
 /// Enforce getter and setter pairs in objects and classes.
 pub struct AccessorPairs {
@@ -77,6 +79,49 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
     }
 }
 
+/// What two keys have in common exactly if they are equal keys.
+#[derive(PartialEq, Eq, Hash)]
+enum KeyIdentity<'a> {
+    Private(Name<'a>),
+    Static(Cow<'a, [u8]>),
+    /// The kind, the length and the value of each token.
+    Tokens(Vec<u8>),
+}
+
+impl<'a> KeyIdentity<'a> {
+    fn of(file: &'a File<'a>, key: Key<'a>) -> Self {
+        if let KeyKind::Private(name) = key.kind() {
+            return KeyIdentity::Private(name);
+        }
+        if let Some(name) = ast_utils::get_static_key_name(key) {
+            return KeyIdentity::Static(name);
+        }
+        let mut tokens = Vec::new();
+        for token in file.tokens_in(key.inner_span(file)) {
+            let value = token.decoded_value();
+            tokens.push(token.kind() as u8);
+            tokens.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            tokens.extend_from_slice(&value);
+        }
+        KeyIdentity::Tokens(tokens)
+    }
+}
+
+/// With more keys than this, they are compared by [`key_groups`], not each with each.
+pub(crate) const MAX_KEYS_TO_COMPARE_IN_PAIRS: usize = 8;
+
+/// For each of `keys` a number, less than the number of keys, that it shares with the keys that
+/// are equal to it (ESLint's `areEqualKeys`) and with no other. In time proportional to the text
+/// of the keys.
+pub(crate) fn key_groups<'a>(file: &'a File<'a>, keys: impl Iterator<Item = Key<'a>>) -> Vec<u32> {
+    let mut groups = FxHashMap::default();
+    keys.map(|key| {
+        let next = groups.len() as u32;
+        *groups.entry(KeyIdentity::of(file, key)).or_insert(next)
+    })
+    .collect()
+}
+
 impl AccessorPairs {
     fn check_list<'a>(
         &self,
@@ -85,15 +130,38 @@ impl AccessorPairs {
         missing_setter: Message,
         cx: &Cx<'a, Self>,
     ) {
-        for accessor in accessors.clone() {
-            let is_checked = if accessor.is_getter { self.get_without_set } else { self.set_without_get };
-            let is_paired = |other: Accessor<'a>| {
-                other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
-            };
-            if is_checked && !accessors.clone().any(is_paired) {
-                let message = if accessor.is_getter { missing_setter } else { missing_getter };
-                cx.report(ast_utils::get_function_head_loc(accessor.func), message)
-                    .data("name", ast_utils::get_function_name_with_kind(accessor.func));
+        let is_checked = |accessor: Accessor<'a>| match accessor.is_getter {
+            true => self.get_without_set,
+            false => self.set_without_get,
+        };
+        let report = |accessor: Accessor<'a>| {
+            let message = if accessor.is_getter { missing_setter } else { missing_getter };
+            cx.report(ast_utils::get_function_head_loc(accessor.func), message)
+                .data("name", ast_utils::get_function_name_with_kind(accessor.func));
+        };
+        if accessors.clone().nth(MAX_KEYS_TO_COMPARE_IN_PAIRS).is_none() {
+            for accessor in accessors.clone() {
+                let is_paired = |other: Accessor<'a>| {
+                    other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
+                };
+                if is_checked(accessor) && !accessors.clone().any(is_paired) {
+                    report(accessor);
+                }
+            }
+            return;
+        }
+        let groups = key_groups(cx.file(), accessors.clone().map(|it| it.key));
+        // Whether the group has a getter, and whether it has a setter.
+        let mut kinds = vec![[false; 2]; groups.len()];
+        for (accessor, &group) in accessors.clone().zip(&groups) {
+            if let Some(kinds) = kinds.get_mut(group as usize) {
+                kinds[usize::from(accessor.is_getter)] = true;
+            }
+        }
+        for (accessor, &group) in accessors.clone().zip(&groups) {
+            let is_paired = kinds.get(group as usize).is_some_and(|it| it[usize::from(!accessor.is_getter)]);
+            if is_checked(accessor) && !is_paired {
+                report(accessor);
             }
         }
     }

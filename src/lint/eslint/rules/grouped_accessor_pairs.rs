@@ -1,3 +1,4 @@
+use super::accessor_pairs::{MAX_KEYS_TO_COMPARE_IN_PAIRS, key_groups};
 use bun_lint::prelude::*;
 
 /// Require grouped accessor pairs in object literals and classes.
@@ -80,31 +81,55 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
 impl GroupedAccessorPairs {
     /// ESLint's `checkList`.
     fn check_list<'a>(&self, accessors: &(impl Iterator<Item = Accessor<'a>> + Clone), cx: &Cx<'a, Self>) {
-        for getter in accessors.clone().filter(|it| it.is_getter) {
-            // Nothing is reported for a name that has several getters or several setters.
-            let mut others = (accessors.clone())
-                .filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
-            let (Some(setter), None) = (others.next(), others.next()) else {
-                continue;
-            };
-            if setter.is_getter {
-                continue;
+        // Nothing is reported for a name that has several getters or several setters.
+        if accessors.clone().nth(MAX_KEYS_TO_COMPARE_IN_PAIRS).is_none() {
+            for getter in accessors.clone().filter(|it| it.is_getter) {
+                let mut others = (accessors.clone())
+                    .filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
+                if let (Some(setter), None) = (others.next(), others.next()) {
+                    self.check_pair(getter, setter, cx);
+                }
             }
-            let is_getter_first = getter.index < setter.index;
-            let (former, latter) = if is_getter_first { (getter, setter) } else { (setter, getter) };
-            let message = if getter.index.abs_diff(setter.index) > 1 {
-                NOT_GROUPED
-            } else if self.order == Order::GetBeforeSet && !is_getter_first
-                || self.order == Order::SetBeforeGet && is_getter_first
-            {
-                INVALID_ORDER
-            } else {
-                continue;
-            };
-            cx.report(ast_utils::get_function_head_loc(latter.func), message)
-                .data("formerName", ast_utils::get_function_name_with_kind(former.func))
-                .data("latterName", ast_utils::get_function_name_with_kind(latter.func));
+            return;
         }
+        let groups = key_groups(cx.file(), accessors.clone().map(|it| it.key));
+        // The first two of each group, and how many there are.
+        let mut members = vec![(None, None, 0usize); groups.len()];
+        for (accessor, &group) in accessors.clone().zip(&groups) {
+            if let Some((first, second, count)) = members.get_mut(group as usize) {
+                let slot = if first.is_none() { first } else { second };
+                slot.get_or_insert(accessor);
+                *count += 1;
+            }
+        }
+        for pair in members {
+            match pair {
+                (Some(getter), Some(setter), 2) if getter.is_getter => self.check_pair(getter, setter, cx),
+                (Some(setter), Some(getter), 2) => self.check_pair(getter, setter, cx),
+                _ => {}
+            }
+        }
+    }
+
+    /// `getter`, and the only other accessor of that name.
+    fn check_pair<'a>(&self, getter: Accessor<'a>, setter: Accessor<'a>, cx: &Cx<'a, Self>) {
+        if setter.is_getter || !getter.is_getter {
+            return;
+        }
+        let is_getter_first = getter.index < setter.index;
+        let (former, latter) = if is_getter_first { (getter, setter) } else { (setter, getter) };
+        let message = if getter.index.abs_diff(setter.index) > 1 {
+            NOT_GROUPED
+        } else if self.order == Order::GetBeforeSet && !is_getter_first
+            || self.order == Order::SetBeforeGet && is_getter_first
+        {
+            INVALID_ORDER
+        } else {
+            return;
+        };
+        cx.report(ast_utils::get_function_head_loc(latter.func), message)
+            .data("formerName", ast_utils::get_function_name_with_kind(former.func))
+            .data("latterName", ast_utils::get_function_name_with_kind(latter.func));
     }
 
     /// `TSMethodSignature`s

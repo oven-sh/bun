@@ -947,12 +947,12 @@ function abortHandshake(socket, code, message, headers) {
     ...headers,
   };
 
-  // No status can reach the peer once the socket is ended or destroyed, or its response is on the wire.
-  const response = socket._httpMessage;
-  const unanswerable = socket.writableEnded || socket.destroyed || response?.headersSent;
+  const gone = socket.writableEnded || socket.destroyed;
 
-  // handleUpgrade() from a 'request' listener answers through that request's ServerResponse.
-  if (response && !unanswerable) {
+  // handleUpgrade() from a 'request' listener answers through that request's ServerResponse, while
+  // that response can still send a status.
+  const response = socket._httpMessage;
+  if (response && !response.headersSent && !gone) {
     response.writeHead(code, headers);
     response.write(message);
     response.end();
@@ -962,8 +962,8 @@ function abortHandshake(socket, code, message, headers) {
   // Another WebSocketServer on the same http.Server has already taken this connection.
   if (socket[kBunInternals]?.upgraded) return;
 
-  // Not end(): a half-close under a writable response leaves it unable to end.
-  if (unanswerable) {
+  // Nothing can go out on an ended socket, and end() on one raises an 'error' instead.
+  if (gone) {
     socket.destroy();
     return;
   }
@@ -1589,6 +1589,11 @@ class WebSocketServer extends EventEmitter {
         });
       }
       cb(ws, request);
+    } else if (socket._httpMessage?.headersSent) {
+      // The native upgrade was refused under a response that is already on the wire. A raw 500 has
+      // no framing of its own there, and the half-close it ends with leaves that response unable to
+      // end, which turns the usual `if (!res.writableEnded) res.end()` into a throw.
+      socket.destroy();
     } else {
       abortHandshake(socket, 500);
     }

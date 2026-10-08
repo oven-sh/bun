@@ -1970,8 +1970,7 @@ where
         if upgrader.is_aborted_or_ended() || upgrader.did_upgrade_web_socket() {
             return Ok(JSValue::FALSE);
         }
-        // A connection the server ended is not aborted, so the test above does not see it.
-        // Decide before the writes below, and before this request gives up its response.
+        // Not aborted, so the test above misses it. Decide before the writes below.
         if resp.is_closed() || resp.is_shutdown() {
             return Ok(JSValue::FALSE);
         }

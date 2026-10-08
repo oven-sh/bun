@@ -977,12 +977,8 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
   });
 });
 
-// uWS refuses to adopt a closed or shut down socket. HttpResponse::upgrade() destructs
-// HttpResponseData before it adopts, so a refused socket kept its HTTP context with WebSocketData
-// built into its ext, and its close destructed that block as an HttpResponseData. The two tests
-// below reach the refusal: the first with a socket that is shut down before the upgrade starts, the
-// second with one that turns shut down while the 101 is written. Each runs in a child process,
-// and a debug build needs several seconds there to load node:http and ws, hence the timeouts.
+// Two roads to a socket uWS cannot adopt: one shut down before the upgrade starts, one that turns
+// shut down while its 101 is written. Each spawns a debug build, hence the timeouts.
 test.concurrent(
   "handleUpgrade() refuses a socket that a 'headers' listener ended, and the close of that socket is clean",
   async () => {

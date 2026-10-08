@@ -8,12 +8,12 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collect, extract, writeBundle } from "../bundle.ts";
 
-const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "misc"];
+const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "handlebars", "misc"];
 // Being written. The runner leaves them out unless `--languages` names them.
-const newLanguages = ["html", "vue", "angular", "lwc", "mjml", "handlebars", "flow"];
+const newLanguages = ["html", "vue", "angular", "lwc", "mjml", "flow"];
 
-const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx"];
-const newParsers = ["html", "vue", "angular", "lwc", "mjml", "glimmer"];
+const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "glimmer"];
+const newParsers = ["html", "vue", "angular", "lwc", "mjml"];
 /** The parsers that count in the tests of a directory. `flow` only where it is the first: elsewhere `babel` stands for it. */
 const parsersIn = (directory: string) => [...ours, ...newParsers, ...(directory.startsWith("flow/") ? ["flow", "babel-flow"] : [])];
 /** The name of a file that is parsed with the parser. */

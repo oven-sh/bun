@@ -21,7 +21,7 @@ const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Pret
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const FLOW: &str = "Flow's type syntax";
 const EMBEDDED: &str = "embedded HTML, which needs a formatter for that language";
-const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular, Handlebars";
+const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
 
 /// What is not run, and why. A case is left out if its path contains the text.
@@ -74,8 +74,10 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("markdown/code/lwc/lwc.md", EMBEDDED),
     ("markdown/cursor/17227.md", EMBEDDED),
     ("misc/front-matter/with-plugins", PLUGIN),
+    ("handlebars/front-matter/toml", PLUGIN),
     ("js/_errors_/html-like-comments.js", HTML_LIKE_COMMENT),
-    ("jsx/jsx-test-suite/rejected-snippets/0.js", HTML_LIKE_COMMENT),
+    ("jsx/jsx-test-suite/rejected-snippets/0/0006-e58e.jsx", HTML_LIKE_COMMENT),
+    ("jsx/jsx-test-suite/rejected-snippets/1/0006-e58e.jsx", HTML_LIKE_COMMENT),
     ("typescript/_errors_/babel-ts2/multiline-declaration-abstract-class.ts", ONLY_BABEL_TS_REJECTS),
     ("typescript/_errors_/babel-ts2/multiline-declaration-interface.ts", ONLY_BABEL_TS_REJECTS),
     ("typescript/_errors_/babel-ts2/multiline-declaration-module.ts", ONLY_BABEL_TS_REJECTS),
@@ -358,7 +360,6 @@ fn directory_of_new_parser(parser: &[u8]) -> Option<&'static [u8]> {
         b"angular" => Some(b"angular"),
         b"lwc" => Some(b"lwc"),
         b"mjml" => Some(b"mjml"),
-        b"glimmer" => Some(b"handlebars"),
         _ => None,
     }
 }
@@ -387,7 +388,7 @@ fn is_javascript_parser(name: &[u8]) -> bool {
 /// Prints `FAIL <check> <case> <options>` for each check that fails, how many pass of each kind,
 /// and how many cases are not run for which reason.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
-    let languages = flags.languages.unwrap_or(b"js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,mdx,misc");
+    let languages = flags.languages.unwrap_or(b"js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,misc");
     let mut by_directory: BTreeMap<Vec<u8>, Tally> = BTreeMap::new();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
     let fail = |kind: &str, id: &[u8], described: &[u8]| output_line!("FAIL {kind} {}{}", BStr::new(id), BStr::new(described));
@@ -410,7 +411,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 // JSON or a style sheet: the parser is not left to the name of the file.
                 let is_named = |it: &&[u8]| match directory_of_new_parser(it) {
                     Some(directory) => strings::split(languages, b",").any(|asked| asked == directory),
-                    None => it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss" | b"graphql" | b"yaml" | b"markdown" | b"mdx"),
+                    None => it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss" | b"graphql" | b"yaml" | b"markdown" | b"mdx" | b"glimmer"),
                 };
                 let first_parser = case.parsers.first().map(Vec::as_slice);
                 // What is rejected says by which parser in its title, or not at all.

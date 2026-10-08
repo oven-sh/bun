@@ -26,6 +26,8 @@ pub(crate) struct Context<'c> {
     pub(crate) cwd: &'c [u8],
     /// Whether [`FileResult::text`] is read.
     pub(crate) keeps_text: bool,
+    /// Whether the fixes and the suggestions of messages are read, if only to be counted.
+    pub(crate) reads_fixes: bool,
     pub(crate) timing: &'c Timing,
 }
 
@@ -39,7 +41,7 @@ impl Context<'_> {
             allow_inline_config: self.options.inline_config,
             // It is part of the configuration: see `Loader::override_config`.
             report_unused_disable_directives: None,
-            wants_fixes: true,
+            wants_fixes: self.fixes() || self.reads_fixes,
             // Warnings have to be counted for `--max-warnings`.
             rule_filter: match self.options.quiet && self.options.max_warnings == -1 {
                 true => Some(&only_errors),
@@ -50,6 +52,17 @@ impl Context<'_> {
 
     pub(crate) fn fixes(&self) -> bool {
         self.options.fix || self.options.fix_dry_run
+    }
+
+    /// oxlint's `--fix-suggestions`: a suggestion is as good as a fix.
+    pub(crate) fn promote_suggestions(&self, result: &mut LintResult) {
+        if !self.options.fix_suggestions {
+            return;
+        }
+        for message in result.messages.iter_mut().filter(|it| it.fix.is_none() && !it.suggestions.is_empty()) {
+            message.fix = Some(message.suggestions.swap_remove(0).fix);
+            message.suggestions.clear();
+        }
     }
 
     /// ESLint's `fix` option as `getFixerForFixTypes` makes it.
@@ -100,7 +113,8 @@ impl Context<'_> {
         let atoms = Interner::new_in(&session);
         let arena = session.arena();
         let how = config.language.parse_options(path);
-        let (mut hir, _) = bun_js_parser::sema::summarize(
+        let (mut hir, _) = bun_js_parser::sema::summarize_as(
+            how.dialect,
             arena,
             path,
             how.script_kind,
@@ -124,7 +138,8 @@ impl Context<'_> {
             };
         }
         let file = File::new(path, &hir, &bound, &atoms, &config.language, None);
-        let result = self.linter.lint(&file, config, &self.lint_options());
+        let mut result = self.linter.lint(&file, config, &self.lint_options());
+        self.promote_suggestions(&mut result);
         self.timing.add(&self.timing.rules, parsed);
         result
     }
@@ -171,6 +186,7 @@ impl Context<'_> {
             messages: result.messages,
             suppressed: result.suppressed,
             suppressed_by_file: 0,
+            thrown: result.thrown,
             is_fixed,
             is_ignored: false,
             config: Some(Arc::clone(config)),

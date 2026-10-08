@@ -5,7 +5,7 @@ use bun_lint::linter::{ResolvedConfig, RuleId, write_json, write_json_string};
 use bun_lint::options::Json;
 
 /// `JSON.stringify(value, null, "  ")`
-fn write_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
+pub(crate) fn write_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
     let new_line = |out: &mut Vec<u8>, depth: usize| {
         out.push(b'\n');
         out.resize(out.len() + depth * 2, b' ');
@@ -41,11 +41,11 @@ fn write_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
     }
 }
 
-fn text(text: &[u8]) -> Json {
+pub(crate) fn text(text: &[u8]) -> Json {
     Json::String(text.to_vec())
 }
 
-fn object(entries: Vec<(&[u8], Json)>) -> Json {
+pub(crate) fn object(entries: Vec<(&[u8], Json)>) -> Json {
     Json::Object(entries.into_iter().map(|(key, value)| (key.to_vec(), value)).collect())
 }
 
@@ -70,8 +70,11 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         (RuleId::Known(rule.entry.meta).to_vec(), Json::Array(setting))
     });
     let mut plugins = vec![text(b"@")];
-    if config.rules.iter().any(|it| it.entry.meta.plugin == bun_lint::rule::Plugin::TypeScript) {
-        plugins.push(text(b"@typescript-eslint"));
+    let of_rules = config.rules.iter().map(|it| it.entry.meta.plugin);
+    for prefix in config.plugins.clone().unwrap_or_else(|| of_rules.collect()).iter().map(|it| text(it.prefix().as_bytes())) {
+        if prefix != text(b"") && !plugins.contains(&prefix) {
+            plugins.push(prefix);
+        }
     }
     plugins.extend(config.foreign_plugins.iter().map(|it| text(it)));
     let language = &config.language;

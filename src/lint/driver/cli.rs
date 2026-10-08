@@ -84,6 +84,25 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--silent"),
     clap::param!("--ignore-path <path>"),
     clap::param!("--disable-nested-config"),
+    clap::param!("--fix-suggestions"),
+    clap::param!("--fix-dangerously"),
+    clap::param!("--type-check"),
+    clap::param!("--rules"),
+    clap::param!("--lsp"),
+    clap::param!("--disable-unicorn-plugin"),
+    clap::param!("--disable-oxc-plugin"),
+    clap::param!("--disable-typescript-plugin"),
+    clap::param!("--import-plugin"),
+    clap::param!("--react-plugin"),
+    clap::param!("--jsdoc-plugin"),
+    clap::param!("--jest-plugin"),
+    clap::param!("--vitest-plugin"),
+    clap::param!("--jsx-a11y-plugin"),
+    clap::param!("--nextjs-plugin"),
+    clap::param!("--react-perf-plugin"),
+    clap::param!("--promise-plugin"),
+    clap::param!("--node-plugin"),
+    clap::param!("--vue-plugin"),
 ];
 
 /// ESLint's `fixTypes`.
@@ -143,6 +162,13 @@ pub struct Options {
     pub help: bool,
     /// Flags of ESLint that are accepted and have no effect, as they were written.
     pub without_effect: Vec<&'static [u8]>,
+    /// oxlint's `--fix-suggestions`: the first suggestion of a problem is applied like a fix.
+    pub fix_suggestions: bool,
+    /// oxlint's `--rules`: lists the rules, and lints nothing.
+    pub rules: bool,
+    /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
+    /// in `plugins`, and whether it is on.
+    pub plugins: Vec<(&'static [u8], bool)>,
     /// `--type-aware`, `--no-type-aware`. `None`: as the configuration says.
     pub type_aware: Option<bool>,
     pub project: Option<Vec<u8>>,
@@ -206,6 +232,9 @@ impl Default for Options {
             version: false,
             help: false,
             without_effect: Vec::new(),
+            fix_suggestions: false,
+            rules: false,
+            plugins: Vec::new(),
             type_aware: None,
             project: None,
             threads: 0,
@@ -351,6 +380,19 @@ impl Options {
             b"silent" => self.silent = is_on,
             b"ignore-path" => self.ignore_path = owned(),
             b"disable-nested-config" => self.disable_nested_config = is_on,
+            b"fix-suggestions" => (self.fix, self.fix_suggestions) = (is_on, is_on),
+            // No fix here is marked as dangerous.
+            b"fix-dangerously" => self.fix = is_on,
+            // Type errors are what `bun check` reports.
+            b"type-check" => self.type_aware = Some(is_on),
+            b"rules" => self.rules = is_on,
+            _ if is_on && name.ends_with(b"-plugin") => {
+                let plugin = &name[..name.len() - b"-plugin".len()];
+                self.plugins.push(match plugin.strip_prefix(b"disable-") {
+                    Some(plugin) => (plugin, false),
+                    None => (plugin, true),
+                });
+            }
             b"cache-strategy" if !matches!(text, b"metadata" | b"content") => {
                 return error(&[b"Option cache-strategy: '", text, b"' not one of metadata or content."]);
             }
@@ -367,7 +409,24 @@ impl Options {
     /// `args`: what follows `lint` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = Options::default();
-        crate::args::parse(PARAMS, args, &mut |argument| match argument {
+        // What oxlint writes differently.
+        let (mut rewritten, count): (Vec<&[u8]>, usize) = (Vec::new(), args.len());
+        for (at, arg) in args.iter().copied().enumerate() {
+            match arg {
+                b"-V" => rewritten.push(b"--version"),
+                _ if arg.starts_with(b"--debug=") => {
+                    for option in strings::split(&arg[b"--debug=".len()..], b",") {
+                        rewritten.push(if option == b"files" { b"--list-files" } else { b"--timing" });
+                    }
+                }
+                // It takes no file.
+                b"--print-config" if args.get(at + 1).is_none_or(|next| next.starts_with(b"-")) || at + 1 == count => {
+                    rewritten.extend([&b"--print-config"[..], b"__placeholder__.js"]);
+                }
+                arg => rewritten.push(arg),
+            }
+        }
+        crate::args::parse(PARAMS, &rewritten, &mut |argument| match argument {
             Argument::Flag { name, value, is_on } => options.set(name, value, is_on),
             Argument::Positional(pattern) => {
                 options.patterns.push(pattern.to_vec());

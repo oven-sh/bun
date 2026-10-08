@@ -1,7 +1,7 @@
 //! `bun lint`: ESLint's `cli.execute`.
 
 use crate::cli::Options;
-use crate::configs::Loader;
+use crate::configs::{Flavor, Loader};
 use crate::discover::{self, Status, Target};
 use crate::format::{self, Format};
 use crate::lint::{Context, elapsed};
@@ -67,6 +67,8 @@ pub struct Outcome {
     pub stderr: Vec<u8>,
     pub exit_code: u8,
 }
+
+const NO_FILES_FOR_OXLINT: &[u8] = b"No files found to lint. Please check your paths and ignore patterns.";
 
 /// Why nothing can be linted: the message. ESLint throws, and exits with 2.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -162,12 +164,18 @@ impl Run<'_> {
         self.out
     }
 
-    fn format(&self) -> Result<Format, Vec<u8>> {
+    /// `is_oxlint`: the configuration of the working directory is oxlint's.
+    fn format(&self, is_oxlint: bool) -> Result<Format, Vec<u8>> {
         let Some(name) = &self.options.format else {
-            // An agent is saved from opening the files.
-            return Ok(if self.environment.is_ai_agent { Format::Agent } else { Format::Stylish });
+            return Ok(match is_oxlint {
+                // An agent is saved from opening the files.
+                _ if self.environment.is_ai_agent => Format::Agent,
+                // Like its `default`.
+                true => Format::Pretty,
+                false => Format::Stylish,
+            });
         };
-        Format::by_name(name)
+        Format::by_name(name, is_oxlint)
             .ok_or_else(|| [b"There is no formatter \"", &name[..], b"\". Those that exist: ", Format::NAMES.as_bytes(), b"."].concat())
     }
 
@@ -271,8 +279,13 @@ impl Run<'_> {
             return Err(Fatal(b"'patterns' must be a non-empty string or an array of non-empty strings".to_vec()));
         }
         let started = Instant::now();
-        let targets = discover::find_files(loader, pool, patterns, self.options.error_on_unmatched_pattern)?;
+        // oxlint says nothing about an argument that matches nothing, as long as there is a file.
+        let is_oxlint = loader.for_directory(&self.environment.cwd).is_ok_and(|it| it.flavor == Flavor::Oxlint);
+        let targets = discover::find_files(loader, pool, patterns, self.options.error_on_unmatched_pattern && !is_oxlint)?;
         phases.discovery = started.elapsed().as_secs_f64();
+        if is_oxlint && self.options.error_on_unmatched_pattern && !targets.iter().any(|it| matches!(it.status, Status::Matched(_))) {
+            return Err(Fatal(NO_FILES_FOR_OXLINT.to_vec()));
+        }
         if self.options.list_files {
             let listed = targets.into_iter().filter(|it| matches!(it.status, Status::Matched(_)));
             return Ok(Linted {
@@ -391,12 +404,20 @@ impl Run<'_> {
         if let Some(refusal) = self.refusal() {
             return self.fail(&refusal);
         }
-        let format = match self.format() {
+        let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES]));
+        let loader = Loader::new(&linter, options, environment);
+        // One that cannot be read is reported when a file is linted with it.
+        let of_cwd = loader.for_directory(&environment.cwd).ok();
+        let format = match self.format(of_cwd.as_ref().is_some_and(|it| it.flavor == Flavor::Oxlint)) {
             Ok(format) => format,
             Err(error) => return self.fail(&error),
         };
-        let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES]));
-        let loader = Loader::new(&linter, options, environment);
+        if options.rules {
+            let categories = loader.categories();
+            let as_json = matches!(format, Format::Json | Format::OxlintJson);
+            format::oxlint::write_rules(&mut self.out.stdout, linter.registry(), &|index| categories[index], as_json);
+            return self.out;
+        }
         let timing = Timing {
             is_on: options.timing,
             ..Timing::default()
@@ -405,7 +426,8 @@ impl Run<'_> {
             linter: &linter,
             options,
             cwd: &environment.cwd,
-            keeps_text: format.reads_text(),
+            keeps_text: format.reads_text() && !options.silent,
+            reads_fixes: format.reads_fixes() && !options.silent,
             timing: &timing,
         };
         if let Some(file) = &options.print_config {
@@ -435,7 +457,13 @@ impl Run<'_> {
         }
         let Linted { mut results, files, listed } = match linted {
             Ok(linted) => linted,
-            Err(Fatal(error)) => return self.fail(&error),
+            Err(Fatal(error)) => {
+                let is_about_files = error == NO_FILES_FOR_OXLINT;
+                let mut out = self.fail(&error);
+                // As oxlint.
+                out.exit_code = if is_about_files { 1 } else { out.exit_code };
+                return out;
+            }
         };
         if let Some(listed) = listed {
             for path in listed {
@@ -443,6 +471,10 @@ impl Run<'_> {
                 self.out.stdout.push(b'\n');
             }
             return self.out;
+        }
+
+        if let Some(thrown) = results.iter().find_map(|it| it.thrown.as_ref()) {
+            return self.fail(thrown);
         }
 
         let mut fixed = 0;
@@ -475,7 +507,13 @@ impl Run<'_> {
             results.iter_mut().for_each(FileResult::keep_errors_only);
             results.retain(|it| !it.messages.is_empty());
         }
-        let has_too_many_warnings = options.max_warnings >= 0 && counts.warnings as i64 > options.max_warnings;
+        // What the command line does not say, the `options` of an `.oxlintrc.json` can.
+        let max_warnings = match options.max_warnings {
+            -1 => of_cwd.as_ref().and_then(|it| it.max_warnings).unwrap_or(-1),
+            given => given,
+        };
+        let denies_warnings = options.deny_warnings || of_cwd.as_ref().is_some_and(|it| it.denies_warnings);
+        let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
         results.sort_by(|a, b| compare_paths(&a.path, &b.path));
 
         let started = Instant::now();
@@ -483,9 +521,22 @@ impl Run<'_> {
             cwd: &environment.cwd,
             color: options.color.unwrap_or(environment.stdout.colors),
             color_option: options.color,
-            max_warnings_exceeded: has_too_many_warnings.then_some((options.max_warnings, counts.warnings)),
+            max_warnings_exceeded: has_too_many_warnings.then_some((max_warnings, counts.warnings)),
             shows_all: options.all,
             github_annotations: environment.is_github_action,
+            run: format::oxlint::Run {
+                files,
+                rules: of_cwd.as_ref().filter(|_| format == Format::OxlintJson).and_then(|it| {
+                    match it.config.get(linter.registry(), &paths::join(&environment.cwd, b"__placeholder__.js")) {
+                        FileConfig::Matched(config) => Some(config.rules.iter().filter(|it| it.severity != Severity::Off).count()),
+                        _ => None,
+                    }
+                }),
+                threads: pool.threads,
+                seconds: self.began.elapsed().as_secs_f64(),
+            },
+            pool: &pool,
+            version: environment.version,
         };
         let output = if options.silent { Vec::new() } else { format::format(format, &results, &meta) };
         phases.formatting = started.elapsed().as_secs_f64();
@@ -503,7 +554,7 @@ impl Run<'_> {
         }
 
         if counts.errors == 0 && has_too_many_warnings {
-            let text = format!("Found too many warnings (maximum: {}).", options.max_warnings);
+            let text = format!("Found too many warnings (maximum: {max_warnings}).");
             self.error(text.as_bytes());
         }
         if !options.stdin && !options.silent {
@@ -522,7 +573,7 @@ impl Run<'_> {
         self.out.exit_code = if options.exit_on_fatal_error && counts.fatal_errors > 0 {
             2
         } else {
-            u8::from(counts.errors > 0 || has_too_many_warnings || (options.deny_warnings && counts.warnings > 0))
+            u8::from(counts.errors > 0 || has_too_many_warnings || (denies_warnings && counts.warnings > 0))
         };
         self.out
     }

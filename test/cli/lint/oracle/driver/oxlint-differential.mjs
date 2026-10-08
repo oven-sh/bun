@@ -1,7 +1,9 @@
 // Runs oxlint and `bun lint` on a project that has an `.oxlintrc.json`, and compares what they report for the rules that both
 // implement, by (file, line, column, rule), and which files they lint.
 //
-//   bun oxlint-differential.mjs --project=<directory> --oxlint=<path of oxlint> --bin="<bun-lint> cli" [--show[=rule]] [-- <arguments for both>]
+//   bun oxlint-differential.mjs --project=<directory> --oxlint=<path of oxlint> --bin="<bun-lint> cli" [--show[=rule]] [--status] [-- <arguments for both>]
+//
+// `--status`: whether the exit code is 0 is compared too, where every diagnostic of oxlint is of a rule that both have.
 //
 // The project can be confidential, so this script is built to leak nothing of its text:
 // - It writes no file. It has no option to.
@@ -71,15 +73,18 @@ function tuplesOfOxlint(stdout) {
   try {
     parsed = JSON.parse(stdout);
   } catch {
+    // It has refused the command line or the configuration, or found no file.
+    if (own.includes("--status")) return { tuples: [], files: 0 };
     console.error("the output of oxlint is not JSON");
     process.exit(2);
   }
   for (const diagnostic of parsed.diagnostics ?? []) {
     const rule = ruleOfOxlint(diagnostic.code);
     const span = diagnostic.labels?.[0]?.span;
-    if (!rule || !span) continue;
+    if (!span || (diagnostic.code && !rule)) continue;
     const file = path.resolve(project, diagnostic.filename);
-    tuples.push({ file: path.relative(project, file), ...position(file, span), rule });
+    // Without a code: a syntax error, or a comment that disables nothing.
+    tuples.push({ file: path.relative(project, file), ...position(file, span), rule: rule ?? "(none)" });
   }
   return { tuples, files: parsed.number_of_files };
 }
@@ -106,7 +111,7 @@ const ours = run(bin, ["--format=unix", ...extra]);
 const expected = tuplesOfOxlint(theirs.stdout);
 const actual = tuplesOfBun(ours.stdout);
 
-const isShared = rule => rules.has(rule) || rules.has(`@typescript-eslint/${rule}`);
+const isShared = rule => rule === "(none)" || rules.has(rule) || rules.has(`@typescript-eslint/${rule}`);
 // The second diagnostic of a rule at a position is another key than the first: `a!.b!` has two at `a`.
 const keyed = tuples => {
   const seen = new Map();
@@ -155,5 +160,9 @@ console.log(
 console.table(Object.fromEntries([...byRule].sort()));
 if (show) {
   for (const line of differences.sort()) if (show === true || line.includes(` ${show}`)) console.log(line);
+}
+if (own.includes("--status") && notShared.size === 0 && (theirs.status === 0) !== (ours.status === 0)) {
+  console.log(`! exit code: oxlint ${theirs.status}, bun lint ${ours.status}`);
+  process.exit(1);
 }
 process.exit(differences.length ? 1 : 0);

@@ -298,7 +298,10 @@ pub(crate) fn find_files(
         match fs::kind_and_size(&path) {
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
-                let status = loaded.config.get(loader.linter.registry(), &path).into();
+                let status = match loader.ignores_named_file(&path, &loaded) {
+                    true => Status::Ignored,
+                    false => loaded.config.get(loader.linter.registry(), &path).into(),
+                };
                 found.push(Target {
                     path,
                     size,

@@ -3,6 +3,7 @@
 use super::Meta;
 use crate::results::FileResult;
 use bun_lint::linter::{LintMessage, Utf16Offsets, write_json_string as write_string};
+use bun_threading::Guarded;
 use std::io::Write;
 
 /// `by_file`: so many of the last are hidden by `eslint-suppressions.json`.
@@ -63,13 +64,22 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
     out.push(b'}');
 }
 
-pub(super) fn write_results(out: &mut Vec<u8>, results: &[FileResult]) {
+pub(super) fn write_results(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    // The text of every file with a problem is in it: on all threads.
+    let mut pieces: Guarded<Vec<Vec<u8>>> = Guarded::new(results.iter().map(|_| Vec::new()).collect());
+    meta.pool.for_each(results.len(), 8, &|index| {
+        let mut piece = Vec::new();
+        write_result(&mut piece, &results[index]);
+        pieces.lock()[index] = piece;
+    });
+    let pieces = pieces.get_mut();
+    out.reserve(pieces.iter().map(|it| it.len() + 1).sum::<usize>() + 2);
     out.push(b'[');
-    for (i, result) in results.iter().enumerate() {
+    for (i, piece) in pieces.iter().enumerate() {
         if i > 0 {
             out.push(b',');
         }
-        write_result(out, result);
+        out.extend_from_slice(piece);
     }
     out.push(b']');
 }
@@ -77,7 +87,7 @@ pub(super) fn write_results(out: &mut Vec<u8>, results: &[FileResult]) {
 /// `rulesMeta` has what is known here of the `meta` of each rule that is reported.
 pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     out.extend_from_slice(b"{\"results\":");
-    write_results(out, results);
+    write_results(out, results, meta);
     out.extend_from_slice(b",\"metadata\":{");
     if let Some(color) = meta.color_option {
         let _ = write!(out, "\"color\":{color},");

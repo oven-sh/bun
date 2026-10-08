@@ -1,8 +1,10 @@
 //! Lints the files that have rules which need types.
 //!
-//! They are type checked as `bun check <files>` checks them: each with the `tsconfig.json` that an
-//! editor uses for it. A file is linted right after it is checked, by the thread that checked it,
-//! while its types are there. Type errors are not reported: that is what `bun check` is for.
+//! Each is type checked with the `tsconfig.json` that an editor uses for it, and as an editor does
+//! it: what it imports is only looked at as far as its types are asked for, and a project that is
+//! referenced is read from its sources. A file is linted right after it is checked, by the thread
+//! that checked it, while its types are there. Type errors are not reported: that is what
+//! `bun check` is for.
 //!
 //! # Fixes
 //!
@@ -64,7 +66,8 @@ fn check_and_lint(
         let config = files[indices[at]].config;
         let started = context.timing.now();
         let linted = bun_lint::types::with_file(checker, file, &config.language, Some(&read_library), |file| {
-            let result = context.linter.lint(file, config, &options);
+            let mut result = context.linter.lint(file, config, &options);
+            context.promote_suggestions(&mut result);
             let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
             let text = (is_reported && (context.keeps_text || context.fixes())).then(|| file.text().to_vec());
             (result, text)
@@ -97,6 +100,10 @@ fn check_and_lint(
         task_clock: None,
         plan_options: bun_sema_driver::PlanOptions {
             after_file_is_for_checked_files: true,
+            // As in an editor, which is what `projectService` of typescript-eslint is.
+            checks_only_named: true,
+            reads_sources_of_references: true,
+            current_directory_is_of_the_project: true,
             ..Default::default()
         },
         retains_everything: false,

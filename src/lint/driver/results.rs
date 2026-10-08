@@ -48,6 +48,8 @@ pub(crate) struct FileResult {
     /// How many of `suppressed`, at its end, are hidden by `eslint-suppressions.json`, not by a
     /// comment.
     pub(crate) suppressed_by_file: usize,
+    /// What ESLint throws while it lints the file. Nothing is printed but this.
+    pub(crate) thrown: Option<Vec<u8>>,
     pub(crate) counts: Counts,
     /// The text that the messages are about: that of the file, or `output` if there is one. Kept
     /// only if there is something to say about the file, and the format reads it.
@@ -84,6 +86,7 @@ impl FileResult {
             messages,
             suppressed: Vec::new(),
             suppressed_by_file: 0,
+            thrown: None,
             text: None,
             is_fixed: false,
             has_source: false,

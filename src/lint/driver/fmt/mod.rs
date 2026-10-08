@@ -18,6 +18,7 @@ use bun_lint::language::LanguageOptions;
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, bind};
 use bun_sema::hir::Diagnostic;
+use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
@@ -42,14 +43,32 @@ enum Failure {
     Unsupported(&'static str),
 }
 
+/// What the file at `path` is parsed as, one after the other until there is no error: a module,
+/// then a script, as the parsers of Prettier do.
+fn dialects(path: &[u8]) -> &'static [Dialect] {
+    const MODULE: Dialect = Dialect::babel(false);
+    const SCRIPT: Dialect = Dialect::babel(true);
+    match path {
+        _ if path.ends_with(b".mjs") || path.ends_with(b".mts") => &[MODULE],
+        _ if path.ends_with(b".cjs") || path.ends_with(b".cts") => &[SCRIPT],
+        _ => &[MODULE, SCRIPT],
+    }
+}
+
 /// Parses `text` as the file at `path` and calls `then` with it, and with the first error in it.
-fn with_file<R>(path: &[u8], text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, Option<&'a Diagnostic>) -> R) -> R {
+fn with_file<R>(
+    path: &[u8],
+    text: &[u8],
+    dialect: Dialect,
+    then: impl for<'a> FnOnce(&'a File<'a>, Option<&'a Diagnostic>) -> R,
+) -> R {
     let language = LanguageOptions::default();
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
     let how = language.parse_options(path);
-    let (mut hir, _) = bun_js_parser::sema::summarize(
+    let (mut hir, _) = bun_js_parser::sema::summarize_as(
+        dialect,
         arena,
         path,
         how.script_kind,
@@ -112,7 +131,19 @@ fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratch, verif
     if !options.is_supported() {
         return Err(Failure::Unsupported("experimentalTernaries and experimentalOperatorPosition are not supported yet."));
     }
-    with_file(path, text, |file, first_error| {
+    let mut first_failure = None;
+    for &dialect in dialects(path) {
+        match format_as(path, text, dialect, how, scratch, verifies) {
+            Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
+            done => return done,
+        }
+    }
+    Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
+}
+
+fn format_as(path: &[u8], text: &[u8], dialect: Dialect, how: &Resolved, scratch: &mut Scratch, verifies: bool) -> Result<Vec<u8>, Failure> {
+    let options = &how.options;
+    with_file(path, text, dialect, |file, first_error| {
         let mut out = Vec::new();
         match bun_format::format(file, options, scratch, &mut out) {
             Ok(()) => {}
@@ -124,7 +155,7 @@ fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratch, verif
             out.truncate(end);
         }
         if verifies && out != text {
-            let is_same = with_file(path, &out, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
+            let is_same = with_file(path, &out, dialect, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
             if !is_same {
                 return Err(Failure::Bug("formatting would change what the code means"));
             }

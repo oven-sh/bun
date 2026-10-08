@@ -24,7 +24,7 @@ pub(crate) const ESLINT: &str = concat!(include_str!("evaluate-track.js"), inclu
 pub(crate) const PRETTIER: &str = concat!(include_str!("evaluate-track.js"), include_str!("fmt/evaluate-prettier.js"));
 
 /// FNV-1a.
-fn hash(parts: &[&[u8]]) -> u64 {
+pub(crate) fn hash(parts: &[&[u8]]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in parts.iter().flat_map(|part| part.iter().chain(&[0])) {
         hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);

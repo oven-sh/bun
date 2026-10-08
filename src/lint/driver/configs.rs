@@ -10,7 +10,7 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{Config, Linter, RcFlavor, ResolvedConfig};
+use bun_lint::linter::{Config, FileConfig, Linter, RcFlavor, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
@@ -72,6 +72,10 @@ pub(crate) struct Loaded {
     pub(crate) flavor: Flavor,
     /// `options.typeAware` of an `.oxlintrc.json`.
     pub(crate) is_type_aware: bool,
+    /// `options.denyWarnings`
+    pub(crate) denies_warnings: bool,
+    /// `options.maxWarnings`
+    pub(crate) max_warnings: Option<i64>,
 }
 
 pub(crate) type Found = Result<Arc<Loaded>, Fatal>;
@@ -312,9 +316,33 @@ impl<'l> Loader<'l> {
                 entries.retain(|it| it.0 != b"ignorePatterns");
             }
             apply_filters(entries, &options.filters);
-            let unused = match options.report_unused_disable_directives {
-                true => Some(Severity::Error),
-                false => options.report_unused_disable_directives_severity,
+            if flavor == RcFlavor::Oxlint && !options.plugins.is_empty() {
+                let mut plugins: Vec<Json> = match entries.iter().find(|it| it.0 == b"plugins") {
+                    Some((_, Json::Array(plugins))) => plugins.clone(),
+                    _ => [&b"unicorn"[..], b"typescript", b"oxc"].iter().map(|it| Json::String(it.to_vec())).collect(),
+                };
+                for (name, is_on) in &options.plugins {
+                    plugins.retain(|it| it.as_str() != Some(name));
+                    if *is_on {
+                        plugins.push(Json::String(name.to_vec()));
+                    }
+                }
+                entries.retain(|it| it.0 != b"plugins");
+                entries.push((b"plugins".to_vec(), Json::Array(plugins)));
+            }
+            let of_file = (entries.iter().find(|it| it.0 == b"options").filter(|_| flavor == RcFlavor::Oxlint))
+                .and_then(|it| it.1.get(b"reportUnusedDisableDirectives"))
+                .and_then(|it| match it.as_str()? {
+                    b"allow" | b"off" => Some(Severity::Off),
+                    b"warn" => Some(Severity::Warn),
+                    b"deny" | b"error" => Some(Severity::Error),
+                    _ => None,
+                });
+            let unused = match (options.report_unused_disable_directives, flavor) {
+                // oxlint warns.
+                (true, RcFlavor::Oxlint) => Some(Severity::Warn),
+                (true, RcFlavor::Eslint) => Some(Severity::Error),
+                (false, _) => options.report_unused_disable_directives_severity.or(of_file),
             };
             if let Some(severity) = unused {
                 entries.retain(|it| it.0 != b"reportUnusedDisableDirectives");
@@ -355,6 +383,8 @@ impl<'l> Loader<'l> {
             config: self.flat(root, bun_lint::json::parse(&text).unwrap_or(Json::Null))?,
             flavor: Flavor::BuiltIn,
             is_type_aware: false,
+            denies_warnings: false,
+            max_warnings: None,
         }))
     }
 
@@ -385,7 +415,13 @@ impl<'l> Loader<'l> {
             },
             |it| it.0,
         );
-        let is_type_aware = json.get(b"options").and_then(|it| it.get(b"typeAware")).and_then(Json::as_bool) == Some(true);
+        let option = |name: &[u8]| json.get(b"options").filter(|_| flavor == Flavor::Oxlint).and_then(|it| it.get(name)).cloned();
+        let is_on = |name: &[u8]| option(name).and_then(|it| it.as_bool()) == Some(true);
+        let (is_type_aware, denies_warnings) = (is_on(b"typeAware") || is_on(b"typeCheck"), is_on(b"denyWarnings"));
+        let max_warnings = match option(b"maxWarnings") {
+            Some(Json::Number(count)) => Some(count as i64),
+            _ => None,
+        };
         let config = match flavor {
             Flavor::Eslint | Flavor::BuiltIn => {
                 let is_empty = match &json {
@@ -413,7 +449,9 @@ impl<'l> Loader<'l> {
         Ok(Arc::new(Loaded {
             config,
             flavor,
-            is_type_aware: is_type_aware && flavor == Flavor::Oxlint,
+            is_type_aware,
+            denies_warnings,
+            max_warnings,
         }))
     }
 
@@ -449,7 +487,9 @@ impl<'l> Loader<'l> {
             b"" if !self.options.config_lookup => Ok(Arc::new(Loaded {
                 config: self.flat(base_path, Json::Array(Vec::new()))?,
                 flavor: Flavor::Eslint,
-                    is_type_aware: false,
+                is_type_aware: false,
+                denies_warnings: false,
+                max_warnings: None,
             })),
             b"" => self.built_in(),
             path => self.read(path, base_path),
@@ -532,6 +572,17 @@ impl<'l> Loader<'l> {
         if self.options.ignore { &[b".gitignore", b".eslintignore"] } else { &[b".gitignore"] }
     }
 
+    /// Whether a file that is an argument is left out all the same, as by oxlint: `.eslintignore`
+    /// or `--ignore-path` has a pattern for it. `.gitignore` is not asked.
+    pub(crate) fn ignores_named_file(&self, path: &[u8], loaded: &Loaded) -> bool {
+        if loaded.flavor != Flavor::Oxlint || !self.options.ignore {
+            return false;
+        }
+        let file = self.options.ignore_path.as_deref().map_or_else(|| b".eslintignore".to_vec(), paths::from_native);
+        let file = paths::resolve(self.cwd(), &file);
+        gitignore::is_ignored(&gitignore::with_file(None, paths::dirname(&file), &file), path, false)
+    }
+
     /// The ignore files that count in `directory`, where a search starts.
     pub(crate) fn ignore_files_at(&self, directory: &[u8], loaded: &Loaded) -> Chain {
         if !self.reads_ignore_files(loaded) {
@@ -542,6 +593,35 @@ impl<'l> Loader<'l> {
             Some(path) => gitignore::with_file(chain, self.cwd(), &paths::resolve(self.cwd(), &paths::from_native(path))),
             None => chain,
         }
+    }
+
+    /// The category of oxlint that each rule of the registry is in.
+    pub(crate) fn categories(&self) -> Vec<Option<&'static str>> {
+        const ALL: [&str; 7] = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
+        let registry = self.linter.registry();
+        let mut categories = vec![None; registry.all().len()];
+        for category in ALL {
+            // What a configuration that has only this category turns on.
+            let severity = |it: &str| Json::String(if it == category { b"error".to_vec() } else { b"off".to_vec() });
+            const PLUGINS: [&[u8]; 5] = [b"typescript", b"react", b"import", b"node", b"oxc"];
+            let plugins = PLUGINS.iter().map(|it| Json::String(it.to_vec()));
+            let json = object(vec![
+                (b"plugins", Json::Array(plugins.collect())),
+                (b"categories", Json::Object(ALL.iter().map(|it| (it.as_bytes().to_vec(), severity(it))).collect())),
+            ]);
+            let Ok(config) = Config::from_rc_json(registry, b"/", &json, RcFlavor::Oxlint, &mut |_, _| None) else {
+                continue;
+            };
+            let FileConfig::Matched(config) = config.get(registry, b"/a.ts") else {
+                continue;
+            };
+            for rule in config.rules.iter().filter(|it| it.severity != Severity::Off) {
+                if let Some(index) = registry.index_of(rule.entry) {
+                    categories[index] = Some(category);
+                }
+            }
+        }
+        categories
     }
 
     pub(crate) fn environment(&self) -> &'l Environment<'l> {

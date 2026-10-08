@@ -174,6 +174,11 @@ impl<'a> ChainMember<'a> {
     }
 }
 
+/// oxfmt writes `a[0 /* comment */]` like `a[b /* comment */]`, with a way to break after the `[`.
+fn breaks_around_a_number_with_comments<'a>(member: Expr<'a>, f: &Formatter<'a>) -> bool {
+    f.options().flavor.is_oxfmt() && f.comments().has_comment_before(member.span().end)
+}
+
 /// The `[b]` or `?.[b]` of `a[b]`.
 pub(crate) struct FormatComputedMemberExpressionWithoutObject<'a>(pub(crate) Expr<'a>);
 
@@ -191,7 +196,7 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
         }
 
         let optional = member.is_optional().then_some("?.");
-        if matches!(index.kind(), ExprKind::Number(_)) {
+        if matches!(index.kind(), ExprKind::Number(_)) && !breaks_around_a_number_with_comments(member, f) {
             write!(f, [optional, "[", index, "]"]);
         } else {
             write!(f, group(&format_args!(optional, "[", soft_block_indent(&index), "]")));

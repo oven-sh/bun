@@ -455,6 +455,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// number is the number only if it is a numeric literal in the source. A property without a
     /// declaration, like a tuple element, is named by a string.
     pub(super) fn key_type_of_prop(&mut self, owner: TypeId, prop: &Prop) -> Option<TypeId> {
+        if let PropSource::Mapped(of, ..) = prop.source
+            && let Some(name) = self.name_type_of_mapped_prop(of, prop)
+        {
+            return Some(name);
+        }
         if prop.flags.contains(PropFlags::STRING_NAME) {
             return Some(self.string_literal(prop.name, false));
         }
@@ -488,7 +493,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(self.string_literal(prop.name, false));
             }
             PropSource::Intersected(_, parts) => return self.key_type_of_props(owner, parts),
-            PropSource::Mapped(of, ..) => return self.name_type_of_mapped_prop(*of, prop),
             // It has the `ValueDeclaration` of the first, and uses the syntax of the name there.
             PropSource::Copy(_, parts, true) => return self.key_type_of_prop(owner, &parts[0]),
             _ => return self.key_type_of_name(prop.name),
@@ -514,20 +518,18 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `nameType` of `prop`, a property of the mapped type `of`: `propNameType` of
     /// `addMemberForKeyTypeWorker`, for all the keys that map to its name. A member of an enum is
-    /// not the string that it spells.
+    /// not the string that it spells. `None`: it is not known from which key.
     fn name_type_of_mapped_prop(&mut self, of: TypeId, prop: &Prop) -> Option<TypeId> {
         let TypeData::Anon {
             origin: Origin::Mapped(file, node),
             ..
         } = *self.data(of)
         else {
-            return self.key_type_of_name(prop.name);
+            return None;
         };
         let mapped = self.mapped_decl(file, node);
         let param = self.type_param(file, mapped.param);
-        let Some(key) = self.types().map(prop.mapper, param) else {
-            return self.key_type_of_name(prop.name);
-        };
+        let key = self.types().map(prop.mapper, param)?;
         let names = if mapped.name_ty.is_some() {
             let declared = self.declared_name_type_of_mapped(file, node);
             self.instantiate(declared, prop.mapper)
@@ -541,7 +543,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         match spelling_it[..] {
-            [] => self.key_type_of_name(prop.name),
+            [] => None,
             [one] => Some(one),
             _ => Some(self.union(&spelling_it)),
         }

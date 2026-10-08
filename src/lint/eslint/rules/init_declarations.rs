@@ -1,4 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
+use rustc_hash::FxHashMap;
 
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
@@ -84,28 +86,47 @@ pub fn declared_namespace_around(statement: Stmt<'_>) -> Option<Module<'_>> {
     })
 }
 
-/// Whether a `declare namespace` somewhere in `body` ends before `offset`.
-fn has_declared_namespace_before<'a>(body: List<'a, Stmt<'a>>, offset: u32) -> bool {
-    body.iter().take_while(|it| it.span().start < offset).any(|it| match it.kind() {
-        StmtKind::Module(module) => {
-            has_declare(it) && it.span().end <= offset
-                || has_declared_namespace_before(module.innermost().body(), offset)
+/// Where the first of the `declare namespace`s somewhere in `namespace` ends.
+fn end_of_first_declared_namespace_in(namespace: Module<'_>) -> Option<u32> {
+    let (mut first, mut pending) = (None, vec![namespace]);
+    while let Some(namespace) = pending.pop() {
+        for statement in namespace.innermost().body() {
+            if let StmtKind::Module(inner) = statement.kind() {
+                let end = statement.span().end;
+                if has_declare(statement) && first.is_none_or(|first| end < first) {
+                    first = Some(end);
+                }
+                pending.push(inner);
+            }
         }
-        _ => false,
-    })
+    }
+    first
+}
+
+#[derive(Default)]
+pub struct State<'a> {
+    declared_namespaces: AncestorMemo<'a, Module<'a>>,
+    /// [`end_of_first_declared_namespace_in`] a `declare namespace`, by its statement.
+    first_ends: FxHashMap<Stmt<'a>, Option<u32>>,
 }
 
 /// ESLint's `insideDeclaredNamespace`, which is a flag and not a depth: the end of a
 /// `declare namespace` clears it for the rest of the one around.
-fn is_inside_declared_namespace(statement: Stmt) -> bool {
-    declared_namespace_around(statement).is_some_and(|namespace| {
-        !has_declared_namespace_before(namespace.innermost().body(), statement.span().start)
+fn is_inside_declared_namespace<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
+    let namespace = state.declared_namespaces.find(Node::Stmt(statement), |_, ancestor| match ancestor.as_stmt()?.kind() {
+        StmtKind::Module(module) if has_declare(module.stmt()) => Some(module),
+        _ => None,
+    });
+    namespace.is_some_and(|namespace| {
+        let first_end = state.first_ends.entry(namespace.stmt());
+        let first_end = *first_end.or_insert_with(|| end_of_first_declared_namespace_in(namespace));
+        first_end.is_none_or(|end| end > statement.span().start)
     })
 }
 
 impl Rule for InitDeclarations {
     const META: Meta = Meta::eslint("init-declarations", Kind::Suggestion);
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         InitDeclarations {
@@ -113,17 +134,18 @@ impl Rule for InitDeclarations {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.var_decls(|rule, decl, cx| {
             let Some(found) = rule.config.check(decl) else {
                 return;
             };
             if decl.flags().contains(Flags::AMBIENT)
-                && (has_declare(found.declaration) || is_inside_declared_namespace(found.declaration))
+                && (has_declare(found.declaration) || is_inside_declared_namespace(found.declaration, &mut cx.state))
             {
                 return;
             }
             cx.report(decl, found.message).data("idName", found.name);
         });
+        State::default()
     }
 }

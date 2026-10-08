@@ -43,6 +43,19 @@ pub struct FormatOptions {
     pub embedded_language_formatting: EmbeddedLanguageFormatting,
     /// The name of the file, if it is not the one that it was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
+    /// Only what is between the two is formatted. As in Prettier, they count UTF-16 code units.
+    pub range_start: Option<u32>,
+    pub range_end: Option<u32>,
+    /// Where the cursor is, in UTF-16 code units. Where it ends up is part of the result.
+    pub cursor_offset: Option<u32>,
+    /// Puts `@format` in a comment at the top of the file.
+    pub insert_pragma: bool,
+    /// Only a file with `@format` or `@prettier` in a comment at its top is formatted.
+    pub require_pragma: bool,
+    /// A file with `@noformat` or `@noprettier` in a comment at its top is not formatted.
+    pub check_ignore_pragma: bool,
+    /// Whose output to produce where the two differ.
+    pub flavor: Flavor,
 }
 
 /// An option has a value that Prettier does not accept, or there is no such option.
@@ -107,6 +120,10 @@ impl FormatOptions {
             }
             b"bracketSpacing" => self.bracket_spacing = BracketSpacing(boolean()?),
             b"bracketSameLine" => self.bracket_same_line = BracketSameLine(boolean()?),
+            // The name it had before 2.4. One of the two is enough.
+            b"jsxBracketSameLine" => {
+                self.bracket_same_line = BracketSameLine(boolean()? || self.bracket_same_line.value());
+            }
             b"arrowParens" => {
                 self.arrow_parentheses = match value {
                     b"always" => ArrowParentheses::Always,
@@ -143,6 +160,22 @@ impl FormatOptions {
                 };
             }
             b"filepath" => self.filepath = Some(value.into()),
+            b"rangeStart" => self.range_start = Some(number(u32::MAX)?),
+            // `Infinity` is the default.
+            b"rangeEnd" => self.range_end = number(u32::MAX).ok(),
+            // -1 is the default.
+            b"cursorOffset" => self.cursor_offset = number(u32::MAX).ok(),
+            b"insertPragma" => self.insert_pragma = boolean()?,
+            b"requirePragma" => self.require_pragma = boolean()?,
+            b"checkIgnorePragma" => self.check_ignore_pragma = boolean()?,
+            // Not an option of Prettier. The kind of the configuration file decides.
+            b"flavor" => {
+                self.flavor = match value {
+                    b"prettier" => Flavor::Prettier,
+                    b"oxfmt" => Flavor::Oxfmt,
+                    _ => return Err(InvalidOption),
+                };
+            }
             _ => return Err(InvalidOption),
         }
         Ok(())
@@ -152,6 +185,21 @@ impl FormatOptions {
     /// `experimentalOperatorPosition: "start"` are understood and not implemented.
     pub fn is_supported(&self) -> bool {
         !self.experimental_ternaries && self.experimental_operator_position == OperatorPosition::End
+    }
+}
+
+/// oxfmt follows an older Prettier (3.8) in a few places, and has a few rules of its own. Whoever
+/// has an `.oxfmtrc.json` gets no diff from switching.
+#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+pub enum Flavor {
+    #[default]
+    Prettier,
+    Oxfmt,
+}
+
+impl Flavor {
+    pub const fn is_oxfmt(self) -> bool {
+        matches!(self, Flavor::Oxfmt)
     }
 }
 

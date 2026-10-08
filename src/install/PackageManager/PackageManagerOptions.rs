@@ -21,6 +21,18 @@ pub enum OfflineMode {
     Offline,
 }
 
+/// Which `.env` files this install loaded.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum EnvFiles {
+    /// The default files of the project root.
+    #[default]
+    Default,
+    /// `--no-env-file` / bunfig `env = false`: none.
+    Disabled,
+    /// `--env-file`: only the named files.
+    Explicit,
+}
+
 // `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
 // `&'static [u8]` per PORTING.md (no lifetime params on structs).
@@ -103,6 +115,9 @@ pub struct Options {
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
 
+    /// The security scanner child follows this: it is a `bun` that loads `.env` files itself.
+    pub(crate) env_files: EnvFiles,
+
     // Minimum release age in ms (security feature)
     // Only install packages published at least N ms ago
     pub minimum_release_age_ms: Option<f64>,
@@ -178,6 +193,7 @@ impl Default for Options {
             hoist: true,
             offline: OfflineMode::Online,
             security_scanner: None,
+            env_files: EnvFiles::Default,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
             cpu: Npm::Architecture::CURRENT,

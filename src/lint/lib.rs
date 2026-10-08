@@ -13,7 +13,7 @@
 pub mod ast;
 pub mod code_path;
 pub mod context;
-pub mod estree;
+pub(crate) mod estree;
 pub mod fix;
 pub mod json;
 pub mod language;

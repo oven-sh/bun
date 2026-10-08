@@ -362,6 +362,9 @@ impl Parser<'_> {
 
                             if off >= self.size || helpers::is_newline(self.text[off as usize]) {
                                 container.contents_indent += 1;
+                            } else if container.ch == b'>' {
+                                // Only the 1st space after '>' is part of the mark
+                                line.indent = line.indent.saturating_sub(1);
                             } else if line.indent <= self.code_indent_offset {
                                 container.contents_indent += line.indent;
                                 line.indent = 0;
@@ -395,6 +398,9 @@ impl Parser<'_> {
 
                         if off >= self.size || helpers::is_newline(self.text[off as usize]) {
                             container.contents_indent += 1;
+                        } else if container.ch == b'>' {
+                            // Only the 1st space after '>' is part of the mark
+                            line.indent = line.indent.saturating_sub(1);
                         } else if line.indent <= self.code_indent_offset {
                             container.contents_indent += line.indent;
                             line.indent = 0;

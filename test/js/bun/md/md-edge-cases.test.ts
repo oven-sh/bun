@@ -1847,3 +1847,15 @@ describe("blank lines of code in list items", () => {
     expect(Markdown.html("- ```\n  a\n \n  ```\n")).toBe("<ul>\n<li>\n<pre><code>a\n\n</code></pre>\n</li>\n</ul>\n");
   });
 });
+
+describe("white space behind the marker of a block quote", () => {
+  test("only the first space belongs to the marker", () => {
+    expect(Markdown.html(">   - a\n>   - b\n")).toBe(
+      "<blockquote>\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n</blockquote>\n",
+    );
+    expect(Markdown.html(">   ```\n>   a\n>   ```\n")).toBe(
+      "<blockquote>\n<pre><code>a\n</code></pre>\n</blockquote>\n",
+    );
+    expect(Markdown.html(">   <div>\n")).toBe("<blockquote>\n  <div>\n</blockquote>\n");
+  });
+});

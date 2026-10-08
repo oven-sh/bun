@@ -716,10 +716,8 @@ impl Parser<'_> {
                     chain: Chain::No,
                 },
             };
-            let end = match self.s.names.get(index + 1) {
-                // The name ends where its text ends: no name here has an escape.
-                _ => pos + self.lx.text_of(name).len() as u32,
-            };
+            // The name ends where its text ends: no name here has an escape.
+            let end = pos + self.lx.text_of(name).len() as u32;
             expr = self.add_expr(kind, first.1, end);
         }
         for index in base..self.s.names.len() {

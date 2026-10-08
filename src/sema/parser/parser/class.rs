@@ -272,9 +272,11 @@ impl Parser<'_> {
             if member.kind != MemberKind::Method {
                 self.context = saved;
                 member.flags.set(Flags::AMBIENT, is_parent_ambient);
-                if member.flags.contains(Flags::ASYNC) {
+                // Only its modifiers say that `static async constructor() {}` is async.
+                if member.flags.contains(Flags::ASYNC) && !member.flags.contains(Flags::STATIC) {
                     self.refuse(Refusal::Reported);
                 }
+                member.flags -= Flags::ASYNC;
             }
             let mut fn_flags = member.flags;
             if is_generator {

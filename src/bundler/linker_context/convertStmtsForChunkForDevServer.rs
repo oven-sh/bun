@@ -10,6 +10,7 @@ use bun_ast::{Binding, E, Expr, ExprNodeList, G, S, Stmt, StmtData, b};
 use bun_ast::{ImportRecordTag, Loader};
 use bun_collections::VecExt;
 
+use crate::linker_context::generate_code_for_lazy_export::css_module_exports;
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
 /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
@@ -78,6 +79,39 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
         match &stmt.data {
             StmtData::SImport(st) => {
                 let record = &mut ast.import_records[st.import_record_index as usize];
+                // A stylesheet, served apart. Imported for its names (a CSS module): the namespace a bundle would
+                // give, `default` and each name mapped to its generated class names, declared in place.
+                if record.source_index.is_valid()
+                    && loaders[record.source_index.get() as usize] == Loader::Css
+                {
+                    if !st.star_name_loc.is_empty() || st.items.len() > 0 || st.default_name.is_some() {
+                        let css = record.source_index.get();
+                        let mut log = bun_ast::Log::init();
+                        let names = |log: &mut bun_ast::Log| {
+                            css_module_exports(&*c, css, stmt.loc, log, bump)
+                                .map(Option::unwrap_or_default)
+                        };
+                        let default = Expr::init(names(&mut log)?, stmt.loc);
+                        let mut namespace = names(&mut log)?;
+                        namespace.put(bump, b"default", default)?;
+                        stmts.inside_wrapper_prefix.append_non_dependency(Stmt::alloc(
+                            S::Local {
+                                kind: js_ast::LocalKind::KVar,
+                                decls: G::DeclList::from_slice(&[G::Decl {
+                                    binding: Binding::alloc(
+                                        bump,
+                                        b::Identifier { r#ref: st.namespace_ref },
+                                        stmt.loc,
+                                    ),
+                                    value: Some(Expr::init(namespace, stmt.loc)),
+                                }]),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ))?;
+                    }
+                    continue;
+                }
                 if record.path.is_disabled {
                     continue;
                 }

@@ -473,7 +473,5 @@ controller.signal.removeEventListener("abort", event => {
   expectType(event).is<Event>();
 });
 
-expectType(Bun.$.inheritStdio()).is<Bun.$>();
-expectType(myShellInstance.inheritStdio(false)).is<Bun.$>();
 expectType(Bun.$`exit 0`.inheritStdio()).is<Bun.$.ShellPromise>();
 expectType(Bun.$`exit 0`.inheritStdio(false).quiet()).is<Bun.$.ShellPromise>();

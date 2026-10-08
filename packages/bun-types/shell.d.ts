@@ -77,25 +77,6 @@ declare module "bun" {
     function throws(shouldThrow: boolean): $;
 
     /**
-     * Configure whether commands run by this instance write to the current
-     * process's stdout and stderr directly. See {@link ShellPromise.inheritStdio}.
-     *
-     * A call to `.quiet()`, `.inheritStdio(false)` or an output method such as
-     * `.text()` on one command takes precedence for that command.
-     *
-     * @param isInherit Defaults to `true`
-     *
-     * @example
-     * ```ts
-     * import { $ } from "bun";
-     * $.inheritStdio();
-     * await $`git status`; // colors, as in a terminal
-     * const head = await $`git rev-parse HEAD`.text(); // still buffered
-     * ```
-     */
-    function inheritStdio(isInherit?: boolean): $;
-
-    /**
      * A shell command that runs once awaited, or once an output method like
      * `.text()` or `.json()` is called.
      *
@@ -141,18 +122,25 @@ declare module "bun" {
        * and stderr themselves, and to buffer nothing.
        *
        * By default each command writes to a pipe that the shell copies to the
-       * terminal, so programs that check for a terminal turn off colors and
-       * progress bars. With `inheritStdio()` they see the terminal, as they do
-       * under `Bun.spawn` with `stdio: "inherit"`.
+       * current process's stdout and stderr, so a program cannot tell when its
+       * output reaches a terminal. With `inheritStdio()` a command gets what the
+       * current process has, as it does under `Bun.spawn` with
+       * `stdout: "inherit"` and `stderr: "inherit"`. If that is a terminal, the
+       * command sees the terminal: colors, progress bars and prompts work.
        *
-       * The resolved `stdout` and `stderr` are empty and the output methods of
-       * the result throw. Cannot be combined with {@link quiet} or an output
-       * method such as {@link text} on the same command.
+       * The output of the command does not stay in memory. Reading `stdout`,
+       * `stderr` or an output method of the result throws. Cannot be combined
+       * with {@link quiet} or an output method such as {@link text} on the same
+       * command.
+       *
+       * Stdin does not change: a command reads the current process's stdin in
+       * every mode.
        *
        * @param isInherit Defaults to `true`
        *
        * @example
        * ```ts
+       * // colors when the current process's stdout is a terminal
        * await $`git log --oneline -5`.inheritStdio();
        * ```
        */

@@ -134,6 +134,8 @@ struct ConfigObject {
     ignores: Option<Vec<Pattern>>,
     /// It has `ignores` and nothing else: what it ignores is ignored altogether.
     is_global_ignores: bool,
+    /// `ignorePatterns` of oxlint, which say nothing about what is outside of the base path.
+    ignores_inside_only: bool,
     language_options: Json,
     linter_options: Json,
     settings: Json,
@@ -155,6 +157,7 @@ impl Default for ConfigObject {
             files: None,
             ignores: None,
             is_global_ignores: false,
+            ignores_inside_only: false,
             language_options: Json::Null,
             linter_options: Json::Null,
             settings: Json::Null,
@@ -236,7 +239,12 @@ impl Config {
     fn is_ignored_globally(&self, relative: &[u8]) -> bool {
         let parts = split_path(relative);
         let mut is_ignored = false;
+        // See `Config::relative`.
+        let is_outside = relative.starts_with(b"/");
         for object in self.objects.iter().filter(|it| it.is_global_ignores) {
+            if is_outside && object.ignores_inside_only {
+                continue;
+            }
             let ignores = object.ignores.as_deref().unwrap_or_default();
             let Some(base_path) = &object.base_path else {
                 is_ignored = is_ignored_by(ignores, &parts, is_ignored);
@@ -254,6 +262,16 @@ impl Config {
         is_ignored
     }
 
+    /// What the patterns see of `path`, which is absolute: it is relative to the base path. For oxlint nothing is outside of
+    /// a configuration: what is not in the base path is matched by its absolute path.
+    fn relative(&self, path: &[u8]) -> Vec<u8> {
+        let relative = path::relative(&self.base_path, path);
+        match self.prefers_typescript_rules && path::is_external(&relative) {
+            true => path::resolve(b"/", path),
+            false => relative,
+        }
+    }
+
     /// The directory that the patterns are relative to.
     pub fn base_path(&self) -> &[u8] {
         &self.base_path
@@ -262,7 +280,7 @@ impl Config {
     /// [`Config::is_directory_ignored`] for a directory inside the base path of which it is known that
     /// no directory that it is in is ignored.
     pub fn is_directory_ignored_in(&self, directory: &[u8]) -> bool {
-        let mut relative = path::relative(&self.base_path, directory);
+        let mut relative = self.relative(directory);
         if relative.is_empty() {
             return false;
         }
@@ -272,12 +290,12 @@ impl Config {
 
     /// Whether a file inside the base path is ignored, if the directory that it is in is not.
     pub fn is_file_ignored_in(&self, file: &[u8]) -> bool {
-        self.is_ignored_globally(&path::relative(&self.base_path, file))
+        self.is_ignored_globally(&self.relative(file))
     }
 
     /// ESLint's `isDirectoryIgnored`. `directory` is absolute.
     pub fn is_directory_ignored(&self, directory: &[u8]) -> bool {
-        let relative = path::relative(&self.base_path, directory);
+        let relative = self.relative(directory);
         if relative.is_empty() {
             return false;
         }
@@ -285,7 +303,7 @@ impl Config {
             return true;
         }
         // A directory is ignored if one that it is in is.
-        let mut end = 0;
+        let mut end = usize::from(relative.starts_with(b"/"));
         while end < relative.len() {
             end += bun_core::strings::index_of_char_usize(&relative[end..], b'/')
                 .unwrap_or(relative.len() - end);
@@ -299,7 +317,7 @@ impl Config {
 
     /// ESLint's `getConfigWithStatus`. `file` is absolute.
     pub fn get(&self, registry: &Registry, file: &[u8]) -> FileConfig {
-        let relative = path::relative(&self.base_path, file);
+        let relative = self.relative(file);
         if path::is_external(&relative) {
             return FileConfig::External;
         }
@@ -312,7 +330,7 @@ impl Config {
     /// The same for a file that is known not to be ignored, and to be inside the base path:
     /// whoever walks the directories has asked [`Config::is_directory_ignored`] on the way.
     pub fn get_unless_ignored(&self, registry: &Registry, file: &[u8]) -> FileConfig {
-        let relative = path::relative(&self.base_path, file);
+        let relative = self.relative(file);
         let parts = split_path(&relative);
         let mut matching: Vec<u32> = Vec::new();
         let mut is_matched = false;

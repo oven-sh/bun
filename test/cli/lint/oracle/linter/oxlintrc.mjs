@@ -7,7 +7,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { bunLint, random, report, runBunLint } from "./shared.mjs";
 
 const oxlint = resolve(process.env.OXLINT ?? "oxlint");
@@ -53,10 +53,12 @@ const root = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "bun-lint-oxlintrc
 const cases = [], expected = [];
 try {
   for (let i = 0; i < 400; i++) {
-    const basePath = join(root, String(i));
+    // In one of four the configuration is in a directory of its own, and most files are outside of that.
+    const project = join(root, String(i));
+    const basePath = i % 4 === 3 ? join(project, "src") : project;
     const config = file(true);
     const extended = Object.fromEntries((config.extends ?? []).map(name => [name, file(false)]));
-    const sources = Object.fromEntries(list(path, 10).map(it => [join(basePath, it), codeOf(it)]));
+    const sources = Object.fromEntries(list(path, 10).map(it => [join(project, it), codeOf(it)]));
     for (const [name, text] of [[".oxlintrc.json", JSON.stringify(config)], ...Object.entries(extended).map(([name, it]) => [name, JSON.stringify(it)])]) {
       mkdirSync(dirname(join(basePath, name)), { recursive: true });
       writeFileSync(join(basePath, name), text);
@@ -65,7 +67,8 @@ try {
       mkdirSync(dirname(name), { recursive: true });
       writeFileSync(name, text);
     }
-    const { stdout } = spawnSync(oxlint, ["--format", "json", "--threads", "1", "."], { cwd: basePath, maxBuffer: 1 << 26 });
+    const where = basePath === project ? [] : ["-c", join(basePath, ".oxlintrc.json")];
+    const { stdout } = spawnSync(oxlint, [...where, "--format", "json", "--threads", "1", "."], { cwd: project, maxBuffer: 1 << 26 });
     let answer;
     try {
       answer = JSON.parse(stdout.toString());
@@ -75,7 +78,7 @@ try {
     const byFile = Object.fromEntries(Object.keys(sources).map(name => [name, []]));
     for (const { code, severity, filename, labels } of answer.diagnostics) {
       const id = /^eslint\((.*)\)$/.exec(code)?.[1];
-      if (ids.includes(id)) byFile[join(basePath, filename)].push([id, severity === "error" ? 2 : 1, labels[0].span.line]);
+      if (ids.includes(id)) byFile[join(project, filename)].push([id, severity === "error" ? 2 : 1, labels[0].span.line]);
     }
     cases.push({ basePath, flavor: "oxlint", config, extended, sources });
     expected.push(byFile);
@@ -89,7 +92,7 @@ const actual = runBunLint("project", cases);
 // One case for each file. A file that is not linted and one about which nothing is reported look the same in what oxlint prints.
 const flat = { cases: [], expected: [], actual: [] };
 cases.forEach(({ basePath, config, extended, sources }, i) => Object.keys(sources).forEach(name => {
-  flat.cases.push({ file: name.slice(basePath.length + 1), config, extended });
+  flat.cases.push({ file: relative(basePath, name), config, extended });
   flat.expected.push(sorted(expected[i][name]));
   flat.actual.push(actual[i].error ?? sorted(actual[i][name]));
 }));

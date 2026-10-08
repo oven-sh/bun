@@ -304,6 +304,7 @@ impl Rc<'_, '_> {
                         .collect(),
                 ),
                 is_global_ignores: true,
+                ignores_inside_only: self.flavor == RcFlavor::Oxlint,
                 ..ConfigObject::default()
             });
         }

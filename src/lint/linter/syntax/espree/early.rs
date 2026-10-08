@@ -710,6 +710,24 @@ impl<'a> Checks<'a> {
             let ExprKind::ImportCall { args } = it.kind() else {
                 continue;
             };
+            // Not after `new`, which acorn-jsx forgets.
+            if !self.file.language().jsx && !it.is_parenthesized() {
+                let mut callee = it;
+                while let Node::Expr(outer) = callee.parent()
+                    && matches!(
+                        outer.kind(),
+                        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == callee
+                    )
+                    && !outer.is_parenthesized()
+                {
+                    callee = outer;
+                }
+                if let Node::Expr(outer) = callee.parent()
+                    && matches!(outer.kind(), ExprKind::New(call) if call.callee() == callee)
+                {
+                    self.unexpected(self.after_token(it.span().start));
+                }
+            }
             if it.is_deferred_import_call() {
                 continue;
             }

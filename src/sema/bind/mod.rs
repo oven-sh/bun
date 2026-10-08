@@ -143,7 +143,8 @@ pub enum Decl {
     Member(MemberId),
     /// `IsParameterPropertyDeclaration`: the property.
     ParameterProperty(ParamId),
-    /// `this.name = value` in a member of a class, in JavaScript: the assignment.
+    /// `this.name = value` in a member of a class, or in a method or an accessor of an object
+    /// literal, in JavaScript: the assignment.
     ThisProperty(ExprId),
     /// A member of an object literal or an attribute of a JSX element.
     Property(PropId),
@@ -676,6 +677,16 @@ impl PatParent {
             PatParent::None => ExprId::NONE,
         }
     }
+
+    /// `hasDotDotDotToken` of the binding element.
+    #[inline]
+    pub fn has_dot_dot_dot_token(self, hir: &File) -> bool {
+        match self {
+            PatParent::Prop(_, prop) => hir[prop].is_rest,
+            PatParent::Elem(_, elem) => hir[elem].is_rest,
+            PatParent::Var(_) | PatParent::Param(_) | PatParent::None => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -691,6 +702,15 @@ impl ClassOwner {
         match self {
             ClassOwner::Expr(e) => Parent::Expr(e),
             ClassOwner::Stmt(s) => Parent::Stmt(s),
+        }
+    }
+
+    /// `node.End()` of the class. 0: the binder did not reach it.
+    #[inline]
+    pub fn end(self, hir: &File) -> u32 {
+        match self {
+            ClassOwner::Expr(e) => hir[e].end,
+            ClassOwner::Stmt(s) => hir.stmts.get(s.idx()).map_or(0, |class| class.loc.end),
         }
     }
 }
@@ -840,10 +860,10 @@ pub struct BoundIn<S: Storage> {
     /// `exportStars.Declarations`: every `export * from spec`, with the module or namespace symbol
     /// that contains it.
     pub export_stars: S::Few<(SymbolId, StmtId)>,
-    /// `declare module "name"` at the top level of a file, or directly inside an ambient module at
-    /// the top level of a script. The flag is `IsModuleAugmentationExternal`: it augments a module
-    /// that is declared elsewhere. One entry for each symbol, which the declarations of a name in
-    /// one container share.
+    /// `declare module "name"` whose container is the file, or an ambient module at the top level
+    /// of a script. One entry for each symbol, which the declarations of a name in one container
+    /// share. The flag: it is a local of a file without module syntax, where it declares the
+    /// module. Any other is merged by `mergeModuleAugmentation` or not at all.
     pub ambient_modules: S::Few<(Atom, SymbolId, bool)>,
     /// `file.PatternAmbientModules`: a module whose name has exactly one `*` and that augments
     /// nothing, wherever it is declared. One entry for each declaration.
@@ -936,6 +956,10 @@ pub struct BoundIn<S: Storage> {
     pub var_stmt: S::List<StmtId>,
     /// The identifiers that are assigned to, keyed by the variable they resolve to.
     pub assignments: S::List<(SymbolId, ExprId)>,
+    /// The identifiers that are assigned to, or whose property is, that nothing in this file
+    /// declares, and that `checkDestructuringAssignment` does not get to: it returns at a rest
+    /// element that is not the last (2462) or that has an initializer (1186).
+    pub unchecked_assignment_targets: S::Few<ExprId>,
     /// The expressions that are (part of) the operand of a `typeof` in a type. Sorted.
     pub type_query_operands: S::Few<ExprId>,
     /// The expressions at or under a node that is in tsgo's AST but that `checkSourceFile` never
@@ -949,6 +973,9 @@ pub struct BoundIn<S: Storage> {
     pub infer_positions: S::Few<(TypeParamId, InferPosition)>,
     /// The assignments and calls that `bindDeferredExpandoAssignment` gives a symbol. Sorted.
     pub expando_declarations: S::Few<ExprId>,
+    /// The symbol of each `this[k] = v` with a dynamic name, and the table it is declared in, in
+    /// the order they are bound. See `computed_symbol_in_table`.
+    pub computed_symbols: S::Few<(TableId, SymbolId)>,
     pub case_stmt: S::List<StmtId>,
     /// The flow node at the start of each statement.
     pub stmt_flow: S::List<FlowId>,
@@ -1184,6 +1211,40 @@ impl<S: Storage> BoundIn<S> {
         }
         let (start, len) = self.tables[table.idx()];
         &self.entries[start as usize..(start + len) as usize]
+    }
+
+    /// `NameResolver.Resolve`: `IsSourceFile(location) || IsModuleDeclaration(location) &&
+    /// location.Flags&NodeFlagsAmbient != 0 && !IsGlobalScopeAugmentation(location)`, where `scope`
+    /// is that of `location`.
+    pub fn is_external_module(&self, hir: &File, scope: ScopeId) -> bool {
+        match self.scopes[scope.idx()].kind {
+            ScopeKind::File => true,
+            ScopeKind::Module(m) => {
+                let mut around = std::iter::successors(Some(scope), |&at| {
+                    Some(self.scopes[at.idx()].parent).filter(|parent| parent.is_some())
+                });
+                !matches!(hir[m].name, ModuleName::Global)
+                    && (hir.kind == FileKind::Declaration
+                        || around.any(|at| {
+                            matches!(self.scopes[at.idx()].kind, ScopeKind::Module(it)
+                                if hir[it].flags.contains(Flags::AMBIENT))
+                        }))
+            }
+            _ => false,
+        }
+    }
+
+    /// `NameResolver.Resolve`: whether `func` has an `arguments` of its own.
+    pub fn has_arguments(&self, hir: &File, func: FnId) -> bool {
+        match hir[func].kind {
+            FnKind::Decl | FnKind::Expr | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
+                true
+            }
+            // A method of a class or an object literal, not a method signature.
+            FnKind::Method => !matches!(self.fns[func.idx()].owner, FnOwner::Member(m)
+                if matches!(self.member_owner[m.idx()], MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_))),
+            _ => false,
+        }
     }
 
     /// `NameResolver.Resolve`, the restrictions on the locals of a function and of a conditional
@@ -1438,6 +1499,16 @@ impl Bound<'_> {
         self.expando_declarations.binary_search(&e).is_ok()
     }
 
+    /// `symbolTable["__computed"]`, which every `this[k] = v` of one table declares, so that its
+    /// `ValueDeclaration` is the first of them. Here each has its own `symbol`: that of the first.
+    pub fn computed_symbol_in_table(&self, symbol: SymbolId) -> SymbolId {
+        let Some(&(table, _)) = self.computed_symbols.iter().find(|it| it.1 == symbol) else {
+            return symbol;
+        };
+        let first = self.computed_symbols.iter().find(|it| it.0 == table);
+        first.map_or(symbol, |it| it.1)
+    }
+
     /// `node.Symbol`. `NONE`: it is not stored for a declaration of that kind, none of which has a
     /// local symbol.
     pub fn symbol_of_declaration(&self, decl: Decl) -> SymbolId {
@@ -1461,6 +1532,15 @@ impl Bound<'_> {
             }
             _ => SymbolId::NONE,
         }
+    }
+
+    /// `node.Symbol` of the function-like `f`.
+    pub fn symbol_of_function(&self, hir: &File, f: FnId) -> SymbolId {
+        self.symbol_of_declaration(match hir.data(hir.node(f)) {
+            NodeData::Member(m) => Decl::Member(m),
+            NodeData::Prop(p) => Decl::Property(p),
+            _ => Decl::Fn(f),
+        })
     }
 
     /// The scope at which `FindAncestor` from `decl` starts: the scope that a file, a module or a
@@ -1613,6 +1693,21 @@ impl Bound<'_> {
             .intersects(SymFlags::VALUE)
             .then_some((code, property))
     }
+
+    /// `NameResolver.Resolve`: whether a lookup of the variable `arguments` from `scope` that finds
+    /// no declaration ends at `argumentsSymbol`, which is in no table.
+    pub fn is_in_function_with_arguments(&self, hir: &File, mut scope: ScopeId) -> bool {
+        while scope.is_some() {
+            let s = &self.scopes[scope.idx()];
+            if let ScopeKind::Fn(f) | ScopeKind::FunctionName(f) = s.kind
+                && self.has_arguments(hir, f)
+            {
+                return true;
+            }
+            scope = s.parent;
+        }
+        false
+    }
 }
 
 fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
@@ -1704,11 +1799,13 @@ impl BoundBuilder {
             module_instance_state: few_to_arena(self.module_instance_state, arena),
             var_stmt: copy_to_arena(&mut self.var_stmt, arena),
             assignments: copy_to_arena(&mut self.assignments, arena),
+            unchecked_assignment_targets: few_to_arena(self.unchecked_assignment_targets, arena),
             type_query_operands: few_to_arena(self.type_query_operands, arena),
             unchecked_exprs: few_to_arena(self.unchecked_exprs, arena),
             unchecked_types: few_to_arena(self.unchecked_types, arena),
             infer_positions: few_to_arena(self.infer_positions, arena),
             expando_declarations: few_to_arena(self.expando_declarations, arena),
+            computed_symbols: few_to_arena(self.computed_symbols, arena),
             case_stmt: copy_to_arena(&mut self.case_stmt, arena),
             stmt_flow: copy_to_arena(&mut self.stmt_flow, arena),
             case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),

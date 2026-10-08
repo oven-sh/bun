@@ -21,6 +21,38 @@ pub(crate) mod flags {
     pub(crate) const JSDOC_LIKE: u8 = 1 << 1;
     /// `KindSingleLineCommentTrivia`
     pub(crate) const SINGLE_LINE: u8 = 1 << 2;
+    /// `TokenFlagsPrecedingJSDocWithSeeOrLink`
+    pub(crate) const SEE_OR_LINK: u8 = 1 << 3;
+    /// No `@augments` or `@extends` tag is in a comment without it.
+    pub(crate) const AUGMENTS: u8 = 1 << 4;
+    /// No `@param`, `@arg` or `@argument` tag is in a comment without it.
+    pub(crate) const PARAM: u8 = 1 << 5;
+}
+
+/// `scanJSDocCommentForTags`, which looks for `@see` and `@link`, and for the tags that the checker
+/// reads in a TypeScript file.
+fn scan_jsdoc_comment_for_tags(mut comment: &[u8]) -> u8 {
+    let mut found = 0;
+    while let Some(at) = bun_core::strings::index_of_char_usize(comment, b'@') {
+        comment = &comment[at + 1..];
+        let len = comment
+            .iter()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .count();
+        found |= match (&comment[..len], comment.get(len)) {
+            // `ScanJSDocToken` decodes an escape in a name.
+            (_, Some(b'\\')) => flags::AUGMENTS | flags::PARAM,
+            // `hasJSDocTag`
+            (
+                b"see" | b"link" | b"linkcode" | b"linkplain",
+                None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'}' | b'*'),
+            ) => flags::SEE_OR_LINK,
+            (b"augments" | b"extends", _) => flags::AUGMENTS,
+            (b"param" | b"arg" | b"argument", _) => flags::PARAM,
+            _ => 0,
+        };
+    }
+    found
 }
 
 impl Lexer<'_> {
@@ -40,12 +72,37 @@ impl Lexer<'_> {
         }
         let comment = &text[self.start..self.end];
         if super::jsdoc::is_jsdoc_like(comment) {
-            reported |= flags::JSDOC_LIKE;
+            reported |= flags::JSDOC_LIKE | scan_jsdoc_comment_for_tags(comment);
         }
         if comment.starts_with(b"//") {
             reported |= flags::SINGLE_LINE;
         }
         self.comment_flags.push(reported);
+    }
+
+    /// The JSDoc comments of a TypeScript file that have to be parsed are those with one of the
+    /// returned `flags`. Only the checker reads their tags, in two functions.
+    pub(crate) fn jsdoc_read_by_checker(&self, is_declaration_file: bool) -> u8 {
+        // JSON
+        if self.is_javascript_file() {
+            return 0;
+        }
+        let flags_of_all = self.comment_flags.iter().fold(0, |all, &it| all | it);
+        // `checkUnmatchedJSDocParameters` reports nothing in TypeScript, but for a function with a
+        // `@param` tag `containsArgumentsReference` resolves the identifiers named `arguments` in
+        // the body. `getAllJSDocTags` needs to know of every comment whether it has tags.
+        if flags_of_all & flags::PARAM != 0
+            && !is_declaration_file
+            && (bun_core::strings::contains(self.contents, b"arguments")
+                || bun_core::strings::contains(self.contents, b"\\u"))
+        {
+            return flags::JSDOC_LIKE;
+        }
+        // `checkGrammarClassDeclarationHeritageClauses`, which reads `EagerJSDoc`.
+        if flags_of_all & flags::AUGMENTS != 0 && flags_of_all & flags::SEE_OR_LINK != 0 {
+            return flags::AUGMENTS;
+        }
+        0
     }
 
     /// `processCommentDirective` for the comment just scanned, from `start` to `end`. `multiline`:

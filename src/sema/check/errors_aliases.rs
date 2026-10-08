@@ -14,13 +14,14 @@
 //! `expected_errors` creates the TS2578 for each `@ts-expect-error`, and `Program::finish_file`
 //! drops those whose directive was used.
 
+use super::errors_operators::language_version;
 use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
 use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
-    ModuleKind, Options, file_extension_is, get_relative_path_from_directory,
+    ModuleKind, Options, ScriptTarget, file_extension_is, get_relative_path_from_directory,
     has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
     try_extract_ts_extension,
 };
@@ -230,7 +231,6 @@ impl Checker<'_, '_> {
             && !options.emit_declaration_only
             && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             && !hir.is_js
-            && !module.is_lib
             && !module.is_from_external_library
     }
 
@@ -343,16 +343,28 @@ impl Checker<'_, '_> {
             || options.verbatim_module_syntax
             || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             || hir.is_js
-            || module.is_lib
             || module.is_from_external_library
         {
             return;
         }
         let index = self.exprs_by_kind(file);
+        // `shouldTransformPrivateElementsOrClassStaticBlocks`
+        let transforms_private_elements = language_version(self) < ScriptTarget::ES2022;
         let mut accesses: Vec<ExprId> = [ExprTag::Dot, ExprTag::Index]
             .iter()
             .flat_map(|&tag| index.of(tag).iter().copied())
             .filter(|&e| !bound.is_unchecked(e.idx()) && !bound.is_in_type_query(e))
+            // `visitPropertyAccessExpression` of the class fields transformer, which comes earlier,
+            // has made `a.#b` a call of a helper.
+            .filter(|&e| match hir[e].kind {
+                ExprKind::Dot { name, .. } => {
+                    !(transforms_private_elements
+                        && self.is_private_name(name)
+                        && (self.lookup_symbol_for_private_identifier_declaration(file, e, name))
+                            .is_some())
+                }
+                _ => true,
+            })
             .collect();
         // Of two that start at the same position, the outer was created last.
         accesses.sort_by_key(|&e| (self.start_of(file, e), std::cmp::Reverse(e)));
@@ -394,10 +406,17 @@ impl Checker<'_, '_> {
         let mut reported: Vec<(StmtId, Vec<Vec<u8>>)> = Vec::new();
         let links = modules.iter().map(|&module| files.module_links(module));
         for collision in links.flat_map(|links| links.export_collisions.iter()) {
-            let (of, first) = collision.first;
-            if collision.duplicate.0 == file
-                && let StmtKind::ExportStar { spec, .. } = self.hir(of)[first].kind
+            if collision.duplicate.0 != file {
+                continue;
+            }
+            // `extendExportSymbols`
+            if let Some((target, source)) = collision.symbols
+                && self.resolve_symbol(target) == self.resolve_symbol(source)
             {
+                continue;
+            }
+            let (of, first) = collision.first;
+            if let StmtKind::ExportStar { spec, .. } = self.hir(of)[first].kind {
                 let specifier = self.aliases_specifier_text(of, self.hir(of)[first].start, spec);
                 let arguments = vec![specifier, self.atom_text(collision.name)];
                 reported.push((collision.duplicate.1, arguments));
@@ -723,7 +742,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`: 1379 1380
-    fn aliases_import_alias_of_type_only(
+    pub(super) fn aliases_import_alias_of_type_only(
         &mut self,
         file: FileId,
         x: ImportEqualsId,
@@ -1390,7 +1409,9 @@ impl Checker<'_, '_> {
             ExprTag::NewTarget,
         ] {
             for &e in index.of(tag) {
-                self.aliases_import_call_or_meta_property(file, e);
+                if !self.is_never_checked(self.hir(file)[e].pos) {
+                    self.aliases_import_call_or_meta_property(file, e);
+                }
             }
         }
     }

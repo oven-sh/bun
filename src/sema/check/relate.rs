@@ -245,6 +245,9 @@ pub(super) struct Relater {
     /// (`check_type_related_to_ex`), which must leave the cache as tsgo's run would find it.
     pub(super) caches_failures: bool,
     failed: FxHashSet<Key>,
+    /// `compareTypes` of `compareSignaturesRelated` is `compareTypesAssignable`: each two types are
+    /// a check of their own, and nothing else of this relater is used.
+    compares_types_assignable: bool,
     /// `errorNode`. An end of `0` means the end of the token at the start. This field and the
     /// following ones are read only under `reportErrors`.
     pub(super) error_node: Place,
@@ -278,6 +281,7 @@ impl Relater {
             cycles,
             caches_failures: false,
             failed: FxHashSet::default(),
+            compares_types_assignable: false,
             error_node: (FileId(0), 0, 0),
             head_message: None,
             error_chain: None,
@@ -448,7 +452,7 @@ pub(super) fn is_object_literal_kind(data: &TypeData) -> bool {
             origin: Origin::ObjectLiteral(..),
             ..
         } => true,
-        TypeData::Synth(shape) => shape.literal.is_of_expression(),
+        TypeData::Synth(shape) => shape.literal.is_of_expression() || shape.literal.is_of_pattern(),
         _ => false,
     }
 }
@@ -698,33 +702,35 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(ty, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
             return true;
         }
-        match self.data(ty) {
-            // `newAnonymousType` takes the members. `getTypeWithSyntheticDefaultImportType` gives
-            // its result the symbol of a type literal without members.
-            TypeData::Synth(shape) => {
-                shape.literal == Literalness::SyntheticDefault || self.is_empty_resolved_type(ty)
+        // `newAnonymousType` takes the members: `checkObjectLiteral`, `getSpreadType`,
+        // `getRestType` and `getWidenedTypeOfObjectLiteral` call it. `instantiateAnonymousType`
+        // does not.
+        let mapper = match self.data(ty) {
+            // `getTypeWithSyntheticDefaultImportType` gives its result the symbol of a type literal
+            // without members.
+            TypeData::Synth(shape) if shape.literal == Literalness::SyntheticDefault => {
+                return true;
             }
-            // `checkObjectLiteral` and `getWidenedTypeOfObjectLiteral` call `newAnonymousType`,
-            // `instantiateAnonymousType` does not.
+            TypeData::Synth(shape) => Some(shape.mapper),
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
                 mapper,
-            } if self.types().mapping(*mapper).iter().all(|p| p.0 == p.1) => {
-                self.is_empty_resolved_type(ty)
-            }
+            } => Some(*mapper),
             // `ObjectFlagsMapped`, without `ObjectFlagsAnonymous`.
             TypeData::Anon {
                 origin: Origin::Mapped(..),
                 ..
-            } => false,
+            } => return false,
             // A type literal that has an `Origin` has members in its symbol.
-            TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => {
-                match self.resolved_members(ty) {
-                    Some(members) => Self::has_no_members(members.shape()),
-                    None => self.has_no_members_in_place(ty),
-                }
-            }
-            _ => false,
+            TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => None,
+            _ => return false,
+        };
+        if mapper.is_some_and(|mapper| !self.is_instantiating(mapper)) {
+            return self.is_empty_resolved_type(ty);
+        }
+        match self.resolved_members(ty) {
+            Some(members) => Self::has_no_members(members.shape()),
+            None => self.has_no_members_in_place(ty),
         }
     }
 
@@ -2017,11 +2023,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getNameTypeFromMappedType`
     pub(super) fn mapped_name_type(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, node, _) = self.mapped_origin(t)?;
-        let name = self.mapped_decl(file, node).name_ty;
-        if name.is_none() {
+        if self.mapped_decl(file, node).name_ty.is_none() {
             return None;
         }
-        let declared = self.type_from_node(file, name);
+        let declared = self.declared_name_type_of_mapped(file, node);
         let mapper = self.mapped_mapper(t);
         Some(self.instantiate(declared, mapper))
     }
@@ -2819,7 +2824,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
+        // `isSignatureAssignableTo`
         let mut r = Relater::new(Relation::Assignable, self.cycles);
+        r.compares_types_assignable = true;
         self.compare_signatures_related::<false>(
             &mut r,
             source,
@@ -3818,9 +3825,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
-        // With reporting the result can differ (`relate_variances`), so it is not cached.
-        let ended = self.end_scope(scope).ok();
-        let stored = ended.filter(|_| !REPORT);
+        let stored = self.end_scope(scope).ok();
         let propagating = self.reliability;
         self.reliability |= save_reliability;
         if recursion & REC_SOURCE != 0 {
@@ -3840,6 +3845,7 @@ impl<'p, 's> Checker<'p, 's> {
                     propagating,
                     result == Ternary::TRUE || result == Ternary::MAYBE,
                     stored,
+                    REPORT,
                 );
             }
         } else {
@@ -3851,14 +3857,14 @@ impl<'p, 's> Checker<'p, 's> {
                 if !is_cut_short {
                     r.failed.insert(key);
                 }
-            } else if let Some(stored) = ended
+            } else if let Some(stored) = stored
                 && !is_cut_short
                 && cached.is_none()
             {
                 self.insert_relation(key, FAILED | propagating, stored);
             }
             r.relation_count -= 1;
-            self.reset_maybe_stack(r, maybe_start, propagating, false, stored);
+            self.reset_maybe_stack(r, maybe_start, propagating, false, stored, REPORT);
         }
         result
     }
@@ -3894,11 +3900,16 @@ impl<'p, 's> Checker<'p, 's> {
         let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
         let scope = self.begin_scope();
         if let Ok(stored) = self.end_scope_as(scope, false) {
-            if self.p.relations.get(&self.task, &key).is_none() {
-                self.insert_relation(key, FAILED | kind, stored);
-            } else {
-                (self.p.relations).rewrite(&self.task, key, FAILED | kind, stored);
-            }
+            self.set_relation(key, FAILED | kind, stored);
+        }
+    }
+
+    /// `relation.set(key, entry)`
+    fn set_relation(&mut self, key: Key, entry: u8, stored: Stored) {
+        if self.p.relations.get(&self.task, &key).is_none() {
+            self.insert_relation(key, entry, stored);
+        } else {
+            (self.p.relations).rewrite(&self.task, key, entry, stored);
         }
     }
 
@@ -3914,7 +3925,8 @@ impl<'p, 's> Checker<'p, 's> {
         (16_000_000 - self.relation_sizes[relation as usize]) / 8
     }
 
-    /// `resetMaybeStack`
+    /// `resetMaybeStack`. `report_errors`: a comparison that elaborates begins at a key whose entry
+    /// is a failure, which an overflow may have cut off.
     fn reset_maybe_stack(
         &mut self,
         r: &mut Relater,
@@ -3922,6 +3934,7 @@ impl<'p, 's> Checker<'p, 's> {
         propagating: u8,
         mark_all_as_succeeded: bool,
         stored: Option<Stored>,
+        report_errors: bool,
     ) {
         while r.maybe_keys.len() > maybe_start {
             let Some(key) = r.maybe_keys.pop() else {
@@ -3929,8 +3942,12 @@ impl<'p, 's> Checker<'p, 's> {
             };
             r.maybe_keys_set.remove(&key);
             if mark_all_as_succeeded {
-                if let Some(stored) = stored {
-                    self.insert_relation(key, SUCCEEDED | propagating, stored);
+                match stored {
+                    Some(stored) if report_errors => {
+                        self.set_relation(key, SUCCEEDED | propagating, stored);
+                    }
+                    Some(stored) => self.insert_relation(key, SUCCEEDED | propagating, stored),
+                    None => {}
                 }
                 r.relation_count -= 1;
             }
@@ -6776,6 +6793,22 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `compareTypes` of `compareSignaturesRelated`: `isRelatedToEx` of `r`, as `signatureRelatedTo`
+    /// passes it, or `compareTypesAssignable`.
+    #[inline]
+    fn compare_types_related<const REPORT: bool>(
+        &mut self,
+        r: &mut Relater,
+        source: TypeId,
+        target: TypeId,
+        state: u8,
+    ) -> Ternary {
+        if r.compares_types_assignable {
+            return Ternary::of(self.is_assignable(source, target));
+        }
+        self.is_related_to_ex::<REPORT>(r, source, target, REC_BOTH, state)
+    }
+
     /// `compareSignaturesRelated`. `as_passed`: the two signatures before type parameter erasure.
     pub(super) fn compare_signatures_related<const REPORT: bool>(
         &mut self,
@@ -6826,7 +6859,11 @@ impl<'p, 's> Checker<'p, 's> {
             (target != as_passed.1).then_some(Some(as_passed.1)),
         );
         let source_type_params = self.sig_type_params(source);
-        if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
+        if !source_type_params.is_empty()
+            && (source_type_params != self.sig_type_params(target)
+                || self.function_with_type_parameters_cloned_for_it(source)
+                    != self.function_with_type_parameters_cloned_for_it(target))
+        {
             let canonical = self.canonical_sig(target);
             if canonical != target {
                 signature_targets.1 = Some(Some(target));
@@ -6835,7 +6872,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             signature_targets.0 = Some(Some(source));
             source = self.instantiate_sig_in_context(source, target, true, &mut |c, s, t| {
-                c.is_related_to_ex::<false>(r, s, t, REC_BOTH, state) != Ternary::FALSE
+                c.compare_types_related::<false>(r, s, t, state) != Ternary::FALSE
             });
         }
         let sp = self.sig_params(source);
@@ -6864,11 +6901,10 @@ impl<'p, 's> Checker<'p, 's> {
             let mut related = if strict_variance {
                 Ternary::FALSE
             } else {
-                self.is_related_to_ex::<false>(r, source_this, target_this, REC_BOTH, state)
+                self.compare_types_related::<false>(r, source_this, target_this, state)
             };
             if !related.holds() {
-                related =
-                    self.is_related_to_ex::<REPORT>(r, target_this, source_this, REC_BOTH, state);
+                related = self.compare_types_related::<REPORT>(r, target_this, source_this, state);
             }
             if !related.holds() {
                 if REPORT {
@@ -6958,16 +6994,15 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 None => {
                     let mut related = if check_mode & CALLBACK == 0 && !strict_variance {
-                        self.is_related_to_ex::<false>(r, source_type, target_type, REC_BOTH, state)
+                        self.compare_types_related::<false>(r, source_type, target_type, state)
                     } else {
                         Ternary::FALSE
                     };
                     if !related.holds() {
-                        related = self.is_related_to_ex::<REPORT>(
+                        related = self.compare_types_related::<REPORT>(
                             r,
                             target_type,
                             source_type,
-                            REC_BOTH,
                             state,
                         );
                     }
@@ -6980,7 +7015,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && i >= self.min_argument_count(&sp)
                 && i < self.min_argument_count(&tp)
                 && self
-                    .is_related_to_ex::<false>(r, source_type, target_type, REC_BOTH, state)
+                    .compare_types_related::<false>(r, source_type, target_type, state)
                     .holds()
             {
                 related = Ternary::FALSE;
@@ -7024,18 +7059,13 @@ impl<'p, 's> Checker<'p, 's> {
             // The return types of callbacks are compared bivariantly too, or `interface Foo<T> {
             // add(cb: () => T): void }` would not be covariant in `T`.
             let mut related = if check_mode & BIVARIANT_CALLBACK != 0 {
-                self.is_related_to_ex::<false>(r, target_return, source_return, REC_BOTH, state)
+                self.compare_types_related::<false>(r, target_return, source_return, state)
             } else {
                 Ternary::FALSE
             };
             if !related.holds() {
-                related = self.is_related_to_ex::<REPORT>(
-                    r,
-                    source_return,
-                    target_return,
-                    REC_BOTH,
-                    state,
-                );
+                related =
+                    self.compare_types_related::<REPORT>(r, source_return, target_return, state);
             }
             result &= related;
             // `incompatibleErrorReporter`
@@ -7075,7 +7105,7 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             related = match (actual.ty, expected.ty) {
                 (a, b) if a == b => Ternary::TRUE,
-                (Some(a), Some(b)) => self.is_related_to_ex::<REPORT>(r, a, b, REC_BOTH, state),
+                (Some(a), Some(b)) => self.compare_types_related::<REPORT>(r, a, b, state),
                 _ => Ternary::FALSE,
             };
         }

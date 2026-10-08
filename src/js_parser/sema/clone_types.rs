@@ -619,15 +619,18 @@ impl Builder<'_> {
                 _ => self.file.error(DiagnosticKind::Grammar, at, 0, code),
             }
         }
-        // `checkVariableLikeDeclaration`: reported regardless of other errors in the file.
-        if kind == MemberKind::Property && matches!(key, ts::PropertyKey::BigInt) {
-            self.file.error(DiagnosticKind::Checker, pos(loc), 0, 1539);
-        }
         let is_number = matches!(key, ts::PropertyKey::Number(_));
         let mut key = self.key(key);
         // `getDeclarationName`: a private name outside a class declares nothing.
         if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
             key = PropKey::None;
+        }
+        // `declareSymbolEx`: `isDefaultExport && parent != nil`
+        if matches!(key, PropKey::Name(_))
+            && !modifiers.is_empty()
+            && self.file.find_modifier(modifiers, Flags::DEFAULT).is_some()
+        {
+            key = PropKey::Name(known::default);
         }
         if func.is_some() {
             self.file[func].name = key.name().unwrap_or(Atom::NONE);
@@ -775,7 +778,11 @@ impl Builder<'_> {
                 | TypeNodeKind::BigIntLit { .. }
                 | TypeNodeKind::BoolLit(_)
                 | TypeNodeKind::UniqueSymbol => {}
-                TypeNodeKind::Heritage(e) => id!(e, exprs),
+                TypeNodeKind::Heritage { expr, args } => {
+                    id!(expr, exprs);
+                    run!(args, ids);
+                    lists.push(*args);
+                }
                 TypeNodeKind::NumberLit(number) => *number = number.wrapping_add(moved.numbers),
                 TypeNodeKind::Ref { name, args } | TypeNodeKind::Import { name, args, .. } => {
                     run!(name, names);

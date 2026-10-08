@@ -1145,6 +1145,8 @@ pub enum MemberKind {
 #[derive(Copy, Clone, Debug)]
 pub struct Member {
     pub kind: MemberKind,
+    /// The name `declareSymbolEx` gives its symbol: that of `node.Name()`, but `default` for a
+    /// member with that modifier (`default class: 1`).
     pub key: PropKey,
     pub flags: Flags,
     pub ty: TypeNodeId,
@@ -1328,6 +1330,8 @@ pub struct Import {
     /// Position of the `*` of `* as namespace`.
     pub namespace_start: u32,
     pub named: Span<ImportSpecId>,
+    /// `importClause.NamedBindings` is a `NamedImports`: `named` can be empty.
+    pub has_named_imports: bool,
     pub type_only: bool,
     /// `importClause.PhaseModifier` is `defer`.
     pub is_deferred: bool,
@@ -1597,8 +1601,11 @@ pub enum TypeNodeKind {
     /// Syntax the type parser failed on.
     Error,
     /// An element of a heritage clause of an interface, or of an `implements` clause of a class,
-    /// whose expression is not an entity name, which is an error: `extends f()`.
-    Heritage(ExprId),
+    /// whose expression is not an entity name, which is an error: `extends f()<Args>`.
+    Heritage {
+        expr: ExprId,
+        args: IdList<TypeNodeId>,
+    },
     Keyword(Keyword),
     /// `A.B.C<Args>`
     Ref {
@@ -1839,6 +1846,11 @@ pub struct FileIn<S: Storage> {
     /// `ParenthesizedExpression`: the inner expression, the start and the end of the parentheses.
     /// Ordered by expression, and for nested parentheses around one expression innermost first.
     pub parens: S::List<(ExprId, u32, u32)>,
+    /// `x!!!` is one `NonNull`, which ends at the last `!`. The parser reads a run of `!` in a loop,
+    /// so nothing bounds its length, and `x!!` has the type of `x!`. These are the other
+    /// `NonNullExpression`s of the run: the `NonNull`, and where each ends. Ordered by expression, the
+    /// innermost first.
+    pub non_null_ends: S::Few<(ExprId, u32)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
     pub jsx_expressions: S::List<(ExprId, u32, u32)>,
@@ -1847,6 +1859,9 @@ pub struct FileIn<S: Storage> {
     /// The spans of the JSDoc comments of a JavaScript file. Sorted. A node whose position is
     /// inside one is synthesized from a tag.
     pub jsdoc_comments: S::Few<(u32, u32)>,
+    /// `TokenFlagsPrecedingJSDocLeadingAsterisks`: the `*` at the start of a line of a type in a
+    /// JSDoc comment, which the scanner passed over as trivia of the next token. Sorted.
+    pub jsdoc_asterisks: S::Few<u32>,
     /// The nodes that have JSDoc comments, in a JavaScript file in which one has a `@satisfies`
     /// tag. Sorted by `token`.
     pub jsdoc_hosts: S::Few<JsDocHost>,
@@ -1864,6 +1879,9 @@ pub struct FileIn<S: Storage> {
     /// `checkUnmatchedJSDocParameters` calls `containsArgumentsReference`. Those of
     /// `jsdoc_param_errors` are among them, in the same order.
     pub functions_with_param_tags: S::Few<FnId>,
+    /// `checkGrammarClassDeclarationHeritageClauses`: the classes with an `@augments` tag that does
+    /// not name the class of the `extends` clause, and the start of the 8023 in `diagnostics`.
+    pub unmatched_augments_tags: S::Few<(ClassId, u32)>,
 
     pub ids: S::List<u32>,
     pub numbers: S::List<f64>,
@@ -2320,15 +2338,18 @@ impl FileBuilder {
             specifier_expressions: few_to_arena(self.specifier_expressions, arena),
             exports_from_expressions: few_to_arena(self.exports_from_expressions, arena),
             parens: copy_to_arena(&mut self.parens, arena),
+            non_null_ends: few_to_arena(self.non_null_ends, arena),
             jsx_expressions: copy_to_arena(&mut self.jsx_expressions, arena),
             jsx_pragmas: self.jsx_pragmas,
             jsdoc_comments: few_to_arena(self.jsdoc_comments, arena),
+            jsdoc_asterisks: few_to_arena(self.jsdoc_asterisks, arena),
             jsdoc_hosts: few_to_arena(self.jsdoc_hosts, arena),
             jsdoc_types: few_to_arena(self.jsdoc_types, arena),
             jsdoc_modifiers: few_to_arena(self.jsdoc_modifiers, arena),
             jsdoc_member_comments: Cow::Owned(self.jsdoc_member_comments),
             jsdoc_param_errors: Cow::Owned(self.jsdoc_param_errors),
             functions_with_param_tags: few_to_arena(self.functions_with_param_tags, arena),
+            unmatched_augments_tags: few_to_arena(self.unmatched_augments_tags, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             numbers: copy_to_arena(&mut self.numbers, arena),
             exprs: copy_to_arena(&mut self.exprs, arena),
@@ -2403,6 +2424,13 @@ pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
 #[inline]
 pub fn open_parenthesis(hir: &File, e: ExprId) -> Option<u32> {
     parentheses_around(hir, e).last().map(|p| p.1)
+}
+
+/// `File::non_null_ends` of `e`.
+pub fn non_null_ends_in<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u32)] {
+    let first = hir.non_null_ends.partition_point(|it| it.0.0 < e.0);
+    let count = hir.non_null_ends[first..].partition_point(|it| it.0 == e);
+    &hir.non_null_ends[first..first + count]
 }
 
 /// The parentheses around `e`, the innermost first.
@@ -2501,8 +2529,16 @@ pub fn is_string_literal_like(hir: &File, e: ExprId) -> bool {
 
 /// `IsStringOrNumericLiteralLike`
 pub fn is_string_or_numeric_literal_like(hir: &File, e: ExprId) -> bool {
-    is_string_literal_like(hir, e)
-        || matches!(hir[e].kind, ExprKind::Number(_)) && !is_parenthesized(hir, e)
+    !is_parenthesized(hir, e) && is_string_or_numeric_literal_like_in_parentheses(hir, e)
+}
+
+/// `IsStringOrNumericLiteralLike(SkipParentheses(e))`
+pub fn is_string_or_numeric_literal_like_in_parentheses(hir: &File, e: ExprId) -> bool {
+    match hir[e].kind {
+        ExprKind::String(_) | ExprKind::Number(_) => true,
+        ExprKind::Template { exprs, .. } => exprs.is_empty(),
+        _ => false,
+    }
 }
 
 /// `IsSignedNumericLiteral`

@@ -265,6 +265,14 @@ impl<'p, 's> Checker<'p, 's> {
         stored: Stored,
     ) -> ResolvedCall {
         let key = (file, call);
+        if self.task.file == Some(file) {
+            if self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
+                self.signatures_resolved_discarding.push(call);
+            } else {
+                // A resolution around the one that was the first to assign has reported.
+                self.signatures_resolved_discarding.retain(|&it| it != call);
+            }
+        }
         ResolvedCall {
             ret: (self.p.call_return_types).insert(&self.task, key, resolved.ret, stored),
             sig: self.p.calls.insert(&self.task, key, resolved.sig, stored),
@@ -549,7 +557,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `hasCorrectArity`
-    pub(super) fn has_correct_arity(&mut self, s: &CallState<'_>, params: &[SigParam]) -> bool {
+    pub(super) fn has_correct_arity(
+        &mut self,
+        s: &CallState<'_>,
+        params: &List<'_, SigParam>,
+    ) -> bool {
         let (file, call, node, args) = (s.file, s.call, s.node, s.args);
         // The attributes are a single argument, regardless of the component's other parameters.
         if matches!(node, CallLike::Jsx(_)) {
@@ -561,21 +573,27 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let spread = args.iter().position(|a| a.is_spread());
         let is_incomplete = self.is_call_incomplete(file, call, node);
-        self.has_correct_arity_for_count(params, actual, spread, is_incomplete)
+        let is_open = matches!(params, List::Own(_));
+        self.has_correct_arity_for_count(params, is_open, actual, spread, is_incomplete)
     }
 
     /// `hasCorrectArity` for a call with `actual` arguments. `spread`: the first spread argument.
-    pub(super) fn has_correct_arity_for_count(
+    /// `is_open`: `sig_params` could not store `params`, so a cycle through the type of a parameter
+    /// is found where tsgo asks for that type.
+    fn has_correct_arity_for_count(
         &mut self,
         params: &[SigParam],
+        is_open: bool,
         actual: usize,
         spread: Option<usize>,
         is_incomplete: bool,
     ) -> bool {
         // Which parameters accept `void` only matters where a required one is omitted. That
-        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern.
+        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, and
+        // where `is_open`.
         let rest = params.last().filter(|p| p.rest);
-        if spread.is_none()
+        if !is_open
+            && spread.is_none()
             && !rest.is_some_and(|p| self.is_tuple(p.ty))
             && !params.iter().any(SigParam::is_named_by_pattern)
         {
@@ -589,6 +607,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let count = self.parameter_count(params);
         let least = self.min_argument_count(params);
+        if is_open {
+            // `getParameterCount`, then `getMinArgumentCount`: from the last required parameter
+            // down to one that does not accept `void`.
+            let required = &params[..Self::min_args(params)];
+            let asked = required.iter().skip(least.saturating_sub(1)).rev();
+            for param in rest.into_iter().chain(asked) {
+                self.request_type_of_parameter(param);
+            }
+        }
         let has_rest = self.has_effective_rest_parameter(params);
         // The spread argument comes after all required parameters, and either reaches a rest
         // parameter or at least starts within the parameter list.
@@ -604,6 +631,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `acceptsVoid`: only a parameter that accepts `void` may be omitted. For a parameter whose
         // type is not known this cannot be determined.
         for i in actual..least {
+            if is_open && let Some(param) = params.get(i) {
+                self.request_type_of_parameter(param);
+            }
             let Some(ty) = self.param_type_at(params, i) else {
                 return false;
             };
@@ -710,7 +740,11 @@ impl<'p, 's> Checker<'p, 's> {
         // (`checkExpression`), which has no re-entrancy guard.
         let outer = (self.resolution_start != self.stack.len()).then(|| self.begin_recheck());
         for arg in self.hir(file).ids(args) {
-            self.type_of_expr(file, arg);
+            let ty = self.type_of_expr(file, arg);
+            // `checkSpreadExpression`
+            if let ExprKind::Spread(operand) = self.hir(file)[arg].kind {
+                self.check_iterated_type_of_spread_element(file, ty, operand);
+            }
         }
         if let Some(outer) = outer {
             self.end_recheck(outer);
@@ -882,7 +916,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `resolveInstanceofExpression`. 2359 is reported elsewhere.
+    /// `resolveInstanceofExpression`
     fn resolve_instanceof_expression(
         &mut self,
         file: FileId,
@@ -900,15 +934,28 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_any(right_type) {
             return any_signature;
         }
+        // `resolveErrorCall`
+        let unknown_signature = ResolvedCall {
+            sig: None,
+            ret: TypeId::ERROR,
+        };
         let Some(method) = self.symbol_has_instance_method_of_object_type(right_type) else {
-            return any_signature;
+            let function = self.global_ref(known::Function, &[]);
+            if !self.signatures(right_type, false).is_empty()
+                || !self.signatures(right_type, true).is_empty()
+                || self.is_subtype(right_type, function)
+            {
+                return any_signature;
+            }
+            let since = self.reported.len();
+            self.error(file, self.hir(file).child(right), 2359, &[]);
+            let reported = self.take_reported_from(since);
+            (self.call_resolution_errors.get_or_insert_default()).extend(reported);
+            return unknown_signature;
         };
         let apparent = self.apparent_type(method);
         if self.is_error_type(apparent) {
-            return ResolvedCall {
-                sig: None,
-                ret: TypeId::ERROR,
-            };
+            return unknown_signature;
         }
         let sigs = self.signatures(apparent, false);
         let constructs = self.signatures(apparent, true).len();
@@ -1117,7 +1164,11 @@ impl<'p, 's> Checker<'p, 's> {
             self.resolved_meanwhile.pop();
             // Another checker may be the one to report it.
             let reported = self.take_reported_from(since);
-            if !reported.is_empty() {
+            // Where `addDiagnostic` has discarded them, the entry says that
+            // `getCandidateForOverloadFailure` has deferred the call.
+            if !reported.is_empty()
+                || self.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL
+            {
                 (self.call_resolution_errors.get_or_insert_default()).extend(reported);
             }
         }
@@ -1272,9 +1323,12 @@ impl<'p, 's> Checker<'p, 's> {
                 let inference_target_type = self.return_type_in_chain(file, call, signature);
                 if self.could_contain_type_variables(inference_target_type) {
                     let outer_context = self.get_inference_context(file, call);
-                    let is_from_binding_pattern = !skip_binding_patterns
-                        && self.contextual_type(file, call, ContextFlags::SKIP_BINDING_PATTERNS)
-                            != Some(contextual_type);
+                    let is_from_binding_pattern = !skip_binding_patterns && {
+                        self.requested_assignment_target = None;
+                        self.contextual_type(file, call, ContextFlags::SKIP_BINDING_PATTERNS)
+                            != Some(contextual_type)
+                            || self.is_contextual_type_created_anew(contextual_type)
+                    };
                     if !is_from_binding_pattern {
                         // `getMapperFromContext(cloneInferenceContext(outerContext, InferenceFlagsNoDefault))`
                         let instantiated_type = outer_context
@@ -1304,7 +1358,6 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut return_context =
                         Inference::for_params(&context.params, Some(signature));
                     return_context.any_default = context.any_default;
-                    return_context.from_pattern = is_from_binding_pattern;
                     let return_source_type = match outer_context {
                         Some(level) => {
                             self.instantiate_with_outer_return_mapper(level, contextual_type)
@@ -1317,14 +1370,6 @@ impl<'p, 's> Checker<'p, 's> {
                         inference_target_type,
                         0,
                     );
-                    // `nonInferrableAnyType`: the names in a pattern can have any type, and nothing
-                    // is inferred from that.
-                    if is_from_binding_pattern {
-                        for c in &mut return_context.candidates {
-                            c.covariant.retain(|t| !self.has_any_flag(*t));
-                            c.contravariant.retain(|t| !self.has_any_flag(*t));
-                        }
-                    }
                     context.return_context = Self::clone_inferred_part_of_context(&return_context);
                 }
             }
@@ -1371,6 +1416,115 @@ impl<'p, 's> Checker<'p, 's> {
         self.inference_mapper(context)
     }
 
+    /// Whether the call of `getContextualType` that has just returned `contextual_type` created it,
+    /// so that it is identical to the result of no other call. The contextual type of an assigned
+    /// value is `getTypeOfExpression(left)`: `checkObjectLiteral` creates a type on every call, and
+    /// `flowTypeCache` keeps it only if the check needed control flow analysis.
+    fn is_contextual_type_created_anew(&mut self, contextual_type: TypeId) -> bool {
+        let Some((file, left)) = self.requested_assignment_target.take() else {
+            return false;
+        };
+        self.contains_type_of_literal_in(contextual_type, file, left)
+            && self.is_checked_without_flow_analysis(file, left)
+    }
+
+    /// Whether `ty` is the type of an object literal inside `within`, or is composed of one.
+    fn contains_type_of_literal_in(&mut self, ty: TypeId, file: FileId, within: ExprId) -> bool {
+        let object_flags = self.types().object_flags(ty);
+        if !object_flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL) {
+            return false;
+        }
+        let (of, literal) = match self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(of, literal, ..),
+                ..
+            } => (*of, *literal),
+            TypeData::Synth(shape) => match shape.symbol_declared_at {
+                Some((of, _, literal)) if literal.is_some() => (of, literal),
+                _ => return false,
+            },
+            TypeData::Union(parts) | TypeData::Intersection(parts) => {
+                return (parts.iter())
+                    .any(|&part| self.contains_type_of_literal_in(part, file, within));
+            }
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => {
+                return (self.type_arguments(ty).iter())
+                    .any(|&part| self.contains_type_of_literal_in(part, file, within));
+            }
+            _ => return false,
+        };
+        let hir = self.hir(file);
+        of == file && hir[within].pos <= hir[literal].pos && hir[literal].end <= hir[within].end
+    }
+
+    /// Whether `checkExpression(e)` leaves `flowInvocationCount` as it is, whatever has been
+    /// resolved by then. `false`: that is not known.
+    fn is_checked_without_flow_analysis(&self, file: FileId, e: ExprId) -> bool {
+        if e.is_none() {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match hir[e].kind {
+            ExprKind::Missing
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex => true,
+            ExprKind::Template { exprs } => exprs.is_empty(),
+            // `checkIdentifier` returns the declared type of a variable that is assigned. A
+            // declaration that precedes has been checked, so that type is resolved.
+            ExprKind::Ident(_) => {
+                let symbol = bound.expr_symbol[e.idx()];
+                symbol.is_some() && self.target_kind(file, e).definite && {
+                    let declarations = &bound.symbols[symbol.idx()].decls;
+                    !declarations.is_empty()
+                        && declarations.iter().all(|&declaration| {
+                            matches!(declaration, Decl::Var(name) | Decl::Param(name)
+                                if hir[name].pos < hir[e].pos)
+                        })
+                }
+            }
+            ExprKind::Spread(operand) | ExprKind::NonNull(operand) => {
+                self.is_checked_without_flow_analysis(file, operand)
+            }
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => {
+                self.is_checked_without_flow_analysis(file, target)
+                    && self.is_checked_without_flow_analysis(file, value)
+            }
+            ExprKind::Array(elements) => (hir.ids(elements))
+                .all(|element| self.is_checked_without_flow_analysis(file, element)),
+            ExprKind::Object(props) => props.iter().all(|p| {
+                let prop = &hir[p];
+                if prop.value.is_none() {
+                    return false;
+                }
+                if let PropKey::Computed(key) = prop.key
+                    && !self.is_checked_without_flow_analysis(file, key)
+                {
+                    return false;
+                }
+                match (prop.kind, hir[prop.value].kind) {
+                    // `checkObjectLiteral`: not the default, in a destructuring pattern.
+                    (PropKind::Shorthand, ExprKind::Assign { target, .. }) => {
+                        self.is_checked_without_flow_analysis(file, target)
+                    }
+                    (PropKind::Init | PropKind::Shorthand | PropKind::Spread, _) => {
+                        self.is_checked_without_flow_analysis(file, prop.value)
+                    }
+                    _ => false,
+                }
+            }),
+            _ => false,
+        }
+    }
+
     /// `checkExpressionWithContextualType` for an argument.
     pub(super) fn check_argument(
         &mut self,
@@ -1400,7 +1554,10 @@ impl<'p, 's> Checker<'p, 's> {
                 (ty, node)
             }
             // `checkSpreadExpression`
-            Arg::SpreadElement(ty, _, _, node) => (ty, node),
+            Arg::SpreadElement(_, list, operand, node) => (
+                self.check_iterated_type_of_spread_element(file, list, operand),
+                node,
+            ),
         };
         // FOR SPEED: `instantiateTypeWithSingleGenericCallSignature` returns `ty`, which is not a
         // fresh literal type.
@@ -1426,7 +1583,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getSignatureInstantiationWithoutFillingInTypeArguments(signature, signature.typeParameters)`
-    fn without_filling_in_type_arguments(&mut self, generic: SigId) -> SigId {
+    pub(super) fn without_filling_in_type_arguments(&mut self, generic: SigId) -> SigId {
         let (params, ret, this) = (
             self.sig_params(generic),
             self.sig_return(generic),
@@ -1437,7 +1594,7 @@ impl<'p, 's> Checker<'p, 's> {
             params: self.list(&params),
             ret,
             this,
-            of: ArenaBox::empty(),
+            of: self.list(&[generic]),
             is_union: true,
         })
     }
@@ -1529,15 +1686,7 @@ impl<'p, 's> Checker<'p, 's> {
         });
         let returned_type = self.sig_return(sig);
         let ret = self.single_signature_type(generalized, construct, returned_type, mapper);
-        let (params, this) = (self.sig_params(sig), self.sig_this_type(sig));
-        self.types().intern_sig(SigData::Synth {
-            type_params: ArenaBox::empty(),
-            params: self.list(&params),
-            ret,
-            this,
-            of: ArenaBox::empty(),
-            is_union: true,
-        })
+        self.types().intern_sig(SigData::WithReturn { sig, ret })
     }
 
     /// `addImplementationSuccessElaboration`: the implementation of the overload `failed`, if
@@ -1696,7 +1845,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `createUnionOfSignaturesForOverloadFailure`: it accepts what any of `sigs` accepts, and
     /// returns what all of them return.
     pub(super) fn union_of_signatures_for_overload_failure(&mut self, sigs: &[SigId]) -> SigId {
-        let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&sig| self.sig_params(sig)).collect();
+        // `tryGetTypeAtPosition` for every position, and `tryGetRestTypeOfSignature`.
+        let lists: Vec<List<'p, SigParam>> = (sigs.iter())
+            .map(|&sig| self.sig_params_up_to(sig, usize::MAX))
+            .collect();
         // `getNonRestParameterCount`
         let plain =
             |list: &[SigParam]| list.len() - usize::from(list.last().is_some_and(|p| p.rest));
@@ -1820,19 +1972,36 @@ impl<'p, 's> Checker<'p, 's> {
             return Some((file, start, self.end_of_type_args(file, nodes)));
         }
         // An empty list begins and ends after the `<`, which follows the expression.
-        let expression = match node {
+        let after =
+            |expression| skip_trivia(&hir.text, self.end_of_expr(file, expression) as usize);
+        let less_than = match node {
             InstantiationExpression::Expr(_, e) => match hir[e].kind {
-                ExprKind::Instantiation { expr, .. } => expr,
+                ExprKind::Instantiation { expr, .. } => after(expr),
                 _ => return None,
             },
             InstantiationExpression::TypeNode(_, node) => match hir[node].kind {
-                TypeNodeKind::Typeof { expr, .. } => expr,
+                TypeNodeKind::Typeof { expr, .. } => after(expr),
+                TypeNodeKind::Import { .. } => {
+                    self.empty_type_argument_list_of_import_type(file, node)? as usize
+                }
                 _ => return None,
             },
         };
-        let less_than = skip_trivia(&hir.text, self.end_of_expr(file, expression) as usize);
         let start = skip_trivia(&hir.text, less_than + 1) as u32;
         Some((file, start, super::explain::NO_LENGTH))
+    }
+
+    /// `node.TypeArgumentList() != nil && len(node.TypeArguments()) == 0` for the `ImportType`
+    /// `node`, which then ends with `<>`: the position of the `<`. `TypeNodeKind::Import` is as
+    /// large as a `TypeNodeKind` may be, so it has no `has_type_arguments` as `Typeof` has.
+    pub(super) fn empty_type_argument_list_of_import_type(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> Option<u32> {
+        let hir = self.hir(file);
+        let greater_than = start_of_token_before(&hir.text, hir[node].end, b">")?;
+        start_of_token_before(&hir.text, greater_than, b"<")
     }
 
     /// `node.TypeArgumentList()`
@@ -2216,6 +2385,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.normalized_tuple(&[t], &[ElemFlags::VARIADIC], false)
     }
 
+    /// `checkIteratedTypeOrElementType(IterationUseSpread, spreadType, c.undefinedType,
+    /// arg.Expression())` for a `SpreadElement` with that operand.
+    fn check_iterated_type_of_spread_element(
+        &mut self,
+        file: FileId,
+        spread_type: TypeId,
+        operand: ExprId,
+    ) -> TypeId {
+        let error_node = self.span_of_parenthesized_expr(file, operand);
+        self.check_iterated_type_of_spread(spread_type, error_node)
+    }
+
     /// `getSpreadArgumentType`
     pub(super) fn spread_argument_type(
         &mut self,
@@ -2247,7 +2428,12 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_array_like(spread_type) {
                     return self.mutable_array_or_tuple(spread_type);
                 }
-                let element = self.iterated_type_of_spread(spread_type);
+                let element = match args.last() {
+                    Some(&Arg::SpreadElement(_, _, operand, _)) => {
+                        self.check_iterated_type_of_spread_element(file, spread_type, operand)
+                    }
+                    _ => self.iterated_type_of_spread(spread_type),
+                };
                 return if is_const {
                     self.readonly_array_of(element)
                 } else {
@@ -2260,13 +2446,16 @@ impl<'p, 's> Checker<'p, 's> {
         let mut flags: SmallVec<[ElemFlags; 8]> = SmallVec::with_capacity(length);
         for i in index..args.len() {
             let (ty, flag) = match args[i] {
-                Arg::Spread(element, list, ..) | Arg::SpreadElement(element, list, ..) => {
-                    if self.is_array_like(list) {
-                        (list, ElemFlags::VARIADIC)
-                    } else {
-                        (element, ElemFlags::REST)
-                    }
+                Arg::Spread(_, list, ..) | Arg::SpreadElement(_, list, ..)
+                    if self.is_array_like(list) =>
+                {
+                    (list, ElemFlags::VARIADIC)
                 }
+                Arg::Spread(element, ..) => (element, ElemFlags::REST),
+                Arg::SpreadElement(_, list, operand, _) => (
+                    self.check_iterated_type_of_spread_element(file, list, operand),
+                    ElemFlags::REST,
+                ),
                 arg => {
                     let contextual = if self.is_tuple(rest) {
                         self.contextual_element_at(rest, i - index, Some(length), None, None)
@@ -2680,7 +2869,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The name that the mapper `around` of a clone gives the type parameter declared as
     /// `declared`: see `unique_type_params`.
-    fn new_type_param_name(&self, declared: Atom, around: MapperId) -> Option<Atom> {
+    pub(super) fn new_type_param_name(&self, declared: Atom, around: MapperId) -> Option<Atom> {
         if around == MapperId::IDENTITY {
             return None;
         }
@@ -2724,9 +2913,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getUniqueTypeParameters`: `own`, with a renamed clone for each type parameter whose name occurs in `inferred` or earlier in
     /// `own`. The mapper of a renamed clone (`cloneTypeParameter`) maps the fresh string literal type of the declared name to the string
     /// literal type of the new name. Instantiation only looks up type parameters, so that entry never reaches a type.
-    /// `clone_mapper` resolves the siblings of a clone with the mapper of the clone, so if a type parameter is renamed, its siblings
-    /// (those of the same function, class or interface with the same mapper) are cloned with the same mapper, and those that keep
-    /// their name only change identity.
+    /// A type parameter that keeps its declared name stays as it is: its constraint and its default name the old siblings.
+    /// `clone_mapper` resolves the renamed siblings of a clone (those of the same function, class or interface with the same mapper)
+    /// with the mapper of the clone, so one that an earlier call renamed is cloned again with the same mapper.
     /// `None`: the renamed clones cannot be represented.
     pub(super) fn unique_type_params(
         &self,
@@ -2803,7 +2992,9 @@ impl<'p, 's> Checker<'p, 's> {
                 .filter(|rename| sibling_sets[rename.0] == sibling_sets[i])
                 .map(|rename| (rename.1, rename.2))
                 .collect();
-            if renames_of_siblings.is_empty() {
+            let has_new_name =
+                renames.iter().any(|rename| rename.0 == i) || self.is_renamed_type_param(param);
+            if renames_of_siblings.is_empty() || !has_new_name {
                 unique.push(param);
                 continue;
             }

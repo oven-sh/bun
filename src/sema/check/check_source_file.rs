@@ -11,6 +11,7 @@ use super::errors_operators::{
     check_tagged_template, check_template_spans, check_yield_result,
 };
 use super::errors_statements::is_with_statement;
+use super::sink::MAX_SERIALIZATION_LEVEL;
 use super::task::{Finished, Published};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
@@ -170,16 +171,22 @@ impl<'s> Checker<'_, 's> {
         self.renamed_binding_elements_in_types.clear();
         self.unvisited_exprs.clear();
         let hir = self.hir(file);
-        let is_ambient = |flags: Flags| flags.contains(Flags::AMBIENT);
+        // `parseDeclaration`, `parseClassElement`: outside a declaration file only a `declare`
+        // sets `NodeFlagsAmbient`.
+        let mut modifiers = hir.modifiers.iter();
         self.has_ambient_context = hir.kind == FileKind::Declaration
-            || hir.modules.iter().any(|it| is_ambient(it.flags))
-            || hir.classes.iter().any(|it| is_ambient(it.flags))
-            || hir.fns.iter().any(|it| is_ambient(it.flags));
+            || modifiers.any(|modifier| modifier.kind.flag() == Flags::AMBIENT);
         self.parsed_again_for_await = None;
         // The kinds that `type_of_expr_uncached` defers. Sorted by position: a single evaluation
         // reaches them in that order.
         let index = self.exprs_by_kind(file);
-        let tags = [ExprTag::Fn, ExprTag::Class, ExprTag::Jsx, ExprTag::Unary];
+        let tags = [
+            ExprTag::Fn,
+            ExprTag::Class,
+            ExprTag::Jsx,
+            ExprTag::Unary,
+            ExprTag::As,
+        ];
         let mut earlier: Vec<ExprId> = (tags.iter())
             .flat_map(|&tag| index.of(tag).iter().copied())
             .filter(|&e| (self.p.deferred_nodes.get(&self.task, &(file, e))).is_some())
@@ -190,8 +197,7 @@ impl<'s> Checker<'_, 's> {
         }
         self.check_source_elements(file, self.hir(file).body);
         self.check_deferred_nodes(file);
-        // `checkFunctionOrConstructorSymbol`, which compares an implementation with its overloads.
-        self.check_overloads(file);
+        self.check_merged_symbols(file);
         self.check_exprs_visited_by_queries(file);
         if hir.kind != FileKind::Declaration {
             self.check_unused_renamed_binding_elements(file);
@@ -207,6 +213,9 @@ impl<'s> Checker<'_, 's> {
     fn check_exprs_visited_by_queries(&mut self, file: FileId) {
         let mut unvisited = Vec::new();
         loop {
+            // `onFailedToResolveSymbol` is part of the walk: `getSpellingSuggestionForName` resolves
+            // the aliases among its candidates, and `getTargetOfAliasLikeExpression` checks.
+            self.report_unresolved_identifiers();
             unvisited.append(&mut self.unvisited_exprs);
             let (visited, rest): (Vec<_>, Vec<_>) = unvisited.into_iter().partition(|&(_, e)| {
                 self.cached_type_of_expr(file, e).is_some()
@@ -226,6 +235,7 @@ impl<'s> Checker<'_, 's> {
             self.never_check_unless_visited_by_query(file, self.hir(file).node(e), range);
         }
         self.never_check_with_bodies(file);
+        self.never_check_specifier_expressions(file);
     }
 
     /// Whether `pos` is in a range given to `never_check`.
@@ -362,7 +372,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkSourceElement`: `c.currentNode = node`, `c.instantiationCount = 0`. Returns
     /// `saveCurrentNode`.
     #[inline]
-    fn enter_source_element(&mut self, node: CurrentNode) -> Option<CurrentNode> {
+    pub(super) fn enter_source_element(&mut self, node: CurrentNode) -> Option<CurrentNode> {
         self.instantiation_count = 0;
         self.current_source_element.replace(node)
     }
@@ -388,7 +398,7 @@ impl<'s> Checker<'_, 's> {
                     }
                 }
                 self.check_getter_returns_a_value(file, func);
-                if hir[func].ret.is_none() {
+                if hir[func].ret.is_none() && hir[func].kind != FnKind::Setter {
                     self.return_type_of_fn(file, func);
                 }
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
@@ -445,6 +455,10 @@ impl<'s> Checker<'_, 's> {
     /// `checkSourceElement(node.Body())`, `checkExpressionCached(node.Body())`
     fn check_function_body(&mut self, file: FileId, func: FnId) {
         let function = &self.hir(file)[func];
+        // `checkBlock`
+        if matches!(function.body, FnBody::Block(_)) {
+            self.check_grammar_function_body_in_ambient_context(file, func);
+        }
         match function.body {
             // A static block is not function-like.
             FnBody::Block(list) if function.kind == FnKind::StaticBlock => {
@@ -478,9 +492,9 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// `checkTypeParameters`: 2706.
+    /// `checkTypeParameters`: 2300 2706.
     fn check_type_parameters(&mut self, file: FileId, type_params: Span<TypeParamId>) {
-        let hir = self.hir(file);
+        let (hir, symbols) = (self.hir(file), &self.bound(file).type_param_symbol);
         let mut seen_default = false;
         for (index, tp) in type_params.iter().enumerate() {
             self.check_type_parameter(file, tp);
@@ -495,6 +509,11 @@ impl<'s> Checker<'_, 's> {
             } else if seen_default {
                 let at = (file, hir[tp].start, self.end_of_type_param(file, tp));
                 self.error_at(at, 2706, &[]);
+            }
+            let symbol = symbols[tp.idx()];
+            let mut earlier = type_params.iter().take(index);
+            if symbol.is_some() && earlier.any(|it| symbols[it.idx()] == symbol) {
+                self.report_on_declaration_name(file, Decl::TypeParam(tp), 2300);
             }
         }
     }
@@ -697,6 +716,7 @@ impl<'s> Checker<'_, 's> {
         }
         let hir = self.hir(file);
         self.check_signature_declaration(file, func);
+        self.check_function_or_constructor_symbols_of(file, Decl::Fn(func));
         self.check_function_body(file, func);
         self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
         if hir[func].ret.is_none()
@@ -722,12 +742,25 @@ impl<'s> Checker<'_, 's> {
         if !exits || !matches!(self.hir(file)[name].kind, PatKind::Ident(_)) {
             self.check_binding_name(file, name, is_bodiless);
         }
-        if exits {
+        if exits || self.is_binding_pattern_in_ambient_or_type_node(file, name) {
             self.leave_unvisited(file, initializer);
         } else {
             self.check_expression(file, initializer);
         }
         exits
+    }
+
+    /// `IsBindingPattern(name) && isInAmbientOrTypeNode(node)`, for the declaration `node` of
+    /// `name`: `checkVariableLikeDeclaration` returns before it validates the initializer.
+    pub(super) fn is_binding_pattern_in_ambient_or_type_node(
+        &self,
+        file: FileId,
+        name: PatId,
+    ) -> bool {
+        let hir = self.hir(file);
+        name.is_some()
+            && matches!(hir[name].kind, PatKind::Object(_) | PatKind::Array(_))
+            && hir.is_in_ambient_or_type_node(hir.node(name))
     }
 
     /// The check of the parent of `e` returns before it checks `e`.
@@ -880,17 +913,19 @@ impl<'s> Checker<'_, 's> {
             }
             let start = hir[hir[p].value].pos;
             let (node, name) = match hir[hir[p].value].kind {
-                PatKind::Ident(name) if name != known::empty => {
-                    (self.place_of_token(file, start), Arg::Atom(name))
-                }
-                _ => ((file, start, start), Arg::Bytes(b"(Missing)")),
+                PatKind::Ident(name) if name != known::empty => (
+                    self.place_of_token(file, start),
+                    self.declaration_name_at(file, start),
+                ),
+                _ => ((file, start, start), b"(Missing)".to_vec()),
             };
             let property = self.declaration_name_at(file, hir[p].key_pos);
             let related = hir[param].ty.is_none().then(|| {
                 let end = self.end_of_param(file, param);
                 self.new_diagnostic((file, end, end), 2843, &[Arg::Bytes(&property)])
             });
-            let diagnostic = self.error_at(node, 2842, &[name, Arg::Bytes(&property)]);
+            let args = [Arg::Bytes(&name), Arg::Bytes(&property)];
+            let diagnostic = self.error_at(node, 2842, &args);
             if let Some(related) = related {
                 diagnostic.add_related_info(related);
             }
@@ -949,7 +984,11 @@ impl<'s> Checker<'_, 's> {
             self.leave_unvisited(file, decl.init);
             return;
         }
-        self.check_expression(file, decl.init);
+        if self.is_binding_pattern_in_ambient_or_type_node(file, decl.pat) {
+            self.leave_unvisited(file, decl.init);
+        } else {
+            self.check_expression(file, decl.init);
+        }
         self.check_variable_initializer(file, d);
         if matches!(decl.kind, VarKind::Using | VarKind::AwaitUsing) {
             self.check_initializer_of_using_declaration(file, d);
@@ -984,8 +1023,14 @@ impl<'s> Checker<'_, 's> {
             self.check_expression(file, decl.extends);
             self.check_type_arguments_of_base(file, class, sym);
             self.report_class_like_declaration(file, class, sym);
+        } else {
+            self.check_heritage_clause_elements(file, decl.implements);
         }
-        self.check_heritage_clause_elements(file, decl.implements);
+        for other in self.hir(file).ids(decl.other_extends) {
+            self.leave_unvisited(file, other);
+        }
+        self.leave_heritage_expressions_unvisited(file, decl.implements);
+        self.leave_heritage_expressions_unvisited(file, decl.other_implements);
         if symbol.is_some() {
             self.check_class_heritage(file, class);
             self.check_property_initialization(file, class);
@@ -1018,9 +1063,16 @@ impl<'s> Checker<'_, 's> {
         }
         if symbol.is_some() {
             self.check_interface_heritage(file, interface);
+            // `getMembersOfSymbol`: `checkInheritedPropertiesAreIdentical` or
+            // `checkIndexConstraints` has asked for the members.
+            self.late_bound_members(self.files().sym(file, symbol), false);
         }
+        let node = self.hir(file).node(interface);
+        self.check_object_type_for_duplicate_declarations(file, node, decl.members, false);
         self.check_bases_of_interface(file, interface);
         self.check_heritage_clause_elements(file, decl.extends);
+        self.leave_heritage_expressions_unvisited(file, decl.extends);
+        self.leave_heritage_expressions_unvisited(file, decl.other_heritage);
         self.check_members(file, decl.members);
     }
 
@@ -1100,10 +1152,15 @@ impl<'s> Checker<'_, 's> {
                 self.check_grammar_constructor_type_annotation(file, member.func);
             }
             // `checkComputedPropertyName`
-            if let PropKey::Computed(key) = member.key
-                && !self.is_computed_name_never_checked(file, key)
-            {
-                self.check_expression(file, key);
+            if let PropKey::Computed(key) = member.key {
+                if self.is_computed_name_never_checked(file, key) {
+                    self.leave_unvisited(file, key);
+                } else {
+                    self.check_expression(file, key);
+                }
+            }
+            if member.kind == MemberKind::Method {
+                self.check_function_or_constructor_symbols_of(file, Decl::Member(m));
             }
             // `checkAccessorDeclaration`: `getTypeOfAccessors` comes before the body, whose `return`
             // asks for the return type of the signature, which is another resolution.
@@ -1118,13 +1175,14 @@ impl<'s> Checker<'_, 's> {
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, member.func);
             }
             if member.kind == MemberKind::Constructor {
+                self.check_function_or_constructor_symbols_of(file, Decl::Member(m));
                 self.check_super_call_in_constructor(file, m);
             }
             // `checkVariableLikeDeclaration`: `getTypeOfSymbol` comes before
             // `checkExpressionCached(initializer)`, unless the name is computed.
             if member.kind == MemberKind::Property
                 && !matches!(member.key, PropKey::Computed(_))
-                && member.ty.is_none()
+                && !is_resolved_by_check_source_element(hir, member.ty)
                 && self.bound(file).member_symbol[m.idx()].is_some()
             {
                 let symbol = self.symbol_of_member(file, m);
@@ -1159,7 +1217,7 @@ impl<'s> Checker<'_, 's> {
     /// The first test of `checkComputedPropertyName`: `e` is `a in b`, and `[e]` is the name of a
     /// member of a type literal, a class or an interface that is no accessor. Its type is the error
     /// type, and it is not checked.
-    fn is_computed_name_never_checked(&self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn is_computed_name_never_checked(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         matches!(hir[e].kind, ExprKind::Binary { op: BinOp::In, .. })
             && !is_parenthesized(hir, e)
@@ -1259,6 +1317,20 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
+    /// `checkTypeReferenceNode` never visits the expression of an element that is no entity name.
+    /// The keyword `import`, a missing expression, has nothing below it.
+    fn leave_heritage_expressions_unvisited(&mut self, file: FileId, elements: IdList<TypeNodeId>) {
+        let hir = self.hir(file);
+        for element in hir.ids(elements) {
+            if element.is_some()
+                && let TypeNodeKind::Heritage { expr, .. } = hir[element].kind
+                && !matches!(hir[expr].kind, ExprKind::Missing)
+            {
+                self.leave_unvisited(file, expr);
+            }
+        }
+    }
+
     /// `checkSourceElement` for a type node.
     pub(super) fn check_type_node(&mut self, file: FileId, node: TypeNodeId) {
         if node.is_none() || self.is_stack_low() {
@@ -1270,7 +1342,7 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `checkSourceElementWorker` for a type node.
-    fn check_type_node_worker(&mut self, file: FileId, node: TypeNodeId) {
+    pub(super) fn check_type_node_worker(&mut self, file: FileId, node: TypeNodeId) {
         let hir = self.hir(file);
         match hir[node].kind {
             // `checkTypeReferenceNode`
@@ -1278,6 +1350,8 @@ impl<'s> Checker<'_, 's> {
                 self.check_type_nodes(file, args);
                 self.check_type_reference_or_import(file, node);
             }
+            // `checkTypeReferenceNode`: `getTypeReferenceName` is nil, so it has the error type.
+            TypeNodeKind::Heritage { args, .. } => self.check_type_nodes(file, args),
             // `checkImportType` checks the argument, never the type arguments. A non-literal argument is stored in `args` (`spec` is `NONE`).
             TypeNodeKind::Import { spec, args, .. } => {
                 if spec.is_none() {
@@ -1292,8 +1366,8 @@ impl<'s> Checker<'_, 's> {
             // `checkTypeQuery`: `checkExpressionWithTypeArguments`
             TypeNodeKind::Typeof { args, expr, .. } => {
                 self.check_type_nodes(file, args);
-                self.check_expression(file, expr);
                 self.type_from_node(file, node);
+                self.check_expression(file, expr);
             }
             // `checkTypeLiteral`
             TypeNodeKind::Object(members) => {
@@ -1302,6 +1376,10 @@ impl<'s> Checker<'_, 's> {
                 if (members.iter()).any(|m| hir[m].kind == MemberKind::IndexSignature) {
                     self.check_index_constraints(file, ty, &[(file, members)], false, None);
                 }
+                // Another task may have stored `ty`.
+                self.get_members_of_type_literal(file, members);
+                let literal = hir.node(node);
+                self.check_object_type_for_duplicate_declarations(file, literal, members, false);
             }
             // `checkArrayType`, `checkTypeOperator`
             TypeNodeKind::Array(of) | TypeNodeKind::Keyof(of) => self.check_type_node(file, of),
@@ -1484,7 +1562,7 @@ impl<'s> Checker<'_, 's> {
                     if matches!(hir[s].kind, StmtKind::ExportAssign(_)) {
                         self.check_grammar_export_equals(file, s);
                     }
-                } else if e.is_some() && matches!(bound.stmt_parent[s.idx()], Parent::Module(_)) {
+                } else if e.is_some() {
                     self.never_check(self.start_of(file, e), hir[s].loc.end);
                 }
                 if matches!(hir[s].kind, StmtKind::ExportAssign(_))
@@ -1495,15 +1573,22 @@ impl<'s> Checker<'_, 's> {
                     self.error(file, s, 1294, &[]);
                 }
             }
-            // `checkImportBinding` of `* as ns`: `checkAliasSymbol` begins with `resolveAlias`. The
-            // first use of a module decides whether it has a synthetic `default`.
-            StmtKind::Import(x) if hir[x].namespace.is_some() => {
+            // `checkImportBinding` of the default name, of `* as ns` and of each name in braces:
+            // `checkAliasSymbol` begins with `resolveAlias`. What a later statement asks of the alias
+            // finds it resolved, or being resolved. The first use of a module decides whether it has
+            // a synthetic `default`.
+            StmtKind::Import(x) => {
                 let scope = bound.import_scope[x.idx()];
-                if scope.is_some()
-                    && let Some(local) =
-                        bound.lookup(bound.scopes[scope.idx()].locals, hir[x].namespace)
-                {
-                    self.resolve_alias(self.files().sym(file, local));
+                if scope.is_some() {
+                    let locals = bound.scopes[scope.idx()].locals;
+                    let named = hir[x].named.iter().map(|item| hir[item].local);
+                    for name in [hir[x].default, hir[x].namespace].into_iter().chain(named) {
+                        if name.is_some()
+                            && let Some(local) = bound.lookup(locals, name)
+                        {
+                            self.resolve_alias(self.files().sym(file, local));
+                        }
+                    }
                 }
             }
             // `checkGrammarTypeOnlyNamedImportsOrExports`: `type` on the statement and again on a
@@ -1755,6 +1840,9 @@ impl<'s> Checker<'_, 's> {
         }
         let hir = self.hir(file);
         let ty = self.type_of_expr(file, e);
+        if ty == TypeId::ERROR {
+            self.reach_flow_depth_limit_again(file, e);
+        }
         // `checkExpressionEx`
         let ty = match hir[e].kind {
             ExprKind::Spread(_) => self.type_of_spread_expression(file, e, ty),
@@ -1775,6 +1863,11 @@ impl<'s> Checker<'_, 's> {
             }
             // `resolveCall`: the type arguments of `super<T>()` are those of the `extends` clause.
             ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
+                let serialization_level = self.serialization_level;
+                if self.task.file == Some(file) && self.signatures_resolved_discarding.contains(&e)
+                {
+                    self.serialization_level = serialization_level.max(MAX_SERIALIZATION_LEVEL);
+                }
                 let callee = hir[c].callee;
                 self.check_expression(file, callee);
                 if callee.is_none() || !matches!(hir[callee].kind, ExprKind::Super) {
@@ -1786,11 +1879,16 @@ impl<'s> Checker<'_, 's> {
                     .is_some()
                 {
                     self.check_node_deferred(file, e);
+                } else if ty == TypeId::SILENT_NEVER && self.is_silent_never_signature(file, e) {
+                    for x in hir.ids(hir[c].args) {
+                        self.leave_unvisited(file, x);
+                    }
                 } else {
                     for x in hir.ids(hir[c].args) {
                         self.check_expression(file, x);
                     }
                 }
+                self.serialization_level = serialization_level;
                 if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
                     check_tagged_template(self, file, c);
                 }
@@ -1812,8 +1910,9 @@ impl<'s> Checker<'_, 's> {
                     self.check_expression(file, expr);
                 }
             }
-            // `checkFunctionExpressionOrObjectLiteralMethod`: the signature now, and its return
-            // type if it is contextually typed.
+            // `checkFunctionExpressionOrObjectLiteralMethod`: `type_of_expr` has run
+            // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`, with the contextual
+            // signature there was at the first look.
             ExprKind::Fn(func) => {
                 if hir[func].kind == FnKind::Expr {
                     self.check_collisions_for_declaration_name(file, e, hir[func].name);
@@ -1827,9 +1926,6 @@ impl<'s> Checker<'_, 's> {
                     self.check_grammar_for_generator(file, func);
                 }
                 self.check_signature_declaration(file, func);
-                if hir[func].ret.is_none() && self.contextual_signature(file, func).is_some() {
-                    self.return_type_of_fn(file, func);
-                }
                 self.check_node_deferred(file, e);
             }
             // `checkClassExpression`: `type_of_expr` has run `checkClassLikeDeclaration`.
@@ -1903,10 +1999,12 @@ impl<'s> Checker<'_, 's> {
             {
                 self.check_expression(file, value);
                 self.check_destructuring_assignment_target(file, target);
-                // One that is a default in a pattern is checked with the pattern.
-                if !self.is_definite_assignment_target(file, e) {
+                if !self.is_assignment_element_with_initializer(file, e) {
                     let source_type = self.type_of_expr(file, value);
+                    // `checkExpressionEx`: `c.currentNode = node`
+                    let saved = self.enter_source_element(CurrentNode::Expr(file, e));
                     self.check_destructuring_assignment(file, target, source_type);
+                    self.current_source_element = saved;
                 }
             }
             // `checkBinaryLikeExpression`. It iterates over the left spine, as TypeScript's trampoline does, so that a long chain
@@ -1948,16 +2046,19 @@ impl<'s> Checker<'_, 's> {
                     }
                 }
             }
-            ExprKind::Index {
-                obj: a, index: b, ..
+            ExprKind::Index { obj, index, .. } => {
+                self.check_expression(file, obj);
+                self.check_expression(file, index);
             }
-            | ExprKind::Assign {
-                target: a,
-                value: b,
-                ..
-            } => {
-                self.check_expression(file, a);
-                self.check_expression(file, b);
+            // `checkBinaryLikeExpression`: `checkAssignmentOperator`. `type_of_expr` has that of a
+            // compound assignment.
+            ExprKind::Assign { target, value, .. } => {
+                self.check_expression(file, target);
+                self.check_expression(file, value);
+                // `checkExpressionEx`: `c.currentNode = node`
+                let saved = self.enter_source_element(CurrentNode::Expr(file, e));
+                self.check_plain_assignment_operator(file, e, None);
+                self.current_source_element = saved;
             }
             ExprKind::Cond { test, yes, no } => {
                 self.check_expression(file, test);
@@ -1975,6 +2076,18 @@ impl<'s> Checker<'_, 's> {
             // `checkJsxElement`, `checkJsxSelfClosingElement`
             ExprKind::Jsx(_) => self.check_node_deferred(file, e),
             _ => {}
+        }
+    }
+
+    /// `getTypeAtFlowNode`, `c.flowAnalysisDisabled = true`, for a reference `e` whose stored type
+    /// is `errorType`. No type of a reference is stored there: one that a query has checked before,
+    /// and whose walk reached the depth limit, reaches it again.
+    #[cold]
+    fn reach_flow_depth_limit_again(&mut self, file: FileId, e: ExprId) {
+        if self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH
+            && (self.p.flows_too_deep.get(&self.task, &(file, e))).is_some()
+        {
+            self.flow_analysis_disabled = true;
         }
     }
 
@@ -2007,16 +2120,18 @@ impl<'s> Checker<'_, 's> {
         match hir[e].kind {
             ExprKind::Object(properties) if !is_parenthesized(hir, e) => {
                 for (i, p) in properties.iter().enumerate() {
-                    if let PropKey::Computed(key) = hir[p].key {
-                        self.check_expression(file, key);
-                    }
                     // A rest element that is not last is rejected and not visited. Neither is a
-                    // member that is not a property assignment.
+                    // member that is not a property assignment, nor its name.
                     let continues = match hir[p].kind {
                         PropKind::Init | PropKind::Shorthand => true,
                         PropKind::Spread => i + 1 == properties.len(),
                         _ => false,
                     };
+                    match hir[p].key {
+                        PropKey::Computed(key) if continues => self.check_expression(file, key),
+                        PropKey::Computed(key) => self.leave_unvisited(file, key),
+                        _ => {}
+                    }
                     if continues {
                         self.check_destructuring_assignment_target(file, hir[p].value);
                     }
@@ -2072,4 +2187,22 @@ impl<'s> Checker<'_, 's> {
             self.check_expression(file, x);
         }
     }
+}
+
+/// FOR SPEED: whether `checkSourceElement(node)` leaves nothing for `getTypeFromTypeNode(node)` to
+/// resolve, so that `getTypeOfSymbol` of the property that `node` annotates cannot close a cycle.
+/// `checkTypeOperator`, `checkConditionalType`, `checkArrayType` and `checkJSDocType` visit the
+/// children and do not ask for the type of `node`.
+fn is_resolved_by_check_source_element(hir: &File, mut node: TypeNodeId) -> bool {
+    // The parser builds `T[][][]..` in a loop, so nothing bounds its depth.
+    while node.is_some()
+        && let TypeNodeKind::Array(of) | TypeNodeKind::Readonly(of) = hir[node].kind
+    {
+        node = of;
+    }
+    node.is_some()
+        && !matches!(
+            hir[node].kind,
+            TypeNodeKind::Keyof(_) | TypeNodeKind::Cond { .. } | TypeNodeKind::JSDoc { .. }
+        )
 }

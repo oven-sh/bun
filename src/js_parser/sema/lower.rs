@@ -32,7 +32,7 @@ pub(crate) struct Lower<'p, 'a> {
     /// `TokenFullStart` of the end of the file.
     end_of_file_full_start: u32,
     stack_check: bun_core::StackCheck,
-    /// The JSDoc comments of a JavaScript file. None for TypeScript.
+    /// The JSDoc comments of a JavaScript file. In TypeScript, `Lexer::jsdoc_read_by_checker`.
     pub(super) jsdoc: std::rc::Rc<Comments>,
     /// Which of them are attached to a node.
     pub(super) jsdoc_is_attached: Vec<bool>,
@@ -57,6 +57,9 @@ pub(crate) struct Lower<'p, 'a> {
     /// `NodeFlagsAmbient`: the node being lowered is in a declaration file or inside a `declare`
     /// declaration.
     is_ambient: bool,
+    /// `checkGrammarModuleElementContext`, for a statement of the list being lowered: it is the
+    /// list of the file.
+    pub(super) is_in_appropriate_context: bool,
 }
 
 impl<'p, 'a> Lower<'p, 'a> {
@@ -67,9 +70,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         is_declaration_file: bool,
     ) -> hir::FileBuilder {
         let end_of_file_full_start = p.lexer.token_full_start as u32;
-        // `withJSDoc`: tags are only processed in JavaScript files.
-        let (mut syntax, jsdoc) = if syntax.has_jsdoc {
-            super::jsdoc::read_comments(p, syntax)
+        let wanted = if syntax.has_jsdoc {
+            super::comments::flags::JSDOC_LIKE
+        } else {
+            p.lexer.jsdoc_read_by_checker(is_declaration_file)
+        };
+        let (mut syntax, jsdoc) = if wanted != 0 {
+            super::jsdoc::read_comments(p, syntax, wanted)
         } else {
             (syntax, Comments::default())
         };
@@ -98,6 +105,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             full_signatures: Default::default(),
             documented_functions: Default::default(),
             is_ambient: is_declaration_file,
+            is_in_appropriate_context: true,
         };
         this.b.file.source_len = source_len as u32;
         this.b.file.kind = if is_declaration_file {
@@ -146,6 +154,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             import_attributes.dedup_by_key(|attributes| attributes.0);
         }
         this.b.file.parens.sort_by_key(|p| p.0.0);
+        this.b.file.non_null_ends.sort_by_key(|it| it.0.0);
         this.b
             .file
             .jsx_expressions
@@ -172,7 +181,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 PendingPart::FunctionBody(func, body) => {
                     let open = self.pos_of(body.loc);
                     self.b.file.body_starts.push((func, open));
+                    let was_ambient = self.is_ambient;
+                    self.is_ambient |= body.is_ambient;
                     let body = FnBody::Block(self.stmts(body.stmts.slice(), false));
+                    self.is_ambient = was_ambient;
                     self.b.file.fns[func.idx()].body = body;
                 }
                 PendingPart::PatternKey(property, key) => {
@@ -207,12 +219,18 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let mut expression = self.expr(&written);
                     // `parseExpressionWithTypeArguments`: type arguments that the expression
                     // consumed belong to the element.
+                    let mut consumed = None;
                     if self.last_cast(&written) == Some(Mark::Instantiation)
-                        && let ExprKind::Instantiation { expr, .. } = self.b.file[expression].kind
+                        && let ExprKind::Instantiation { expr, type_args } =
+                            self.b.file[expression].kind
                     {
                         expression = expr;
+                        consumed = Some(type_args);
                     }
-                    self.b.file[node].kind = TypeNodeKind::Heritage(expression);
+                    if let TypeNodeKind::Heritage { expr, args } = &mut self.b.file[node].kind {
+                        *expr = expression;
+                        *args = consumed.unwrap_or(*args);
+                    }
                 }
             }
         }
@@ -398,21 +416,50 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         }
         if decorators {
-            self.check_js_decorator_syntax(list);
+            self.check_js_decorator_syntax(list, false);
         }
     }
 
-    /// `checkJSDecoratorSyntax`: the first decorator in `list`, the modifiers of a node for which
-    /// `CanHaveIllegalDecorators` is true.
-    fn check_js_decorator_syntax(&mut self, list: Span<ModifierId>) {
-        let mut modifiers = self.b.file.modifier_list(list).iter();
-        let first = modifiers.find_map(|modifier| match modifier.kind {
-            ModifierKind::Decorator(e) => Some((modifier.pos, e)),
-            ModifierKind::Keyword(_) => None,
-        });
-        if let Some((pos, e)) = first {
-            let end = hir::end_of_expr(&self.b.file, e);
-            self.b.js_error_at_range((pos, end), 1206, b"");
+    /// `checkJSDecoratorSyntax` for a node whose modifiers are `list`: a class declaration
+    /// (`is_class_declaration`), or a node for which `CanHaveIllegalDecorators` is true.
+    fn check_js_decorator_syntax(&mut self, list: Span<ModifierId>, is_class_declaration: bool) {
+        let file = &self.b.file;
+        let modifiers = file.modifier_list(list);
+        // Each with its index and its range.
+        let decorators = || {
+            let modifiers = modifiers.iter().enumerate();
+            modifiers.filter_map(move |(index, modifier)| match modifier.kind {
+                ModifierKind::Decorator(e) => {
+                    Some((index, (modifier.pos, hir::end_of_expr(file, e))))
+                }
+                ModifierKind::Keyword(_) => None,
+            })
+        };
+        let index_of = |keyword: Flags| {
+            let mut modifiers = modifiers.iter();
+            modifiers.position(|modifier| modifier.kind == ModifierKind::Keyword(keyword))
+        };
+        let Some((decorator_index, first)) = decorators().next() else {
+            return;
+        };
+        if !is_class_declaration {
+            self.b.js_error_at_range(first, 1206, b"");
+            return;
+        }
+        let Some(export_index) = index_of(Flags::EXPORT) else {
+            return;
+        };
+        let default_index = index_of(Flags::DEFAULT);
+        let trailing = decorators().find(|&(index, _)| index > export_index);
+        if decorator_index > export_index {
+            if default_index.is_some_and(|default_index| decorator_index < default_index) {
+                self.b.js_error_at_range(first, 1206, b"");
+            }
+        } else if let Some((_, trailing)) = trailing {
+            let mut diagnostic = Diagnostic::new(DiagnosticKind::Js, trailing, 8038, &[]);
+            let related = Diagnostic::new(DiagnosticKind::Js, first, 1486, &[]);
+            diagnostic.related.push(related);
+            self.b.file.diagnostics.push(diagnostic);
         }
     }
 
@@ -420,20 +467,37 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// nothing from its comments yet.
     fn check_js_syntax(&mut self, id: StmtId) {
         let stmt = self.b.file[id];
+        match stmt.kind {
+            // `parseAmbientExternalModuleDeclaration` does not perform this check.
+            StmtKind::Module(m) if !matches!(self.b.file[m].name, ModuleName::Ident(_)) => return,
+            StmtKind::Class(_) => self.check_js_decorator_syntax(stmt.modifiers, true),
+            StmtKind::Var(_)
+            | StmtKind::Fn(_)
+            | StmtKind::Interface(_)
+            | StmtKind::TypeAlias(_)
+            | StmtKind::Enum(_)
+            | StmtKind::Module(_)
+            | StmtKind::ImportEquals(_)
+            | StmtKind::Import(_)
+            | StmtKind::ExportNamed(_)
+            | StmtKind::ExportStar { .. }
+            | StmtKind::ExportDefault(_)
+            | StmtKind::ExportAssign(_) => self.check_js_decorator_syntax(stmt.modifiers, false),
+            // Nor does `parseNamespaceExportDeclaration`.
+            _ => return,
+        }
         if let StmtKind::Fn(_) | StmtKind::Var(_) | StmtKind::Class(_) = stmt.kind {
             self.check_js_modifiers(stmt.modifiers, false);
         }
         let (file, whole) = (&self.b.file, (stmt.start, stmt.loc.end));
         let (at, code, what): (_, _, &[u8]) = match stmt.kind {
-            StmtKind::Fn(f) if matches!(file[f].body, FnBody::None) => (whole, 8017, b""),
+            StmtKind::Fn(f) if !hir::has_body_node(&file[f]) => (whole, 8017, b""),
             StmtKind::Import(i) if file[i].type_only => (whole, 8006, b"import type"),
             StmtKind::ExportNamed(e) if file[e].type_only => (whole, 8006, b"export type"),
             StmtKind::ExportStar { type_only, .. } if type_only => (whole, 8006, b"export type"),
             StmtKind::ImportEquals(_) => (whole, 8002, b""),
             StmtKind::ExportAssign(_) => (whole, 8003, b""),
             StmtKind::Interface(i) => ((file[i].name_pos, 0), 8006, b"interface"),
-            // `parseAmbientExternalModuleDeclaration` does not perform this check.
-            StmtKind::Module(m) if !matches!(file[m].name, ModuleName::Ident(_)) => return,
             StmtKind::Module(m) if file[m].specifies_module => {
                 ((file[m].name_pos, 0), 8006, b"module")
             }
@@ -472,6 +536,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         // parsed from.
         let was_module = self.b.file.has_module_syntax;
         let outer_reparsed = std::mem::take(&mut self.reparsed);
+        let outer_context = std::mem::replace(&mut self.is_in_appropriate_context, is_top_level);
         for stmt in stmts {
             if is_top_level
                 && matches!(
@@ -499,6 +564,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.list_reparsed();
         }
         self.reparsed = outer_reparsed;
+        self.is_in_appropriate_context = outer_context;
         if !is_top_level {
             self.b.file.has_module_syntax = was_module;
         }
@@ -547,10 +613,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         self.b.file.list(&out)
     }
 
+    /// `isAnExternalModuleIndicatorNode`
     fn is_exported(&self, id: StmtId) -> bool {
         let f = &self.b.file;
         let flags = match f[id].kind {
-            StmtKind::Var(decls) => decls.iter().next().map_or(Flags::empty(), |d| f[d].flags),
+            // Its declarations have its flags, and there may be none.
+            StmtKind::Var(_) => f.modifiers_to_flags(f[id].modifiers),
             StmtKind::Fn(x) => f[x].flags,
             StmtKind::Class(x) => f[x].flags,
             StmtKind::Interface(x) => f[x].flags,
@@ -694,19 +762,23 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     fn stmt(&mut self, stmt: &Stmt) -> Option<StmtId> {
-        // `declare` makes the whole statement ambient.
+        // `parseDeclaration`: `declare` makes the statement ambient.
         let was_ambient = self.is_ambient;
         self.is_ambient |= self.modifier_flags_at(stmt.loc).contains(Flags::AMBIENT);
-        let id = self.stmt_in_context(stmt);
+        let id = self.stmt_in_context(stmt, was_ambient);
         self.is_ambient = was_ambient;
         id
     }
 
-    fn stmt_in_context(&mut self, stmt: &Stmt) -> Option<StmtId> {
-        let id = self.stmt_without_jsdoc(stmt);
+    /// `was_ambient`: `NodeFlagsAmbient` where the modifiers of `stmt` were parsed, its decorators
+    /// among them, which is before the parser knows of a `declare`.
+    fn stmt_in_context(&mut self, stmt: &Stmt, was_ambient: bool) -> Option<StmtId> {
+        let id = self.stmt_without_jsdoc(stmt, was_ambient);
         if let Some(id) = id {
             self.finish_stmt(id, stmt.loc);
+            let is_ambient = std::mem::replace(&mut self.is_ambient, was_ambient);
             self.statement_modifiers(stmt.loc, id);
+            self.is_ambient = is_ambient;
             if self.b.is_js {
                 self.check_js_syntax(id);
             }
@@ -780,7 +852,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     /// `withJSDoc` for the node `host` whose first token is at `token`, if the parser recorded its
-    /// full start.
+    /// full start. For an expression it does so in JavaScript only (`P::pos_for_jsdoc`).
     fn with_noted_jsdoc(
         &mut self,
         full_start: Option<u32>,
@@ -788,9 +860,14 @@ impl<'p, 'a> Lower<'p, 'a> {
         with_trailing: bool,
         host: &mut Host,
     ) {
-        if !self.jsdoc.list.is_empty()
-            && let Some(full_start) = full_start
-        {
+        if self.jsdoc.list.is_empty() {
+            return;
+        }
+        let full_start = match full_start {
+            None if !self.b.is_js => self.first_comment_before(token),
+            _ => full_start,
+        };
+        if let Some(full_start) = full_start {
             self.with_jsdoc(token, full_start, with_trailing, host);
         }
     }
@@ -811,14 +888,14 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// The initializer of a `for` statement, which is not a statement: a comment before it is
     /// attached to no node.
     fn for_initializer(&mut self, stmt: &Stmt) -> StmtId {
-        let id = match self.stmt_without_jsdoc(stmt) {
+        let id = match self.stmt_without_jsdoc(stmt, self.is_ambient) {
             Some(id) => id,
             None => self.b.file.stmt(StmtKind::Empty, self.pos_of(stmt.loc)),
         };
         self.finish_stmt(id, stmt.loc)
     }
 
-    fn stmt_without_jsdoc(&mut self, stmt: &Stmt) -> Option<StmtId> {
+    fn stmt_without_jsdoc(&mut self, stmt: &Stmt, was_ambient: bool) -> Option<StmtId> {
         if !self.stack_check.is_safe_to_recurse() {
             self.b.file.syntax_errors += 1;
             self.b.file.ran_out_of_stack = true;
@@ -998,7 +1075,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if s.is_export {
                     flags |= Flags::EXPORT;
                 }
-                StmtKind::Class(self.class(&s.class, flags, pos, start))
+                StmtKind::Class(self.class(&s.class, flags, pos, start, was_ambient))
             }
             StmtData::SExportDefault(s) => match &s.value {
                 StmtOrExpr::Expr(e) => StmtKind::ExportDefault(self.expr(e)),
@@ -1018,6 +1095,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                             | self.modifier_flags_at(stmt.loc) & Flags::ABSTRACT,
                         pos,
                         start,
+                        was_ambient,
                     )),
                     _ => return self.stmt(inner),
                 },
@@ -1272,9 +1350,20 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let expr = self.expr(key);
                 self.b.computed_key(expr)
             }
-            // Only for a binding pattern, where a bigint is not an index type (2538). The source
-            // spelling is used, so `0n` does not match `0`.
-            Data::EBigInt(n) => PropKey::Name(self.b.atom(&[n.value.slice(), &b"n"[..]].concat())),
+            // Only for a binding pattern, where a bigint is not an index type (2538). `name.Text()`
+            // ends with the `n`, so `0n` does not match `0`.
+            Data::EBigInt(_) => {
+                let source = self.p.source.contents();
+                let written = source
+                    .get(self.pos_of(key.loc) as usize..)
+                    .unwrap_or_default();
+                let token = match bun_core::strings::index_of_char_usize(written, b'n') {
+                    Some(at) => &written[..=at],
+                    None => written,
+                };
+                let text = bun_sema::json::bigint_token_value(token);
+                PropKey::Name(self.b.atom(&text))
+            }
             _ => PropKey::None,
         }
     }
@@ -1429,26 +1518,23 @@ impl<'p, 'a> Lower<'p, 'a> {
             Some(at) => self.type_at(at),
             None => TypeNodeId::NONE,
         };
-        // `parseFunctionBlockOrSemicolon`: no body at all after a semicolon.
-        let body = if func
-            .flags
-            .contains(ast::flags::Function::IsForwardDeclaration)
-        {
-            FnBody::None
-        } else {
-            self.js_error_at_types(ret, ret, 8010);
-            // `checkGrammarStatementInAmbientContext`, `checkGrammarAccessor`: for anything that
-            // has a body in an ambient context.
-            if self.is_ambient || flags.contains(Flags::AMBIENT) {
-                let body = self.pos_of(func.body.loc);
-                self.b.file.error(DiagnosticKind::Grammar, body, 0, 1183);
-            }
-            FnBody::Block(self.stmts(func.body.stmts.slice(), false))
-        };
         // `parseBlock` without its `{`: a missing block, which is not the same as no body.
         if self.note(open, Mark::MissingBody).is_some() {
             flags |= Flags::MISSING_BODY;
         }
+        // `parseFunctionBlockOrSemicolon`: no body at all after a semicolon.
+        let is_present = !func
+            .flags
+            .contains(ast::flags::Function::IsForwardDeclaration);
+        // `checkJSSyntax`: unless `node.Body() == nil`, which is 8017.
+        if is_present || flags.contains(Flags::MISSING_BODY) {
+            self.js_error_at_types(ret, ret, 8010);
+        }
+        let body = if is_present {
+            FnBody::Block(self.stmts(func.body.stmts.slice(), false))
+        } else {
+            FnBody::None
+        };
         // `createMissingList`: without a `(` the parameter list is at the end of the previous
         // token. The anchor is one before that position.
         let anchor = match self.note(open, Mark::MissingParameters) {
@@ -1503,13 +1589,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             ] if arrow.prefer_expr && ret.value.is_some() => {
                 FnBody::Expr(self.expr(ret.value.as_ref().unwrap()))
             }
-            _ => {
-                if self.is_ambient {
-                    let body = self.pos_of(arrow.body.loc);
-                    self.b.file.error(DiagnosticKind::Grammar, body, 0, 1183);
-                }
-                FnBody::Block(self.stmts(stmts, false))
-            }
+            _ => FnBody::Block(self.stmts(stmts, false)),
         };
         let anchor = arrow_token.unwrap_or(pos);
         let created = self.b.file.add_fn(Func {
@@ -1536,7 +1616,15 @@ impl<'p, 'a> Lower<'p, 'a> {
         created
     }
 
-    fn class(&mut self, class: &G::Class, flags: Flags, pos: u32, start: u32) -> ClassId {
+    /// `was_ambient`: `NodeFlagsAmbient` where its decorators were parsed (`stmt_in_context`).
+    fn class(
+        &mut self,
+        class: &G::Class,
+        flags: Flags,
+        pos: u32,
+        start: u32,
+        was_ambient: bool,
+    ) -> ClassId {
         let keyword = class.class_keyword.loc;
         // `GetContainingClass`: its decorators and heritage clauses are inside it too.
         self.b.classes_around += 1;
@@ -1581,11 +1669,13 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .collect();
                 self.b.file.list(&elements)
             });
+        let is_ambient = std::mem::replace(&mut self.is_ambient, was_ambient);
         let of_class: Vec<(ExprId, u32)> = class
             .ts_decorators
             .iter()
             .map(|d| (self.expr(d), self.at_sign(d)))
             .collect();
+        self.is_ambient = is_ambient;
         let mut members = Vec::with_capacity(class.properties.slice().len());
         // Keyed by the position of the member. They are sorted further down.
         let mut of_members: Vec<(u32, ExprId)> = Vec::new();
@@ -1648,7 +1738,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                 self.b.file.decorators.push((DecoratorOwner::Member(m), e));
             }
         }
-        let modifiers = self.b.modifiers_with_decorators(Span::EMPTY, &of_class);
+        // `parseDecoratedExpression`: the keywords among the modifiers of a class expression.
+        let keywords = self.modifiers_at(keyword);
+        let keywords = self.b.add_modifier_list(&keywords);
+        self.check_js_modifiers(keywords, false);
+        let modifiers = self.b.modifiers_with_decorators(keywords, &of_class);
+        let flags = flags | self.modifier_flags_at(keyword) & Flags::ABSTRACT;
         let id = self.b.file.add_class(Class {
             name: class
                 .class_name
@@ -1685,17 +1780,25 @@ impl<'p, 'a> Lower<'p, 'a> {
         {
             self.b.js_error_at_range((question, 0), 8009, b"?");
         }
-        if member.func.is_some() && matches!(self.b.file[member.func].body, FnBody::None) {
+        if member.func.is_some() && !hir::has_body_node(&self.b.file[member.func]) {
             self.b
                 .js_error_at_range((member.start, member.loc.end), 8017, b"");
         }
         match member.kind {
-            MemberKind::IndexSignature => self.check_js_decorator_syntax(member.modifiers),
+            MemberKind::IndexSignature => self.check_js_decorator_syntax(member.modifiers, false),
             kind => self.check_js_modifiers(member.modifiers, kind == MemberKind::Constructor),
         }
     }
 
     fn class_member(&mut self, property: &G::Property) -> Member {
+        let was_ambient = self.is_ambient;
+        let member = self.class_member_in_context(property);
+        self.is_ambient = was_ambient;
+        member
+    }
+
+    /// Leaves `is_ambient` as it is at the end of the member.
+    fn class_member_in_context(&mut self, property: &G::Property) -> Member {
         let mut member = Member {
             kind: MemberKind::Property,
             key: PropKey::None,
@@ -1739,6 +1842,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         member.name_pos = self.pos_of(key.loc);
         member.start = member.name_pos;
         let is_computed = property.flags.contains(ast::flags::Property::IsComputed);
+        let modifiers = self.modifiers_at(key.loc);
+        // `parseClassElement`: its own `declare` makes a property or a method ambient, from its
+        // name on.
+        let is_parent_ambient = self.is_ambient;
+        let is_accessor = matches!(property.kind, G::PropertyKind::Get | G::PropertyKind::Set);
+        self.is_ambient |= !is_accessor && modifiers.iter().any(|it| it.0 == Flags::AMBIENT);
         member.key = self.key(key, is_computed);
         // `getDeclarationName`: a bigint name declares nothing.
         let is_named_by_bigint = !is_computed && matches!(key.data, Data::EBigInt(_));
@@ -1748,13 +1857,14 @@ impl<'p, 'a> Lower<'p, 'a> {
         if let Some(start) = self.note(key.loc, Mark::MemberStart) {
             member.start = start;
         }
-        let modifiers = self.modifiers_at(key.loc);
         member.modifiers = self.b.add_modifier_list(&modifiers);
-        // Its own `declare` makes a property or a method ambient.
-        let is_parent_ambient = self.is_ambient;
         member.flags = modifiers
             .iter()
             .fold(self.ambient(), |flags, modifier| flags | modifier.0);
+        // `declareSymbolEx`: `isDefaultExport && parent != nil`
+        if member.flags.contains(Flags::DEFAULT) && matches!(member.key, PropKey::Name(_)) {
+            member.key = PropKey::Name(bun_sema::atom::known::default);
+        }
         if self.note(key.loc, Mark::Optional).is_some() {
             member.flags |= Flags::OPTIONAL;
         } else if self.note(key.loc, Mark::Definite).is_some() {
@@ -1785,8 +1895,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             data: Data::EFunction(f),
             loc,
         }) = &property.value
-            && (property.flags.contains(ast::flags::Property::IsMethod)
-                || matches!(property.kind, G::PropertyKind::Get | G::PropertyKind::Set))
+            && (property.flags.contains(ast::flags::Property::IsMethod) || is_accessor)
         {
             // `tryParseConstructorDeclaration`: the keyword, or a string literal with the same text
             // directly before the `(`. Never `[..]`.
@@ -1805,8 +1914,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             member.kind = member_kind;
             member.ty = TypeNodeId::NONE;
             // `parseClassElement`: but not an accessor or a constructor.
-            if !is_parent_ambient && !matches!(member_kind, MemberKind::Method) {
-                member.flags.remove(Flags::AMBIENT);
+            if !matches!(member_kind, MemberKind::Method) {
+                self.is_ambient = is_parent_ambient;
+                member.flags.set(Flags::AMBIENT, is_parent_ambient);
             }
             // On a member these are only reported as errors.
             member
@@ -1835,12 +1945,6 @@ impl<'p, 'a> Lower<'p, 'a> {
         member
             .flags
             .remove(Flags::CONST | Flags::EXPORT | Flags::DEFAULT);
-        // `checkVariableLikeDeclaration`
-        if is_named_by_bigint {
-            self.b
-                .file
-                .error(DiagnosticKind::Checker, member.name_pos, 0, 1539);
-        }
         member.init = self.optional_expr(property.initializer.as_ref().or(property.value.as_ref()));
         member
     }
@@ -1940,6 +2044,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             created.reverse();
             let mut paren_full_start = None;
             let mut is_parenthesized_type = false;
+            // `id`, if it is a `NonNull` with nothing around it yet.
+            let mut non_null = None;
             for (what, kept) in created {
                 let kind = match what {
                     Mark::End => {
@@ -1962,10 +2068,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                         }
                         pos = open;
                         self.b.file.parens.push((id, open, end));
+                        non_null = None;
                         continue;
                     }
                     Mark::NonNull => {
                         self.b.js_error_at_range((pos, end), 8013, b"");
+                        if non_null == Some(id) {
+                            let inner =
+                                std::mem::replace(&mut self.b.file.exprs[id.idx()].end, end);
+                            self.b.file.non_null_ends.push((id, inner));
+                            continue;
+                        }
                         ExprKind::NonNull(id)
                     }
                     Mark::Instantiation => ExprKind::Instantiation {
@@ -2005,6 +2118,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                                     && self.b.file[name.at(0)].text
                                         == bun_sema::atom::known::r#const =>
                             {
+                                // `checkAssertion` returns before it checks the type node, which
+                                // is more than the word if it is `const<>`.
+                                let TypeNode {
+                                    pos: from, end: to, ..
+                                } = self.b.file[ty];
+                                if to.saturating_sub(from) > b"const".len() as u32 {
+                                    self.b.file.diagnostics.retain(|d| {
+                                        d.kind != DiagnosticKind::Grammar
+                                            || !(from..to).contains(&d.start)
+                                    });
+                                }
                                 ExprKind::AsConst(id)
                             }
                             _ => ExprKind::As { expr: id, ty },
@@ -2014,6 +2138,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     _ => continue,
                 };
                 id = self.b.file.expr(kind, pos, end);
+                non_null = matches!(kind, ExprKind::NonNull(_)).then_some(id);
             }
         }
         self.source_end = end;
@@ -2242,9 +2367,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ExprKind::Fn(func)
             }
             Data::EClass(e) => {
-                let class = self.class(e, Flags::empty(), pos, self.declaration_start(expr.loc));
-                let full_start = self.full_start_of(expr.loc);
-                self.with_noted_jsdoc(full_start, pos, false, &mut Host::Class(class));
+                let start = self.declaration_start(expr.loc);
+                let class = self.class(e, Flags::empty(), pos, start, self.is_ambient);
+                // `parseDecoratedExpression`: its comments are those before the decorators. The
+                // parser records the full start of `class`.
+                let full_start = if start == pos {
+                    self.full_start_of(expr.loc)
+                } else {
+                    self.first_comment_before(start)
+                };
+                self.with_noted_jsdoc(full_start, start, false, &mut Host::Class(class));
                 ExprKind::Class(class)
             }
             Data::EDot(e) => {
@@ -2594,10 +2726,19 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .note(key_in_source.loc, Mark::PostfixToken)
                     .unwrap_or(0),
             };
+            // `checkJSSyntax`
             if kind == PropKind::Method
                 && let Some(question) = self.note(key_in_source.loc, Mark::Optional)
             {
                 self.b.js_error_at_range((question, 0), 8009, b"?");
+            }
+            // Only a method or an accessor can be without a body.
+            if self.b.is_js
+                && value.is_some()
+                && let ExprKind::Fn(func) = self.b.file[value].kind
+                && !hir::has_body_node(&self.b.file[func])
+            {
+                self.b.js_error_at_range((start, prop.end), 8017, b"");
             }
             let written = self.modifiers_at(key_in_source.loc);
             if !written.is_empty() {

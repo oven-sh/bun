@@ -982,13 +982,14 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
         expected[at].1.unmarshal_json(data, is_map, has_duplicates);
     }
     for (name, field) in expected {
-        let shown = if field.valid {
-            field.value
-        } else {
-            field.actual
+        let (shown, value) = match field.valid {
+            true => (field.value, None),
+            false if matches!(field.actual, Some(Json::Object(_))) => (field.actual, None),
+            false => (field.actual, field.value),
         };
         let null = (field.null && shown != Some(Json::Null)).then_some(Json::Null);
-        fields.extend(shown.into_iter().chain(null).map(|it| (name.to_vec(), it)));
+        let values = shown.into_iter().chain(null).chain(value);
+        fields.extend(values.map(|it| (name.to_vec(), it)));
     }
     Some(Json::Object(fields))
 }

@@ -99,6 +99,10 @@ pub(super) struct Reported {
     /// `Emit` reported it, before the check (`Options::emits_first`). It stays where
     /// `checkSourceFile` never comes.
     pub(super) by_emit: bool,
+    /// The check of another node than the one it points at reported it: `checkUnusedIdentifiers`
+    /// for the container of a declaration, `resolveAlias` for a reference. It stays where
+    /// `checkSourceFile` never comes.
+    pub(super) by_another_node: bool,
     /// It is a callback of `addDeferredDiagnostic` that has not been called: `args` is empty.
     pub(super) deferred: Option<TypeNotIterable>,
 }
@@ -136,6 +140,7 @@ impl Reported {
             directive: NO_DIRECTIVE,
             was_bare: false,
             by_emit: false,
+            by_another_node: false,
             deferred: None,
         }
     }
@@ -456,29 +461,123 @@ impl Checker<'_, '_> {
             }
             return self.discarded.insert(diagnostic);
         }
+        if self.is_reported_too_late(None, diagnostic.file) {
+            self.mark_tainted_from(0);
+            return self.discarded.insert(diagnostic);
+        }
         self.reported.push(diagnostic);
         self.reported.last_mut().unwrap()
     }
 
-    /// `getReturnTypeFromBody` checks the expression of a `return` statement with
-    /// `checkExpressionCached`, and so does `checkReturnStatement`. An expression body and the
-    /// operand of a `yield` are checked again with `checkExpression`, which stores no result and
-    /// creates a discarded diagnostic again. The index in `stack` of such an expression, if the
-    /// queries from there up are expressions that check one another.
+    /// `checkExpression` stores no result, and creates a discarded diagnostic again. The index in
+    /// `stack` of the outermost of the expressions that check one another, up to the innermost
+    /// query, if `checkSourceFile` checks it again.
+    /// - `getReturnTypeFromBody` checks the expression of a `return` statement, without its
+    ///   parentheses, with `checkExpressionCached`, and `checkReturnStatement` with them. An
+    ///   expression body and the operand of a `yield` are checked again with `checkExpression`.
+    /// - `getTypeOfExpression`, for the assigned type of a reference, stores nothing that
+    ///   `checkExpression` reads.
+    /// - `checkObjectLiteral` checks every member. Here whoever reads a member first checks it.
     fn expressions_checked_again(&self) -> Option<usize> {
+        use crate::bind::Parent;
+        let floor = self.printing_floors.last().copied().unwrap_or(0);
         let is_check = |q: &&Query| matches!(q, Query::Expr(..) | Query::LiteralProp(..));
-        let from = self.stack.len() - self.stack.iter().rev().take_while(is_check).count();
-        if from <= self.printing_floors.last().copied().unwrap_or(0) {
-            return None;
-        }
-        let (Query::Return(..) | Query::ReturnAtFirstLook(..), &Query::Expr(file, outermost)) =
-            (self.stack[from - 1], self.stack.get(from)?)
-        else {
-            return None;
+        let checks = self.stack.get(floor..)?.iter().rev().take_while(is_check);
+        let lowest = self.stack.len() - checks.count();
+        let from = (lowest + 1..self.stack.len())
+            .rev()
+            .find(|&i| !self.is_part_of(self.stack[i], self.stack[i - 1]))
+            .unwrap_or(lowest);
+        let asked_by = (from > floor).then(|| self.stack[from - 1]);
+        let is_checked_again = match (*self.stack.get(from)?, asked_by) {
+            (Query::Expr(file, e), Some(Query::Return(..) | Query::ReturnAtFirstLook(..))) => {
+                let hir = self.hir(file);
+                is_parenthesized(hir, e)
+                    || !matches!(self.bound(file).expr_parent[e.idx()],
+                        Parent::Stmt(s) if matches!(hir[s].kind, StmtKind::Return(_)))
+            }
+            (Query::Expr(file, e), Some(Query::Expr(..) | Query::LiteralProp(..))) => {
+                let hir = self.hir(file);
+                match self.bound(file).expr_parent[e.idx()] {
+                    Parent::Expr(parent) if parent.is_some() => {
+                        matches!(hir[parent].kind, ExprKind::Assign { value, .. } if value == e)
+                    }
+                    Parent::Stmt(s) => {
+                        matches!(hir[s].kind, StmtKind::ForOf { expr, .. } if expr == e)
+                    }
+                    _ => false,
+                }
+            }
+            (Query::LiteralProp(file, p), _) => self.is_member_checked_again(file, p),
+            _ => false,
         };
-        let is_cached = matches!(self.bound(file).expr_parent[outermost.idx()],
-            crate::bind::Parent::Stmt(s) if matches!(self.hir(file)[s].kind, StmtKind::Return(_)));
-        (!is_cached).then_some(from)
+        is_checked_again.then_some(from)
+    }
+
+    /// Whether the check of `whole` checks `part`, through expressions and members of object
+    /// literals alone.
+    fn is_part_of(&self, part: Query, whole: Query) -> bool {
+        use crate::bind::Parent;
+        let (file, mut parent) = match part {
+            Query::Expr(file, e) => (file, self.bound(file).expr_parent[e.idx()]),
+            Query::LiteralProp(file, p) => {
+                (file, Parent::Expr(self.bound(file).prop_owner[p.idx()]))
+            }
+            _ => return false,
+        };
+        let bound = self.bound(file);
+        loop {
+            parent = match parent {
+                Parent::Expr(e) if e.is_some() => {
+                    if whole == Query::Expr(file, e) {
+                        return true;
+                    }
+                    bound.expr_parent[e.idx()]
+                }
+                Parent::Prop(p) => {
+                    if whole == Query::LiteralProp(file, p) {
+                        return true;
+                    }
+                    Parent::Expr(bound.prop_owner[p.idx()])
+                }
+                _ => return false,
+            };
+        }
+    }
+
+    /// Whether `checkSourceFile` checks the member `p` of an object literal again, whatever has
+    /// checked the literal: no expression around it has a stored type or a resolved signature.
+    fn is_member_checked_again(&self, file: FileId, p: PropId) -> bool {
+        use crate::bind::Parent;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut e = bound.prop_owner[p.idx()];
+        loop {
+            // The attributes of a JSX element are checked with its signature.
+            if e.is_none() || matches!(hir[e].kind, ExprKind::Jsx(_)) {
+                return false;
+            }
+            e = match bound.expr_parent[e.idx()] {
+                Parent::FnBody(_) => return true,
+                Parent::Stmt(s) => {
+                    return match hir[s].kind {
+                        StmtKind::Return(_) => {
+                            is_parenthesized(hir, e) || matches!(hir[e].kind, ExprKind::Await(_))
+                        }
+                        StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) => false,
+                        _ => true,
+                    };
+                }
+                Parent::Prop(member) => bound.prop_owner[member.idx()],
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Yield { .. } => return true,
+                    ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => {
+                        return false;
+                    }
+                    _ => parent,
+                },
+                _ => return false,
+            };
+        }
     }
 
     /// `c.addDeferredDiagnostic`. `callback`: see `Reported::deferred`.
@@ -507,7 +606,12 @@ impl Checker<'_, '_> {
             for diagnostic in self.reported.split_off(from) {
                 self.log_diagnostic(Some(q), diagnostic);
             }
+        } else {
+            return;
         }
+        let requests = &self.reported_iteration_requests;
+        let since_entered = requests.partition_point(|request| request.0 < frame.serial);
+        self.settle_iteration_requests(since_entered, frame.drops_reported);
     }
 
     /// `settle_reported` for the innermost frame if it stores nothing under its query, before
@@ -535,7 +639,25 @@ impl Checker<'_, '_> {
     /// - `None`: it belongs to the task. A limit, after which no query in progress is cacheable. A
     ///   cycle that has no query.
     pub(super) fn add_diagnostic_of(&mut self, owner: Option<Query>, diagnostic: Reported) {
+        // As in `add_diagnostic`. In another file tsgo's result depends on file order, and the
+        // entry is stored already: the diagnostic stays with it.
+        if self.serialization_level >= MAX_SERIALIZATION_LEVEL
+            && self.task.file == Some(diagnostic.file)
+        {
+            return;
+        }
         self.log_diagnostic(owner, diagnostic);
+    }
+
+    /// Whether the diagnostic that was logged last belongs to the task and is `Reported::bare(at, code)`.
+    /// It is still there, so whatever has reported it was not discarded.
+    pub(super) fn is_last_diagnostic_of_task(&self, at: (FileId, u32, u32), code: u32) -> bool {
+        (self.task.diagnostics.last()).is_some_and(|(owner, last)| {
+            owner.is_none()
+                && last.code == code
+                && (last.file, last.start, last.end) == at
+                && last.by_emit == self.is_emitting
+        })
     }
 
     /// The diagnostics reported from index `from` on belong to the task.
@@ -552,9 +674,11 @@ impl Checker<'_, '_> {
         if self.is_type_checked && self.task.file == Some(diagnostic.file) {
             return;
         }
-        // `GetGlobalDiagnostics` comes after the last `checkSourceFile` and before a baseline writer. What the writer is the
-        // first to evaluate is not stored then, so the check of a later file that asks for it reports.
-        if self.is_type_checked && diagnostic.file == NOWHERE.0 {
+        // `GetGlobalDiagnostics` comes after the last `checkSourceFile` and before `Emit` or a baseline writer. What those are
+        // the first to evaluate is not stored then, so the check of a later file that asks for it reports.
+        if self.is_type_checked && diagnostic.file == NOWHERE.0
+            || self.is_reported_too_late(owner, diagnostic.file)
+        {
             return self.mark_tainted_from(0);
         }
         diagnostic.by_emit |= self.is_emitting;
@@ -603,20 +727,84 @@ impl Checker<'_, '_> {
     /// reported no later than the first of these files is checked: that of the task, and those
     /// whose syntax `owner` and the queries in progress are about. Any file can be the first to ask
     /// for a query about a type. No check asks for the type of a symbol that
-    /// `is_resolved_on_request`.
+    /// `is_resolved_on_request`, nor for what its pattern implies but for a name in it, and the
+    /// check of a declaration asks for its inferred return type only if
+    /// `is_inferred_return_type_requested`.
     pub(super) fn is_reported_in_time(&self, owner: Option<Query>, file: FileId) -> bool {
+        self.is_reported_in_time_under(owner, &self.stack, file)
+    }
+
+    /// `is_reported_in_time` for what the innermost query reports, if no check asks for that query.
+    pub(super) fn is_reported_in_time_on_request(&self, file: FileId) -> bool {
+        let below = self.stack.len().saturating_sub(1);
+        self.is_reported_in_time_under(None, &self.stack[..below], file)
+    }
+
+    /// `is_reported_in_time` for what follows from the state of `stack[height]`, a resolution in
+    /// progress: a check that begins at a query above it does not find that state.
+    pub(super) fn is_reported_in_time_under_resolution(&self, height: usize, file: FileId) -> bool {
+        self.is_reported_in_time_under(None, &self.stack[..height], file)
+    }
+
+    /// `in_progress`: the queries in progress that count.
+    fn is_reported_in_time_under(
+        &self,
+        owner: Option<Query>,
+        in_progress: &[Query],
+        file: FileId,
+    ) -> bool {
+        (self.task.file).is_none_or(|current| self.is_checked_no_later_than(current, file))
+            || self.is_asked_by_check_in_time(owner, in_progress, file)
+    }
+
+    /// `is_reported_in_time_under` without the file of the task.
+    fn is_asked_by_check_in_time(
+        &self,
+        owner: Option<Query>,
+        in_progress: &[Query],
+        file: FileId,
+    ) -> bool {
         let is_in_time = |visited: FileId| self.is_checked_no_later_than(visited, file);
         let is_asked_by_check = |q: Query| match q {
             Query::ParameterSymbol(of, name) => !matches!(
                 self.bound(of).pat_parent[name.idx()],
                 crate::bind::PatParent::Param(p) if self.is_resolved_on_request(of, p)
             ),
+            // `getTypeForBindingElementParent`, for an element of the pattern.
+            Query::Pat(of, pattern) => !matches!(
+                self.bound(of).pat_parent[pattern.idx()],
+                crate::bind::PatParent::Param(p) if self.is_resolved_on_request(of, p)
+                    && self.returns_before_type_of_every_name(of, pattern)
+            ),
+            Query::Return(of, func) => {
+                self.hir(of)[func].ret.is_some() || self.is_inferred_return_type_requested(of, func)
+            }
             _ => true,
         };
-        self.task.file.is_none_or(is_in_time)
-            || (owner.iter().chain(&self.stack)).any(|&q| {
-                is_asked_by_check(q) && q.syntax().is_none_or(|(visited, _)| is_in_time(visited))
-            })
+        (owner.iter().chain(in_progress)).any(|&q| {
+            is_asked_by_check(q) && q.syntax().is_none_or(|(visited, _)| is_in_time(visited))
+        })
+    }
+
+    /// Whether `checkVariableLikeDeclaration` `returns_before_type_of_symbol` for every name that
+    /// `pattern` binds, so that it never asks for the type that `pattern` takes apart.
+    fn returns_before_type_of_every_name(&self, file: FileId, pattern: PatId) -> bool {
+        let mut names = Vec::new();
+        names_bound_by(self.hir(file), pattern, &mut names);
+        (names.iter()).all(|&(_, name)| self.returns_before_type_of_symbol(file, name))
+    }
+
+    /// `GetDiagnosticsOfAnyProgram`: `Emit`, like a baseline writer, comes after the diagnostics of
+    /// every file are collected, here after those of the task's file. Whether a diagnostic in
+    /// `file`, another file that is checked, is one that only they cause: no check asks in time for
+    /// `owner` or a query in progress. The caller stores no result, so the check of a later file
+    /// that does ask evaluates it, and reports.
+    fn is_reported_too_late(&self, owner: Option<Query>, file: FileId) -> bool {
+        self.is_type_checked
+            && file != NOWHERE.0
+            && self.task.file != Some(file)
+            && self.reports_semantic_errors(file)
+            && !self.is_asked_by_check_in_time(owner, &self.stack, file)
     }
 
     /// At the end of the task, on its own thread, for `Task::finish`. A query with a task-local key

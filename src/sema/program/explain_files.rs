@@ -1,19 +1,23 @@
 //! `Program.ExplainFiles`: what `explainFiles` prints.
 
-use super::{
-    FileId, Files, IncludeReason, Included, Module, Reference, Visit, implied_format_reason,
-};
+use super::{FileId, Files, IncludeReason, Included, Module, Reference, Visit};
 use crate::messages;
 use crate::resolve::{Host, Resolver};
 use crate::session::Session;
 
 impl Files<'_> {
-    /// The lines. `to_relative_file_name`: `toRelativeFileName`.
+    /// The lines. `has_made_diagnostics`: `includeProcessor.getDiagnostics` has been called.
+    /// `to_relative_file_name`: `toRelativeFileName`.
     pub fn explain_files(
         &self,
         host: &dyn Host,
+        has_made_diagnostics: bool,
         to_relative_file_name: &dyn Fn(&[u8]) -> Vec<u8>,
     ) -> Vec<Vec<u8>> {
+        let explained_in_diagnostics = match has_made_diagnostics {
+            true => self.explained_in_diagnostics.to_vec(),
+            false => Vec::new(),
+        };
         let included = Included {
             host,
             options: self.options,
@@ -25,6 +29,7 @@ impl Files<'_> {
             libs_end: self.libs_end,
             roots_end: self.roots_end,
             root_of_start: self.root_of_start,
+            explained_in_diagnostics: explained_in_diagnostics.into(),
         };
         let resolving = Session::new();
         let resolver = Resolver::new(&resolving, host, self.options);
@@ -51,8 +56,8 @@ impl Files<'_> {
             Some(text.get(it.start as usize..it.end as usize)?.to_vec())
         };
         let mut lines: Vec<Vec<u8>> = Vec::new();
-        // `is_redirect`: `name` is that of a `redirectsFile`, and `file` is its target.
-        let mut explain_file = |name: &[u8], file: FileId, is_redirect: bool| {
+        // `name` is that of `file`, or of a `redirectsFile` whose target is `file`.
+        let mut explain_file = |name: &[u8], file: FileId| {
             let module: &Module = &self.modules[file.idx()];
             lines.push(to_relative_file_name(name));
             for visit in reasons_of(file, name) {
@@ -64,19 +69,10 @@ impl Files<'_> {
                 }
                 lines.push(line(code, &args));
             }
-            // `explainRedirectAndImpliedFormat`
-            let options = self.options;
-            if !is_redirect && module.project_reference_source.is_some() {
-                let source = self.atoms.bytes(module.project_reference_source);
-                lines.push(line(1428, &[to_relative_file_name(source)]));
-            }
-            if is_redirect {
-                lines.push(line(1429, &[to_relative_file_name(module.file_name())]));
-            } else if let Some((code, args)) =
-                implied_format_reason(&resolver, options, module, to_relative_file_name)
-            {
-                lines.push(line(code, &args));
-            }
+            let to_file_name = Some(to_relative_file_name);
+            let explained =
+                included.explain_redirect_and_implied_format(&resolver, module, name, to_file_name);
+            lines.extend(explained.iter().map(|(code, args)| line(*code, args)));
         };
         // The visit at which `collectFiles` goes on to what the file refers to.
         let first: Vec<Option<&Visit>> = (self.modules.iter().enumerate())
@@ -112,14 +108,14 @@ impl Files<'_> {
             while files_explained < index
                 && let Some(&file) = source_files.next()
             {
-                explain_file(self.modules[file.idx()].file_name(), file, false);
+                explain_file(self.modules[file.idx()].file_name(), file);
                 files_explained += 1;
             }
-            explain_file(name, target, true);
+            explain_file(name, target);
             files_explained += 1;
         }
         for &file in source_files {
-            explain_file(self.modules[file.idx()].file_name(), file, false);
+            explain_file(self.modules[file.idx()].file_name(), file);
         }
         lines
     }

@@ -395,7 +395,7 @@ fn compiler_option_from_flag(
     name: &[u8],
     value: Option<&[u8]>,
 ) -> Result<CompilerOption, FlagError> {
-    use bun_sema::config_options::{choices, choices_of_list, from_text, possible_option};
+    use bun_sema::config_options::{choices, from_text, invalid_enum_type, possible_option};
     // What `tsc` does instead of compiling. A configuration file may have them, to no effect.
     if [&b"all"[..], b"init", b"version"]
         .iter()
@@ -418,16 +418,8 @@ fn compiler_option_from_flag(
         }
         None => return Err(FlagError::Unknown),
     };
-    if let Some(allowed) = allowed
-        && !allowed.iter().any(|a| a.eq_ignore_ascii_case(value))
-    {
-        return Err(FlagError::BadValue(match is_boolean {
-            true => Vec::new(),
-            false => allowed.to_vec(),
-        }));
-    }
     match from_text(name, value) {
-        Some((name, value)) => match choices_of_list(name, &value) {
+        Some((name, value)) => match invalid_enum_type(name, &value) {
             Some(allowed) => Err(FlagError::BadValue(allowed)),
             None => Ok(CompilerOption(name.to_vec(), value)),
         },
@@ -1190,7 +1182,7 @@ fn dependencies_not_installed(
 /// some, and each is loaded once.
 #[derive(Default)]
 struct Projects {
-    loaded: FxHashMap<Vec<u8>, config::Project>,
+    loaded: FxHashMap<Vec<u8>, Result<config::Project, Vec<ConfigError>>>,
     /// `Project::files`, to look a file up in.
     files: FxHashMap<Vec<u8>, FxHashSet<Vec<u8>>>,
     /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
@@ -1199,13 +1191,38 @@ struct Projects {
 }
 
 impl Projects {
-    fn load(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &config::Project {
+    /// `None`: `config` cannot be read.
+    fn load(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Option<&config::Project> {
+        let loaded = (self.loaded.entry(config.to_vec()))
+            .or_insert_with(|| Self::load_from_disk(disk, request, config));
+        loaded.as_ref().ok()
+    }
+
+    /// `load`, and the project is handed over.
+    fn take(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Result<config::Project, Vec<ConfigError>> {
+        let loaded = self.loaded.remove(config);
+        loaded.unwrap_or_else(|| Self::load_from_disk(disk, request, config))
+    }
+
+    fn load_from_disk(
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Result<config::Project, Vec<ConfigError>> {
         // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
         // `tsc -b` has no such option.
-        self.loaded.entry(config.to_vec()).or_insert_with(|| {
-            config::load_overriding(disk, &Session::new(), config, &|_| {
-                overriding_options(request, false)
-            })
+        config::load_overriding(disk, &Session::new(), config, &|_| {
+            overriding_options(request, false)
         })
     }
 
@@ -1227,7 +1244,7 @@ impl Projects {
         seen.push(config.to_vec());
         let is_new = !self.files.contains_key(config);
         let counts_javascript = self.counts_javascript;
-        let project = self.load(disk, request, config);
+        let project = self.load(disk, request, config)?;
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
             .collect();
@@ -1240,7 +1257,9 @@ impl Projects {
                         options.push((b"allowJs".to_vec(), Json::Bool(true)));
                         options
                     };
-                    config::load_overriding(disk, &Session::new(), config, &with_javascript).files
+                    config::load_overriding(disk, &Session::new(), config, &with_javascript)
+                        .map(|it| it.files)
+                        .unwrap_or_default()
                 }
             };
             let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
@@ -1268,7 +1287,9 @@ impl Projects {
             return;
         }
         seen.push(config.to_vec());
-        let project = self.load(disk, request, config);
+        let Some(project) = self.load(disk, request, config) else {
+            return;
+        };
         files.extend(project.files.iter().cloned());
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
@@ -1298,7 +1319,8 @@ impl Projects {
             return Ok(Some(owner));
         }
         let project = self.load(disk, request, &nearest);
-        let is_solution = project.files.is_empty() && !project.references.is_empty();
+        let is_solution =
+            project.is_some_and(|it| it.files.is_empty() && !it.references.is_empty());
         Err((!is_solution).then_some(nearest))
     }
 }
@@ -1560,8 +1582,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             let top = (config.as_deref().map(dirname::<Posix>))
                 .filter(is_below)
                 .unwrap_or(path);
-            let files = match &config {
-                Some(config) => projects.load(disk, request, config).files_under(disk, top),
+            // One that cannot be read excludes nothing. `check_project_of` reports it.
+            let project = (config.as_ref()).and_then(|it| projects.load(disk, request, it));
+            let files = match project {
+                Some(project) => project.files_under(disk, top),
                 None => project_without_config(disk, request, &cwd, &[]).files_under(disk, top),
             };
             let (mut included, mut others) = (Vec::new(), Vec::new());
@@ -1664,14 +1688,26 @@ fn check_project_of(
     request: &Request,
     projects: &mut Projects,
     of: OfProject<'_>,
-    report: Report,
+    mut report: Report,
     started: Instant,
 ) -> Report {
     let mut project = match of.config {
-        Some(config) => {
-            projects.load(disk, request, config);
-            projects.loaded.remove(config).expect("loaded above")
-        }
+        Some(config) => match projects.take(disk, request, config) {
+            Ok(project) => project,
+            // `tscCompilation`: "these are unrecoverable errors--exit to report them as
+            // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
+            Err(errors) => {
+                let errors = errors.iter().map(|it| of_config_error(disk, config, it));
+                match request.build {
+                    true => report
+                        .diagnostics
+                        .push(global(6053, &[displayed_path(config)])),
+                    false => report.diagnostics.extend(errors),
+                }
+                report.load_time = started.elapsed();
+                return report;
+            }
+        },
         None => {
             let cwd = host::from_native(request.cwd);
             let files = of.named.map(|it| it.1).unwrap_or_default();
@@ -1789,10 +1825,11 @@ impl Graph<'_> {
             if self.tasks.contains_key(&path) {
                 continue;
             }
-            let resolved = self.host.is_file(&config).then(|| {
-                let over = |_: bool| self.overrides.clone();
-                config::load_overriding(self.host, self.session, &config, &over)
-            });
+            let over = |_: bool| self.overrides.clone();
+            let resolved = match self.host.is_file(&config) {
+                true => config::load_overriding(self.host, self.session, &config, &over).ok(),
+                false => None,
+            };
             if let Some(project) = &resolved {
                 queued.extend(referenced(project));
             }
@@ -2635,12 +2672,17 @@ fn check_named_files(
     if let Some(loaded) = request.loaded {
         loaded(program);
     }
-    if is_true(b"explainFiles") {
+    let explains_files = is_true(b"explainFiles");
+    let explain_files = |has_made_diagnostics: bool| {
         let cwd = host::from_native(request.cwd);
-        report.listed_files = program.files.explain_files(host, &|file_name: &[u8]| {
+        let to_relative_file_name = |file_name: &[u8]| {
             get_relative_path_from_directory(&cwd, file_name, COMPARE_PATHS_CASE_SENSITIVE)
-        });
-    } else if is_true(b"listFiles") || is_true(b"listFilesOnly") {
+        };
+        program
+            .files
+            .explain_files(host, has_made_diagnostics, &to_relative_file_name)
+    };
+    if !explains_files && (is_true(b"listFiles") || is_true(b"listFilesOnly")) {
         let file_name = |&file: &FileId| program.files.module(file).file_name();
         let file_names = program.files.order.iter().map(file_name);
         report.listed_files = file_names
@@ -2665,8 +2707,10 @@ fn check_named_files(
             match module.hir.kind {
                 // Only parse errors are reported for JSON files.
                 FileKind::Json => module.hir.has_parse_diagnostics,
-                _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
-                FileKind::Declaration => !skip_lib_check,
+                // `SkipTypeChecking`, and nothing is emitted for a declaration file.
+                FileKind::Declaration => {
+                    !skip_lib_check && !(skip_default_lib_check && module.is_lib)
+                }
                 FileKind::Ts | FileKind::Tsx => true,
             }
         })
@@ -3254,11 +3298,21 @@ fn check_named_files(
             finish_files();
             let syntactic = std::mem::take(&mut *found.lock());
             if !syntactic.is_empty() {
+                // `GetProgramDiagnostics` is not called. An incremental program asks for them when
+                // `Emit` writes its build info (`ensureHasErrorsForState`).
+                if explains_files {
+                    let is_incremental = options.is_incremental || options.is_build;
+                    report.listed_files = explain_files(is_incremental && !lists_files_only);
+                }
                 report.diagnostics.extend(syntactic);
                 report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }
+        }
+        // Before a file is checked, which can free its HIR.
+        if explains_files {
+            report.listed_files = explain_files(true);
         }
         report.diagnostics.append(&mut about_options);
         // `ListFilesOnly`: no checker is asked for anything, and `Emit` is not called.

@@ -159,13 +159,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// The type arguments just parsed, which are those of an import call.
-    /// `checkImportCallExpression` never checks them, so the errors the list logged about itself
-    /// (1099, 1009) are removed: the log had `logged` messages and `errors` errors before it.
+    /// `checkImportCallExpression` never checks them, so the checker's errors that were logged for
+    /// them (1099, 1009) are removed: the log had `logged` messages and `errors` errors before it.
     fn type_arguments_of_import_call(&mut self, logged: usize, errors: u32) -> Option<u32> {
         let log = self.log();
-        log.msgs.truncate(logged);
-        log.errors = errors;
+        let of_parser: Vec<bun_ast::Msg> = (log.msgs.drain(logged..))
+            .filter(crate::sema::is_parse_error)
+            .collect();
+        log.errors = errors + of_parser.len() as u32;
+        log.msgs.extend(of_parser);
         self.saved_type_arguments()
+    }
+
+    /// The `import<T>` just parsed is an element of a heritage clause, which
+    /// `checkExpressionWithTypeArguments` never sees. Removes the 1326 logged for it since the log
+    /// had `logged` messages, and returns whether there was one: `checkGrammarHeritageClause`
+    /// decides.
+    pub(crate) fn take_back_import_with_type_arguments(&mut self, logged: usize) -> bool {
+        let log = self.log();
+        let is_logged = log.msgs.len() > logged
+            && log.msgs.last().is_some_and(|msg| {
+                matches!(
+                    msg.metadata,
+                    bun_ast::Metadata::TypeScript { code: 1326, .. }
+                )
+            });
+        if is_logged {
+            log.msgs.pop();
+            log.errors -= 1;
+        }
+        is_logged
     }
 
     /// `import.name` where the name is not `meta`, after the dot
@@ -181,7 +204,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         type_arguments: &mut Option<u32>,
     ) -> Result<Option<Expr>, Error> {
         let p = self;
-        if !p.lexer.is_identifier_or_keyword() {
+        let is_private_name = p.lexer.token == T::TPrivateIdentifier;
+        if !p.lexer.is_identifier_or_keyword() && !is_private_name {
             // `parseIdentifierName`: 1003, nothing consumed.
             p.lexer.expect(T::TIdentifier)?;
             return Ok(Some(p.new_expr(E::Missing {}, loc)));
@@ -205,15 +229,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
             return Ok(None);
         }
-        let is_callee = p.lexer.token == T::TOpenParen
-            || (!has_type_arguments
-                && p.lexer.token == T::TQuestionDot
-                && p.next_token_matches(|p| {
-                    matches!(
-                        p.lexer.token,
-                        T::TOpenParen | T::TLessThan | T::TLessThanLessThan
-                    )
-                }));
+        let is_optional_callee = !has_type_arguments
+            && p.lexer.token == T::TQuestionDot
+            && p.next_token_matches(|p| {
+                matches!(
+                    p.lexer.token,
+                    T::TOpenParen | T::TLessThan | T::TLessThanLessThan
+                )
+            });
+        // `IsImportCall` does not look at the `?.`.
+        if is_defer && is_optional_callee {
+            let question_dot = p.lexer.snapshot();
+            p.lexer.next()?;
+            if p.lexer.token == T::TOpenParen {
+                return Ok(None);
+            }
+            // `parseCallExpressionRest`: with type arguments it is a call whatever follows them.
+            if TYPESCRIPT
+                && !p.lexer.is_javascript_file()
+                && p.try_skip_type_script_type_arguments_with_backtracking()?
+            {
+                *type_arguments = p.type_arguments_of_import_call(logged, errors);
+                return Ok(None);
+            }
+            p.lexer.restore(&question_dot);
+        }
+        let is_callee = p.lexer.token == T::TOpenParen || is_optional_callee;
         if is_defer {
             if !is_callee {
                 // "(" expected, at the end of the meta property.
@@ -229,17 +270,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let named = [word, b"import", b"meta"].join(&0);
             p.lexer.ts_grammar_error_about(name, 17012, &named);
         }
-        let target = p.new_expr(E::Missing {}, loc);
-        let mut property = p.new_expr_ending_at(
-            E::Dot {
-                target,
-                name: text,
-                name_loc: name.loc,
-                ..Default::default()
-            },
-            loc,
-            name.end(),
-        );
+        let mut property = if is_private_name {
+            // `parseIdentifierName` makes an `Identifier` of it. A property access would look it
+            // up as the private name of a class.
+            p.new_expr_ending_at(E::Missing {}, loc, name.end())
+        } else {
+            let target = p.new_expr(E::Missing {}, loc);
+            p.new_expr_ending_at(
+                E::Dot {
+                    target,
+                    name: text,
+                    name_loc: name.loc,
+                    ..Default::default()
+                },
+                loc,
+                name.end(),
+            )
+        };
         if has_type_arguments {
             p.note_type_arguments(&mut property, less_than);
         }

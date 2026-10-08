@@ -10,7 +10,8 @@ use crate::js::format::{
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
+use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
+use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -24,7 +25,7 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     if is_consistent {
         let quote_needed = class.members().iter().any(|member| {
             matches!(member.kind(), MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter)
-                && member.key().is_some_and(|key| should_preserve_quote(key, f))
+                && member.key().is_some_and(|key| key_requires_quotes(key, member.as_ast_nodes(), f))
         });
         f.context_mut().push_quote_needed(quote_needed);
     }
@@ -86,7 +87,7 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     write!(f, [value.is_async().then_some("async "), value.is_generator().then_some("*")]);
     let node = AstNodes::MethodDefinition(member);
     match (member.key(), member.constructor_keyword()) {
-        (_, Some(keyword)) => write!(f, identifier(keyword, node)),
+        (_, Some(keyword)) => write_constructor_keyword(keyword, node, f),
         (Some(key), None) => format_computed_or_property_key(key, node, f),
         (None, None) => {}
     }
@@ -97,8 +98,29 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if value.has_body() {
         write!(f, FormatFunctionBody(value));
     } else {
-        let comments = f.comments().comments_before(member.span().end);
-        write!(f, [FormatTrailingComments::Comments(comments), OptionalSemicolon]);
+        write!(f, OptionalSemicolon);
+    }
+}
+
+/// `constructor`, which can be written as a string, and is quoted like any other name.
+fn write_constructor_keyword<'a>(keyword: Ident<'a>, node: AstNodes<'a>, f: &mut Formatter<'a>) {
+    let span = keyword.span();
+    let source = f.source_text().text_for(&span);
+    if source.starts_with(b"\"") || source.starts_with(b"'") {
+        let is_unquoted = match f.options().quote_properties {
+            QuoteProperties::AsNeeded => true,
+            QuoteProperties::Preserve => false,
+            QuoteProperties::Consistent => !f.context().is_quote_needed(),
+        };
+        format_node(span, || node, f, |f| match is_unquoted {
+            true => write!(f, source_text(span.shrink(1, 1))),
+            false => write!(f, FormatLiteralStringToken::new(source, false, StringLiteralParentKind::Expression)),
+        });
+    } else if f.context().is_quote_needed() {
+        let quote = f.options().quote_style.as_str();
+        format_node(span, || node, f, |f| write!(f, [quote, source_text(span), quote]));
+    } else {
+        write!(f, identifier(keyword, node));
     }
 }
 
@@ -123,17 +145,28 @@ fn write_ts_index_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
             write!(f, [keyword, space()]);
         }
     }
+    // With one parameter it is more like a computed name than a list: no trailing comma.
+    let trailing_separator = match signature.params().len() > 1 {
+        true => FormatTrailingCommas::ES5.trailing_separator(f.options()),
+        false => TrailingSeparator::Disallowed,
+    };
     let parameters = format_with(|f| {
         f.join_with(soft_line_break_or_space()).entries_with_trailing_separator(
             signature.params().iter().map(FormatIndexSignatureName),
             ",",
-            TrailingSeparator::Disallowed,
+            trailing_separator,
         );
     });
     let is_class = matches!(node.parent(), AstNodes::ClassBody(_));
     write!(
         f,
-        ["[", parameters, "]", signature.return_type().map(FormatTypeAnnotation), is_class.then_some(OptionalSemicolon)]
+        [
+            "[",
+            group(&soft_block_indent(&parameters)),
+            "]",
+            signature.return_type().map(FormatTypeAnnotation),
+            is_class.then_some(OptionalSemicolon)
+        ]
     );
 }
 
@@ -316,13 +349,18 @@ impl<'a> Format<'a> for FormatClass<'a> {
 
         if group_mode {
             let heritage_id = f.group_id("heritageGroup");
-            write!(
-                f,
-                [group(&format_args!(head, indent(&format_heritage_clauses))).with_group_id(Some(heritage_id)), space()]
-            );
-            // An empty line sets the members apart from a head that is broken.
-            if !class.members().is_empty() {
-                write!(f, if_group_breaks(&hard_line_break()).with_group_id(Some(heritage_id)));
+            write!(f, group(&format_args!(head, indent(&format_heritage_clauses))).with_group_id(Some(heritage_id)));
+            // The `{` on a line of its own sets the members apart from a head that is broken.
+            if class.members().is_empty() {
+                write!(f, space());
+            } else {
+                write!(
+                    f,
+                    [
+                        if_group_breaks(&hard_line_break()).with_group_id(Some(heritage_id)),
+                        if_group_fits_on_line(&space()).with_group_id(Some(heritage_id))
+                    ]
+                );
             }
         } else {
             write!(f, [head, format_heritage_clauses, space()]);
@@ -350,7 +388,13 @@ fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -
     }
 
     let is_expression = matches!(class.owner(), Node::Expr(_));
-    let is_member = |e: Expr<'a>| matches!(e.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. });
+    // Prettier's `isMemberExpression(stripChainElementWrappers(e))`.
+    let is_member = |mut e: Expr<'a>| {
+        while let ExprKind::NonNull(inner) = e.kind() {
+            e = inner;
+        }
+        matches!(e.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+    };
     if ((!is_expression || !matches!(parent, AstNodes::AssignmentExpression(_)))
         && super_class.is_some_and(is_member)
         && class.extends_args().is_empty())
@@ -392,12 +436,12 @@ struct FormatClassElementWithSemicolon<'a> {
 }
 
 impl FormatClassElementWithSemicolon<'_> {
-    /// With `semi: false`, whether the property `element` needs a `;` all the same.
+    /// Prettier's `shouldPrintSemicolonAfterClassProperty`: with `semi: false`, whether the property
+    /// `element` needs a `;` all the same.
     fn needs_semicolon(&self) -> bool {
         let element = self.element;
         // `static;`, `get;`, `set;`
-        if matches!(element.as_ast_nodes(), AstNodes::PropertyDefinition(_))
-            && element.init().is_none()
+        if element.init().is_none()
             && element.ty().is_none()
             && element.key().is_some_and(|key| {
                 matches!(key.kind(), KeyKind::Ident(name) if matches!(name.bytes(), b"static" | b"get" | b"set"))
@@ -408,22 +452,27 @@ impl FormatClassElementWithSemicolon<'_> {
         let Some(next) = self.next_element else {
             return false;
         };
+        if [Flags::STATIC, Flags::PUBLIC, Flags::PROTECTED, Flags::PRIVATE, Flags::READONLY]
+            .into_iter()
+            .any(|flag| has_modifier(next, flag))
+        {
+            return false;
+        }
 
-        // What follows would be taken for the rest of this property: `[a]`, `*a() {}`.
+        // What follows would be taken for the rest of this property: `in`, `[a]`, `*a() {}`.
         let is_computed = next.key().is_some_and(Key::is_computed);
-        let has_any = |flags: &[Flags]| next.modifiers().iter().any(|it| flags.contains(&it.flag()));
-        let accessibility = [Flags::PUBLIC, Flags::PROTECTED, Flags::PRIVATE, Flags::STATIC, Flags::OVERRIDE];
+        if next.key().is_some_and(|key| {
+            matches!(key.kind(), KeyKind::Ident(name) if matches!(name.bytes(), b"in" | b"instanceof"))
+        }) {
+            return true;
+        }
         match next.as_ast_nodes() {
+            AstNodes::PropertyDefinition(_) => is_computed,
             AstNodes::MethodDefinition(_) => next.func().is_some_and(|value| {
                 !value.is_async()
-                    && ((is_computed
-                        && !(matches!(next.kind(), MemberKind::Getter | MemberKind::Setter) || has_any(&accessibility)))
-                        || value.is_generator())
+                    && !matches!(next.kind(), MemberKind::Getter | MemberKind::Setter)
+                    && (is_computed || value.is_generator())
             }),
-            AstNodes::PropertyDefinition(_) => {
-                is_computed && !(has_any(&accessibility) || has_any(&[Flags::AMBIENT, Flags::READONLY]))
-            }
-            AstNodes::AccessorProperty(_) => false,
             AstNodes::TSIndexSignature(_) => true,
             _ => false,
         }

@@ -4,7 +4,8 @@ use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
-use crate::js::format::{FormatTypeAnnotation, format_node_without_comments, identifier};
+use crate::js::format::{ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression};
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
 
@@ -80,6 +81,52 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
     } else {
         write!(f, OptionalSemicolon);
     }
+}
+
+/// Prettier's `isIifeCalleeOrTaggedTemplateExpressionTag`.
+fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
+    match e.ast_parent() {
+        AstNodes::CallExpression(call) => call.callee() == Some(e),
+        AstNodes::TaggedTemplateExpression(tagged) => tagged.tag_expression() == Some(e),
+        _ => false,
+    }
+}
+
+/// Prettier's `printCommentsForFunction`: the comments around a function that is called, or is the
+/// tag of a template, are written in its parentheses.
+///
+/// ```js
+/// (
+///   // comment
+///   function () {}
+/// )();
+/// ```
+///
+/// Returns whether `e` is such a function and has been written.
+pub(crate) fn write_called_function_with_comments<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) -> bool {
+    if e.as_fn().is_none() {
+        return false;
+    }
+    let span = e.span();
+    if !f.comments().has_comment_before(e.outer_span().end) || !is_iife_callee_or_tagged_template_tag(e) {
+        return false;
+    }
+    let has_comments = f.comments().has_comment_before(span.start)
+        || !f.comments().comments_in_range(span.end, e.outer_span().end).is_empty();
+    if !has_comments {
+        return false;
+    }
+    let is_suppressed = f.comments().is_suppressed(span.start);
+    let content = format_with(|f| {
+        write!(f, format_leading_comments(span));
+        match is_suppressed {
+            true => write!(f, FormatSuppressedNode(span)),
+            false => write_expression(e, options, f),
+        }
+        write!(f, FormatTrailingComments::Comments(f.comments().comments_before(e.outer_span().end)));
+    });
+    write!(f, ["(", soft_block_indent(&content), ")"]);
+    true
 }
 
 /// The `{ .. }` of a function.

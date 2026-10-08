@@ -2,7 +2,7 @@ use super::decorators::FormatDecorators;
 use crate::js::format::{FormatTypeAnnotation, format_node_without_comments};
 use crate::js::utils::call_expression::{is_angular_test_wrapper, is_test_call_expression};
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 
 /// The `( .. )` of a function, with the `this` parameter.
 #[derive(Copy, Clone)]
@@ -27,9 +27,12 @@ fn has_modifier(param: Param<'_>) -> bool {
 
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     let span = FormatFormalParameters(func).span();
-    // `function foo /**/ () {}`
+    // `function foo /**/ () {}`. In an arrow function, a signature and a function type, they lead the
+    // first parameter: Prettier's `handleFunctionNameComments`.
     let comments = f.comments().comments_before(span.start);
-    if !comments.is_empty() {
+    if !comments.is_empty()
+        && (func.params_with_this().next().is_none() || matches!(func.as_ast_nodes(), AstNodes::Function(_)))
+    {
         write!(f, [space(), FormatTrailingComments::Comments(comments)]);
     }
 
@@ -70,16 +73,28 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
     if matches!(param.as_ast_nodes(), AstNodes::TSThisParameter(_)) {
         return write!(f, ["this", param.ty().map(FormatTypeAnnotation)]);
     }
+    let has_decorators = param.decorators().next().is_some();
     if param.is_rest() {
-        let decorators = FormatDecorators::of_param(param);
-        return write!(f, [decorators, "...", param.pat(), param.ty().map(FormatTypeAnnotation)]);
+        let content = format_with(|f| write!(f, ["...", param.pat(), param.ty().map(FormatTypeAnnotation)]));
+        return match has_decorators {
+            true => write!(f, group(&format_args!(FormatDecorators::of_param(param), content))),
+            false => write!(f, content),
+        };
     }
 
     let content = format_with(|f| {
         let left = format_with(|f| {
-            for modifier in param.modifiers() {
-                if modifier.decorator().is_none() {
-                    write!(f, [source_text(modifier.span()), space()]);
+            let modifiers = param.modifiers();
+            for (flag, keyword) in [
+                (Flags::PUBLIC, "public"),
+                (Flags::PROTECTED, "protected"),
+                (Flags::PRIVATE, "private"),
+                (Flags::STATIC, "static"),
+                (Flags::OVERRIDE, "override"),
+                (Flags::READONLY, "readonly"),
+            ] {
+                if modifiers.iter().any(|it| it.flag() == flag) {
+                    write!(f, [keyword, space()]);
                 }
             }
             write!(f, [param.pat(), param.is_optional().then_some("?")]);
@@ -109,14 +124,13 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         let parentheses_not_needed = func.is_arrow() && can_avoid_parentheses(func, f);
         should_hug_function_parameters(func, parentheses_not_needed, f)
     });
-    let has_decorators = param.decorators().next().is_some();
 
     if is_hug_parameter && !has_decorators {
         write!(f, content);
     } else if !has_decorators {
         write!(f, group(&content));
     } else {
-        write!(f, [group(&FormatDecorators::of_param(param)), group(&content)]);
+        write!(f, group(&format_args!(FormatDecorators::of_param(param), group(&content))));
     }
 }
 
@@ -196,9 +210,6 @@ pub(crate) fn should_hug_function_parameters<'a>(func: Func<'a>, parentheses_not
     }
     // Not if there are comments around the only parameter.
     let has_comments_around = |param: Param<'a>| {
-        if f.is_quiet() {
-            return false;
-        }
         let span = FormatFormalParameters(func).span();
         f.comments().has_comment_in_range(span.start, param.span().start)
             || f.comments().has_comment_in_range(param.span().end, span.end)
@@ -207,7 +218,7 @@ pub(crate) fn should_hug_function_parameters<'a>(func: Func<'a>, parentheses_not
     if let Some(this_param) = func.this_param() {
         return !has_comments_around(this_param)
             && list.is_empty()
-            && this_param.ty().is_none_or(|ty| matches!(ty.kind(), TypeKind::Object(_)));
+            && this_param.ty().is_some_and(|ty| matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_)));
     }
     let Some(only_parameter) = list.first() else {
         return false;

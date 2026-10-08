@@ -1923,6 +1923,16 @@ fn find_jsdoc_comment<'a>(file: &'a File<'a>, start: u32) -> Option<Token<'a>> {
         .then_some(before)
 }
 
+/// The braces of the `JSXExpressionContainer` that ESLint has as the parent of `node`.
+fn jsx_container_of(node: Node<'_>) -> Option<Span> {
+    let owner = match node {
+        Node::Func(func) => func.owner(),
+        Node::Class(class) => class.owner(),
+        _ => node,
+    };
+    owner.as_expr()?.jsx_container_span()
+}
+
 /// ESLint's `getJSDocComment`, for a function or a class: the `/** .. */` comment that documents
 /// it.
 pub fn get_jsdoc_comment<'a>(node: impl Into<Node<'a>>) -> Option<Token<'a>> {
@@ -1945,7 +1955,13 @@ pub fn get_jsdoc_comment<'a>(node: impl Into<Node<'a>>) -> Option<Token<'a>> {
                 Some(ExprKind::Call(_) | ExprKind::New(_))
             );
             if !is_argument {
+                let mut child = node;
                 loop {
+                    if let Some(braces) = jsx_container_of(child)
+                        && file.comments_before(braces).next().is_some()
+                    {
+                        return find_jsdoc_comment(file, braces.start);
+                    }
                     match parent {
                         Node::File(_) => break,
                         Node::Func(outer) if outer.kind() == FnKind::Decl => break,
@@ -1960,13 +1976,19 @@ pub fn get_jsdoc_comment<'a>(node: impl Into<Node<'a>>) -> Option<Token<'a>> {
                         {
                             return find_jsdoc_comment(file, member.span().start);
                         }
-                        Node::Prop(_) | Node::PatProp(_) => {
+                        // A `SpreadElement` and a `JSXAttribute` are no `Property`.
+                        Node::Prop(prop)
+                            if prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() =>
+                        {
+                            return find_jsdoc_comment(file, parent.span().start);
+                        }
+                        Node::PatProp(_) => {
                             return find_jsdoc_comment(file, parent.span().start);
                         }
                         _ if file.comments_before(parent).next().is_some() => {
                             return find_jsdoc_comment(file, parent.span().start);
                         }
-                        _ => parent = estree_parent(parent),
+                        _ => (child, parent) = (parent, estree_parent(parent)),
                     }
                 }
             }
@@ -2087,7 +2109,12 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
                     None => return true,
                 }
             }
-            Node::Prop(prop) => return prop.is_jsx_attribute() || prop.value() != Some(current),
+            // A `SpreadElement` and a `JSXAttribute` are no `Property`.
+            Node::Prop(prop) => {
+                return prop.is_jsx_attribute()
+                    || prop.kind() == PropKind::Spread
+                    || prop.value() != Some(current);
+            }
             Node::Member(member) => return !is_value_of(member, current),
             Node::VarDecl(declaration) => {
                 return !(declaration.init() == Some(current)

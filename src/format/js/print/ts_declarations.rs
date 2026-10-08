@@ -314,7 +314,8 @@ fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
     write!(f, "{");
     let members = declaration.members();
     if members.is_empty() {
-        write!(f, format_dangling_comments(declaration.body_span()).with_soft_block_indent());
+        // Prettier's `printObject`: the group of an enum breaks, with nothing in it as well.
+        write!(f, [format_dangling_comments(declaration.body_span()).with_soft_block_indent(), expand_parent()]);
     } else {
         let is_consistent = f.options().quote_properties.is_consistent();
         if is_consistent {

@@ -80,6 +80,24 @@ fn is_led_by_language_comment<'a>(
             && follows_language_comment(outer_start, false, language, f))
 }
 
+/// Whether a comment is before `e`, with nothing but white space, `(`, `;` and comments between. No other comment says what
+/// language the template `e` is in.
+pub(crate) fn is_behind_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let start = e.span().start;
+    let comments = f.comments();
+    let nearest = comments
+        .comments_before(start)
+        .last()
+        .or_else(|| comments.printed_comments().last());
+    nearest.is_some_and(|comment| {
+        comment.span.end > start
+            || f.source_text()
+                .text_for(&Span::after(comment.span, start))
+                .iter()
+                .all(|byte| matches!(byte, b'(' | b';' | 0x80..) || byte.is_ascii_whitespace())
+    })
+}
+
 /// Prettier's `hasLanguageComment`. `language`: what is between the `/*` and the `*/`.
 pub(crate) fn has_language_comment<'a>(
     e: Expr<'a>,
@@ -87,21 +105,7 @@ pub(crate) fn has_language_comment<'a>(
     language: &[u8],
     f: &Formatter<'a>,
 ) -> bool {
-    // A comment that counts is before `e`, with nothing but white space, `(`, `;` and comments between.
-    let start = e.span().start;
-    let comments = f.comments();
-    let nearest = comments
-        .comments_before(start)
-        .last()
-        .or_else(|| comments.printed_comments().last());
-    let is_near = nearest.is_some_and(|comment| {
-        comment.span.end > start
-            || f.source_text()
-                .text_for(&Span::after(comment.span, start))
-                .iter()
-                .all(|byte| matches!(byte, b'(' | b';' | 0x80..) || byte.is_ascii_whitespace())
-    });
-    is_near
+    is_behind_comment(e, f)
         && (is_led_by_language_comment(e, parent, language, f)
             || match parent {
                 AstNodes::ExpressionStatement(_) => {

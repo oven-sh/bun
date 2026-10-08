@@ -13,16 +13,35 @@ use crate::js::utils::string::push_with_normalized_newlines;
 use crate::prelude::*;
 use crate::{format_args, write};
 
+/// Whether Prettier's `embed` can have anything to say about the template `e`. About most it has not.
+fn can_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    match e.ast_parent() {
+        AstNodes::TaggedTemplateExpression(_)
+        | AstNodes::JSXExpressionContainer(_)
+        | AstNodes::ObjectProperty(_)
+        | AstNodes::ArrayExpression(_) => true,
+        AstNodes::CallExpression(call)
+            if call
+                .callee()
+                .is_some_and(|callee| callee.text() == b"graphql") =>
+        {
+            true
+        }
+        _ => crate::graphql::embed::is_behind_comment(e, f),
+    }
+}
+
 /// `` `a${b}c` ``
 pub(crate) fn write_template_literal<'a>(
     e: Expr<'a>,
     template: Template<'a>,
     f: &mut Formatter<'a>,
 ) {
-    if !embed::write_template(e, template, f)
-        && !crate::graphql::embed::write_template(e, template, f)
-        && !crate::html::in_js::write_template(e, template, f)
-        && !crate::markdown::embed::write_template(e, template, f)
+    if !can_be_in_another_language(e, f)
+        || (!embed::write_template(e, template, f)
+            && !crate::graphql::embed::write_template(e, template, f)
+            && !crate::html::in_js::write_template(e, template, f)
+            && !crate::markdown::embed::write_template(e, template, f))
     {
         TemplateLike::TemplateLiteral(template).fmt(f);
     }

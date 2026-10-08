@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { once } from "node:events";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { Readable } from "node:stream";
-import { request, fetch as undiciFetch } from "undici";
+import { errors, request, fetch as undiciFetch } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -392,5 +394,118 @@ describe("undici.request maxRedirections", () => {
     } finally {
       server.stop(true);
     }
+  });
+});
+
+describe.concurrent("undici.request method", () => {
+  // Records the request line of every request. It is a raw socket because
+  // Bun.serve closes the connection for a method outside its table.
+  async function listen() {
+    const lines: string[] = [];
+    const server = createNetServer(socket => {
+      let head = "";
+      socket.on("data", chunk => {
+        head += chunk;
+        if (!head.includes("\r\n\r\n")) return;
+        lines.push(head.slice(0, head.indexOf("\r\n")));
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    return { lines, url: `http://127.0.0.1:${port}/`, [Symbol.asyncDispose]: () => server[Symbol.asyncDispose]() };
+  }
+
+  // undici makes these checks before it connects:
+  // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L31-L33
+  // https://github.com/nodejs/undici/blob/v6.21.3/lib/core/request.js#L59-L63
+  it.each([
+    ["true", true, "method must be a string"],
+    ["123", 123, "method must be a string"],
+    ["1n", 1n, "method must be a string"],
+    ["a symbol", Symbol("GET"), "method must be a string"],
+    ["{}", {}, "method must be a string"],
+    ['["POST"]', ["POST"], "method must be a string"],
+    ['new String("POST")', new String("POST"), "method must be a string"],
+    ['"GET POST"', "GET POST", "invalid request method"],
+    ['" GET"', " GET", "invalid request method"],
+    ['"GET\\r\\n"', "GET\r\n", "invalid request method"],
+    ['"a/b"', "a/b", "invalid request method"],
+    ['"G\\u00e9T"', "G\u00e9T", "invalid request method"],
+    // toUpperCase() turns U+017F into "S".
+    ['"po\\u017ft"', "po\u017ft", "invalid request method"],
+    ['"CONNECT"', "CONNECT", "invalid method"],
+  ])("rejects %s and sends nothing", async (_, method, message) => {
+    await using server = await listen();
+
+    const rejected = request(server.url, { method: method as never });
+    await expect(rejected).rejects.toBeInstanceOf(errors.InvalidArgumentError);
+    await expect(rejected).rejects.toMatchObject({
+      name: "InvalidArgumentError",
+      code: "UND_ERR_INVALID_ARG",
+      message,
+    });
+
+    // The next request is the first one that the server sees.
+    await (await request(server.url)).body.text();
+    expect(server.lines).toEqual(["GET / HTTP/1.1"]);
+  });
+
+  async function expectRequestLine(_: string, sent: string, method: unknown) {
+    await using server = await listen();
+
+    await (await request(server.url, { method: method as never })).body.text();
+    expect(server.lines).toEqual([`${sent} / HTTP/1.1`]);
+  }
+
+  it.each([
+    // A falsy method is no method, as in undici.
+    ["no method", "GET", undefined],
+    ["null", "GET", null],
+    ['""', "GET", ""],
+    ["0", "GET", 0],
+    ["false", "GET", false],
+    ['"POST"', "POST", "POST"],
+    ['"PROPFIND"', "PROPFIND", "PROPFIND"],
+  ])("%s goes out as %s", expectRequestLine);
+
+  // undici sends each of these as written. request() goes through fetch(), which
+  // sends GET for a mixed-case spelling (#42497), so it upper-cases the method.
+  it.each([
+    ['"patch"', "PATCH", "patch"],
+    ['"Put"', "PUT", "Put"],
+    ['"Delete"', "DELETE", "Delete"],
+    // Only exactly "CONNECT" is rejected, as in undici.
+    ['"connect"', "CONNECT", "connect"],
+    ['"Connect"', "CONNECT", "Connect"],
+  ])("unlike undici, %s goes out as %s", expectRequestLine);
+
+  // undici sends PUT for these: https://github.com/nodejs/undici/blob/v6.21.3/index.js#L99
+  // request() has no such default. A falsy method is GET, and GET takes no body.
+  it.each([
+    ["null", null],
+    ['""', ""],
+    ["0", 0],
+    ["false", false],
+  ])("unlike undici, %s with a body rejects as GET with a body and sends nothing", async (_, method) => {
+    await using server = await listen();
+
+    await expect(request(server.url, { method: method as never, body: "x" })).rejects.toMatchObject({
+      message: "Body not allowed for GET or HEAD requests",
+    });
+
+    // The next request is the first one that the server sees.
+    await (await request(server.url)).body.text();
+    expect(server.lines).toEqual(["GET / HTTP/1.1"]);
+  });
+
+  it("InvalidArgumentError has undici's name, code and default message", () => {
+    const error = new errors.InvalidArgumentError();
+    expect(error).toBeInstanceOf(errors.UndiciError);
+    expect(error).toMatchObject({
+      name: "InvalidArgumentError",
+      code: "UND_ERR_INVALID_ARG",
+      message: "Invalid Argument Error",
+    });
   });
 });

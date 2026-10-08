@@ -1,4 +1,5 @@
 const EventEmitter = require("node:events");
+const { checkIsHttpToken } = require("internal/validators");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -105,6 +106,29 @@ class BodyReadable extends ReadableFromWeb {
   }
 }
 
+// undici checks the method before it connects:
+// https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L31-L33
+// https://github.com/nodejs/undici/blob/v6.21.3/lib/core/request.js#L59-L63
+function requestMethod(method) {
+  // The usual methods need no scan and no case map.
+  switch (method) {
+    case "GET":
+    case "HEAD":
+    case "POST":
+    case "PUT":
+    case "DELETE":
+    case "OPTIONS":
+    case "PATCH":
+      return method;
+  }
+  if (!method) return "GET";
+  if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
+  if (typeof method !== "string") throw new InvalidArgumentError("method must be a string");
+  if (!checkIsHttpToken(method)) throw new InvalidArgumentError("invalid request method");
+  // fetch() sends GET for a spelling outside its method table (#42497), and the table has no mixed case.
+  return method.toUpperCase();
+}
+
 // NOT IMPLEMENTED
 // *   idempotent?: boolean;
 // *   onInfo?: (info: { statusCode: number, headers: Object<string, string | string[]> }) => void;
@@ -187,7 +211,7 @@ async function request(
   if (typeof url === "string" && query) url = new URL(url);
   if (typeof url === "object" && url !== null && query) if (query) url.search = new URLSearchParams(query).toString();
 
-  method = method && typeof method === "string" ? method.toUpperCase() : null;
+  method = requestMethod(method);
   // idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
@@ -316,7 +340,14 @@ class BodyTimeoutError extends UndiciError {}
 class RequestContentLengthMismatchError extends UndiciError {}
 class ConnectTimeoutError extends UndiciError {}
 class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
+class InvalidArgumentError extends UndiciError {
+  constructor(message) {
+    super(message);
+    this.name = "InvalidArgumentError";
+    this.message = message || "Invalid Argument Error";
+    this.code = "UND_ERR_INVALID_ARG";
+  }
+}
 class InvalidReturnValueError extends UndiciError {}
 class RequestAbortedError extends AbortError {}
 class ClientDestroyedError extends UndiciError {}

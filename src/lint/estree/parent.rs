@@ -5,6 +5,7 @@ use crate::ast::{
     BinOp, Expr, ExprKind, FnKind, Func, List, Modifier, Node, Param, Stmt, StmtKind, TypeKind,
     TypeNode, TypeParam,
 };
+use smallvec::{SmallVec, smallvec};
 
 /// The node that the parameters, the type parameters and the return type of `func` are fields of.
 fn function_node<'a>(func: Func<'a>) -> VNode<'a> {
@@ -343,20 +344,26 @@ impl<'a> VNode<'a> {
     pub fn for_each_with_type_at(node: Node<'a>, visit: &mut dyn FnMut(VNode<'a>, super::NodeType)) {
         // The parts of a node are a tree of their own, except where the outermost is missing.
         fn descend<'a>(v: VNode<'a>, visit: &mut dyn FnMut(VNode<'a>, super::NodeType)) {
-            let node_type = v.node_type();
-            visit(v, node_type);
-            let parts = node_type.fields().iter().take_while(|it| it.is_child).filter(|it| it.is_part);
-            for entry in parts {
-                if !entry.is_in(v.dialect()) {
-                    continue;
-                }
-                match (entry.get)(v) {
-                    super::Value::Node(child) if child.base == v.base => descend(child, visit),
-                    super::Value::Nodes(children) => {
-                        children.flatten().filter(|child| child.base == v.base).for_each(|child| descend(child, visit));
+            // The next is the last. Not by recursion: the parts of `A.B.C..`, which is one node, are as deep as it is long.
+            let mut pending: SmallVec<[VNode<'a>; 8]> = smallvec![v];
+            while let Some(v) = pending.pop() {
+                let node_type = v.node_type();
+                visit(v, node_type);
+                let first = pending.len();
+                let parts = node_type.fields().iter().take_while(|it| it.is_child).filter(|it| it.is_part);
+                for entry in parts {
+                    if !entry.is_in(v.dialect()) {
+                        continue;
                     }
-                    _ => {}
+                    match (entry.get)(v) {
+                        super::Value::Node(child) if child.base == v.base => pending.push(child),
+                        super::Value::Nodes(children) => {
+                            pending.extend(children.flatten().filter(|child| child.base == v.base));
+                        }
+                        _ => {}
+                    }
                 }
+                pending[first..].reverse();
             }
         }
         let mut root = |v: Option<VNode<'a>>| {

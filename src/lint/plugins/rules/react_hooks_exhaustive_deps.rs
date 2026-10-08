@@ -1,3 +1,4 @@
+use crate::oxlint;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -363,11 +364,16 @@ impl Rule for ExhaustiveDeps {
             let pattern = file.settings().get(b"react-hooks")?.get(b"additionalEffectHooks")?.as_str()?;
             Regex::from_bytes(pattern, b"").ok()
         };
-        let additional_hooks = if self.additional_hooks.is_none() { from_settings() } else { None };
+        let follows_oxlint = oxlint::is_followed(file);
+        let additional_hooks = if self.additional_hooks.is_none() && !follows_oxlint { from_settings() } else { None };
         if self.additional_hooks.is_none()
             && additional_hooks.is_none()
             && !file.has_expr_named_any(&["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"])
         {
+            return State::default();
+        }
+        if follows_oxlint {
+            on.exprs([ExprTag::Call], |rule, e, cx| oxlint::exhaustive_deps::run(cx, e, rule.additional_hooks.as_ref()));
             return State::default();
         }
         on.exprs([ExprTag::Call], |rule, e, cx| {

@@ -8,6 +8,7 @@ export interface Project {
 }
 
 const rules = (plugins: string[], rules: object) => ({ plugins, categories: { correctness: "off" }, rules });
+const hooks = rules(["react"], { "react-hooks/rules-of-hooks": "error", "react-hooks/exhaustive-deps": "warn" });
 const noCycle = (...options: object[]) => rules(["import"], { "import/no-cycle": ["warn", ...options] });
 
 /** Two modules that import each other, the first with `first` and the second with `import { a } from "./a"`. */
@@ -208,5 +209,80 @@ export const projects: Project[] = [
     about: "comments that disable the rule",
     config: noCycle(),
     files: pair(`// oxlint-disable-next-line import/no-cycle\nimport { b } from "./b";\n// eslint-disable-next-line import/no-cycle\nimport { b as c } from "./b.ts";`),
+  },
+  {
+    name: "rules-of-hooks/loop-in-callback",
+    about: "no loops and conditions are looked for in a function that is passed to a call outside a component",
+    config: hooks,
+    files: {
+      "a.ts": `items.forEach(item => {\n  for (const part of item) {\n    useThing(part);\n  }\n  if (item) useOther();\n});\n`,
+      "b.ts": `function Component() {\n  items.forEach(item => {\n    for (const part of item) useThing(part);\n  });\n}\n`,
+    },
+  },
+  {
+    name: "rules-of-hooks/try",
+    about: "a hook in a try statement is called conditionally",
+    config: hooks,
+    files: {
+      "a.ts": `function Component() {\n  try {\n    useThing();\n  } catch {\n    useOther();\n  } finally {\n    useLast();\n  }\n  while (a) {\n    try {\n      useLoop();\n    } catch {}\n  }\n}\n`,
+    },
+  },
+  {
+    name: "rules-of-hooks/anonymous",
+    about: "a function without any name counts as a component; the default of what is assigned to has no name",
+    config: hooks,
+    files: {
+      "a.ts": `export default () => {\n  if (a) useThing();\n};\n`,
+      "b.ts": `export default function () {\n  if (a) useThing();\n}\n`,
+      "c.ts": `({ k = () => { useThing(); } } = {});\nconst { j = () => { useThing(); } } = {};\nconst c = () => { useThing(); };\n`,
+    },
+  },
+  {
+    name: "rules-of-hooks/one-report",
+    about: "a call is reported once",
+    config: hooks,
+    files: {
+      "a.ts": `function notComponent() {\n  while (a) useThing();\n}\nclass A {\n  m() {\n    if (a) useThing();\n  }\n  p = () => useThing();\n}\nasync function Component() {\n  if (a) useThing();\n}\nuseThing();\n`,
+    },
+  },
+  {
+    name: "exhaustive-deps/places",
+    about: "a missing dependency is printed where it is used; what changes every render in the array; `ref.current` as a whole",
+    config: hooks,
+    files: {
+      "a.tsx": `function Component({ a }) {\n  const ref = useRef();\n  const made = {};\n  const call = () => a;\n  useEffect(() => {\n    console.log(a);\n    return () => {\n      ref.current.stop();\n    };\n  }, []);\n  useCallback(() => [made, call], [made, call]);\n}\n`,
+    },
+  },
+  {
+    name: "exhaustive-deps/each-by-itself",
+    about: "each dependency that is not needed, is there twice or is no dependency is a report of its own",
+    config: hooks,
+    files: {
+      "a.tsx": `const outer = 1;\nfunction Component({ a, b }) {\n  useMemo(() => a, [a, a, b, b.c, outer, 1, a + b, ...b]);\n  useMemo(() => a);\n  useEffect(async () => {}, a);\n  useEffect(b, []);\n  useEffect();\n}\n`,
+    },
+  },
+  {
+    name: "exhaustive-deps/callee",
+    about: "is_callee_of_call: what a method is called on is the dependency",
+    config: hooks,
+    files: {
+      "a.tsx": `function Component({ a, b, c, d, e }) {\n  useEffect(() => {\n    a.b.c();\n  }, []);\n  useEffect(() => {\n    b.c[d]();\n  }, [d]);\n  useEffect(() => {\n    c[d.e]();\n  }, [c]);\n  useEffect(() => {\n    e.f.g;\n  }, []);\n}\n`,
+    },
+  },
+  {
+    name: "exhaustive-deps/comments",
+    about: "comments go by the array, which is the primary label",
+    config: hooks,
+    files: {
+      "a.tsx": `function Component({ a }) {\n  useEffect(() => {\n    console.log(a);\n    // oxlint-disable-next-line react-hooks/exhaustive-deps\n  }, []);\n  useEffect(() => {\n    // oxlint-disable-next-line react-hooks/exhaustive-deps\n    console.log(a);\n  }, []);\n}\n`,
+    },
+  },
+  {
+    name: "no-accumulating-spread/places",
+    about: "in a loop the accumulator is printed, and comments go by the loop",
+    config: rules(["oxc"], { "oxc/no-accumulating-spread": "warn" }),
+    files: {
+      "a.ts": `let all = [];\nfor (const it of items) {\n  all = [...all, it];\n}\nlet more = [];\n// oxlint-disable-next-line oxc/no-accumulating-spread\nfor (const it of items) {\n  more = [...more, it];\n}\n// oxlint-disable-next-line oxc/no-accumulating-spread\nlet rest = [];\nfor (const it of items) {\n  rest = [...rest, it];\n}\nitems.reduce((acc, it) => [...acc, it], []);\n`,
+    },
   },
 ];

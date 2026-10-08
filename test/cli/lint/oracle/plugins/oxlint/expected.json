@@ -81,5 +81,62 @@
  ],
  "no-cycle/comments": [
   "b.ts:1:19 import(no-cycle)"
+ ],
+ "rules-of-hooks/loop-in-callback": [
+  "b.ts:3:30 react-hooks(rules-of-hooks)"
+ ],
+ "rules-of-hooks/try": [
+  "a.ts:11:7 react-hooks(rules-of-hooks)",
+  "a.ts:3:5 react-hooks(rules-of-hooks)",
+  "a.ts:5:5 react-hooks(rules-of-hooks)",
+  "a.ts:7:5 react-hooks(rules-of-hooks)"
+ ],
+ "rules-of-hooks/anonymous": [
+  "a.ts:2:10 react-hooks(rules-of-hooks)",
+  "b.ts:2:10 react-hooks(rules-of-hooks)",
+  "c.ts:2:21 react-hooks(rules-of-hooks)",
+  "c.ts:3:19 react-hooks(rules-of-hooks)"
+ ],
+ "rules-of-hooks/one-report": [
+  "a.ts:11:10 react-hooks(rules-of-hooks)",
+  "a.ts:13:1 react-hooks(rules-of-hooks)",
+  "a.ts:2:13 react-hooks(rules-of-hooks)",
+  "a.ts:6:12 react-hooks(rules-of-hooks)",
+  "a.ts:8:13 react-hooks(rules-of-hooks)"
+ ],
+ "exhaustive-deps/places": [
+  "a.tsx:11:36 react-hooks(exhaustive-deps)",
+  "a.tsx:11:42 react-hooks(exhaustive-deps)",
+  "a.tsx:6:17 react-hooks(exhaustive-deps)",
+  "a.tsx:8:7 react-hooks(exhaustive-deps)"
+ ],
+ "exhaustive-deps/each-by-itself": [
+  "a.tsx:3:20 react-hooks(exhaustive-deps)",
+  "a.tsx:3:20 react-hooks(exhaustive-deps)",
+  "a.tsx:3:20 react-hooks(exhaustive-deps)",
+  "a.tsx:3:24 react-hooks(exhaustive-deps)",
+  "a.tsx:3:35 react-hooks(exhaustive-deps)",
+  "a.tsx:3:42 react-hooks(exhaustive-deps)",
+  "a.tsx:3:45 react-hooks(exhaustive-deps)",
+  "a.tsx:3:52 react-hooks(exhaustive-deps)",
+  "a.tsx:4:3 react-hooks(exhaustive-deps)",
+  "a.tsx:5:13 react-hooks(exhaustive-deps)",
+  "a.tsx:5:29 react-hooks(exhaustive-deps)",
+  "a.tsx:6:13 react-hooks(exhaustive-deps)",
+  "a.tsx:7:3 react-hooks(exhaustive-deps)"
+ ],
+ "exhaustive-deps/callee": [
+  "a.tsx:12:5 react-hooks(exhaustive-deps)",
+  "a.tsx:3:5 react-hooks(exhaustive-deps)",
+  "a.tsx:6:5 react-hooks(exhaustive-deps)",
+  "a.tsx:9:7 react-hooks(exhaustive-deps)"
+ ],
+ "exhaustive-deps/comments": [
+  "a.tsx:8:17 react-hooks(exhaustive-deps)"
+ ],
+ "no-accumulating-spread/places": [
+  "a.ts:11:5 oxc(no-accumulating-spread)",
+  "a.ts:15:28 oxc(no-accumulating-spread)",
+  "a.ts:1:5 oxc(no-accumulating-spread)"
  ]
 }

@@ -1,3 +1,4 @@
+use crate::oxlint::{self, rules_of_hooks::Flow};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -414,7 +415,7 @@ impl Rule for RulesOfHooks {
                 }
             });
         }
-        if has_effect_events {
+        if has_effect_events && !oxlint::is_followed(file) {
             on.finish(Self::check_effect_events);
         }
         State::default()
@@ -472,8 +473,17 @@ impl RulesOfHooks {
             }
         }
 
+        let follows_oxlint = oxlint::is_followed(cx.file());
         for &(segment, hook) in &hooks {
             let Some(segment) = segment.filter(|it| it.is_reachable()) else {
+                if follows_oxlint && let Node::Expr(call) = hook.parent() {
+                    let flow = Flow {
+                        is_reachable: false,
+                        is_cyclic: false,
+                        is_conditional: false,
+                    };
+                    oxlint::rules_of_hooks::check(cx, call, flow);
+                }
                 continue;
             };
             let length = paths.shortest_path_length_to_start(segment);
@@ -484,6 +494,17 @@ impl RulesOfHooks {
             let paths_from_start_to_end =
                 paths.count(segment, Direction::FromStart).times(paths.count(segment, Direction::ToEnd));
             let is_cycled = paths.cyclic.contains(&segment.id());
+            if follows_oxlint {
+                if let Node::Expr(call) = hook.parent() {
+                    let flow = Flow {
+                        is_reachable: true,
+                        is_cyclic: is_cycled,
+                        is_conditional: paths_from_start_to_end != all_paths_from_start_to_end,
+                    };
+                    oxlint::rules_of_hooks::check(cx, call, flow);
+                }
+                continue;
+            }
             let is_use = is_react_function(hook, "use");
             let report = |message: Message| cx.report(hook, message).data("hook", hook.text());
             let mut reports: smallvec::SmallVec<[Message; 2]> = smallvec::SmallVec::new();

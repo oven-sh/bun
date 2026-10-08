@@ -132,6 +132,7 @@ fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: 
             _ => 3,
         };
         let start = stmt.span().start;
-        cx.report(Span::new(start, start + keyword), LOOP_SPREAD);
+        // The labels of oxlint: the accumulator, the spread, and the loop, which is the primary one.
+        cx.report(pat, LOOP_SPREAD).comments_apply_at(Span::new(start, start + keyword));
     }
 }

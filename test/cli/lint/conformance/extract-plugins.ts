@@ -548,7 +548,8 @@ function recordWithOxlint(rule: string, raws: Raw[]): FixtureCase[] {
         const id = ids.find(([, message]) => message === it.message)?.[0];
         if (!id) throw new Error(`no id for: ${it.message}`);
         // The primary label, which the output does not mark.
-        const { label: _, ...at } = labels.find((label: any) => label.label === "For this loop") ?? labels[0];
+        // Where oxlint prints it.
+        const { label: _, ...at } = labels[0];
         return { messageId: id, message: it.message, ...at, fix: null, suggestions: [], oxlint: { labels, help: it.help ?? null } };
       })
       .sort((a, b) => a.line - b.line || a.column - b.column);

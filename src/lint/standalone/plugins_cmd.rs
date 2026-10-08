@@ -76,7 +76,8 @@ fn cycles(args: &[String]) {
     let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
     config.language.parser = bun_lint::language::Parser::TypeScript;
     config.language.experimental_decorators = true;
-    config.language.refuses_what_parser_refuses = !args.iter().any(|it| it == "--oxlint");
+    config.language.refuses_what_parser_refuses = false;
+    config.language.is_oxlint = args.iter().any(|it| it == "--oxlint");
     config.skips_unknown_rules = true;
     let mut paths = Vec::new();
     for arg in args.iter().filter(|a| !a.starts_with("--") && !a.starts_with('[')) {

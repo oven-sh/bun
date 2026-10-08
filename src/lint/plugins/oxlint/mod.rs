@@ -4,12 +4,15 @@
 //! Each difference is behind a function that is named after what oxlint does, here or in [`bun_lint::modules::Flavor`], and has a
 //! project in `test/cli/lint/oracle/plugins/oxlint`.
 
+pub(crate) mod exhaustive_deps;
+pub(crate) mod rules_of_hooks;
+
 use bun_lint::ast::File;
 use bun_lint::modules::Flavor;
 
 /// The file is linted with a configuration of oxlint.
 pub(crate) fn is_followed(file: &File) -> bool {
-    !file.language().refuses_what_parser_refuses
+    file.language().is_oxlint
 }
 
 pub(crate) fn flavor_of_modules(file: &File) -> Flavor {

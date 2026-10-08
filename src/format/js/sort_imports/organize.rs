@@ -659,48 +659,93 @@ impl<'a> Organizer<'a, '_> {
         out.extend_from_slice(if ends_line { self.end_of_line } else { b" " });
     }
 
-    /// `emitNodeList` for the elements of named imports or exports, with the comments that the
-    /// printer writes with them. `list`: the list that the braces are those of.
-    fn write_elements(&self, elements: &[Element], list: u32, is_multi_line: bool, has_trailing_comma: bool, out: &mut Vec<u8>) {
+    /// The comments on the lines after `at`, up to the next token: `emitLeadingCommentsOfPosition`.
+    fn write_leading_comments(&self, at: u32, out: &mut Vec<u8>) {
+        let leading = self.leading_comments(at);
+        // `emitNewLineBeforeLeadingCommentOfPosition`
+        if !leading.is_empty() {
+            self.write_line(out);
+        }
+        leading.into_iter().for_each(|it| self.write_comment(it, out));
+    }
+
+    /// `writer.writeLine()`: nothing at the start of a line.
+    fn write_line(&self, out: &mut Vec<u8>) {
+        if out.last() == Some(&b' ') {
+            out.pop();
+        }
+        if !out.ends_with(self.end_of_line) {
+            out.extend_from_slice(self.end_of_line);
+        }
+    }
+
+    /// `emitNodeListItems` for the elements of named imports or exports, with the comments that
+    /// the printer writes with them. `list`: the list that the braces are those of.
+    /// `prefers_new_lines`: `ListFormat.PreferNewLine`.
+    fn write_elements(&self, elements: &[Element], list: u32, prefers_new_lines: bool, has_trailing_comma: bool, out: &mut Vec<u8>) {
+        if elements.is_empty() {
+            return out.extend_from_slice(b"{ }");
+        }
         out.push(b'{');
+        // `getLeadingLineTerminatorCount`
+        let starts_on_new_line = prefers_new_lines
+            || (elements.first().filter(|it| it.place.0 == list).and_then(|it| it.span))
+                .is_some_and(|span| self.has_line_break_in(self.full_start_of(span.start), span.start));
+        out.extend_from_slice(if starts_on_new_line { self.end_of_line } else { b" " });
+        // Whether what is between the `,` before an element and the end of that line is written.
+        let mut writes_intervening_comments = !starts_on_new_line;
         let mut previous: Option<&Element> = None;
         for element in elements {
-            // Whether it is written on a new line. If so, what is after the `,` before it is lost.
-            let breaks = is_multi_line
-                || match (previous, element.span) {
-                    (_, None) => false,
-                    (None, Some(span)) => element.place.0 == list && self.has_line_break_in(self.full_start_of(span.start), span.start),
-                    (Some(previous), Some(span)) => {
-                        previous.place == (element.place.0, element.place.1.wrapping_sub(1))
-                            && previous.span.is_some_and(|it| self.has_line_break_in(it.end, span.start))
-                    }
-                };
-            if previous.is_some() {
+            let full_start = element.span.map(|span| self.full_start_of(span.start));
+            if let Some(previous) = previous {
+                if let Some(span) = previous.span {
+                    self.write_leading_comments(span.end, out);
+                }
                 out.push(b',');
+                // `getSeparatingLineTerminatorCount`
+                let is_on_new_line = match (previous.span, element.span) {
+                    (Some(before), Some(span)) if previous.place == (element.place.0, element.place.1.wrapping_sub(1)) => {
+                        self.has_line_break_in(before.end, span.start)
+                    }
+                    _ => prefers_new_lines,
+                };
+                if is_on_new_line {
+                    if writes_intervening_comments {
+                        self.write_trailing_comments(full_start, out);
+                    }
+                    self.write_line(out);
+                    writes_intervening_comments = false;
+                } else {
+                    out.push(b' ');
+                }
             }
-            out.extend_from_slice(if breaks { self.end_of_line } else { b" " });
-            if let Some(span) = element.span {
-                let full_start = self.full_start_of(span.start);
-                if !breaks {
-                    self.trailing_comments(full_start).into_iter().for_each(|it| self.write_comment(it, out));
-                }
-                let leading = self.leading_comments(full_start);
-                // `emitNewLineBeforeLeadingCommentOfPosition`
-                if !leading.is_empty() && out.last() == Some(&b' ') {
-                    out.pop();
-                    out.extend_from_slice(self.end_of_line);
-                }
-                leading.into_iter().for_each(|it| self.write_comment(it, out));
+            if let (true, Some(full_start)) = (writes_intervening_comments, full_start) {
+                self.trailing_comments(full_start).into_iter().for_each(|it| self.write_comment(it, out));
+            }
+            writes_intervening_comments = true;
+            if let Some(full_start) = full_start {
+                self.write_leading_comments(full_start, out);
             }
             out.extend_from_slice(&element.code);
             self.write_trailing_comments(element.span.map(|it| it.end), out);
             previous = Some(element);
         }
-        if let (true, Some(last)) = (has_trailing_comma, previous) {
-            out.push(b',');
-            self.write_trailing_comments(last.span.map(|it| self.skip_trivia(it.end, false, false) + 1), out);
+        match previous.and_then(|it| it.span) {
+            // `emitTokenWithComment`
+            Some(last) if has_trailing_comma => {
+                self.write_leading_comments(last.end, out);
+                out.push(b',');
+                self.write_trailing_comments(Some(self.skip_trivia(last.end, false, false) + 1), out);
+            }
+            Some(last) => self.write_leading_comments(last.end, out),
+            None if has_trailing_comma && previous.is_some() => out.push(b','),
+            None => {}
         }
-        out.extend_from_slice(if is_multi_line { self.end_of_line } else { b" " });
+        if prefers_new_lines {
+            self.write_line(out);
+        } else if !out.ends_with(self.end_of_line) {
+            out.push(b' ');
+        }
         out.push(b'}');
     }
 
@@ -734,8 +779,8 @@ impl<'a> Organizer<'a, '_> {
     }
 
     fn import_code(&self, import: &NewImport<'a>) -> Vec<u8> {
-        if import.is_unchanged() {
-            return self.file.slice(import.base.span()).to_vec();
+        if self.is_written_alike(import) {
+            return self.as_written(&import.base);
         }
         let original = import.base.import();
         // What is before and after the braces is written as it is, with its comments.
@@ -788,7 +833,10 @@ impl<'a> Organizer<'a, '_> {
                 .collect();
             let braces = import.braces.and_then(|it| Some((it.0, it.1, self.braces_in(it.0.clause_span())?)));
             let is_multi_line = braces.is_some_and(|it| self.has_line_break_in(it.2.start, it.2.end));
-            let has_trailing_comma = braces.is_some_and(|it| it.1 && self.text[..it.2.end as usize - 1].trim_ascii_end().ends_with(b","));
+            let has_trailing_comma = braces.is_some_and(|it| {
+                let after_last = it.0.named().last().map(|last| self.skip_trivia(last.span().end, false, false));
+                it.1 && after_last.is_some_and(|at| self.text.get(at as usize) == Some(&b','))
+            });
             self.write_elements(&elements, braces.map_or(0, |it| it.0.stmt().span().start), is_multi_line, has_trailing_comma, &mut out);
         }
         if let Some(braces) = own_braces {
@@ -836,10 +884,40 @@ impl<'a> Organizer<'a, '_> {
     }
 
     /// Whether writing `declarations` anew in the same order changes nothing: no other statement
-    /// is between them, and no comment that is written with the second or a later one.
+    /// is between them, no comment that is written with the second or a later one, and none has
+    /// its `;` on a later line.
     fn is_plain(&self, declarations: &[Declaration<'a>]) -> bool {
-        (declarations.iter().zip(declarations.iter().skip(1)))
-            .all(|(a, b)| a.span().end == b.full_start && (self.comments.is_empty() || self.leading_comments(b.full_start).is_empty()))
+        !declarations.iter().any(|it| self.before_far_semicolon(it).is_some())
+            && (declarations.iter().zip(declarations.iter().skip(1)))
+                .all(|(a, b)| a.span().end == b.full_start && (self.comments.is_empty() || self.leading_comments(b.full_start).is_empty()))
+    }
+
+    /// Of a declaration with its `;` on a later line, what is before the `;`.
+    fn before_far_semicolon(&self, declaration: &Declaration<'a>) -> Option<&'a [u8]> {
+        let text = self.file.slice(declaration.span()).strip_suffix(b";")?;
+        let before = text.trim_ascii_end();
+        let end = declaration.span().start + before.len() as u32;
+        let is_after_comment = self.comments.get(self.comments.partition_point(|it| it.0.end < end)).is_some_and(|it| it.0.end == end);
+        (!is_after_comment && strings::index_of_any(&text[before.len()..], b"\n\r").is_some()).then_some(before)
+    }
+
+    /// `declaration` the way it is written, with its `;` where the printer writes it.
+    fn as_written(&self, declaration: &Declaration<'a>) -> Vec<u8> {
+        match self.before_far_semicolon(declaration) {
+            Some(before) => [before, b";"].concat(),
+            None => self.file.slice(declaration.span()).to_vec(),
+        }
+    }
+
+    fn has_comment_in(&self, span: Span) -> bool {
+        let next = self.comments.partition_point(|comment| comment.0.start < span.start);
+        self.comments.get(next).is_some_and(|comment| comment.0.end <= span.end)
+    }
+
+    /// Whether the printer writes `import` the way it is written. It makes a new list of what is
+    /// in the braces, and leaves out some of the comments there.
+    fn is_written_alike(&self, import: &NewImport<'a>) -> bool {
+        import.is_unchanged() && !(import.base.import()).and_then(|it| self.braces_in(it.clause_span())).is_some_and(|it| self.has_comment_in(it))
     }
 
     /// `organizeImportsWorker`
@@ -856,7 +934,7 @@ impl<'a> Organizer<'a, '_> {
         }
         let is_same = new.len() == old.len()
             && self.is_plain(old)
-            && new.iter().zip(old).all(|(new, old)| new.base.span() == old.span() && new.is_unchanged());
+            && new.iter().zip(old).all(|(new, old)| new.base.span() == old.span() && self.is_written_alike(new));
         if !is_same {
             let new: Vec<(Declaration<'a>, Vec<u8>)> = new.iter().map(|it| (it.base, self.import_code(it))).collect();
             self.replace(old, &new);
@@ -889,7 +967,7 @@ impl<'a> Organizer<'a, '_> {
         for group in self.sorted_by_module(old) {
             // `coalesceExportsWorker`
             let is_star = |it: &&Declaration| matches!(it.statement.kind(), StmtKind::ExportStar { alias: None, .. });
-            new.extend(group.iter().find(is_star).map(|it| (*it, self.file.slice(it.span()).to_vec())));
+            new.extend(group.iter().find(is_star).map(|it| (*it, self.as_written(it))));
             is_same &= group.iter().filter(is_star).count() <= 1;
             for is_type_only in [false, true] {
                 let of_kind: Vec<&Declaration> = (group.iter())
@@ -904,7 +982,7 @@ impl<'a> Organizer<'a, '_> {
                 };
                 is_same &= of_kind.len() == 1;
                 let StmtKind::ExportNamed(export) = first.statement.kind() else {
-                    new.push((*first, self.file.slice(first.span()).to_vec()));
+                    new.push((*first, self.as_written(first)));
                     continue;
                 };
                 let written: Vec<ExportSpec<'a>> = (of_kind.iter())
@@ -916,9 +994,9 @@ impl<'a> Organizer<'a, '_> {
                     let key = |it: &ExportSpec<'a>| (it.is_type_only(), it.exported().bytes());
                     compare_specifiers(key(a), key(b), self.named_comparer.unwrap_or(Comparer::CaseSensitive), type_order)
                 });
-                let is_sorted = items.iter().zip(&written).all(|(a, b)| a.span() == b.span());
+                let is_sorted = items.iter().zip(&written).all(|(a, b)| a.span() == b.span()) && !self.has_comment_in(first.span());
                 is_same &= is_sorted;
-                new.push((*first, if is_sorted && of_kind.len() == 1 { self.file.slice(first.span()).to_vec() } else { self.export_code(first, export, &items) }));
+                new.push((*first, if is_sorted && of_kind.len() == 1 { self.as_written(first) } else { self.export_code(first, export, &items) }));
             }
         }
         is_same &= new.len() == old.len() && self.is_plain(old) && new.iter().zip(old).all(|(new, old)| new.0.span() == old.span());

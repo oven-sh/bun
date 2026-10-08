@@ -275,6 +275,10 @@ pub(crate) trait Sink {
     fn is_stream_reading(&self, _stream_id: u32) -> bool {
         true
     }
+    /// Code of a reset the embedder recorded for `stream_id` and has yet to write: ours carries it.
+    fn recorded_reset_code(&self, _stream_id: u32) -> Option<u32> {
+        None
+    }
 }
 
 pub(crate) struct Connection {
@@ -471,12 +475,13 @@ impl Connection {
     }
 
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
+        let code = sink.recorded_reset_code(stream_id).unwrap_or(code.as_u32());
         self.write_frame(
             sink,
             FrameType::RstStream,
             0,
             stream_id,
-            &code.as_u32().to_be_bytes(),
+            &code.to_be_bytes(),
         );
         // MadeYouReset cancels a delivered request. A late frame on a closed stream cancels nothing.
         let delivered = |s: &Stream| s.recv_final_headers && s.state != State::Closed;

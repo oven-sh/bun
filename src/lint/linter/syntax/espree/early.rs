@@ -759,13 +759,19 @@ impl<'a> Checks<'a> {
     fn meta_properties(&mut self) {
         let file = self.file;
         let of_import = "The only valid meta property for import is 'import.meta'";
+        let of_new = "The only valid meta property for new is 'new.target'";
         for it in file.exprs_of_kind(ExprTag::ImportCall) {
-            // Proposals that Prettier has Babel accept.
-            if it.is_deferred_import_call() && !self.is_babel {
-                self.fail(
-                    self.after_token(self.after_token(it.span().start)),
-                    of_import,
-                );
+            let name = self.after_token(self.after_token(it.span().start));
+            // Proposals that Prettier has Babel accept, as they are written in the proposal.
+            let is_refused = match self.is_babel {
+                true => {
+                    it.import_call_phase().is_some()
+                        && !matches!(self.token_at(name), b"defer" | b"source")
+                }
+                false => it.is_deferred_import_call(),
+            };
+            if is_refused {
+                self.fail(name, of_import);
             }
         }
         // `import defer * as a from "a"`: `defer` is the name of the default import.
@@ -798,13 +804,36 @@ impl<'a> Checks<'a> {
                 }
                 _ => continue,
             };
-            match self.token_at(self.before_token(self.before_token(name))) {
+            let keyword = self.before_token(self.before_token(name));
+            // The parser compares what is written. The diagnostic has the name.
+            let is_meta = it.code == 17012 && it.args.first().is_some_and(|it| **it == *b"meta");
+            match self.token_at(keyword) {
+                b"import" if is_meta && !self.is_babel => {
+                    self.fail(keyword, "'import.meta' must not contain escaped characters");
+                }
                 b"import" => self.fail(name, of_import),
-                b"new" => self.fail(name, "The only valid meta property for new is 'new.target'"),
+                b"new" => self.fail(name, of_new),
                 _ => {}
             }
         }
         for it in file.exprs_of_kind(ExprTag::NewTarget) {
+            // acorn throws the first of its three complaints about one `new.target`, wherever the others are.
+            let name = self.after_token(self.after_token(it.span().start));
+            let is_target = matches!(
+                it.try_raw().map(|it| it.kind),
+                Some(hir::ExprKind::NewTarget(name)) if file.name(name).bytes() == b"target"
+            );
+            if !is_target || self.is_babel && self.token_at(name) != b"target" {
+                self.fail(name, of_new);
+                continue;
+            }
+            if self.token_at(name) != b"target" {
+                self.fail(
+                    it.span().start,
+                    "'new.target' must not contain escaped characters",
+                );
+                continue;
+            }
             // In a function that is not an arrow function, in the initializer of a field, in a static block.
             let is_allowed = Node::Expr(it).ancestors().any(|it| match it {
                 Node::Func(func) => func.kind() != FnKind::Arrow,

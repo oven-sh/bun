@@ -307,12 +307,51 @@ const snippets = [
   "<a>b</a>;",
   "<a b={c} />;",
   "<T,>x</T>;",
+  // A meta property that is written with an escape.
+  "function f() { new.t\\u0061rget; }",
+  "function f() { new.\\u0074arget; }",
+  "function f() { new.t\\u{61}rget; }",
+  "function f() { new.t\\u0061rge; }",
+  "function f() { new.target; }",
+  "function f() { new . target; }",
+  "function f() { new./* c */target; }",
+  "function f() { new.target.a\\u0062c; }",
+  "function f() { new.foo; }",
+  "a.t\\u0061rget;",
+  "import.m\\u0065ta;",
+  "import.\\u006deta;",
+  "import.meta;",
+  "import.meta.\\u0061;",
+  "import.foo;",
+  "import.d\\u0065fer('a');",
+  "import.s\\u006furce('a');",
+  "import.defer('a');",
+  "import.source('a');",
   "declare global {}",
   "module\nA\n{}",
   "declare\nmodule\n{}",
 ];
 
+const typescriptSnippets = [
+  'import.source("a");',
+  'import.s\\u006furce("a");',
+  'a;\n  import . source("a");',
+  "import.source;",
+  'import.defer("a");',
+  'import.d\\u0065fer("a");',
+  'import.foo("a");',
+  "import.meta;",
+  "import.m\\u0065ta;",
+  'import("a");',
+  "function f() { new.t\\u0061rget; }",
+  "function f() { new.target; }",
+  "interface I { public get a(): 1 }",
+  "interface I { get a(): 1 }",
+];
+
 const cases = snippets.map((code, i) => ({ path: `snippet ${i}: ${code}`, code, filename: "snippet.js" }));
+for (const code of typescriptSnippets)
+  cases.push({ path: `TypeScript snippet: ${code}`, code, filename: "snippet.ts" });
 for (const root of args.map(it => resolve(it))) {
   for (const path of filesOf(root)) {
     const code = readFileSync(path, "utf8");

@@ -1182,6 +1182,11 @@ impl<'a> Checks<'a> {
                 }
             }
             Some(hir::ExprKind::ImportCall { args }) => {
+                // The dialect of Babel, in which `bun format` has every file parsed, has it.
+                if self.is_of_prettier && it.import_call_phase() == Some("source") {
+                    let message = "'source' is not a valid meta-property for keyword 'import'.";
+                    self.fail(it.span(), it.span().start, message);
+                }
                 let args = file.hir.ids.get(args.range()).unwrap_or_default();
                 let is_missing = |id: u32| {
                     matches!(
@@ -1444,7 +1449,8 @@ impl<'a> Checks<'a> {
                 let Some(start) = self.import_before(at) else {
                     return;
                 };
-                let name = self.token_at(at);
+                // Not as it is written: `import.\u0061`
+                let name = it.args.first().map_or(self.token_at(at), |it| &it[..]);
                 let message = [
                     b"'",
                     name,

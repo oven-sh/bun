@@ -14,14 +14,17 @@
 use crate::js::utils::typescript::without_lone_operator;
 use crate::ir::element::{CursorMark, FormatElement};
 use crate::ir::formatter::Formatter;
+use crate::prelude::{Format, if_group_breaks};
 use crate::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::{
-    Class, EntityName, Enum, EnumMember, ExportSpec, Expr, ExprKind, File, FnBody, Func, Ident, ImportEqualsTarget,
+    BinOp, Class, EntityName, Enum, EnumMember, ExportSpec, Expr, ExprKind, File, FnBody, Func, Ident, ImportEqualsTarget,
     ImportSpec, Interface, Jsx, JsxChild, Key, KeyKind, List, Member, MemberKind, Modifier, Module, Param, Pat,
     PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, TupleElem, TypeKind, TypeNode, TypeParam, VarDecl,
 };
 use bun_lint::span::Span;
-use bun_lint::tokens::skip_trivia_back;
+use bun_core::strings;
+use bun_lint::tokens::{skip_trivia, skip_trivia_back};
+use smallvec::SmallVec;
 
 /// The part of the text that the cursor is in.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -44,9 +47,11 @@ struct Item<'a> {
 #[derive(Copy, Clone)]
 enum Kind<'a> {
     Leaf,
-    /// A leaf that Prettier does not print as a node of its own, so that it does not learn where it
-    /// ends up: the second name of `import { a }`, the text in a JSX element.
+    /// A leaf that Prettier does not print, so that it does not learn where it ends up: the second
+    /// name of `import { a }`.
     UnmarkedLeaf,
+    /// Text in the JSX element that starts there.
+    JsxText(u32),
     /// Its only child is a leaf.
     LeafIn(Span),
     /// Its children are two leaves.
@@ -55,6 +60,10 @@ enum Kind<'a> {
     Expr(Expr<'a>),
     /// Without the `ChainExpression` around it.
     ChainElement(Expr<'a>),
+    /// A `ParenthesizedExpression`: of those around the expression, the one that is in so many.
+    Parenthesized(Expr<'a>, usize),
+    /// The `LogicalExpression` of the left side and so many of the operands in the right side.
+    Logical(Expr<'a>, usize),
     /// `x!!`: the `TSNonNullExpression` that has so many others in it.
     NonNull(Expr<'a>, usize),
     /// With its `export`.
@@ -184,10 +193,109 @@ impl<'a> Walk<'a> {
     }
 
     fn expr(&self, e: Expr<'a>) -> Item<'a> {
-        Item {
-            span: e.span(),
-            kind: Kind::Expr(e),
+        match self.kept_parentheses(e).first() {
+            Some(&span) => Item {
+                span,
+                kind: Kind::Parenthesized(e, 1),
+            },
+            None => Item {
+                span: e.span(),
+                kind: Kind::Expr(e),
+            },
         }
+    }
+
+    /// The parentheses around `e` that are a `ParenthesizedExpression` for Prettier, the outermost
+    /// first: those of Babel's tree that a type cast comment is before.
+    fn kept_parentheses(&self, e: Expr<'a>) -> SmallVec<[Span; 2]> {
+        let mut kept = SmallVec::new();
+        if !self.is_babel || !e.is_parenthesized() {
+            return kept;
+        }
+        let (text, outer, mut inner) = (self.text(), e.outer_span(), e.span());
+        while inner.start > outer.start {
+            let open = skip_trivia_back(text, inner.start).saturating_sub(1);
+            let close = skip_trivia(text, inner.end);
+            if text.get(open as usize) != Some(&b'(') || text.get(close as usize) != Some(&b')') {
+                break;
+            }
+            inner = Span::new(open, close + 1);
+            if self.is_after_type_cast_comment(open) {
+                kept.push(inner);
+            }
+        }
+        kept.reverse();
+        kept
+    }
+
+    /// Whether there is a comment before `at`, with nothing but blanks between them, for which
+    /// Prettier's `isTypeCastComment` holds.
+    fn is_after_type_cast_comment(&self, at: u32) -> bool {
+        let text = self.text();
+        let trivia = text.get(skip_trivia_back(text, at) as usize..at as usize).unwrap_or_default();
+        let mut rest = trivia;
+        let mut last_comment = None;
+        while let Some((_, tail)) = rest.split_first() {
+            (last_comment, rest) = match rest {
+                [b'/', b'*', after @ ..] => match strings::index_of(after, b"*/") {
+                    Some(end) => (after.get(..end), after.get(end + 2..).unwrap_or_default()),
+                    None => (None, &[][..]),
+                },
+                [b'/', b'/', after @ ..] => (None, after.get(strings::index_of_any(after, b"\r\n").unwrap_or(after.len())..).unwrap_or_default()),
+                _ => (last_comment, tail),
+            };
+        }
+        let Some(content) = last_comment.filter(|content| content.starts_with(b"*")) else {
+            return false;
+        };
+        [&b"@type"[..], b"@satisfies"].iter().any(|tag| {
+            let mut rest = content;
+            while let Some(found) = strings::index_of(rest, tag) {
+                rest = rest.get(found + tag.len()..).unwrap_or_default();
+                if !rest.first().is_some_and(|&byte| byte.is_ascii_alphanumeric() || byte == b'_') {
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    /// `a && (b && c)` is `(a && b) && c` for Prettier (`rebalanceLogicalTree`). The operands that are
+    /// in the right side of `e`, if that has the operator of `e`.
+    fn operands_in_right_side(e: Expr<'a>) -> SmallVec<[Expr<'a>; 4]> {
+        let mut operands = SmallVec::new();
+        let ExprKind::Binary { op, right, .. } = e.kind() else {
+            return operands;
+        };
+        let is_same = |it: Expr<'a>| matches!(it.kind(), ExprKind::Binary { op: other, .. } if other == op);
+        if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || !is_same(right) {
+            return operands;
+        }
+        let mut stack: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
+        stack.push(right);
+        while let Some(at) = stack.pop() {
+            match at.kind() {
+                ExprKind::Binary { op: other, left, right } if other == op => stack.extend([right, left]),
+                _ => operands.push(at),
+            }
+        }
+        operands
+    }
+
+    /// What is in the `LogicalExpression` of the left side of `e` and the first `count` of
+    /// `operands`.
+    fn logical_parts(&self, e: Expr<'a>, operands: &[Expr<'a>], count: usize, out: &mut Vec<Item<'a>>) {
+        let (ExprKind::Binary { left, .. }, Some(&last)) = (e.kind(), operands.get(count.wrapping_sub(1))) else {
+            return;
+        };
+        out.push(match operands.get(count.wrapping_sub(2)) {
+            Some(before_last) => Item {
+                span: Span::new(left.span().start, before_last.span().end),
+                kind: Kind::Logical(e, count - 1),
+            },
+            None => self.expr(left),
+        });
+        out.push(self.expr(last));
     }
 
     fn ty(&self, ty: TypeNode<'a>) -> Item<'a> {
@@ -453,7 +561,6 @@ impl<'a> Walk<'a> {
                 span,
                 kind: Kind::JsxContainer(e),
             },
-            (None, _) if e.is_jsx_text() => unmarked_leaf(e.span()),
             (None, _) => self.expr(e),
         }
     }
@@ -555,6 +662,10 @@ impl<'a> Walk<'a> {
             }
             ExprKind::NonNull(_) => self.non_null_parts(e, e.inner_non_null_spans().len(), out),
             ExprKind::Binary { .. } => {
+                let in_right_side = Self::operands_in_right_side(e);
+                if !in_right_side.is_empty() {
+                    return self.logical_parts(e, &in_right_side, in_right_side.len(), out);
+                }
                 let operands = e.sequence();
                 match (operands.len(), e.kind()) {
                     (1, ExprKind::Binary { left, right, .. }) => out.extend([self.expr(left), self.expr(right)]),
@@ -578,8 +689,15 @@ impl<'a> Walk<'a> {
                     },
                 });
                 out.extend(jsx.children_with_whitespace().map(|child| match child {
+                    JsxChild::Expr(child) if child.is_jsx_text() => Item {
+                        span: child.span(),
+                        kind: Kind::JsxText(e.span().start),
+                    },
                     JsxChild::Expr(child) => self.jsx_child(child),
-                    JsxChild::Whitespace(span) => unmarked_leaf(span),
+                    JsxChild::Whitespace(span) => Item {
+                        span,
+                        kind: Kind::JsxText(e.span().start),
+                    },
                 }));
                 out.extend(jsx.closing_span().map(|span| match jsx.is_fragment() {
                     true => leaf(span),
@@ -726,6 +844,16 @@ impl<'a> Walk<'a> {
                 out.extend(export.spec_span().map(leaf));
                 self.import_attributes(statement, out);
             }
+            // In Babel's tree, `* as a` is an `ExportNamespaceSpecifier`.
+            StmtKind::ExportStar { alias: Some(alias), .. } if self.is_babel => {
+                let star = skip_trivia(self.text(), statement.span().start + "export".len() as u32);
+                out.push(Item {
+                    span: Span::new(star, alias.span().end),
+                    kind: Kind::LeafIn(alias.span()),
+                });
+                out.extend(statement.module_specifier_span().map(leaf));
+                self.import_attributes(statement, out);
+            }
             StmtKind::ExportStar { alias, .. } => {
                 out.extend(statement.module_specifier_span().map(leaf));
                 self.import_attributes(statement, out);
@@ -759,7 +887,7 @@ impl<'a> Walk<'a> {
             TypeKind::NumberLit(_) | TypeKind::BigIntLit { .. } => out.push(match ty.text().starts_with(b"-") {
                 true => Item {
                     span,
-                    kind: Kind::LeafIn(Span::new(bun_lint::tokens::skip_trivia(self.text(), span.start + 1), span.end)),
+                    kind: Kind::LeafIn(Span::new(skip_trivia(self.text(), span.start + 1), span.end)),
                 },
                 false => leaf(span),
             }),
@@ -840,7 +968,7 @@ impl<'a> Walk<'a> {
     /// Appends the children of `item` to `out`, in the order of Prettier's visitor keys.
     fn children(&self, item: Item<'a>, out: &mut Vec<Item<'a>>) {
         match item.kind {
-            Kind::Leaf | Kind::UnmarkedLeaf => {}
+            Kind::Leaf | Kind::UnmarkedLeaf | Kind::JsxText(_) => {}
             Kind::LeafIn(span) => out.push(leaf(span)),
             // Of a name that stands for two, the first is printed.
             Kind::Leaves(first, second) if first == second => out.extend([leaf(first), unmarked_leaf(second)]),
@@ -851,11 +979,29 @@ impl<'a> Walk<'a> {
                 kind: Kind::ChainElement(e),
             }),
             Kind::Expr(e) | Kind::ChainElement(e) => self.expression_parts(e, out),
-            Kind::NonNull(e, inner) => self.non_null_parts(e, inner, out),
-            Kind::Stmt(statement) if statement.is_exported() => out.push(Item {
-                span: Span::new(statement.span_without_export().start, self.statement_end(statement, false)),
-                kind: Kind::Declaration(statement),
+            Kind::Parenthesized(e, depth) => out.push(match self.kept_parentheses(e).get(depth) {
+                Some(&span) => Item {
+                    span,
+                    kind: Kind::Parenthesized(e, depth + 1),
+                },
+                None => Item {
+                    span: e.span(),
+                    kind: Kind::Expr(e),
+                },
             }),
+            Kind::Logical(e, count) => self.logical_parts(e, &Self::operands_in_right_side(e), count, out),
+            Kind::NonNull(e, inner) => self.non_null_parts(e, inner, out),
+            Kind::Stmt(statement) if statement.is_exported() => {
+                let span = Span::new(statement.span_without_export().start, self.statement_end(statement, false));
+                out.push(Item {
+                    // The decorators of a class can be before the `export`.
+                    span: match statement.kind() {
+                        StmtKind::Class(class) => Self::with_decorators(span, class.modifiers()),
+                        _ => span,
+                    },
+                    kind: Kind::Declaration(statement),
+                });
+            }
             Kind::Stmt(statement) | Kind::Declaration(statement) => self.declaration_parts(statement, out),
             Kind::Statements(statements) => out.extend(statements.iter().map(|it| self.statement(it))),
             Kind::CatchClause(statement) => {
@@ -1078,37 +1224,85 @@ pub(crate) struct CursorRegion {
     /// Everything that overlaps this is written on the paths that call `enter` and `exit`.
     extent: Span,
     /// The cursor is in this node.
-    node: Span,
+    node: Extent,
     /// The region starts where this node ends.
-    before: Span,
+    before: Extent,
     /// The region ends where this node starts.
-    after: Span,
+    after: Extent,
+    /// The region starts where the children of the JSX element that starts there do.
+    starts_with_children_of: u32,
+    /// The region ends where the children of the JSX element that starts there do.
+    ends_with_children_of: u32,
 }
 
-/// No node is there.
-const NOWHERE: Span = Span::new(u32::MAX, u32::MAX);
+/// Where a node is.
+#[derive(Copy, Clone)]
+struct Extent {
+    span: Span,
+    /// Prettier has most statements end before their `;`. Here they are also written as what ends
+    /// after it.
+    end_with_semicolon: u32,
+}
+
+impl Extent {
+    /// No node is there.
+    const NOWHERE: Extent = Extent {
+        span: Span::new(u32::MAX, u32::MAX),
+        end_with_semicolon: u32::MAX,
+    };
+
+    fn ends_at(self, end: u32) -> bool {
+        end == self.span.end || end == self.end_with_semicolon
+    }
+}
 
 impl CursorRegion {
     pub(crate) const NONE: CursorRegion = CursorRegion {
-        extent: NOWHERE,
-        node: NOWHERE,
-        before: NOWHERE,
-        after: NOWHERE,
+        extent: Extent::NOWHERE.span,
+        node: Extent::NOWHERE,
+        before: Extent::NOWHERE,
+        after: Extent::NOWHERE,
+        starts_with_children_of: u32::MAX,
+        ends_with_children_of: u32::MAX,
     };
 
     fn new<'a>(offset: u32, (first, second, is_node): (Option<Item<'a>>, Option<Item<'a>>, bool)) -> CursorRegion {
         let marked = |item: Option<Item<'a>>| match item {
-            Some(item) if !matches!(item.kind, Kind::UnmarkedLeaf) => item.span,
-            _ => NOWHERE,
+            None
+            | Some(Item {
+                kind: Kind::UnmarkedLeaf | Kind::JsxText(_),
+                ..
+            }) => Extent::NOWHERE,
+            Some(Item { span, kind }) => Extent {
+                span,
+                end_with_semicolon: match kind {
+                    Kind::Stmt(statement) | Kind::Declaration(statement) => statement.span().end,
+                    _ => span.end,
+                },
+            },
+        };
+        let element_of = |item: Option<Item<'a>>| match item {
+            Some(Item {
+                kind: Kind::JsxText(element),
+                ..
+            }) => element,
+            _ => u32::MAX,
         };
         CursorRegion {
             extent: Span::new(
                 first.map_or(offset, |it| it.span.start.min(offset)),
                 second.or(first).map_or(offset, |it| it.span.end.max(offset)),
             ),
-            node: if is_node { marked(first) } else { NOWHERE },
-            before: if is_node { NOWHERE } else { marked(first) },
+            node: if is_node { marked(first) } else { Extent::NOWHERE },
+            before: if is_node { Extent::NOWHERE } else { marked(first) },
             after: marked(second),
+            starts_with_children_of: element_of(first),
+            // Prettier looks at the node after the cursor only if the one before it is no text.
+            ends_with_children_of: match (is_node, element_of(first)) {
+                (true, element) => element,
+                (false, u32::MAX) => element_of(second),
+                (false, _) => u32::MAX,
+            },
         }
     }
 
@@ -1123,22 +1317,87 @@ impl CursorRegion {
 
     /// Before what is at `span` is written, after the comments that lead it.
     pub(crate) fn enter(&self, span: Span, f: &mut Formatter<'_>) {
-        if span == self.node {
+        if span.start == self.node.span.start && self.node.ends_at(span.end) {
             f.write_element(FormatElement::Cursor(CursorMark::RegionStart));
         }
-        if span.start == self.after.start && span.end <= self.after.end {
+        if span.start == self.after.span.start && span.end <= self.after.end_with_semicolon {
             f.write_element(FormatElement::Cursor(CursorMark::RegionEnd));
         }
     }
 
     /// After what is at `span` is written, before the comments that trail it.
     pub(crate) fn exit(&self, span: Span, f: &mut Formatter<'_>) {
-        if span == self.node {
+        if span.start == self.node.span.start && self.node.ends_at(span.end) {
             f.write_element(FormatElement::Cursor(CursorMark::RegionEnd));
         }
-        if span.end == self.before.end && span.start >= self.before.start {
+        if self.before.ends_at(span.end) && span.start >= self.before.span.start {
             f.write_element(FormatElement::Cursor(CursorMark::RegionStart));
         }
+    }
+}
+
+/// Calls `write`, which writes the node of ESTree at `span`. For a node that is not written by the
+/// `impl Format` of a handle: the body of an interface, the text of a template.
+#[inline]
+pub(crate) fn around_node<'a>(span: Span, f: &mut Formatter<'a>, write: impl FnOnce(&mut Formatter<'a>)) {
+    around_node_at(|| span, f, write);
+}
+
+/// The same. `span` is only called if there is a cursor.
+#[inline]
+pub(crate) fn around_node_at<'a>(
+    span: impl FnOnce() -> Span,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    if !f.context().cursor.is_active() {
+        return write(f);
+    }
+    let (cursor, span) = (f.context().cursor, span());
+    cursor.enter(span, f);
+    write(f);
+    cursor.exit(span, f);
+}
+
+/// Calls `write`, which writes the children of the JSX element that starts at `element` on lines of
+/// their own. Prettier does not print the text in an element as nodes. For text that the region
+/// starts or ends with, it takes all of the children, if they are written that way.
+///
+/// `in_group`: they are only on lines of their own if the group that this is in breaks.
+#[inline]
+pub(crate) fn around_jsx_children<'a>(
+    element: u32,
+    in_group: bool,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    if !f.context().cursor.is_active() {
+        return write(f);
+    }
+    let cursor = f.context().cursor;
+    let mark = |mark: CursorMark, f: &mut Formatter<'a>| {
+        let mark = crate::prelude::format_with(move |f: &mut Formatter<'a>| f.write_element(FormatElement::Cursor(mark)));
+        match in_group {
+            true => if_group_breaks(&mark).fmt(f),
+            false => mark.fmt(f),
+        }
+    };
+    if cursor.starts_with_children_of == element {
+        mark(CursorMark::RegionStart, f);
+    }
+    write(f);
+    if cursor.ends_with_children_of == element {
+        mark(CursorMark::RegionEnd, f);
+    }
+}
+
+/// What has been written since the node at `span` is part of what Prettier prints for that node:
+/// the `;` after a member.
+#[inline]
+pub(crate) fn extend_node(span: Span, f: &mut Formatter<'_>) {
+    if f.context().cursor.is_active() {
+        let cursor = f.context().cursor;
+        cursor.exit(span, f);
     }
 }
 
@@ -1201,78 +1460,33 @@ fn units_to_bytes(text: &[u8], mut units: usize) -> usize {
     at.min(text.len())
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Change {
-    Common,
-    Added,
-    Removed,
-}
-
-/// A run of changes of one kind, and the index of the one before it.
-#[derive(Copy, Clone)]
-struct Component {
-    count: u32,
-    change: Change,
-    previous: u32,
-}
-
-const NO_COMPONENT: u32 = u32::MAX;
-
+/// The furthest that a number of changes gets on a diagonal of the edit graph.
 #[derive(Copy, Clone)]
 struct Path {
-    /// -1 is before the first.
+    /// The last unit of the old text that is dealt with. -1: none.
     old_pos: i64,
-    last: u32,
+    /// How many units of the new text were dealt with when the cursor was removed.
+    new_units_before_cursor: i64,
 }
 
 /// `diffArrays` of jsdiff 9, as far as it takes to tell how much of `new` is before the place where
 /// the cursor is removed from `old`. The choices between equally short ways are those of jsdiff.
 ///
-/// `None` if there are more than `max_differences`: it is quadratic in their number, in time and in
-/// memory.
+/// Prettier adds up the lengths of what is added or kept before the run of removals with the cursor
+/// in it. Removals do not add to that, so it is what has been added or kept when the cursor goes.
+///
+/// `None` if there are more than `max_differences`: the time it takes is quadratic in their number.
 fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Option<usize> {
     let (old_len, new_len) = (old.len() as i64, new.len() as i64);
-    let mut components: Vec<Component> = Vec::new();
 
-    // `extractCommon`
-    let extract_common = |path: &mut Path, diagonal: i64, components: &mut Vec<Component>| -> i64 {
-        let mut old_pos = path.old_pos;
-        let mut new_pos = old_pos - diagonal;
-        let mut count = 0;
-        while new_pos + 1 < new_len && old_pos + 1 < old_len && old[(old_pos + 1) as usize] == new[(new_pos + 1) as usize] {
-            new_pos += 1;
-            old_pos += 1;
-            count += 1;
-        }
-        if count > 0 {
-            components.push(Component {
-                count,
-                change: Change::Common,
-                previous: path.last,
-            });
-            path.last = components.len() as u32 - 1;
-        }
-        path.old_pos = old_pos;
-        new_pos
-    };
-    // `addToPath`
-    let add_to_path = |path: Path, change: Change, components: &mut Vec<Component>| -> Path {
-        let component = match components.get(path.last as usize) {
-            Some(last) if last.change == change => Component {
-                count: last.count + 1,
-                ..*last
-            },
-            _ => Component {
-                count: 1,
-                change,
-                previous: path.last,
-            },
-        };
-        components.push(component);
-        Path {
-            old_pos: path.old_pos + i64::from(change == Change::Removed),
-            last: components.len() as u32 - 1,
-        }
+    // `extractCommon`. Returns the last unit of the new text that is dealt with.
+    let extract_common = |path: &mut Path, diagonal: i64| -> i64 {
+        let start = (path.old_pos + 1) as usize;
+        let new_start = (path.old_pos - diagonal + 1) as usize;
+        let (old_rest, new_rest) = (old.get(start..).unwrap_or_default(), new.get(new_start..).unwrap_or_default());
+        let count = old_rest.iter().zip(new_rest).take_while(|(a, b)| a == b).count() as i64;
+        path.old_pos += count;
+        path.old_pos - diagonal
     };
 
     let max_edit_length = (old_len + new_len).min(max_differences);
@@ -1282,40 +1496,41 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
 
     let mut first = Path {
         old_pos: -1,
-        last: NO_COMPONENT,
+        new_units_before_cursor: 0,
     };
-    let new_pos = extract_common(&mut first, 0, &mut components);
-    let mut done = (first.old_pos + 1 >= old_len && new_pos + 1 >= new_len).then_some(first.last);
+    let new_pos = extract_common(&mut first, 0);
+    if first.old_pos + 1 >= old_len && new_pos + 1 >= new_len {
+        return Some(first.new_units_before_cursor as usize);
+    }
     best_path[slot(0)] = Some(first);
 
     let (mut min_diagonal, mut max_diagonal) = (i64::MIN, i64::MAX);
-    let mut edit_length = 1;
-    'search: while done.is_none() && edit_length <= max_edit_length {
+    for edit_length in 1..=max_edit_length {
         let mut diagonal = min_diagonal.max(-edit_length);
         while diagonal <= max_diagonal.min(edit_length) {
             let remove_path = best_path[slot(diagonal - 1)].take();
             let add_path = best_path[slot(diagonal + 1)];
-            let can_add = add_path.is_some_and(|path| {
-                let new_pos = path.old_pos - diagonal;
-                0 <= new_pos && new_pos < new_len
-            });
-            let can_remove = remove_path.is_some_and(|path| path.old_pos + 1 < old_len);
-            let mut base = match (add_path, remove_path) {
-                _ if !can_add && !can_remove => {
+            let can_add = add_path.filter(|path| (0..new_len).contains(&(path.old_pos - diagonal)));
+            let can_remove = remove_path.filter(|path| path.old_pos + 1 < old_len);
+            let mut base = match (can_add, can_remove) {
+                (None, None) => {
                     best_path[slot(diagonal)] = None;
                     diagonal += 2;
                     continue;
                 }
-                (Some(add), remove) if !can_remove || (can_add && remove.is_some_and(|it| it.old_pos < add.old_pos)) => {
-                    add_to_path(add, Change::Added, &mut components)
-                }
-                (_, Some(remove)) => add_to_path(remove, Change::Removed, &mut components),
-                _ => break 'search,
+                (Some(add), None) => add,
+                (Some(add), Some(remove)) if remove.old_pos < add.old_pos => add,
+                (_, Some(remove)) => Path {
+                    old_pos: remove.old_pos + 1,
+                    new_units_before_cursor: match old.get((remove.old_pos + 1) as usize) {
+                        Some(&CURSOR) => remove.old_pos - (diagonal - 1) + 1,
+                        _ => remove.new_units_before_cursor,
+                    },
+                },
             };
-            let new_pos = extract_common(&mut base, diagonal, &mut components);
+            let new_pos = extract_common(&mut base, diagonal);
             if base.old_pos + 1 >= old_len && new_pos + 1 >= new_len {
-                done = Some(base.last);
-                break 'search;
+                return Some(base.new_units_before_cursor as usize);
             }
             best_path[slot(diagonal)] = Some(base);
             if base.old_pos + 1 >= old_len {
@@ -1326,31 +1541,8 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
             }
             diagonal += 2;
         }
-        edit_length += 1;
     }
-
-    // The components are linked from the last to the first.
-    let mut order = Vec::new();
-    let mut at = done?;
-    while let Some(component) = components.get(at as usize) {
-        order.push(*component);
-        at = component.previous;
-    }
-    let cursor = old.iter().position(|&unit| unit == CURSOR)?;
-    let (mut old_pos, mut new_pos) = (0, 0);
-    for component in order.iter().rev() {
-        let count = component.count as usize;
-        match component.change {
-            Change::Removed if (old_pos..old_pos + count).contains(&cursor) => break,
-            Change::Removed => old_pos += count,
-            Change::Added => new_pos += count,
-            Change::Common => {
-                old_pos += count;
-                new_pos += count;
-            }
-        }
-    }
-    Some(new_pos)
+    None
 }
 
 /// What stands in for the comparison if there are too many differences: the cursor is behind as
@@ -1403,7 +1595,7 @@ fn resolve(source: &[u8], offset: u32, region: Region, formatted: &[u8], marks: 
     }
     old_units.insert(units_before, CURSOR);
 
-    const MAX_DIFFERENCES: i64 = 1500;
+    const MAX_DIFFERENCES: i64 = 20_000;
     let bytes = match units_before_cursor(&old_units, &new_units, MAX_DIFFERENCES) {
         Some(units) => units_to_bytes(new_text, units),
         None => bytes_before_cursor_by_count(old_text, cursor, new_text),

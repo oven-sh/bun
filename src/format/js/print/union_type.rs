@@ -65,7 +65,7 @@ pub(crate) fn write_ts_union_type_in<'a>(
         is_first_type_suppressed: suppression.is_some(),
     };
     if union_breaks_one_per_line(f) {
-        return write_union_one_per_line(members, is_one_of_several_tuple_elements, f);
+        return write_union_one_per_line(&members, is_one_of_several_tuple_elements, f);
     }
 
     let printed = format_with(|f| {
@@ -118,7 +118,7 @@ pub(crate) fn union_breaks_one_per_line(f: &Formatter<'_>) -> bool {
 
 /// oxc's `TSUnionType::write`, which is `printUnionType` of Prettier 3.8, for a union that is not
 /// written like an object type.
-fn write_union_one_per_line<'a>(members: UnionMembers<'a>, is_one_of_several_tuple_elements: bool, f: &mut Formatter<'a>) {
+fn write_union_one_per_line<'a>(members: &UnionMembers<'a>, is_one_of_several_tuple_elements: bool, f: &mut Formatter<'a>) {
     let leading_comments = match f.is_quiet() {
         true => &[][..],
         false => f.comments().comments_before(members.ty.span().start),

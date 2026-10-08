@@ -8,6 +8,7 @@ use super::semicolon::OptionalSemicolon;
 use super::ts_types::{FormatModuleSpecifier, entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::{union_breaks_one_per_line, write_ts_union_type_in};
+use crate::cursor::around_node;
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -103,12 +104,17 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
                 write!(f, [space(), FormatLeadingComments::Comments(comments)]);
             }
         }
-        write!(f, [space(), "{"]);
-        match interface.members().is_empty() {
-            true => write!(f, format_dangling_comments(body_span).with_block_indent()),
-            false => write!(f, block_indent(&format_with(|f| write_ts_interface_signatures(interface.members(), f)))),
-        }
-        write!(f, "}");
+        write!(f, space());
+        around_node(body_span, f, |f| {
+            write!(f, "{");
+            match interface.members().is_empty() {
+                true => write!(f, format_dangling_comments(body_span).with_block_indent()),
+                false => {
+                    write!(f, block_indent(&format_with(|f| write_ts_interface_signatures(interface.members(), f))));
+                }
+            }
+            write!(f, "}");
+        });
     });
     write!(f, group(&content));
 }
@@ -157,7 +163,8 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
         match ty.kind() {
             // The comments before a union are written with it.
             TypeKind::Union(types) => {
-                write_ts_union_type_in(ty, types, layout == AssignmentLikeLayout::BreakAfterOperator, f);
+                let is_indented = layout == AssignmentLikeLayout::BreakAfterOperator;
+                around_node(ty.span(), f, |f| write_ts_union_type_in(ty, types, is_indented, f));
                 write_trailing_comments_of(ty.as_ast_nodes(), f);
             }
             _ => write!(f, ty),
@@ -208,7 +215,7 @@ fn type_alias_comments_stay_behind_operator(f: &Formatter<'_>) -> bool {
 
 /// What oxc's `AssignmentLike::write_left` does after the left side of a type alias.
 fn write_comments_after_type_alias_left_side<'a>(alias: Alias<'a>, f: &mut Formatter<'a>) {
-    let left_end = alias.type_params().angle_brackets_span().map_or(alias.name().span().end, |it| it.end);
+    let left_end = alias.type_params().angle_brackets_span().map_or_else(|| alias.name().span().end, |it| it.end);
     let declared = alias.ty();
     let end_of_line_comments = f.comments().end_of_line_comments_after(left_end);
     let comments = if end_of_line_comments.is_empty() {
@@ -297,10 +304,14 @@ pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: En
             space(),
             identifier(declaration.name(), node),
             space(),
-            format_leading_comments(declaration.body_span()),
-            "{"
+            format_leading_comments(declaration.body_span())
         ]
     );
+    around_node(declaration.body_span(), f, |f| write_ts_enum_body(declaration, f));
+}
+
+fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
+    write!(f, "{");
     let members = declaration.members();
     if members.is_empty() {
         write!(f, format_dangling_comments(declaration.body_span()).with_soft_block_indent());

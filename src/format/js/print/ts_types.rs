@@ -6,6 +6,7 @@ use super::function_type::{
 use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::type_parameters::type_arguments;
+use crate::cursor::extend_node;
 use crate::js::format::{FormatTypeAnnotation, identifier, write_trailing_comments_of};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::conditional::ConditionalLike;
@@ -238,6 +239,7 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
         // The separator is not part of the member. The comments after the member are behind it.
         write!(f, FormatNodeWithoutTrailingComments(&FormatMemberIn(signature, span)));
         self.write_separator(f);
+        extend_node(signature.span(), f);
         write_trailing_comments_of(signature.as_ast_nodes(), f);
     }
 }

@@ -528,6 +528,9 @@ impl<'t> Parser<'t> {
 
 /// `/\/[/*]/.test(selector.replaceAll(/"[^"]+"|'[^']+'/g, ""))`
 fn has_comment(selector: &[u8]) -> bool {
+    if !bun_core::strings::contains_char(selector, b'/') {
+        return false;
+    }
     let mut at = 0;
     while let Some(&byte) = selector.get(at) {
         match byte {

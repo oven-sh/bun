@@ -13,6 +13,7 @@ use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
 use super::text;
 use super::value_parser::{ValueId, ValueKind, Values};
+use std::borrow::Cow;
 
 /// A node and the nodes that it is in.
 #[derive(Copy, Clone)]
@@ -78,6 +79,8 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) single_quote: bool,
     /// `trailingComma` is `"es5"` or `"all"`.
     pub(crate) trailing_comma: bool,
+    /// Nothing depends on it, but for what is kept of one flavor not to be taken for the other if that changes.
+    pub(crate) is_oxfmt: bool,
     /// The nodes of the value that what is being printed is in.
     pub(crate) value_stack: Vec<ValueId>,
     /// For a text that is made to be written.
@@ -185,6 +188,7 @@ impl<'a> Printer<'a, '_> {
             self.syntax() == Syntax::Scss,
             self.single_quote,
             self.trailing_comma,
+            self.is_oxfmt,
             statement.inside_icss_rule(),
             parent.kind == Kind::AtRule && parent.variable,
             statement.css_ancestor(Kind::Rule).is_some_and(|rule| rule.is_scss_nested_property),
@@ -201,7 +205,11 @@ impl<'a> Printer<'a, '_> {
             && raw.clean_value.is_none()
             && self.has_no_block(raw)
             && self.context.of(raw.before).iter().all(u8::is_ascii_whitespace);
-        self.context.text.get(raw.start as usize..raw.end.filter(|_| is_plain)? as usize)
+        // Everything that it is made of is in the text, from where it starts on.
+        let parts = [raw.prop, raw.between, raw.value, raw.raw_important.unwrap_or_default()];
+        let end = parts.iter().fold(raw.end.filter(|_| is_plain)?, |end, part| end.max(part.end));
+        let is_in_order = parts.iter().all(|part| part.is_empty() || part.start >= raw.start);
+        self.context.text.get(raw.start as usize..end as usize).filter(|_| is_in_order)
     }
 
     /// `printSequence` for the nodes of `block`, which `scope` is for, and `after` behind a blank unless it is empty.
@@ -856,14 +864,16 @@ impl<'a> Printer<'a, '_> {
                     false => self.sink.text(&adjust_numbers(value)),
                 }
             }
-            SelectorKind::Id => {
-                self.sink.token("#");
-                self.sink.text(value);
-            }
-            SelectorKind::Class => {
-                self.sink.token(".");
-                self.sink.text(&adjust_numbers(&adjust_strings(value, single_quote)));
-            }
+            // With the `#` before it.
+            SelectorKind::Id => self.sink.text(selectors.text((node.value.0.saturating_sub(1), node.value.1))),
+            SelectorKind::Class => match (adjust_strings(value, single_quote), adjust_numbers(value)) {
+                // With the `.` before it.
+                (Cow::Borrowed(_), Cow::Borrowed(_)) => self.sink.text(selectors.text((node.value.0.saturating_sub(1), node.value.1))),
+                (adjusted, _) => {
+                    self.sink.token(".");
+                    self.sink.text(&adjust_numbers(&adjusted));
+                }
+            },
             SelectorKind::Attribute => {
                 self.sink.token("[");
                 self.print_namespace(selectors, node.namespace);
@@ -895,6 +905,9 @@ impl<'a> Printer<'a, '_> {
                         self.sink.token(" ");
                     }
                     return;
+                }
+                if value.iter().all(u8::is_ascii_whitespace) {
+                    return self.sink.line();
                 }
                 if text::trim_start(value).starts_with(b"(") {
                     self.sink.line();

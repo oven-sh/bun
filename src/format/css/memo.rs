@@ -25,14 +25,16 @@ struct Context {
 pub(crate) struct Memo {
     bytes: Vec<u8>,
     contexts: Vec<Context>,
+    /// The number of the first of `contexts`. No number is given twice.
+    first_context: u32,
     entries: Vec<Entry>,
     /// For each hash, by its low bits or in one of the places that follow, the index of its entry plus one. Its
     /// length is a power of two.
     table: Vec<u32>,
 }
 
-/// More than that is not kept.
-const MAX_BYTES: usize = 1 << 23;
+/// With more than that, it starts anew.
+const MAX_BYTES: usize = 1 << 20;
 
 fn hash(context: u32, text: &[u8]) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
@@ -55,15 +57,19 @@ impl Memo {
     /// A number for all that the way a declaration is printed depends on besides its text: `flags`, and the name of
     /// the at-rule that it is in.
     pub(crate) fn context(&mut self, flags: u32, at_rule: &[u8]) -> u32 {
-        if self.bytes.len() > MAX_BYTES {
-            *self = Memo::default();
+        if self.bytes.len() + self.entries.len() * size_of::<Entry>() + self.table.len() * size_of::<u32>() > MAX_BYTES {
+            *self = Memo {
+                first_context: self.first_context.wrapping_add(self.contexts.len() as u32),
+                ..Memo::default()
+            };
         }
         let known = self.contexts.iter().position(|context| context.flags == flags && self.of(context.at_rule) == at_rule);
-        known.unwrap_or_else(|| {
+        let index = known.unwrap_or_else(|| {
             let at_rule = self.add(at_rule);
             self.contexts.push(Context { flags, at_rule });
             self.contexts.len() - 1
-        }) as u32
+        });
+        self.first_context.wrapping_add(index as u32)
     }
 
     /// What has been printed for the declaration `text`, and whether there is a group in it.

@@ -220,7 +220,10 @@ impl<'o> Sink<'o> {
         if self.is_document {
             self.elements.text(text.as_bytes());
         } else if let Some(printer) = &mut self.printer {
-            printer.out.extend_from_slice(text.as_bytes());
+            match *text.as_bytes() {
+                [byte] => printer.out.push(byte),
+                _ => printer.out.extend_from_slice(text.as_bytes()),
+            }
         }
     }
 

@@ -63,6 +63,11 @@ bun test <patterns>
   Output file path for the reporter format (required with --reporter=junit)
 </ParamField>
 
+<ParamField path="--reporter-junit-suites" type="string">
+  How --reporter=junit writes describe blocks: <code>nested</code> (default, a testsuite in the file's testsuite) or{" "}
+  <code>flat</code> (a prefix of the test's name)
+</ParamField>
+
 <ParamField path="--dots" type="boolean">
   Enable dots reporter. Shorthand for --reporter=dots
 </ParamField>

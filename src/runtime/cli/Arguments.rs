@@ -621,6 +621,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
     ),
     parse_param!(
+        "--reporter-junit-suites <STR>    How --reporter=junit writes describe blocks: 'nested' (default, a \\<testsuite\\> in the file's \\<testsuite\\>) or 'flat' (a prefix of the test's name)."
+    ),
+    parse_param!(
         "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
     ),
     parse_param!(
@@ -1836,6 +1839,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 
     if let Some(reporter_outfile) = args.option(b"--reporter-outfile") {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
+    }
+
+    if let Some(name) = args.option(b"--reporter-junit-suites") {
+        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --reporter-junit-suites expects 'nested' or 'flat', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.reporters.junit_suites = Some(suites);
     }
 
     if let Some(reporter) = args.option(b"--reporter") {

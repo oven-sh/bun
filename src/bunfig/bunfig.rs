@@ -448,6 +448,26 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
+                    if let Some(suites_expr) = expr.get(b"junitSuites") {
+                        self.expect_string(&suites_expr)?;
+                        let name = suites_expr.as_string(self.bump).unwrap_or(b"");
+                        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name)
+                        else {
+                            return self.add_error_format(
+                                suites_expr.loc,
+                                format_args!(
+                                    "expected \"junitSuites\" to be \"nested\" or \"flat\" but received \"{}\"",
+                                    bstr::BStr::new(name)
+                                ),
+                            );
+                        };
+                        // --reporter-junit-suites is parsed first and wins.
+                        self.ctx
+                            .test_options
+                            .reporters
+                            .junit_suites
+                            .get_or_insert(suites);
+                    }
                     if let Some(dots_expr) = expr.get(b"dots").or_else(|| expr.get(b"dot")) {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
                         self.ctx.test_options.reporters.dots =

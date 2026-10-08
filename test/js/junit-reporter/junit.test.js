@@ -608,6 +608,168 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  describe.concurrent("--reporter-junit-suites", () => {
+    const files = {
+      "package.json": "{}",
+      "a.test.js": `import { describe, expect, test } from "bun:test";
+test("top-level", () => {
+  expect(1).toBe(1);
+});
+describe("first block", () => {
+  test("passes", () => {
+    expect(1).toBe(1);
+    expect(2).toBe(2);
+  });
+  test.skip("skipped", () => {});
+  test.todo("todo");
+  describe("inner <&> block", () => {
+    test("fails", () => {
+      expect(1).toBe(2);
+    });
+    test.failing("failing that passes", () => {});
+  });
+  test("after inner", () => {});
+});
+describe("second block", () => {
+  test("passes", () => {});
+});
+describe.each([1, 2])("each %i", () => {
+  test("passes", () => {});
+});
+`,
+      "b.test.js": `import { describe, test } from "bun:test";
+describe("only block", () => {
+  test("passes", () => {});
+});
+`,
+    };
+
+    const flat = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="11" assertions="4" failures="2" skipped="2" time="#">
+  <testsuite name="a.test.js" file="a.test.js" tests="10" assertions="4" failures="2" skipped="2" time="#">
+    <properties>
+      <property name="ci" value="https://ci.example.com/123" />
+      <property name="commit" value="1234567890" />
+    </properties>
+    <testcase name="top-level" classname="a.test.js" time="#" file="a.test.js" line="2" assertions="1" />
+    <testcase name="first block &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="6" assertions="2" />
+    <testcase name="first block &gt; skipped" classname="a.test.js" time="#" file="a.test.js" line="10" assertions="0">
+      <skipped />
+    </testcase>
+    <testcase name="first block &gt; todo" classname="a.test.js" time="#" file="a.test.js" line="11" assertions="0">
+      <skipped message="TODO" />
+    </testcase>
+    <testcase name="first block &gt; inner &lt;&amp;&gt; block &gt; fails" classname="a.test.js" time="#" file="a.test.js" line="13" assertions="1">
+      <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 2&#10;Received: 1&#10;&#10;      at a.test.js:14:17&#10;</failure>
+    </testcase>
+    <testcase name="first block &gt; inner &lt;&amp;&gt; block &gt; failing that passes" classname="a.test.js" time="#" file="a.test.js" line="16" assertions="0">
+      <failure message="test marked with .failing() did not throw" type="AssertionError"/>
+    </testcase>
+    <testcase name="first block &gt; after inner" classname="a.test.js" time="#" file="a.test.js" line="18" assertions="0" />
+    <testcase name="second block &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="21" assertions="0" />
+    <testcase name="each 1 &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="24" assertions="0" />
+    <testcase name="each 2 &gt; passes" classname="a.test.js" time="#" file="a.test.js" line="24" assertions="0" />
+  </testsuite>
+  <testsuite name="b.test.js" file="b.test.js" tests="1" assertions="0" failures="0" skipped="0" time="#">
+    <properties>
+      <property name="ci" value="https://ci.example.com/123" />
+      <property name="commit" value="1234567890" />
+    </properties>
+    <testcase name="only block &gt; passes" classname="b.test.js" time="#" file="b.test.js" line="3" assertions="0" />
+  </testsuite>
+</testsuites>
+`;
+
+    const normalize = xml =>
+      xml.replaceAll(/ hostname="[^"]*"/g, "").replaceAll(/ time="\d+(\.\d+)?(e-\d+)?"/g, ' time="#"');
+
+    /** Runs `bun test` on `files`, and returns the report with `#` for each time and without the host names. */
+    async function report(args, bunfig) {
+      using dir = tempDir("junit-suites", bunfig ? { ...files, "bunfig.toml": bunfig } : files);
+      await using proc = spawn([bunExe(), "test", ...args], {
+        cwd: String(dir),
+        env: { ...bunEnv, CI_JOB_URL: "https://ci.example.com/123", CI_COMMIT_SHA: "1234567890" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const outfile = file(join(String(dir), "junit.xml"));
+      return { xml: (await outfile.exists()) ? normalize(await outfile.text()) : null, stderr, exitCode };
+    }
+    const junit = ["--reporter=junit", "--reporter-outfile=junit.xml"];
+
+    it("flat writes one <testsuite> per file and puts the describe blocks in the name of the <testcase>", async () => {
+      const { xml, exitCode } = await report([...junit, "--reporter-junit-suites=flat"]);
+      expect(xml).toBe(flat);
+      expect(exitCode).toBe(1);
+    });
+
+    it("flat writes the same report with --parallel", async () => {
+      const { xml, exitCode } = await report([...junit, "--reporter-junit-suites=flat", "--parallel=2"]);
+      expect(xml).toBe(flat);
+      expect(exitCode).toBe(1);
+    });
+
+    it("nested is the default, and counts the same tests as flat", async () => {
+      const [byDefault, nested, { xml: flat }] = await Promise.all([
+        report(junit),
+        report([...junit, "--reporter-junit-suites=nested"]),
+        report([...junit, "--reporter-junit-suites=flat"]),
+      ]);
+      expect(nested.xml).toBe(byDefault.xml);
+      expect(flat).not.toBe(byDefault.xml);
+      const suiteNames = Array.from(byDefault.xml.matchAll(/^( *)<testsuite name="([^"]*)"/gm), m => m[1] + m[2]);
+      expect(suiteNames).toEqual([
+        "  a.test.js",
+        "    first block",
+        "      inner &lt;&amp;&gt; block",
+        "    second block",
+        "    each 1",
+        "    each 2",
+        "  b.test.js",
+        "    only block",
+      ]);
+      // The attributes of <testsuites> and of the <testsuite> of each file.
+      const totals = xml =>
+        Array.from(xml.matchAll(/^ {0,2}<testsuites? name="[^"]*"(?: file="[^"]*")? (.*)>$/gm), m => m[1]);
+      expect(totals(byDefault.xml)).toEqual(totals(flat));
+      expect(totals(flat)).toHaveLength(3);
+    });
+
+    it("reads junitSuites from bunfig.toml", async () => {
+      const { xml, exitCode } = await report([], `[test.reporter]\njunit = "junit.xml"\njunitSuites = "flat"\n`);
+      expect(xml).toBe(flat);
+      expect(exitCode).toBe(1);
+    });
+
+    it("the flag wins over bunfig.toml", async () => {
+      const [overridden, nested] = await Promise.all([
+        report(["--reporter-junit-suites=nested"], `[test.reporter]\njunit = "junit.xml"\njunitSuites = "flat"\n`),
+        report(junit),
+      ]);
+      expect(overridden.xml).toBe(nested.xml);
+      const { xml } = await report(
+        ["--reporter-junit-suites=flat"],
+        `[test.reporter]\njunit = "junit.xml"\njunitSuites = "nested"\n`,
+      );
+      expect(xml).toBe(flat);
+    });
+
+    it("rejects any other value", async () => {
+      const [flag, bunfig] = await Promise.all([
+        report([...junit, "--reporter-junit-suites=deep"]),
+        report([], `[test.reporter]\njunit = "junit.xml"\njunitSuites = "deep"\n`),
+      ]);
+      expect(flag).toEqual({
+        xml: null,
+        stderr: `error: --reporter-junit-suites expects 'nested' or 'flat', received "deep"\n`,
+        exitCode: 1,
+      });
+      expect(bunfig.stderr).toContain(`error: expected "junitSuites" to be "nested" or "flat" but received "deep"`);
+      expect({ xml: bunfig.xml, exitCode: bunfig.exitCode }).toEqual({ xml: null, exitCode: 1 });
+    });
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

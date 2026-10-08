@@ -13,6 +13,7 @@ use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_options_types::context::JunitSuites;
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -219,6 +220,7 @@ pub(crate) struct JunitReporter {
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
     pub(crate) current_depth: u32,
+    pub(crate) suites: JunitSuites,
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
@@ -288,8 +290,11 @@ impl JunitReporter {
         None
     }
 
-    pub(crate) fn init() -> Box<JunitReporter> {
-        Box::new(JunitReporter::default())
+    pub(crate) fn init(suites: JunitSuites) -> Box<JunitReporter> {
+        Box::new(JunitReporter {
+            suites,
+            ..Default::default()
+        })
     }
 }
 
@@ -643,6 +648,16 @@ impl JunitReporter {
             self.begin_test_suite(t.file)?;
         }
 
+        if self.suites == JunitSuites::Flat {
+            let mut name: Vec<u8> = Vec::new();
+            for &(scope, _) in &t.scopes {
+                name.extend_from_slice(scope);
+                name.extend_from_slice(b" > ");
+            }
+            name.extend_from_slice(t.name);
+            return self.write_test_case(t, &name, t.file);
+        }
+
         // Keep the longest prefix of open describe suites that matches
         // `t.scopes`; close the rest, then open what is missing.
         let open = &self.suite_stack[1..];
@@ -667,13 +682,17 @@ impl JunitReporter {
             class_name.extend_from_slice(name);
         }
 
-        self.write_test_case(t, &class_name)
+        self.write_test_case(t, t.name, &class_name)
     }
 
-    fn write_test_case(&mut self, t: &TestCaseReport<'_>, class_name: &[u8]) -> crate::Result<()> {
+    fn write_test_case(
+        &mut self,
+        t: &TestCaseReport<'_>,
+        name: &[u8],
+        class_name: &[u8],
+    ) -> crate::Result<()> {
         let TestCaseReport {
             file,
-            name,
             status,
             assertions,
             elapsed_ns,
@@ -1899,7 +1918,9 @@ impl TestCommand {
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
         if ctx.test_options.reporters.junit && !ctx.test_options.test_worker {
-            reporter.reporters.junit = Some(JunitReporter::init());
+            reporter.reporters.junit = Some(JunitReporter::init(
+                ctx.test_options.reporters.junit_suites.unwrap_or_default(),
+            ));
         }
         if ctx.test_options.reporters.dots {
             reporter.reporters.dots = true;

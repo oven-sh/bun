@@ -482,6 +482,28 @@ pub struct Reporters {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: bool,
+    /// `bun test --reporter-junit-suites=<name>`, else `[test.reporter] junitSuites`.
+    pub junit_suites: Option<JunitSuites>,
+}
+
+/// What a `describe` block becomes in the JUnit report.
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub enum JunitSuites {
+    /// A `<testsuite>` inside the file's `<testsuite>`.
+    #[default]
+    Nested,
+    /// A prefix of the `name` of its `<testcase>`s.
+    Flat,
+}
+
+impl JunitSuites {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"nested" => Some(Self::Nested),
+            b"flat" => Some(Self::Flat),
+            _ => None,
+        }
+    }
 }
 
 impl TestOptions {

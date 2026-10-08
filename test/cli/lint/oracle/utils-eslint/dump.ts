@@ -44,7 +44,10 @@ for (const name of builtinNames) {
   };
   const it = (globalThis as any)[name];
   members(it, name);
-  if (isObject(it.prototype)) members(it.prototype, `${name}.prototype`);
+  if (isObject(it.prototype)) {
+    pathOf.set(it.prototype, `${name}.prototype`);
+    members(it.prototype, `${name}.prototype`);
+  }
 }
 
 const quote = (text: string) =>

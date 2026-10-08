@@ -15,6 +15,8 @@ pub(super) enum Member {
     Function,
     /// An object that is not a function.
     Namespace,
+    /// The `prototype` of a constructor.
+    Prototype,
     /// The same function as another member.
     Alias,
     /// A number.
@@ -60,6 +62,7 @@ static ENTRIES: &[Entry] = entries! {
     "Array" {
         Call: isArray of;
         Function: from fromAsync;
+        Prototype: prototype;
     }
     "Array.prototype" {
         Call: at concat entries every filter find findIndex flat includes indexOf join keys lastIndexOf slice some toString
@@ -67,11 +70,18 @@ static ENTRIES: &[Entry] = entries! {
         Function: copyWithin fill findLast findLastIndex flatMap forEach map pop push reduce reduceRight reverse shift sort
             splice toLocaleString toReversed toSorted toSpliced unshift with;
     }
+    "ArrayBuffer" {
+        Function: isView;
+    }
     "BigInt" {
         Function: asIntN asUintN;
+        Prototype: prototype;
     }
     "BigInt.prototype" {
         Function: toLocaleString toString valueOf;
+    }
+    "Boolean" {
+        Prototype: prototype;
     }
     "Boolean.prototype" {
         Function: toString valueOf;
@@ -90,10 +100,12 @@ static ENTRIES: &[Entry] = entries! {
     }
     "Map" {
         Function: groupBy;
+        Prototype: prototype;
     }
     "Map.prototype" {
         Call: entries get has keys values;
         Function: clear delete forEach getOrInsert getOrInsertComputed set;
+        Getter: size;
     }
     "Math" {
         Call: abs acos acosh asin asinh atan atan2 atanh cbrt ceil clz32 cos cosh exp expm1 f16round floor fround hypot imul
@@ -106,6 +118,7 @@ static ENTRIES: &[Entry] = entries! {
         Alias: parseFloat parseInt;
         Function: isInteger isSafeInteger;
         Constant: EPSILON MAX_SAFE_INTEGER MAX_VALUE MIN_SAFE_INTEGER MIN_VALUE NaN NEGATIVE_INFINITY POSITIVE_INFINITY;
+        Prototype: prototype;
     }
     "Number.prototype" {
         Call: toExponential toFixed toPrecision toString;
@@ -116,12 +129,19 @@ static ENTRIES: &[Entry] = entries! {
         PassThrough: freeze preventExtensions seal;
         Function: assign create defineProperties defineProperty fromEntries getOwnPropertyDescriptor
             getOwnPropertyDescriptors getOwnPropertyNames getOwnPropertySymbols getPrototypeOf groupBy hasOwn setPrototypeOf;
+        Prototype: prototype;
     }
     "Object.prototype" {
         Alias: isPrototypeOf;
         Function: __defineGetter__ __defineSetter__ __lookupGetter__ __lookupSetter__ hasOwnProperty propertyIsEnumerable
             toLocaleString toString valueOf;
         Getter: __proto__;
+    }
+    "Promise" {
+        Function: all allSettled any race reject resolve try withResolvers;
+    }
+    "Proxy" {
+        Function: revocable;
     }
     "Reflect" {
         Function: apply construct defineProperty deleteProperty get getOwnPropertyDescriptor getPrototypeOf has isExtensible
@@ -130,19 +150,25 @@ static ENTRIES: &[Entry] = entries! {
     "RegExp" {
         Function: escape;
         Getter: input lastMatch lastParen leftContext rightContext;
+        Prototype: prototype;
     }
     "RegExp.prototype" {
         Function: compile exec test toString;
-        Getter: unicodeSets;
+        Getter: dotAll flags global hasIndices ignoreCase multiline source sticky unicode unicodeSets;
+    }
+    "Set" {
+        Prototype: prototype;
     }
     "Set.prototype" {
         Call: entries has values;
         Alias: keys;
         Function: add clear delete difference forEach intersection isDisjointFrom isSubsetOf isSupersetOf symmetricDifference
             union;
+        Getter: size;
     }
     "String" {
         Call: fromCharCode fromCodePoint raw;
+        Prototype: prototype;
     }
     "String.prototype" {
         Call: at charAt charCodeAt codePointAt concat endsWith includes indexOf lastIndexOf normalize padEnd padStart slice
@@ -156,9 +182,11 @@ static ENTRIES: &[Entry] = entries! {
         Call: for keyFor;
         Symbol: asyncDispose asyncIterator dispose hasInstance isConcatSpreadable iterator match matchAll replace search
             species split toPrimitive toStringTag unscopables;
+        Prototype: prototype;
     }
     "Symbol.prototype" {
         Function: toString valueOf;
+        Getter: description;
     }
 };
 
@@ -189,7 +217,13 @@ impl Builtin {
 
     /// `typeof value === "function"`
     pub fn is_callable(self) -> bool {
-        self.member() != Member::Namespace
+        !matches!(self.member(), Member::Namespace | Member::Prototype)
+    }
+
+    /// `Array.prototype` and the like. They are of the kind that they are the prototype of: an
+    /// array, a string, ..
+    pub(super) fn is_prototype(self) -> bool {
+        self.member() == Member::Prototype
     }
 
     pub(super) fn member(self) -> Member {
@@ -232,7 +266,7 @@ fn constant(path: &str) -> f64 {
 fn value_of(at: usize) -> Eval<StaticValue<'static>> {
     let entry = ENTRIES.get(at).ok_or(Stop::Abort)?;
     match entry.member {
-        Member::Call | Member::PassThrough | Member::Function | Member::Namespace => {
+        Member::Call | Member::PassThrough | Member::Function | Member::Namespace | Member::Prototype => {
             Ok(StaticValue::Builtin(Builtin(at as u16)))
         }
         Member::Alias => {
@@ -354,8 +388,27 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
             if name == b"name" && builtin.is_callable() {
                 return Ok(StaticValue::string(builtin.entry().map_or("", |entry| entry.name).as_bytes()));
             }
+            // Only constructors have one.
+            let is_constructor = path != "Proxy"
+                && !strings::contains_char(path.as_bytes(), b'.')
+                && path.starts_with(|c: char| c.is_ascii_uppercase());
+            if name == b"prototype" && builtin.is_callable() && !is_constructor {
+                return Ok(StaticValue::Undefined);
+            }
+            if builtin.member() == Member::Prototype {
+                let constructor = path.strip_suffix(".prototype").unwrap_or(path);
+                return match name {
+                    // An array and a string, which are empty.
+                    b"length" if matches!(constructor, "Array" | "String") => Ok(StaticValue::Number(0.0)),
+                    _ => inherited(constructor, "Object.prototype", name),
+                };
+            }
             // Whether all the properties of this one are listed.
-            let is_known = builtin.member() != Member::Function || matches!(path, "Array" | "Symbol");
+            let is_known = builtin.member() != Member::Function
+                || matches!(
+                    path,
+                    "Array" | "ArrayBuffer" | "DataView" | "Function" | "Promise" | "Proxy" | "Symbol" | "WeakMap" | "WeakSet"
+                );
             match (is_known, builtin.is_callable()) {
                 (false, _) => Err(Stop::Abort),
                 (true, true) => inherited("Function", "Function.prototype", name),

@@ -2,6 +2,7 @@
 //
 //   bun cases.ts --fixtures <test/cli/lint/conformance/fixtures> > cases.jsonl     the `code` of every conformance case
 //   bun cases.ts --upstream <eslint-utils checkout>/test > cases.jsonl             the `code` of upstream's own tests
+//   node cases.ts --builtins > cases.jsonl                                         every property of the standard library that is modeled
 //   bun cases.ts --files <directory> > cases.jsonl                                 source files
 //   bun cases.ts --lines <file> > cases.jsonl                                      each line of a file is a case
 //
@@ -66,6 +67,22 @@ if (mode === "--fixtures") {
       for (const sourceType of ["module", "script"]) emit({ filename: "file.js", code, sourceType });
       emit({ filename: "file.ts", code, sourceType: "module" });
     }
+  }
+} else if (mode === "--builtins") {
+  const names =
+    "Array ArrayBuffer BigInt BigInt64Array BigUint64Array Boolean DataView Date decodeURI decodeURIComponent encodeURI encodeURIComponent escape Float32Array Float64Array Function Infinity Int16Array Int32Array Int8Array isFinite isNaN isPrototypeOf JSON Map Math NaN Number Object parseFloat parseInt Promise Proxy Reflect RegExp Set String Symbol Uint16Array Uint32Array Uint8Array Uint8ClampedArray undefined unescape WeakMap WeakSet".split(
+      " ",
+    );
+  const instances: Record<string, string> = { Array: "[]", BigInt: "1n", Boolean: "true", Map: "new Map()", Number: "(1)", Object: "({})", RegExp: "/a/", Set: "new Set()", String: '""', Symbol: "Symbol.iterator" };
+  const own = (it: unknown) => (Object(it) === it ? Object.getOwnPropertyNames(it).filter(key => /^[\w$]+$/.test(key)) : []);
+  for (const name of names) {
+    const it = (globalThis as any)[name];
+    const all = [name, ...own(it).map(key => `${name}.${key}`), ...own(it?.prototype).map(key => `${name}.prototype.${key}`)];
+    for (const key of [...own(it?.prototype), ...own(Object.prototype), "nothing"]) {
+      if (instances[name]) all.push(`${instances[name]}.${key}`);
+    }
+    for (const key of [...own(Function.prototype), ...own(Object.prototype), "nothing"]) all.push(`${name}.${key}`, `${name}.prototype.${key}`);
+    for (const code of all) emit({ filename: "file.js", code: `[${code}, typeof ${code}]`, sourceType: "module" });
   }
 } else if (mode === "--files") {
   for (const file of walk(path)) {

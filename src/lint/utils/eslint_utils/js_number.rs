@@ -2,23 +2,23 @@
 //!
 //! | JavaScript | here |
 //! | --- | --- |
-//! | `Number(text)`, `+text` | [`string_to_number`] |
+//! | `Number(text)`, `+text` | [`string_to_number`](crate::utils::text::string_to_number) |
 //! | `parseInt(text, radix)`, `parseFloat(text)` | [`parse_int`], [`parse_float`] |
 //! | `n.toFixed(digits)` | [`to_fixed`] |
 //! | `n.toExponential(digits)` | [`to_exponential`] |
-//! | `n.toPrecision(precision)` | [`to_precision`] |
+//! | `n.toPrecision(precision)` | [`to_precision`], and only its digits and its exponent: [`decimal_digits`] |
 //! | `n.toString(radix)` | [`to_radix_string`] |
 //! | `n \| 0`, `n >>> 0` | [`to_int32`], [`to_uint32`] |
 //! | `String(n)` | [`number_to_string`](crate::utils::text::number_to_string) |
 
 use crate::utils::text::{number_to_string, trim, trim_start};
 
-/// `ToInt32`
+/// `n | 0`: `ToInt32`.
 pub fn to_int32(n: f64) -> i32 {
     to_uint32(n) as i32
 }
 
-/// `ToUint32`
+/// `n >>> 0`: `ToUint32`.
 pub fn to_uint32(n: f64) -> u32 {
     if !n.is_finite() {
         return 0;
@@ -78,8 +78,9 @@ fn split_sign(text: &[u8]) -> (f64, &[u8]) {
     }
 }
 
-/// `StringToNumber`: `Number(text)`. `None` if the result cannot be computed here.
-pub fn string_to_number(text: &[u8]) -> Option<f64> {
+/// `Number(text)`: `StringToNumber`. `None` for more digits in a radix other than 10 than can be
+/// rounded correctly here.
+pub(super) fn string_to_number(text: &[u8]) -> Option<f64> {
     let text = trim(text);
     if text.is_empty() {
         return Some(0.0);
@@ -171,6 +172,18 @@ fn round_digits(digits: &mut Vec<u8>, count: usize) -> bool {
     true
 }
 
+/// `n.toPrecision(precision)` in parts: the first `precision` decimal digits of the absolute value
+/// of a finite `n`, rounded half up as JavaScript does, and the exponent of the first:
+/// `d1.d2d3.. * 10 ** exponent`. For 0 the digits are zeros and the exponent is 0.
+pub fn decimal_digits(n: f64, precision: usize) -> (Vec<u8>, i32) {
+    let (mut digits, mut exponent) = (vec![b'0'], 0);
+    if n != 0.0 {
+        (digits, exponent) = exact_digits(n.abs());
+    }
+    exponent += i32::from(round_digits(&mut digits, precision));
+    (digits, exponent)
+}
+
 fn with_sign(n: f64, unsigned: Vec<u8>) -> Vec<u8> {
     match n < 0.0 {
         true => [b"-", &unsigned[..]].concat(),
@@ -206,10 +219,10 @@ pub fn to_fixed(n: f64, fraction_digits: usize) -> Vec<u8> {
 
 fn exponential(digits: &[u8], exponent: i32) -> Vec<u8> {
     let mut text = Vec::with_capacity(digits.len() + 6);
-    text.extend_from_slice(&digits[..1]);
-    if digits.len() > 1 {
+    text.extend_from_slice(digits.get(..1).unwrap_or(b"0"));
+    if let Some(fraction @ [_, ..]) = digits.get(1..) {
         text.push(b'.');
-        text.extend_from_slice(&digits[1..]);
+        text.extend_from_slice(fraction);
     }
     text.extend_from_slice(if exponent < 0 { b"e-" } else { b"e+" });
     text.extend_from_slice(exponent.unsigned_abs().to_string().as_bytes());
@@ -231,12 +244,7 @@ pub fn to_exponential(n: f64, fraction_digits: Option<usize>) -> Vec<u8> {
             exponent = text[at..].parse().unwrap_or(0);
         }
         None => {}
-        Some(count) => {
-            if n != 0.0 {
-                (digits, exponent) = exact_digits(n.abs());
-            }
-            exponent += i32::from(round_digits(&mut digits, count + 1));
-        }
+        Some(count) => (digits, exponent) = decimal_digits(n, count + 1),
     }
     with_sign(n, exponential(&digits, exponent))
 }
@@ -246,11 +254,7 @@ pub fn to_precision(n: f64, precision: usize) -> Vec<u8> {
     if !n.is_finite() {
         return number_to_string(n);
     }
-    let (mut digits, mut exponent) = (vec![b'0'], 0);
-    if n != 0.0 {
-        (digits, exponent) = exact_digits(n.abs());
-    }
-    exponent += i32::from(round_digits(&mut digits, precision));
+    let (mut digits, exponent) = decimal_digits(n, precision);
     if exponent < -6 || exponent >= precision as i32 {
         return with_sign(n, exponential(&digits, exponent));
     }
@@ -263,11 +267,11 @@ pub fn to_precision(n: f64, precision: usize) -> Vec<u8> {
     with_sign(n, digits)
 }
 
-/// `n.toString(radix)` for `radix` in `2..=36`. The specification leaves the digits open for a
+/// `n.toString(radix)` for `radix` in `2..=36`, otherwise in 10. The specification leaves the digits open for a
 /// radix other than 10: this is the algorithm of V8.
 pub fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
     const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    if radix == 10 || !n.is_finite() {
+    if radix == 10 || !(2..=36).contains(&radix) || !n.is_finite() {
         return number_to_string(n);
     }
     let base = f64::from(radix);

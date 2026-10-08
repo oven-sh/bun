@@ -273,6 +273,7 @@ impl<'a> StaticValue<'a> {
                 let name = strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot + 1..]);
                 return Ok(StaticValue::string([b"function ", name, b"() { [native code] }"].concat()));
             }
+            StaticValue::Builtin(builtin) if builtin.is_prototype() => return Err(Stop::Abort),
             StaticValue::Builtin(builtin) => {
                 return Ok(StaticValue::string([b"[object ", builtin.name().as_bytes(), b"]"].concat()));
             }

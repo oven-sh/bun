@@ -143,8 +143,22 @@ fn call_value<'a>(function: &StaticValue<'a>, this: &StaticValue<'a>, args: Args
     }
 }
 
+/// Whether one of `values`, or an element of one that is an array, is `Array.prototype` or the
+/// like. Functions treat them as the array, the wrapper of a string, .. that they are, which is
+/// not modeled.
+fn has_prototype(values: &[StaticValue<'_>]) -> bool {
+    values.iter().any(|value| match value {
+        StaticValue::Builtin(builtin) => builtin.is_prototype(),
+        StaticValue::Array(items) => has_prototype(items),
+        _ => false,
+    })
+}
+
 /// `function.call(this, ...args)` for a function in `callAllowed`.
 pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+    if has_prototype(args) || has_prototype(std::slice::from_ref(this)) {
+        return Err(Stop::Abort);
+    }
     let path = function.name();
     if let Some(name) = path.strip_prefix("Math.") {
         return math(name, args);
@@ -247,6 +261,9 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
 
 /// `new function(...args)` for a function in `callAllowed`.
 pub(super) fn construct<'a>(function: Builtin, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+    if has_prototype(args) {
+        return Err(Stop::Abort);
+    }
     let first = arg(args, 0);
     match function.name() {
         "Map" => {

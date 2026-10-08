@@ -442,7 +442,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         p.discard_scopes_up_to(scope_index);
                         p.note_expr(class_keyword, Mark::OtherExtends, value);
                         if count == 1 && !stop_checking {
-                            p.lexer.ts_grammar_error(start, 1174);
+                            match p.is_ecmascript() {
+                                true => p.lexer.ts_error(start, 1174),
+                                false => p.lexer.ts_grammar_error(start, 1174),
+                            }
                             stop_checking = true;
                         }
                     }
@@ -477,7 +480,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // `checkGrammarHeritageClause`
             if !stop_checking {
                 if let Some(comma) = trailing_comma {
-                    p.lexer.ts_grammar_error(comma, 1009);
+                    match p.is_ecmascript() {
+                        true => p.lexer.ts_error(comma, 1009),
+                        false => p.lexer.ts_grammar_error(comma, 1009),
+                    }
                 } else if count == 0 {
                     let after = bun_ast::Range {
                         loc: keyword.end(),
@@ -1132,6 +1138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // speculative parse also succeeds before a "{", where the missing "=>" is then reported.)
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan
             || (p.lexer.token == T::TOpenBrace
+                && !p.is_ecmascript()
                 && (attempt == ArrowAttempt::ArrowOrBacktrack
                     || (attempt == ArrowAttempt::Undecided
                         && p.is_tolerant()
@@ -2535,10 +2542,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.allow_in = !opts.is_for_loop_init;
         }
 
+        // For TypeScript's parser the list can end with a comma. acorn expects a declaration.
+        let mut follows_comma = false;
         loop {
             match p.classify_list_token(ListKind::VariableDeclarations)? {
                 ListStep::Element => {}
                 ListStep::Skipped => continue,
+                ListStep::Over if follows_comma && p.is_ecmascript() => {}
                 ListStep::Over => break,
             }
             let decl_start = p.lexer.loc();
@@ -2600,11 +2610,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
             if p.lexer.token != T::TComma {
                 if p.recover_missing_comma(ListKind::VariableDeclarations, decl_start)? {
+                    follows_comma = false;
                     continue;
                 }
                 break;
             }
             p.lexer.next()?;
+            follows_comma = true;
         }
 
         if p.is_tolerant() {

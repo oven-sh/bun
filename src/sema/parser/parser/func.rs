@@ -529,7 +529,7 @@ impl Parser<'_> {
         };
         if self.token() != T::EqualsGreaterThan {
             // Before a `{` TypeScript takes it for an arrow function whose `=>` is missing.
-            if self.token() == T::OpenBrace && !self.has_failed() {
+            if self.token() == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
                 self.refuse(Refusal::Reported);
             }
             if allow_ambiguity {

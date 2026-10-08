@@ -289,6 +289,7 @@ impl<'a> Comments<'a> {
 
     /// The same after the left side of an assignment or the key of a property, which ends at `pos`:
     /// an operator and `(` can be in between. `a ||= ( // comment`
+    #[allow(dead_code)]
     pub(crate) fn end_of_line_comments_after_left_side(&self, pos: u32) -> &'a [Comment] {
         self.end_of_line_comments_after_bytes(pos, |b| {
             matches!(
@@ -354,6 +355,7 @@ impl<'a> Comments<'a> {
 
     /// Whether a comment, printed or not, is in `outer` and not in `inner`, which is a part of
     /// `outer`. If `inner` is the only child of `outer`, this is Prettier's `hasComment(inner)`.
+    #[allow(dead_code)]
     pub(crate) fn has_comment_around(&self, inner: Span, outer: Span) -> bool {
         let starts_in = |start: u32, end: u32| {
             let at = self.inner.partition_point(|comment| comment.span.start < start);

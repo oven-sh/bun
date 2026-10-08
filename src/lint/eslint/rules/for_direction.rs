@@ -9,18 +9,24 @@ const INCORRECT_DIRECTION: Message = Message::new(
     "The update clause in this loop moves the variable in the wrong direction.",
 );
 
-/// How many expressions in the update clause `e` modify `counter`, and the last of them.
-fn modifying_expressions<'a>(e: Expr<'a>, counter: Name<'a>, count: &mut u32, last: &mut Option<Expr<'a>>) {
+/// How many expressions in the update clause `e` modify `counter`, and the last of them. It goes
+/// through them from the last to the first.
+fn modifying_expressions<'a>(mut e: Expr<'a>, counter: Name<'a>, count: &mut u32, last: &mut Option<Expr<'a>>) {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        // Several: nothing is reported.
+        *count += 2;
+        return;
+    }
+    while let ExprKind::Binary {
+        op: BinOp::Comma,
+        left,
+        right,
+    } = e.kind()
+    {
+        modifying_expressions(right, counter, count, last);
+        e = left;
+    }
     let modified = match e.kind() {
-        ExprKind::Binary {
-            op: BinOp::Comma,
-            left,
-            right,
-        } => {
-            modifying_expressions(left, counter, count, last);
-            modifying_expressions(right, counter, count, last);
-            return;
-        }
         ExprKind::Unary {
             op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
             operand,
@@ -30,7 +36,7 @@ fn modifying_expressions<'a>(e: Expr<'a>, counter: Name<'a>, count: &mut u32, la
     };
     if modified.as_ident() == Some(counter) {
         *count += 1;
-        *last = Some(e);
+        last.get_or_insert(e);
     }
 }
 

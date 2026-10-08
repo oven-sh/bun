@@ -1,12 +1,12 @@
 //! `bun-lint utils-tsscope ..`
 //!
-//! - `batch <cases.jsonl>`: for each line `{ id, filename, code, sourceType?, parserOptions? }`, what
+//! - `batch <cases.jsonl>`: for each line `{ id, filename, code, languageOptions }`, what
 //!   `bun_lint::utils::ts_scope` says about the code, as a line of JSON in the format of
 //!   `test/cli/lint/oracle/utils-tsscope/oracle.ts`. Positions are in bytes.
 
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{FnKind, Func, Node};
-use bun_lint::language::{LanguageOptions, SourceType};
+use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Object};
 use bun_lint::span::Span;
 use bun_lint::utils::estree_compat::estree_span;
@@ -93,15 +93,7 @@ fn write_variables(out: &mut String, variables: &[Variable]) {
 
 fn dump(case: Object<'_>) -> String {
     let id = case.number("id").unwrap_or(-1.0);
-    let language = LanguageOptions {
-        source_type: match case.str("sourceType") {
-            Some("script") => SourceType::Script,
-            Some("commonjs") => SourceType::CommonJs,
-            _ => SourceType::Module,
-        },
-        parser_options: case.get("parserOptions").cloned().unwrap_or(Json::Null),
-        ..LanguageOptions::default()
-    };
+    let language = LanguageOptions::from_json(case.get("languageOptions").unwrap_or(&Json::Null), &Json::Null);
     let code = case.get("code").and_then(Json::as_str).unwrap_or_default();
     crate::with_file(case.str("filename").unwrap_or("file.ts"), code, &language, |file| {
         if file.has_parse_errors() {

@@ -22,7 +22,7 @@ expected.forEach((want, i) => {
     if (a.join() === b.join()) continue;
     wrong[section]++;
     if (shown++ < Number(show)) {
-      console.log(`--- ${section} #${i} (${cases[i].rule}, ${cases[i].filename}, ${cases[i].sourceType})\n${cases[i].code.length > 600 ? "(long)" : cases[i].code}`);
+      console.log(`--- ${section} #${i} (${cases[i].rule}, ${cases[i].filename}, ${cases[i].languageOptions.sourceType})\n${cases[i].code.length > 600 ? "(long)" : cases[i].code}`);
       console.log("  missing:", a.filter((it: string) => !b.includes(it)).join(" "));
       console.log("  extra:  ", b.filter((it: string) => !a.includes(it)).join(" "));
     }

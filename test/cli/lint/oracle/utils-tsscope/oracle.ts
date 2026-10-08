@@ -126,7 +126,8 @@ function add(rule: string, one: Case) {
     return;
   }
   const id = cases.length;
-  cases.push(JSON.stringify({ id, rule, ...one }));
+  const languageOptions = { parser: "typescript", sourceType: one.sourceType, parserOptions: one.parserOptions };
+  cases.push(JSON.stringify({ id, rule, filename: one.filename, code: one.code, languageOptions }));
   const list = (all: string[]) => `[${all.join(",")}]`;
   expected.push(
     `{"id":${id},"functions":${list(result.functions)},"unused":${list(result.unused)},"used":${list(result.used)},"members":${list(result.members)}}`,

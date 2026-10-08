@@ -349,7 +349,11 @@ fn has_marked_parameters(func: Func) -> bool {
 }
 
 fn mark_identifier<'a>(name: Name<'a>, holder: Node<'a>, marks: &mut UsedMarks) {
-    if let Some(symbol) = holder.scope().resolve_name(name) {
+    // Inside a class its name is the other variable, which counts as used anyway.
+    if let Some(symbol) = holder.scope().resolve_name(name)
+        && (!symbol.flags().contains(SymFlags::CLASS)
+            || Variable::new(symbol).has_reference_at(holder.span()))
+    {
         marks.mark(symbol);
     }
 }

@@ -27,7 +27,7 @@ const out = createWriteStream(output);
 let rejected = 0;
 const lines = readFileSync(inputs, "utf8").split("\n").filter(Boolean);
 for (const line of lines) {
-  const { id, filename, code } = JSON.parse(line);
+  const { id, filename, code, sourceType } = JSON.parse(line);
   let result: any;
   try {
     const ast = parse(code, {
@@ -37,8 +37,11 @@ for (const line of lines) {
       tokens: false,
       jsx: /x$/.test(filename),
       filePath: filename,
+      sourceType: sourceType === "module" ? "module" : "script",
       suppressDeprecatedPropertyWarnings: true,
     });
+    // As `@typescript-eslint/parser` does.
+    ast.sourceType = sourceType === "module" ? "module" : "script";
     result = { id, ast: normalize(ast) };
   } catch (error: any) {
     rejected++;

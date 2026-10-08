@@ -44,12 +44,21 @@ impl<'a> Func<'a> {
     /// `ASYNC`, `GENERATOR`, and the modifiers of the declaration.
     #[inline]
     pub fn flags(self) -> Flags {
-        self.raw().flags
+        match self.file.has_synthetic_nodes() {
+            true => match self.owner() {
+                Node::Member(member) => self.file.written_flags(self.raw().flags, member.modifiers()),
+                _ => self.raw().flags,
+            },
+            false => self.raw().flags,
+        }
     }
 
-    #[inline]
     pub fn is_async(self) -> bool {
         self.flags().contains(Flags::ASYNC)
+            // The HIR has no flag for the `async` of `static async constructor() {}`.
+            || self.kind() == FnKind::Constructor
+                && matches!(self.owner(), Node::Member(member)
+                    if member.modifiers().iter().any(|it| it.flag() == Flags::ASYNC))
     }
 
     #[inline]
@@ -829,7 +838,7 @@ impl<'a> Member<'a> {
     /// `AMBIENT`, `PUBLIC`, `PROTECTED`, `PRIVATE`
     #[inline]
     pub fn flags(self) -> Flags {
-        self.raw().flags
+        self.file.written_flags(self.raw().flags, self.modifiers())
     }
 
     #[inline]

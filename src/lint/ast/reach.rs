@@ -45,7 +45,9 @@ impl File<'_> {
     /// The kind of the type at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn type_in_tree(&self, i: usize) -> Option<TypeTag> {
         let raw = self.hir.types.get(i)?;
-        let is_node = self.bound.type_scope.get(i).is_some_and(|scope| scope.is_some()) && self.is_outside_jsdoc(raw.pos);
+        let is_node = self.bound.type_scope.get(i).is_some_and(|scope| scope.is_some())
+            && self.is_outside_jsdoc(raw.pos)
+            && !self.parents().is_in_error(&self.hir, hir::TypeNodeId(i as u32));
         is_node.then(|| TypeTag::of(&raw.kind))
     }
 

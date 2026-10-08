@@ -277,6 +277,16 @@ impl<'a> Expr<'a> {
                 let start = self.jsx_container_span().map_or(pos, |it| skip_trivia(self.file.hir.text, it.start + 1));
                 Span::new(start, end)
             }
+            Some(&hir::Expr {
+                kind: hir::ExprKind::Ident(_),
+                pos,
+                end,
+            }) => Span::new(pos, self.file.end_of_identifier(pos, end)),
+            Some(&hir::Expr {
+                kind: hir::ExprKind::Dot { name_pos, .. },
+                pos,
+                end,
+            }) => Span::new(pos, self.file.end_of_identifier(name_pos, end)),
             // Its decorators are part of it.
             Some(&hir::Expr {
                 kind: hir::ExprKind::Class(c),

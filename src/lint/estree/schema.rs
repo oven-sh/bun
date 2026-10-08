@@ -21,7 +21,7 @@ use super::views::*;
 use super::vnode::{Leaf, Part, VNode};
 use super::{Dialect, Field};
 use crate::ast::{
-    ExprKind, ExprTag, Flags, FnBody, MappedModifier, MemberKind, ModuleName, Node, PatKind,
+    ExprKind, ExprTag, Flags, FnBody, FnKind, MappedModifier, MemberKind, ModuleName, Node, PatKind,
     PropKind, StmtKind, StmtTag, TypeKind, TypeTag, UnOp, VarDecl, VarKind, assign_op_text,
     bin_op_text, un_op_text,
 };
@@ -259,7 +259,8 @@ estree_schema! {
         node Params = params(v)?;
         ts_node ReturnType = return_type(v)?;
         part Body = v.with(Part::Body);
-        data Async = v.func()?.is_async();
+        // For typescript-estree no constructor is `async`, not even `static async constructor() {}`.
+        data Async = v.func()?.is_async() && (v.func()?.kind() != FnKind::Constructor || v.dialect() == Dialect::Espree);
         ts_data Declare = false;
         data Expression = false;
         data Generator = v.func()?.is_generator();

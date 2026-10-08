@@ -376,6 +376,8 @@ pub(crate) struct Parents {
     tuple_elems: Box<[Packed]>,
     /// The `a.b` of `typeof a.b`, with the type. Sorted.
     type_query_operands: Box<[(hir::ExprId, hir::TypeNodeId)]>,
+    /// There is a type that is an error and whose operand is not a node: `T?`, `unique T`.
+    has_types_in_errors: bool,
     /// The `this` of each `this` parameter, with the parameter. Sorted.
     this_names: Box<[(hir::PatId, hir::ParamId)]>,
 }
@@ -385,6 +387,24 @@ impl Parents {
     fn of_type_query_operand(&self, e: hir::ExprId) -> Option<hir::TypeNodeId> {
         let at = self.type_query_operands.binary_search_by_key(&e, |it| it.0);
         at.ok().map(|at| self.type_query_operands[at].1)
+    }
+
+    /// Whether the type `id` is in a type that is an error, which has no children.
+    pub(super) fn is_in_error(&self, hir: &super::Hir, id: hir::TypeNodeId) -> bool {
+        if !self.has_types_in_errors {
+            return false;
+        }
+        let mut at = id;
+        while let Some(&Packed { tag: Tag::Type, id }) = self.types.get(at.idx()) {
+            at = hir::TypeNodeId(id);
+            if matches!(
+                hir.types.get(at.idx()).map(|it| it.kind),
+                Some(hir::TypeNodeKind::JSDoc { .. } | hir::TypeNodeKind::Unique(_))
+            ) {
+                return true;
+            }
+        }
+        false
     }
 
     #[inline]
@@ -569,6 +589,8 @@ impl Parents {
             type_params,
             tuple_elems,
             type_query_operands: type_query_operands.into_boxed_slice(),
+            has_types_in_errors: (hir.types.iter())
+                .any(|it| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. } | hir::TypeNodeKind::Unique(_))),
             this_names: this_names.into_boxed_slice(),
         }
     }

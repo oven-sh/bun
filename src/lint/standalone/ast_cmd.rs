@@ -45,14 +45,13 @@ pub(crate) fn run(args: &[String]) {
 
 // ───────────────────────────── inputs ─────────────────────────────
 
-/// What makes the ESTree that of `parse(code)` of typescript-estree, or with `--espree` that of
-/// espree for a module.
+/// What makes the ESTree that of `@typescript-eslint/parser`, or with `--espree` that of espree, for
+/// a module.
 fn language_of(flags: &[String]) -> LanguageOptions {
     match flags.iter().any(|it| it == "--espree") {
         true => LanguageOptions::default(),
         false => LanguageOptions {
             parser: Parser::TypeScript,
-            source_type: SourceType::Script,
             ..LanguageOptions::default()
         },
     }
@@ -98,7 +97,11 @@ fn with_input<R>(
             jsx: true,
             ..LanguageOptions::default()
         },
-        _ => language,
+        _ => &LanguageOptions {
+            parser: Parser::TypeScript,
+            source_type: input.source_type,
+            ..LanguageOptions::default()
+        },
     };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::with_file(&input.filename, &input.code, language, then)

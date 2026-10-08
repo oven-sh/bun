@@ -282,14 +282,11 @@ impl<'a> File<'a> {
         self.language.source_type == crate::language::SourceType::Module
     }
 
-    /// ESLint's `Program.sourceType` is `"module"`. ESLint's own parser repeats
-    /// `languageOptions.sourceType`. `@typescript-eslint/parser` also says so of every file that
-    /// [has module syntax](File::has_module_syntax) or an `import.meta`.
+    /// ESLint's `Program.sourceType` is `"module"`. Both parsers repeat what the configuration says:
+    /// whether the file [has module syntax](File::has_module_syntax) does not matter.
+    #[inline]
     pub fn is_module_program(&self) -> bool {
-        use crate::language::{Parser, SourceType};
-        self.language.scope_source_type() == SourceType::Module
-            || self.language.parser == Parser::TypeScript
-                && (self.has_module_syntax || self.hir.exprs.iter().any(|it| matches!(it.kind, hir::ExprKind::ImportMeta)))
+        self.language.scope_source_type() == crate::language::SourceType::Module
     }
 
     /// It has an `import` or an `export` at the top level, or its extension says that it is a
@@ -508,6 +505,18 @@ impl<'a> File<'a> {
             }
         }
         id
+    }
+
+    /// `flags` without the modifiers that are from JSDoc tags such as `@private`: of these only
+    /// what is among `written`.
+    #[inline]
+    pub(crate) fn written_flags(&'a self, flags: Flags, written: List<'a, Modifier<'a>>) -> Flags {
+        if !self.has_synthetic_nodes() {
+            return flags;
+        }
+        let from_tags = Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE | Flags::READONLY | Flags::OVERRIDE;
+        let keywords = written.iter().fold(Flags::empty(), |all, it| all | it.flag());
+        (flags - from_tags) | (keywords & from_tags)
     }
 
     /// Whether the file has nodes that are synthesized from JSDoc comments.

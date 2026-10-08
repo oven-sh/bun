@@ -462,13 +462,17 @@ pub(crate) fn enqueue_peer_rows(
     register_moved(manager, &from)
 }
 
-/// Pending log lines go to stderr; `--silent` drops everything but errors.
+/// Pending log lines go to stderr; `--silent` drops everything but errors. An error among them fails the install here, because the reset below hides it from `install_with_manager`.
 fn print_log(manager: &PackageManager) -> crate::Result<()> {
     let log = manager.log_mut();
-    if manager.options.log_level != LogLevel::Silent || log.has_errors() {
+    let failed = log.has_errors();
+    if manager.options.log_level != LogLevel::Silent || failed {
         log.print(core::ptr::from_mut(Output::error_writer()))?;
     }
     log.reset();
+    if failed {
+        return Err(crate::Error::InstallFailed);
+    }
     Ok(())
 }
 
@@ -576,8 +580,7 @@ pub(crate) fn register_moved(
         }
         let mut tag_buf =
             vec![0u8; current.tag.pre.len() + current.tag.build.len()].into_boxed_slice();
-        let mut cursor: &mut [u8] = &mut tag_buf;
-        let original = current.clone_into(buf, &mut cursor);
+        let original = current.clone_into(buf, &mut tag_buf, &mut 0);
         *entry.value_ptr = PackageUpdateInfo {
             original_version_literal: Box::default(),
             written_back: false,

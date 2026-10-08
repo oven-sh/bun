@@ -1,6 +1,4 @@
-use core::ptr::NonNull;
-
-use bun_ptr::ThisPtr;
+use bun_ptr::{RefPtr, ThisPtr};
 
 use super::WebSocketProxyTunnel;
 
@@ -15,9 +13,9 @@ pub(crate) struct WebSocketProxy {
     target_is_https: bool,
     /// WebSocket upgrade request to send after CONNECT succeeds
     websocket_request_buf: Box<[u8]>,
-    /// TLS tunnel for wss:// through HTTP proxy
-    // Holds one intrusive ref; Drop calls shutdown()+deref().
-    tunnel: Option<NonNull<WebSocketProxyTunnel>>,
+    /// TLS tunnel for wss:// through HTTP proxy.
+    /// Holds one ref; `Drop` calls shutdown() and releases it.
+    tunnel: Option<RefPtr<WebSocketProxyTunnel>>,
 }
 
 impl WebSocketProxy {
@@ -47,13 +45,14 @@ impl WebSocketProxy {
     }
 
     /// Get the TLS tunnel for wss:// through HTTP proxy
-    pub(crate) fn get_tunnel(&self) -> Option<NonNull<WebSocketProxyTunnel>> {
-        self.tunnel
+    pub(crate) fn get_tunnel(&self) -> Option<ThisPtr<WebSocketProxyTunnel>> {
+        self.tunnel.as_ref().map(RefPtr::this_ptr)
     }
 
-    /// Set the TLS tunnel
-    pub(crate) fn set_tunnel(&mut self, new_tunnel: Option<NonNull<WebSocketProxyTunnel>>) {
-        self.tunnel = new_tunnel;
+    /// Store the TLS tunnel, taking over the caller's ref.
+    pub(crate) fn set_tunnel(&mut self, new_tunnel: RefPtr<WebSocketProxyTunnel>) {
+        debug_assert!(self.tunnel.is_none());
+        self.tunnel = Some(new_tunnel);
     }
 
     /// Take ownership of the WebSocket request buffer, clearing the internal reference.
@@ -68,12 +67,7 @@ impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
         if let Some(tunnel) = self.tunnel.take() {
-            // SAFETY: tunnel is a live intrusive-refcounted pointer; we hold one ref
-            // until deref() below releases it.
-            unsafe {
-                WebSocketProxyTunnel::shutdown(ThisPtr::new(tunnel.as_ptr()));
-                WebSocketProxyTunnel::deref(tunnel.as_ptr());
-            }
+            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
         }
     }
 }

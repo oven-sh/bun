@@ -120,10 +120,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub use draft::{
-    ConfigIterator, Parser, RegistryAuth, ScopeItem, ScopeIterator, ToStringFormatter,
-    apply_registry_auth, load_npmrc, load_npmrc_config,
-};
+pub use draft::{Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config};
 
 mod draft {
 
@@ -337,21 +334,8 @@ mod draft {
                     line_offset,
                 )?
                 .into_key();
-                let is_array: bool = {
-                    key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]")
-                    // Commenting out because options are not supported but we might
-                    // support them.
-                    // if (this.opts.bracked_array) {
-                    //     break :brk key_raw.len > 2 and bun.strings.endsWith(key_raw, "[]");
-                    // } else {
-                    //     // const gop = try duplicates.getOrPut(allocator, key_raw);
-                    //     // if (gop.found_existing) {
-                    //     //     gop.value_ptr.* = 1;
-                    //     // } else gop.value_ptr.* += 1;
-                    //     // break :brk gop.value_ptr.* > 1;
-                    //     @panic("We don't support this right now");
-                    // }
-                };
+                let is_array: bool =
+                    key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]");
 
                 let key = if is_array && bun_core::strings::ends_with(key_raw, b"[]") {
                     &key_raw[..key_raw.len() - 2]
@@ -969,7 +953,7 @@ mod draft {
     // ToStringFormatter
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct ToStringFormatter<'a> {
+    pub(crate) struct ToStringFormatter<'a> {
         pub(crate) d: &'a ExprData,
     }
 
@@ -1017,7 +1001,7 @@ mod draft {
     // ConfigIterator
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct ConfigIterator<'a> {
+    pub(crate) struct ConfigIterator<'a> {
         pub(crate) config: &'a E::Object,
         pub(crate) log: &'a mut Log,
 
@@ -1189,7 +1173,7 @@ mod draft {
     // ScopeIterator
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct ScopeIterator<'a> {
+    pub(crate) struct ScopeIterator<'a> {
         pub(crate) config: &'a E::Object,
         pub(crate) source: &'a Source,
         pub(crate) log: &'a mut Log,
@@ -1198,7 +1182,7 @@ mod draft {
         pub(crate) count: bool,
     }
 
-    pub struct ScopeItem {
+    pub(crate) struct ScopeItem {
         pub(crate) scope: Box<[u8]>,
         pub(crate) registry: NpmRegistry,
     }

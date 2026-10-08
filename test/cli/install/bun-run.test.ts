@@ -401,6 +401,34 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/41275
+  it("a __PURE__ marker that is not the first word of a // comment is not a DCE annotation", async () => {
+    const source = `
+      function repro() {
+        // \`/*#__PURE__*/\`
+        console.log("Hello, world!");
+      }
+      repro();
+      // Wrap class inside init: \`/*#__PURE__*/ (() => { let C = class C {}; return C; })()\`
+      console.log("second");
+      // @__PURE__
+      console.log("removed");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("Hello, world!\nsecond\n");
+    expect(exitCode).toBe(0);
+  });
+
   it("--ignore-dce-annotations ignores DCE annotations", async () => {
     using dir = tempDir("test", {
       "index.ts": `

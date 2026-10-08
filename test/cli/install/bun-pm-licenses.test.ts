@@ -846,7 +846,9 @@ describe("bun pm licenses", () => {
       patchInstalledManifest(dir, "one-dep", { license: "ISC\nGPL-3.0" });
       patchInstalledManifest(dir, "no-deps", { license: "BSD\t2" });
 
-      const stdout = await licensesText(dir, "--long");
+      // --no-summary drops the "bun pm licenses v<version> (<short sha>)" banner. A short sha can be all
+      // digits, and the banner would then pass the group-header filter below.
+      const stdout = await licensesText(dir, "--long", "--no-summary");
       expect(stdout).not.toContain("\u001b");
       expect(stdout).not.toContain("\r");
       expect(stdout).not.toContain("\t");

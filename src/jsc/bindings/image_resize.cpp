@@ -307,6 +307,40 @@ static void ModulateImpl(uint8_t* HWY_RESTRICT buf, size_t len, float brightness
     }
 }
 
+// u8×u8/255 with exact round-to-nearest: t=a·k+128; (t + (t>>8)) >> 8.
+template<class D8, class V8 = hn::Vec<D8>>
+static HWY_INLINE V8 MulDiv255(D8 d8, V8 a, V8 k)
+{
+    const hn::RepartitionToWide<D8> d16;
+    const auto bias = hn::Set(d16, 128);
+    auto lo = hn::Add(hn::Mul(hn::PromoteLowerTo(d16, a), hn::PromoteLowerTo(d16, k)), bias);
+    auto hi = hn::Add(hn::Mul(hn::PromoteUpperTo(d16, a), hn::PromoteUpperTo(d16, k)), bias);
+    lo = hn::ShiftRight<8>(hn::Add(lo, hn::ShiftRight<8>(lo)));
+    hi = hn::ShiftRight<8>(hn::Add(hi, hn::ShiftRight<8>(hi)));
+    return hn::OrderedDemote2To(d8, lo, hi);
+}
+
+// In-place inverted CMYK (byte = 255 − ink, libjpeg-turbo's TJPF_CMYK) → opaque RGBA via RGB = CMY·K/255, the non-CMS formula Skia and pdf.js use.
+static void CmykToRgbaImpl(uint8_t* HWY_RESTRICT buf, size_t npx)
+{
+    const hn::ScalableTag<uint8_t> d8;
+    const size_t N = hn::Lanes(d8);
+    const auto opaque = hn::Set(d8, 0xFF);
+    size_t i = 0;
+    for (; i + N <= npx; i += N, buf += N * 4) {
+        hn::Vec<decltype(d8)> c, m, y, k;
+        hn::LoadInterleaved4(d8, buf, c, m, y, k);
+        hn::StoreInterleaved4(MulDiv255(d8, c, k), MulDiv255(d8, m, k), MulDiv255(d8, y, k), opaque, d8, buf);
+    }
+    for (; i < npx; i++, buf += 4) {
+        const uint32_t k = buf[3];
+        buf[0] = static_cast<uint8_t>((buf[0] * k + 127) / 255);
+        buf[1] = static_cast<uint8_t>((buf[1] * k + 127) / 255);
+        buf[2] = static_cast<uint8_t>((buf[2] * k + 127) / 255);
+        buf[3] = 0xFF;
+    }
+}
+
 } // namespace HWY_NAMESPACE
 } // namespace bun_image
 HWY_AFTER_NAMESPACE();
@@ -322,6 +356,7 @@ HWY_EXPORT(Rotate270Impl);
 HWY_EXPORT(FlipHImpl);
 HWY_EXPORT(FlipVImpl);
 HWY_EXPORT(ModulateImpl);
+HWY_EXPORT(CmykToRgbaImpl);
 HWY_EXPORT(NearestPaletteImpl);
 
 namespace {
@@ -562,6 +597,11 @@ void bun_image_flip_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* dst
 void bun_image_modulate_rgba8(uint8_t* buf, size_t len, float brightness, float saturation)
 {
     BUN_HWY_DISPATCH(ModulateImpl)(buf, len, brightness, saturation);
+}
+
+void bun_image_cmyk_to_rgba8(uint8_t* buf, size_t len)
+{
+    BUN_HWY_DISPATCH(CmykToRgbaImpl)(buf, len / 4);
 }
 
 uint32_t bun_image_nearest_palette(const uint8_t* palette, uint32_t k,

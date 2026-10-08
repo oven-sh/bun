@@ -25,7 +25,7 @@ use bun_libuv_sys as uv;
 //   [UV_X]         — no counterpart (EAI_* resolver codes, UNKNOWN, ERRNO_MAX)
 //
 // ORDER IS LOAD-BEARING: `enum_map::Enum` derives ordinals from declaration
-// order, and `SystemErrno::to_e` transmutes by discriminant, so the two enums
+// order, and `SystemErrno::to_e` maps by discriminant, so the two enums
 // MUST stay in lockstep. Editing this list updates both atomically.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -85,18 +85,7 @@ macro_rules! __errno_enum_with_uv_tail {
 
 for_each_uv_errno! { __errno_enum_with_uv_tail {
 #[repr(u16)]
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Hash,
-    Debug,
-    strum::IntoStaticStr,
-    strum::EnumString,
-    strum::FromRepr,
-    enum_map::Enum,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::FromRepr, enum_map::Enum)]
 pub enum E {
     SUCCESS = 0,
     PERM = 1,
@@ -106,7 +95,6 @@ pub enum E {
     IO = 5,
     NXIO = 6,
     // Rust identifiers cannot start with a digit.
-    #[strum(serialize = "2BIG")]
     _2BIG = 7,
     NOEXEC = 8,
     BADF = 9,
@@ -242,16 +230,13 @@ pub enum E {
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
 impl E {
+    /// An undeclared discriminant maps to `UNKNOWN`.
     #[inline]
-    pub(crate) const fn from_raw(n: u16) -> Self {
-        // `E` is sparse (dense 0..=137 plus isolated UV_* tags ~3000–4095), so
-        // `n < MAX` is NOT a sufficient validity check. `strum::FromRepr`
-        // generates a `const fn from_repr` matching every declared variant.
-        debug_assert!(Self::from_repr(n).is_some(), "invalid E discriminant");
-        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
-        // of `E`. Debug-asserted above; for
-        // untrusted input use `try_from_raw` instead.
-        unsafe { core::mem::transmute::<u16, E>(n) }
+    pub const fn from_raw(n: u16) -> Self {
+        match Self::from_repr(n) {
+            Some(e) => e,
+            None => Self::UNKNOWN,
+        }
     }
 
     /// Checked discriminant lookup —
@@ -332,6 +317,22 @@ impl E {
     pub const EFTYPE: E = E::FTYPE;
 }
 
+/// `ENOENT`, as the POSIX alias `E = SystemErrno` spells it, not the variant name `NOENT`.
+impl From<E> for &'static str {
+    #[inline]
+    fn from(e: E) -> &'static str {
+        // Same discriminant set; `SystemErrno::to_e` is the reverse cast.
+        <&'static str>::from(SystemErrno::from_raw(e as u16))
+    }
+}
+
+impl From<&E> for &'static str {
+    #[inline]
+    fn from(e: &E) -> &'static str {
+        <&'static str>::from(*e)
+    }
+}
+
 /// Mirrors `bun_errno::posix` on POSIX targets so callers can `use
 /// bun_errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
 /// `errno`, so this is the minimal subset higher tiers reach for.
@@ -349,20 +350,6 @@ pub mod posix {
 /// Uppercase re-export so `bun_errno::S::IFDIR` compiles cross-platform.
 pub use self::s as S;
 
-use super::GetErrno;
-
-// Windows errno comes from `GetLastError()` regardless of `rc`, so every impl
-// ignores `self`. Kept to the same concrete-type set as POSIX — a blanket impl
-// would shadow `bun_sys::Error::get_errno` (inherent method) via autoref.
-macro_rules! impl_win_get_errno {
-    ($($t:ty),*) => {$(
-        impl GetErrno for $t {
-            #[inline] fn get_errno(self) -> E { get_errno(self) }
-        }
-    )*};
-}
-impl_win_get_errno!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
-
 // ──────────────────────────────────────────────────────────────────────────
 // S — file mode bits
 // ──────────────────────────────────────────────────────────────────────────
@@ -373,25 +360,18 @@ impl_win_get_errno!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 pub use bun_core::S as s;
 
 // ──────────────────────────────────────────────────────────────────────────
-// getErrno
+// last_error
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `get_errno(rc)` — `rc` is ignored;
-/// NTSTATUS callers use `windows::translate_ntstatus_to_errno` directly.
-pub fn get_errno<T>(_rc: T) -> E {
-    if let Some(sys) = Win32Error::get().to_system_errno() {
-        return sys.to_e();
+/// `GetLastError()` as `E`: `SUCCESS` when no code is recorded, else
+/// `Win32ErrorExt::to_e`. For the error of a call known to have failed use
+/// `bun_sys::Error::from_win32` / `bun_sys::windows::last_system_errno`.
+#[inline]
+pub fn last_error() -> E {
+    match Win32Error::get() {
+        Win32Error::SUCCESS => E::SUCCESS,
+        code => code.to_e(),
     }
-
-    // `wsa_get_last_error()` returns `Option<SystemErrno>` (already routed
-    // through the Win32Error→errno switch). An unmapped non-zero WSA code
-    // yields `None` there and falls through to `SUCCESS` — it must NOT surface
-    // as `E::UNKNOWN` (which `Win32ErrorExt::to_e`'s `unwrap_or` would do).
-    if let Some(wsa) = windows::wsa_get_last_error() {
-        return wsa.to_e();
-    }
-
-    E::SUCCESS
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -559,16 +539,17 @@ pub enum SystemErrno {
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
 /// Type-dispatch shim for `SystemErrno::init`.
-/// Covers every concrete type the codebase actually passes — `i64` (shared
-/// `Error.rs` paths), `u32`/`DWORD` (`GetLastError()`), `c_int` (libuv rc),
-/// `u16`, and `Win32Error`.
+/// Covers every concrete type the codebase actually passes — `i64`
+/// (POSIX-shaped shared call sites), `u32`/`DWORD` (a Win32/WSA code carried
+/// as an integer), and `c_int` (`Bun__errnoName`, which may receive a libuv
+/// code). A typed `Win32Error` uses `Win32ErrorExt` instead.
 pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
 impl SystemErrnoInit for i64 {
     #[inline]
     fn into_system_errno(self) -> Option<SystemErrno> {
-        // Only `u16` / positive `c_int` inputs enter the Win32/uv mapping
+        // Only `u32` / positive `c_int` inputs enter the Win32/uv mapping
         // branch; `i64` is a direct discriminant cast, NOT the Win32Error
         // mapper. Routing i64 through `init_c_int` would mis-map e.g. 13 →
         // EINVAL (Win32 ERROR_INVALID_DATA) instead of EACCES (discriminant 13).
@@ -596,23 +577,13 @@ impl SystemErrnoInit for i32 {
 impl SystemErrnoInit for u32 {
     #[inline]
     fn into_system_errno(self) -> Option<SystemErrno> {
-        // GetLastError()/WSAGetLastError() return DWORD; HRESULT-shaped facility
-        // codes and some installer/WinHTTP errors exceed 0xFFFF. Those are
-        // intentionally unmapped → None. Codes that DO fit u16 route via
-        // the Win32Error→errno table.
-        u16::try_from(self).ok().and_then(SystemErrno::init_u16)
-    }
-}
-impl SystemErrnoInit for u16 {
-    #[inline]
-    fn into_system_errno(self) -> Option<SystemErrno> {
-        SystemErrno::init_u16(self)
-    }
-}
-impl SystemErrnoInit for Win32Error {
-    #[inline]
-    fn into_system_errno(self) -> Option<SystemErrno> {
-        SystemErrno::init_win32_error(self)
+        // A DWORD from GetLastError() and friends: values above 0xFFFF are
+        // unmapped unless they are a `FACILITY_WIN32` HRESULT wrapping a Win32
+        // code (see `Win32Error::from_u32`).
+        match Win32Error::from_u32(self) {
+            Win32Error(u16::MAX) => None,
+            code => SystemErrno::init_numeric(code.0),
+        }
     }
 }
 
@@ -630,17 +601,12 @@ impl SystemErrno {
     }
 
     /// Cross-platform `SystemErrno::init` — POSIX targets define a single
-    /// `init(i64)`; Windows splits it into typed entry points (`init_u16` /
-    /// `init_c_int` / `init_win32_error`). Re-unified here behind `SystemErrnoInit` so
-    /// shared call sites can keep writing `SystemErrno::init(code)`.
+    /// `init(i64)`; Windows dispatches on the integer type via
+    /// `SystemErrnoInit` so shared call sites can keep writing
+    /// `SystemErrno::init(code)`.
     #[inline]
     pub fn init<C: SystemErrnoInit>(code: C) -> Option<SystemErrno> {
         code.into_system_errno()
-    }
-
-    /// `init(code: u16)` — Win32/WSA error codes and negated-uv codes encoded as u16.
-    pub(crate) fn init_u16(code: u16) -> Option<SystemErrno> {
-        Self::init_numeric(code)
     }
 
     /// `init(code: c_int)` — same as u16 path for positives; negatives are negated and retried.
@@ -782,20 +748,16 @@ impl SystemErrno {
             W::META_EXPANSION_TOO_LONG => SystemErrno::E2BIG,
             W::WSAESOCKTNOSUPPORT => SystemErrno::ESOCKTNOSUPPORT,
             W::DELETE_PENDING => SystemErrno::EBUSY,
+            W::BAD_EXE_FORMAT => SystemErrno::EFTYPE,
             _ => return None,
         })
     }
 }
 
-/// Thin typed adapter over the canonical row table in `bun_libuv_sys`.
+/// A negative libuv return code → `E`; a code libuv does not define is `UNKNOWN`.
 pub fn translate_uv_error_to_e(code: c_int) -> E {
     uv::uv_err_to_e_discriminant(code)
         .and_then(E::try_from_raw)
-        .or_else(|| {
-            u16::try_from(code.wrapping_neg())
-                .ok()
-                .and_then(E::try_from_raw)
-        })
         .unwrap_or(E::UNKNOWN)
 }
 
@@ -828,13 +790,13 @@ pub mod uv_e {
 // ──────────────────────────────────────────────────────────────────────────
 // `windows` — Win32Error / NTSTATUS / kernel32 surface moved DOWN from
 // `bun_sys::windows` (cycle-break per PORTING.md §Dep-cycle fixes). Only the
-// subset referenced by `SystemErrno::init` / `get_errno` is mirrored; the full
+// subset referenced by `SystemErrno::init` / `last_error` is mirrored; the full
 // 1100-variant table stays in `bun_sys::windows` and re-exports this newtype.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     use super::{E, SystemErrno};
 
-    /// `enum(u16) Win32Error` — newtype over `GetLastError()`'s low word.
+    /// `enum(u16) Win32Error` — newtype over `GetLastError()` (see `Win32Error::get`).
     /// Re-exported from the tier-0 `bun_windows_sys` leaf crate (no cycle:
     /// that crate has zero workspace deps), so this module and
     /// `bun_sys::windows` share one nominal type.
@@ -843,40 +805,25 @@ pub mod windows {
     /// `NTSTATUS` — `enum(u32) { …, _ }`. Same provenance as `Win32Error`.
     pub use bun_windows_sys::NTSTATUS;
 
-    use bun_windows_sys::ws2_32::WSAGetLastError;
-
     /// Extension trait for `Win32Error` → `SystemErrno`/`E` mapping.
-    /// `bun_windows_sys` is tier-0 and cannot name `SystemErrno`, so
-    /// `to_system_errno()` surfaces here as an extension method instead.
+    /// `bun_windows_sys` is tier-0 and cannot name `SystemErrno`, so the
+    /// mapping surfaces here as extension methods instead.
     pub trait Win32ErrorExt: Copy {
-        fn to_system_errno(self) -> Option<SystemErrno>;
-        /// Convenience: Win32 error → `E`, falling back to `E::UNKNOWN` for
-        /// codes not in the Win32→errno table.
-        ///
-        /// **Note:** NOT appropriate where unmapped codes must fall through
-        /// to `SUCCESS` (e.g. the WSA path of `get_errno`); those callers
-        /// must use `to_system_errno()` and choose their own fallback.
+        /// The errno for a failed call whose `GetLastError()` is `self`: its row
+        /// in the Win32→errno table (`init_win32_error`), else `EUNKNOWN` —
+        /// including `SUCCESS`, a failure that set no code. Compare against
+        /// `Win32Error::SUCCESS` first when the call may have succeeded.
+        fn to_system_errno(self) -> SystemErrno;
         #[inline]
         fn to_e(self) -> E {
-            self.to_system_errno()
-                .map(SystemErrno::to_e)
-                .unwrap_or(E::UNKNOWN)
+            self.to_system_errno().to_e()
         }
     }
     impl Win32ErrorExt for Win32Error {
         #[inline]
-        fn to_system_errno(self) -> Option<SystemErrno> {
-            SystemErrno::init_win32_error(self)
+        fn to_system_errno(self) -> SystemErrno {
+            SystemErrno::init_win32_error(self).unwrap_or(SystemErrno::EUNKNOWN)
         }
-    }
-
-    /// Feeds the raw WSA code (`c_int`) through the Win32→errno switch.
-    /// Returns `Some(SUCCESS)` for `0` and `None` for any non-zero code with
-    /// no mapping (e.g. `WSANOTINITIALISED`/`WSAEDISCON`); callers that need
-    /// a success-on-unmapped fallthrough (`getErrno`) rely on that `None`.
-    #[inline]
-    pub(crate) fn wsa_get_last_error() -> Option<SystemErrno> {
-        SystemErrno::init_c_int(WSAGetLastError())
     }
 
     /// Moved DOWN so `bun_errno` owns the only NTSTATUS→`E` mapping (cycle-break).

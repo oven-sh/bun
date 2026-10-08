@@ -1,5 +1,14 @@
-declare const self: typeof globalThis;
-type WebWorker = InstanceType<typeof globalThis.Worker>;
+declare const self: Omit<typeof globalThis, "onmessage"> & {
+  onmessage: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
+  onmessageerror: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
+};
+type WebWorker = InstanceType<typeof globalThis.Worker> & {
+  getHeapSnapshot(options: unknown): Promise<string>;
+  getHeapStatistics(): Promise<Record<string, number | boolean>>;
+  startCpuProfileInternal(): Promise<void>;
+  stopCpuProfileInternal(): Promise<string>;
+  cpuUsageInternal(): Promise<{ user: number; system: number }>;
+};
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
@@ -52,16 +61,6 @@ function validateWorkerFilename(filename) {
   throw $ERR_WORKER_PATH(message);
 }
 
-const {
-  MessageChannel,
-  BroadcastChannel,
-  Worker: WebWorker,
-} = globalThis as typeof globalThis & {
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
-};
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
@@ -79,6 +78,13 @@ const {
   10: _isNodeWorker,
   11: _setParentPort,
   12: _setStdioPorts,
+  // The intrinsic web constructors, captured natively so user code replacing the
+  // globals (e.g. happy-dom's registrator) before this module loads cannot break
+  // worker_threads (#40268).
+  13: _MessagePort,
+  14: MessageChannel,
+  15: BroadcastChannel,
+  16: WebWorker,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -93,6 +99,13 @@ const {
   boolean,
   (port: MessagePort) => void,
   (ports: object) => void,
+  typeof globalThis.MessagePort,
+  typeof globalThis.MessageChannel,
+  typeof globalThis.BroadcastChannel,
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -281,7 +294,6 @@ function injectFakeEmitter(Class) {
   Object.setPrototypeOf(proto, inherited);
 }
 
-const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
@@ -343,7 +355,7 @@ function setupWorkerStdio(stdio) {
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");
-  globalThis.console = new Console(stdoutStream, stderrStream);
+  (globalThis as { console: unknown }).console = new Console(stdoutStream, stderrStream);
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for
@@ -580,7 +592,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   return packed;
 }
 
-let workerData = unpackJSTransferables(_workerData);
+let workerData: any = unpackJSTransferables(_workerData);
 let threadId = _threadId;
 // node: main-thread and unspecified-worker name are both "" (trimmed).
 const threadName = isMainThread ? "" : (_threadName ?? "");
@@ -591,7 +603,7 @@ let parentPort: MessagePort | null = null;
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");
-messaging.initThreadInfo(threadId, isMainThread);
+messaging.initThreadInfo(threadId, isMainThread, MessageChannel);
 // Captured stdio + the messaging control port ride inside workerData (wrapped;
 // ports transferred). Unwrap and bind the worker's stdio / messaging hub.
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that loads this module
@@ -607,7 +619,7 @@ if (
 ) {
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
-  const transferredParentPort = workerData[BUN_WORKER_PARENT_PORT_KEY];
+  const transferredParentPort: MessagePort | undefined = workerData[BUN_WORKER_PARENT_PORT_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
@@ -1039,7 +1051,7 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate(callback: unknown) {
+  terminate(callback?: unknown) {
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
@@ -1058,7 +1070,7 @@ class Worker extends EventEmitter {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(undefined);
     }
 
-    const { resolve, promise } = Promise.withResolvers();
+    const { resolve, promise } = Promise.withResolvers<number>();
     this.#worker.addEventListener(
       "close",
       event => {
@@ -1205,10 +1217,6 @@ class Worker extends EventEmitter {
     const message = event.message;
     if (message !== "") {
       error = new Error(message, { cause: event });
-      const stack = event?.stack;
-      if (stack) {
-        error.stack = stack;
-      }
     }
     // Reshape the native 'ModuleNotFound ... (entry point)' error into node's
     // "Cannot find module '<path>'" (MODULE_NOT_FOUND).
@@ -1223,12 +1231,12 @@ class Worker extends EventEmitter {
     this.emit("error", error);
   }
 
-  #onMessage(event: MessageEvent) {
+  #onMessage(event: Pick<MessageEvent, "data">) {
     // TODO: is this right?
     this.emit("message", event.data);
   }
 
-  #onMessageError(event: MessageEvent) {
+  #onMessageError(event: Pick<MessageEvent, "data">) {
     // TODO: is this right?
     this.emit("messageerror", (event as any).error ?? event.data ?? event);
   }

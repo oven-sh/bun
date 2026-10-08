@@ -240,6 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
 
     if (port.isString()) {
         auto port_str = port.getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto trimmed = port_str.trim([](auto c) {
             // https://tc39.es/ecma262/multipage/text-processing.html#sec-string.prototype.trim
             // The definition of white space is the union of *WhiteSpace* and *LineTerminator*.
@@ -369,19 +370,6 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value,
-    ASCIILiteral name)
-{
-    if (value.isCell()) {
-        auto type = value.asCell()->type();
-        if (type >= Int8ArrayType && type <= DataViewType) {
-            return JSValue::encode(jsUndefined());
-        }
-    }
-
-    return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -505,12 +493,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
     auto encoding = callFrame->argument(1);
 
     auto normalized = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, encoding);
+    RETURN_IF_EXCEPTION(scope, {});
     if (normalized == BufferEncodingType::hex) {
         auto data = callFrame->argument(0);
 
         size_t length = 0;
         if (data.isString()) {
-            length = data.toString(globalObject)->length();
+            length = asString(data)->length();
         } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
             length = view->length();
         } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(data)) {

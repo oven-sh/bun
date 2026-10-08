@@ -39,6 +39,11 @@
       "SourceLocation"
     ]
   },
+  "src/jsc/VirtualMachine.rs": {
+    "unsafe impl Send": [
+      "Shared"
+    ]
+  },
   "src/jsc/hot_reloader.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -46,11 +51,6 @@
     ],
     "unsafe impl Sync": [
       "WatchChangedPaths"
-    ]
-  },
-  "src/jsc/node_path.rs": {
-    "unsafe impl Send": [
-      "ThreadSafe<T>"
     ]
   },
   "src/jsc/web_worker.rs": {
@@ -63,12 +63,12 @@
     "unsafe impl Send": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ],
     "unsafe impl Sync": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ]
   },
   "src/runtime/api/JSTranspiler.rs": {
@@ -178,6 +178,11 @@
     ],
     "unsafe impl Sync": [
       "PathWatcherManager"
+    ]
+  },
+  "src/runtime/node/types.rs": {
+    "unsafe impl Send": [
+      "ThreadIsolated<T>"
     ]
   },
   "src/runtime/shell/IOReader.rs": {

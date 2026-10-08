@@ -465,3 +465,43 @@ impl CustomIdent {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub type CustomIdentList = SmallList<CustomIdent, 1>;
+
+/// `none | <custom-ident>+`: the `none` keyword, or a space-separated list of
+/// [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
+#[derive(Clone, crate::CssEql, crate::DeepClone)]
+pub enum NoneOrCustomIdentList {
+    /// The `none` keyword.
+    None,
+    /// A list of idents.
+    Idents(CustomIdentList),
+}
+
+impl NoneOrCustomIdentList {
+    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+        let mut idents = CustomIdentList::default();
+        while let Ok(ident) = input.try_parse(CustomIdent::parse) {
+            if strings::eql_case_insensitive_ascii_check_length(ident.v(), b"none") {
+                if idents.len() == 0 {
+                    return Ok(Self::None);
+                }
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
+            idents.append(ident);
+        }
+        if idents.len() == 0 {
+            return Err(input.new_error_for_next_token());
+        }
+        Ok(Self::Idents(idents))
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            Self::None => dest.write_str(b"none"),
+            Self::Idents(idents) => dest.write_separated(
+                idents.slice(),
+                |d| d.write_char(b' '),
+                |d, ident| ident.to_css(d),
+            ),
+        }
+    }
+}

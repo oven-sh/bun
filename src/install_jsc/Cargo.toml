@@ -21,6 +21,5 @@ bun_install.workspace = true
 bun_js_parser_jsc.workspace = true
 bun_jsc.workspace = true
 bun_ast.workspace = true
-bun_ast_jsc.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true

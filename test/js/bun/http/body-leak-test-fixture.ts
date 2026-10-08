@@ -1,9 +1,4 @@
-// RSS on darwin keeps freed-but-mapped (MADV_FREE_REUSABLE) pages, so it only reports
-// the high-water mark; memoryFootprint() is what the process actually retains.
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 async function memoryUsage() {
   Bun.gc(true);
@@ -11,9 +6,11 @@ async function memoryUsage() {
   return rss();
 }
 
+const http2 = process.argv.includes("--http2");
 const server = Bun.serve({
   port: 0,
   idleTimeout: 0,
+  ...(http2 ? { tls: require("harness").tls, http2: true } : {}),
   async fetch(req: Request) {
     const url = req.url;
     if (url.endsWith("/report")) {

@@ -31,45 +31,20 @@ impl Params {
     pub(crate) const MIN_WINDOW_BITS: u8 = 8;
 }
 
-#[derive(Default)]
-pub struct RareData {
-    libdeflate_decompressor: Option<libdeflate_sys::OwnedDecompressor>,
-    // PERF: a 128KB inline buffer reused as scratch for (de)compression
-    // output could avoid per-call allocation — profile if hot.
-}
-
-impl RareData {
-    pub(crate) const STACK_BUFFER_SIZE: usize = 128 * 1024;
-
-    pub(crate) fn array_list(&self) -> Vec<u8> {
-        // PERF: allocates a fresh heap Vec per call — profile if hot.
-        Vec::with_capacity(Self::STACK_BUFFER_SIZE)
-    }
-
-    pub(crate) fn decompressor(&mut self) -> Option<&mut libdeflate_sys::Decompressor> {
-        if self.libdeflate_decompressor.is_none() {
-            self.libdeflate_decompressor = libdeflate_sys::OwnedDecompressor::new();
-        }
-        self.libdeflate_decompressor.as_deref_mut()
-    }
-}
-
 /// Parent module references this type as `WebSocketDeflate`.
 pub type WebSocketDeflate = PerMessageDeflate;
 /// Parent module matches `websocket_deflate::Error::*` against `decompress()`'s
 /// error type.
 pub(crate) type Error = DecompressError;
 
+/// The zlib streams are per connection: with context takeover (the default)
+/// each message's back-references reach into the previous message's window.
+/// The libdeflate fast path is stateless and lives in the VM's
+/// `bun_jsc::RareData`, shared by every client on the thread.
 pub struct PerMessageDeflate {
     pub(crate) compress_stream: zlib::DeflateEncoder,
     pub(crate) decompress_stream: zlib::InflateDecoder,
     pub(crate) params: Params,
-    // VM `bun_jsc::RareData` would be the natural owner (pooled libdeflate
-    // handles, shared across connections), but the concrete type is *this*
-    // `RareData`, which `bun_jsc` cannot name without a dep cycle, so each
-    // connection owns a fresh instance instead: a per-connection libdeflate
-    // allocation, not a correctness divergence.
-    pub(crate) rare_data: RareData,
 }
 
 // Constants from zlib.h
@@ -79,6 +54,11 @@ const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
+
+/// Output space reserved up front for one message. The one-shot libdeflate
+/// path gets exactly that space, so it is skipped for compressed inputs at
+/// least this large: their output would not fit either.
+const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
 
 // Maximum decompressed message size (128 MB)
 const MAX_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
@@ -125,8 +105,6 @@ impl PerMessageDeflate {
             params,
             compress_stream,
             decompress_stream,
-            // Fresh per-connection instance; see the `rare_data` field note.
-            rare_data: RareData::default(),
         }))
     }
 
@@ -135,19 +113,24 @@ impl PerMessageDeflate {
             return false;
         }
 
-        len < RareData::STACK_BUFFER_SIZE
+        len < INFLATE_BUFFER_SIZE
     }
 
+    /// Inflate one message onto `out`. `decompressor` is the thread's shared
+    /// libdeflate handle (`None` when it could not be allocated).
     pub(crate) fn decompress(
         &mut self,
+        decompressor: Option<&mut libdeflate_sys::Decompressor>,
         in_buf: &[u8],
         out: &mut Vec<u8>,
     ) -> Result<(), DecompressError> {
         let initial_len = out.len();
+        out.try_reserve_exact(INFLATE_BUFFER_SIZE)
+            .map_err(|_| DecompressError::OutOfMemory)?;
 
         // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
         if Self::can_use_libdeflate(in_buf.len()) {
-            if let Some(decompressor) = self.rare_data.decompressor() {
+            if let Some(decompressor) = decompressor {
                 let result =
                     decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
                 if result.status == libdeflate_sys::Status::Success {

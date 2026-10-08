@@ -6,9 +6,9 @@
 #include "BunStandaloneTextSink.h"
 #include "BunStreamSource.h"
 #include "JSCrossRealmTransformState.h"
-#include "JSDirectSinkCloseState.h"
 #include "JSAsyncIteratorSourceOperation.h"
 #include "JSDirectStreamController.h"
+#include "JSDirectStreamSource.h"
 #include "JSOneShotDirectSink.h"
 #include "JSReadableStreamIntoArrayOperation.h"
 #include "JSPullIntoDescriptor.h"
@@ -44,6 +44,7 @@ struct HandlerTableEntry {
 static constexpr HandlerTableEntry handlerTable[] = {
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_HANDLER_TABLE_ENTRY)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_HANDLER_TABLE_ENTRY)
+    FOR_EACH_WEB_STREAMS_METHOD_HANDLER(WEB_STREAMS_HANDLER_TABLE_ENTRY)
 };
 // clang-format on
 #undef WEB_STREAMS_HANDLER_TABLE_ENTRY

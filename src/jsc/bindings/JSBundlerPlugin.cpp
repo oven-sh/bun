@@ -65,7 +65,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     auto* nsGroup = group(namespaceString, index);
 
     if (nsGroup == nullptr) {
-        namespaces.append(namespaceString);
+        namespaces.append(namespaceString.isolatedCopy());
         groups.append(Vector<FilterRegExp> {});
         nsGroup = &groups.last();
         index = namespaces.size() - 1;
@@ -258,7 +258,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
         auto* nsGroup = group(namespaceString, index);
 
         if (nsGroup == nullptr) {
-            namespaces.append(namespaceString);
+            namespaces.append(namespaceString.isolatedCopy());
             groups.append(Vector<FilterRegExp> {});
             nsGroup = &groups.last();
             index = namespaces.size() - 1;
@@ -376,22 +376,25 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
         return {};
     }
     WTF::String on_before_parse_symbol = on_before_parse_symbol_js.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // The dlopen *void handle is attached to the node_addon as a NapiExternal
-    Bun::NapiExternal* napi_external = dynamicDowncast<Bun::NapiExternal>(node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName()));
+    JSValue napiDlopenHandle = node_addon.getObject()->get(globalObject, WebCore::builtinNames(vm).napiDlopenHandlePrivateName());
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::NapiExternal* napi_external = dynamicDowncast<Bun::NapiExternal>(napiDlopenHandle);
     if (!napi_external) [[unlikely]] {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Expected node_addon (2nd argument) to have a napiDlopenHandle property"_s);
         return {};
     }
     Bun::NapiModuleMeta* meta = (Bun::NapiModuleMeta*)napi_external->value();
     void* dlopen_handle = meta->dlopenHandle;
-    CString utf8 = on_before_parse_symbol.utf8();
+    UTF8CString utf8 = on_before_parse_symbol.utf8();
 
 #if OS(WINDOWS)
-    void* on_before_parse_symbol_ptr = GetProcAddress((HMODULE)dlopen_handle, utf8.data());
+    void* on_before_parse_symbol_ptr = GetProcAddress((HMODULE)dlopen_handle, utf8.legacyCStringPointer());
     const char** native_plugin_name = (const char**)GetProcAddress((HMODULE)dlopen_handle, "BUN_PLUGIN_NAME");
 #else
-    void* on_before_parse_symbol_ptr = dlsym(dlopen_handle, utf8.data());
+    void* on_before_parse_symbol_ptr = dlsym(dlopen_handle, utf8.legacyCStringPointer());
     const char** native_plugin_name = (const char**)dlsym(dlopen_handle, "BUN_PLUGIN_NAME");
 #endif
 

@@ -201,6 +201,21 @@ pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i
     retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
 }
 
+/// `faccessat(2)`, the syscall without a `flags` argument. Do not use libc's
+/// `faccessat()` for this: glibc 2.33+ issues `faccessat2` first even for
+/// `flags == 0` and falls back on ENOSYS only, so a seccomp filter that
+/// answers the newer call with any other errno (EPERM from a profile written
+/// before Linux 5.8) fails every check. With empty flags rustix goes straight
+/// to `faccessat`.
+#[inline]
+pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
+    // `Access` is `c_uint` bits on rustix's linux_raw backend, `c_int` on its
+    // libc backend (Android, where bionic's `faccessat` is already flag-less).
+    let access = rustix::fs::Access::from_bits_retain(mode as _);
+    let dir = dir.as_borrowed_fd();
+    retry(|| rustix::fs::accessat(dir, path.as_cstr(), access, rustix::fs::AtFlags::empty()))
+}
+
 /// Map rustix's kernel `struct stat` → `libc::stat`.
 ///
 /// On Bun's tier-1 Linux targets (x86_64, aarch64 — gnu/musl/bionic alike),

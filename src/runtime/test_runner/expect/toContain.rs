@@ -46,8 +46,8 @@ impl Expect {
                 }
             }
         } else if value.is_string_literal() && expected.is_string_literal() {
-            let value_string = value.to_slice(global)?;
-            let expected_string = expected.to_slice(global)?;
+            let value_string = value.to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
 
             if expected_string.slice().is_empty() {
                 // edge case empty string is always contained

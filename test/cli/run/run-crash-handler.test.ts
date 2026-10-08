@@ -13,7 +13,7 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
-const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
+const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-23"));
 
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
@@ -128,6 +128,27 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(exitCode).not.toBe(0);
     void stdout;
   });
+});
+
+// The report header names the CPU features the crash handler detected. On
+// x86_64 that detection uses cpuid directly (CPUFeatures.cpp). Every supported
+// x64 CPU has SSE4.2 and POPCNT, since the baseline build targets Nehalem.
+// AVX is optional. AVX2 and AVX-512 are reported only with AVX, and after it.
+test("the crash report lists the CPU features", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const cpuLine = stderr.split(/\r?\n/).find(line => line.startsWith("CPU: "));
+  if (process.arch === "x64") {
+    expect(cpuLine).toMatch(/^CPU: sse42 popcnt(?: avx(?: avx2)?(?: avx512)?)?$/);
+  } else {
+    expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
+  }
+  expect(exitCode).not.toBe(0);
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.

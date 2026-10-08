@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
-pub struct RefCountedStr {
+pub(crate) struct RefCountedStr {
     pub(super) refcount: Cell<u32>,
     // Owning `Box<[u8]>`, so `byte_slice`/`free_str` need no raw-parts rebuild.
     data: Box<[u8]>,
@@ -23,13 +23,13 @@ impl RefCountedStr {
         &self.data
     }
 
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         self.refcount.set(self.refcount.get() + 1);
     }
 
     // Takes `*mut Self` because reaching refcount==0 deallocates the
     // `Box<Self>` that backs `this`; a `&self` borrow would dangle across that drop.
-    pub unsafe fn deref(this: *mut RefCountedStr) {
+    pub(crate) unsafe fn deref(this: *mut RefCountedStr) {
         // SAFETY: caller guarantees `this` was produced by `init` and is still
         // live; on hitting 0, `this` is uniquely owned and Box-allocated.
         unsafe {

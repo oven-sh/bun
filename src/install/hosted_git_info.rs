@@ -50,13 +50,12 @@
 //! tags like `github:` which are handled as "shortcuts" by this library.
 
 use core::ops::Range;
-use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
-use bun_core::{OwnedString, strings};
+use bun_core::strings;
 use bun_url::PercentEncoding;
-use bun_url::whatwg::URL as JscUrl;
+use bun_url::whatwg::{Parsed, URL};
 use enum_map::{Enum, EnumMap};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -255,8 +254,6 @@ impl HostedGitInfo {
         let Ok(parsed) = parse_url(git_url_mut) else {
             return Ok(None);
         };
-        // `parsed.url` is `OwnedJscUrl`; Drop handles `defer parsed.url.deinit()`.
-
         let host_provider = match parsed.proto {
             UrlProtocol::WellFormed(p) => p
                 .host_provider()
@@ -333,28 +330,8 @@ impl HostedGitInfo {
 // parse_url
 // ──────────────────────────────────────────────────────────────────────────
 
-/// RAII handle over a heap-allocated `WTF::URL` (C++). The allocation comes from
-/// `URL__fromString` (C++ `new`), so it MUST be freed via `URL__deinit` — wrapping
-/// the pointer in `Box` is allocator-mismatch UB and never runs the C++ destructor.
-pub struct OwnedJscUrl(NonNull<JscUrl>);
-impl core::ops::Deref for OwnedJscUrl {
-    type Target = JscUrl;
-    fn deref(&self) -> &JscUrl {
-        // SAFETY: `from_string`/`from_utf8` returned a live heap WTF::URL we own.
-        unsafe { self.0.as_ref() }
-    }
-}
-impl Drop for OwnedJscUrl {
-    fn drop(&mut self) {
-        // SAFETY: pointer is the unique owner of a `new WTF::URL` from C++; `deinit`
-        // calls `URL__deinit` which `delete`s it.
-        unsafe { self.0.as_mut() }.deinit();
-    }
-}
-
-// `url` is owned: `jsc.URL.fromString` creates it and the holder deinits.
 pub struct ParsedUrl<'a> {
-    pub url: OwnedJscUrl,
+    pub url: Parsed,
     pub(crate) proto: UrlProtocol<'a>,
 }
 
@@ -671,7 +648,7 @@ impl<'a> UrlProtocolPair<'a> {
     }
 
     /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
-    fn to_url(&self) -> Option<OwnedJscUrl> {
+    fn to_url(&self) -> Option<Parsed> {
         let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
@@ -693,12 +670,12 @@ impl<'a> UrlProtocolPair<'a> {
         }
     }
 
-    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<OwnedJscUrl> {
+    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<Parsed> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
         // get rid of -- in theory, the URL layer could allocate once.
         let new_str = strings::concat(parts);
         // Drop handles `defer allocator.free(new_str)`.
-        JscUrl::from_utf8(&new_str).map(OwnedJscUrl)
+        Parsed::from_utf8(&new_str)
     }
 }
 
@@ -911,7 +888,7 @@ impl HostProvider {
         HostProvider::Sourcehut,
     ];
 
-    fn extract(self, url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+    fn extract(self, url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
         (configs()[self].format_extract)(url)
     }
 
@@ -961,8 +938,8 @@ impl HostProvider {
     }
 
     /// Parse a URL and return the appropriate host provider, if any.
-    fn from_url(url: &JscUrl) -> Option<HostProvider> {
-        let proto_str = OwnedString::new(url.protocol());
+    fn from_url(url: &URL) -> Option<HostProvider> {
+        let proto_str = url.protocol();
 
         // Try shortcut first (github:, gitlab:, etc.)
         if let Some(provider) = HostProvider::from_shortcut(proto_str.byte_slice(), false) {
@@ -973,8 +950,8 @@ impl HostProvider {
     }
 
     /// Given a URL, use the domain in the URL to find the appropriate host provider.
-    fn from_url_domain(url: &JscUrl) -> Option<HostProvider> {
-        let hostname_str = OwnedString::new(url.hostname());
+    fn from_url_domain(url: &URL) -> Option<HostProvider> {
+        let hostname_str = url.hostname();
 
         let hostname_utf8 = hostname_str.to_utf8();
         let hostname = strings::without_prefix(hostname_utf8.slice(), b"www.");
@@ -1028,10 +1005,9 @@ pub(crate) mod formatters {
     pub(crate) mod extract {
         use super::*;
 
-        pub(crate) type Type =
-            fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
+        pub(crate) type Type = fn(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
-        pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn github(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1063,8 +1039,7 @@ pub(crate) mod formatters {
             // valid until it's copied into the StringBuilder.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
-                let fragment_str = OwnedString::new(url.fragment_identifier());
-                fragment_utf8 = fragment_str.to_utf8();
+                fragment_utf8 = url.fragment_identifier().into_utf8();
                 let fragment = fragment_utf8.slice();
                 if !fragment.is_empty() {
                     Some(fragment)
@@ -1099,7 +1074,7 @@ pub(crate) mod formatters {
             }))
         }
 
-        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn bitbucket(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1124,7 +1099,7 @@ pub(crate) mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> = if !fragment.is_empty() {
@@ -1157,7 +1132,7 @@ pub(crate) mod formatters {
             }))
         }
 
-        pub(crate) fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn gitlab(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1179,7 +1154,7 @@ pub(crate) mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let committish = fragment_utf8.slice();
 
@@ -1211,7 +1186,7 @@ pub(crate) mod formatters {
             }))
         }
 
-        pub(crate) fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn gist(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1244,7 +1219,7 @@ pub(crate) mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> = if !fragment.is_empty() {
@@ -1296,7 +1271,7 @@ pub(crate) mod formatters {
             }))
         }
 
-        pub(crate) fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn sourcehut(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1321,7 +1296,7 @@ pub(crate) mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> = if !fragment.is_empty() {

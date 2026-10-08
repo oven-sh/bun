@@ -112,6 +112,68 @@ describe("body-mixin-errors", () => {
     });
   });
 
+  // The body can also have failed before anything reads it: here the whole response arrives at
+  // once and its body does not decode, so the Response is created with the failure already in
+  // hand. `.body` then has to be the body's stream all the same: the same stream each time, read
+  // once it counts as used, and the readers see "already used" afterwards instead of the
+  // network error again.
+  async function withUndecodableBodyServer<T>(fn: (url: string) => Promise<T>): Promise<T> {
+    const server = net.createServer(socket => {
+      socket.resume();
+      socket.end(
+        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 16\r\nConnection: close\r\n\r\nthis is not gzip",
+      );
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      return await fn(`http://127.0.0.1:${port}/`);
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }
+
+  it.concurrent("fetch: .body of a body that failed before it was read is still the body", async () => {
+    await withUndecodableBodyServer(async url => {
+      const res = await fetch(url);
+      const body = res.body!;
+      expect(res.body).toBe(body);
+      expect(res.bodyUsed).toBe(false);
+
+      let firstErr: unknown;
+      await body
+        .getReader()
+        .read()
+        .catch(e => (firstErr = e));
+      expect(firstErr).toBeInstanceOf(TypeError);
+      expect(res.bodyUsed).toBe(true);
+
+      let secondErr: unknown;
+      await res.text().catch(e => (secondErr = e));
+      expectBodyAlreadyUsed(secondErr);
+    });
+  });
+
+  // textStream() is one shot: handing it out uses the body up, failed or not.
+  it.concurrent("fetch: textStream() of a body that failed before it was read uses the body up", async () => {
+    await withUndecodableBodyServer(async url => {
+      const res = await fetch(url);
+      expect(res.bodyUsed).toBe(false);
+
+      let firstErr: unknown;
+      await res
+        .textStream()
+        .getReader()
+        .read()
+        .catch(e => (firstErr = e));
+      expect(firstErr).toBeInstanceOf(TypeError);
+      expect(res.bodyUsed).toBe(true);
+
+      expect(() => res.textStream()).toThrow(TypeError);
+    });
+  });
+
   it.concurrent.each(["arrayBuffer", "bytes", "blob", "json"] as const)(
     "fetch: truncated body %s() marks body used",
     async method => {
@@ -130,6 +192,88 @@ describe("body-mixin-errors", () => {
       });
     },
   );
+
+  // The failure is delivered while `res.body` already exists but nothing is
+  // reading it, so it is held inside the native ByteStream behind the stream
+  // rather than on the Response. The server announces 100 bytes, sends part of
+  // them, and closes only after the test has materialized `res.body`, so the
+  // ordering does not depend on timing. Before the fix every consumer below
+  // saw a clean, empty body instead of the error.
+  async function withIdleErroredBody<T>(fn: (body: ReadableStream<Uint8Array>) => Promise<T>): Promise<T> {
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      socket.resume();
+      socket.on("error", () => {});
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      const body = res.body!;
+      for (const socket of sockets) socket.end();
+      // The failure reaches the body on a later event-loop turn. Bun.inspect(res)
+      // lists the body stream while the body is still pending and stops listing
+      // it once the body holds the error; reading the stream to find out would
+      // consume the very state under test.
+      const deadline = Date.now() + 10_000;
+      while (Bun.inspect(res).includes("ReadableStream")) {
+        if (Date.now() > deadline) throw new Error("the truncation never reached the idle body");
+        await Bun.sleep(1);
+      }
+      return await fn(body);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }
+
+  function expectTruncationError(err: unknown) {
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as any).code).toBe("ECONNRESET");
+  }
+
+  type IdleBody = ReadableStream<Uint8Array>;
+  it.concurrent.each([
+    ["getReader().read()", (body: IdleBody) => body.getReader().read()],
+    [
+      "for await",
+      async (body: IdleBody) => {
+        for await (const _ of body);
+      },
+    ],
+    ["pipeTo()", (body: IdleBody) => body.pipeTo(new WritableStream())],
+    ["tee()", (body: IdleBody) => body.tee()[0].getReader().read()],
+  ] as const)("fetch: %s on a stream that errored while idle rejects instead of ending cleanly", async (_, read) => {
+    await withIdleErroredBody(async body => {
+      let err: unknown;
+      await read(body).catch((e: unknown) => (err = e));
+      expectTruncationError(err);
+    });
+  });
+
+  // text() never took the blob fast path and already rejected; it is listed so
+  // the whole family is pinned to one behaviour.
+  it.concurrent.each(["text", "arrayBuffer", "bytes", "blob", "json"] as const)(
+    "fetch: Response wrapping a stream that errored while idle rejects %s()",
+    async method => {
+      await withIdleErroredBody(async body => {
+        let err: unknown;
+        await new Response(body)[method]().catch((e: unknown) => (err = e));
+        expectTruncationError(err);
+      });
+    },
+  );
+
+  it.concurrent("fetch: Request wrapping a stream that errored while idle rejects arrayBuffer()", async () => {
+    await withIdleErroredBody(async body => {
+      let err: unknown;
+      await new Request("http://example.com/", { method: "POST", body }).arrayBuffer().catch((e: unknown) => (err = e));
+      expectTruncationError(err);
+    });
+  });
 
   // Counts inbound TCP connections on a server that answers a chunked POST
   // once it sees the 0\r\n\r\n terminator. `expectConnections(n)` first sends

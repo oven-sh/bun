@@ -186,6 +186,18 @@ impl<'a, T: Format<'a>> Format<'a> for WrapInParens<'_, T> {
     }
 }
 
+/// Whether `conditional`, an expression, breaks whatever its width: there is a conditional after
+/// its `?` or its `:`, or an operand has a block comment of several lines. Prettier's `shouldBreak`.
+pub(crate) fn should_break<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let ExprKind::Cond { test, yes, no } = conditional.kind() else {
+        return false;
+    };
+    let (test, consequent, alternate) = (Operand::Expr(test), Operand::Expr(yes), Operand::Expr(no));
+    consequent.is_conditional()
+        || alternate.is_conditional()
+        || OperandComments::new(test, consequent, alternate, f).has_multiline_block()
+}
+
 pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Formatter<'a>) {
     write_ternary_with_last_group(conditional, None, f);
 }

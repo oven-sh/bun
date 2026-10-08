@@ -220,13 +220,13 @@ impl<'a> AssignmentLike<'a> {
             _ => {
                 match self.get_right_expression().map(|right| (right, right.kind())) {
                     // Prettier's `isOnSameLineAsAssignment`.
-                    Some((right, ExprKind::Cond { yes, no, .. }))
+                    Some((right, ExprKind::Cond { .. }))
                         if f.options().experimental_ternaries
                             && layout != AssignmentLikeLayout::BreakAfterOperator
                             && !matches!(self, Self::AccessorProperty(_))
                             && !f.comments().is_type_cast_node(&right) =>
                     {
-                        match matches!(yes.kind(), ExprKind::Cond { .. }) || matches!(no.kind(), ExprKind::Cond { .. }) {
+                        match super::experimental_ternary::should_break(right, f) {
                             true => write!(f, indent(&right)),
                             false => write!(f, group(&indent(&format_args!(soft_line_break(), right)))),
                         }
@@ -455,6 +455,12 @@ fn should_break_after_operator<'a>(
             matches!(conditional.kind(), ExprKind::Cond { yes, no, .. }
                 if matches!(yes.kind(), ExprKind::Cond { .. }) || matches!(no.kind(), ExprKind::Cond { .. }))
         }
+        // `/** @type {T} */ (a || b) ? c : d`: the test is in parentheses.
+        AstNodes::ConditionalExpression(conditional)
+            if starts_with_type_cast && conditional.test().is_some_and(Expr::is_parenthesized) =>
+        {
+            false
+        }
         AstNodes::ConditionalExpression(conditional) => match conditional.test().map(|test| test.as_ast_nodes()) {
             Some(AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_)) => true,
             Some(AstNodes::LogicalExpression(logical)) => !can_inline(logical),
@@ -560,6 +566,8 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
     let threshold = f.options().line_width.value() / 4;
     let mut is_chain = false;
     let mut call_expressions: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
+    // Below a call. Prettier's `printMemberChain` labels such a chain a member chain however short.
+    let mut has_comment_between_links = false;
     let mut current = expression;
 
     loop {
@@ -570,7 +578,19 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
                 call_expressions.push(current);
                 call.callee()
             }
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
+            ExprKind::Dot { obj, name, .. } => {
+                is_chain = true;
+                // `a./* comment */ b()`: that one leads the name, which is not a link.
+                has_comment_between_links |= !call_expressions.is_empty()
+                    && !f.is_quiet()
+                    && (f.comments().comments_in_range(obj.outer_span().end, name.span().start).iter()).any(|comment| {
+                        comment.preceded_by_newline()
+                            || comment.followed_by_newline()
+                            || f.source_text().bytes_contain(comment.span.end, name.span().start, b'.')
+                    });
+                obj
+            }
+            ExprKind::Index { obj, .. } => {
                 is_chain = true;
                 obj
             }
@@ -584,6 +604,11 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
     let Some(&first_call) = call_expressions.first() else {
         return true;
     };
+    if has_comment_between_links
+        || (comment_in_call_chain_makes_it_breakable(f) && f.comments().has_comment_in_span(first_call.span()))
+    {
+        return false;
+    }
     for &call_expression in &call_expressions {
         let Some(call) = call_expression.call() else {
             continue;
@@ -602,6 +627,12 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
         }
     }
     !is_member_call_chain(first_call, f)
+}
+
+/// For oxfmt a chain with a comment anywhere in it is not poorly breakable. Prettier only looks at
+/// the comments around a lone argument.
+fn comment_in_call_chain_makes_it_breakable(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `isShortCallArgument`/`isLoneShortArgument`.

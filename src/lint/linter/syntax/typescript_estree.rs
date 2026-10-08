@@ -1467,7 +1467,10 @@ impl<'a> Checks<'a> {
                     return;
                 };
                 // Not as it is written: `import.\u0061`
-                let name = it.args.first().map_or(self.token_at(at), |it| &it[..]);
+                let name = it
+                    .args
+                    .first()
+                    .map_or_else(|| self.token_at(at), |it| &it[..]);
                 let message = [
                     b"'",
                     name,

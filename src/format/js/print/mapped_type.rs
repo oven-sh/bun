@@ -42,7 +42,11 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
         if let Some(type_annotation) = mapped.ty() {
             write!(f, [":", space(), type_annotation]);
         }
-        write!(f, if_group_breaks(&OptionalSemicolon));
+        // In Flow, whose types those in a JavaScript file are, it is a property of an object type.
+        match f.file().is_javascript() {
+            true => write!(f, FormatTrailingCommas::ES5),
+            false => write!(f, if_group_breaks(&OptionalSemicolon)),
+        }
     });
 
     write!(

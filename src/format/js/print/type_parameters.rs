@@ -171,12 +171,14 @@ impl<'a> FormatTypeArguments<'a> {
             && params.first().is_some_and(|first| should_hug_single_type(first, f) && !self.has_comment_on_own_line(first, f))
             && !is_arrow_function_variable_type_argument(self);
 
+        // TypeScript has no `,` after the last type argument. Flow, whose types those in a JavaScript
+        // file are, has.
+        let trailing_separator = match f.file().is_javascript() && !should_inline {
+            true => FormatTrailingCommas::ES5.trailing_separator(f.options()),
+            false => TrailingSeparator::Disallowed,
+        };
         let format_params = format_with(|f| {
-            f.join_with(soft_line_break_or_space()).entries_with_trailing_separator(
-                params.iter(),
-                ",",
-                TrailingSeparator::Disallowed,
-            );
+            f.join_with(soft_line_break_or_space()).entries_with_trailing_separator(params.iter(), ",", trailing_separator);
         });
 
         if should_inline {

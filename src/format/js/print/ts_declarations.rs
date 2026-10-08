@@ -263,6 +263,8 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
         {
             true
         }
+        // Flow's `StringLiteralTypeAnnotation`
+        TypeKind::StringLit(_) if f.file().is_javascript() => true,
         _ => {
             !f.is_quiet()
                 && f

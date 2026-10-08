@@ -50,6 +50,25 @@ pub(crate) fn write_ts_type_reference<'a>(
     if name.len() > 2 && matches!(node, AstNodes::TSInterfaceHeritage(_) | AstNodes::TSClassImplements(_)) {
         return write!(f, [heritage_name(name, node), type_arguments(args, Node::Type(ty))]);
     }
+    if args.is_empty() && f.file().is_javascript() {
+        // Flow's other name for it.
+        if name.len() == 1 && ty.text() == b"bool" {
+            return write!(f, "boolean");
+        }
+        // `A<>`
+        if let Some(last) = name.get(name.len().wrapping_sub(1))
+            && ty.text().ends_with(b">")
+        {
+            let brackets = Span::new(last.span().end, ty.span().end);
+            let has_line_comment = f.comments().comments_in_range(brackets.start, brackets.end).iter().any(|it| it.is_line());
+            write!(f, [entity_name(name, node), "<"]);
+            match has_line_comment {
+                true => write!(f, format_dangling_comments(brackets).with_block_indent()),
+                false => write!(f, format_dangling_comments(brackets)),
+            }
+            return write!(f, ">");
+        }
+    }
     let wrap = keeps_parentheses_of_intrinsic(f) && is_leftmost_intrinsic_in_type_alias(ty, name, args);
     write!(f, [wrap.then_some("("), entity_name(name, node), type_arguments(args, Node::Type(ty)), wrap.then_some(")")]);
 }
@@ -225,6 +244,14 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
 
 impl<'a> FormatTSSignature<'a> {
     fn write_separator(&self, f: &mut Formatter<'a>) {
+        // The types in a JavaScript file are Flow's.
+        if f.file().is_javascript() {
+            return match (self.is_interface, self.next_signature) {
+                (true, _) => write!(f, ";"),
+                (false, Some(_)) => write!(f, ","),
+                (false, None) => write!(f, FormatTrailingCommas::ES5),
+            };
+        }
         match (f.options().semicolons, self.next_signature) {
             (Semicolons::Always, Some(_)) => write!(f, ";"),
             (Semicolons::Always, None) => write!(f, if_group_breaks(&";")),

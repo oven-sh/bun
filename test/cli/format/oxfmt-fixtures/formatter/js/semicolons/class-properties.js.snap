@@ -1,0 +1,48 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+class X {
+  prop1 = "test"; /* comment */
+  accessor prop2 = 1; /* comment */
+  static prop3; /* comment */
+}
+
+==================== Output ====================
+------------------------------
+{ printWidth: 80, semi: true }
+------------------------------
+class X {
+  prop1 = "test"; /* comment */
+  accessor prop2 = 1; /* comment */
+  static prop3; /* comment */
+}
+
+-------------------------------
+{ printWidth: 100, semi: true }
+-------------------------------
+class X {
+  prop1 = "test"; /* comment */
+  accessor prop2 = 1; /* comment */
+  static prop3; /* comment */
+}
+
+-------------------------------
+{ printWidth: 80, semi: false }
+-------------------------------
+class X {
+  prop1 = "test" /* comment */
+  accessor prop2 = 1 /* comment */
+  static prop3 /* comment */
+}
+
+--------------------------------
+{ printWidth: 100, semi: false }
+--------------------------------
+class X {
+  prop1 = "test" /* comment */
+  accessor prop2 = 1 /* comment */
+  static prop3 /* comment */
+}
+
+===================== End =====================

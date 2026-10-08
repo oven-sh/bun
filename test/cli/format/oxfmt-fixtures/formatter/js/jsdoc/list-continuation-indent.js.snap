@@ -1,0 +1,67 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix E: List continuation lines should align with text after marker
+/**
+ * - Short item
+ * - Item that wraps to next line because it is quite long and needs continuation indent to align properly
+ * 1. Numbered item that also wraps to next line because it is quite long and needs proper indent alignment
+ */
+const a = 1;
+
+// Nested list continuation
+/**
+ * - Outer item with a long description that wraps to the next line for testing continuation indent
+ *   - Nested item also with long description that should wrap properly with correct continuation indent
+ */
+const b = 2;
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix E: List continuation lines should align with text after marker
+/**
+ * - Short item
+ * - Item that wraps to next line because it is quite long and needs continuation
+ *   indent to align properly
+ *
+ * 1. Numbered item that also wraps to next line because it is quite long and needs
+ *    proper indent alignment
+ */
+const a = 1;
+
+// Nested list continuation
+/**
+ * - Outer item with a long description that wraps to the next line for testing
+ *   continuation indent
+ *
+ *   - Nested item also with long description that should wrap properly with correct
+ *     continuation indent
+ */
+const b = 2;
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix E: List continuation lines should align with text after marker
+/**
+ * - Short item
+ * - Item that wraps to next line because it is quite long and needs continuation indent to align
+ *   properly
+ *
+ * 1. Numbered item that also wraps to next line because it is quite long and needs proper indent
+ *    alignment
+ */
+const a = 1;
+
+// Nested list continuation
+/**
+ * - Outer item with a long description that wraps to the next line for testing continuation indent
+ *
+ *   - Nested item also with long description that should wrap properly with correct continuation indent
+ */
+const b = 2;
+
+===================== End =====================

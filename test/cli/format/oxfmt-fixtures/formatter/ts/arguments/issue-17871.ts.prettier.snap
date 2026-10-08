@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+const x = [].reduce(() => {
+  return "y";
+}, {} as SomeType<OtherType>);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x = [].reduce(() => {
+  return "y";
+}, {} as SomeType<OtherType>);
+
+===================== End =====================

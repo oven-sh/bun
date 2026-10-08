@@ -1,0 +1,93 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const a = 1
+
+;(function() {
+  const b = 2;
+})()
+
+foo();
+[1,2,3]; // prettier-ignore
+
+bar();
+[4,5,6]; // oxfmt-ignore
+
+baz();
+[7,8,9]
+
+==================== Output ====================
+------------------------------
+{ printWidth: 80, semi: true }
+------------------------------
+const a = 1;
+
+(function () {
+  const b = 2;
+})();
+
+foo();
+[1,2,3]; // prettier-ignore
+
+bar();
+[4,5,6]; // oxfmt-ignore
+
+baz();
+[7, 8, 9];
+
+-------------------------------
+{ printWidth: 100, semi: true }
+-------------------------------
+const a = 1;
+
+(function () {
+  const b = 2;
+})();
+
+foo();
+[1,2,3]; // prettier-ignore
+
+bar();
+[4,5,6]; // oxfmt-ignore
+
+baz();
+[7, 8, 9];
+
+-------------------------------
+{ printWidth: 80, semi: false }
+-------------------------------
+const a = 1
+
+;(function () {
+  const b = 2
+})()
+
+foo()
+;[1,2,3]; // prettier-ignore
+
+bar()
+;[4,5,6]; // oxfmt-ignore
+
+baz()
+;[7, 8, 9]
+
+--------------------------------
+{ printWidth: 100, semi: false }
+--------------------------------
+const a = 1
+
+;(function () {
+  const b = 2
+})()
+
+foo()
+;[1,2,3]; // prettier-ignore
+
+bar()
+;[4,5,6]; // oxfmt-ignore
+
+baz()
+;[7, 8, 9]
+
+===================== End =====================

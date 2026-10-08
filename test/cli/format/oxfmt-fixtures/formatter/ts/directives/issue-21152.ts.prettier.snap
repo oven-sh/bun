@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+"use client"; // browser only
+
+import { Foo } from "foo";
+import { Bar } from "bar";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+"use client"; // browser only
+
+import { Foo } from "foo";
+import { Bar } from "bar";
+
+===================== End =====================

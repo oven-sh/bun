@@ -1,0 +1,38 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+{
+  RESOLUTION_CACHE = new ExpiringCache(
+    options.singleRun
+      ? 'Infinity'
+      : (options.cacheLifetime?.glob ??
+        DEFAULT_TSCONFIG_CACHE_DURATION_SECONDS),
+  );
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+{
+  RESOLUTION_CACHE = new ExpiringCache(
+    options.singleRun
+      ? "Infinity"
+      : (options.cacheLifetime?.glob ??
+          DEFAULT_TSCONFIG_CACHE_DURATION_SECONDS),
+  );
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+{
+  RESOLUTION_CACHE = new ExpiringCache(
+    options.singleRun
+      ? "Infinity"
+      : (options.cacheLifetime?.glob ?? DEFAULT_TSCONFIG_CACHE_DURATION_SECONDS),
+  );
+}
+
+===================== End =====================

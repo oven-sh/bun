@@ -1,0 +1,42 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * Table with alignment markers:
+ *
+ * | Left | Center | Right |
+ * | :--- | :----: | ----: |
+ * | a    | b      | c     |
+ * | long | text   | here  |
+ */
+const a = 1;
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * Table with alignment markers:
+ *
+ * | Left | Center | Right |
+ * | :--- | :----: | ----: |
+ * | a    | b      | c     |
+ * | long | text   | here  |
+ */
+const a = 1;
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * Table with alignment markers:
+ *
+ * | Left | Center | Right |
+ * | :--- | :----: | ----: |
+ * | a    | b      | c     |
+ * | long | text   | here  |
+ */
+const a = 1;
+
+===================== End =====================

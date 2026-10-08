@@ -1,0 +1,24 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+(id) =>
+  id
+    .replace('@', resolve(__dirname, './mods/'))
+    .replace('#', resolve(__dirname, '../../'))
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+(id) =>
+  id
+    .replace("@", resolve(__dirname, "./mods/"))
+    .replace("#", resolve(__dirname, "../../"));
+
+-------------------
+{ printWidth: 100 }
+-------------------
+(id) => id.replace("@", resolve(__dirname, "./mods/")).replace("#", resolve(__dirname, "../../"));
+
+===================== End =====================

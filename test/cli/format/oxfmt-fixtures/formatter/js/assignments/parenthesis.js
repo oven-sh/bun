@@ -1,0 +1,1 @@
+object[key = "a" + "b"];

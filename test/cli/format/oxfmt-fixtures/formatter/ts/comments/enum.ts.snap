@@ -1,0 +1,24 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+enum Foo {
+  // Comment
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+enum Foo {
+  // Comment
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+enum Foo {
+  // Comment
+}
+
+===================== End =====================

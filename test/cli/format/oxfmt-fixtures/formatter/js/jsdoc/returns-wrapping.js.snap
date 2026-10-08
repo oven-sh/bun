@@ -1,0 +1,58 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 4: @returns with long description should wrap at printWidth
+
+class LineElement {
+  /**
+   * @returns {ControlPoint[]} - the list of points to be drawn (includes the head, tail, and all intersection points)
+   */
+  getPoints() {}
+
+  /**
+   * @returns {boolean} - whether the element is at the edge of the area and should be considered visible
+   */
+  isVisible() {}
+}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 4: @returns with long description should wrap at printWidth
+
+class LineElement {
+  /**
+   * @returns {ControlPoint[]} - The list of points to be drawn (includes the
+   *   head, tail, and all intersection points)
+   */
+  getPoints() {}
+
+  /**
+   * @returns {boolean} - Whether the element is at the edge of the area and
+   *   should be considered visible
+   */
+  isVisible() {}
+}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 4: @returns with long description should wrap at printWidth
+
+class LineElement {
+  /**
+   * @returns {ControlPoint[]} - The list of points to be drawn (includes the head, tail, and all
+   *   intersection points)
+   */
+  getPoints() {}
+
+  /**
+   * @returns {boolean} - Whether the element is at the edge of the area and should be considered
+   *   visible
+   */
+  isVisible() {}
+}
+
+===================== End =====================

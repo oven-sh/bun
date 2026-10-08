@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+xxxxxxxxxxxx === "xxxxxxxxxxxxxxxxx" && (
+  // test
+  <div></div>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+xxxxxxxxxxxx === "xxxxxxxxxxxxxxxxx" && (
+  // test
+  <div></div>
+);
+
+===================== End =====================

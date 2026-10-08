@@ -1,0 +1,192 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Import with attributes - consistent should quote all when one requires quotes
+import A from "test" with {
+  "tess-sdt": "a",
+  sd: "b"
+};
+
+// Import with no quotes needed
+import B from "test2" with {
+  type: "json",
+  encoding: "utf8"
+};
+
+// Export with attributes
+export { foo } from "bar" with {
+  "x-y": "value",
+  normal: "other"
+};
+
+==================== Output ====================
+-------------------------------------------
+{ printWidth: 80, quoteProps: "as-needed" }
+-------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from "test" with {
+  "tess-sdt": "a",
+  sd: "b",
+};
+
+// Import with no quotes needed
+import B from "test2" with {
+  type: "json",
+  encoding: "utf8",
+};
+
+// Export with attributes
+export { foo } from "bar" with {
+  "x-y": "value",
+  normal: "other",
+};
+
+--------------------------------------------
+{ printWidth: 100, quoteProps: "as-needed" }
+--------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from "test" with {
+  "tess-sdt": "a",
+  sd: "b",
+};
+
+// Import with no quotes needed
+import B from "test2" with {
+  type: "json",
+  encoding: "utf8",
+};
+
+// Export with attributes
+export { foo } from "bar" with {
+  "x-y": "value",
+  normal: "other",
+};
+
+------------------------------------------
+{ printWidth: 80, quoteProps: "preserve" }
+------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from "test" with {
+  "tess-sdt": "a",
+  sd: "b",
+};
+
+// Import with no quotes needed
+import B from "test2" with {
+  type: "json",
+  encoding: "utf8",
+};
+
+// Export with attributes
+export { foo } from "bar" with {
+  "x-y": "value",
+  normal: "other",
+};
+
+-------------------------------------------
+{ printWidth: 100, quoteProps: "preserve" }
+-------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from "test" with {
+  "tess-sdt": "a",
+  sd: "b",
+};
+
+// Import with no quotes needed
+import B from "test2" with {
+  type: "json",
+  encoding: "utf8",
+};
+
+// Export with attributes
+export { foo } from "bar" with {
+  "x-y": "value",
+  normal: "other",
+};
+
+--------------------------------------------
+{ printWidth: 80, quoteProps: "consistent" }
+--------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from "test" with {
+  "tess-sdt": "a",
+  "sd": "b",
+};
+
+// Import with no quotes needed
+import B from "test2" with {
+  type: "json",
+  encoding: "utf8",
+};
+
+// Export with attributes
+export { foo } from "bar" with {
+  "x-y": "value",
+  "normal": "other",
+};
+
+---------------------------------------------
+{ printWidth: 100, quoteProps: "consistent" }
+---------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from "test" with {
+  "tess-sdt": "a",
+  "sd": "b",
+};
+
+// Import with no quotes needed
+import B from "test2" with {
+  type: "json",
+  encoding: "utf8",
+};
+
+// Export with attributes
+export { foo } from "bar" with {
+  "x-y": "value",
+  "normal": "other",
+};
+
+---------------------------------------------------------------
+{ printWidth: 80, quoteProps: "consistent", singleQuote: true }
+---------------------------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from 'test' with {
+  'tess-sdt': 'a',
+  'sd': 'b',
+};
+
+// Import with no quotes needed
+import B from 'test2' with {
+  type: 'json',
+  encoding: 'utf8',
+};
+
+// Export with attributes
+export { foo } from 'bar' with {
+  'x-y': 'value',
+  'normal': 'other',
+};
+
+----------------------------------------------------------------
+{ printWidth: 100, quoteProps: "consistent", singleQuote: true }
+----------------------------------------------------------------
+// Import with attributes - consistent should quote all when one requires quotes
+import A from 'test' with {
+  'tess-sdt': 'a',
+  'sd': 'b',
+};
+
+// Import with no quotes needed
+import B from 'test2' with {
+  type: 'json',
+  encoding: 'utf8',
+};
+
+// Export with attributes
+export { foo } from 'bar' with {
+  'x-y': 'value',
+  'normal': 'other',
+};
+
+===================== End =====================

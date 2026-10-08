@@ -1,0 +1,18 @@
+------------------
+{ printWidth: 80 }
+------------------
+new (
+  require("./webpack/plugins/next-trace-entrypoints-plugin")
+    .TraceEntryPointsPlugin as P
+)({
+  rootDir: dir,
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+new (require("./webpack/plugins/next-trace-entrypoints-plugin").TraceEntryPointsPlugin as P)({
+  rootDir: dir,
+});
+
+===================== End =====================

@@ -1,0 +1,48 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const foo = {
+  createNewConnection: ([
+  password,
+    ,
+    // @ts-expect-error THIS SHOULD STAY HERE
+      username,
+
+  ]) => {
+    void password; void username;
+  },
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const foo = {
+  createNewConnection: ([
+    password,
+    ,
+    // @ts-expect-error THIS SHOULD STAY HERE
+    username,
+  ]) => {
+    void password;
+    void username;
+  },
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const foo = {
+  createNewConnection: ([
+    password,
+    ,
+    // @ts-expect-error THIS SHOULD STAY HERE
+    username,
+  ]) => {
+    void password;
+    void username;
+  },
+};
+
+===================== End =====================

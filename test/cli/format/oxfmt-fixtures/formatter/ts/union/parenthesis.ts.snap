@@ -1,0 +1,21 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+type T1<B> = | (B extends any ? number : string);
+type T2 = | (() => void);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+type T1<B> = B extends any ? number : string;
+type T2 = () => void;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type T1<B> = B extends any ? number : string;
+type T2 = () => void;
+
+===================== End =====================

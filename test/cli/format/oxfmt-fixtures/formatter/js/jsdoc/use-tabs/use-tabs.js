@@ -1,0 +1,34 @@
+/**
+ * @param {string | number | boolean | null | undefined | object | symbol} value - The value
+ */
+function longUnion(value) {}
+
+/**
+ * @example
+ * const x = 1;
+ * const y = 2;
+ */
+function withExample() {}
+
+/**
+ * Description text.
+ *
+ * ```ts
+ * const store = toStore(
+ *   () => count,
+ *   (v) => (count = v),
+ * );
+ * ```
+ */
+function withFencedCodeBlock() {}
+
+// Inline @type cast mid-expression: width should be measured from adjacent
+// whitespace, not leading indent, to prevent unnecessary type wrapping.
+function inlineCast() {
+	const init =
+		fn.type === "VariableDeclarator"
+			? /** @type {ESTree.FunctionExpression | ESTree.ArrowFunctionExpression} */ (
+					fn.init
+				)
+			: fn;
+}

@@ -1,0 +1,33 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+"use client"; /* multi
+line
+comment */
+
+import { Foo } from "foo";
+import { Bar } from "bar";
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+"use client"; /* multi
+line
+comment */
+
+import { Foo } from "foo";
+import { Bar } from "bar";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+"use client"; /* multi
+line
+comment */
+
+import { Foo } from "foo";
+import { Bar } from "bar";
+
+===================== End =====================

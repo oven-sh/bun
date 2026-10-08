@@ -1,0 +1,18 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+export default <Array>[];
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+export default <Array>[];
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export default <Array>[];
+
+===================== End =====================

@@ -1,0 +1,67 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * @fires {CustomEvent<{ id: string }>}
+ */
+function foo() {}
+
+/**
+ * @fires {CustomEvent<{ id: string }>} when the item is clicked
+ */
+function bar() {}
+
+/**
+ * @fires myEvent some description here
+ */
+function baz() {}
+
+/**
+ * @augments {Set<string>} some description
+ */
+class Bar {}
+
+/**
+ * @augments {CustomEvent<{ id: string }>} some description here
+ */
+class Baz {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/** @fires {CustomEvent<{ id: string }>} */
+function foo() {}
+
+/** @fires {CustomEvent<{ id: string }>} when The item is clicked */
+function bar() {}
+
+/** @fires myEvent Some description here */
+function baz() {}
+
+/** @augments {Set<string>} Some description */
+class Bar {}
+
+/** @augments {CustomEvent<{ id: string }>} Some description here */
+class Baz {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/** @fires {CustomEvent<{ id: string }>} */
+function foo() {}
+
+/** @fires {CustomEvent<{ id: string }>} when The item is clicked */
+function bar() {}
+
+/** @fires myEvent Some description here */
+function baz() {}
+
+/** @augments {Set<string>} Some description */
+class Bar {}
+
+/** @augments {CustomEvent<{ id: string }>} Some description here */
+class Baz {}
+
+===================== End =====================

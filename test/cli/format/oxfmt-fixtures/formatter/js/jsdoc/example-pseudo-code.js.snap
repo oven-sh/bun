@@ -1,0 +1,36 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 8: @example pseudo-code should be preserved as-is
+
+/**
+ * @example
+ * {undefined}('popup', 'options')
+ */
+function openPopup() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 8: @example pseudo-code should be preserved as-is
+
+/**
+ * @example
+ *   {undefined}('popup', 'options')
+ */
+function openPopup() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 8: @example pseudo-code should be preserved as-is
+
+/**
+ * @example
+ *   {undefined}('popup', 'options')
+ */
+function openPopup() {}
+
+===================== End =====================

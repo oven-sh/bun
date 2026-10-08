@@ -1,0 +1,20 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const requestTrie =
+  TernarySearchTree.forPaths<IRecursiveWatchRequest>(!isLinux);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const requestTrie =
+  TernarySearchTree.forPaths<IRecursiveWatchRequest>(!isLinux);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const requestTrie = TernarySearchTree.forPaths<IRecursiveWatchRequest>(!isLinux);
+
+===================== End =====================

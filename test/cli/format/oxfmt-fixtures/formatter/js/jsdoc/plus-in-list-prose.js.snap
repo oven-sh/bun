@@ -1,0 +1,35 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * 1. Determine the initial value by taking the data range and calculating min
+ *    + spacing.
+ * 2. Another step in the process.
+ */
+const a = 1;
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * 1. Determine the initial value by taking the data range and calculating min
+ *
+ *    - Spacing.
+ * 2. Another step in the process.
+ */
+const a = 1;
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * 1. Determine the initial value by taking the data range and calculating min
+ *
+ *    - Spacing.
+ * 2. Another step in the process.
+ */
+const a = 1;
+
+===================== End =====================

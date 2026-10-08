@@ -1,0 +1,148 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * @param {string} [name] - Optional param
+ */
+function a(name) {}
+
+/**
+ * @param {string} [name="default"] - Optional param with default
+ */
+function b(name) {}
+
+/**
+ * @param {string} name
+ */
+function c(name) {}
+
+/**
+ * @param name - No type
+ */
+function d(name) {}
+
+/**
+ * @returns
+ */
+function e() {}
+
+/**
+ * @deprecated Use newFunc instead
+ * @see newFunc
+ */
+function f() {}
+
+/**
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/style#setting_styles
+ */
+function seeUrl() {}
+
+/**
+ * @internal
+ *
+ * This function is internal and should not be used directly.
+ */
+function internalFunction() {}
+
+/**
+ * When the user selects an <option> from the <select> element,
+ * the value is updated accordingly.
+ */
+function handleSelect() {}
+
+/**
+ * Renders a
+ * <div>
+ * element with the given props.
+ */
+function renderDiv() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/** @param {string} [name] - Optional param */
+function a(name) {}
+
+/**
+ * @param {string} [name="default"] - Optional param with default. Default is
+ *   `"default"`
+ */
+function b(name) {}
+
+/** @param {string} name */
+function c(name) {}
+
+/** @param name - No type */
+function d(name) {}
+
+/** @returns */
+function e() {}
+
+/**
+ * @deprecated Use newFunc instead
+ * @see newFunc
+ */
+function f() {}
+
+/** @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/style#setting_styles */
+function seeUrl() {}
+
+/**
+ * @internal
+ *
+ * This function is internal and should not be used directly.
+ */
+function internalFunction() {}
+
+/**
+ * When the user selects an <option> from the <select> element, the value is
+ * updated accordingly.
+ */
+function handleSelect() {}
+
+/** Renders a <div> element with the given props. */
+function renderDiv() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/** @param {string} [name] - Optional param */
+function a(name) {}
+
+/** @param {string} [name="default"] - Optional param with default. Default is `"default"` */
+function b(name) {}
+
+/** @param {string} name */
+function c(name) {}
+
+/** @param name - No type */
+function d(name) {}
+
+/** @returns */
+function e() {}
+
+/**
+ * @deprecated Use newFunc instead
+ * @see newFunc
+ */
+function f() {}
+
+/** @see https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/style#setting_styles */
+function seeUrl() {}
+
+/**
+ * @internal
+ *
+ * This function is internal and should not be used directly.
+ */
+function internalFunction() {}
+
+/** When the user selects an <option> from the <select> element, the value is updated accordingly. */
+function handleSelect() {}
+
+/** Renders a <div> element with the given props. */
+function renderDiv() {}
+
+===================== End =====================

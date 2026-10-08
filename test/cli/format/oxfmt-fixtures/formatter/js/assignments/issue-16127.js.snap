@@ -1,0 +1,17 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const { assignmentPattern: { nestedAssignmentPattern = {} } = {} } = call();
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const { assignmentPattern: { nestedAssignmentPattern = {} } = {} } = call();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const { assignmentPattern: { nestedAssignmentPattern = {} } = {} } = call();
+
+===================== End =====================

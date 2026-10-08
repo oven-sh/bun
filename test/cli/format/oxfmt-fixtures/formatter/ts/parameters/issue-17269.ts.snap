@@ -1,0 +1,31 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+useStableCallback(function useShowToast(
+    ...args: Parameters<typeof toastService.addToastItem>
+  ): void {
+    toastService.addToastItem(...args);
+  });
+
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+useStableCallback(function useShowToast(
+  ...args: Parameters<typeof toastService.addToastItem>
+): void {
+  toastService.addToastItem(...args);
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+useStableCallback(function useShowToast(
+  ...args: Parameters<typeof toastService.addToastItem>
+): void {
+  toastService.addToastItem(...args);
+});
+
+===================== End =====================

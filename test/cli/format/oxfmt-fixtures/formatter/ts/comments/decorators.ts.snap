@@ -1,0 +1,50 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// test.ts
+import { Component } from "@angular/core";
+
+@Component({
+  selector: "my-component", // test
+})
+export class AppMyComponent {}
+
+@Component({
+  selector: "my-component", // test
+})
+export default class AppMyComponent {}
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// test.ts
+import { Component } from "@angular/core";
+
+@Component({
+  selector: "my-component", // test
+})
+export class AppMyComponent {}
+
+@Component({
+  selector: "my-component", // test
+})
+export default class AppMyComponent {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// test.ts
+import { Component } from "@angular/core";
+
+@Component({
+  selector: "my-component", // test
+})
+export class AppMyComponent {}
+
+@Component({
+  selector: "my-component", // test
+})
+export default class AppMyComponent {}
+
+===================== End =====================

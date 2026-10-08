@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+export class Cls /* YES */ {
+  // class body comment
+}
+
+export class Mutliline /* Y
+E
+S */ {
+  // class body comment
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export class Cls /* YES */ {
+  // class body comment
+}
+
+export class Mutliline /* Y
+E
+S */ {
+  // class body comment
+}
+
+===================== End =====================

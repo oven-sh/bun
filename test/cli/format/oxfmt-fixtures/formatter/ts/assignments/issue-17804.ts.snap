@@ -1,0 +1,20 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const fooRef =
+        useRef<Record<string, LazyFooThingFD<T, TError> | null | undefined>>(cache);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const fooRef =
+  useRef<Record<string, LazyFooThingFD<T, TError> | null | undefined>>(cache);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const fooRef = useRef<Record<string, LazyFooThingFD<T, TError> | null | undefined>>(cache);
+
+===================== End =====================

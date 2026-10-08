@@ -1,0 +1,95 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 6: Multi-line @default values should preserve internal indentation
+
+/**
+ * @default
+ *
+ * {
+ *   ui: {
+ *     developer_mode: true,
+ *   },
+ * }
+ */
+const config = {};
+
+/**
+ * @default "simple"
+ */
+const singleLine = "simple";
+
+/**
+ * @default
+ *
+ * [
+ *   "foo",
+ *   "bar",
+ *   "baz",
+ * ]
+ */
+const list = [];
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 6: Multi-line @default values should preserve internal indentation
+
+/**
+ * @default
+ *
+ * {
+ *   ui: {
+ *     developer_mode: true,
+ *   },
+ * }
+ */
+const config = {};
+
+/** @default "simple" */
+const singleLine = "simple";
+
+/**
+ * @default
+ *
+ * [
+ *   "foo",
+ *   "bar",
+ *   "baz",
+ * ]
+ */
+const list = [];
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 6: Multi-line @default values should preserve internal indentation
+
+/**
+ * @default
+ *
+ * {
+ *   ui: {
+ *     developer_mode: true,
+ *   },
+ * }
+ */
+const config = {};
+
+/** @default "simple" */
+const singleLine = "simple";
+
+/**
+ * @default
+ *
+ * [
+ *   "foo",
+ *   "bar",
+ *   "baz",
+ * ]
+ */
+const list = [];
+
+===================== End =====================

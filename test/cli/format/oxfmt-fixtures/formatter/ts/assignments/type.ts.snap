@@ -1,0 +1,39 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+(type) as unknown;
+(type) satisfies unknown;
+
+() => (type) as unknown;
+() => (type) satisfies unknown;
+
+((type) as any)['t'];
+((type) satisfies any)['t'];
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+(type) as unknown;
+(type) satisfies unknown;
+
+() => type as unknown;
+() => type satisfies unknown;
+
+(type as any)["t"];
+(type satisfies any)["t"];
+
+-------------------
+{ printWidth: 100 }
+-------------------
+(type) as unknown;
+(type) satisfies unknown;
+
+() => type as unknown;
+() => type satisfies unknown;
+
+(type as any)["t"];
+(type satisfies any)["t"];
+
+===================== End =====================

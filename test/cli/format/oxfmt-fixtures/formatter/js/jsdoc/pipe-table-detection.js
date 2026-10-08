@@ -1,0 +1,28 @@
+// Fix 3: Single pipe in prose should not be misidentified as a table
+
+/**
+ * Calculate the value of |splineCurve| based on the input parameters.
+ * The |result| should be within acceptable bounds.
+ */
+function singlePipes() {}
+
+/**
+ * A real table:
+ *
+ * | Name | Value |
+ * | ---- | ----- |
+ * | foo  | 1     |
+ * | bar  | 2     |
+ */
+function realTable() {}
+
+/**
+ * Mixed content with |word| in prose and a table:
+ *
+ * The |value| is important.
+ *
+ * | Key | Description |
+ * | --- | ----------- |
+ * | a   | First item  |
+ */
+function mixedContent() {}

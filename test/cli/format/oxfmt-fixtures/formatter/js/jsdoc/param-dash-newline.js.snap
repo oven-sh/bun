@@ -1,0 +1,46 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 25: @param dash preserved when description wraps to new line
+
+/**
+ * @param {"component" | "if" | "each" | "await" | "key" | "render"} type - Type of block/component
+ */
+function longTypeParamDash(type) {}
+
+/**
+ * @param {import("./types").VeryLongModuleType<GenericParam>} value - The value to process
+ */
+function longImportParamDash(value) {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 25: @param dash preserved when description wraps to new line
+
+/**
+ * @param {"component" | "if" | "each" | "await" | "key" | "render"} type - Type
+ *   of block/component
+ */
+function longTypeParamDash(type) {}
+
+/**
+ * @param {import("./types").VeryLongModuleType<GenericParam>} value - The value
+ *   to process
+ */
+function longImportParamDash(value) {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 25: @param dash preserved when description wraps to new line
+
+/** @param {"component" | "if" | "each" | "await" | "key" | "render"} type - Type of block/component */
+function longTypeParamDash(type) {}
+
+/** @param {import("./types").VeryLongModuleType<GenericParam>} value - The value to process */
+function longImportParamDash(value) {}
+
+===================== End =====================

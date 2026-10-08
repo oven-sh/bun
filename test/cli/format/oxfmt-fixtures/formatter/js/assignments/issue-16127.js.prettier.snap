@@ -1,0 +1,11 @@
+------------------
+{ printWidth: 80 }
+------------------
+const { assignmentPattern: { nestedAssignmentPattern = {} } = {} } = call();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const { assignmentPattern: { nestedAssignmentPattern = {} } = {} } = call();
+
+===================== End =====================

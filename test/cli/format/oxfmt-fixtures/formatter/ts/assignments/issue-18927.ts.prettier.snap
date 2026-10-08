@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  readonly customHeaderTemplate =
+    viewChild.required<TemplateRef<{ total: number }>>("customHeader");
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  readonly customHeaderTemplate =
+    viewChild.required<TemplateRef<{ total: number }>>("customHeader");
+}
+
+===================== End =====================

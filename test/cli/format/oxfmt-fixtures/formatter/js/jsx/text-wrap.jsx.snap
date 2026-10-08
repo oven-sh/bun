@@ -1,0 +1,34 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+<p>
+  Current usage for X is ${(() => {
+    // comment
+  })()}.
+</p>
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+<p>
+  Current usage for X is $
+  {(() => {
+    // comment
+  })()}
+  .
+</p>;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<p>
+  Current usage for X is $
+  {(() => {
+    // comment
+  })()}
+  .
+</p>;
+
+===================== End =====================

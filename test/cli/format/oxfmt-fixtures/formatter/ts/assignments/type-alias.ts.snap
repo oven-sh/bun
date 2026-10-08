@@ -1,0 +1,22 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+export type _Repeat<A extends any, N extends number, L extends List = []> =
+  __Repeat<N, A, L> extends infer X
+  ? Cast<X, List>
+  : never
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+export type _Repeat<A extends any, N extends number, L extends List = []> =
+  __Repeat<N, A, L> extends infer X ? Cast<X, List> : never;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export type _Repeat<A extends any, N extends number, L extends List = []> =
+  __Repeat<N, A, L> extends infer X ? Cast<X, List> : never;
+
+===================== End =====================

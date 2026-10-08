@@ -1,0 +1,45 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * Example usage:
+ *
+ *     const x = 1;
+ *     const y = 2;
+ *     console.log(x + y);
+ *
+ * End of example.
+ */
+function foo() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * Example usage:
+ *
+ *     const x = 1;
+ *     const y = 2;
+ *     console.log(x + y);
+ *
+ * End of example.
+ */
+function foo() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * Example usage:
+ *
+ *     const x = 1;
+ *     const y = 2;
+ *     console.log(x + y);
+ *
+ * End of example.
+ */
+function foo() {}
+
+===================== End =====================

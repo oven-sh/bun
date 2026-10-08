@@ -1,0 +1,6 @@
+[
+  { "quoteProps": "as-needed" },
+  { "quoteProps": "preserve" },
+  { "quoteProps": "consistent" },
+  { "quoteProps": "consistent", "singleQuote": true }
+]

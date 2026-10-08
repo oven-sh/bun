@@ -1,0 +1,12 @@
+------------------
+{ printWidth: 80 }
+------------------
+const requestTrie =
+  TernarySearchTree.forPaths<IRecursiveWatchRequest>(!isLinux);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const requestTrie = TernarySearchTree.forPaths<IRecursiveWatchRequest>(!isLinux);
+
+===================== End =====================

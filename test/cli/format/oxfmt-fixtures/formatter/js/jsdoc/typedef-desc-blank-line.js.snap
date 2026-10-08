@@ -1,0 +1,84 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 7: @typedef with blank line between tag+type+name and description
+
+/**
+ * @typedef {Object} MyType
+ *
+ * This is a description separated by a blank line from the typedef declaration.
+ */
+const a = 1;
+
+/**
+ * @param {string} name
+ *
+ * Description after blank line for a param tag.
+ */
+function withParamBlank(name) {}
+
+/**
+ * @typedef {import("./foo").Bar} AliasType
+ *
+ * An alias type with a blank line before its description that should wrap when the description is long enough to exceed the print width.
+ */
+const b = 2;
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 7: @typedef with blank line between tag+type+name and description
+
+/**
+ * @typedef {Object} MyType
+ *
+ *   This is a description separated by a blank line from the typedef
+ *   declaration.
+ */
+const a = 1;
+
+/**
+ * @param {string} name
+ *
+ *   Description after blank line for a param tag.
+ */
+function withParamBlank(name) {}
+
+/**
+ * @typedef {import("./foo").Bar} AliasType
+ *
+ *   An alias type with a blank line before its description that should wrap
+ *   when the description is long enough to exceed the print width.
+ */
+const b = 2;
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 7: @typedef with blank line between tag+type+name and description
+
+/**
+ * @typedef {Object} MyType
+ *
+ *   This is a description separated by a blank line from the typedef declaration.
+ */
+const a = 1;
+
+/**
+ * @param {string} name
+ *
+ *   Description after blank line for a param tag.
+ */
+function withParamBlank(name) {}
+
+/**
+ * @typedef {import("./foo").Bar} AliasType
+ *
+ *   An alias type with a blank line before its description that should wrap when the description is
+ *   long enough to exceed the print width.
+ */
+const b = 2;
+
+===================== End =====================

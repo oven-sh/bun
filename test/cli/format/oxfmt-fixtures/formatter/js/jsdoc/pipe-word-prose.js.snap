@@ -1,0 +1,30 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * Calculate the value of |splineCurve| based on the *input* parameters. This
+ * is a longer description that wraps across multiple lines with emphasis.
+ */
+const a = 1;
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * Calculate the value of |splineCurve| based on the _input_ parameters. This is
+ * a longer description that wraps across multiple lines with emphasis.
+ */
+const a = 1;
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * Calculate the value of |splineCurve| based on the _input_ parameters. This is a longer
+ * description that wraps across multiple lines with emphasis.
+ */
+const a = 1;
+
+===================== End =====================

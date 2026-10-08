@@ -1,0 +1,17 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+code || !escapeless && (true /* 1 */ || false /* 2 */)
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+code || (!escapeless && (true /* 1 */ || false) /* 2 */);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+code || (!escapeless && (true /* 1 */ || false) /* 2 */);
+
+===================== End =====================

@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+class Foo {
+  realTierLabel$ =
+    this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+}
+
+const realTierLabel$ =
+  this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class Foo {
+  realTierLabel$ = this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+}
+
+const realTierLabel$ = this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+
+===================== End =====================

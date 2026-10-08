@@ -1,0 +1,39 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Issue #18973 - await with private field access needs parentheses
+!(await a).#b;
+
+// Additional test cases
+(await a).#b;
+(await a).b;
+(await a)['b'];
+(await a)[0];
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// Issue #18973 - await with private field access needs parentheses
+!(await a).#b;
+
+// Additional test cases
+(await a).#b;
+(await a).b;
+(await a)["b"];
+(await a)[0];
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// Issue #18973 - await with private field access needs parentheses
+!(await a).#b;
+
+// Additional test cases
+(await a).#b;
+(await a).b;
+(await a)["b"];
+(await a)[0];
+
+===================== End =====================

@@ -1,0 +1,30 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+new ((
+  require('./webpack/plugins/next-trace-entrypoints-plugin')
+)
+  .TraceEntryPointsPlugin as P)(
+  {
+    rootDir: dir,
+  }
+)
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+new (require("./webpack/plugins/next-trace-entrypoints-plugin")
+  .TraceEntryPointsPlugin as P)({
+  rootDir: dir,
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+new (require("./webpack/plugins/next-trace-entrypoints-plugin").TraceEntryPointsPlugin as P)({
+  rootDir: dir,
+});
+
+===================== End =====================

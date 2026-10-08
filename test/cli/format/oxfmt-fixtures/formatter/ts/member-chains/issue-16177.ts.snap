@@ -1,0 +1,62 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+{
+  {
+    jest.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+      ...args
+    ) {
+      return {
+        ...originalGetBoundingClientRect.bind(this)(...args),
+        top: canvasTop,
+        left: canvasLeft,
+        width: canvasWidth,
+        height: canvasHeight,
+      };
+    });
+  }
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+{
+  {
+    jest
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element, ...args) {
+        return {
+          ...originalGetBoundingClientRect.bind(this)(...args),
+          top: canvasTop,
+          left: canvasLeft,
+          width: canvasWidth,
+          height: canvasHeight,
+        };
+      });
+  }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+{
+  {
+    jest.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+      ...args
+    ) {
+      return {
+        ...originalGetBoundingClientRect.bind(this)(...args),
+        top: canvasTop,
+        left: canvasLeft,
+        width: canvasWidth,
+        height: canvasHeight,
+      };
+    });
+  }
+}
+
+===================== End =====================

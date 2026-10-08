@@ -1,0 +1,26 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const defaultColorDecoratorsEnablement = accessor
+  .get(IConfigurationService)
+  .getValue<'auto' | 'always' | 'never'>('longlonglonglonglonglonglonglonglong');
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const defaultColorDecoratorsEnablement = accessor
+  .get(IConfigurationService)
+  .getValue<"auto" | "always" | "never">(
+    "longlonglonglonglonglonglonglonglong",
+  );
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const defaultColorDecoratorsEnablement = accessor
+  .get(IConfigurationService)
+  .getValue<"auto" | "always" | "never">("longlonglonglonglonglonglonglonglong");
+
+===================== End =====================

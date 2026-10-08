@@ -1,0 +1,50 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 17: @param with dash separator and description on next line
+
+/**
+ * @param {ActiveElement[]} lastActive -
+ *   Previously active elements
+ */
+function update(lastActive) {}
+
+// Dash with description on same line (should stay the same)
+/**
+ * @param {string} name - The user name
+ */
+function greet(name) {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 17: @param with dash separator and description on next line
+
+/**
+ * @param {ActiveElement[]} lastActive -
+ *   Previously active elements
+ */
+function update(lastActive) {}
+
+// Dash with description on same line (should stay the same)
+/** @param {string} name - The user name */
+function greet(name) {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 17: @param with dash separator and description on next line
+
+/**
+ * @param {ActiveElement[]} lastActive -
+ *   Previously active elements
+ */
+function update(lastActive) {}
+
+// Dash with description on same line (should stay the same)
+/** @param {string} name - The user name */
+function greet(name) {}
+
+===================== End =====================

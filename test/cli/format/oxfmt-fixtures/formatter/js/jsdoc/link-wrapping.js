@@ -1,0 +1,53 @@
+/**
+ * Returns a promise that resolves with the value from {@link Storage.getItem}.
+ */
+const a = 1;
+
+/**
+ * This uses the {@link SomeVeryLongClassName} to handle the operation properly.
+ */
+const b = 2;
+
+/**
+ * The `string` values within a renderer are always associated with the {@link type} of that renderer. To switch types, call {@link child} with a different `type` argument.
+ */
+const c = 3;
+
+// Full-width wrapping: {@link} counts as full token width, not just display text.
+// "the {@link Converter} and" should NOT fit on one line at printWidth=80 because
+// {@link Converter} is 17 chars, not 9.
+/**
+ * This class holds the two main components of TypeDoc, the {@link Converter} and the {@link Renderer}. When running TypeDoc, first the {@link Converter} is invoked which generates a {@link ProjectReflection} from the passed in source files.
+ */
+const d = 4;
+
+// Multiple {@link} tags wrapping at tag boundary
+/**
+ * Triggered when the converter has created a parameter reflection. The listener will be given {@link Context}, {@link Models.ParameterReflection} and a `ts.Node?`
+ */
+const e = 5;
+
+// {@link} with pipe separator
+/**
+ * If canceled, a {@link CancellablePromise | `CancellablePromise`} should throw an `Cancellation` object.
+ */
+const f = 6;
+
+// {@link} overflow tolerance: upstream Prettier allows lines with {@link} tags
+// to slightly exceed printWidth since the tag syntax is rendering overhead.
+/**
+ * Checks if an array is non-empty and narrows its type to {@link NonEmptyArray}.
+ */
+const g = 7;
+
+// {@link} tolerance with regular word as the overflow word
+/**
+ * This class holds the two main components of TypeDoc, the {@link Converter} and the {@link Renderer}. When running TypeDoc, first the {@link Converter} is invoked.
+ */
+const h = 8;
+
+// No tolerance for non-{@link} overflow — normal wrapping still applies
+/**
+ * This function returns a value similar to SomeLongClassName and does something when called today.
+ */
+const i = 9;

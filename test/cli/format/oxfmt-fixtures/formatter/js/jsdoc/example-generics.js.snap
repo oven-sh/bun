@@ -1,0 +1,48 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * @example
+ * await storage.getItem<number>("key");
+ */
+function foo() {}
+
+/**
+ * @example
+ * const result = override<{ opt: string }>({ opt: "value" });
+ */
+function bar() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * @example
+ *   await storage.getItem<number>("key");
+ */
+function foo() {}
+
+/**
+ * @example
+ *   const result = override<{ opt: string }>({ opt: "value" });
+ */
+function bar() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * @example
+ *   await storage.getItem<number>("key");
+ */
+function foo() {}
+
+/**
+ * @example
+ *   const result = override<{ opt: string }>({ opt: "value" });
+ */
+function bar() {}
+
+===================== End =====================

@@ -1,0 +1,33 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Minimum repro from issue #19436:
+// Comments before call expressions must be preserved
+const r = /* THIS */ f()
+
+// @__PURE__ comments must not be deleted
+export const globalRegistry = /*@__PURE__*/ registry();
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// Minimum repro from issue #19436:
+// Comments before call expressions must be preserved
+const r = /* THIS */ f();
+
+// @__PURE__ comments must not be deleted
+export const globalRegistry = /*@__PURE__*/ registry();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// Minimum repro from issue #19436:
+// Comments before call expressions must be preserved
+const r = /* THIS */ f();
+
+// @__PURE__ comments must not be deleted
+export const globalRegistry = /*@__PURE__*/ registry();
+
+===================== End =====================

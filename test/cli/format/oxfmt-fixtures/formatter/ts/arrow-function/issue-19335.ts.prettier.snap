@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+(): {
+  any;
+  // this comment causes function body in a new line
+} => ({
+  any,
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+(): {
+  any;
+  // this comment causes function body in a new line
+} => ({
+  any,
+});
+
+===================== End =====================

@@ -1,0 +1,86 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * `` ```js /Hello|Hi/ ``
+ *
+ * Meta word highlight
+ *
+ * @param parser - Code parser instance
+ * @param meta - Meta string
+ */
+function highlight(parser, meta) {}
+
+/**
+ * Single backtick: `foo` and double-backtick escaping: `` a`b ``.
+ */
+function a() {}
+
+/**
+ * Content with leading backtick: `` `leading ``, trailing: `` trailing` ``.
+ */
+function b() {}
+
+/**
+ * *emph* triggers mdast parsing. Pure single backtick: `` ` ``.
+ */
+function c() {}
+
+/**
+ * *emph* then double-backtick escape: `` a`b ``.
+ */
+function d() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * ` ```js /Hello|Hi/ `
+ *
+ * Meta word highlight
+ *
+ * @param parser - Code parser instance
+ * @param meta - Meta string
+ */
+function highlight(parser, meta) {}
+
+/** Single backtick: `foo` and double-backtick escaping: `` a`b ``. */
+function a() {}
+
+/** Content with leading backtick: `` `leading ``, trailing: `` trailing` ``. */
+function b() {}
+
+/** _emph_ triggers mdast parsing. Pure single backtick: `` ` ``. */
+function c() {}
+
+/** _emph_ then double-backtick escape: ``a`b``. */
+function d() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * ` ```js /Hello|Hi/ `
+ *
+ * Meta word highlight
+ *
+ * @param parser - Code parser instance
+ * @param meta - Meta string
+ */
+function highlight(parser, meta) {}
+
+/** Single backtick: `foo` and double-backtick escaping: `` a`b ``. */
+function a() {}
+
+/** Content with leading backtick: `` `leading ``, trailing: `` trailing` ``. */
+function b() {}
+
+/** _emph_ triggers mdast parsing. Pure single backtick: `` ` ``. */
+function c() {}
+
+/** _emph_ then double-backtick escape: ``a`b``. */
+function d() {}
+
+===================== End =====================

@@ -1,0 +1,46 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+ const assertFilteringFor = (expected: {
+   [T in TestFilterTerm]?: boolean;
+ }) => {};
+
+// Should not hug
+export async function update(
+  options: {
+    eventKey?: ConfigEvent.ConfigEventKey;
+  } = {},
+): Promise<void> {
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const assertFilteringFor = (expected: {
+  [T in TestFilterTerm]?: boolean;
+}) => {};
+
+// Should not hug
+export async function update(
+  options: {
+    eventKey?: ConfigEvent.ConfigEventKey;
+  } = {},
+): Promise<void> {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const assertFilteringFor = (expected: {
+  [T in TestFilterTerm]?: boolean;
+}) => {};
+
+// Should not hug
+export async function update(
+  options: {
+    eventKey?: ConfigEvent.ConfigEventKey;
+  } = {},
+): Promise<void> {}
+
+===================== End =====================

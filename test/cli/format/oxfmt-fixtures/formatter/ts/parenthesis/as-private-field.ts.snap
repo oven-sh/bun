@@ -1,0 +1,37 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+class X {
+  #selectClause: unknown;
+
+  test(columns: unknown) {
+    (this as any).#selectClause = columns;
+  }
+}
+
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+class X {
+  #selectClause: unknown;
+
+  test(columns: unknown) {
+    (this as any).#selectClause = columns;
+  }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class X {
+  #selectClause: unknown;
+
+  test(columns: unknown) {
+    (this as any).#selectClause = columns;
+  }
+}
+
+===================== End =====================

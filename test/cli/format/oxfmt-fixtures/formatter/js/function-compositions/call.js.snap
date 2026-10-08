@@ -1,0 +1,33 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+foo(
+  'foo',
+  () => 'bar',
+  ref('baz'),
+  computed(() => 'hi'),
+);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+foo(
+  "foo",
+  () => "bar",
+  ref("baz"),
+  computed(() => "hi"),
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+foo(
+  "foo",
+  () => "bar",
+  ref("baz"),
+  computed(() => "hi"),
+);
+
+===================== End =====================

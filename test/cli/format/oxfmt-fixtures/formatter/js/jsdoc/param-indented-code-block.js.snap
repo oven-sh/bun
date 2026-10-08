@@ -1,0 +1,138 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Bug D: @param description with 4-space indented code block
+/**
+ * @param {object} options The options object:
+ *
+ *     const result = process(options);
+ *     console.log(result);
+ *
+ * @returns {void}
+ */
+function foo(options) {}
+
+// Bug E: @ inside indented code block should not be treated as a tag
+/**
+ * @deprecated Use the new API instead:
+ *
+ *     @myDecorator
+ *     class Foo {}
+ *
+ * @type {string}
+ */
+const bar = "hello";
+
+// @default with blank line (Bug A)
+/**
+ * @default
+ *
+ * Some default value description that should not get
+ * continuation indent.
+ */
+const baz = 42;
+
+// Fix G: @param code block with excess indent (6 spaces = continuation + code indent)
+// The code block should be normalized to exactly continuation_indent + 4 spaces
+/**
+ * @param paramA This is a **parameter** pointing to an interface.
+ *
+ *       const value = new BaseClass("test");
+ *       functionWithArguments("arg", 0, value);
+ * @returns This is the return value of the function.
+ */
+function qux(paramA) {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Bug D: @param description with 4-space indented code block
+/**
+ * @param {object} options The options object:
+ *
+ *       const result = process(options);
+ *       console.log(result);
+ *
+ * @returns {void}
+ */
+function foo(options) {}
+
+// Bug E: @ inside indented code block should not be treated as a tag
+/**
+ * @deprecated Use the new API instead:
+ *
+ *     @myDecorator
+ *     class Foo {}
+ *
+ * @type {string}
+ */
+const bar = "hello";
+
+// @default with blank line (Bug A)
+/**
+ * @default
+ *
+ * Some default value description that should not get
+ * continuation indent.
+ */
+const baz = 42;
+
+// Fix G: @param code block with excess indent (6 spaces = continuation + code indent)
+// The code block should be normalized to exactly continuation_indent + 4 spaces
+/**
+ * @param paramA This is a **parameter** pointing to an interface.
+ *
+ *       const value = new BaseClass("test");
+ *       functionWithArguments("arg", 0, value);
+ * @returns This is the return value of the function.
+ */
+function qux(paramA) {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Bug D: @param description with 4-space indented code block
+/**
+ * @param {object} options The options object:
+ *
+ *       const result = process(options);
+ *       console.log(result);
+ *
+ * @returns {void}
+ */
+function foo(options) {}
+
+// Bug E: @ inside indented code block should not be treated as a tag
+/**
+ * @deprecated Use the new API instead:
+ *
+ *     @myDecorator
+ *     class Foo {}
+ *
+ * @type {string}
+ */
+const bar = "hello";
+
+// @default with blank line (Bug A)
+/**
+ * @default
+ *
+ * Some default value description that should not get
+ * continuation indent.
+ */
+const baz = 42;
+
+// Fix G: @param code block with excess indent (6 spaces = continuation + code indent)
+// The code block should be normalized to exactly continuation_indent + 4 spaces
+/**
+ * @param paramA This is a **parameter** pointing to an interface.
+ *
+ *       const value = new BaseClass("test");
+ *       functionWithArguments("arg", 0, value);
+ * @returns This is the return value of the function.
+ */
+function qux(paramA) {}
+
+===================== End =====================

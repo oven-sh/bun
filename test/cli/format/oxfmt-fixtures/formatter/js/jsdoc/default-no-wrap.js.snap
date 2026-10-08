@@ -1,0 +1,57 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// @default values on the same line should NOT be wrapped at printWidth.
+// Upstream (stringify.ts:131-136) preserves description as-is for
+// TAGS_PEV_FORMATE_DESCRIPTION tags.
+
+/**
+ * @example
+ *   {{browser}} -mv{{manifestVersion}}
+ *
+ * @default <span v-pre>`"{{browser}}-mv{{manifestVersion}}{{modeSuffix}}"`</span>
+ */
+var outDirTemplate;
+
+/**
+ * @default { object: "value", nestingTest: { obj: "nested", anotherKey: "something" } }
+ */
+var anotherDefault;
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// @default values on the same line should NOT be wrapped at printWidth.
+// Upstream (stringify.ts:131-136) preserves description as-is for
+// TAGS_PEV_FORMATE_DESCRIPTION tags.
+
+/**
+ * @example
+ *   {{browser}} -mv{{manifestVersion}}
+ * @default <span v-pre>`"{{browser}}-mv{{manifestVersion}}{{modeSuffix}}"`</span>
+ */
+var outDirTemplate;
+
+/** @default { object: "value", nestingTest: { obj: "nested", anotherKey: "something" } } */
+var anotherDefault;
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// @default values on the same line should NOT be wrapped at printWidth.
+// Upstream (stringify.ts:131-136) preserves description as-is for
+// TAGS_PEV_FORMATE_DESCRIPTION tags.
+
+/**
+ * @example
+ *   {{browser}} -mv{{manifestVersion}}
+ * @default <span v-pre>`"{{browser}}-mv{{manifestVersion}}{{modeSuffix}}"`</span>
+ */
+var outDirTemplate;
+
+/** @default { object: "value", nestingTest: { obj: "nested", anotherKey: "something" } } */
+var anotherDefault;
+
+===================== End =====================

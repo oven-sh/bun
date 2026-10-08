@@ -1,0 +1,23 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+export default function useTagsCount({
+  query,
+}: { query?: Record<any, any> } = {}) {
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+export default function useTagsCount({
+  query,
+}: { query?: Record<any, any> } = {}) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export default function useTagsCount({ query }: { query?: Record<any, any> } = {}) {}
+
+===================== End =====================

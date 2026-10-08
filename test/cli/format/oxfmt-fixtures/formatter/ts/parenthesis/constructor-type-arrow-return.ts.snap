@@ -1,0 +1,61 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const f = (): (new () => Foo) => new Foo();
+
+const g = (): new () => Foo => new Foo();
+
+export const provideCloudMessagingServiceClass = (): (new () => CloudMessagingService) => {
+  return MobileCloudMessagingService;
+};
+
+const h = (): (new <T>() => T) => new Foo();
+
+const i = (): (abstract new () => Foo) => new Foo();
+
+const j = (): (() => Foo) => () => new Foo();
+
+type T = (new () => Foo) | Bar;
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const f = (): new () => Foo => new Foo();
+
+const g = (): new () => Foo => new Foo();
+
+export const provideCloudMessagingServiceClass =
+  (): new () => CloudMessagingService => {
+    return MobileCloudMessagingService;
+  };
+
+const h = (): new <T>() => T => new Foo();
+
+const i = (): abstract new () => Foo => new Foo();
+
+const j = (): (() => Foo) => () => new Foo();
+
+type T = (new () => Foo) | Bar;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const f = (): new () => Foo => new Foo();
+
+const g = (): new () => Foo => new Foo();
+
+export const provideCloudMessagingServiceClass = (): new () => CloudMessagingService => {
+  return MobileCloudMessagingService;
+};
+
+const h = (): new <T>() => T => new Foo();
+
+const i = (): abstract new () => Foo => new Foo();
+
+const j = (): (() => Foo) => () => new Foo();
+
+type T = (new () => Foo) | Bar;
+
+===================== End =====================

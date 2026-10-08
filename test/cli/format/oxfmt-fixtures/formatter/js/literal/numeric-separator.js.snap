@@ -1,0 +1,27 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Issue #18968 - numeric separators should be preserved
+const x = 123.000_000_000_000_000_000_000_0;
+const y = 1_000_000;
+const z = 0.000_1;
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// Issue #18968 - numeric separators should be preserved
+const x = 123.000_000_000_000_000_000_000_0;
+const y = 1_000_000;
+const z = 0.000_1;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// Issue #18968 - numeric separators should be preserved
+const x = 123.000_000_000_000_000_000_000_0;
+const y = 1_000_000;
+const z = 0.000_1;
+
+===================== End =====================

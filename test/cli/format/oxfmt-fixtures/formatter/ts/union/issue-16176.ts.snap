@@ -1,0 +1,49 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+export default class TestUnionTypeAnnotation1 {
+  private prop!: /* comment */
+    LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+
+  private accessor prop2!: /* comment */
+    LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+}
+
+export interface TestUnionTypeAnnotation2 {
+  property: /* comment */
+    LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+export default class TestUnionTypeAnnotation1 {
+  private prop!: /* comment */
+    LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+
+  private accessor prop2!: /* comment */
+    LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+}
+
+export interface TestUnionTypeAnnotation2 {
+  property: /* comment */
+    LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export default class TestUnionTypeAnnotation1 {
+  private prop!: /* comment */ LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+
+  private accessor prop2!: /* comment */
+    LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+}
+
+export interface TestUnionTypeAnnotation2 {
+  property: /* comment */ LongLongLongLongLongLongType[] | LongLongLongLongLongLongType[];
+}
+
+===================== End =====================

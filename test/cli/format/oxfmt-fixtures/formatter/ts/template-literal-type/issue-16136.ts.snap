@@ -1,0 +1,47 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+type templateLiteralType = `${
+  TStringConvertedSoFar extends Capitalize<TStringConvertedSoFar>
+    ? '_'
+    : ''
+}`;
+
+type CamelToSnakeCase<TCamelCaseString extends string> =
+  TCamelCaseString extends `${infer TStringConvertedSoFar}${infer TStringYetToConvert}`
+    ? `${TStringConvertedSoFar extends Capitalize<TStringConvertedSoFar>
+        ? '_'
+        : ''}${Lowercase<TStringConvertedSoFar>}${CamelToSnakeCase<TStringYetToConvert>}`
+    : TCamelCaseString;
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+type templateLiteralType =
+  `${TStringConvertedSoFar extends Capitalize<TStringConvertedSoFar>
+    ? "_"
+    : ""}`;
+
+type CamelToSnakeCase<TCamelCaseString extends string> =
+  TCamelCaseString extends `${infer TStringConvertedSoFar}${infer TStringYetToConvert}`
+    ? `${TStringConvertedSoFar extends Capitalize<TStringConvertedSoFar>
+        ? "_"
+        : ""}${Lowercase<TStringConvertedSoFar>}${CamelToSnakeCase<TStringYetToConvert>}`
+    : TCamelCaseString;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type templateLiteralType = `${TStringConvertedSoFar extends Capitalize<TStringConvertedSoFar>
+  ? "_"
+  : ""}`;
+
+type CamelToSnakeCase<TCamelCaseString extends string> =
+  TCamelCaseString extends `${infer TStringConvertedSoFar}${infer TStringYetToConvert}`
+    ? `${TStringConvertedSoFar extends Capitalize<TStringConvertedSoFar>
+        ? "_"
+        : ""}${Lowercase<TStringConvertedSoFar>}${CamelToSnakeCase<TStringYetToConvert>}`
+    : TCamelCaseString;
+
+===================== End =====================

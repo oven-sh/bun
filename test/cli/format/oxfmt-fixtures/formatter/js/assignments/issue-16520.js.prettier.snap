@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+const {
+  data: { args: { something } } = {
+    args: { something: [] },
+  },
+} = obj;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const {
+  data: { args: { something } } = {
+    args: { something: [] },
+  },
+} = obj;
+
+===================== End =====================

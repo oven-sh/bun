@@ -1,0 +1,35 @@
+------------------
+{ printWidth: 80 }
+------------------
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+foo
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */?.();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+foo
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */?.();
+
+===================== End =====================

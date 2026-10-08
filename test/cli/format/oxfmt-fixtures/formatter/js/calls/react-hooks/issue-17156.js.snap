@@ -1,0 +1,33 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const handleFoo = useCallback((...args) => {
+  onSubmit(...args);
+  onClose();
+}, [onSubmit, onClose]);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const handleFoo = useCallback(
+  (...args) => {
+    onSubmit(...args);
+    onClose();
+  },
+  [onSubmit, onClose],
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const handleFoo = useCallback(
+  (...args) => {
+    onSubmit(...args);
+    onClose();
+  },
+  [onSubmit, onClose],
+);
+
+===================== End =====================

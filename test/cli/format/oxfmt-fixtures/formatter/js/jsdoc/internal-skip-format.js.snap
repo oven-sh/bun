@@ -1,0 +1,109 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 1: @internal should skip description formatting (no continuation indent)
+
+/**
+ * @internal
+ *
+ * This function is internal and should not be used directly.
+ */
+function internalA() {}
+
+/**
+ * @internal
+ *
+ * A longer internal description that should wrap at printWidth but without any continuation indent applied to the wrapped lines.
+ */
+function internalB() {}
+
+// @module should also skip formatting (already in the list)
+/**
+ * @module
+ *
+ * This is a module description with a blank line separator. It should not get continuation indent.
+ */
+
+// @deprecated should also skip formatting
+/**
+ * @deprecated
+ *
+ * Use the new API instead. This old function will be removed in the next major version.
+ */
+function oldFunc() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 1: @internal should skip description formatting (no continuation indent)
+
+/**
+ * @internal
+ *
+ * This function is internal and should not be used directly.
+ */
+function internalA() {}
+
+/**
+ * @internal
+ *
+ * A longer internal description that should wrap at printWidth but without any
+ * continuation indent applied to the wrapped lines.
+ */
+function internalB() {}
+
+// @module should also skip formatting (already in the list)
+/**
+ * @module
+ *
+ * This is a module description with a blank line separator. It should not get
+ * continuation indent.
+ */
+
+// @deprecated should also skip formatting
+/**
+ * @deprecated
+ *
+ * Use the new API instead. This old function will be removed in the next major
+ * version.
+ */
+function oldFunc() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 1: @internal should skip description formatting (no continuation indent)
+
+/**
+ * @internal
+ *
+ * This function is internal and should not be used directly.
+ */
+function internalA() {}
+
+/**
+ * @internal
+ *
+ * A longer internal description that should wrap at printWidth but without any continuation indent
+ * applied to the wrapped lines.
+ */
+function internalB() {}
+
+// @module should also skip formatting (already in the list)
+/**
+ * @module
+ *
+ * This is a module description with a blank line separator. It should not get continuation indent.
+ */
+
+// @deprecated should also skip formatting
+/**
+ * @deprecated
+ *
+ * Use the new API instead. This old function will be removed in the next major version.
+ */
+function oldFunc() {}
+
+===================== End =====================

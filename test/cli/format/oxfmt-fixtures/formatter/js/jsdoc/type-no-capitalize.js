@@ -1,0 +1,20 @@
+// Inline type casts — description is an identifier, not prose
+const x = /** @type {ARIARoleDefinitionKey} current_role */ (c_r);
+const y = /** @type {Element} node */ (someNode);
+const z = /** @type {string | null} lastPart */ (undefined);
+
+// @type with prose description — first word should not be capitalized
+// (upstream treats first word as "name", not "description")
+/**
+ * @type {Data<object>} will also be removed
+ */
+
+// @type with dash separator
+/**
+ * @type {string} - some description
+ */
+
+// @satisfies should also skip capitalization
+/**
+ * @satisfies {Record<string, boolean>} config
+ */

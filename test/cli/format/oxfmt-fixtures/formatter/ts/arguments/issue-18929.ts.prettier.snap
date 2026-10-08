@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+// The first argument of test function should be a simple string literal or template literal
+it(
+  "a" + b,
+  async () => {
+    // code
+  },
+  30000,
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// The first argument of test function should be a simple string literal or template literal
+it(
+  "a" + b,
+  async () => {
+    // code
+  },
+  30000,
+);
+
+===================== End =====================

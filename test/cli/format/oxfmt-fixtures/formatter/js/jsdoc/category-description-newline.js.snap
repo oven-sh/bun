@@ -1,0 +1,86 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 14: @categoryDescription/@groupDescription preserve description on next line
+
+/**
+ * @categoryDescription Component
+ * React Components that can be used to build UIs.
+ */
+function a() {}
+
+/**
+ * @groupDescription Methods
+ * Descriptions can be added to groups of reflections.
+ */
+function b() {}
+
+/**
+ * @categoryDescription Utility
+ * Simple single-line description.
+ */
+function c() {}
+
+// When description is already on same line, keep it there
+/**
+ * @categoryDescription Component React Components
+ */
+function d() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 14: @categoryDescription/@groupDescription preserve description on next line
+
+/**
+ * @categoryDescription Component
+ * React Components that can be used to build UIs.
+ */
+function a() {}
+
+/**
+ * @groupDescription Methods
+ * Descriptions can be added to groups of reflections.
+ */
+function b() {}
+
+/**
+ * @categoryDescription Utility
+ * Simple single-line description.
+ */
+function c() {}
+
+// When description is already on same line, keep it there
+/** @categoryDescription Component React Components */
+function d() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 14: @categoryDescription/@groupDescription preserve description on next line
+
+/**
+ * @categoryDescription Component
+ * React Components that can be used to build UIs.
+ */
+function a() {}
+
+/**
+ * @groupDescription Methods
+ * Descriptions can be added to groups of reflections.
+ */
+function b() {}
+
+/**
+ * @categoryDescription Utility
+ * Simple single-line description.
+ */
+function c() {}
+
+// When description is already on same line, keep it there
+/** @categoryDescription Component React Components */
+function d() {}
+
+===================== End =====================

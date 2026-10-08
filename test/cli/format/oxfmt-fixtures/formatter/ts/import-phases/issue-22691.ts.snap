@@ -1,0 +1,42 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+import defer * as b from "./b";
+
+console.log(b.b);
+
+import source wasm from "./mod.wasm";
+
+import source x from "<specifier>";
+
+import defer * as c from "./c" with { type: "json" };
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+import defer * as b from "./b";
+
+console.log(b.b);
+
+import source wasm from "./mod.wasm";
+
+import source x from "<specifier>";
+
+import defer * as c from "./c" with { type: "json" };
+
+-------------------
+{ printWidth: 100 }
+-------------------
+import defer * as b from "./b";
+
+console.log(b.b);
+
+import source wasm from "./mod.wasm";
+
+import source x from "<specifier>";
+
+import defer * as c from "./c" with { type: "json" };
+
+===================== End =====================

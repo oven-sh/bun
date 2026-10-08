@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+vite = await (
+  await import("vite")
+).createServer({
+  appType,
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+vite = await (
+  await import("vite")
+).createServer({
+  appType,
+});
+
+===================== End =====================

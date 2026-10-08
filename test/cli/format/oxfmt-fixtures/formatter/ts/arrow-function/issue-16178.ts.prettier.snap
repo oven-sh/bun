@@ -1,0 +1,26 @@
+------------------
+{ printWidth: 80 }
+------------------
+{
+  const xxxxxxxxxxxxxxxxxxxxxxxxx = (
+    xxxxxxxxxxx: xxxxxx,
+    xxxxx: xxxxxxxxxxxxxx,
+  ): xxxxxxxxxxxxxxx =>
+    xxxxxxxxxxxxxxxxxxxxxx({
+      xxxxxxxxxxxx: "xxxxxxxxxxxxxxxxxx",
+      xxxxxxxx: false,
+    });
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+{
+  const xxxxxxxxxxxxxxxxxxxxxxxxx = (xxxxxxxxxxx: xxxxxx, xxxxx: xxxxxxxxxxxxxx): xxxxxxxxxxxxxxx =>
+    xxxxxxxxxxxxxxxxxxxxxx({
+      xxxxxxxxxxxx: "xxxxxxxxxxxxxxxxxx",
+      xxxxxxxx: false,
+    });
+}
+
+===================== End =====================

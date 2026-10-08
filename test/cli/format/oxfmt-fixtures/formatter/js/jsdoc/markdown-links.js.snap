@@ -1,0 +1,30 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * See [https://example.com](https://example.com) for details.
+ * Also check [docs](https://docs.example.com) for more info.
+ */
+function foo() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * See [https://example.com](https://example.com) for details. Also check
+ * [docs](https://docs.example.com) for more info.
+ */
+function foo() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * See [https://example.com](https://example.com) for details. Also check
+ * [docs](https://docs.example.com) for more info.
+ */
+function foo() {}
+
+===================== End =====================

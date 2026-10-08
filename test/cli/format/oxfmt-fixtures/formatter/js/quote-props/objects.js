@@ -1,0 +1,81 @@
+// Object with no quotes needed
+a = {
+  a: "a",
+  b: "b"
+};
+
+// Object with quotes preserved
+a = {
+  'b': "b"
+};
+
+// Object with mixed - consistent should quote all
+a = {
+  c1: "c1",
+  'c2': "c2"
+};
+
+// Object with required quotes - consistent should quote all
+a = {
+  d1: "d1",
+  'd-2': "d2"
+};
+
+// Nested objects - each object is handled independently
+a = {
+  outer1: {
+    inner1: "value",
+    inner2: "value"
+  },
+  outer2: "value"
+};
+
+// Nested object where only inner needs quotes - outer keys stay unquoted
+a = {
+  outer1: {
+    inner1: "value",
+    'inner-2': "value"
+  },
+  outer2: "value"
+};
+
+// Nested object where only outer needs quotes - inner keys stay unquoted
+a = {
+  outer1: {
+    inner1: "value",
+    inner2: "value"
+  },
+  'outer-2': "value"
+};
+
+// Nested object where both need quotes
+a = {
+  outer1: {
+    inner1: "value",
+    'inner-2': "value"
+  },
+  'outer-2': "value"
+};
+
+// Shorthand properties
+a = { x };
+a = { x, y };
+a = { x, y, z };
+
+// Shorthand mixed with regular properties
+a = {
+  x,
+  y: "value"
+};
+
+// Shorthand with quoted properties - quotes should not affect shorthand
+a = {
+  x,
+  'y-z': "value"
+};
+
+// Nested shorthand
+a = {
+  outer: { x, y },
+  z
+};

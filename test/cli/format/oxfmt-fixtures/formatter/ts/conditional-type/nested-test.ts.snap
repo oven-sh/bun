@@ -1,0 +1,42 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+type IsUnion<T> = (
+  Testtttttttttttttttttttttttttttttttttt extends any ? false : never
+) extends false
+  ? false
+  : true
+
+
+
+export const IsUnionType = (
+  Testtttttttttttttttttttttttttttttttttt ? false : never
+)  ? false
+  : true
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+type IsUnion<T> = (
+  Testtttttttttttttttttttttttttttttttttt extends any ? false : never
+) extends false
+  ? false
+  : true;
+
+export const IsUnionType = (
+  Testtttttttttttttttttttttttttttttttttt ? false : never
+)
+  ? false
+  : true;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type IsUnion<T> = (Testtttttttttttttttttttttttttttttttttt extends any ? false : never) extends false
+  ? false
+  : true;
+
+export const IsUnionType = (Testtttttttttttttttttttttttttttttttttt ? false : never) ? false : true;
+
+===================== End =====================

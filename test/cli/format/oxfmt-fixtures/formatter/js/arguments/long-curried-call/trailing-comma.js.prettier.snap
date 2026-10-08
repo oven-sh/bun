@@ -1,0 +1,40 @@
+-----------------------------------------
+{ printWidth: 80, trailingComma: "none" }
+-----------------------------------------
+Event.debounce(
+  call(A, B),
+  DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+)(() => {});
+
+------------------------------------------
+{ printWidth: 100, trailingComma: "none" }
+------------------------------------------
+Event.debounce(call(A, B), DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD)(() => {});
+
+----------------------------------------
+{ printWidth: 80, trailingComma: "es5" }
+----------------------------------------
+Event.debounce(
+  call(A, B),
+  DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+)(() => {});
+
+-----------------------------------------
+{ printWidth: 100, trailingComma: "es5" }
+-----------------------------------------
+Event.debounce(call(A, B), DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD)(() => {});
+
+----------------------------------------
+{ printWidth: 80, trailingComma: "all" }
+----------------------------------------
+Event.debounce(
+  call(A, B),
+  DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD,
+)(() => {});
+
+-----------------------------------------
+{ printWidth: 100, trailingComma: "all" }
+-----------------------------------------
+Event.debounce(call(A, B), DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD)(() => {});
+
+===================== End =====================

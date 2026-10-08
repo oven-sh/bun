@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+function* a() {
+  yield task
+    // No extra parens
+    .run();
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function* a() {
+  yield task
+    // No extra parens
+    .run();
+}
+
+===================== End =====================

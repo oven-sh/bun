@@ -1,0 +1,29 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const builder = {
+  build(environment: BuildEnvironment): Promise<
+    RollupOutput | RollupOutput[]
+  > {
+  },
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const builder = {
+  build(
+    environment: BuildEnvironment,
+  ): Promise<RollupOutput | RollupOutput[]> {},
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const builder = {
+  build(environment: BuildEnvironment): Promise<RollupOutput | RollupOutput[]> {},
+};
+
+===================== End =====================

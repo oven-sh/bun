@@ -1,0 +1,13 @@
+------------------
+{ printWidth: 80 }
+------------------
+const { data: { fooBarBazProfiles = [] } = {}, isLoading: isFooBarLoading } =
+  useFooBarBazQuxProfiles(profileId, profileQueryParams);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const { data: { fooBarBazProfiles = [] } = {}, isLoading: isFooBarLoading } =
+  useFooBarBazQuxProfiles(profileId, profileQueryParams);
+
+===================== End =====================

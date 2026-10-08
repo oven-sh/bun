@@ -1,0 +1,40 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 27: @deprecated description should NOT be capitalized
+
+/**
+ * @deprecated in ARIA 1.1
+ */
+function oldFunction() {}
+
+/**
+ * @deprecated use newFunction instead
+ */
+function anotherOld() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 27: @deprecated description should NOT be capitalized
+
+/** @deprecated in ARIA 1.1 */
+function oldFunction() {}
+
+/** @deprecated use newFunction instead */
+function anotherOld() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 27: @deprecated description should NOT be capitalized
+
+/** @deprecated in ARIA 1.1 */
+function oldFunction() {}
+
+/** @deprecated use newFunction instead */
+function anotherOld() {}
+
+===================== End =====================

@@ -1,0 +1,96 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * @return {string} The result
+ */
+function a() {}
+
+/**
+ * @arg {number} x - The value
+ */
+function b(x) {}
+
+/**
+ * @argument {number} y - The value
+ */
+function c(y) {}
+
+/**
+ * @yield {number} The yielded value
+ */
+function* d() {}
+
+/**
+ * @prop {string} name - The name
+ */
+const e = {};
+
+/**
+ * @exception {Error} If something fails
+ */
+function f() {}
+
+/**
+ * @template T
+ * @typedef {Object} Container
+ * @property {T} value
+ */
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/** @returns {string} The result */
+function a() {}
+
+/** @param {number} x - The value */
+function b(x) {}
+
+/** @param {number} y - The value */
+function c(y) {}
+
+/** @yields {number} The yielded value */
+function* d() {}
+
+/** @property {string} name - The name */
+const e = {};
+
+/** @throws {Error} If something fails */
+function f() {}
+
+/**
+ * @template T
+ * @typedef {Object} Container
+ * @property {T} value
+ */
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/** @returns {string} The result */
+function a() {}
+
+/** @param {number} x - The value */
+function b(x) {}
+
+/** @param {number} y - The value */
+function c(y) {}
+
+/** @yields {number} The yielded value */
+function* d() {}
+
+/** @property {string} name - The name */
+const e = {};
+
+/** @throws {Error} If something fails */
+function f() {}
+
+/**
+ * @template T
+ * @typedef {Object} Container
+ * @property {T} value
+ */
+
+===================== End =====================

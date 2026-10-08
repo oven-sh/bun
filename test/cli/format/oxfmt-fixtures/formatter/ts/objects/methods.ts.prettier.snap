@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+const builder = {
+  build(
+    environment: BuildEnvironment,
+  ): Promise<RollupOutput | RollupOutput[]> {},
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const builder = {
+  build(environment: BuildEnvironment): Promise<RollupOutput | RollupOutput[]> {},
+};
+
+===================== End =====================

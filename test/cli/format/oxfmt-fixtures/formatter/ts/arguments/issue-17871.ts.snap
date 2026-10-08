@@ -1,0 +1,25 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+
+const x = [].reduce(() => {
+  return "y";
+}, {} as SomeType<OtherType>);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const x = [].reduce(() => {
+  return "y";
+}, {} as SomeType<OtherType>);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const x = [].reduce(() => {
+  return "y";
+}, {} as SomeType<OtherType>);
+
+===================== End =====================

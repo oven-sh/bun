@@ -1,0 +1,132 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// https://github.com/oxc-project/oxc/issues/20183
+function get_attributes(element) {
+	return /** @type {Record<string | symbol, unknown>} */ (
+		// @ts-expect-error
+		element.__attributes ??= {
+			[IS_CUSTOM_ELEMENT]: element.nodeName.includes('-'),
+			[IS_HTML]: element.namespaceURI === NAMESPACE_HTML
+		}
+	);
+}
+
+function simple_type_cast() {
+	return /** @type {string} */ (value);
+}
+
+function throw_type_cast() {
+	throw /** @type {Error} */ (err);
+}
+
+function satisfies_type_cast() {
+	return /** @satisfies {Record<string, unknown>} */ ({
+		key: "value"
+	});
+}
+
+function long_type_cast_in_return() {
+	return (/** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+		(fooBarBaz));
+}
+
+function type_cast_member_expression() {
+	return (
+		/** @type {X} */ (
+			obj
+				// comment
+				.prop
+		)
+	);
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// https://github.com/oxc-project/oxc/issues/20183
+function get_attributes(element) {
+  return /** @type {Record<string | symbol, unknown>} */ (
+    // @ts-expect-error
+    element.__attributes ??= {
+      [IS_CUSTOM_ELEMENT]: element.nodeName.includes("-"),
+      [IS_HTML]: element.namespaceURI === NAMESPACE_HTML,
+    }
+  );
+}
+
+function simple_type_cast() {
+  return /** @type {string} */ (value);
+}
+
+function throw_type_cast() {
+  throw /** @type {Error} */ (err);
+}
+
+function satisfies_type_cast() {
+  return /** @satisfies {Record<string, unknown>} */ ({
+    key: "value",
+  });
+}
+
+function long_type_cast_in_return() {
+  return (
+    /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+    (fooBarBaz)
+  );
+}
+
+function type_cast_member_expression() {
+  return /** @type {X} */ (
+    obj
+      // comment
+      .prop
+  );
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// https://github.com/oxc-project/oxc/issues/20183
+function get_attributes(element) {
+  return /** @type {Record<string | symbol, unknown>} */ (
+    // @ts-expect-error
+    element.__attributes ??= {
+      [IS_CUSTOM_ELEMENT]: element.nodeName.includes("-"),
+      [IS_HTML]: element.namespaceURI === NAMESPACE_HTML,
+    }
+  );
+}
+
+function simple_type_cast() {
+  return /** @type {string} */ (value);
+}
+
+function throw_type_cast() {
+  throw /** @type {Error} */ (err);
+}
+
+function satisfies_type_cast() {
+  return /** @satisfies {Record<string, unknown>} */ ({
+    key: "value",
+  });
+}
+
+function long_type_cast_in_return() {
+  return (
+    /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+    (fooBarBaz)
+  );
+}
+
+function type_cast_member_expression() {
+  return /** @type {X} */ (
+    obj
+      // comment
+      .prop
+  );
+}
+
+===================== End =====================

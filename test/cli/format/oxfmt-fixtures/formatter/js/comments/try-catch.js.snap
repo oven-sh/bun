@@ -1,0 +1,43 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+try /* comment1 */ {
+} catch (err) /* comment2 */ {
+} finally /* comment3 */ {
+}
+
+
+try /* comment1 */ {
+} catch (/* before */ err /* after */) /* comment2 */ {
+} finally /* comment3 */ {
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+try /* comment1 */ {
+} catch (err) /* comment2 */ {
+} finally /* comment3 */ {
+}
+
+try /* comment1 */ {
+} catch (/* before */ err /* after */) /* comment2 */ {
+} finally /* comment3 */ {
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+try /* comment1 */ {
+} catch (err) /* comment2 */ {
+} finally /* comment3 */ {
+}
+
+try /* comment1 */ {
+} catch (/* before */ err /* after */) /* comment2 */ {
+} finally /* comment3 */ {
+}
+
+===================== End =====================

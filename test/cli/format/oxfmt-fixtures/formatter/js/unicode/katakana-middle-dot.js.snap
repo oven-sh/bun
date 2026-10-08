@@ -1,0 +1,36 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// https://github.com/oxc-project/oxc/issues/16527
+x = { 'x・': 0, 'x･': 1 };
+x = y['x・', 'x･'];
+class A {
+  'x・'() {}
+  'x･'() {}
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// https://github.com/oxc-project/oxc/issues/16527
+x = { "x・": 0, "x･": 1 };
+x = y[("x・", "x･")];
+class A {
+  "x・"() {}
+  "x･"() {}
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// https://github.com/oxc-project/oxc/issues/16527
+x = { "x・": 0, "x･": 1 };
+x = y[("x・", "x･")];
+class A {
+  "x・"() {}
+  "x･"() {}
+}
+
+===================== End =====================

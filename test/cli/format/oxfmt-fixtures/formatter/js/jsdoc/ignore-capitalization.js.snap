@@ -1,0 +1,60 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 15: @ignore with blank-line separator should not apply named-tag capitalization
+
+/**
+ * @ignore
+ *
+ * `@hidden` and `@ignore` mark a reflection as not being documented.
+ */
+function internalHelper() {}
+
+/**
+ * @ignore
+ *
+ * some description after blank line
+ */
+function anotherHelper() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 15: @ignore with blank-line separator should not apply named-tag capitalization
+
+/**
+ * @ignore
+ *
+ *   `@hidden` and `@ignore` mark a reflection as not being documented.
+ */
+function internalHelper() {}
+
+/**
+ * @ignore
+ *
+ *   Some description after blank line
+ */
+function anotherHelper() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 15: @ignore with blank-line separator should not apply named-tag capitalization
+
+/**
+ * @ignore
+ *
+ *   `@hidden` and `@ignore` mark a reflection as not being documented.
+ */
+function internalHelper() {}
+
+/**
+ * @ignore
+ *
+ *   Some description after blank line
+ */
+function anotherHelper() {}
+
+===================== End =====================

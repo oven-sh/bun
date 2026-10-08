@@ -1,0 +1,81 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+call(editor /* comment */, () => {
+  //
+});
+call(editor, /* comment */
+  () => {
+    //
+  }
+);
+call(/* */ editor /* comment */, () => {
+  //
+});
+call(/* comment */
+  () => {
+    //
+  }
+);
+call(
+  function () {
+    var a = 1;
+    // one
+  },
+  // two
+);
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+call(editor /* comment */, () => {
+  //
+});
+call(editor /* comment */, () => {
+  //
+});
+call(/* */ editor /* comment */, () => {
+  //
+});
+call(
+  /* comment */
+  () => {
+    //
+  },
+);
+call(
+  function () {
+    var a = 1;
+    // one
+  },
+  // two
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+call(editor /* comment */, () => {
+  //
+});
+call(editor /* comment */, () => {
+  //
+});
+call(/* */ editor /* comment */, () => {
+  //
+});
+call(
+  /* comment */
+  () => {
+    //
+  },
+);
+call(
+  function () {
+    var a = 1;
+    // one
+  },
+  // two
+);
+
+===================== End =====================

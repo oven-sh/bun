@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+label: "string literal";
+
+label: "string literal";
+
+function f() {
+  label: "string literal";
+}
+
+if (x) {
+  label: "string literal";
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+label: "string literal";
+
+label: "string literal";
+
+function f() {
+  label: "string literal";
+}
+
+if (x) {
+  label: "string literal";
+}
+
+===================== End =====================

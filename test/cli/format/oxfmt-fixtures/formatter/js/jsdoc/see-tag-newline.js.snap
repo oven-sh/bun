@@ -1,0 +1,41 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * @see
+ * - The "[right](https://frontendmasters.com/)" way to animate modals
+ */
+function foo() {}
+
+/**
+ * @see https://example.com
+ */
+function bar() {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * @see
+ * - The "[right](https://frontendmasters.com/)" way to animate modals
+ */
+function foo() {}
+
+/** @see https://example.com */
+function bar() {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * @see
+ * - The "[right](https://frontendmasters.com/)" way to animate modals
+ */
+function foo() {}
+
+/** @see https://example.com */
+function bar() {}
+
+===================== End =====================

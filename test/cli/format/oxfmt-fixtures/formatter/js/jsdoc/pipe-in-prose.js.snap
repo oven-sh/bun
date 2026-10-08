@@ -1,0 +1,67 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * The |splineCurve| option controls curve interpolation.
+ */
+const a = 1;
+
+/**
+ * | Name | Value |
+ * | ---- | ----- |
+ * | foo  | 1     |
+ */
+const b = 2;
+
+/**
+ * This function calculates Bézier control points in a similar way than
+ * |splineCurve|, but preserves monotonicity of the provided data and ensures no
+ * local extremums are added between the dataset discrete points due to the
+ * interpolation.
+ */
+const c = 3;
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/** The |splineCurve| option controls curve interpolation. */
+const a = 1;
+
+/**
+ * | Name | Value |
+ * | ---- | ----- |
+ * | foo  | 1     |
+ */
+const b = 2;
+
+/**
+ * This function calculates Bézier control points in a similar way than
+ * |splineCurve|, but preserves monotonicity of the provided data and ensures no
+ * local extremums are added between the dataset discrete points due to the
+ * interpolation.
+ */
+const c = 3;
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/** The |splineCurve| option controls curve interpolation. */
+const a = 1;
+
+/**
+ * | Name | Value |
+ * | ---- | ----- |
+ * | foo  | 1     |
+ */
+const b = 2;
+
+/**
+ * This function calculates Bézier control points in a similar way than |splineCurve|, but preserves
+ * monotonicity of the provided data and ensures no local extremums are added between the dataset
+ * discrete points due to the interpolation.
+ */
+const c = 3;
+
+===================== End =====================

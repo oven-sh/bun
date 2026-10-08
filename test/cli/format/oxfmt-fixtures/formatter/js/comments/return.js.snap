@@ -1,0 +1,39 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+function escapePathForGlob(path) {
+  return fastGlob
+    .escapePath(
+      path.replaceAll("\\", "\0"), // Workaround for fast-glob#262 (part 1)
+    )
+    .replaceAll(String.raw`\!`, "@(!)") // Workaround for fast-glob#261
+    .replaceAll("\0", String.raw`@(\\)`); // Workaround for fast-glob#262 (part 2)
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+function escapePathForGlob(path) {
+  return fastGlob
+    .escapePath(
+      path.replaceAll("\\", "\0"), // Workaround for fast-glob#262 (part 1)
+    )
+    .replaceAll(String.raw`\!`, "@(!)") // Workaround for fast-glob#261
+    .replaceAll("\0", String.raw`@(\\)`); // Workaround for fast-glob#262 (part 2)
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function escapePathForGlob(path) {
+  return fastGlob
+    .escapePath(
+      path.replaceAll("\\", "\0"), // Workaround for fast-glob#262 (part 1)
+    )
+    .replaceAll(String.raw`\!`, "@(!)") // Workaround for fast-glob#261
+    .replaceAll("\0", String.raw`@(\\)`); // Workaround for fast-glob#262 (part 2)
+}
+
+===================== End =====================

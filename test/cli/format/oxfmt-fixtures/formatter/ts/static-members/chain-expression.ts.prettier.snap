@@ -1,0 +1,12 @@
+------------------
+{ printWidth: 80 }
+------------------
+this._position = this._editor._getViewModel()?.getPrimaryCursorState()
+  .modelState.position;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+this._position = this._editor._getViewModel()?.getPrimaryCursorState().modelState.position;
+
+===================== End =====================

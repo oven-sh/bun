@@ -1,0 +1,36 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+new (get(win))[ty](xxx);
+new (get(win))[ty][ty](xxx);
+
+new (A?.[ty])(xxx);
+new (A?.B[ty])(xxx);
+
+new window['TouchEvent'](xxx);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+new (get(win)[ty])(xxx);
+new (get(win)[ty][ty])(xxx);
+
+new (A?.[ty])(xxx);
+new (A?.B[ty])(xxx);
+
+new window["TouchEvent"](xxx);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+new (get(win)[ty])(xxx);
+new (get(win)[ty][ty])(xxx);
+
+new (A?.[ty])(xxx);
+new (A?.B[ty])(xxx);
+
+new window["TouchEvent"](xxx);
+
+===================== End =====================

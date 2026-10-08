@@ -1,0 +1,60 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const plain = `value ${
+  // leading comment stays attached to identifier
+  value
+}`;
+
+const call = `value ${
+  // leading comment stays attached to call expression
+  call()
+}`;
+
+const inlineBlock = `value ${/* leading block */ value}`;
+
+const trailing = `value ${
+  value // trailing comment stays before interpolation end
+}`;
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const plain = `value ${
+  // leading comment stays attached to identifier
+  value
+}`;
+
+const call = `value ${
+  // leading comment stays attached to call expression
+  call()
+}`;
+
+const inlineBlock = `value ${/* leading block */ value}`;
+
+const trailing = `value ${
+  value // trailing comment stays before interpolation end
+}`;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const plain = `value ${
+  // leading comment stays attached to identifier
+  value
+}`;
+
+const call = `value ${
+  // leading comment stays attached to call expression
+  call()
+}`;
+
+const inlineBlock = `value ${/* leading block */ value}`;
+
+const trailing = `value ${
+  value // trailing comment stays before interpolation end
+}`;
+
+===================== End =====================

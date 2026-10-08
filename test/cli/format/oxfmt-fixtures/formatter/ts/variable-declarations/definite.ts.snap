@@ -1,0 +1,21 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+let A!: never;
+var B!: string;
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+let A!: never;
+var B!: string;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+let A!: never;
+var B!: string;
+
+===================== End =====================

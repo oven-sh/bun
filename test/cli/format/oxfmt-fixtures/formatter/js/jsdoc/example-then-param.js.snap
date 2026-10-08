@@ -1,0 +1,56 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 6: @param should not get extra indent after @example
+
+/**
+ * @example
+ * ```ts
+ * defineWxtModule({
+ *   name: "my-module",
+ *   setup(wxt) {},
+ * });
+ * ```
+ * @param wxt The module setup context
+ */
+function defineWxtModule(wxt) {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 6: @param should not get extra indent after @example
+
+/**
+ * @example
+ *   ```ts
+ *   defineWxtModule({
+ *     name: "my-module",
+ *     setup(wxt) {},
+ *   });
+ *   ```
+ *
+ * @param wxt The module setup context
+ */
+function defineWxtModule(wxt) {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 6: @param should not get extra indent after @example
+
+/**
+ * @example
+ *   ```ts
+ *   defineWxtModule({
+ *     name: "my-module",
+ *     setup(wxt) {},
+ *   });
+ *   ```
+ *
+ * @param wxt The module setup context
+ */
+function defineWxtModule(wxt) {}
+
+===================== End =====================

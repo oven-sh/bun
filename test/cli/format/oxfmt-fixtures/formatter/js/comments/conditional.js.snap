@@ -1,0 +1,30 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+test /* comment1 */ ? /* comment2 */ consequent /* comment3 */ : /* comment4 */ alternative
+
+test 
+/* comment1 */ ? /* comment2 */ consequent 
+/* comment3 */ : /* comment4 */ alternative
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+test /* comment1 */
+  ? /* comment2 */ consequent /* comment3 */
+  : /* comment4 */ alternative;
+
+test
+  ? /* comment1 */ /* comment2 */ consequent
+  : /* comment3 */ /* comment4 */ alternative;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+test /* comment1 */ ? /* comment2 */ consequent /* comment3 */ : /* comment4 */ alternative;
+
+test ? /* comment1 */ /* comment2 */ consequent : /* comment3 */ /* comment4 */ alternative;
+
+===================== End =====================

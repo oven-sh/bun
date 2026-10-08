@@ -1,0 +1,70 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+useImperativeHandle(ref, () => ({ getIsPending: () => isPending }), [
+  isPending,
+]);
+
+
+useImperativeHandle(
+  ref,
+  () => {
+    return !editor.getInstanceState().isCoarsePointer;
+  },
+  [editor]
+);
+
+// The following output is not the same as above because of this hook requires
+// the first argument to be am identifier.
+useImperativeHandle(
+  'copy shape url',
+  () => {
+    return !editor.getInstanceState().isCoarsePointer;
+  },
+  [editor]
+);
+
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+useImperativeHandle(ref, () => ({ getIsPending: () => isPending }), [
+  isPending,
+]);
+
+useImperativeHandle(ref, () => {
+  return !editor.getInstanceState().isCoarsePointer;
+}, [editor]);
+
+// The following output is not the same as above because of this hook requires
+// the first argument to be am identifier.
+useImperativeHandle(
+  "copy shape url",
+  () => {
+    return !editor.getInstanceState().isCoarsePointer;
+  },
+  [editor],
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+useImperativeHandle(ref, () => ({ getIsPending: () => isPending }), [isPending]);
+
+useImperativeHandle(ref, () => {
+  return !editor.getInstanceState().isCoarsePointer;
+}, [editor]);
+
+// The following output is not the same as above because of this hook requires
+// the first argument to be am identifier.
+useImperativeHandle(
+  "copy shape url",
+  () => {
+    return !editor.getInstanceState().isCoarsePointer;
+  },
+  [editor],
+);
+
+===================== End =====================

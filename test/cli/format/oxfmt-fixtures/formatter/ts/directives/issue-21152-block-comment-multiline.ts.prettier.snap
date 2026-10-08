@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+"use client"; /* multi
+line
+comment */
+
+import { Foo } from "foo";
+import { Bar } from "bar";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+"use client"; /* multi
+line
+comment */
+
+import { Foo } from "foo";
+import { Bar } from "bar";
+
+===================== End =====================

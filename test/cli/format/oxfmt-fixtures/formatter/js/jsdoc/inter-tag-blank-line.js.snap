@@ -1,0 +1,73 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * @categoryDescription Output
+ * These functions provide the output.
+ *
+ * @document
+ */
+const a = 1;
+
+/**
+ * @param {string} x - First param
+ *
+ * @param {string} y - Second param
+ */
+function b(x, y) {}
+
+/**
+ * @param {string} x - First param
+ * @param {string} y - Second param
+ */
+function c(x, y) {}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * @categoryDescription Output
+ * These functions provide the output.
+ *
+ * @document
+ */
+const a = 1;
+
+/**
+ * @param {string} x - First param
+ * @param {string} y - Second param
+ */
+function b(x, y) {}
+
+/**
+ * @param {string} x - First param
+ * @param {string} y - Second param
+ */
+function c(x, y) {}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * @categoryDescription Output
+ * These functions provide the output.
+ *
+ * @document
+ */
+const a = 1;
+
+/**
+ * @param {string} x - First param
+ * @param {string} y - Second param
+ */
+function b(x, y) {}
+
+/**
+ * @param {string} x - First param
+ * @param {string} y - Second param
+ */
+function c(x, y) {}
+
+===================== End =====================

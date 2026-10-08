@@ -1,0 +1,21 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// type cast on rest parameter should stay after comma
+(/** @type {string} */ param, /** @type {string[]} */ ...rest) => {};
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// type cast on rest parameter should stay after comma
+(/** @type {string} */ param, /** @type {string[]} */ ...rest) => {};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// type cast on rest parameter should stay after comma
+(/** @type {string} */ param, /** @type {string[]} */ ...rest) => {};
+
+===================== End =====================

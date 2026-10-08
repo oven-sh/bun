@@ -1,0 +1,27 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+class A {
+    readonly customHeaderTemplate =
+      viewChild.required<TemplateRef<{ total: number }>>("customHeader");
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+class A {
+  readonly customHeaderTemplate =
+    viewChild.required<TemplateRef<{ total: number }>>("customHeader");
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class A {
+  readonly customHeaderTemplate =
+    viewChild.required<TemplateRef<{ total: number }>>("customHeader");
+}
+
+===================== End =====================

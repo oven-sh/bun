@@ -1,0 +1,22 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+this._position = this._editor
+  ._getViewModel()
+  ?.getPrimaryCursorState().modelState.position;
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+this._position = this._editor
+  ._getViewModel()
+  ?.getPrimaryCursorState().modelState.position;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+this._position = this._editor._getViewModel()?.getPrimaryCursorState().modelState.position;
+
+===================== End =====================

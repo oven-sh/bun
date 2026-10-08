@@ -1,0 +1,28 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+export type Bar<T> = {[P in keyof T]: string}
+
+==================== Output ====================
+----------------------------------------
+{ bracketSpacing: true, printWidth: 80 }
+----------------------------------------
+export type Bar<T> = { [P in keyof T]: string };
+
+-----------------------------------------
+{ bracketSpacing: true, printWidth: 100 }
+-----------------------------------------
+export type Bar<T> = { [P in keyof T]: string };
+
+-----------------------------------------
+{ bracketSpacing: false, printWidth: 80 }
+-----------------------------------------
+export type Bar<T> = {[P in keyof T]: string};
+
+------------------------------------------
+{ bracketSpacing: false, printWidth: 100 }
+------------------------------------------
+export type Bar<T> = {[P in keyof T]: string};
+
+===================== End =====================

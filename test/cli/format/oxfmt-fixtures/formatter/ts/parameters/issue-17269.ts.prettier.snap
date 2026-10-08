@@ -1,0 +1,19 @@
+------------------
+{ printWidth: 80 }
+------------------
+useStableCallback(function useShowToast(
+  ...args: Parameters<typeof toastService.addToastItem>
+): void {
+  toastService.addToastItem(...args);
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+useStableCallback(function useShowToast(
+  ...args: Parameters<typeof toastService.addToastItem>
+): void {
+  toastService.addToastItem(...args);
+});
+
+===================== End =====================

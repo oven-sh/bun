@@ -1,0 +1,13 @@
+------------------
+{ printWidth: 80 }
+------------------
+(<IJSONSchema>(
+  compoundConfigurationsSchema.items
+)).oneOf![1].properties!.folder.enum = folderNames;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+(<IJSONSchema>compoundConfigurationsSchema.items).oneOf![1].properties!.folder.enum = folderNames;
+
+===================== End =====================

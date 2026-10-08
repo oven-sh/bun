@@ -1,0 +1,54 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * @type {string}
+ */
+const a = "";
+
+/**
+ * @deprecated
+ */
+function b() {}
+
+/**
+ * @returns {number}
+ */
+function c() {}
+
+/** @type {string} */
+const d = "";
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/** @type {string} */
+const a = "";
+
+/** @deprecated */
+function b() {}
+
+/** @returns {number} */
+function c() {}
+
+/** @type {string} */
+const d = "";
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/** @type {string} */
+const a = "";
+
+/** @deprecated */
+function b() {}
+
+/** @returns {number} */
+function c() {}
+
+/** @type {string} */
+const d = "";
+
+===================== End =====================

@@ -1,0 +1,18 @@
+------------------
+{ printWidth: 80 }
+------------------
+export type xxxxxxxxxxxxxx =
+  /** xxxx
+   */
+  | { xxxxxxxxxxxxxxx: true }
+  | { xxxxxxxxxxxxxxx: false; xxxxxxxxxxxxxxx: bigint | null };
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export type xxxxxxxxxxxxxx =
+  /** xxxx
+   */
+  { xxxxxxxxxxxxxxx: true } | { xxxxxxxxxxxxxxx: false; xxxxxxxxxxxxxxx: bigint | null };
+
+===================== End =====================

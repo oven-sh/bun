@@ -1,0 +1,69 @@
+-----------------------------------
+{ endOfLine: "lf", printWidth: 80 }
+-----------------------------------
+/*
+multi
+line
+block
+*/
+
+/**
+ * js doc
+ * @type {string}
+ * @description This is a description.
+ */
+
+// single line comment
+
+------------------------------------
+{ endOfLine: "lf", printWidth: 100 }
+------------------------------------
+/*
+multi
+line
+block
+*/
+
+/**
+ * js doc
+ * @type {string}
+ * @description This is a description.
+ */
+
+// single line comment
+
+-------------------------------------
+{ endOfLine: "crlf", printWidth: 80 }
+-------------------------------------
+/*
+multi
+line
+block
+*/
+
+/**
+ * js doc
+ * @type {string}
+ * @description This is a description.
+ */
+
+// single line comment
+
+--------------------------------------
+{ endOfLine: "crlf", printWidth: 100 }
+--------------------------------------
+/*
+multi
+line
+block
+*/
+
+/**
+ * js doc
+ * @type {string}
+ * @description This is a description.
+ */
+
+// single line comment
+
+===================== End =====================

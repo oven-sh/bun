@@ -1,0 +1,54 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+this.getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+foo
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+foo
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */?.();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+this
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+foo
+  .getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */
+  ?.();
+
+getParameters /* xxxxxxxxxxxxxxxxxxxxxxxxxxxx */?.();
+
+===================== End =====================

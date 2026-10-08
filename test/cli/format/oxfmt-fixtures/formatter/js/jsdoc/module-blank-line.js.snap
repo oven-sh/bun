@@ -1,0 +1,39 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Fix 16: @module with blank line between name and continuation paragraph
+
+/**
+ * @module TypeDoc API
+ *
+ * In addition to the members documented here, TypeDoc exports a number of
+ * internal utilities.
+ */
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+// Fix 16: @module with blank line between name and continuation paragraph
+
+/**
+ * @module TypeDoc API
+ *
+ * In addition to the members documented here, TypeDoc exports a number of
+ * internal utilities.
+ */
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+// Fix 16: @module with blank line between name and continuation paragraph
+
+/**
+ * @module TypeDoc API
+ *
+ * In addition to the members documented here, TypeDoc exports a number of
+ * internal utilities.
+ */
+
+===================== End =====================

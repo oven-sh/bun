@@ -1,0 +1,32 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+class Foo {
+  realTierLabel$ = this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+}
+
+const realTierLabel$ = this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+class Foo {
+  realTierLabel$ =
+    this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+}
+
+const realTierLabel$ =
+  this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+
+-------------------
+{ printWidth: 100 }
+-------------------
+class Foo {
+  realTierLabel$ = this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+}
+
+const realTierLabel$ = this.billingPlansFacade.realTierLabel$.pipe(filterNullable());
+
+===================== End =====================

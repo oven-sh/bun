@@ -1,0 +1,39 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+export type AddressAllocator =
+(/** Reserve a specific IP address. The pool is inferred from the address since IP pools cannot have overlapping ranges. */
+| {
+y: boolean
+,}
+| {
+x: boolean }
+);
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+export type AddressAllocator =
+  /** Reserve a specific IP address. The pool is inferred from the address since IP pools cannot have overlapping ranges. */
+  | {
+      y: boolean;
+    }
+  | {
+      x: boolean;
+    };
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export type AddressAllocator =
+  /** Reserve a specific IP address. The pool is inferred from the address since IP pools cannot have overlapping ranges. */
+  | {
+      y: boolean;
+    }
+  | {
+      x: boolean;
+    };
+
+===================== End =====================

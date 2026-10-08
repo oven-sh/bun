@@ -1,0 +1,50 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/******/ 'use strict' /**/
+/******/ a;
+
+function func() {
+  /******/ 'use strict' //
+  /******/ b;
+}
+
+namespace M {
+  /******/ 'use strict' 
+  /******/ export const a = 1;
+}
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+/******/ "use strict"; /**/
+/******/ a;
+
+function func() {
+  /******/ "use strict"; //
+  /******/ b;
+}
+
+namespace M {
+  /******/ "use strict";
+  /******/ export const a = 1;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+/******/ "use strict"; /**/
+/******/ a;
+
+function func() {
+  /******/ "use strict"; //
+  /******/ b;
+}
+
+namespace M {
+  /******/ "use strict";
+  /******/ export const a = 1;
+}
+
+===================== End =====================

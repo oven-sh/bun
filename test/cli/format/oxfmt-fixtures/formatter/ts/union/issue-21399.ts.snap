@@ -1,0 +1,60 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Issue #21399 - comment after pipe in single member union
+export type myType = |
+  // Comment
+  "A";
+
+// Block comment after pipe on own line
+type BlockComment = |
+  /* block comment */
+  "B";
+
+// Multiple comments after pipe
+type MultipleComments = |
+  // Comment 1
+  // Comment 2
+  "C";
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// Issue #21399 - comment after pipe in single member union
+export type myType =
+  // Comment
+  "A";
+
+// Block comment after pipe on own line
+type BlockComment =
+  /* block comment */
+  "B";
+
+// Multiple comments after pipe
+type MultipleComments =
+  // Comment 1
+  // Comment 2
+  "C";
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// Issue #21399 - comment after pipe in single member union
+export type myType =
+  // Comment
+  "A";
+
+// Block comment after pipe on own line
+type BlockComment =
+  /* block comment */
+  "B";
+
+// Multiple comments after pipe
+type MultipleComments =
+  // Comment 1
+  // Comment 2
+  "C";
+
+===================== End =====================

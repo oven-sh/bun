@@ -1,0 +1,21 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Issue #18969 - comment between callee and optional chaining operator
+alert/* comment */?.('value')
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// Issue #18969 - comment between callee and optional chaining operator
+alert /* comment */?.("value");
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// Issue #18969 - comment between callee and optional chaining operator
+alert /* comment */?.("value");
+
+===================== End =====================

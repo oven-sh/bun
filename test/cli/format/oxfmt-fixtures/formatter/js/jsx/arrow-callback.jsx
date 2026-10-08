@@ -1,0 +1,53 @@
+// Arrow functions returning JSX inside JSX expression containers
+// The multiline structure should be preserved when the arrow body is JSX
+
+// https://github.com/oxc-project/oxc/issues/18738
+// Arrow returning JSX in attribute callback
+[
+  {
+    baz: () => {
+      return <Tooltip
+        title={[].map(name => (
+          <Foo>{name}</Foo>
+        ))}
+      >
+        Foo
+      </Tooltip>
+    }
+  }
+];
+
+// Simpler attribute case
+<Component
+  items={data.map(item => (
+    <Item key={item.id}>{item.name}</Item>
+  ))}
+/>;
+
+// JSX as child
+<div>
+  {items.map(item => (
+    <Item key={item.id}>{item.name}</Item>
+  ))}
+</div>;
+
+// Multiple attributes with callback returning JSX
+<DataGrid
+  columns={columns.map(col => (
+    <Column key={col.id}>{col.label}</Column>
+  ))}
+  rows={rows.map(row => (
+    <Row key={row.id}>{row.data}</Row>
+  ))}
+/>;
+
+// Nested JSX in attribute
+<Outer
+  render={items.map(item => (
+    <Inner
+      content={subitems.map(sub => (
+        <Leaf>{sub.name}</Leaf>
+      ))}
+    />
+  ))}
+/>;

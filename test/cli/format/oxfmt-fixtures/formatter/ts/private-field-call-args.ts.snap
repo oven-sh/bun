@@ -1,0 +1,60 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Private field access should not force multi-line call arguments
+class Foo {
+  #t: NodeJS.Timeout | undefined = undefined;
+  #v: number;
+
+  constructor(v: number) {
+    this.#v = v;
+  }
+
+  start() {
+    this.#t = setInterval(() => {
+      console.log();
+    }, this.#v);
+  }
+}
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// Private field access should not force multi-line call arguments
+class Foo {
+  #t: NodeJS.Timeout | undefined = undefined;
+  #v: number;
+
+  constructor(v: number) {
+    this.#v = v;
+  }
+
+  start() {
+    this.#t = setInterval(() => {
+      console.log();
+    }, this.#v);
+  }
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// Private field access should not force multi-line call arguments
+class Foo {
+  #t: NodeJS.Timeout | undefined = undefined;
+  #v: number;
+
+  constructor(v: number) {
+    this.#v = v;
+  }
+
+  start() {
+    this.#t = setInterval(() => {
+      console.log();
+    }, this.#v);
+  }
+}
+
+===================== End =====================

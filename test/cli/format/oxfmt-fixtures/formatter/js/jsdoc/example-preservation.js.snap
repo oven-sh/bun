@@ -1,0 +1,63 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+/**
+ * Adds two numbers.
+ *
+ * @example
+ * ```js
+ * const result = add(1, 2);
+ * console.log(result); // 3
+ * ```
+ *
+ * @param {number} a - First number
+ * @param {number} b - Second number
+ * @returns {number} The sum
+ */
+function add(a, b) {
+  return a + b;
+}
+
+==================== Output ====================
+-----------------------------
+{ jsdoc: {}, printWidth: 80 }
+-----------------------------
+/**
+ * Adds two numbers.
+ *
+ * @example
+ *   ```js
+ *   const result = add(1, 2);
+ *   console.log(result); // 3
+ *   ```
+ *
+ * @param {number} a - First number
+ * @param {number} b - Second number
+ * @returns {number} The sum
+ */
+function add(a, b) {
+  return a + b;
+}
+
+------------------------------
+{ jsdoc: {}, printWidth: 100 }
+------------------------------
+/**
+ * Adds two numbers.
+ *
+ * @example
+ *   ```js
+ *   const result = add(1, 2);
+ *   console.log(result); // 3
+ *   ```
+ *
+ * @param {number} a - First number
+ * @param {number} b - Second number
+ * @returns {number} The sum
+ */
+function add(a, b) {
+  return a + b;
+}
+
+===================== End =====================

@@ -1,0 +1,31 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+const fixturePackageJson = (
+  await import(
+    pathToFileURL(path.join(fixtureDir, 'package.json')).href,
+    { with: { type: 'json' } }
+  )
+).default;
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+const fixturePackageJson = (
+  await import(pathToFileURL(path.join(fixtureDir, "package.json")).href, {
+    with: { type: "json" },
+  })
+).default;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const fixturePackageJson = (
+  await import(pathToFileURL(path.join(fixtureDir, "package.json")).href, {
+    with: { type: "json" },
+  })
+).default;
+
+===================== End =====================

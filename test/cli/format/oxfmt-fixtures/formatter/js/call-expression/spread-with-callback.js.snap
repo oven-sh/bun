@@ -1,0 +1,99 @@
+---
+source: crates/oxc_formatter/tests/fixtures/mod.rs
+---
+==================== Input ====================
+// Issue #18930 - spread with arrow callback
+target(...argument, () => {
+  // code
+});
+
+// Issue #18971 - spread with arrow callback returning value
+fn(...x, v => {
+  return v;
+});
+
+// Additional test cases
+foo(...args, (a, b) => {
+  console.log(a, b);
+});
+
+bar(...items, function() {
+  return 1;
+});
+
+// Multiple spreads
+baz(...a, ...b, () => {
+  return;
+});
+
+// Spread in the middle
+qux(first, ...rest, () => {
+  return;
+});
+
+==================== Output ====================
+------------------
+{ printWidth: 80 }
+------------------
+// Issue #18930 - spread with arrow callback
+target(...argument, () => {
+  // code
+});
+
+// Issue #18971 - spread with arrow callback returning value
+fn(...x, (v) => {
+  return v;
+});
+
+// Additional test cases
+foo(...args, (a, b) => {
+  console.log(a, b);
+});
+
+bar(...items, function () {
+  return 1;
+});
+
+// Multiple spreads
+baz(...a, ...b, () => {
+  return;
+});
+
+// Spread in the middle
+qux(first, ...rest, () => {
+  return;
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// Issue #18930 - spread with arrow callback
+target(...argument, () => {
+  // code
+});
+
+// Issue #18971 - spread with arrow callback returning value
+fn(...x, (v) => {
+  return v;
+});
+
+// Additional test cases
+foo(...args, (a, b) => {
+  console.log(a, b);
+});
+
+bar(...items, function () {
+  return 1;
+});
+
+// Multiple spreads
+baz(...a, ...b, () => {
+  return;
+});
+
+// Spread in the middle
+qux(first, ...rest, () => {
+  return;
+});
+
+===================== End =====================

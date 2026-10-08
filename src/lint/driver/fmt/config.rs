@@ -60,7 +60,8 @@ pub(crate) enum Flavor {
 }
 
 /// The options that the formatter has.
-const OPTIONS: [&[u8]; 23] = [
+const OPTIONS: [&[u8]; 24] = [
+    b"parser",
     b"jsxBracketSameLine",
     b"rangeStart",
     b"rangeEnd",
@@ -157,6 +158,12 @@ fn settings(json: &Json) -> Settings {
                 let mut text = Vec::new();
                 write_json(&mut text, value);
                 text
+            }
+            Json::Object(_) if name == b"sortPackageJson" => {
+                let sorts_scripts = value.get(b"sortScripts").and_then(Json::as_bool) == Some(true);
+                settings.push((name.clone(), b"true".to_vec()));
+                settings.push((b"sortPackageJson.sortScripts".to_vec(), if sorts_scripts { b"true".to_vec() } else { b"false".to_vec() }));
+                continue;
             }
             // A feature of oxfmt that is configured, and so is on.
             Json::Object(_) => b"true".to_vec(),
@@ -314,7 +321,9 @@ impl<'c> Configs<'c> {
             return Ok(None);
         }
         // What the plugins that sort imports do is built in.
-        let is_built_in = |it: &Json| it.as_str().is_some_and(|name| name.ends_with(b"/prettier-plugin-sort-imports"));
+        let is_built_in = |it: &Json| {
+            it.as_str().is_some_and(|name| name.ends_with(b"/prettier-plugin-sort-imports") || name == b"prettier-plugin-organize-imports")
+        };
         if json.get(b"plugins").and_then(Json::as_array).is_some_and(|it| !it.iter().all(is_built_in)) {
             self.warn(&[b"Plugins are not supported: \"plugins\" in ", path, b" has no effect."]);
         }
@@ -435,17 +444,19 @@ impl<'c> Configs<'c> {
         };
         let mut resolved = Resolved::default();
         let mut sort = SortSettings::default();
-        // oxfmt sorts the keys of a `package.json` unless it is told not to.
-        let mut sorts_package_json = self.flavor == Flavor::Oxfmt && paths::basename(path) == b"package.json";
         let _ = resolved.options.set(b"filepath", path);
         if self.flavor == Flavor::Oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
+            // It sorts the keys of a `package.json` unless it is told not to.
+            let _ = resolved.options.set(b"sortPackageJson", b"true");
         }
         for (name, value) in all {
             match name {
                 name if sort.set(name, value) => {}
                 b"insertFinalNewline" if self.flavor == Flavor::Oxfmt => resolved.omits_final_newline = value == b"false",
-                b"sortPackageJson" => sorts_package_json &= value != b"false",
+                b"sortPackageJson" | b"sortPackageJson.sortScripts" if self.flavor == Flavor::Oxfmt => {
+                    let _ = resolved.options.set(name, value);
+                }
                 b"sortTailwindcss" | b"experimentalTailwindcss" | b"jsdoc" if value != b"false" => {
                     self.warn(&[name, b" is not supported yet, and has no effect."]);
                 }
@@ -454,9 +465,6 @@ impl<'c> Configs<'c> {
                 }
                 _ => {}
             }
-        }
-        if sorts_package_json {
-            self.warn(&[b"sortPackageJson is not supported yet: the keys of package.json stay in their order."]);
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         Ok(resolved)

@@ -1,9 +1,9 @@
 ---
 title: "Formatting"
-description: "Format JavaScript, TypeScript, and JSON with bun format, a fast formatter that is compatible with Prettier"
+description: "Format JavaScript, TypeScript, JSON, and CSS with bun format, a fast formatter that is compatible with Prettier"
 ---
 
-`bun format` formats JavaScript, TypeScript, and JSON the way [Prettier](https://prettier.io) does. It reads your `.prettierrc`, and uses every CPU core.
+`bun format` formats JavaScript, TypeScript, JSON, and CSS the way [Prettier](https://prettier.io) does. It reads your `.prettierrc`, and uses every CPU core.
 
 ```bash terminal icon="terminal"
 bun format
@@ -41,12 +41,12 @@ Checking formatting...
 | `prettier -l .`                  | `bun format -l`                 |
 | `prettier --stdin-filepath a.ts` | `bun format --stdin-filepath a.ts` |
 
-`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, and `.json5` files. It leaves CSS, Markdown, YAML, HTML, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
+`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, and `.less` files. It leaves Markdown, YAML, HTML, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
 
 ```json package.json icon="file-json"
 {
   "scripts": {
-    "format": "bun format && prettier --write \"**/*.{css,md,yml}\""
+    "format": "bun format && prettier --write \"**/*.{md,yml}\""
   }
 }
 ```
@@ -68,7 +68,7 @@ If the nearest configuration file is one of these, `bun format` finds files and 
 - Only the `.editorconfig` nearest to the current directory counts.
 - `.prettierrc` files are not read.
 
-`sortPackageJson`, `sortTailwindcss`, and `jsdoc` are not supported yet. Set `"sortPackageJson": false`.
+`sortImports` and `sortPackageJson` work as in oxfmt. `sortTailwindcss` and `jsdoc` are not supported yet.
 
 ## Configuration
 
@@ -89,7 +89,7 @@ For each file, `bun format` uses the nearest configuration file: it looks in the
 }
 ```
 
-See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load, with one exception: what `@trivago/prettier-plugin-sort-imports` and `@ianvs/prettier-plugin-sort-imports` do is built in. If `plugins` names one of them, `bun format` sorts imports as `importOrder` and the other options of that plugin say.
+See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load, with one exception: what `@trivago/prettier-plugin-sort-imports`, `@ianvs/prettier-plugin-sort-imports`, and `prettier-plugin-organize-imports` do is built in. If `plugins` names one of them, `bun format` sorts imports as the options of that plugin say.
 
 A flag overrides the configuration file:
 
@@ -174,8 +174,8 @@ These differences are intentional:
 - **It writes by default.** `prettier` without `--write` prints the formatted code. `--write` is accepted and changes nothing.
 - **No arguments means the current directory.**
 - **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
-- **JavaScript, TypeScript, and JSON only.** Other files are skipped with a warning. Code embedded in them is not formatted either.
-- **Plugins do not load.** The two that sort imports are built in.
+- **JavaScript, TypeScript, JSON, and CSS only.** Other files are skipped with a warning. Code embedded in them is not formatted either.
+- **Plugins do not load.** The three that sort imports are built in.
 - **An unknown flag is an error.** Prettier warns and goes on.
 - **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.
 - **`--cache` has no effect.** Every run formats every file.

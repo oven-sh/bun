@@ -111,11 +111,17 @@ describe.concurrent("bun format", () => {
   });
 
   test("other languages are left alone, with a warning", async () => {
-    const result = await format({ "a.css": "a{color:red}\n", "b.md": "*  a\n", "c.js": ugly }, [], {
-      reads: ["a.css", "b.md", "c.js"],
+    const result = await format({ "a.yaml": "a:   1\n", "b.md": "*  a\n", "c.js": ugly }, [], {
+      reads: ["a.yaml", "b.md", "c.js"],
     });
-    expect(result.files).toEqual({ "a.css": "a{color:red}\n", "b.md": "*  a\n", "c.js": formatted });
+    expect(result.files).toEqual({ "a.yaml": "a:   1\n", "b.md": "*  a\n", "c.js": formatted });
     expect(result.stderr).toContain("2 files are in a language that bun format does not support yet");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("CSS", async () => {
+    const result = await format({ "a.css": "a{color:red}\n", "b.scss": "a{b{color:RED}}\n" }, [], { reads: ["a.css", "b.scss"] });
+    expect(result.files).toEqual({ "a.css": "a {\n  color: red;\n}\n", "b.scss": "a {\n  b {\n    color: RED;\n  }\n}\n" });
     expect(result.exitCode).toBe(0);
   });
 

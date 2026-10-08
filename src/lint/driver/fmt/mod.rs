@@ -15,8 +15,8 @@ use bun_core::strings;
 use bun_format::pragma::BeforeParsing;
 use bun_format::{FormatError, Scratch};
 use bun_lint::ast::File;
-use bun_lint::language::LanguageOptions;
-use bun_sema::atom::Interner;
+use bun_lint::language::{LanguageOptions, Parser, SourceType};
+use bun_sema::atom::{Intern, Interner};
 use bun_sema::bind::{BindOptions, bind};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
@@ -45,39 +45,48 @@ enum Failure {
     Bug(&'static str),
 }
 
-/// What the file at `path` is parsed as, one after the other until there is no error: a module,
-/// then a script, as the parsers of Prettier do.
-fn dialects(path: &[u8]) -> &'static [Dialect] {
-    const MODULE: Dialect = Dialect::babel(false);
-    const SCRIPT: Dialect = Dialect::babel(true);
+/// What the file at `path` is parsed as, one after the other until there is no error: whether as
+/// a script. A module, then a script, as the parsers of Prettier do.
+fn kinds(path: &[u8]) -> &'static [bool] {
     match path {
-        _ if path.ends_with(b".mjs") || path.ends_with(b".mts") => &[MODULE],
-        _ if path.ends_with(b".cjs") || path.ends_with(b".cts") => &[SCRIPT],
-        _ => &[MODULE, SCRIPT],
+        _ if path.ends_with(b".mjs") || path.ends_with(b".mts") => &[false],
+        _ if path.ends_with(b".cjs") || path.ends_with(b".cts") => &[true],
+        _ => &[false, true],
     }
 }
 
-/// Parses `text` as the file at `path` and calls `then` with it, and with the first error in it.
-fn with_file<R>(
-    path: &[u8],
-    text: &[u8],
-    dialect: Dialect,
-    then: impl for<'a> FnOnce(&'a File<'a>, Option<&'a Diagnostic>) -> R,
-) -> R {
-    let language = LanguageOptions::default();
+/// How a file is parsed and formatted.
+#[derive(Copy, Clone)]
+struct How<'h> {
+    path: &'h [u8],
+    is_script: bool,
+    resolved: &'h Resolved,
+    verifies: bool,
+    /// The names in all files. They are freed when the run ends.
+    atoms: &'h dyn Intern,
+}
+
+/// Parses `text` and calls `then` with the file, and with the first error in it.
+fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, Option<&'a Diagnostic>) -> R) -> R {
+    let path = how.path;
+    let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"].iter().any(|it| path.ends_with(it));
+    let language = LanguageOptions {
+        parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
+        source_type: if how.is_script { SourceType::Script } else { SourceType::Module },
+        ..LanguageOptions::default()
+    };
     let session = Session::new();
-    let atoms = Interner::new_in(&session);
     let arena = session.arena();
-    let how = language.parse_options(path);
-    let (mut hir, _) = bun_js_parser::sema::summarize_as(
-        dialect,
-        arena,
+    let options = language.parse_options(path);
+    let (mut hir, _) = bun_js_parser::sema::summarize_in(
+        Dialect::babel(how.is_script),
+        (arena, &session),
         path,
-        how.script_kind,
+        options.script_kind,
         text,
-        &atoms,
-        how.experimental_decorators,
-        how.every_file_is_a_module,
+        how.atoms,
+        options.experimental_decorators,
+        options.every_file_is_a_module,
     );
     hir.text = Cow::Borrowed(text);
     let bind_options = BindOptions {
@@ -85,8 +94,8 @@ fn with_file<R>(
         before_es2020: false,
         before_es2017: false,
     };
-    let bound = bind(&hir, bind_options, &atoms, arena);
-    then(&File::new(path, &hir, &bound, &atoms, &language, None), hir.diagnostics.first())
+    let bound = bind(&hir, bind_options, how.atoms, arena);
+    then(&File::new(path, &hir, &bound, how.atoms, &language, None), hir.diagnostics.first())
 }
 
 /// `SyntaxError: ';' expected. (1:7)`
@@ -106,6 +115,7 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
 struct Scratches {
     js: Scratch,
     json: bun_format::json::Scratch,
+    css: bun_format::css::Scratch,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -114,29 +124,55 @@ fn without_final_newline(out: &mut Vec<u8>) {
 }
 
 /// The formatted text of the file at `path`. `verifies`: it is parsed and compared with `text`.
-fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratches, verifies: bool) -> Result<Vec<u8>, Failure> {
-    let options = &how.options;
-    if let Some(parser) = bun_format::json::parser_for_path(path) {
-        let mut out = Vec::new();
-        return match bun_format::json::format(text, parser, options, &mut scratch.json, &mut out) {
-            Ok(()) => {
-                if how.omits_final_newline {
-                    without_final_newline(&mut out);
-                }
-                Ok(out)
+fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scratch: &mut Scratches, verifies: bool) -> Result<Vec<u8>, Failure> {
+    let options = &resolved.options;
+    let finish = |done: Result<(), FormatError>, mut out: Vec<u8>, what: &str| match done {
+        Ok(()) => {
+            if resolved.omits_final_newline {
+                without_final_newline(&mut out);
             }
-            Err(FormatError::SyntaxError) => Err(Failure::Syntax(b"SyntaxError: It is not JSON.".to_vec())),
-            Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
-            Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
+            Ok(out)
+        }
+        Err(FormatError::SyntaxError) => Err(Failure::Syntax(format!("SyntaxError: It is not {what}.").into_bytes())),
+        Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
+        Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
+    };
+    let json = match &options.parser {
+        Some(parser) => bun_format::json::Parser::from_name(parser),
+        None => bun_format::json::parser_for_path(path),
+    };
+    if let Some(parser) = json {
+        let (mut sorted, mut out) = (Vec::new(), Vec::new());
+        let text = match options.sort_package_json.filter(|_| paths::basename(path) == b"package.json") {
+            Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => &sorted[..],
+            _ => text,
         };
+        let done = bun_format::json::format(text, parser, options, &mut scratch.json, &mut out);
+        return finish(done, out, "JSON");
+    }
+    let css = match &options.parser {
+        Some(parser) => bun_format::css::Parser::from_name(parser),
+        None => bun_format::css::parser_for_path(path),
+    };
+    if let Some(parser) = css {
+        let mut out = Vec::new();
+        let done = bun_format::css::format(text, parser, options, &mut scratch.css, &mut out);
+        return finish(done, out, "a style sheet");
     }
     let text = match bun_format::pragma::before_parsing(text, options) {
         BeforeParsing::LeaveAsItIs => return Ok(text.to_vec()),
         BeforeParsing::Format(text) => text,
     };
     let mut first_failure = None;
-    for &dialect in dialects(path) {
-        match format_as(path, &text, dialect, how, &mut scratch.js, verifies) {
+    for &is_script in kinds(path) {
+        let how = How {
+            path,
+            is_script,
+            resolved,
+            verifies,
+            atoms,
+        };
+        match format_as(&how, &text, &mut scratch.js) {
             Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
             done => return done,
         }
@@ -144,18 +180,18 @@ fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratches, ver
     Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
 }
 
-/// How a file is parsed and formatted.
-struct How<'h> {
-    path: &'h [u8],
-    dialect: Dialect,
-    resolved: &'h Resolved,
-    verifies: bool,
-}
-
 fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, scratch: &mut Scratch) -> Result<Vec<u8>, Failure> {
+    let options = &how.resolved.options;
+    // What typescript-estree refuses while it converts the tree, Prettier refuses too.
+    if file.language().parser == Parser::TypeScript
+        && let Some(error) = bun_lint::linter::parse_error(file)
+    {
+        let message = error.message.strip_prefix(b"Parsing error: ").unwrap_or(&error.message);
+        return Err(Failure::Syntax(format!("SyntaxError: {} ({}:{})", BStr::new(message), error.line, error.column).into_bytes()));
+    }
     let mut out = Vec::new();
-    let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how.path, part, how.dialect, |file, _| then(file));
-    match bun_format::range::format(file, &how.resolved.options, scratch, &mut out, parse) {
+    let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _| then(file));
+    match bun_format::range::format(file, options, scratch, &mut out, parse) {
         Ok(()) => {}
         Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
         Err(FormatError::NestedTooDeeply) => return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
@@ -164,8 +200,10 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
     if how.resolved.omits_final_newline {
         without_final_newline(&mut out);
     }
-    if how.verifies && out != file.text() {
-        let is_same = with_file(how.path, &out, how.dialect, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
+    // Imports that the formatter itself moves are not where they were.
+    let moves_imports = options.sort_imports.as_deref().is_some_and(|it| it.is_applied_by_format());
+    if how.verifies && !moves_imports && out != file.text() {
+        let is_same = with_file(how, &out, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
         if !is_same {
             return Err(Failure::Bug("formatting would change what the code means"));
         }
@@ -173,19 +211,13 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
     Ok(out)
 }
 
-fn format_as(path: &[u8], text: &[u8], dialect: Dialect, resolved: &Resolved, scratch: &mut Scratch, verifies: bool) -> Result<Vec<u8>, Failure> {
-    let how = How {
-        path,
-        dialect,
-        resolved,
-        verifies,
-    };
-    with_file(path, text, dialect, |file, first_error| {
+fn format_as(how: &How, text: &[u8], scratch: &mut Scratch) -> Result<Vec<u8>, Failure> {
+    with_file(how, text, |file, first_error| {
         // A file whose imports move is parsed again.
-        let how_to_sort = resolved.options.sort_imports.as_deref();
+        let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-            Some(sorted) => with_file(path, &sorted, dialect, |file, first_error| print(file, first_error, &how, scratch)),
-            None => print(file, first_error, &how, scratch),
+            Some(sorted) => with_file(how, &sorted, |file, first_error| print(file, first_error, how, scratch)),
+            None => print(file, first_error, how, scratch),
         }
     })
 }
@@ -271,7 +303,8 @@ impl Run<'_> {
         if files::language_of(&path) == Language::Unknown {
             return self.fail(&[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
         }
-        match format(&path, &text, &options, &mut Scratches::default(), self.options.verify) {
+        let names = Session::new();
+        match format(&path, &text, &options, &Interner::new_in(&names), &mut Scratches::default(), self.options.verify) {
             Err(failure) => self.error(&Self::describe(name, failure)),
             Ok(formatted) if self.options.check || self.options.list_different => {
                 if formatted != text {
@@ -347,6 +380,8 @@ impl Run<'_> {
         work.sort_by_key(|it| std::cmp::Reverse(it.1.size));
         let started = Instant::now();
         let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
+        let names = Session::new();
+        let atoms = Interner::new_in(&names);
         let mut results = Guarded::new(done);
         pool.for_each(work.len(), 1, &|at| {
             let (index, target) = work[at];
@@ -356,7 +391,7 @@ impl Run<'_> {
                 let options = configs.options_for(&target.scope, &target.path).map_err(|error| error.0)?;
                 let text = fs::read_sized(&target.path, target.size)
                     .map_err(|error| [b"Unable to read file \"", &shown[..], b"\":\n", &fs::describe(&error)].concat())?;
-                let formatted = format(&target.path, &text, &options, &mut scratch, self.options.verify && !only_looks)
+                let formatted = format(&target.path, &text, &options, &atoms, &mut scratch, self.options.verify && !only_looks)
                     .map_err(|failure| Self::describe(&shown, failure))?;
                 if formatted == text {
                     return Ok(Done::Unchanged);

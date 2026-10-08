@@ -193,6 +193,7 @@ fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
         b"require-pragma" => b"requirePragma",
         b"insert-pragma" => b"insertPragma",
         b"check-ignore-pragma" => b"checkIgnorePragma",
+        b"parser" => b"parser",
         b"range-start" => b"rangeStart",
         b"range-end" => b"rangeEnd",
         b"jsx-bracket-same-line" => b"jsxBracketSameLine",

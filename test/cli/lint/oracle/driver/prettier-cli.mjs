@@ -39,7 +39,7 @@ function run(command, root, test, args) {
   });
   const files = {};
   for (const name of Object.keys(test.files)) {
-    if (!/\.([cm]?[jt]sx?|jsonc?|json5)$/.test(name)) continue;
+    if (!/\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less)$/.test(name)) continue;
     try {
       files[name] = fs.readFileSync(path.join(root, name), "utf8");
     } catch {}
@@ -53,7 +53,7 @@ const normalize = text =>
     .split("\n")
     .filter(line => !/does not support yet|^Formatted \d+ files?/.test(line))
     // A file in another language.
-    .filter(line => !/^(\[warn\] )?\S+\.(css|md|ya?ml|html)$/.test(line))
+    .filter(line => !/^(\[warn\] )?\S+\.(md|ya?ml|html)$/.test(line))
     .join("\n")
     .replace("Run Prettier with --write to fix.", "Run bun format to fix.");
 

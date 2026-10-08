@@ -4164,6 +4164,12 @@ pub mod bv2_impl {
                         },
                         loader,
                         side_effects: copy.side_effects,
+                        // A source that takes a plugin's bytes as they are is loaded by that plugin.
+                        flags: if copy.loaded_by_plugin && on_load == OnLoadPlugins::Skip {
+                            crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN
+                        } else {
+                            Default::default()
+                        },
                         ..Default::default()
                     }
                 })?;
@@ -4227,6 +4233,8 @@ pub mod bv2_impl {
             let copy = ClientModuleCopy {
                 path: self.graph.input_files.items_source()[reference_index as usize].path,
                 contents: boundary.contents,
+                loaded_by_plugin: self.graph.input_files.items_flags()[reference_index as usize]
+                    .contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN),
                 loader: boundary.loader,
                 jsx: &jsx,
                 module_type: boundary.module_type,
@@ -4321,6 +4329,8 @@ pub mod bv2_impl {
     struct ClientModuleCopy<'b> {
         path: Fs::Path<'static>,
         contents: &'static [u8],
+        /// `contents` is what an onLoad plugin returned.
+        loaded_by_plugin: bool,
         loader: Loader,
         jsx: &'b options::jsx::Pragma,
         module_type: options::ModuleType,
@@ -7947,6 +7957,7 @@ pub mod bv2_impl {
                                 path: source.path,
                                 // SAFETY: the graph row owns the contents for the bundle pass.
                                 contents: unsafe { interned_slice(source.contents()) },
+                                loaded_by_plugin: false,
                                 loader: this.graph.input_files.items_loader()[result_source_index],
                                 jsx: &jsx,
                                 module_type: this.graph.ast.items_module_type()

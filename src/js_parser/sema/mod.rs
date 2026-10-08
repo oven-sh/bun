@@ -602,7 +602,8 @@ fn parse_directly(
         is_declaration_file: by_name && bun_sema::resolve::is_declaration_file_name(path),
         is_jsx: is_js || script_kind == Some(ScriptKind::Tsx),
         is_javascript: is_js,
-        await_is_a_name: is_ecmascript && dialect.script,
+        // `flow-parser` reads it as a name outside an async function, in a module too.
+        await_is_a_name: is_ecmascript && (dialect.script || dialect.flow && !dialect.babel),
         dialect,
     };
     let parse = |options, scratch: &mut bun_sema_parser::Scratch| match atoms {

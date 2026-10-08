@@ -420,11 +420,19 @@ impl Dialect {
         }
     }
 
-    /// Prettier's `flow` and `babel-flow`.
+    /// Prettier's `babel-flow`.
     pub const fn flow(script: bool) -> Dialect {
         Dialect {
             flow: true,
             ..Dialect::babel(script)
+        }
+    }
+
+    /// Prettier's `flow`: `flow-parser` itself.
+    pub const fn flow_parser(script: bool) -> Dialect {
+        Dialect {
+            babel: false,
+            ..Dialect::flow(script)
         }
     }
 }

@@ -524,9 +524,9 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     ASSERT(callFrame->argumentCount() == 2);
     ASSERT(callFrame->uncheckedArgument(0).isString());
     // Only the main thread writes through to the OS environment (Node: a worker env is a MapKVStore).
-    auto* context = defaultGlobalObject(global)->scriptExecutionContext();
-    if (context && !context->isMainThread())
-        return JSValue::encode(jsUndefined());
+    auto* zigGlobal = defaultGlobalObject(global);
+    auto* context = zigGlobal ? zigGlobal->scriptExecutionContext() : nullptr;
+    bool writesOSEnv = !context || context->isMainThread();
     WTF::String string1 = callFrame->uncheckedArgument(0).toWTFString(global);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue arg2 = callFrame->uncheckedArgument(1);
@@ -536,14 +536,16 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
         RETURN_IF_EXCEPTION(scope, {});
         BunString k = Bun::toString(string1);
         BunString v = Bun::toString(string2);
-        Bun__Process__editWindowsEnvVar(&k, &v);
+        if (writesOSEnv)
+            Bun__Process__editWindowsEnvVar(&k, &v);
         // fetch() reads the proxy variables from the native env map.
         if (isProxyEnvVarName(global->vm(), string1))
             Bun__setEnvValue(global, &k, &v);
     } else {
         BunString k = Bun::toString(string1);
         BunString v = { .tag = BunStringTag::Dead };
-        Bun__Process__editWindowsEnvVar(&k, &v);
+        if (writesOSEnv)
+            Bun__Process__editWindowsEnvVar(&k, &v);
         if (isProxyEnvVarName(global->vm(), string1))
             Bun__setEnvValue(global, &k, &v);
     }
@@ -579,8 +581,8 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
 // `process.env` object that is a thin write-through view over the tree's
 // SharedEnvStore (lock-guarded, strings isolatedCopy()'d both ways).
 //
-// Only the JS-visible `process.env` is shared; Bun's Zig-side env map (Bun.env,
-// fetch proxy resolution) is still snapshotted per worker.
+// Only the JS-visible `process.env` is shared; the worker's native env map (Bun.spawn's
+// default env, fetch proxy resolution) is a snapshot of the store taken when it starts.
 
 // The store for the tree this global belongs to, or null if it's in none. The
 // context can be gone during teardown, when a surviving process.env is read.

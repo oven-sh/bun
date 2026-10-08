@@ -140,10 +140,14 @@ fn worker_env_loader(
     let mut loader = parent.for_worker_env(pairs.len() / 2)?;
     for pair in pairs.chunks_exact(2) {
         let key = pair[0].to_utf8();
-        if key.is_empty() {
+        let value = pair[1].to_utf8();
+        // Not a valid environment entry. `Bun.spawn` rejects a NUL byte in an explicit `env` too.
+        if key.is_empty()
+            || bun_core::strings::contains_char(&key, 0)
+            || bun_core::strings::contains_char(&value, 0)
+        {
             continue;
         }
-        let value = pair[1].to_utf8();
         loader.map.put(&key, &value)?;
     }
     Ok(loader)

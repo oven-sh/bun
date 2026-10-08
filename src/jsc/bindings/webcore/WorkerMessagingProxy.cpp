@@ -144,6 +144,10 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
+    // A SHARE_ENV worker's native env map starts from the store as it is now.
+    if (m_options.sharedEnvStore)
+        m_options.env = m_options.sharedEnvStore->entries();
+
     // [key, value, ...]; WebWorker__create copies the bytes, so these only live across the call.
     Vector<BunString> envPairs;
     bool hasEnv = m_options.env.has_value();

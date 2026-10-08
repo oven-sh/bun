@@ -145,6 +145,11 @@ fn compare_paths(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
     }
 }
 
+/// Whether [`compare_paths`] is the order of the bytes for `path`.
+fn is_ordered_by_bytes(path: &[u8]) -> bool {
+    path.iter().all(|&byte| byte < 0xEE)
+}
+
 struct Run<'r> {
     options: &'r Options,
     environment: &'r Environment<'r>,
@@ -557,7 +562,10 @@ impl Run<'_> {
         };
         let denies_warnings = options.deny_warnings || of_cwd.as_ref().is_some_and(|it| it.denies_warnings);
         let has_too_many_warnings = max_warnings >= 0 && counts.warnings as i64 > max_warnings;
-        results.sort_by(|a, b| compare_paths(&a.path, &b.path));
+        match results.iter().all(|it| is_ordered_by_bytes(&it.path)) {
+            true => results.sort_by(|a, b| a.path.cmp(&b.path)),
+            false => results.sort_by(|a, b| compare_paths(&a.path, &b.path)),
+        }
 
         let started = Instant::now();
         let meta = format::Meta {

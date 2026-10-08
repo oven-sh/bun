@@ -635,28 +635,42 @@ impl Parents {
             params(alias.type_params, parent);
             one(alias.ty, parent);
         }
+        // Few expressions have a type in them. This goes through all of them, so what tells that from
+        // the expression alone comes first.
+        const fn kind(tag: hir::ExprTag) -> u64 {
+            1 << tag as u8
+        }
+        const CAN_HAVE_TYPES: u64 = kind(hir::ExprTag::As)
+            | kind(hir::ExprTag::Satisfies)
+            | kind(hir::ExprTag::Instantiation)
+            | kind(hir::ExprTag::Call)
+            | kind(hir::ExprTag::New)
+            | kind(hir::ExprTag::TaggedTemplate)
+            | kind(hir::ExprTag::Jsx);
         for (i, e) in hir.exprs.iter().enumerate() {
             use hir::ExprKind as K;
+            if CAN_HAVE_TYPES & kind(e.kind.tag()) == 0 {
+                continue;
+            }
+            let (ty, type_args) = match e.kind {
+                K::As { ty, .. } | K::Satisfies { ty, .. } => (ty, hir::IdList::EMPTY),
+                K::Instantiation { type_args, .. } => (hir::TypeNodeId::NONE, type_args),
+                K::Call(c) | K::New(c) | K::TaggedTemplate(c) => {
+                    (hir::TypeNodeId::NONE, hir.calls.get(c.idx()).map_or(hir::IdList::EMPTY, |call| call.type_args))
+                }
+                K::Jsx(j) => (hir::TypeNodeId::NONE, hir.jsx.get(j.idx()).map_or(hir::IdList::EMPTY, |jsx| jsx.type_args)),
+                _ => continue,
+            };
+            if ty.is_none() && type_args.len == 0 {
+                continue;
+            }
             // What the parser has left behind can share its type arguments with a node.
             if matches!(file.bound.expr_parent.get(i), None | Some(Parent::None)) {
                 continue;
             }
             let parent = packed(Tag::Expr, i);
-            match e.kind {
-                K::As { ty, .. } | K::Satisfies { ty, .. } => one(ty, parent),
-                K::Instantiation { type_args, .. } => list!(type_args, parent),
-                K::Call(c) | K::New(c) | K::TaggedTemplate(c) => {
-                    if let Some(call) = hir.calls.get(c.idx()) {
-                        list!(call.type_args, parent);
-                    }
-                }
-                K::Jsx(j) => {
-                    if let Some(jsx) = hir.jsx.get(j.idx()) {
-                        list!(jsx.type_args, parent);
-                    }
-                }
-                _ => {}
-            }
+            one(ty, parent);
+            list!(type_args, parent);
         }
         type_query_operands.sort_unstable_by_key(|it| it.0);
         Parents {

@@ -18,7 +18,6 @@ use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
 use crate::bun_json as JSON;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
-use bun_dotenv as DotEnv;
 use bun_perf::system_timer::Timer;
 use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
@@ -1635,11 +1634,6 @@ pub struct Printer<'a> {
     pub(crate) updates: &'a [UpdateRequest],
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PrinterFormat {
-    Yarn,
-}
-
 pub mod printer {
     pub use super::printer_mods::tree_printer as Tree;
     pub use super::printer_mods::yarn as Yarn;
@@ -1647,11 +1641,7 @@ pub mod printer {
 
 impl<'a> Printer<'a> {
     #[cold]
-    pub fn print(
-        log: &mut bun_ast::Log,
-        input_lockfile_path: &[u8],
-        format: PrinterFormat,
-    ) -> Result<(), BunError> {
+    pub fn print(log: &mut bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 
@@ -1757,82 +1747,13 @@ impl<'a> Printer<'a> {
         }
 
         let writer = Output::writer_buffered();
-        match Self::print_with_lockfile(&lockfile, format, writer) {
+        match printer::Yarn::print(&lockfile, writer) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
             Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();
-        Ok(())
-    }
-
-    pub(crate) fn print_with_lockfile<W: bun_io::Write>(
-        lockfile: &Lockfile,
-        format: PrinterFormat,
-        writer: W,
-    ) -> Result<(), BunError> {
-        // `FileSystem::init` ran in the caller (`Printer::print`); this is the
-        // process-static singleton. Single-threaded
-        // CLI path, no concurrent access.
-        let fs = FileSystem::instance();
-        let mut options = PackageManagerOptions {
-            max_concurrent_lifecycle_scripts: 1,
-            ..Default::default()
-        };
-
-        // Capture the `'static` cwd slice
-        // before borrowing `fs.fs` mutably.
-        let top_level_dir = fs.top_level_dir;
-        // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
-        // with the `&mut self` borrow `read_directory` took.
-        let entries_option: *const Fs::EntriesOption =
-            fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        // Copy the listing's basenames out under `entries_mutex`; `.data` must
-        // only be probed while the lock is held.
-        let entries = {
-            let _entries_lock = fs.fs.entries_mutex.lock_guard();
-            // SAFETY: BSSMap-owned slot; shared read under `entries_mutex`.
-            match unsafe { &*entries_option } {
-                Fs::EntriesOption::Entries(e) => {
-                    DotEnv::DirEntryKeys(e.data.iter().map(|(k, _)| Box::from(&**k)).collect())
-                }
-                Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
-            }
-        };
-
-        let mut env_loader = DotEnv::Loader::init();
-        env_loader.quiet = true;
-
-        env_loader.load_process()?;
-        env_loader.load(
-            &entries,
-            &[] as &[&[u8]],
-            DotEnv::DotEnvFileSuffix::Production,
-            false,
-        )?;
-        let mut log = bun_ast::Log::init();
-        options.load(
-            &mut log,
-            &mut env_loader,
-            None,
-            None,
-            crate::Subcommand::Install,
-        )?;
-
-        let mut printer = Printer {
-            lockfile,
-            options: &options,
-            successfully_installed: None,
-            updates: &[],
-        };
-
-        let mut writer = writer;
-        match format {
-            PrinterFormat::Yarn => {
-                printer::Yarn::print(&mut printer, &mut writer)?;
-            }
-        }
         Ok(())
     }
 }

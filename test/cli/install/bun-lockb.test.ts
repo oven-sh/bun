@@ -1,7 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { copyFile, exists, open, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, runBunInstall, VerdaccioRegistry } from "harness";
+import { readFileSync } from "fs";
+import { copyFile, exists, open, rm, symlink, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isWindows, runBunInstall, tempDir, textLockfile, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -13,6 +14,18 @@ beforeAll(async () => {
 afterAll(() => {
   registry.stop();
 });
+
+async function run(cwd: string, ...args: string[]) {
+  await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// A `.env` that cannot be opened: a symlink to itself fails with ELOOP.
+async function writeUnopenableEnv(dir: string) {
+  await symlink(".env", join(dir, ".env"));
+  expect(() => readFileSync(join(dir, ".env"))).toThrow("ELOOP");
+}
 
 it("should not print anything to stderr when running bun.lockb", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
@@ -80,6 +93,88 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   expect(stderrOutput).toBe("");
 
   expect(await exited).toBe(0);
+
+  const hashed = { stdout: stdoutOutput.match(/ --hash: (\S+)/)![1], stderr: "", exitCode: 0 };
+  expect(
+    await Promise.all([
+      run(packageDir, "bun.lockb", "--hash"),
+      run(packageDir, "--no-env-file", "bun.lockb", "--hash"),
+    ]),
+  ).toEqual([hashed, hashed]);
+});
+
+it("bun.lockb and bun.lockb --hash read only the lockfile", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+  await write(
+    packageJson,
+    JSON.stringify({ name: "lockb-only", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+  );
+  await runBunInstall(env, packageDir);
+
+  const printed = await run(packageDir, "bun.lockb");
+  expect(printed).toEqual({
+    stdout: expect.stringMatching(/^# bun \.\/bun\.lockb --hash: \S+\n\n\nno-deps@1\.0\.0:$/m),
+    stderr: "",
+    exitCode: 0,
+  });
+  const hashed = { stdout: printed.stdout.match(/ --hash: (\S+)/)![1], stderr: "", exitCode: 0 };
+  const parseError = {
+    stdout: "",
+    stderr: "error: failed to parse lockfile: Lockfile is missing data\n",
+    exitCode: 1,
+  };
+
+  // No package.json and no `.env` that can be opened.
+  const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+  const truncated = lockb.subarray(0, lockb.length >> 1);
+  using dir = tempDir("lockb-only", { "custom.env": "FOO=bar" });
+  const cwd = String(dir);
+  await Promise.all([
+    write(join(cwd, "bun.lockb"), lockb),
+    write(join(cwd, "truncated.lockb"), truncated),
+    write(join(packageDir, "truncated.lockb"), truncated),
+    writeUnopenableEnv(cwd),
+  ]);
+
+  expect(
+    await Promise.all([
+      run(cwd, "bun.lockb"),
+      run(cwd, "--no-env-file", "bun.lockb"),
+      run(cwd, "--env-file=custom.env", "bun.lockb"),
+      run(cwd, "bun.lockb", "--hash"),
+      run(cwd, "truncated.lockb", "--hash"),
+      // `--hash` reads no `bun pm` flag: `--silent` does not hide the error.
+      run(packageDir, "truncated.lockb", "--hash", "--silent"),
+    ]),
+  ).toEqual([printed, printed, printed, hashed, parseError, parseError]);
+});
+
+it("bun.lockb prints a text bun.lock without opening .env", async () => {
+  using dir = tempDir("lockb-text", {
+    "bun.lock": textLockfile(1, {
+      workspaces: { "": { name: "lockb-text", dependencies: { "no-deps": "1.0.0" } } },
+      packages: {
+        "no-deps": [
+          "no-deps@1.0.0",
+          "",
+          {},
+          "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+        ],
+      },
+    }),
+  });
+  const cwd = String(dir);
+  await writeUnopenableEnv(cwd);
+
+  const printed = {
+    stdout: expect.stringMatching(/^# bun \.\/bun\.lockb --hash: \S+\n\n\nno-deps@1\.0\.0:\n  version "1\.0\.0"$/m),
+    stderr: "",
+    exitCode: 0,
+  };
+  expect(await Promise.all([run(cwd, "bun.lockb"), run(cwd, "--no-env-file", "bun.lockb")])).toEqual([
+    printed,
+    printed,
+  ]);
 });
 
 it("should continue using a binary lockfile if it exists", async () => {

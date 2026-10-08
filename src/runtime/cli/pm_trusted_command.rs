@@ -58,8 +58,7 @@ impl UntrustedCommand {
 
         // Reshaped for borrowck — `LoadResult` returned by
         // `load_lockfile_from_cwd` mutably borrows `pm.lockfile`, so all
-        // subsequent `pm` access goes through `pm_raw`. Same singleton pattern
-        // as `package_manager_command.rs::print_hash`.
+        // subsequent `pm` access goes through `pm_raw`.
         let pm_raw: *mut PackageManager = pm;
         let log_level = pm.options.log_level;
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();

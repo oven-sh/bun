@@ -1257,18 +1257,11 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     let file = tmpfile.file();
     {
-        let mut printer = crate::lockfile_real::Printer {
-            lockfile: &this.lockfile,
-            options: &this.options,
-            successfully_installed: None,
-            // `Yarn::print` never reads `updates`; pass an empty slice.
-            updates: &[],
-        };
         // `bun_sys::File`
         // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
         // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
         let mut buf: Vec<u8> = Vec::with_capacity(4096);
-        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
+        crate::lockfile_real::printer::Yarn::print(&this.lockfile, &mut buf)?;
         file.write_all(&buf).map_err(Error::from)?;
     }
 

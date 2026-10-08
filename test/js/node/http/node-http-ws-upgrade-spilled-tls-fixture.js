@@ -1,9 +1,10 @@
-// Four TLS connections hand their response socket to `ws` after a write that the client does not
+// Three TLS connections hand their response socket to `ws` after a write that the client does not
 // read. The first connection's ciphertext does not fit the kernel buffer and parks in the loop's
 // one spill slot. The writes of the connections behind it are therefore not batched, so BoringSSL
-// parks a record for them, and the short header writes of their 101 fail with BAD_WRITE_RETRY.
-// That marks those sockets shut down, and uWS refuses to adopt a shut down socket.
-// Prints "ok" when the server survived the close of every socket.
+// parks a record for them, and their 101, which is shorter than that record, fails with
+// BAD_WRITE_RETRY. That marks those sockets shut down. Every connection still has to become a
+// WebSocket, and every one of them has to close cleanly when its client goes.
+// Prints one JSON line.
 const https = require("node:https");
 const tls = require("node:tls");
 const fs = require("node:fs");
@@ -27,33 +28,24 @@ const wss = new WebSocketServer({ noServer: true });
 
 let upgraded = 0;
 let refused = 0;
-let serverSocketsClosed = 0;
-let guardThrew = null;
+let webSocketsClosed = 0;
 const { promise: allHandled, resolve: onAllHandled } = Promise.withResolvers();
+const { promise: allClosed, resolve: onAllClosed } = Promise.withResolvers();
 
 server.on("request", (req, res) => {
   res.on("error", () => {});
   req.socket.on("error", () => {});
-  req.socket.on("close", () => serverSocketsClosed++);
   res.write(BODY);
   let accepted = false;
   wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
     accepted = true;
     ws.on("error", () => {});
-    ws.on("close", () => serverSocketsClosed++);
-    ws.on("message", () => {});
+    ws.on("close", () => {
+      if (++webSocketsClosed === CONNECTIONS) onAllClosed();
+    });
   });
   if (accepted) upgraded++;
-  else {
-    refused++;
-    // The usual "finish it if nobody did" guard of a 'request' listener. A refused upgrade must
-    // leave the response endable, not half-closed underneath it.
-    try {
-      if (!res.writableEnded && !res.destroyed) res.end();
-    } catch (error) {
-      guardThrew = error.code || String(error);
-    }
-  }
+  else refused++;
   if (upgraded + refused === CONNECTIONS) onAllHandled();
 });
 server.on("clientError", (err, socket) => socket.destroy());
@@ -78,13 +70,10 @@ server.on("clientError", (err, socket) => socket.destroy());
   await allHandled;
 
   for (const client of clients) client.destroy();
-  // The crash is in the close dispatch of the server's sockets, so wait for them.
-  const deadline = Date.now() + 1500;
-  while (serverSocketsClosed < CONNECTIONS && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
+  // The crash was in the close dispatch of the server's sockets, so wait for every one of them.
+  await allClosed;
 
   server.close();
-  console.log(JSON.stringify({ ok: true, upgraded, refused, guardThrew }));
+  console.log(JSON.stringify({ upgraded, refused, webSocketsClosed }));
   process.exit(0);
 })();

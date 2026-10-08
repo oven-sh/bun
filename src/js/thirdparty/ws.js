@@ -947,15 +947,12 @@ function abortHandshake(socket, code, message, headers) {
     ...headers,
   };
 
-  // The application ended or destroyed the socket before the handshake finished (in 'headers' or
-  // verifyClient), so no status can reach the peer.
-  const gone = socket.writableEnded || socket.destroyed;
-
-  // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
-  // Only while that response can still send a status: once its headers are out, the status of the
-  // abort has nowhere to go and writeHead() would throw ERR_HTTP_HEADERS_SENT.
+  // No status can reach the peer once the socket is ended or destroyed, or its response is on the wire.
   const response = socket._httpMessage;
-  if (response && !response.headersSent && !gone) {
+  const unanswerable = socket.writableEnded || socket.destroyed || response?.headersSent;
+
+  // handleUpgrade() from a 'request' listener answers through that request's ServerResponse.
+  if (response && !unanswerable) {
     response.writeHead(code, headers);
     response.write(message);
     response.end();
@@ -965,9 +962,8 @@ function abortHandshake(socket, code, message, headers) {
   // Another WebSocketServer on the same http.Server has already taken this connection.
   if (socket[kBunInternals]?.upgraded) return;
 
-  // Release the connection. ws on Node gets there too: its socket.end() below raises an 'error' on
-  // an ended socket, and that destroys it.
-  if (gone) {
+  // Not end(): a half-close under a writable response leaves it unable to end.
+  if (unanswerable) {
     socket.destroy();
     return;
   }
@@ -1593,11 +1589,6 @@ class WebSocketServer extends EventEmitter {
         });
       }
       cb(ws, request);
-    } else if (socket._httpMessage?.headersSent) {
-      // A response is already on the wire, so a 500 for the refused handshake has no framing of its
-      // own. abortHandshake would half-close the socket and leave that response writable but unable
-      // to end, which turns the usual `if (!res.writableEnded) res.end()` into a throw.
-      socket.destroy();
     } else {
       abortHandshake(socket, 500);
     }

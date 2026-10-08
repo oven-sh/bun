@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs } from "harness";
+import { tls as certs } from "harness";
 import net from "net";
-import path from "node:path";
 import tls from "tls";
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
@@ -63,10 +62,8 @@ test("should be able to upgrade a paused socket and also have backpressure on it
 });
 
 test("tls.connect({ socket }) on a socket that already finished writing emits 'error'", async () => {
-  // Same underlying bug as upgradeTLS() on a shut-down Bun socket: the native
-  // adopt used to leave the fd registered as a plain TCP socket while the TLS
-  // wrapper was stored as its owner, so the TLSSocket never got an 'error' and
-  // simply went 'close' once the peer hung up.
+  // A socket that finished writing cannot be adopted, so the wrap fails on the
+  // TLSSocket and the net.Socket stays in charge of its fd.
   const peerSawFin = Promise.withResolvers<net.Socket>();
   // allowHalfOpen: the peer must not answer our FIN on its own, or its reply
   // could close the socket under test before tls.connect() gets to it.
@@ -87,10 +84,6 @@ test("tls.connect({ socket }) on a socket that already finished writing emits 'e
     await once(socket, "finish");
 
     const tlsSocket = tls.connect({ socket, rejectUnauthorized: false });
-    // The refusal has to close the TLSSocket through its stream, or 'close' arrives twice: once
-    // from the error itself and once when that stream tears down. Node emits it once.
-    let tlsClosed = 0;
-    tlsSocket.on("close", () => tlsClosed++);
     const outcome = new Promise<Error>((resolve, reject) => {
       tlsSocket.once("error", resolve);
       tlsSocket.once("secureConnect", () => reject(new Error("handshake completed on a finished socket")));
@@ -103,9 +96,7 @@ test("tls.connect({ socket }) on a socket that already finished writing emits 'e
     expect((await outcome).message).toBe("Cannot upgrade to TLS: the socket is closed or has been shut down");
     await peerReplied;
     await socketClosed;
-    // The second 'close' of the bug lands before the wrapped socket's own close, which is awaited
-    // above, so the count is final here.
-    expect({ received, tlsClosed }).toEqual({ received: "bye", tlsClosed: 1 });
+    expect(received).toBe("bye");
   } finally {
     server.close();
   }
@@ -135,6 +126,50 @@ test("new tls.TLSSocket(socket, { isServer: true }) on a socket that already fin
     expect((await outcome).message).toBe("Cannot upgrade to TLS: the socket is closed or has been shut down");
   } finally {
     client.destroy();
+    server.close();
+  }
+});
+
+// The refused wrap destroys the TLSSocket, so it reports 'close' once. An owner that gives the
+// TLSSocket up in the same tick gets only what that owner did, with no error from the wrap behind it.
+test.each([
+  ["and nothing else", (_tlsSocket: tls.TLSSocket) => {}, ["error: Cannot upgrade to TLS: the socket is closed or has been shut down", "close"]],
+  ["and destroy() in the same tick", (tlsSocket: tls.TLSSocket) => void tlsSocket.destroy(), ["close"]],
+  ["and destroy(error) in the same tick", (tlsSocket: tls.TLSSocket) => void tlsSocket.destroy(new Error("mine")), ["error: mine", "close"]],
+] as const)("tls.connect({ socket }) on a finished socket %s emits 'close' once", async (_name, giveUp, expected) => {
+  const server = net.createServer({ allowHalfOpen: true }, peer => {
+    peer.on("error", () => {});
+    peer.on("end", () => peer.end());
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const raw = net.connect({
+      port: (server.address() as net.AddressInfo).port,
+      host: "127.0.0.1",
+      allowHalfOpen: true,
+    });
+    raw.on("error", () => {});
+    await once(raw, "connect");
+    raw.end();
+    await once(raw, "finish");
+
+    const events: string[] = [];
+    const tlsSocket = tls.connect({ socket: raw, host: "127.0.0.1" });
+    tlsSocket.on("error", error => events.push("error: " + error.message));
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    tlsSocket.on("close", () => {
+      events.push("close");
+      onClosed();
+    });
+    giveUp(tlsSocket);
+    await closed;
+    // What tls.connect() queued for the next tick has run by the next turn of the loop.
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect({ events, destroyed: tlsSocket.destroyed }).toEqual({ events: [...expected], destroyed: true });
+    raw.destroy();
+  } finally {
     server.close();
   }
 });
@@ -226,17 +261,3 @@ test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrap
     server.close();
   }
 });
-
-test("a refused tls.connect({ socket }) emits 'close' once, like Node", async () => {
-  // The refusal used to report the error and emit 'close' by hand, and the stream behind the
-  // TLSSocket emitted a second one when it tore down.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-tls-upgrade-refused-close-fixture.js")],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect(JSON.parse(stdout)).toEqual({ silent: 1, replies: 1, ends: 1 });
-}, 20_000);

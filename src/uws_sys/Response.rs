@@ -176,8 +176,7 @@ impl<const SSL: bool> Response<SSL> {
         us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
     }
 
-    /// Our side sent a FIN, or TLS its close_notify. uWS refuses to adopt such a socket, so an
-    /// upgrade of it cannot succeed.
+    /// Our side sent a FIN, or TLS its close_notify. uWS refuses to adopt such a socket.
     pub(crate) fn is_shutdown(&self) -> bool {
         us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>())
             .is_shutdown()
@@ -907,8 +906,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.is_closed())
     }
 
-    /// See `Response::is_shutdown`. A stream of HTTP/2 or HTTP/3 is not a socket uWS adopts, so
-    /// both answer `false`.
+    /// See `Response::is_shutdown`. HTTP/2 and HTTP/3 have no socket to adopt: always `false`.
     pub fn is_shutdown(self) -> bool {
         any_dispatch!(self, |r| r.is_shutdown())
     }

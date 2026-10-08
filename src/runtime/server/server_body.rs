@@ -1970,10 +1970,8 @@ where
         if upgrader.is_aborted_or_ended() || upgrader.did_upgrade_web_socket() {
             return Ok(JSValue::FALSE);
         }
-        // uWS refuses to adopt a closed or shut down socket, and a connection the server ended
-        // (its idle timeout, a TLS close_notify that waits for the peer's) is not aborted, so the
-        // test above does not see it. Decide before the writes below and before this request
-        // gives up its response.
+        // A connection the server ended is not aborted, so the test above does not see it.
+        // Decide before the writes below, and before this request gives up its response.
         if resp.is_closed() || resp.is_shutdown() {
             return Ok(JSValue::FALSE);
         }

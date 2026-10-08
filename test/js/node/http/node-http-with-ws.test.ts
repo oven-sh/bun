@@ -1061,7 +1061,7 @@ test.concurrent(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(JSON.parse(stdout)).toEqual({ ok: true, upgraded: 3, refused: 0, guardThrew: null });
+    expect(JSON.parse(stdout)).toEqual({ upgraded: 3, refused: 0, webSocketsClosed: 3 });
   },
   30_000,
 );

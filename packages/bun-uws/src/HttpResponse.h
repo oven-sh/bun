@@ -588,18 +588,12 @@ public:
         /* Move construct the UserData right before calling open handler */
         new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));
 
-        /* The 101 goes out here, through the WebSocket. It lands behind the moved backpressure and
-         * in the cork it shares with the frames open() writes, so one upgrade is one write even
-         * when the cork of the parser is long gone. A write here cannot refuse the upgrade: the
-         * socket already belongs to the WebSocket, so a failure ends as any other WebSocket
-         * failure does. */
+        /* The 101 goes out here, through the WebSocket: behind the backpressure the response
+         * handed over, and in the cork it shares with the frames open() writes. A write that
+         * fails cannot refuse the upgrade. The socket is the WebSocket's by now, so it ends as
+         * any other WebSocket failure does. */
         writeUpgradeHandshake((AsyncSocket<SSL> *) webSocket, httpState, secWebSocketAccept,
             selectedProtocol, negotiatedExtensions);
-
-        /* That write can close the socket, which has already run the close handler for it. */
-        if (us_socket_is_closed(usSocket)) {
-            return usSocket;
-        }
 
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {

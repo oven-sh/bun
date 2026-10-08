@@ -61,7 +61,7 @@ mod connection {
             }
         }
 
-        /// uWS refused the upgrade, so the socket stays in the HTTP context and the response keeps it.
+        /// uWS refused the upgrade, so the socket stays this response's.
         pub(super) fn return_after_refused_upgrade(&self, raw_response: uws::AnyResponse) {
             self.0.set(Some(raw_response));
         }
@@ -627,8 +627,7 @@ impl NodeHTTPResponse {
         if upgrade_ctx.is_null() {
             return false;
         }
-        // uWS refuses to adopt a closed or shut down socket. Decide before this response gives up
-        // its connection below, so a refusal leaves it able to answer.
+        // Decide before this response gives up its connection below, so a refusal can still answer.
         if writer.is_closed() || writer.is_shutdown() {
             return false;
         }
@@ -709,8 +708,7 @@ impl NodeHTTPResponse {
                 )
                 .is_null();
             if !upgraded {
-                // The test above lets only a socket that a re-entrant option getter ended reach
-                // this. It stays this response's to write and to end.
+                // Only a re-entrant option getter can have ended the socket since the test above.
                 self.update_flags(|f| f.remove(Flags::UPGRADED));
                 self.connection.return_after_refused_upgrade(raw_response);
                 if held_poll_ref {

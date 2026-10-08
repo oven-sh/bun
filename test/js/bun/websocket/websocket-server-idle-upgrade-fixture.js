@@ -60,10 +60,10 @@ const server = Bun.serve({
   connectionEnded.resolve();
   await handled.promise;
 
+  // The crash was in the close dispatch of the server's socket, so wait for that close.
+  const closed = once(client, "close");
   client.destroy();
-  // The crash was in the close dispatch of the server's socket.
-  const deadline = Date.now() + 2000;
-  while (server.pendingWebSockets > 0 && Date.now() < deadline) await Bun.sleep(10);
+  await closed;
 
   console.log(
     JSON.stringify({

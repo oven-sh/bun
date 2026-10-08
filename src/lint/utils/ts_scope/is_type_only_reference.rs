@@ -2,7 +2,7 @@
 //! `@typescript-eslint/scope-manager`.
 
 use super::{reference_contains_type_predicate, reference_contains_type_query};
-use crate::semantic::{Declaration, DeclarationKind, Reference, Symbol};
+use crate::semantic::{Declaration, DeclarationKind, DeclarationKinds, Reference, Symbol};
 
 /// scope-manager's `definition.isTypeDefinition`: a class, an enum, an enum member, a namespace, an
 /// import, an interface, a type alias, a type parameter.
@@ -66,6 +66,6 @@ pub fn is_type_only_reference(variable: Symbol, reference: Reference) -> bool {
     is_in_type
         || !reference.is_value()
             && variable
-                .declarations()
-                .any(is_variable_declarator_definition)
+                .declaration_kinds()
+                .contains(DeclarationKinds::VARIABLE)
 }

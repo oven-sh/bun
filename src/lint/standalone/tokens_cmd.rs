@@ -72,7 +72,7 @@ fn batch(path: &str) {
     let cases = std::fs::read(path).expect("the cases");
     let stdout = std::io::stdout();
     let mut stdout = std::io::BufWriter::new(stdout.lock());
-    for line in cases.split(|&b| b == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&cases, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("a case");
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
@@ -136,7 +136,7 @@ fn query(path: &str) {
     let cases = std::fs::read(path).expect("the cases");
     let stdout = std::io::stdout();
     let mut stdout = std::io::BufWriter::new(stdout.lock());
-    for line in cases.split(|&b| b == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&cases, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("a case");
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();

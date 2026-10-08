@@ -6,26 +6,31 @@
 use super::super::spans::{get_leading_comment_ranges, get_trailing_comment_ranges};
 use super::*;
 
+bitflags::bitflags! {
+    /// Which tags there are.
+    #[derive(Copy, Clone, PartialEq, Eq, Default)]
+    struct TagSet: u8 {
+        /// A tag, whatever it is.
+        const ANY = 1 << 0;
+        const INHERIT_DOC = 1 << 1;
+        /// `@typedef`, `@callback`
+        const TYPEDEF = 1 << 2;
+        /// `@param`, `@returns`
+        const PARAMETER_OR_RETURN = 1 << 3;
+    }
+}
+
 /// What the tags of some JSDoc comments say.
 #[derive(Default)]
 struct Tags {
-    /// There is a tag.
-    has_any: bool,
+    set: TagSet,
     /// The text of the first `@deprecated`.
     deprecated: Option<Vec<u8>>,
-    has_inherit_doc: bool,
-    /// `@typedef`, `@callback`
-    has_typedef: bool,
-    /// `@param`, `@returns`
-    has_parameter_or_return: bool,
 }
 
 impl Tags {
     fn add(&mut self, other: Tags) {
-        self.has_any |= other.has_any;
-        self.has_inherit_doc |= other.has_inherit_doc;
-        self.has_typedef |= other.has_typedef;
-        self.has_parameter_or_return |= other.has_parameter_or_return;
+        self.set |= other.set;
         if self.deprecated.is_none() {
             self.deprecated = other.deprecated;
         }
@@ -162,13 +167,13 @@ fn parse_tags(comment: &[u8]) -> Tags {
             .take_while(|&&c| is_identifier_part(c) || c == b'-')
             .count();
         let (name, rest) = tag.split_at(name_len);
-        tags.has_any = true;
+        tags.set |= TagSet::ANY;
         match name {
             b"deprecated" if tags.deprecated.is_none() => tags.deprecated = Some(tag_comment(rest)),
-            b"inheritDoc" | b"inheritdoc" => tags.has_inherit_doc = true,
-            b"typedef" | b"callback" => tags.has_typedef = true,
+            b"inheritDoc" | b"inheritdoc" => tags.set |= TagSet::INHERIT_DOC,
+            b"typedef" | b"callback" => tags.set |= TagSet::TYPEDEF,
             b"param" | b"arg" | b"argument" | b"return" | b"returns" => {
-                tags.has_parameter_or_return = true
+                tags.set |= TagSet::PARAMETER_OR_RETURN;
             }
             _ => {}
         }
@@ -336,11 +341,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             let found = self.js_doc_tags(declaration);
             // "skip comments containing @typedefs since they're not associated with particular declarations"
-            if !found.has_typedef || found.has_parameter_or_return {
+            if !found.set.contains(TagSet::TYPEDEF)
+                || found.set.contains(TagSet::PARAMETER_OR_RETURN)
+            {
                 tags.add(found);
             }
         }
-        if (tags.has_any && !tags.has_inherit_doc) || depth > 16 {
+        if (tags.set & (TagSet::ANY | TagSet::INHERIT_DOC)) == TagSet::ANY || depth > 16 {
             return tags;
         }
         // Those that a member inherits come first.

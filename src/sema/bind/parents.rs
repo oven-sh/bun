@@ -713,12 +713,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
         }
     }
-    for (i, declaration) in f.var_decls.iter().enumerate() {
-        let id = VarDeclId(i as u32);
-        set!(pat_parent[declaration.pat] = PatParent::Var(id));
-        set!(expr_parent[declaration.init] = Parent::VarInit(id));
-        ty!(declaration.ty);
-    }
+    fill_of_var_decls(&f.var_decls, expr_parent, pat_parent, type_scope);
     for (i, pat) in f.pats.iter().enumerate() {
         let id = PatId(i as u32);
         match pat.kind {
@@ -770,6 +765,27 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         set!(expr_parent[specifier] = Parent::File);
     }
     true
+}
+
+/// The part of [`fill`] that is about the declarations of variables.
+fn fill_of_var_decls(
+    declarations: &[VarDecl],
+    expr_parent: &mut [Parent],
+    pat_parent: &mut [PatParent],
+    type_scope: &mut [ScopeId],
+) {
+    for (i, declaration) in declarations.iter().enumerate() {
+        let id = VarDeclId(i as u32);
+        if let Some(slot) = pat_parent.get_mut(declaration.pat.idx()) {
+            *slot = PatParent::Var(id);
+        }
+        if let Some(slot) = expr_parent.get_mut(declaration.init.idx()) {
+            *slot = Parent::VarInit(id);
+        }
+        if let Some(slot) = type_scope.get_mut(declaration.ty.idx()) {
+            *slot = REACHED;
+        }
+    }
 }
 
 /// What nothing says to be a part of anything is what the parser has left behind, and what is in it

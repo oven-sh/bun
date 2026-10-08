@@ -1986,23 +1986,31 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
+    /// The response is gone: this sink never writes again. Stores only, so no
+    /// JavaScript runs and the owner can still close the connection before
+    /// [`Self::notify_revoked`] tells the source.
+    pub(crate) fn revoke_response(&mut self) {
+        bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
+        self.state = HTTPServerWritableState::Aborted;
+        self.res = None;
+        self.unregister_auto_flusher();
+    }
+
+    /// Second half of an abort, after [`Self::revoke_response`]: settles what is
+    /// parked on the sink and closes the source.
+    ///
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
     /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
     /// sink. A `&mut self` argument protector must not be live across that free.
     ///
     /// # Safety
     /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
-        bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
+    pub(crate) unsafe fn notify_revoked(this: *mut Self) {
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
-        unsafe {
-            (*this).state = HTTPServerWritableState::Aborted;
-            (*this).res = None;
-            (*this).unregister_auto_flusher();
-        }
+        debug_assert!(unsafe { (*this).is_aborted() });
 
-        // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
+        // SAFETY: as above; exclusive borrow scoped to the call.
         unsafe { (*this).flush_promise() };
         // SAFETY: as above.
         unsafe { (*this).finalize() };

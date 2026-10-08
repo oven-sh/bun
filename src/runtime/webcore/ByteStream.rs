@@ -390,9 +390,25 @@ impl ByteStream {
 
     /// Drop the native sink and end the stream locked to it: errored with the producer's `err`, else closed.
     pub(crate) fn detach_sink(&self, err: Option<&streams::StreamError>) {
-        self.sink_paused.set(false);
-        if self.sink.replace(SinkHandle::None).is_some() {
+        if self.revoke_sink() {
             self.parent_const().end_locked_stream(err);
+        }
+    }
+
+    /// Stop dispatching to the native sink; `true` if one was attached. Stores only: the
+    /// stream stays locked and no JavaScript runs until [`Self::finish_revoked_sink`].
+    pub(crate) fn revoke_sink(&self) -> bool {
+        self.sink_paused.set(false);
+        self.sink.replace(SinkHandle::None).is_some()
+    }
+
+    /// [`Self::detach_finished_sink`] for a sink that [`Self::revoke_sink`] dropped. A producer
+    /// error that arrived in between errors the stream, as it would have through the sink.
+    pub(crate) fn finish_revoked_sink(&self) {
+        let err = self.take_pending_error();
+        self.parent_const().end_locked_stream(err.as_ref());
+        if !self.has_received_last_chunk.get() {
+            self.cancel_from_sink(None);
         }
     }
 

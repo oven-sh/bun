@@ -64,7 +64,7 @@ use crate::language::LanguageOptions;
 use crate::span::Span;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::{bind, hir};
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 
 macro_rules! slices {
     ($(#[$doc:meta])* $name:ident of $module:ident::$source:ident { $($field:ident: $ty:ty,)* }) => {
@@ -171,6 +171,16 @@ slices! {
     }
 }
 
+/// The first and the last of [`Lazy::unicode_escapes`]. Until these are known it is the whole text,
+/// and if there are none it is empty.
+struct UnicodeEscapeRange(Cell<(u32, u32)>);
+
+impl Default for UnicodeEscapeRange {
+    fn default() -> Self {
+        UnicodeEscapeRange(Cell::new((0, u32::MAX)))
+    }
+}
+
 /// What is computed from a file on demand, once.
 #[derive(Default)]
 pub(crate) struct Lazy {
@@ -180,6 +190,7 @@ pub(crate) struct Lazy {
     has_types_that_are_errors: OnceCell<bool>,
     /// Where the text has a `\u`, in order.
     unicode_escapes: OnceCell<Box<[u32]>>,
+    unicode_escape_range: UnicodeEscapeRange,
     /// A bit for each expression: it is in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
     pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
@@ -346,11 +357,8 @@ impl<'a> File<'a> {
     /// HIR says. Most files have none at all, and most of the others have a few in strings.
     #[inline]
     pub(crate) fn has_no_unicode_escape_in(&self, pos: u32, end: u32) -> bool {
-        match self.lazy.unicode_escapes.get().map(|all| (all.first(), all.last())) {
-            Some((Some(&first), Some(&last))) => end <= first || last < pos,
-            Some(_) => true,
-            None => false,
-        }
+        let (first, last) = self.lazy.unicode_escape_range.0.get();
+        end <= first || last < pos
     }
 
     /// Where the identifier at `pos` ends. The HIR says `end`, which for some identifiers that are
@@ -372,6 +380,10 @@ impl<'a> File<'a> {
                 all.push((from + at) as u32);
                 from += at + 2;
             }
+            self.lazy.unicode_escape_range.0.set(match (all.first(), all.last()) {
+                (Some(&first), Some(&last)) => (first, last),
+                _ => (u32::MAX, 0),
+            });
             all.into_boxed_slice()
         });
         match escapes.get(escapes.partition_point(|&at| at < pos)) {

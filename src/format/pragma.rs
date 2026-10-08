@@ -61,6 +61,47 @@ fn has_any_pragma(text: &[u8], names: [&[u8]; 2]) -> bool {
     doc_block.pragmas.iter().any(|(name, _)| names.contains(&name.as_slice()))
 }
 
+/// Prettier's `isFlowFile`: whether it has Babel parse `text` as Flow, because `@flow` or `@noflow`
+/// is somewhere in the comments that it starts with, or because of its name. What is printed
+/// differently then: a property name that is a number keeps its quotes.
+pub fn is_flow_file(text: &[u8], filepath: &[u8]) -> bool {
+    if filepath.ends_with(b".js.flow") {
+        return true;
+    }
+    let text = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text);
+    let text = match (text.starts_with(b"#!"), strings::index_of_any(text, b"\n\r")) {
+        (false, _) => text,
+        (true, None) => return false,
+        (true, Some(end)) => &text[end..],
+    };
+
+    // `getNextNonSpaceNonCommentCharacterIndex`
+    let mut rest = text;
+    loop {
+        rest = match rest {
+            [b' ' | b'\t' | b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => rest,
+            [b'/', b'*', comment @ ..] => match strings::index_of(comment, b"*/") {
+                Some(end) => &comment[end + 2..],
+                None => break,
+            },
+            [b'/', b'/', comment @ ..] => &comment[strings::index_of_any(comment, b"\n\r").unwrap_or(comment.len())..],
+            _ => break,
+        };
+    }
+
+    // `/@(?:no)?flow\b/`
+    let mut comments = &text[..text.len() - rest.len()];
+    while let Some(at) = strings::index_of_char_usize(comments, b'@') {
+        comments = &comments[at + 1..];
+        if let Some(after) = comments.strip_prefix(b"no").unwrap_or(comments).strip_prefix(b"flow")
+            && !after.first().is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Prettier's `insertPragma`: appends `text` to `out`, with `@format` in its first comment, which is
 /// added if there is none.
 pub fn insert_pragma(text: &[u8], out: &mut Vec<u8>) {

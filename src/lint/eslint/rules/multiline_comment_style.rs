@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use std::cell::OnceCell;
 
 /// Enforce a particular style for multiline comments.
 pub struct MultilineCommentStyle {
@@ -267,6 +268,8 @@ impl MultilineCommentStyle {
         }
 
         let start_line = file.line_of(first.start());
+        // Which of the lines of the comment is the first that is not blank, once a fix asks.
+        let first_line_with_text = OnceCell::new();
         for line_number in start_line + 1..=file.line_of(first.end()) {
             let line = file.line_span(line_number);
             let line_text = file.slice(line);
@@ -283,7 +286,7 @@ impl MultilineCommentStyle {
             }
             cx.report(line, MISSING_STAR).fix(|fixer| {
                 let mut prefix = concat(&[initial_offset, b" *"]);
-                match text::lines(value).position(|line| !text::is_blank(line)) {
+                match *first_line_with_text.get_or_init(|| text::lines(value).position(|line| !text::is_blank(line))) {
                     Some(index) => {
                         let to_align_with = file.slice(line_span(file, start_line + index as u32));
                         // `/^(\s*(?:\/?\*)?(\s*))/u`

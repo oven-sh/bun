@@ -4,6 +4,12 @@ use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTr
 use crate::prelude::*;
 use crate::write;
 
+/// Prettier 3.9 writes `new (⏎ a as T⏎)()` like `(⏎ a as T⏎)()`. oxfmt follows 3.8, in which only `T`
+/// can break.
+fn breaks_around_the_callee_of_new(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let (expression, type_annotation, operation) = match e.kind() {
         ExprKind::As { expr, ty } => (expr, Some(ty), "as"),
@@ -52,6 +58,7 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
     let is_callee_or_object = match parent {
         AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
         AstNodes::ComputedMemberExpression(member) => member.object() == Some(e),
+        AstNodes::NewExpression(_) if !breaks_around_the_callee_of_new(f) => false,
         _ => parent.is_call_like_callee(e),
     };
     match is_callee_or_object {

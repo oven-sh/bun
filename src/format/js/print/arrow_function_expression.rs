@@ -66,6 +66,12 @@ fn next_in_chain(arrow: Func<'_>) -> Option<Func<'_>> {
     get_expression(arrow).and_then(|body| body.arrow_function())
 }
 
+/// `f(a, b =>⏎ // comment⏎ c ? d : e)`: for oxfmt the line of the `=>` is one column longer than it
+/// looks, as if a space were behind it.
+fn counts_space_before_commented_conditional(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Prettier's `printArrowFunction`. `e`: the expression that `arrow` is.
 pub(crate) fn write_arrow_function_expression<'a>(
     e: Expr<'a>,
@@ -109,9 +115,10 @@ fn write_arrow<'a>(
 
     let has_own_line_comment = has_leading_own_line_comment(tail, options.cache_mode, f);
     let add_parens_if_not_break = should_add_parens_if_not_break(tail);
-    let is_body_on_same_line = !has_own_line_comment
+    let is_body_on_same_line = (!has_own_line_comment
         && (get_expression(tail).is_none_or(|body| is_sequence(body) || may_break_after_short_prefix(body, f))
-            || (!should_break_chain && add_parens_if_not_break));
+            || (!should_break_chain && add_parens_if_not_break)))
+        || (add_parens_if_not_break && expand_last_arg && counts_space_before_commented_conditional(f));
 
     let format_body = FormatArrowBody {
         arrow: tail,

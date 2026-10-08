@@ -12,46 +12,6 @@ fn os(bytes: &[u8]) -> &std::ffi::OsStr {
     std::ffi::OsStr::from_bytes(bytes)
 }
 
-struct Worker {
-    child: std::process::Child,
-    input: Option<std::process::ChildStdin>,
-    output: std::process::ChildStdout,
-}
-
-impl bun_lint::js_plugin::Channel for Worker {
-    fn send(&mut self, bytes: &[u8]) -> Result<(), Vec<u8>> {
-        let input = self.input.as_mut().ok_or(b"closed".as_slice())?;
-        std::io::Write::write_all(input, bytes).map_err(|error| error.to_string().into_bytes())
-    }
-
-    fn receive(&mut self, into: &mut [u8]) -> Result<(), Vec<u8>> {
-        std::io::Read::read_exact(&mut self.output, into).map_err(|error| error.to_string().into_bytes())
-    }
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        drop(self.input.take());
-        let _ = self.child.wait();
-    }
-}
-
-fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint::js_plugin::Channel>, Vec<u8>> {
-    use std::process::Stdio;
-    // The pipes are its file descriptors 3 and 4. What it prints is for the user.
-    let mut command = std::process::Command::new("sh");
-    command.args(["-c", r#"exec "$0" "$@" 3<&0 4>&1 1>&2 </dev/null"#]);
-    command.arg(std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned()));
-    command.arg("-e").arg(script.source).args(script.arguments.iter().map(|it| os(it))).current_dir(os(script.cwd));
-    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|error| error.to_string().into_bytes())?;
-    let (input, output) = (child.stdin.take(), child.stdout.take());
-    Ok(Box::new(Worker {
-        child,
-        input,
-        output: output.ok_or(b"no pipe".as_slice())?,
-    }))
-}
-
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let mut command = std::process::Command::new("bun");
     command.arg("-e").arg(script.source).args(script.arguments.iter().map(|it| os(it))).current_dir(os(script.cwd));
@@ -114,6 +74,7 @@ pub(crate) fn run(args: &[String]) {
     // `Output::is_ai_agent`
     let is_one = |name: &str| std::env::var_os(name).map(|it| it == "1");
     let is_agent = is_one("AGENT").unwrap_or_else(|| is_one("CLAUDECODE") == Some(true) || is_one("REPL_ID") == Some(true));
+    let processes = crate::js_plugin_cmd::new_processes(std::thread::available_parallelism().map_or(1, usize::from));
     let environment = Environment {
         cwd: std::env::current_dir().expect("the working directory").into_os_string().into_vec(),
         stdout: stream(std::io::stdout().is_terminal()),
@@ -122,7 +83,7 @@ pub(crate) fn run(args: &[String]) {
         is_github_action: !is_agent && std::env::var_os("GITHUB_ACTIONS").is_some_and(|it| it == "true"),
         libs: bun_sema_driver::Libs::Directory(&libs),
         run_script: &run_script,
-        spawn_worker: &spawn_worker,
+        js_engine: &processes,
         version: b"0.0.0-harness",
     };
     let outcome = match &command {

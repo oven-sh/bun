@@ -89,7 +89,7 @@ struct Worker {
     output: bun_sys::File,
 }
 
-impl bun_lint_driver::Channel for Worker {
+impl bun_lint_driver::js_plugin::Channel for Worker {
     fn send(&mut self, bytes: &[u8]) -> Result<(), Vec<u8>> {
         let input = self.input.as_ref().ok_or(&b"The pipe is closed."[..])?;
         input.write_all(bytes).map_err(|err| err.name().to_vec())
@@ -114,7 +114,7 @@ impl Drop for Worker {
 }
 
 /// Starts `script` with this executable.
-fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::Channel>, Vec<u8>> {
+fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::js_plugin::Channel>, Vec<u8>> {
     use crate::api::bun::process::{SpawnEnv, SpawnOptions, Stdio, spawn_process_cstr};
     let failed = |name: &[u8]| [&b"Could not start a process: "[..], name].concat();
     let Ok(exe) = bun_core::self_exe_path() else {
@@ -186,8 +186,19 @@ pub(crate) fn run_and_exit(
         let _turn = turn.lock();
         run_script(script)
     };
+    let cwd = bun_lint_driver::from_native_path(&working_directory());
+    let worker = Script {
+        source: bun_lint_driver::js_plugin::BOOTSTRAP,
+        arguments: &[],
+        cwd: &cwd,
+    };
+    let spawn_worker = || {
+        let _turn = turn.lock();
+        spawn_worker(&worker)
+    };
+    let processes = bun_lint_driver::js_plugin::Processes::new(&spawn_worker, usize::from(bun_core::get_thread_count()));
     let environment = Environment {
-        cwd: bun_lint_driver::from_native_path(&working_directory()),
+        cwd: cwd.clone(),
         stdout: Stream {
             is_tty: Output::is_stdout_tty(),
             colors: Output::enable_ansi_colors_stdout(),
@@ -200,10 +211,7 @@ pub(crate) fn run_and_exit(
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         run_script: &run_script,
-        spawn_worker: &|script: &Script| {
-            let _turn = turn.lock();
-            spawn_worker(script)
-        },
+        js_engine: &processes,
         version: Global::package_json_version.as_bytes(),
     };
     let outcome = run(&environment);

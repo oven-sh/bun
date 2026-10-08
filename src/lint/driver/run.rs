@@ -11,7 +11,7 @@ use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::{Channel, Host};
+use bun_lint::js_plugin::{Engine, Host};
 use bun_lint::linter::{FileConfig, Linter, Registry};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
@@ -58,10 +58,8 @@ pub struct Environment<'e> {
     /// Runs a script to its end. `Ok`: what it has printed on standard output. `Err`: it failed, and
     /// this is why.
     pub run_script: &'e (dyn Fn(&Script) -> Result<Vec<u8>, Vec<u8>> + Sync),
-    /// Starts a script, with a pipe to read from as its file descriptor 3 and one to write to as 4.
-    /// It is talked to through what is returned. What it prints is for the user: it goes to
-    /// standard error.
-    pub spawn_worker: &'e (dyn Fn(&Script) -> Result<Box<dyn Channel>, Vec<u8>> + Sync),
+    /// Where the rules that are written in JavaScript run.
+    pub js_engine: &'e dyn Engine,
     /// The version of Bun.
     pub version: &'e [u8],
 }
@@ -412,14 +410,8 @@ impl Run<'_> {
         }
         let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES]));
         let pool = Pool::new(options.threads);
-        let script = Script {
-            source: bun_lint::js_plugin::BOOTSTRAP,
-            arguments: &[],
-            cwd: &environment.cwd,
-        };
-        let spawn_worker = || (environment.spawn_worker)(&script);
-        // No process is started unless a configuration has a plugin in JavaScript.
-        let js_plugins = Host::new(&spawn_worker, &environment.cwd, pool.threads);
+        // Nothing is started unless a configuration has a plugin in JavaScript.
+        let js_plugins = Host::with_engine(environment.js_engine, &environment.cwd);
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let modules = bun_lint_graph::Graph::new(&store);
         let loader = Loader::new(&linter, options, environment, &js_plugins);

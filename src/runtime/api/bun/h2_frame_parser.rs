@@ -3005,12 +3005,10 @@ impl H2FrameParser {
         if self.fatal_write_close_queued.replace(true) {
             return;
         }
-        let task = bun_core::heap::into_raw(Box::new(FatalWriteCloseTask(self.ref_guard())));
         let event_loop = self.global_this.bun_vm().event_loop_mut();
-        event_loop.enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
-            task,
-            FatalWriteCloseTask::run,
-        ));
+        event_loop.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+            FatalWriteCloseTask(self.ref_guard()),
+        )));
         // A queued task does not shorten the libuv poll.
         #[cfg(windows)]
         event_loop.wakeup();
@@ -3361,14 +3359,13 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     unsafe { (*(ctx.cast_const().cast::<H2FrameParser>())).on_auto_flush() }
 }
 
-/// Keeps the parser alive in the task queue. `ManagedTask` drops it if the task never runs.
-struct FatalWriteCloseTask(RefPtr<H2FrameParser>);
+/// Keeps the parser alive in the task queue.
+pub(crate) struct FatalWriteCloseTask(RefPtr<H2FrameParser>);
 
 impl FatalWriteCloseTask {
-    fn run(this: *mut Self) -> JsResult<()> {
-        // SAFETY: the box `queue_transport_close_after_fatal_write` leaked; `ManagedTask`
-        // hands it over once.
-        let Self(queued_ref) = *unsafe { bun_core::heap::take(this) };
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) {
+        let Self(queued_ref) = *self;
         // Counted, so `finalize` can release it if `process.exit()` strands this frame.
         let keepalive = OwnedKeepalive::adopt(queued_ref);
         let parser: &H2FrameParser = &keepalive.0;
@@ -3381,7 +3378,18 @@ impl FatalWriteCloseTask {
                 parser.transport_write_fatal.set(false);
             }
         }
-        Ok(())
+    }
+}
+
+impl bun_event_loop::Taskable for FatalWriteCloseTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::H2FatalWriteClose;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract, boxed in `queue_transport_close_after_fatal_write`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// The socket's own close: its handlers enter their context before they call script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

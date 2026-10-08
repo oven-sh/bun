@@ -105,7 +105,7 @@ fn format_embedded(
     };
     let mut out = Vec::new();
     let format_javascript = |path: &[u8], out: &mut Vec<u8>| match &options.format_javascript {
-        Some(format_javascript) => format_javascript.0(path, code, &options, out),
+        Some(format_javascript) => format_javascript(path, code, &options, out),
         None => false,
     };
     let is_done = if let Some(parser) = crate::json::Parser::from_name(parser) {

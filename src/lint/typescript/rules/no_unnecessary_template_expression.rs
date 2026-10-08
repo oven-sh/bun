@@ -129,7 +129,7 @@ fn backslashes_at_end(text: &[u8]) -> usize {
 }
 
 fn ends_with_unescaped_dollar_sign(text: &[u8]) -> bool {
-    matches!(text.split_last(), Some((b'$', before)) if backslashes_at_end(before) % 2 == 0)
+    matches!(text.split_last(), Some((b'$', before)) if backslashes_at_end(before).is_multiple_of(2))
 }
 
 /// `String(regex)`, with every backslash escaped.

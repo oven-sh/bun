@@ -252,7 +252,7 @@ impl<'a> Comparison<'a> {
 impl PreferStringStartsEndsWith {
     /// `foo[0] === "a"`, `foo.charAt(0) === "a"`, `foo[foo.length - 1] === "a"`,
     /// `foo.charAt(foo.length - 1) === "a"`
-    fn check_single_element<'a>(&self, it: Comparison<'a>, index_node: Expr<'a>, cx: &Cx<'a, Self>) {
+    fn check_single_element<'a>(&self, it: &Comparison<'a>, index_node: Expr<'a>, cx: &Cx<'a, Self>) {
         if self.allow_single_element_equality
             || !is_equality_comparison(it.op)
             || !is_string_type(it.object)
@@ -273,7 +273,7 @@ impl PreferStringStartsEndsWith {
     }
 
     /// `foo.indexOf('bar') === 0`
-    fn check_index_of<'a>(it: Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
+    fn check_index_of<'a>(it: &Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         if call.args().len() != 1
             || !is_equality_comparison(it.op)
             || !is_number(it.right, 0.0)
@@ -286,7 +286,7 @@ impl PreferStringStartsEndsWith {
     }
 
     /// `foo.lastIndexOf('bar') === foo.length - 3`, `foo.lastIndexOf(bar) === foo.length - bar.length`
-    fn check_last_index_of<'a>(it: Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
+    fn check_last_index_of<'a>(it: &Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
@@ -305,7 +305,7 @@ impl PreferStringStartsEndsWith {
     }
 
     /// `foo.match(/^bar/) === null`, `foo.match(/bar$/) === null`
-    fn check_match<'a>(it: Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
+    fn check_match<'a>(it: &Comparison<'a>, call_node: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
@@ -333,7 +333,7 @@ impl PreferStringStartsEndsWith {
     /// `foo.slice(0, 3) === 'bar'`, `foo.slice(-3) === 'bar'`, `foo.slice(-3, foo.length) === 'bar'`,
     /// `foo.substring(0, 3) === 'bar'`, `foo.substring(foo.length - 3) === 'bar'`,
     /// `foo.substring(foo.length - 3, foo.length) === 'bar'`
-    fn check_slice<'a>(it: Comparison<'a>, call: Call<'a>, negative_index_supported: bool, cx: &Cx<'a, Self>) {
+    fn check_slice<'a>(it: &Comparison<'a>, call: Call<'a>, negative_index_supported: bool, cx: &Cx<'a, Self>) {
         if !is_equality_comparison(it.op) || !is_string_type(it.object) {
             return;
         }
@@ -394,7 +394,7 @@ impl PreferStringStartsEndsWith {
         };
         let call = match left.kind() {
             ExprKind::Index { obj, index, .. } => {
-                return self.check_single_element(comparison(left, obj), index, cx);
+                return self.check_single_element(&comparison(left, obj), index, cx);
             }
             ExprKind::Call(call) => call,
             _ => return,
@@ -404,7 +404,7 @@ impl PreferStringStartsEndsWith {
             // `(a?.b)()` calls a `ChainExpression`.
             _ if callee.is_chain_root() => {}
             ExprKind::Dot { obj, name, .. } => {
-                let it = comparison(callee, obj);
+                let it = &comparison(callee, obj);
                 // The `name` of a `PrivateIdentifier` has no `#`.
                 match name.bytes().strip_prefix(b"#").unwrap_or_else(|| name.bytes()) {
                     b"charAt" => {
@@ -422,7 +422,7 @@ impl PreferStringStartsEndsWith {
             }
             ExprKind::Index { obj, index, .. } => {
                 if is_static_member_access_of_value(callee, &["slice", "substring"]) {
-                    Self::check_slice(comparison(callee, obj), call, index.is_ident("slice"), cx);
+                    Self::check_slice(&comparison(callee, obj), call, index.is_ident("slice"), cx);
                 }
             }
             _ => {}

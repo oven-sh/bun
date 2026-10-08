@@ -46,7 +46,7 @@ impl NoMeaninglessVoidOperator {
         match unwrap_void_argument(argument).kind() {
             ExprKind::Call(_) => {}
             // `void 0` is a common way to write `undefined`.
-            ExprKind::Number(value) if value == 0.0 => return,
+            ExprKind::Number(0.0) => return,
             // `() => void (x = 1)` discards the value of the assignment.
             ExprKind::Assign { .. } => return,
             _ => {

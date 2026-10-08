@@ -36,7 +36,7 @@ fn fix_type_alias<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, alias: Alias<'a>) -
 
 fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface<'a>) -> Vec<Fix> {
     let (file, name, body) = (fixer.file(), interface.name(), interface.body_span());
-    let head_end = interface.type_params().angle_brackets_span().map_or(name.span().end, |it| it.end);
+    let head_end = interface.type_params().angle_brackets_span().map_or_else(|| name.span().end, |it| it.end);
     let mut fixes = Vec::new();
     if let Some(first_token) = file.token_before(name) {
         fixes.push(fixer.replace(first_token, "type"));

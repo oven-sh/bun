@@ -32,7 +32,7 @@ impl NoThisAlias {
         };
         match name {
             Some(name) => {
-                if !self.allowed_names.iter().any(|allowed| name == &**allowed) {
+                if !self.allowed_names.iter().any(|allowed| name == **allowed) {
                     cx.report(id, THIS_ASSIGNMENT);
                 }
             }

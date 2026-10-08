@@ -69,13 +69,13 @@ impl NoRestrictedTypes {
         Some(&self.banned.get(at)?.1)
     }
 
-    fn check_named<'a>(&self, at: Span, name: Cow<'a, [u8]>, cx: &Cx<'a, Self>) {
-        let Some(ban) = self.get(&name) else {
+    fn check_named<'a>(&self, at: Span, name: &[u8], cx: &Cx<'a, Self>) {
+        let Some(ban) = self.get(name) else {
             return;
         };
         let mut report = cx
             .report(at, BANNED_TYPE_MESSAGE)
-            .data("name", name.clone())
+            .data("name", name.to_vec())
             .data("customMessage", ban.custom_message.clone());
         if let Some(fix_with) = &ban.fix_with {
             report = report.fix(|fixer| fixer.replace(at, &fix_with[..]));
@@ -83,7 +83,7 @@ impl NoRestrictedTypes {
         for replacement in &ban.suggest {
             report = report.suggest_with(
                 BANNED_TYPE_REPLACEMENT,
-                &[("name", &name[..]), ("replacement", &replacement[..])],
+                &[("name", name), ("replacement", &replacement[..])],
                 |fixer| fixer.replace(at, &replacement[..]),
             );
         }
@@ -91,7 +91,7 @@ impl NoRestrictedTypes {
     }
 
     fn check(&self, at: Span, cx: &Cx<'_, Self>) {
-        self.check_named(at, remove_spaces(cx.slice(at)), cx);
+        self.check_named(at, &remove_spaces(cx.slice(at)), cx);
     }
 
     /// A `TSTypeReference`, a `TSClassImplements` or a `TSInterfaceHeritage`.
@@ -171,18 +171,18 @@ impl Rule for NoRestrictedTypes {
             if let TypeKind::Keyword(keyword) = ty.kind()
                 && let Some(name) = keyword_name(keyword)
             {
-                rule.check_named(ty.span(), Cow::Borrowed(name.as_bytes()), cx);
+                rule.check_named(ty.span(), name.as_bytes(), cx);
             }
         });
         // ESLint has a `TSSymbolKeyword` in `unique symbol`, and a `TSTypeReference` in `as const`.
         on.types([TypeTag::UniqueSymbol], |rule, ty, cx| {
             if let Some(keyword) = ty.unique_symbol_keyword_span() {
-                rule.check_named(keyword, Cow::Borrowed(b"symbol"), cx);
+                rule.check_named(keyword, b"symbol", cx);
             }
         });
         on.exprs([ExprTag::AsConst], |rule, e, cx| {
             if let Some(keyword) = e.const_keyword_span() {
-                rule.check_named(keyword, Cow::Borrowed(b"const"), cx);
+                rule.check_named(keyword, b"const", cx);
             }
         });
     }

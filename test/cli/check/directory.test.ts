@@ -105,6 +105,18 @@ const layouts: Record<string, [files: Record<string, string>, reported: string[]
       `apps/site/.storybook/main.ts(2,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`,
     ],
   ],
+  // The tsconfig.json there has no say either. The project is there, and it checks what it lists with its options.
+  "a project in a dot directory that the tsconfig.json references": [
+    {
+      "tsconfig.json": config({ include: ["src"], references: [{ path: "./.storybook" }] }),
+      "src/globals.d.ts": globals,
+      "src/a.ts": right,
+      ".storybook/tsconfig.json": config({}, { ...library, strict: false }),
+      ".storybook/globals.d.ts": globals,
+      ".storybook/main.ts": `${wrong}export function f(x) {\n  return x;\n}\n`,
+    },
+    [error(".storybook/main.ts")],
+  ],
   "where the project lists a file, only what it lists": [
     {
       "tsconfig.json": config({ include: [".gen/**/*"] }),
@@ -180,8 +192,8 @@ describe("a directory without a tsconfig.json at or above it", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: error("src/legacy.js", 2), exitCode: 1 });
   });
 
-  // The link is what a package manager makes for a package of the workspace. The tsconfig.json that is reached through
-  // it is in `node_modules`, so it has no say about what is there.
+  // The link is what a package manager makes for a package of the workspace. What it leads to is not in `node_modules`:
+  // the tsconfig.json that has a say about it is the one in `packages/ui`, if the run is about that directory.
   test("a project that another references through a link in node_modules is checked where it is", async () => {
     using dir = tempDir("bun-check-directory", {
       "apps/site": {

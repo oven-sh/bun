@@ -1365,6 +1365,17 @@ fn skipped_directory<'a>(path: &'a [u8], is_below: impl Fn(&&'a [u8]) -> bool) -
         .last()
 }
 
+/// Whether a link leads to the directory `dir`, by a name of it that is `top` or below that.
+fn is_linked(disk: &host::Disk, dir: &[u8], top: &[u8]) -> bool {
+    let is_case_sensitive = disk.is_case_sensitive();
+    let mut dirs = ancestors(dir).take_while(|it| contains_path(top, it, is_case_sensitive));
+    dirs.any(|it| {
+        let parent = disk.realpath(dirname::<Posix>(it));
+        let real = inside(&parent, bun_paths::basename_posix(it));
+        !is_same_path(&disk.realpath(it), &real, is_case_sensitive)
+    })
+}
+
 /// The directories below `top` with a configuration file of their own, as the paths of those files.
 fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
     let (mut found, mut pending) = (Vec::new(), vec![top.to_vec()]);
@@ -1626,8 +1637,9 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             }
             let project = &graph[next];
             next += 1;
-            // One that `nested_configs` skips adds nothing that is beside it.
-            let skipped = skipped_directory(project, is_below);
+            // One that a link leads to, in what `nested_configs` skips, adds nothing that is beside it.
+            let skipped = skipped_directory(project, is_below)
+                .filter(|top| is_linked(disk, dirname::<Posix>(project), top));
             let is_beside = |file: &[u8]| {
                 skipped.is_some_and(|dir| contains_path(dir, file, is_case_sensitive))
             };

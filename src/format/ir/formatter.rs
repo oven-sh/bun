@@ -468,13 +468,13 @@ impl<'a> Formatter<'a> {
     /// Starts content that is not part of what is being written. Nothing is moved: it stays where
     /// it is written, behind an element that tells whoever reads the pool to skip it.
     #[inline]
-    fn start_capture(&mut self) -> usize {
+    pub(crate) fn start_capture(&mut self) -> usize {
         self.storage.pool.push(FormatElement::Skip(Skip::new(0)));
         self.storage.pool.len() - 1
     }
 
     /// Ends the content that `slot` started.
-    fn end_capture(&mut self, slot: usize) -> Interned {
+    pub(crate) fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
         match self.storage.pool.get_mut(slot) {
             Some(element) if len > 0 => *element = FormatElement::Skip(Skip::new(len)),

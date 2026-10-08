@@ -38,7 +38,72 @@ pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<
 }
 
 /// Whether `e` itself needs parentheses, not the `ChainExpression` around it.
+#[inline]
 pub(crate) fn needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    may_need_parentheses(e) && needs_parentheses_where_it_is(e, f)
+}
+
+/// A necessary condition that takes no more than the kind of `e`, what it is directly in, and the
+/// kind of that. It is false for nearly every expression. Each `false` here is what
+/// [`needs_parentheses_where_it_is`] comes to for that pair.
+fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
+    use bun_sema::hir::ExprTag as T;
+    let tag = e.tag();
+    match tag {
+        T::Missing | T::PrivateIdentifier | T::Super | T::Spread => return false,
+        T::Ident => return is_name_that_may_need_parentheses(e.text()),
+        // `in` in the head of a `for` statement, and a sequence, depend on more.
+        T::Binary if matches!(e.binary_operator(), None | Some(BinOp::In | BinOp::Comma)) => return true,
+        _ => {}
+    }
+    let is_argument = |call: Expr<'a>| matches!(call.tag(), T::Call | T::New) && call.callee() != Some(e);
+    let parent = e.parent();
+    // For anything but an assignment, `for (var a = (e) in b);` is all there is to an initializer.
+    if let (Node::VarDecl(_), false) = (parent, tag == T::Assign) {
+        return is_for_in_statement_init(e);
+    }
+    match tag {
+        T::This
+        | T::Null
+        | T::True
+        | T::False
+        | T::BigInt
+        | T::Regex
+        | T::Template
+        | T::ImportMeta
+        | T::NewTarget
+        | T::Array => false,
+        T::Number => matches!(parent, Node::Expr(parent) if matches!(parent.tag(), T::Dot | T::Index)),
+        T::String => matches!(parent, Node::Stmt(_)),
+        T::New => matches!(parent, Node::Class(_)),
+        T::Dot | T::Index | T::Call | T::ImportCall | T::NonNull | T::TaggedTemplate => match parent {
+            Node::Expr(parent) => parent.tag() == T::New,
+            Node::Stmt(statement) => statement.tag() == StmtTag::ExportDefault,
+            Node::Class(_) => matches!(tag, T::NonNull | T::TaggedTemplate),
+            _ => false,
+        },
+        T::Object | T::Fn => match parent {
+            Node::Expr(parent) => parent.tag() != T::Array && !is_argument(parent),
+            Node::Stmt(statement) => statement.tag() != StmtTag::Return,
+            Node::Func(_) => tag == T::Object,
+            Node::Prop(_) | Node::Param(_) | Node::PatProp(_) | Node::PatElem(_) | Node::Member(_) => false,
+            _ => true,
+        },
+        T::Assign => match parent {
+            Node::Stmt(statement) if statement.tag() == StmtTag::Expr => e.left().is_none_or(|left| left.tag() == T::Object),
+            _ => true,
+        },
+        T::Binary | T::Unary | T::Cond | T::As | T::AsConst | T::Satisfies | T::Await | T::Yield => match parent {
+            Node::Expr(parent) => !is_argument(parent),
+            Node::Stmt(statement) => statement.tag() == StmtTag::ExportDefault,
+            Node::Func(_) | Node::Case(_) | Node::Param(_) | Node::PatProp(_) | Node::PatElem(_) | Node::Member(_) => false,
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let kind = e.kind();
     match kind {
         ExprKind::Missing | ExprKind::PrivateIdentifier(_) | ExprKind::Super | ExprKind::Spread(_) => return false,
@@ -312,14 +377,18 @@ pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, A
     }
 }
 
+#[inline]
+fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"async" | b"let" | b"await" | b"interface" | b"module" | b"using" | b"yield" | b"component" | b"hook" | b"type"
+    )
+}
+
 /// Prettier's `shouldAddParenthesesToIdentifier`.
 fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let name = e.text();
-    if !matches!(
-        name,
-        b"async" | b"let" | b"await" | b"interface" | b"module" | b"using" | b"yield" | b"component" | b"hook" | b"type"
-    ) || f.comments().is_type_cast_node(&e)
-    {
+    if !is_name_that_may_need_parentheses(name) || f.comments().is_type_cast_node(&e) {
         return false;
     }
     let is_left_of = |statement: Stmt<'a>, left: Expr<'a>| {

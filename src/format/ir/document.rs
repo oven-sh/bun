@@ -347,10 +347,39 @@ impl Pass<'_> {
 fn flat_of(pool: &[FormatElement], interned: Interned) -> Flat {
     match (interned.start as usize).checked_sub(1).and_then(|before| pool.get(before)) {
         Some(FormatElement::Skip(skip)) if skip.len == interned.len => skip.flat,
-        // It has not been written by `Formatter::capture`.
         _ => Flat {
             width: 0,
-            flags: FlatFlags::EXPANDS,
+            flags: FlatFlags::default().with(FlatFlags::EXPANDS, part_expands(pool, interned, 0)),
         },
     }
+}
+
+/// Whether there is a forced line break in `part`, which is not all of what has been captured
+/// but a part of it.
+#[cold]
+fn part_expands(pool: &[FormatElement], part: Interned, depth: u32) -> bool {
+    let mut elements = pool.get(part.range()).unwrap_or_default().iter();
+    while let Some(element) = elements.next() {
+        let expands = match element {
+            FormatElement::Skip(skip) => {
+                if skip.len > 0 {
+                    elements.nth(skip.len as usize - 1);
+                }
+                false
+            }
+            FormatElement::Line(mode) => mode.will_break(),
+            FormatElement::ExpandParent => true,
+            FormatElement::SourceText(text) | FormatElement::OwnedText(text) => text.width.is_multiline(),
+            FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
+            FormatElement::Interned(interned) => match (interned.start as usize).checked_sub(1).and_then(|at| pool.get(at)) {
+                Some(FormatElement::Skip(skip)) if skip.len == interned.len => skip.flat.flags.has(FlatFlags::EXPANDS),
+                _ => depth >= 16 || part_expands(pool, *interned, depth + 1),
+            },
+            _ => false,
+        };
+        if expands {
+            return true;
+        }
+    }
+    false
 }

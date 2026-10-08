@@ -4,6 +4,7 @@ pub(crate) mod array;
 pub(crate) mod assignment_like;
 pub(crate) mod call_expression;
 pub(crate) mod conditional;
+pub(crate) mod experimental_ternary;
 pub(crate) mod expression;
 pub(crate) mod format_node_without_trailing_comments;
 pub(crate) mod jsx;

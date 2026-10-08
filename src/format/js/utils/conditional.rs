@@ -345,6 +345,9 @@ impl<'a> FormatConditionalLike<'a> {
 
 impl<'a> Format<'a> for ConditionalLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if f.options().experimental_ternaries {
+            return super::experimental_ternary::write_ternary(*self, f);
+        }
         FormatConditionalLike {
             conditional: *self,
             jsx_chain: false,

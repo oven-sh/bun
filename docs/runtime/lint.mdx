@@ -88,7 +88,22 @@ Three things are not there for a rule in JavaScript:
 
 - Types. `parserServices.program` is `null`, also with `--type-aware`.
 - `languageOptions.parser`. A rule cannot parse text of its own.
-- Processors, and parsers other than those of ESLint and typescript-eslint.
+- Parsers other than those of ESLint and typescript-eslint, and languages other than JavaScript.
+
+### Processors
+
+A `processor` takes code out of files that are not JavaScript, such as the code blocks of a Markdown file. `bun lint` calls the processor, lints each block with the configuration for its name, such as `README.md/0_example.js`, and lets the processor put the problems where they belong. `--fix` fixes the blocks in the file if the processor supports it.
+
+```js eslint.config.js icon="file-code"
+import markdown from "@eslint/markdown";
+
+export default [
+  { files: ["**/*.md"], plugins: { markdown }, processor: "markdown/markdown" },
+  { files: ["**/*.md/*.js"], rules: { "no-var": "error" } },
+];
+```
+
+Only the processor runs in JavaScript. The built-in rules lint the blocks as native code. Rules that need types do not run on a file with a processor.
 
 ### `.eslintrc.json`
 
@@ -318,7 +333,7 @@ When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `ag
 These differences are intentional:
 
 - **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
-- **Processors, custom parsers, and custom formatters do not load.** Files that need them, such as `.vue` or Markdown files, are skipped. The rules of plugins run.
+- **Custom parsers, languages, and custom formatters do not load.** Files that need them, such as `.vue` files with `vue-eslint-parser` or JSON files with `@eslint/json`, are skipped. The rules and the processors of plugins run.
 - **One parser.** Bun's parser reads all files. The wording of a syntax error can differ from espree's.
 - **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
 - **`parserOptions.project` is a switch.** Any value turns types on. Each file is checked with its nearest `tsconfig.json`, and a file that no `tsconfig.json` includes is still linted.

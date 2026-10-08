@@ -22,6 +22,7 @@ mod gitignore;
 mod lint;
 mod paths;
 mod print_config;
+mod processor;
 mod results;
 mod run;
 mod suppressions;

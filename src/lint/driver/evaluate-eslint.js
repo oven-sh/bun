@@ -91,6 +91,25 @@ function describe(name, plugin) {
   return stringify({ name, rules });
 }
 
+// The plugins of all objects, by the prefix of what is in them: `{ plugin, index }`.
+const pluginsByPrefix = new Map();
+
+// How a worker gets hold of a processor: `{ plugin, prefix, name }` for one that a plugin has, `plugin` being where that is,
+// `{ object }` for one that a module exports, `{ config, index }` for one that only the object of the configuration has.
+// `null`: there is no such processor.
+function locateProcessor(processor, index) {
+  if (typeof processor !== "string") {
+    const object = locate(processor);
+    return object === null ? { config: path, index } : { object };
+  }
+  const parts = processor.split("/");
+  const name = parts.pop();
+  const prefix = parts.join("/");
+  const found = pluginsByPrefix.get(prefix);
+  if (found?.plugin?.processors?.[name] === undefined) return null;
+  return { plugin: locate(found.plugin) ?? { config: path, index: found.index }, prefix, name };
+}
+
 function serialize(value, ancestors = []) {
   switch (typeof value) {
     case "string":
@@ -161,6 +180,7 @@ function serializeConfigObject(config, index) {
   }
   if (processor !== undefined) {
     out.processor = typeof processor === "string" ? processor : ((processor && objectId(processor)) ?? "unknown");
+    out.$processor = locateProcessor(processor, index);
   }
   // Only a file that does not call `defineConfig()` still has it.
   if (extended !== undefined) {
@@ -176,6 +196,11 @@ if (typeof exported === "function") exported = exported();
 exported = await exported;
 const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
 if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
+[exported].flat(Infinity).forEach((object, index) => {
+  for (const [prefix, plugin] of Object.entries(object?.plugins ?? {})) {
+    if (!pluginsByPrefix.has(prefix)) pluginsByPrefix.set(prefix, { plugin, index });
+  }
+});
 let config = null;
 if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
 else if (exported !== undefined) config = serializeConfigObject(exported, 0);

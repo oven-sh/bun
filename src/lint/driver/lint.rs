@@ -46,6 +46,17 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) memory: &'c Session,
 }
 
+/// How a text is linted, if not like a file.
+#[derive(Copy, Clone, Default)]
+struct How<'h> {
+    /// See [`LintOptions::again`].
+    again: Option<Again<'h>>,
+    /// ESLint's `disableFixes`.
+    without_fixes: bool,
+    /// See [`LintOptions::physical_path_len`].
+    physical_path_len: Option<usize>,
+}
+
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
     severity == Severity::Error
 }
@@ -136,7 +147,25 @@ impl Context<'_, '_> {
 
     /// Parses `text` as the file at `path` and lints it, without types.
     pub(crate) fn verify(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> LintResult {
-        self.verify_or_again(path, text, config, None)
+        self.verify_as(path, text, config, How::default())
+    }
+
+    /// The same for a block that a processor has found in a file, whose path is the first `physical_path_len` bytes of `path`.
+    /// `without_fixes`: ESLint's `disableFixes`.
+    pub(crate) fn verify_block_natively(
+        &self,
+        path: &[u8],
+        physical_path_len: usize,
+        text: &[u8],
+        config: &ResolvedConfig,
+        without_fixes: bool,
+    ) -> LintResult {
+        let how = How {
+            without_fixes,
+            physical_path_len: Some(physical_path_len),
+            ..How::default()
+        };
+        self.verify_as(path, text, config, how)
     }
 
     /// Lints a file again that `modules` names when all files are linted.
@@ -160,7 +189,11 @@ impl Context<'_, '_> {
             previous: &previous,
             had_types: result.had_types,
         };
-        let linted = self.verify_or_again(&path, &text, &config, Some(again));
+        let how = How {
+            again: Some(again),
+            ..How::default()
+        };
+        let linted = self.verify_as(&path, &text, &config, how);
         let had_types = result.had_types;
         *result = self.result(
             std::mem::take(&mut result.path),
@@ -173,12 +206,12 @@ impl Context<'_, '_> {
         Ok(())
     }
 
-    fn verify_or_again(
+    fn verify_as(
         &self,
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
-        again: Option<Again>,
+        as_what: How,
     ) -> LintResult {
         let started = self.timing.now();
         let session = self.memory;
@@ -213,9 +246,12 @@ impl Context<'_, '_> {
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
                 file.set_modules(self.modules);
+                let options = self.lint_options();
                 let options = LintOptions {
-                    again,
-                    ..self.lint_options()
+                    again: as_what.again,
+                    wants_fixes: options.wants_fixes && !as_what.without_fixes,
+                    physical_path_len: as_what.physical_path_len,
+                    ..options
                 };
                 let mut result = self.linter.lint(&file, config, &options);
                 self.promote_suggestions(&mut result);
@@ -234,13 +270,33 @@ impl Context<'_, '_> {
         config: &Arc<ResolvedConfig>,
         on_circular_fixes: &dyn Fn(&[u8]),
     ) -> FileResult {
+        self.verify_text_by(
+            path,
+            path_to_verify,
+            text,
+            config,
+            on_circular_fixes,
+            &mut |text| self.verify(path_to_verify, text, config),
+        )
+    }
+
+    /// The same. `verify`: lints a text.
+    pub(crate) fn verify_text_by(
+        &self,
+        path: Vec<u8>,
+        path_to_verify: &[u8],
+        text: Vec<u8>,
+        config: &Arc<ResolvedConfig>,
+        on_circular_fixes: &dyn Fn(&[u8]),
+        verify: &mut dyn FnMut(&[u8]) -> LintResult,
+    ) -> FileResult {
         let (result, text, is_fixed) = match self.fixes() {
-            false => (self.verify(path_to_verify, &text, config), text, false),
+            false => (verify(&text), text, false),
             true => {
                 let report = bun_lint::linter::verify_and_fix(
                     &text,
                     &|message| self.should_fix(message),
-                    &mut |text| self.verify(path_to_verify, text, config),
+                    verify,
                 );
                 if report.is_circular {
                     on_circular_fixes(path_to_verify);
@@ -301,8 +357,19 @@ impl Context<'_, '_> {
             )
         })?;
         self.timing.add(&self.timing.read, started);
+        let shown = paths::to_native(target.path.clone());
+        if target.has_processor() {
+            return Ok(Some(self.verify_processed_text(
+                &target.loaded,
+                shown,
+                &target.path,
+                text,
+                config,
+                on_circular_fixes,
+            )));
+        }
         Ok(Some(self.verify_text(
-            paths::to_native(target.path.clone()),
+            shown,
             &target.path,
             text,
             config,

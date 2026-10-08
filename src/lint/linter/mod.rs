@@ -19,7 +19,7 @@
 //! // On any thread, for each file:
 //! let FileConfig::Matched(resolved) = config.get(linter.registry(), path) else { continue };
 //! if let Some(message) = &resolved.error { /* ESLint refuses to run */ }
-//! if !resolved.is_supported(path) { continue }
+//! if resolved.route(path) != Route::Native { continue }
 //! let how = resolved.language.parse_options(path); // The arguments of `summarize`.
 //! let file = File::new(path, &hir, &bound, &atoms, &resolved.language, types);
 //! let result = linter.lint(&file, &resolved, &LintOptions::default());
@@ -106,6 +106,9 @@ pub struct LintOptions<'o> {
     pub js_plugins: Option<&'o js_plugin::Host<'o>>,
     /// The file is linted again, for the rules that are about several files only.
     pub again: Option<Again<'o>>,
+    /// How much of the path of the file is ESLint's `physicalFilename`, if not all of it: it is a block that a processor has
+    /// found in the file there.
+    pub physical_path_len: Option<usize>,
 }
 
 /// See [`LintOptions::again`]. Only the rules with [`Meta::needs_modules`](crate::rule::Meta::needs_modules) run. What the
@@ -128,6 +131,7 @@ impl Default for LintOptions<'_> {
             rule_filter: None,
             js_plugins: None,
             again: None,
+            physical_path_len: None,
         }
     }
 }
@@ -416,7 +420,14 @@ impl Linter {
         {
             let enabled: Vec<&js_plugin::Configured> =
                 running_js.iter().map(|it| &**it.configured).collect();
-            match host.run(file, settings, &enabled, options.wants_fixes) {
+            let physical_path_len = options.physical_path_len;
+            match host.run_on_block(
+                file,
+                settings,
+                &enabled,
+                options.wants_fixes,
+                physical_path_len,
+            ) {
                 Ok(reports) => {
                     problems.reserve(reports.len());
                     for report in reports {

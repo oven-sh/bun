@@ -666,6 +666,7 @@ function handle(kind) {
 }
 
 function respond(kind) {
+  if (kind >= PREPROCESS) return handleForProcessor(kind);
   if (kind === LOAD) {
     return loadPlugin(askForJson(MESSAGE)).then(
       described => DONE + stringify(described),

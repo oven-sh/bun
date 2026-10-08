@@ -11,7 +11,7 @@ use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::{Engine, Host, Loading};
+use bun_lint::js_plugin::{Engine, Host, Loading, Route};
 use bun_lint::linter::{FileConfig, Linter, Registry};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
@@ -97,7 +97,7 @@ const FILES_FOR_AN_ENGINE: usize = 32;
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Needs {
     Nothing,
-    /// A rule in JavaScript.
+    /// A rule or a processor in JavaScript.
     Engine,
     /// One for which the engine has to run the configuration file, with all that it imports.
     Configuration,
@@ -113,12 +113,17 @@ fn needs(target: &Target) -> Needs {
         return Needs::Nothing;
     };
     let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
-    if on
-        .clone()
-        .any(|it| it.configured.rule.needs_the_configuration)
+    let processor = config
+        .processor_location
+        .as_ref()
+        .filter(|_| target.has_processor());
+    if processor.is_some_and(|it| it.needs_the_configuration)
+        || on
+            .clone()
+            .any(|it| it.configured.rule.needs_the_configuration)
     {
         Needs::Configuration
-    } else if on.next().is_some() {
+    } else if on.next().is_some() || target.has_processor() {
         Needs::Engine
     } else {
         Needs::Nothing
@@ -358,6 +363,21 @@ impl Run<'_> {
             paths::to_native(path.clone())
         };
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
+        if loaded.routes(config, &path) == Route::Processor {
+            let result = context.verify_processed_text(
+                &loaded,
+                shown,
+                &path,
+                text,
+                config,
+                &on_circular_fixes,
+            );
+            return Ok(Linted {
+                results: vec![result],
+                files: 1,
+                listed: None,
+            });
+        }
         let needs_types = name.is_some()
             && loader.wants_types(&loaded, config)
             && config
@@ -428,10 +448,18 @@ impl Run<'_> {
         )?;
         phases.discovery = started.elapsed().as_secs_f64();
         // Every configuration is loaded by now.
-        if let threads @ 1.. = threads_to_lint_on(self.options, context.js_plugins) {
+        let has_processors = targets.iter().any(Target::has_processor);
+        let threads = match threads_to_lint_on(self.options, context.js_plugins) {
+            0 if has_processors => pool
+                .threads()
+                .min(MOST_THREADS_WITH_JS_PLUGINS)
+                .min(context.js_plugins.most_realms()),
+            threads => threads,
+        };
+        if threads > 0 {
             pool.threads.store(threads, Ordering::Relaxed);
         }
-        if context.js_plugins.has_plugins() {
+        if has_processors || context.js_plugins.has_plugins() {
             bun_sema_driver::keep_to_the_same_threads();
         }
         if is_oxlint
@@ -464,7 +492,9 @@ impl Run<'_> {
             targets
                 .into_iter()
                 .partition(|target| match &target.status {
-                    Status::Matched(config) => config.is_supported(&target.path),
+                    Status::Matched(config) => {
+                        target.loaded.routes(config, &target.path) != Route::Unsupported
+                    }
                     _ => true,
                 });
         if !unsupported.is_empty() {
@@ -477,7 +507,7 @@ impl Run<'_> {
             loader.warn(&[
                 &count,
                 noun,
-                b" skipped: only JavaScript and TypeScript can be linted, without a processor.",
+                b" skipped: only JavaScript and TypeScript can be linted.",
             ]);
         }
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
@@ -493,6 +523,10 @@ impl Run<'_> {
                 without_types.push(target);
                 continue;
             };
+            if target.has_processor() {
+                without_types.push(target);
+                continue;
+            }
             let mut needing = config
                 .rules
                 .iter()

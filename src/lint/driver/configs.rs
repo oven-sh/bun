@@ -10,7 +10,7 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::Host;
+use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::{Config, Linter, RcFlavor, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -78,6 +78,16 @@ pub(crate) struct Loaded {
     pub(crate) denies_warnings: bool,
     /// `options.maxWarnings`
     pub(crate) max_warnings: Option<i64>,
+}
+
+impl Loaded {
+    /// How the file at `path`, which has `config`, is linted. Only an `eslint.config.js` has processors.
+    pub(crate) fn routes(&self, config: &ResolvedConfig, path: &[u8]) -> Route {
+        match config.route(path) {
+            Route::Processor if self.flavor != Flavor::Eslint => Route::Unsupported,
+            route => route,
+        }
+    }
 }
 
 pub(crate) type Found = Result<Arc<Loaded>, Fatal>;

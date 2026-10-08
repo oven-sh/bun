@@ -30,6 +30,8 @@
 //!     "linterOptions": { "reportUnusedDisableDirectives": "error" },
 //!     // The name of the processor: the string, or `processor.meta.name`.
 //!     "processor": "markdown/markdown",
+//!     // Where it is: see `js_plugin::Processor::new`.
+//!     "$processor": { "plugin": { "module": "/app/node_modules/@eslint/markdown/dist/index.js", "export": ["default"] }, "prefix": "markdown", "name": "markdown" },
 //!     "rules": { "eqeqeq": ["error", "smart"] },
 //!     "settings": {}
 //!   }
@@ -164,6 +166,8 @@ struct ConfigObject {
     error: Option<Vec<u8>>,
     language: Option<Box<[u8]>>,
     processor: Option<Box<[u8]>>,
+    /// `$processor`
+    processor_location: Option<Arc<js_plugin::Processor>>,
 }
 
 impl Default for ConfigObject {
@@ -183,6 +187,7 @@ impl Default for ConfigObject {
             error: None,
             language: None,
             processor: None,
+            processor_location: None,
         }
     }
 }
@@ -602,6 +607,7 @@ impl Config {
             }
             if object.processor.is_some() {
                 config.processor.clone_from(&object.processor);
+                (config.processor_location).clone_from(&object.processor_location);
             }
         }
         config.validate_language_options(&language_options);

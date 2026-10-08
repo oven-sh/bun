@@ -8,6 +8,7 @@ use crate::configs::{Flavor, Loaded, Loader};
 use crate::gitignore::{self, Chain};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
+use bun_lint::js_plugin::Route;
 use bun_lint::linter::{FileConfig, Glob, ResolvedConfig};
 use bun_threading::Guarded;
 use std::sync::Arc;
@@ -40,6 +41,16 @@ pub(crate) struct Target {
     pub(crate) size: u64,
     pub(crate) loaded: Arc<Loaded>,
     pub(crate) status: Status,
+}
+
+impl Target {
+    /// Whether a processor is to take the code out of it.
+    pub(crate) fn has_processor(&self) -> bool {
+        match &self.status {
+            Status::Matched(config) => self.loaded.routes(config, &self.path) == Route::Processor,
+            _ => false,
+        }
+    }
 }
 
 /// A pattern, relative to the directory that is searched.

@@ -229,15 +229,7 @@ fn format_flattened_logical_expression<'a>(
     inside_condition: bool,
     f: &mut Formatter<'a>,
 ) {
-    match binary.can_flatten() {
-        Some(left) => format_flattened_logical_expression(left, inside_condition, f),
-        None => write!(f, group(&binary.left)),
-    }
-    BinaryLeftOrRightSide::Right {
-        parent: binary,
-        inside_condition,
-    }
-    .fmt(f);
+    f.join().entries(split_into_left_and_right_sides(binary, inside_condition).iter());
 }
 
 impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
@@ -250,6 +242,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             } => (parent, inside_condition),
         };
         let logical_operator = binary_like_expression.is_logical().then_some(binary_like_expression.operator);
+        let outermost = binary_like_expression;
 
         // `a && (b && c)` is written like `a && b && c`, in one group. Prettier rebalances the
         // tree for that after parsing.
@@ -282,11 +275,11 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             write!(f, right);
             // See `is_last_binary_operand_comment`.
             if !f.is_quiet()
-                && let AstNodes::UnaryExpression(unary) = parent
+                && let AstNodes::UnaryExpression(unary) = outermost.parent()
                 && let [comment, ..] = f.comments().unprinted_comments()
                 && comment.span.start >= right.span().end
                 && comment.span.end <= unary.span().end
-                && is_last_binary_operand_comment(binary_like_expression.expr, comment, f)
+                && is_last_binary_operand_comment(outermost.expr, comment, f)
             {
                 write!(f, FormatTrailingComments::Comments(std::slice::from_ref(comment)));
             }

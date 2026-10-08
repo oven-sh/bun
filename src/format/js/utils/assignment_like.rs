@@ -75,6 +75,24 @@ fn should_print_as_leading(e: Expr<'_>) -> bool {
 /// operator would gain next to nothing.
 const MIN_OVERLAP_FOR_BREAK: u8 = 3;
 
+/// Whether all that is written for the computed `key` is one piece of text. Only such a key can be
+/// short.
+fn is_plain_computed_key(key: Key<'_>) -> bool {
+    match key.kind() {
+        KeyKind::Computed(e) => matches!(
+            e.kind(),
+            ExprKind::Ident(_)
+                | ExprKind::This
+                | ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::BigInt(_)
+                | ExprKind::Regex(_)
+        ),
+        _ => true,
+    }
+}
+
 fn has_modifier(member: Member<'_>, flag: Flags) -> bool {
     member.modifiers().iter().any(|it| it.flag() == flag)
 }
@@ -145,7 +163,7 @@ impl<'a> AssignmentLike<'a> {
                     }
                     Some(key) if key.is_computed() => {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
-                        f.source_text().span_width(key.span(f.file())) < text_width_for_break
+                        is_plain_computed_key(key) && f.source_text().span_width(key.span(f.file())) < text_width_for_break
                     }
                     Some(key) => write_member_name(key, node, f) < text_width_for_break,
                     None => false,
@@ -160,7 +178,7 @@ impl<'a> AssignmentLike<'a> {
                     }
                     Some(key) if key.is_computed() => {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
-                        f.source_text().span_width(key.span(f.file())) < text_width_for_break
+                        is_plain_computed_key(key) && f.source_text().span_width(key.span(f.file())) < text_width_for_break
                     }
                     Some(key) => write_member_name(key, node, f) < text_width_for_break,
                     None => false,

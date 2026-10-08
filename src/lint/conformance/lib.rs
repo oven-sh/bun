@@ -261,9 +261,13 @@ struct Fixture {
     tally: Tally,
 }
 
+fn cases_of(fixture: &Json) -> &[Json] {
+    fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default()
+}
+
 impl Fixture {
     fn cases(&self) -> &[Json] {
-        self.json.get(b"cases").and_then(Json::as_array).unwrap_or_default()
+        cases_of(&self.json)
     }
 }
 
@@ -326,10 +330,11 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     let (mut untyped, mut typed) = (0, 0);
     let mut chosen = Vec::new();
     for (fixture, it) in fixtures.iter_mut().enumerate() {
-        let kinds: Vec<Kind> = it.cases().iter().map(|case| kind_of(it.entry, case)).collect();
-        for (index, kind) in kinds.into_iter().enumerate() {
+        let Fixture { entry, json, tally, .. } = it;
+        for (index, case) in cases_of(json).iter().enumerate() {
+            let kind = kind_of(entry, case);
             if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
-                it.tally.skipped += 1;
+                tally.skipped += 1;
                 continue;
             }
             let (counter, every) = match kind {

@@ -17,7 +17,7 @@ use bun_format::{FormatError, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, Interner};
-use bun_sema::bind::{BindOptions, bind};
+use bun_sema::bind::{BindOptions, bind_for_format};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
@@ -94,7 +94,7 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
         before_es2020: false,
         before_es2017: false,
     };
-    let bound = bind(&hir, bind_options, how.atoms, arena);
+    let bound = bind_for_format(&hir, bind_options, how.atoms, arena);
     then(&File::new(path, &hir, &bound, how.atoms, &language, None), hir.diagnostics.first())
 }
 

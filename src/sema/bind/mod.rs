@@ -3,6 +3,9 @@
 //! thread.
 
 mod binder;
+mod parents;
+
+pub use parents::bind_for_format;
 
 use crate::atom::{Atom, known};
 use crate::hir::*;

@@ -22,7 +22,7 @@ use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind};
+use bun_sema::bind::{BindOptions, bind_for_format};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
 use std::collections::BTreeMap;
@@ -60,7 +60,7 @@ fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], then: impl for<'a> 
         before_es2020: false,
         before_es2017: false,
     };
-    let bound = bind(&hir, bind_options, &atoms, arena);
+    let bound = bind_for_format(&hir, bind_options, &atoms, arena);
     then(&File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None))
 }
 

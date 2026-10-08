@@ -9,8 +9,9 @@
 //! - `check <file>..`: whether `bun_lint::ast` is consistent with itself for these files.
 //! - `check-batch <inputs.jsonl>`: the same for many, summarized by the kind of problem.
 //! - `bench <file>`: how long the ways through a file take.
-//! - `bind-check <inputs.jsonl> [--espree]`: whether `bind_for_lint` has what `bind` has, in all that
-//!   `bun_lint::ast` and `bun_lint::semantic` read of it.
+//! - `bind-check <inputs.jsonl> [--espree] [--format]`: whether `bind_for_lint` has what `bind` has, in
+//!   all that `bun_lint::ast` and `bun_lint::semantic` read of it. `--format`: whether
+//!   `bind_for_format` has, in what it promises.
 
 #[path = "estree/json.rs"]
 mod estree_json;
@@ -41,7 +42,9 @@ pub(crate) fn run(args: &[String]) {
         [command, paths @ ..] if command == "check" && !paths.is_empty() => check_files(paths),
         [command, path] if command == "check-batch" => check_batch(path),
         [command, path] if command == "bench" => bench(path),
-        [command, path, flags @ ..] if command == "bind-check" => bind_check(path, &language_of(flags)),
+        [command, path, flags @ ..] if command == "bind-check" => {
+            bind_check(path, &language_of(flags), flags.iter().any(|it| it == "--format"));
+        }
         _ => println!("usage: bun-lint ast estree|estree-batch|check|check-batch|bench <path>"),
     }
 }
@@ -782,8 +785,52 @@ fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Ve
     different
 }
 
-fn bind_check(path: &str, language: &LanguageOptions) {
-    use bun_sema::bind::{BindOptions, bind, bind_for_lint};
+/// The same for `ours`, from `bind_for_format`: of the nodes that `bind` reaches.
+fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::Bound) -> Vec<String> {
+    use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent};
+    use bun_sema::hir::{ExprId, StmtId};
+    let mut different = Vec::new();
+    macro_rules! same {
+        ($($field:ident unless $is_left_out:expr;)*) => {$(
+            let is_left_out = $is_left_out;
+            let both = full.$field.iter().zip(ours.$field.iter()).enumerate();
+            let at = both.filter(|(i, (a, _))| !is_left_out(*i, *a)).find(|(_, (a, b))| a != b);
+            if full.$field.len() != ours.$field.len() || at.is_some() {
+                different.push(format!("{}: {} and {} long, first {at:?}", stringify!($field), full.$field.len(), ours.$field.len()));
+            }
+        )*};
+    }
+    let is_operand = |of: &bun_sema::bind::Bound, e: ExprId| of.type_query_operands.binary_search(&e).is_ok();
+    same! {
+        // The parent of the `a.b` of `typeof a.b` is what the type is in.
+        expr_parent unless |i: usize, it: &Parent| match it {
+            Parent::None => true,
+            Parent::Expr(_) => false,
+            _ => is_operand(full, ExprId(i as u32)),
+        };
+        stmt_parent unless |_, it: &Parent| *it == Parent::None;
+        pat_parent unless |_, it: &PatParent| *it == PatParent::None;
+        prop_owner unless |_, it: &ExprId| it.is_none();
+        member_owner unless |_, it: &MemberOwner| *it == MemberOwner::None;
+        param_fn unless |_, it: &bun_sema::hir::FnId| it.is_none();
+        var_stmt unless |_, it: &StmtId| it.is_none();
+        case_stmt unless |_, it: &StmtId| it.is_none();
+        enum_member_owner unless |_, it: &bun_sema::hir::EnumId| it.is_none();
+        class_owner unless |_, it: &ClassOwner| *it == ClassOwner::Stmt(StmtId::NONE);
+    }
+    let owners = full.fns.iter().zip(ours.fns.iter()).position(|(a, b)| a.owner != FnOwner::None && a.owner != b.owner);
+    if full.fns.len() != ours.fns.len() || owners.is_some() {
+        different.push(format!("fns.owner: {} and {} long, first at {owners:?}", full.fns.len(), ours.fns.len()));
+    }
+    let reached = (0..full.expr_parent.len()).filter(|&i| full.expr_parent[i] != Parent::None).map(|i| ExprId(i as u32));
+    if let Some(e) = reached.into_iter().find(|&e| is_operand(full, e) != is_operand(ours, e)) {
+        different.push(format!("type_query_operands: {e:?}"));
+    }
+    different
+}
+
+fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
+    use bun_sema::bind::{BindOptions, bind, bind_for_format, bind_for_lint};
     std::panic::set_hook(Box::new(|_| {}));
     let inputs = read_inputs(path);
     let (mut same, mut by_kind) = (0, BTreeMap::<String, (usize, Vec<String>)>::new());
@@ -816,7 +863,11 @@ fn bind_check(path: &str, language: &LanguageOptions) {
                 before_es2020: false,
                 before_es2017: false,
             };
-            differences(&bind(&hir, options, &atoms, arena), &bind_for_lint(&hir, options, &atoms, arena))
+            let full = bind(&hir, options, &atoms, arena);
+            match is_for_format {
+                true => differences_for_format(&full, &bind_for_format(&hir, options, &atoms, arena)),
+                false => differences(&full, &bind_for_lint(&hir, options, &atoms, arena)),
+            }
         }));
         let different = outcome.unwrap_or_else(|_| vec!["panic".to_owned()]);
         same += usize::from(different.is_empty());

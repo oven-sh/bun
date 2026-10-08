@@ -212,7 +212,14 @@ impl<'a> AssignmentLike<'a> {
     }
 
     /// `right`: [`AssignmentLike::get_right_expression`].
-    fn write_right(&self, right: Option<Expr<'a>>, f: &mut Formatter<'a>, layout: AssignmentLikeLayout) {
+    /// `fluid_group_id`: in the fluid layout, of the group with the line break after the operator.
+    fn write_right(
+        &self,
+        right: Option<Expr<'a>>,
+        f: &mut Formatter<'a>,
+        layout: AssignmentLikeLayout,
+        fluid_group_id: Option<GroupId>,
+    ) {
         match *self {
             Self::BindingProperty(property) => write!(f, FormatBindingPropertyValue(property)),
             _ => {
@@ -227,7 +234,21 @@ impl<'a> AssignmentLike<'a> {
                     {
                         match super::experimental_ternary::should_break(right, f) {
                             true => write!(f, indent(&right)),
-                            false => write!(f, group(&indent(&format_args!(soft_line_break(), right)))),
+                            false => {
+                                // Behind the line break after the operator, Prettier's `softline` is
+                                // a second one.
+                                let line_break = format_with(|f| match fluid_group_id {
+                                    Some(_) => write!(
+                                        f,
+                                        [
+                                            if_group_breaks(&soft_empty_line()).with_group_id(fluid_group_id),
+                                            if_group_fits_on_line(&soft_line_break()).with_group_id(fluid_group_id)
+                                        ]
+                                    ),
+                                    None => write!(f, soft_line_break()),
+                                });
+                                write!(f, group(&indent(&format_args!(line_break, right))));
+                            }
                         }
                     }
                     Some(right) if right.tag() == ExprTag::Fn => write!(f, with_assignment_layout(right, Some(layout))),
@@ -275,6 +296,14 @@ impl<'a> AssignmentLike<'a> {
             {
                 return AssignmentLikeLayout::NeverBreakAfterOperator;
             }
+        }
+        // The right side of a property of a pattern is not an expression.
+        if let Self::BindingProperty(property) = *self
+            && !f.is_quiet()
+            && (f.comments().comments_before_iter(property.value().span().start))
+                .any(|comment| comment.followed_by_newline() || comment.is_indentable_block())
+        {
+            return AssignmentLikeLayout::BreakAfterOperator;
         }
 
         if self.should_break_left_hand_side(left_may_break) {
@@ -534,10 +563,11 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
 
         self.write_operator(f);
 
-        let right = format_with(|f| self.write_right(right_expression, f, layout));
+        let right = format_with(|f| self.write_right(right_expression, f, layout, None));
         match layout {
             AssignmentLikeLayout::Fluid => {
                 let group_id = f.group_id("assignment_like");
+                let right = format_with(|f| self.write_right(right_expression, f, layout, Some(group_id)));
                 write!(
                     f,
                     [
@@ -648,7 +678,18 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
             return false;
         }
     }
-    !is_member_call_chain(first_call, f)
+    // Prettier's `printCallExpression`: only the call of a member can be a member chain. It is asked
+    // of every call: in `a.b().c()()` of the second from the right.
+    !call_expressions.iter().any(|&call_expression| {
+        call_expression.callee().is_some_and(|callee| {
+            matches!(
+                callee.as_ast_nodes(),
+                AstNodes::StaticMemberExpression(_)
+                    | AstNodes::ComputedMemberExpression(_)
+                    | AstNodes::PrivateFieldExpression(_)
+            )
+        }) && is_member_call_chain(call_expression, f)
+    })
 }
 
 /// For oxfmt a chain with a comment anywhere in it is not poorly breakable. Prettier only looks at

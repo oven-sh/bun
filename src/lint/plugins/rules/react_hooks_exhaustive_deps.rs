@@ -38,6 +38,8 @@ pub struct State<'a> {
     use_effect_event_variables: FxHashSet<u32>,
     stable_known_value_cache: FxHashMap<usize, bool>,
     function_without_captured_value_cache: FxHashMap<usize, bool>,
+    /// The innermost call of a name, or function, around something.
+    call_or_function_around: AncestorMemo<'a, Node<'a>>,
     oxlint: oxlint::exhaustive_deps::Memo<'a>,
 }
 
@@ -1178,7 +1180,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         }
 
         if extra_warning.is_empty() {
-            extra_warning = set_state_recommendation(&missing, dependency_with_key, component_scope, &cx.state).unwrap_or_default();
+            extra_warning = set_state_recommendation(&missing, dependency_with_key, component_scope, &mut cx.state).unwrap_or_default();
         }
 
         let Some(warning) = get_warning_message(&missing, "a", "missing", "include")
@@ -1324,39 +1326,49 @@ fn is_used_outside_of_hook<'a>(variable: Symbol<'a>, scope: Scope<'a>, declared_
     false
 }
 
+fn is_call_of_name_or_function(node: Node) -> bool {
+    match node {
+        Node::Func(_) => true,
+        Node::Expr(e) => matches!(e.kind(), ExprKind::Call(call) if call.callee().tag() == ExprTag::Ident),
+        _ => false,
+    }
+}
+
 /// What to say about `setState(something(missingDep))`.
 fn set_state_recommendation<'a, 'd>(
     missing: &[Vec<u8>],
     dependency_with_key: impl Fn(&[u8]) -> Option<&'d Dependency<'a>>,
     component_scope: Scope<'a>,
-    state: &State<'a>,
+    state: &mut State<'a>,
 ) -> Option<Vec<u8>>
 where
     'a: 'd,
 {
     let component = component_scope.node();
-    // The innermost call in the component, around something, of what sets a state. `None` in it if there is none.
-    let mut set_state_call_around: AncestorMemo<'a, Option<(Name<'a>, StateVariable<'a>)>> = AncestorMemo::default();
     for missing_dep in missing {
         let used_dep = dependency_with_key(missing_dep)?;
         for reference in &used_dep.references {
             let Some(id) = reference.expr() else {
                 continue;
             };
-            let found = set_state_call_around.find(Node::Expr(id), |_, maybe_call| {
-                if maybe_call == component {
-                    return Some(None);
-                }
-                let ExprKind::Call(call) = maybe_call.as_expr()?.kind() else {
-                    return None;
+            // The innermost call in the component, around it, of what sets a state. Which names do is learned from call to call
+            // of a hook, so what is kept is where the calls of names are.
+            let mut at = Node::Expr(id);
+            let found = loop {
+                let around = state.call_or_function_around.find(at, |_, it| is_call_of_name_or_function(it).then_some(it));
+                let Some(around) = around.filter(|it| *it != component) else {
+                    break None;
                 };
-                let setter = call.callee().as_ident()?;
-                match state.set_state_call_sites.get(&call.callee().span().start) {
-                    None | Some(StateVariable::Missing) => None,
-                    Some(&it) => Some(Some((setter, it))),
+                if let Some(ExprKind::Call(call)) = around.as_expr().map(Expr::kind)
+                    && let Some(setter) = call.callee().as_ident()
+                    && let Some(&state_variable) = state.set_state_call_sites.get(&call.callee().span().start)
+                    && !matches!(state_variable, StateVariable::Missing)
+                {
+                    break Some((setter, state_variable));
                 }
-            });
-            if let Some(Some((setter, state_variable))) = found {
+                at = around;
+            };
+            if let Some((setter, state_variable)) = found {
                 let setter = setter.bytes();
                 if matches!(state_variable, StateVariable::Ident(name) if name.bytes() == &missing_dep[..]) {
                     // `setCount(count + 1)`

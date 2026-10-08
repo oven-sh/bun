@@ -157,7 +157,7 @@ impl Context<'_, '_> {
     fn verify_or_again(&self, path: &[u8], text: &[u8], config: &ResolvedConfig, again: Option<Again>) -> LintResult {
         let started = self.timing.now();
         let session = Session::new();
-        let atoms = self.atoms;
+        let atoms = self.atoms.of_this_thread();
         let arena = session.arena();
         let how = config.language.parse_options(path);
         let (mut hir, _) = bun_js_parser::sema::summarize_in(

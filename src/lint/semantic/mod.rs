@@ -2,12 +2,19 @@
 //!
 //! The symbols, their declarations and what each identifier resolves to are what the binder of the
 //! type checker has computed for the file (`bun_sema::bind`). Nothing is analyzed a second time.
-//! What is added, in three parts that are each computed the first time a rule needs them:
-//! the scopes as ESLint cuts them ([`scopes`]), the symbols by scope ([`variables`]), and the
-//! references, with the names in types resolved ([`references`]).
+//! What is added, in three parts that are each computed the first time a rule needs them, each
+//! by passes over the vectors of the HIR:
+//! 1. `scopes.rs`: the scopes as ESLint cuts them. Needed by [`Node::scope`] and all of [`Scope`].
+//! 2. `variables.rs`: the symbols by scope and by name. Needed by [`Symbol::declarations`],
+//!    [`Symbol::scope`], [`Scope::symbols`], [`Scope::get`], [`Scope::resolve`].
+//! 3. `references.rs`: the references, with the names in types resolved. Needed by all of
+//!    [`Reference`].
 //!
-//! The model is that of `eslint-scope` for JavaScript files and that of
-//! `@typescript-eslint/scope-manager` for TypeScript files, which differ in little.
+//! [`Expr::symbol`], [`Pat::symbol`], [`Symbol::name`] and [`Symbol::flags`] need none of them.
+//!
+//! The model is that of `@typescript-eslint/scope-manager` for a TypeScript file, and for any file
+//! if that parser is configured. Otherwise it is that of `eslint-scope`. They differ in little.
+//! `test/cli/lint/oracle/semantic` compares all of it with the two.
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -49,6 +56,9 @@
 //!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
 //!   ESLint.
 //! - `x as const` has no reference to a type `const`.
+//! - Declarations and references are in source order. ESLint has them in the order it visits
+//!   them: the type parameters of a function after its parameters, the type of a variable after
+//!   its initializer, the decorators of a member after the member.
 //! - Where TypeScript merges declarations that are in different scopes, there is a [`Symbol`] in
 //!   each scope, as in ESLint, and they have the same [`Symbol::id`]: the type parameters of
 //!   `interface I<T> {} interface I<T> {}`, what the bodies of `namespace N {} namespace N {}`

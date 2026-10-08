@@ -18,7 +18,7 @@ mod unicode_tables;
 
 use crate::css::doc;
 use crate::options::{EmbeddedLanguageFormatting, LineEnding, LineWidth};
-use crate::range::write_with_line_ending;
+use crate::range::{Offsets, trim_start, write_with_line_ending};
 use crate::{FormatError, FormatOptions};
 
 /// Whether Prettier takes the file at `path` for Markdown.
@@ -39,10 +39,6 @@ pub fn is_markdown_path(path: &[u8]) -> bool {
 pub struct Scratch {
     tree: ast::Tree,
 }
-
-/// Formats JavaScript or TypeScript: the name of a file that says which it is, the code, the options, and
-/// where the result is appended. Returns whether it could be formatted.
-pub type FormatJavaScript<'f> = dyn FnMut(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool + 'f;
 
 /// The syntax tree of `text`, for debugging.
 pub fn dump_ast(text: &[u8], out: &mut Vec<u8>) {
@@ -87,7 +83,6 @@ fn format_embedded(
     code: &[u8],
     width: usize,
     options: &FormatOptions,
-    format_javascript: &mut FormatJavaScript<'_>,
 ) -> Option<Vec<u8>> {
     // Nothing to format: front matter without anything in it.
     if language.is_empty() {
@@ -109,6 +104,10 @@ fn format_embedded(
         ..options.clone()
     };
     let mut out = Vec::new();
+    let format_javascript = |path: &[u8], out: &mut Vec<u8>| match &options.format_javascript {
+        Some(format_javascript) => format_javascript.0(path, code, &options, out),
+        None => false,
+    };
     let is_done = if let Some(parser) = crate::json::Parser::from_name(parser) {
         crate::json::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
@@ -117,10 +116,10 @@ fn format_embedded(
         match parser {
             b"graphql" => crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok(),
             b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok(),
-            b"markdown" => format(code, &options, &mut Default::default(), &mut out, format_javascript).is_ok(),
-            b"babel" => format_javascript(b"dummy.jsx", code, &options, &mut out),
-            _ if language == b"tsx" => format_javascript(b"dummy.tsx", code, &options, &mut out),
-            _ => format_javascript(b"dummy.ts", code, &options, &mut out),
+            b"markdown" => format(code, &options, &mut Default::default(), &mut out).is_ok(),
+            b"babel" => format_javascript(b"dummy.jsx", &mut out),
+            _ if language == b"tsx" => format_javascript(b"dummy.tsx", &mut out),
+            _ => format_javascript(b"dummy.ts", &mut out),
         }
     };
     is_done.then_some(out)
@@ -128,27 +127,92 @@ fn format_embedded(
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
 
+/// Whether a comment with `@` and one of `pragmas` is at the start of `text`, behind the front matter.
+fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
+    let content = &text[front_matter::parse(text).map_or(0, |it| it.end)..];
+    let content = trim_start(content);
+    let strip_pragma = |text: &'_ [u8]| -> Option<usize> {
+        let name = text.strip_prefix(b"@")?;
+        pragmas.iter().find(|pragma| name.starts_with(pragma)).map(|pragma| pragma.len() + 1)
+    };
+    // `<!-- @format -->`, `{/* @format */}`
+    let is_between = |open: &[&[u8]], close: &[&[u8]]| {
+        let mut rest = content;
+        for part in open {
+            let Some(after) = rest.strip_prefix(*part) else {
+                return false;
+            };
+            rest = trim_start(after);
+        }
+        let Some(len) = strip_pragma(rest) else {
+            return false;
+        };
+        rest = &rest[len..];
+        close.iter().all(|part| match trim_start(rest).strip_prefix(*part) {
+            Some(after) => {
+                rest = after;
+                true
+            }
+            None => false,
+        })
+    };
+    if is_between(&[b"<!--"], &[b"-->"]) || is_between(&[b"{", b"/*"], &[b"*/", b"}"]) {
+        return true;
+    }
+    // A comment with a line that is nothing but the pragma, which ends on a later line.
+    if !content.starts_with(b"<!--") {
+        return false;
+    }
+    let is_blank = |text: &[u8]| text.iter().all(|byte| byte.is_ascii_whitespace());
+    let mut lines = bun_core::strings::split(content, b"\n").skip(1);
+    let has_line = lines.any(|line| {
+        let line = trim_start(line);
+        strip_pragma(line).is_some_and(|len| is_blank(&line[len..]))
+    });
+    has_line && lines.any(|line| bun_core::strings::contains(line, b"-->"))
+}
+
 /// Appends the formatted `text` to `out`.
-pub fn format(
-    text: &[u8],
-    options: &FormatOptions,
-    scratch: &mut Scratch,
-    out: &mut Vec<u8>,
-    format_javascript: &mut FormatJavaScript<'_>,
-) -> Result<(), FormatError> {
+pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
+    let original = text;
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
-    out.extend_from_slice(&text[..first]);
-    let mut text = &text[first..];
+    let Offsets { start, end, .. } = Offsets::new(original, first, options);
+    let mut text = &original[first..];
     let options = FormatOptions {
         line_ending: options.line_ending.resolve(text),
         ..options.clone()
     };
+    let is_whole = start <= first && end >= original.len();
     let mut normalized = Vec::new();
     if bun_core::strings::contains_char(text, b'\r') {
         write_with_line_ending(text, b"\n", &mut normalized);
         text = &normalized;
     }
-    if crate::range::trim_start(text).is_empty() {
+    if (start >= end && !text.is_empty())
+        || (options.require_pragma && !has_pragma(text, [b"format", b"prettier"]))
+        || (options.check_ignore_pragma && has_pragma(text, [b"noformat", b"noprettier"]))
+    {
+        out.extend_from_slice(original);
+        return Ok(());
+    }
+    out.extend_from_slice(&original[..first]);
+    // Nothing in Markdown can be formatted on its own.
+    if !is_whole {
+        write_with_line_ending(text, options.line_ending.as_bytes(), out);
+        return Ok(());
+    }
+    let mut with_pragma = Vec::new();
+    if options.insert_pragma && !options.require_pragma && !has_pragma(text, [b"format", b"prettier"]) {
+        let front_matter_end = front_matter::parse(text).map_or(0, |it| it.end);
+        if front_matter_end > 0 {
+            with_pragma.extend_from_slice(&text[..front_matter_end]);
+            with_pragma.extend_from_slice(b"\n\n");
+        }
+        with_pragma.extend_from_slice(b"<!-- @format -->\n\n");
+        with_pragma.extend_from_slice(&text[front_matter_end..]);
+        text = &with_pragma;
+    }
+    if trim_start(text).is_empty() {
         return Ok(());
     }
 
@@ -168,7 +232,7 @@ pub fn format(
 
     let formats_embedded = matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Auto);
     let mut embed = |embedded: &printer::Embedded<'_>| match formats_embedded {
-        true => format_embedded(embedded.language, embedded.code, embedded.width, &options, format_javascript),
+        true => format_embedded(embedded.language, embedded.code, embedded.width, &options),
         false => None,
     };
     let mut printer = printer::Printer {

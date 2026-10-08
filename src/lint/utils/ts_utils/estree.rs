@@ -1,6 +1,6 @@
 //! Which node of typescript-estree a handle stands for, where that decides an answer.
 
-use crate::ast::{Expr, ExprKind, List, Node, Stmt, StmtKind};
+use crate::ast::{Expr, ExprKind, List, Node, PropKind, Stmt, StmtKind};
 
 /// Whether typescript-estree converts `e` as a pattern: it is the left of an assignment or of a
 /// `for`-`in` or `for`-`of`, or an element, a property value or a rest argument of such a pattern.
@@ -18,6 +18,12 @@ pub(super) fn is_pattern(e: Expr<'_>) -> bool {
                 _ => return false,
             },
             Node::Prop(prop) => match prop.parent() {
+                // The `a = 1` of `{ a = 1 }` is an `AssignmentPattern` wherever the object is.
+                _ if prop.kind() == PropKind::Shorthand
+                    && matches!(at.kind(), ExprKind::Assign { .. }) =>
+                {
+                    return true;
+                }
                 Node::Expr(object) if prop.value() == Some(at) && !prop.is_jsx_attribute() => {
                     at = object;
                 }
@@ -32,6 +38,25 @@ pub(super) fn is_pattern(e: Expr<'_>) -> bool {
             }
             _ => return false,
         }
+    }
+}
+
+/// Whether `e` is a `MemberExpression`. The `a.b` of `typeof a.b` is a `TSQualifiedName`, that of
+/// `<a.b />` a `JSXMemberExpression`.
+pub(super) fn is_member_expression(e: Expr<'_>) -> bool {
+    match e.kind() {
+        ExprKind::Index { .. } => true,
+        ExprKind::Dot { .. } => {
+            let mut at = e;
+            loop {
+                match at.parent() {
+                    Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { .. }) => at = parent,
+                    Node::Type(_) => return false,
+                    _ => return !e.is_jsx_tag_name(),
+                }
+            }
+        }
+        _ => false,
     }
 }
 

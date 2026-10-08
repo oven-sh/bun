@@ -1,6 +1,6 @@
 //! `getWrappingFixer.ts`.
 
-use super::estree::is_expression_statement;
+use super::estree::{is_expression_statement, is_member_expression};
 use super::precedence::parenthesize;
 use crate::ast::{BinOp, Expr, ExprKind, FnBody, FnKind, Node, Stmt, StmtKind, TypeKind, UnOp};
 use crate::context::IntoText;
@@ -170,8 +170,9 @@ pub fn is_strong_precedence_node<'a>(node: impl Into<Node<'a>>) -> bool {
             | ExprKind::New(_)
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Instantiation { .. } => true,
-            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => {
-                !e.is_chain_root()
+            ExprKind::Call(_) => !e.is_chain_root(),
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                !e.is_chain_root() && is_member_expression(e)
             }
             _ => false,
         },
@@ -199,7 +200,9 @@ pub fn is_weak_precedence_parent<'a>(node: impl Into<Node<'a>>) -> bool {
     match parent.kind() {
         ExprKind::Binary { op, .. } => op != BinOp::Comma,
         ExprKind::Unary { .. } | ExprKind::Cond { .. } | ExprKind::Await(_) => true,
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == node,
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
+            obj == node && is_member_expression(parent)
+        }
         ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
             call.callee() == node
         }

@@ -141,9 +141,13 @@ pub fn is_class_or_type_element<'a>(node: impl Into<Node<'a>>) -> bool {
 }
 
 /// typescript-eslint's `isConstructor`: the `Member` that is a constructor of a class, with or
-/// without a body. For upstream's `isConstructor(node.parent)` pass `func.parent()`.
+/// without a body. `static constructor() {}` is a method. For upstream's
+/// `isConstructor(node.parent)` pass `func.parent()`.
 pub fn is_constructor<'a>(node: impl Into<Node<'a>>) -> bool {
-    matches!(node.into(), Node::Member(member) if member.kind() == MemberKind::Constructor)
+    matches!(
+        node.into(),
+        Node::Member(member) if member.kind() == MemberKind::Constructor && !member.is_static()
+    )
 }
 
 /// typescript-eslint's `isSetter`: a `set` accessor of a class that is not abstract, or of an

@@ -1,5 +1,6 @@
 //! `getOperatorPrecedence.ts`, `getWrappedCode.ts`, `isHigherPrecedenceThanAwait.ts`.
 
+use super::estree::is_member_expression;
 use crate::ast::{BinOp, Expr, ExprKind, FnKind, Node, PropKind, UnOp};
 use std::borrow::Cow;
 
@@ -233,14 +234,23 @@ pub fn ts_operator_kind(e: Expr<'_>) -> Option<OperatorKind> {
 /// The expression that is `tsNode.parent`, if that is an expression other than a
 /// `ParenthesizedExpression`. What TypeScript has a node of another kind in between for has none:
 /// a substitution of a template (`TemplateSpan`), an expression in the braces of JSX
-/// (`JsxExpression`), the default of `{ a = 1 }` in an assignment.
+/// (`JsxExpression`), the name of a tag, the default of `{ a = 1 }` in an assignment, the `a` of
+/// `typeof a.b` (`QualifiedName`).
 fn ts_parent_expression(e: Expr<'_>) -> Option<Expr<'_>> {
-    let Node::Expr(parent) = e.parent() else {
-        return None;
+    let parent = match e.parent() {
+        Node::Expr(parent) => parent,
+        // The value of a method is the `MethodDeclaration`, which is directly in the object.
+        Node::Prop(prop) if prop.func().is_some() && prop.value() == Some(e) => {
+            return prop.parent().as_expr();
+        }
+        _ => return None,
     };
     match parent.kind() {
-        ExprKind::Template(_) | ExprKind::Jsx(_) => None,
-        ExprKind::TaggedTemplate(call) if call.callee() != e && call.template() != Some(e) => None,
+        ExprKind::Template(_) => None,
+        ExprKind::Jsx(_) => (matches!(e.kind(), ExprKind::Jsx(_))
+            && e.jsx_container_span().is_none())
+        .then_some(parent),
+        ExprKind::Dot { .. } if !is_member_expression(parent) => None,
         ExprKind::Assign { .. }
             if matches!(parent.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand) =>
         {

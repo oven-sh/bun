@@ -77,7 +77,15 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     if is_punctuator && matches!(previous.text(), b"--" | b";" | b":" | b"{" | b"++" | b"=>") {
         return false;
     }
-    let previous_node = get_node_by_range_index(file, previous.start());
+    let mut previous_node = get_node_by_range_index(file, previous.start());
+    // In `@d export class C {}` the `ExportNamedDeclaration` starts at the `export`, so nothing
+    // in it is found for a position in the decorator.
+    let exported = previous_node.ancestors().filter_map(Node::as_stmt).find(|statement| {
+        statement.export_span().is_some_and(|export| previous.start() < export.start)
+    });
+    if let Some(statement) = exported {
+        previous_node = statement.parent();
+    }
     let previous_statement = previous_node.as_stmt().map(|it| it.kind());
     if is_punctuator && previous.is(")") {
         return !matches!(

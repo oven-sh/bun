@@ -8,7 +8,7 @@ use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
 use bun_lint::runner::{Enabled, RuleEntry};
-use bun_lint::utils::estree_compat::estree_span;
+use bun_lint::utils::estree_compat::{estree_parent, estree_span};
 use bun_lint::utils::text::json_stringify;
 use bun_lint::utils::ts_utils::{self, MemberAccessValue, WrappingFixerParams};
 use std::fmt::Write as _;
@@ -238,7 +238,7 @@ impl Rule for Probe {
                 let params = WrappingFixerParams { node, inner_nodes, wrap: |code: &[&[u8]]| array(code) };
                 ts_utils::get_wrapping_fixer_for_chain_element(fixer, params)
             });
-            if let Node::Expr(parent) = node.parent() {
+            if let Node::Expr(parent) = estree_parent(Node::Expr(node)) {
                 cx.report(node, PARENT).fix(|fixer| {
                     let params = WrappingFixerParams { node: parent, inner_nodes: &[node, node], wrap: pair };
                     ts_utils::get_wrapping_fixer_for_chain_element(fixer, params)

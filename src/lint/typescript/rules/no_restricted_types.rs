@@ -5,6 +5,8 @@ use std::borrow::Cow;
 pub struct NoRestrictedTypes {
     /// By name without whitespace, sorted.
     banned: Vec<(Vec<u8>, Ban)>,
+    /// The length of the longest of the names.
+    longest: usize,
 }
 
 struct Ban {
@@ -91,7 +93,11 @@ impl NoRestrictedTypes {
     }
 
     fn check(&self, at: Span, cx: &Cx<'_, Self>) {
-        self.check_named(at, &remove_spaces(cx.slice(at)), cx);
+        // What has more characters that are no spaces than the longest name is none of them.
+        let text = cx.slice(at);
+        if text.len() <= self.longest || text.iter().filter(|it| it.is_ascii_graphic()).nth(self.longest).is_none() {
+            self.check_named(at, &remove_spaces(text), cx);
+        }
     }
 
     /// A `TSTypeReference`, a `TSClassImplements` or a `TSInterfaceHeritage`.
@@ -149,7 +155,10 @@ impl Rule for NoRestrictedTypes {
             banned.push((name, ban));
         }
         banned.sort_by(|a, b| a.0.cmp(&b.0));
-        NoRestrictedTypes { banned }
+        NoRestrictedTypes {
+            longest: banned.iter().map(|it| it.0.len()).max().unwrap_or(0),
+            banned,
+        }
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {

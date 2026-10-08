@@ -1,4 +1,4 @@
-use bun_core::strings;
+use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -54,6 +54,29 @@ fn is_possible_constructor(e: Expr<'_>) -> bool {
     }
 }
 
+/// The first statement directly in the body of `constructor` that is a `super(..)` and nothing else,
+/// with what precedes it and the call.
+pub fn first_super_statement<'a>(constructor: Func<'a>) -> Option<(impl Iterator<Item = Stmt<'a>>, Call<'a>)> {
+    let body = constructor.body_statements()?;
+    let (at, call) = body.iter().enumerate().find_map(|(at, statement)| match statement.kind() {
+        StmtKind::Expr(e) => e.as_call().filter(|call| call.callee().tag() == ExprTag::Super).map(|call| (at, call)),
+        _ => None,
+    })?;
+    Some((body.iter().take(at), call))
+}
+
+/// Whether it can be told from the statements of the body alone that `super()` is called exactly
+/// once on every way through `constructor`: it is a statement of its own there, no `return`
+/// precedes it, and there is no other.
+fn calls_super_plainly(constructor: Func<'_>) -> bool {
+    let Some((_, call)) = first_super_statement(constructor) else {
+        return false;
+    };
+    let (file, callee, whole) = (constructor.file(), call.callee(), constructor.span());
+    constructor.returns().all(|it| it.span().start > callee.span().start)
+        && !file.exprs_of_kind(ExprTag::Super).any(|e| e != callee && whole.contains(e.span()) && ast_utils::is_callee(e))
+}
+
 fn is_update_of_for(node: Node<'_>) -> bool {
     let (Node::Expr(e), Node::Stmt(parent)) = (node, node.parent()) else {
         return false;
@@ -77,6 +100,8 @@ struct FuncInfo<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
+    /// The constructor that is checked. Those of the classes in it are checked on their own.
+    constructor: Option<Func<'a>>,
     /// For each of the code paths around the current node, the innermost last.
     func_infos: Vec<FuncInfo<'a>>,
     /// By `Segment::id`, for the segments of the constructors that are checked.
@@ -132,11 +157,29 @@ impl<'a> State<'a> {
 }
 
 impl ConstructorSuper {
+    fn check_constructor<'a>(&self, constructor: Func<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.constructor = Some(constructor);
+        for step in constructor.code_path_steps(StmtTag::Return, ExprTag::Call) {
+            match step {
+                Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node, cx),
+                Step::Event(Event::CodePathEnd(path, node)) => self.on_code_path_end(path, node, cx),
+                Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
+                Step::Event(Event::SegmentLoop(from, to, node)) => self.on_segment_loop(from, to, node, cx),
+                Step::Event(_) => {}
+                Step::Enter(node) => self.on_return(node, cx),
+                Step::Exit(node) => self.on_call_exit(node, cx),
+            }
+        }
+        cx.state.seg_info_map.clear();
+    }
+
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let super_class = match node {
             // `static constructor() {}` is a method.
             Node::Func(func)
-                if func.kind() == FnKind::Constructor && !func.flags().contains(Flags::STATIC) =>
+                if cx.state.constructor == Some(func)
+                    && func.kind() == FnKind::Constructor
+                    && !func.flags().contains(Flags::STATIC) =>
             {
                 match func.owner().parent() {
                     Node::Class(class) => class.extends(),
@@ -253,18 +296,18 @@ impl Rule for ConstructorSuper {
         ConstructorSuper
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        // TODO(api): replace by integrator::File::has_nodes(NodeTags::CLASS)
-        // A keyword cannot be written with escapes.
-        if !strings::contains(file.text(), b"extends") {
-            return State::default();
-        }
-        on.code_path_start(Self::on_code_path_start);
-        on.code_path_end(Self::on_code_path_end);
-        on.segment_start(Self::on_segment_start);
-        on.segment_loop(Self::on_segment_loop);
-        on.exit(ExprTag::Call, Self::on_call_exit);
-        on.enter(StmtTag::Return, Self::on_return);
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+        on.classes(|rule, class, cx| {
+            let Some(super_class) = class.extends() else {
+                return;
+            };
+            let constructors = class.members().iter().filter(|it| it.kind() == MemberKind::Constructor);
+            for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
+                if !(is_possible_constructor(super_class) && calls_super_plainly(constructor)) {
+                    rule.check_constructor(constructor, cx);
+                }
+            }
+        });
         State::default()
     }
 }

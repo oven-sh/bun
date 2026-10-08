@@ -8,10 +8,12 @@
 //!   that are entered and left, and the graph of each code path when it ends.
 //! - `batch <file> [all|statements|nothing]`: the same for each `{ "path", "code" }` of a file of JSON lines, as JSON lines.
 //!   `test/cli/lint/oracle/code_path/trace.ts` compares it with what ESLint does.
+//! - `reach <file>`: for each `{ "path", "code" }` of a file of JSON lines, where `Stmt::is_reachable`
+//!   and the like differ from what the analysis finds. `reach.ts` runs it.
 //! - `upstream`: the cases of ESLint's `tests/lib/linter/code-path-analysis/code-path.js`.
 //! - `bench <file>`: how long the analysis takes.
 
-use bun_lint::code_path::{Event, Step, steps};
+use bun_lint::code_path::{Event, Method, Step, reachability, steps};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
 use bun_lint::runner::Enabled;
@@ -711,6 +713,74 @@ fn batch(path: &str, listen: &str) {
     print!("{output}");
 }
 
+/// For each `{ "path", "code" }` of a file of JSON lines, where what is found out from the
+/// statements alone differs from what the analysis finds.
+fn compare_reachability(path: &str) {
+    let input = std::fs::read(path).expect("the file");
+    let mut output = String::new();
+    for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
+        let case = bun_lint::json::parse(line).expect("JSON");
+        let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
+        let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+        let path = String::from_utf8_lossy(path);
+        let differences = crate::with_file(&path, code, &LanguageOptions::default(), |file| {
+            if file.has_parse_errors() {
+                return Vec::new();
+            }
+            let (quick, analysis) = (
+                reachability(file, Method::Quick),
+                reachability(file, Method::Analysis),
+            );
+            let mut differences = Vec::new();
+            fn compare<T: PartialEq + Copy>(
+                what: &str,
+                a: &[T],
+                b: &[T],
+                at: impl Fn(T) -> u32,
+                to: &mut Vec<String>,
+            ) {
+                to.extend(
+                    a.iter()
+                        .filter(|it| !b.contains(it))
+                        .map(|&it| format!("{what} only quick {}", at(it))),
+                );
+                to.extend(
+                    b.iter()
+                        .filter(|it| !a.contains(it))
+                        .map(|&it| format!("{what} only analysis {}", at(it))),
+                );
+            }
+            compare(
+                "unreachable",
+                &quick.0,
+                &analysis.0,
+                |it| it.span().start,
+                &mut differences,
+            );
+            compare(
+                "case-end",
+                &quick.1,
+                &analysis.1,
+                |it| it.span().start,
+                &mut differences,
+            );
+            compare(
+                "fn-end",
+                &quick.2,
+                &analysis.2,
+                |it| it.span().start,
+                &mut differences,
+            );
+            if quick.3 != analysis.3 {
+                differences.push("file-end differs 0".to_owned());
+            }
+            differences
+        });
+        let _ = writeln!(output, "[\"{}\"]", differences.join("\",\""));
+    }
+    print!("{output}");
+}
+
 // ───────────────────────────── ESLint's tests of `CodePath` ─────────────────────────────
 
 /// What a case of `tests/lib/linter/code-path-analysis/code-path.js` asks of `traverseSegments`.
@@ -898,6 +968,9 @@ fn bench(path: &str) {
         let with_statements = time(|| {
             steps(file, statements, statements).count();
         });
+        let reach = time(|| {
+            reachability(file, Method::Quick);
+        });
         let with_everything = time(|| {
             steps(file, NodeTags::ALL, NodeTags::ALL).count();
         });
@@ -905,7 +978,7 @@ fn bench(path: &str) {
             bun_lint::runner::run(file, &rules, false);
         });
         println!(
-            "{} bytes, {} events: parse and bind {parsing:?}, a walk {walk:?}, analysis {analysis:?}, and all statements {with_statements:?}, and all nodes {with_everything:?}, a rule that listens {rule:?}",
+            "{} bytes, {} events: parse and bind {parsing:?}, reachability of all statements {reach:?}, a walk {walk:?}, analysis {analysis:?}, and all statements {with_statements:?}, and all nodes {with_everything:?}, a rule that listens {rule:?}",
             code.len(),
             steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count(),
         );
@@ -927,6 +1000,7 @@ pub(crate) fn run(args: &[String]) {
         [command, path, listen @ ..] if command == "batch" => {
             batch(path, listen.first().map_or("all", |it| it));
         }
+        [command, path] if command == "reach" => compare_reachability(path),
         [command, path] if command == "bench" => bench(path),
         [command] if command == "upstream" => upstream(),
         // For a profiler.

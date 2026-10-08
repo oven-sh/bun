@@ -1,4 +1,3 @@
-use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::directives::match_directives_pattern;
 use bun_lint::utils::text;
@@ -16,20 +15,6 @@ const UNUSED_FALLTHROUGH_COMMENT: Message = Message::new(
 );
 const CASE: Message = Message::new("case", "Expected a 'break' statement before 'case'.");
 const DEFAULT: Message = Message::new("default", "Expected a 'break' statement before 'default'.");
-
-#[derive(Default)]
-pub struct State<'a> {
-    /// The code paths around the current node, the innermost last.
-    code_paths: Vec<CodePath<'a>>,
-    /// The `case` that has been left last, unless another has been entered since.
-    previous_case: Option<PreviousCase<'a>>,
-}
-
-struct PreviousCase<'a> {
-    node: Case<'a>,
-    is_switch_exit_reachable: bool,
-    is_fallthrough: bool,
-}
 
 impl NoFallthrough {
     /// The comment, if it is a fallthrough comment and not a directive of ESLint.
@@ -63,59 +48,43 @@ impl NoFallthrough {
         self.fallthrough_comment(file.comments_before(subsequent_case).next_back())
     }
 
-    fn enter_case<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let (Node::Case(case), Some(previous)) = (node, cx.state.previous_case.take()) else {
-            return;
+    /// Checks `previous`, which `case` follows.
+    fn check_case<'a>(&self, previous: Case<'a>, case: Case<'a>, cx: &Cx<'a, Self>) {
+        let has_blank_lines_before_next_token = || {
+            let end = previous.span().end;
+            cx.line_of(skip_trivia(cx.text(), end)) > cx.line_of(end) + 1
         };
-        let may_be_unused =
-            self.report_unused_fallthrough_comment && !previous.is_switch_exit_reachable;
-        if !(previous.is_fallthrough || may_be_unused) || previous.node.parent() != case.parent() {
+        let last = previous.body().last();
+        // What follows a `break`, a `return` or a `throw` cannot be reached.
+        let ends_with_jump = matches!(
+            last.map(Stmt::tag),
+            Some(StmtTag::Break | StmtTag::Return | StmtTag::Throw | StmtTag::Continue)
+        );
+        let may_fall_through =
+            !ends_with_jump && (last.is_some() || !self.allow_empty_case && has_blank_lines_before_next_token());
+        if !may_fall_through && !self.report_unused_fallthrough_comment {
             return;
         }
-        match self.get_fallthrough_comment(previous.node, case) {
-            None if previous.is_fallthrough => {
+        let is_switch_exit_reachable = !ends_with_jump && previous.is_end_reachable();
+        let is_fallthrough = is_switch_exit_reachable && may_fall_through;
+        if !is_fallthrough && (is_switch_exit_reachable || !self.report_unused_fallthrough_comment) {
+            return;
+        }
+        match self.get_fallthrough_comment(previous, case) {
+            None if is_fallthrough => {
                 cx.report(case, if case.is_default() { DEFAULT } else { CASE });
             }
-            Some(comment) if !previous.is_fallthrough => {
+            Some(comment) if !is_fallthrough => {
                 cx.report(comment, UNUSED_FALLTHROUGH_COMMENT);
             }
             _ => {}
         }
     }
-
-    fn exit_case<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Node::Case(case) = node else {
-            return;
-        };
-        // What follows a `break`, a `return` or a `throw` cannot be reached.
-        let is_switch_exit_reachable =
-            cx.state.code_paths.last().is_some_and(|path| path.is_current_reachable());
-        let is_last = || match case.parent() {
-            Node::Stmt(parent) => match parent.kind() {
-                StmtKind::Switch { cases, .. } => cases.last() == Some(case),
-                _ => true,
-            },
-            _ => true,
-        };
-        let has_blank_lines_before_next_token = || {
-            let end = case.span().end;
-            cx.line_of(skip_trivia(cx.text(), end)) > cx.line_of(end) + 1
-        };
-        let is_fallthrough = is_switch_exit_reachable
-            && !is_last()
-            && (!case.body().is_empty()
-                || !self.allow_empty_case && has_blank_lines_before_next_token());
-        cx.state.previous_case = Some(PreviousCase {
-            node: case,
-            is_switch_exit_reachable,
-            is_fallthrough,
-        });
-    }
 }
 
 impl Rule for NoFallthrough {
     const META: Meta = Meta::eslint("no-fallthrough", Kind::Problem).recommended();
-    type State<'a> = State<'a>;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -130,17 +99,17 @@ impl Rule for NoFallthrough {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        // TODO(api): replace by integrator::File::has_nodes(StmtTag::Switch)
-        if !strings::contains(file.text(), b"switch") {
-            return State::default();
-        }
-        on.code_path_start(|_, path, _, cx| cx.state.code_paths.push(path));
-        on.code_path_end(|_, _, _, cx| {
-            cx.state.code_paths.pop();
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.stmts([StmtTag::Switch], |rule, stmt, cx| {
+            let StmtKind::Switch { cases, .. } = stmt.kind() else {
+                return;
+            };
+            let mut previous = None;
+            for case in cases {
+                if let Some(previous) = previous.replace(case) {
+                    rule.check_case(previous, case, cx);
+                }
+            }
         });
-        on.enter(NodeTags::CASE, Self::enter_case);
-        on.exit(NodeTags::CASE, Self::exit_case);
-        State::default()
     }
 }

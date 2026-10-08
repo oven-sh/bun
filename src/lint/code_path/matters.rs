@@ -12,15 +12,28 @@ use bun_sema::bind::Parent;
 use bun_sema::hir::{self, ExprTag};
 
 /// A bit for each node of a vector of the HIR.
-struct Marks(Box<[u64]>);
+pub(super) struct Marks(Box<[u64]>);
 
 impl Marks {
-    fn new(len: usize) -> Marks {
+    pub(super) fn new(len: usize) -> Marks {
         Marks(vec![0; len.div_ceil(64)].into_boxed_slice())
     }
 
+    pub(super) fn is_any(&self) -> bool {
+        self.0.iter().any(|&word| word != 0)
+    }
+
+    pub(super) fn set(&mut self, at: usize, is_marked: bool) {
+        if let Some(word) = self.0.get_mut(at / 64) {
+            match is_marked {
+                true => *word |= 1 << (at % 64),
+                false => *word &= !(1 << (at % 64)),
+            }
+        }
+    }
+
     #[inline]
-    fn has(&self, at: usize) -> bool {
+    pub(super) fn has(&self, at: usize) -> bool {
         self.0
             .get(at / 64)
             .is_some_and(|word| word & (1 << (at % 64)) != 0)
@@ -28,7 +41,7 @@ impl Marks {
 
     /// Returns whether it was not marked yet.
     #[inline]
-    fn add(&mut self, at: usize) -> bool {
+    pub(super) fn add(&mut self, at: usize) -> bool {
         let Some(word) = self.0.get_mut(at / 64) else {
             return false;
         };

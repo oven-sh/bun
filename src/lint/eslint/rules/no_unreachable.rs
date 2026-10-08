@@ -6,9 +6,7 @@ pub struct NoUnreachable;
 const UNREACHABLE_CODE: Message = Message::new("unreachableCode", "Unreachable code.");
 
 #[derive(Default)]
-pub struct State<'a> {
-    /// The code paths around the current node, the innermost last.
-    code_paths: Vec<CodePath<'a>>,
+pub struct State {
     /// ESLint's `ConsecutiveRange`: consecutive unreachable statements that are not reported yet.
     range: Option<Span>,
     /// For each of the constructors around the current node, whether a `super()` has been seen.
@@ -64,17 +62,34 @@ fn is_listened(stmt: Stmt) -> bool {
     }
 }
 
+/// Whether there can be a subclass whose constructor does not call `super()`.
+fn has_constructor_without_super_call<'a>(file: &'a File<'a>) -> bool {
+    let mut constructors = (file.classes().filter(|class| class.extends().is_some()))
+        .flat_map(|class| class.members())
+        .filter(|&member| is_constructor(member))
+        .peekable();
+    if constructors.peek().is_none() {
+        return false;
+    }
+    let constructor_around = |e: Expr<'a>| {
+        Node::Expr(e).ancestors().find_map(|it| match it {
+            Node::Member(member) if is_constructor(member) => Some(member),
+            _ => None,
+        })
+    };
+    let with_call: Vec<Member> = (file.exprs_of_kind(ExprTag::Super))
+        .filter(|&e| matches!(e.parent(), Node::Expr(parent) if parent.as_call().is_some_and(|call| call.callee() == e)))
+        .filter_map(constructor_around)
+        .collect();
+    constructors.any(|member| !with_call.contains(&member))
+}
+
 impl NoUnreachable {
     fn enter_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let (Node::Stmt(stmt), Some(&path)) = (node, cx.state.code_paths.last()) else {
+        let Node::Stmt(stmt) = node else {
             return;
         };
-        // The code path of a function has started already. The `export` is outside it.
-        let path = match stmt.kind() {
-            StmtKind::Fn(func) if func.has_body() => path.upper().unwrap_or(path),
-            _ => path,
-        };
-        let is_reachable = path.is_current_reachable();
+        let is_reachable = stmt.is_reachable();
         if is_reachable && cx.state.range.is_none() || !is_listened(stmt) {
             return;
         }
@@ -139,17 +154,16 @@ impl NoUnreachable {
 
 impl Rule for NoUnreachable {
     const META: Meta = Meta::eslint("no-unreachable", Kind::Problem).recommended();
-    type State<'a> = State<'a>;
+    type State<'a> = State;
 
     fn new(_: &Options) -> Self {
         NoUnreachable
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.code_path_start(|_, path, _, cx| cx.state.code_paths.push(path));
-        on.code_path_end(|_, _, _, cx| {
-            cx.state.code_paths.pop();
-        });
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
+        if !file.has_unreachable_statements() && !has_constructor_without_super_call(file) {
+            return State::default();
+        }
         on.enter(
             [
                 StmtTag::Block,

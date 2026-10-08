@@ -1,3 +1,5 @@
+use super::constructor_super::first_super_statement;
+use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -24,6 +26,8 @@ struct FuncInfo<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
+    /// The constructor that is checked. Those of the classes in it are checked on their own.
+    constructor: Option<Func<'a>>,
     /// For each of the code paths around the current node, the innermost last.
     func_infos: Vec<FuncInfo<'a>>,
     /// By `Segment::id`, for the segments of the constructors that are checked.
@@ -59,10 +63,47 @@ impl<'a> State<'a> {
     }
 }
 
+/// Whether there is a `this` or a `super` in `node`.
+fn has_this_or_super(node: Node<'_>) -> bool {
+    let mut todo = vec![node];
+    while let Some(node) = todo.pop() {
+        if matches!(node, Node::Expr(e) if matches!(e.tag(), ExprTag::This | ExprTag::Super)) {
+            return true;
+        }
+        node.for_each_child(|child| todo.push(child));
+    }
+    false
+}
+
+/// Whether it can be told from the statements of the body alone that there is no `this` or `super`
+/// before `super()` is called: that is a statement of its own there, and there is none in what
+/// precedes it and in its arguments.
+fn calls_super_first(constructor: Func<'_>) -> bool {
+    first_super_statement(constructor).is_some_and(|(mut before, call)| {
+        !before.any(|it| has_this_or_super(it.into())) && !call.args().iter().any(|it| has_this_or_super(it.into()))
+    })
+}
+
 impl NoThisBeforeSuper {
+    fn check_constructor<'a>(&self, constructor: Func<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.constructor = Some(constructor);
+        for step in constructor.code_path_steps([ExprTag::This, ExprTag::Super], ExprTag::Call) {
+            match step {
+                Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node, cx),
+                Step::Event(Event::CodePathEnd(path, node)) => self.on_code_path_end(path, node, cx),
+                Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
+                Step::Event(Event::SegmentLoop(from, to, node)) => self.on_segment_loop(from, to, node, cx),
+                Step::Event(_) => {}
+                Step::Enter(node) => self.on_this_or_super(node, cx),
+                Step::Exit(node) => self.on_call_exit(node, cx),
+            }
+        }
+        cx.state.seg_info_map.clear();
+    }
+
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let super_class = match node {
-            Node::Func(func) => match func.owner() {
+            Node::Func(func) if cx.state.constructor == Some(func) => match func.owner() {
                 Node::Member(member) if member.is_constructor() => match member.parent() {
                     Node::Class(class) => class.extends(),
                     _ => None,
@@ -170,20 +211,18 @@ impl Rule for NoThisBeforeSuper {
         NoThisBeforeSuper
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let has_constructor_of_derived_class = file.classes().any(|class| {
-            class.extends().is_some()
-                && class.members().iter().any(|it| it.is_constructor() && it.func().is_some_and(Func::has_body))
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+        on.classes(|rule, class, cx| {
+            if class.extends().is_none() {
+                return;
+            }
+            let constructors = class.members().iter().filter(|it| it.is_constructor());
+            for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
+                if !calls_super_first(constructor) {
+                    rule.check_constructor(constructor, cx);
+                }
+            }
         });
-        if !has_constructor_of_derived_class || !file.has_exprs([ExprTag::This, ExprTag::Super]) {
-            return State::default();
-        }
-        on.code_path_start(Self::on_code_path_start);
-        on.code_path_end(Self::on_code_path_end);
-        on.segment_start(Self::on_segment_start);
-        on.segment_loop(Self::on_segment_loop);
-        on.enter([ExprTag::This, ExprTag::Super], Self::on_this_or_super);
-        on.exit(ExprTag::Call, Self::on_call_exit);
         State::default()
     }
 }

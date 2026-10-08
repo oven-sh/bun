@@ -14,10 +14,6 @@ const MISSING_RETURN_VALUE: Message = Message::new("missingReturnValue", "{{name
 const UNEXPECTED_RETURN_VALUE: Message =
     Message::new("unexpectedReturnValue", "{{name}} expected no return value.");
 
-/// The code paths around the current node that have a `return`, each with the function or the file
-/// it is of.
-pub type State<'a> = Vec<(Node<'a>, CodePath<'a>)>;
-
 /// Whether there can be anything to report in `file`.
 pub fn is_relevant(file: &File<'_>) -> bool {
     file.has_stmts([StmtTag::Return])
@@ -63,31 +59,10 @@ fn location_of(func: Func<'_>) -> Span {
     key.unwrap_or_else(|| next_token(file.text(), func.estree_span().start))
 }
 
-/// For [`Listeners::code_path_start`].
-pub fn code_path_start<'a>(state: &mut State<'a>, path: CodePath<'a>, node: Node<'a>) {
-    let has_returns = match node {
-        Node::File(_) => true,
-        Node::Func(func) => func.returns().next().is_some(),
-        _ => false,
-    };
-    if has_returns {
-        state.push((node, path));
-    }
-}
-
-/// For [`Listeners::exit`] of `NodeTags::FUNC | NodeTags::FILE`.
+/// Checks a function or the file.
 ///
 /// `classify`: whether a `return` statement specifies a value. `None`: it is as if it was not there.
-pub fn exit<'a, R: Rule<State<'a> = State<'a>>>(
-    node: Node<'a>,
-    cx: &mut Cx<'a, R>,
-    classify: impl Fn(Stmt<'a>) -> Option<bool>,
-) {
-    let Some((_, path)) = cx.state.pop_if(|it| it.0 == node) else {
-        return;
-    };
-    let cx = &*cx;
-
+pub fn check<'a, R: Rule>(node: Node<'a>, cx: &Cx<'a, R>, classify: impl Fn(Stmt<'a>) -> Option<bool>) {
     // Whether the first `return` specifies a value.
     let mut expected = None;
     for_each_return(node, &mut |statement: Stmt<'a>| {
@@ -105,13 +80,18 @@ pub fn exit<'a, R: Rule<State<'a> = State<'a>>>(
         cx.report(statement, message).data("name", name);
     });
 
-    if expected != Some(true) || !path.is_current_reachable() {
+    if expected != Some(true) {
         return;
     }
     let Node::Func(func) = node else {
-        cx.report_at(0, MISSING_RETURN).data("name", "program");
+        if cx.file().is_end_reachable() {
+            cx.report_at(0, MISSING_RETURN).data("name", "program");
+        }
         return;
     };
+    if !func.is_end_reachable() {
+        return;
+    }
     let is_class_constructor = matches!(func.owner(), Node::Member(member) if member.is_constructor());
     if !ast_utils::is_es5_constructor(func) && !is_class_constructor {
         cx.report(location_of(func), MISSING_RETURN)
@@ -119,9 +99,18 @@ pub fn exit<'a, R: Rule<State<'a> = State<'a>>>(
     }
 }
 
+impl ConsistentReturn {
+    fn check<'a>(&self, node: Node<'a>, cx: &Cx<'a, Self>) {
+        check(node, cx, |statement| match statement.kind() {
+            StmtKind::Return(argument) => Some(has_return_value(argument, self.treat_undefined_as_unspecified)),
+            _ => None,
+        });
+    }
+}
+
 impl Rule for ConsistentReturn {
     const META: Meta = Meta::eslint("consistent-return", Kind::Suggestion);
-    type State<'a> = State<'a>;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         ConsistentReturn {
@@ -129,19 +118,10 @@ impl Rule for ConsistentReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        // TODO(api): replace by code_path::Func::is_end_reachable, which needs no walk.
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         if is_relevant(file) {
-            on.code_path_start(|_, path, node, cx| code_path_start(&mut cx.state, path, node));
-            on.exit(NodeTags::FUNC | NodeTags::FILE, |rule, node, cx| {
-                exit(node, cx, |statement| match statement.kind() {
-                    StmtKind::Return(argument) => {
-                        Some(has_return_value(argument, rule.treat_undefined_as_unspecified))
-                    }
-                    _ => None,
-                });
-            });
+            on.funcs(|rule, func, cx| rule.check(func.into(), cx));
+            on.finish(|rule, cx| rule.check(cx.file().into(), cx));
         }
-        Vec::new()
     }
 }

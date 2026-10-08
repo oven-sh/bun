@@ -64,12 +64,17 @@
 
 mod analyzer;
 mod matters;
+mod reach;
 mod state;
 
 #[doc(hidden)]
-pub use analyzer::{Step, Steps, steps};
+pub use analyzer::steps;
+pub use analyzer::{Step, Steps};
+#[doc(hidden)]
+pub use reach::Method;
+use reach::Reach;
 
-use crate::ast::{File, Func, Node};
+use crate::ast::{Case, File, Func, Handle, Node, Stmt};
 use crate::rule::NodeTags;
 use smallvec::SmallVec;
 use std::cell::{Cell, OnceCell, RefCell};
@@ -132,6 +137,7 @@ pub(crate) struct Store {
     epoch: Cell<u32>,
     /// What matters to the analysis itself.
     matters: OnceCell<matters::Matters>,
+    reach: OnceCell<Reach>,
 }
 
 impl Store {
@@ -141,23 +147,110 @@ impl Store {
     }
 }
 
-impl Func<'_> {
+impl<'a> Func<'a> {
     /// Whether execution can reach the end of the body: what ESLint's rules ask with
     /// `isAnySegmentReachable(currentSegments)` when they leave the function.
     ///
-    /// It analyzes this function alone, in time proportional to its size without the functions in
-    /// it. A rule that asks nothing else of a few functions needs no listener for code paths,
-    /// which make the linter analyze the whole file.
+    /// It looks at the statements of this function alone, and takes a few instructions for each. A
+    /// rule that asks nothing else needs no listener for code paths, which make the linter
+    /// analyze the file.
     pub fn is_end_reachable(self) -> bool {
-        analyzer::is_end_reachable(Node::Func(self))
+        match self.file().lazy.code_paths.reach.get() {
+            Some(reach) => !self.has_body() || reach.is_fn_end_reachable(self),
+            None => reach::is_end_reachable(Node::Func(self), Method::Quick, None),
+        }
+    }
+}
+
+impl<'a> Func<'a> {
+    /// Analyzes this function alone, with the functions in it, and returns what the listeners for
+    /// code paths would be called with, in order, together with the nodes of the kinds `enter` and
+    /// `exit` in it: what [`Listeners::enter`](crate::rule::Listeners::enter) and
+    /// [`Listeners::exit`](crate::rule::Listeners::exit) would be called with.
+    ///
+    /// For a rule that finds out from the syntax which few functions it has to look at: it needs
+    /// no listener for code paths, which make the linter analyze the whole file. The code path of
+    /// the function has no [`CodePath::upper`].
+    pub fn code_path_steps(
+        self,
+        enter: impl Into<NodeTags>,
+        exit: impl Into<NodeTags>,
+    ) -> Steps<'a> {
+        analyzer::steps_in(self, enter.into(), exit.into())
     }
 }
 
 impl<'a> File<'a> {
     /// [`Func::is_end_reachable`] for the code path of the file.
     pub fn is_end_reachable(&'a self) -> bool {
-        analyzer::is_end_reachable(Node::File(self))
+        match self.lazy.code_paths.reach.get() {
+            Some(reach) => reach.is_file_end_reachable(),
+            None => reach::is_end_reachable(Node::File(self), Method::Quick, None),
+        }
     }
+
+    fn reach(&'a self) -> &'a Reach {
+        self.lazy
+            .code_paths
+            .reach
+            .get_or_init(|| Reach::new(self, Method::Quick))
+    }
+
+    /// Whether there is a statement for which [`Stmt::is_reachable`] does not hold.
+    pub fn has_unreachable_statements(&'a self) -> bool {
+        self.reach().has_unreachable()
+    }
+}
+
+impl<'a> Stmt<'a> {
+    /// Whether execution can reach the statement: what ESLint's rules ask with
+    /// `isAnySegmentReachable(currentSegments)` when they enter it. For a function declaration,
+    /// that is in the code path around it.
+    ///
+    /// The first call looks at all the statements of the file, and takes a few instructions for
+    /// each. It needs no listener for code paths.
+    pub fn is_reachable(self) -> bool {
+        self.file().reach().is_reachable(self)
+    }
+}
+
+impl<'a> Case<'a> {
+    /// Whether execution can reach the end of the case, and so falls through to the next: what
+    /// ESLint's rules ask with `isAnySegmentReachable(currentSegments)` when they leave it.
+    ///
+    /// See [`Stmt::is_reachable`] for what it costs.
+    pub fn is_end_reachable(self) -> bool {
+        self.file().reach().is_case_end_reachable(self)
+    }
+}
+
+/// What [`Stmt::is_reachable`] and the like answer for `file` if they find out by `method`: the
+/// unreachable statements, the cases and the functions whose end can be reached, and whether that
+/// of the file can. For comparing the methods.
+#[doc(hidden)]
+pub fn reachability<'a>(
+    file: &'a File<'a>,
+    method: Method,
+) -> (Vec<Stmt<'a>>, Vec<Case<'a>>, Vec<Func<'a>>, bool) {
+    let reach = Reach::new(file, method);
+    let (mut statements, mut cases, mut funcs) = (Vec::new(), Vec::new(), Vec::new());
+    for id in 0..file.hir.stmts.len() as u32 {
+        let stmt = Stmt::from_raw(file, id);
+        if !reach.is_reachable(stmt) {
+            statements.push(stmt);
+        }
+    }
+    file.every_case(|case| {
+        if reach.is_case_end_reachable(case) {
+            cases.push(case);
+        }
+    });
+    file.every_func(|func| {
+        if reach.is_fn_end_reachable(func) {
+            funcs.push(func);
+        }
+    });
+    (statements, cases, funcs, reach.is_file_end_reachable())
 }
 
 pub type Segments<'a> = SmallVec<[Segment<'a>; 2]>;
@@ -560,9 +653,8 @@ impl<'a> CurrentSegments<'a> {
     }
 }
 
-/// What the analysis tells the rules.
+/// What the analysis tells the rules: what a listener for code paths is called with.
 #[derive(Copy, Clone, Debug)]
-#[doc(hidden)]
 pub enum Event<'a> {
     CodePathStart(CodePath<'a>, Node<'a>),
     CodePathEnd(CodePath<'a>, Node<'a>),

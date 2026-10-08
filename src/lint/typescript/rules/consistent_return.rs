@@ -1,9 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::is_type_flag_set;
 use bun_lint::types::{TsNode, Type, TypeFlags, tsutils};
-use bun_lint_eslint::rules::consistent_return::{
-    State, code_path_start, exit, has_return_value, is_relevant,
-};
+use bun_lint_eslint::rules::consistent_return::{check, has_return_value, is_relevant};
 use std::cell::OnceCell;
 
 /// Require `return` statements to either always or never specify values.
@@ -39,9 +37,9 @@ fn is_return_void_or_thenable_void(func: Func<'_>) -> bool {
 }
 
 impl ConsistentReturn {
-    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn check<'a>(&self, node: Node<'a>, cx: &Cx<'a, Self>) {
         let returns_void = OnceCell::new();
-        exit(node, cx, |statement| {
+        check(node, cx, |statement| {
             let StmtKind::Return(argument) = statement.kind() else {
                 return None;
             };
@@ -62,7 +60,7 @@ impl Rule for ConsistentReturn {
     const META: Meta = Meta::typescript("consistent-return", Kind::Suggestion)
         .requires_types()
         .extends_base_rule("consistent-return");
-    type State<'a> = State<'a>;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         ConsistentReturn {
@@ -70,11 +68,10 @@ impl Rule for ConsistentReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         if is_relevant(file) {
-            on.code_path_start(|_, path, node, cx| code_path_start(&mut cx.state, path, node));
-            on.exit(NodeTags::FUNC | NodeTags::FILE, Self::exit);
+            on.funcs(|rule, func, cx| rule.check(func.into(), cx));
+            on.finish(|rule, cx| rule.check(cx.file().into(), cx));
         }
-        Vec::new()
     }
 }

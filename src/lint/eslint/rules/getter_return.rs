@@ -34,13 +34,10 @@ fn is_getter(func: Func) -> bool {
 }
 
 impl GetterReturn {
-    fn exit_function<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Node::Func(func) = node else {
+    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if !is_getter(func) {
             return;
-        };
-        let Some((_, path)) = cx.state.pop_if(|it| it.0 == func) else {
-            return;
-        };
+        }
         if !self.allows_implicit {
             for statement in func.returns() {
                 if matches!(statement.kind(), StmtKind::Return(None)) {
@@ -49,7 +46,7 @@ impl GetterReturn {
                 }
             }
         }
-        if path.is_current_reachable() {
+        if func.is_end_reachable() {
             let has_return = func.returns().next().is_some();
             cx.report(
                 ast_utils::get_function_head_loc(func),
@@ -62,8 +59,7 @@ impl GetterReturn {
 
 impl Rule for GetterReturn {
     const META: Meta = Meta::eslint("getter-return", Kind::Problem).recommended();
-    /// The getters around the current node, each with its code path.
-    type State<'a> = Vec<(Func<'a>, CodePath<'a>)>;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         GetterReturn {
@@ -71,19 +67,9 @@ impl Rule for GetterReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        // TODO(api): replace by integrator::File::funcs(), to listen only if there is a getter.
-        if !file.has_classes() && !file.has_exprs([ExprTag::Object]) {
-            return Vec::new();
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if file.has_classes() || file.has_exprs([ExprTag::Object]) {
+            on.funcs(Self::check_function);
         }
-        on.code_path_start(|_, path, node, cx| {
-            if let Node::Func(func) = node
-                && is_getter(func)
-            {
-                cx.state.push((func, path));
-            }
-        });
-        on.exit(NodeTags::FUNC, Self::exit_function);
-        Vec::new()
     }
 }

@@ -10,6 +10,7 @@
 //! in a few flags, so that neither its children nor leaving it have to look at it again.
 
 use super::matters::Matters;
+use super::reach::Reach;
 use super::state::{ChoiceKind, Cx, LoopKind, State};
 use super::{CodePath, Event, Origin, Segment, SegmentIds, Store};
 use crate::ast::{
@@ -104,7 +105,7 @@ fn is_forking_by_true_or_false<'a>(e: Expr<'a>, parent: Option<Node<'a>>) -> boo
 }
 
 /// `getBooleanValueIfSimpleConstant`
-fn boolean_value_if_simple_constant(e: Expr) -> Option<bool> {
+pub(super) fn boolean_value_if_simple_constant(e: Expr) -> Option<bool> {
     match e.kind() {
         ExprKind::True | ExprKind::Regex(_) => Some(true),
         ExprKind::False | ExprKind::Null => Some(false),
@@ -137,7 +138,7 @@ fn label_of(parent: Option<Node>) -> Option<Atom> {
 }
 
 /// `breakableTypePattern`
-fn is_breakable(stmt: Stmt) -> bool {
+pub(super) fn is_breakable(stmt: Stmt) -> bool {
     stmt.is_loop() || stmt.tag() == StmtTag::Switch
 }
 
@@ -164,12 +165,12 @@ fn is_non_null_after_chain(e: Expr) -> bool {
 }
 
 /// Whether ESLint starts a code path for `func`.
-fn has_code_path(func: Func) -> bool {
+pub(super) fn has_code_path(func: Func) -> bool {
     func.has_body() && func.kind() != FnKind::StaticBlock
 }
 
 /// Whether `member` is a `PropertyDefinition`.
-fn is_property_definition(member: Member) -> bool {
+pub(super) fn is_property_definition(member: Member) -> bool {
     member.kind() == MemberKind::Property
         && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
         && matches!(member.parent(), Node::Class(_))
@@ -178,7 +179,7 @@ fn is_property_definition(member: Member) -> bool {
 /// Whether the first child that `node` has in ESTree is an `Identifier` that does not exist here
 /// and for which `isIdentifierReference` holds. It holds for every name that ESLint does not
 /// know to be something else, which includes all the names in the syntax of TypeScript.
-fn starts_with_identifier_reference(node: Node) -> bool {
+pub(super) fn starts_with_identifier_reference(node: Node) -> bool {
     let is_identifier =
         |key: Option<Key>| key.is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)));
     match node {
@@ -211,7 +212,7 @@ fn starts_with_identifier_reference(node: Node) -> bool {
 }
 
 /// `isIdentifierReference` for an identifier that is bound.
-fn is_binding_a_reference(pat: Pat) -> bool {
+pub(super) fn is_binding_a_reference(pat: Pat) -> bool {
     match pat.parent() {
         Node::PatProp(prop) => !prop.is_rest(),
         Node::PatElem(element) => element.default().is_some(),
@@ -602,6 +603,15 @@ impl<'s, 'a> Builder<'s, 'a> {
             _ => Is::empty(),
         };
         let mut more = match e.tag() {
+            ExprTag::Fn => {
+                return match e.as_fn() {
+                    Some(func) if has_code_path(func) => {
+                        self.start_code_path(Origin::Function, cx);
+                        Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
+                    }
+                    _ => Is::empty(),
+                };
+            }
             ExprTag::Ident
             | ExprTag::New
             | ExprTag::ImportCall
@@ -621,7 +631,7 @@ impl<'s, 'a> Builder<'s, 'a> {
                 return Is::PLACES_CHILDREN;
             }
             ExprTag::Jsx => return Is::PLACES_CHILDREN,
-            ExprTag::Fn | ExprTag::Binary | ExprTag::Assign | ExprTag::Cond => Is::empty(),
+            ExprTag::Binary | ExprTag::Assign | ExprTag::Cond => Is::empty(),
             _ => return Is::empty(),
         };
         if more.contains(Is::IN_CHAIN) && !is.contains(Is::CONTINUES_CHAIN) {
@@ -636,10 +646,6 @@ impl<'s, 'a> Builder<'s, 'a> {
             return more;
         };
         match e.kind() {
-            ExprKind::Fn(func) if has_code_path(func) => {
-                self.start_code_path(Origin::Function, cx);
-                more |= Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS;
-            }
             ExprKind::Call(call) => {
                 if call.is_optional() {
                     state.make_optional_node();
@@ -681,6 +687,15 @@ impl<'s, 'a> Builder<'s, 'a> {
 
     /// `processCodePathToEnter`, without the last step. Returns what is known about `stmt`.
     fn enter_stmt(&mut self, stmt: Stmt<'a>, parent: Option<Node<'a>>, cx: &mut Cx<'_, 'a>) -> Is {
+        if stmt.tag() == StmtTag::Fn
+            && let StmtKind::Fn(func) = stmt.kind()
+        {
+            if !has_code_path(func) {
+                return Is::empty();
+            }
+            self.start_code_path(Origin::Function, cx);
+            return Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS;
+        }
         let Some(state) = self.states.last_mut() else {
             return Is::empty();
         };
@@ -697,11 +712,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             StmtTag::For => LoopKind::For,
             StmtTag::ForIn => LoopKind::ForIn,
             StmtTag::ForOf => LoopKind::ForOf,
-            StmtTag::Fn | StmtTag::Switch | StmtTag::Try | StmtTag::Labeled => match stmt.kind() {
-                StmtKind::Fn(func) if has_code_path(func) => {
-                    self.start_code_path(Origin::Function, cx);
-                    return Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS;
-                }
+            StmtTag::Switch | StmtTag::Try | StmtTag::Labeled => match stmt.kind() {
                 StmtKind::Switch { cases, .. } => {
                     let has_case = cases.iter().any(|case| !case.is_default());
                     state.push_switch_context(has_case, label_of(parent));
@@ -1054,7 +1065,7 @@ impl<'a> Recorder<'_, 'a> {
     /// `ast::walk::walk_node` for each of `nodes`, the last first, without what does not matter.
     ///
     /// `is_shallow`: it does not go into what has a code path of its own.
-    fn walk(&mut self, nodes: Vec<Node<'a>>, matters: &Matters, is_shallow: bool) {
+    fn walk(&mut self, nodes: Vec<Node<'a>>, matters: Option<&Matters>, is_shallow: bool) {
         enum Todo<'a> {
             Enter(Node<'a>),
             Exit(Node<'a>),
@@ -1070,7 +1081,7 @@ impl<'a> Recorder<'_, 'a> {
             };
             self.enter(node);
             // Where nothing has thrown yet in a `try` block, every name matters.
-            let is_left_out = matters.is_nothing_in(node)
+            let is_left_out = matters.is_some_and(|it| it.is_nothing_in(node))
                 && !self.builder.is_before_first_throwable()
                 || is_shallow && self.builder.has_started_code_path();
             if is_left_out {
@@ -1102,10 +1113,41 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
     };
     recorder.walk(
         vec![Node::File(file)],
-        &Matters::new(file, enter | exit),
+        Some(&Matters::new(file, enter | exit)),
         false,
     );
-    file.lazy.code_paths.finish();
+    file.lazy.code_paths.finish(0);
+    Steps {
+        file,
+        steps: recorder.steps.into_iter(),
+    }
+}
+
+/// [`steps`] for `func` alone, with the functions in it. Its code path has no `upper()`.
+///
+/// What has been analyzed before stays valid.
+pub(super) fn steps_in<'a>(func: Func<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'a> {
+    let file = func.file();
+    let store = &file.lazy.code_paths;
+    let first_segment = store.segment_count();
+    let mut recorder = Recorder {
+        builder: Builder::new(file, store),
+        steps: Vec::new(),
+        enter,
+        exit,
+    };
+    // A function expression or declaration starts its code path, a member does not.
+    let owner = func.owner();
+    let root = match owner {
+        Node::Member(_) => {
+            let is = Is::empty();
+            recorder.builder.ancestors.push(Frame { node: owner, is });
+            Node::Func(func)
+        }
+        _ => owner,
+    };
+    recorder.walk(vec![root], None, false);
+    store.finish(first_segment);
     Steps {
         file,
         steps: recorder.steps.into_iter(),
@@ -1113,14 +1155,23 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
 }
 
 /// Analyzes the code path of `node` alone, which is a function or the file, without the functions
-/// in it. Returns whether its end can be reached.
-pub(super) fn is_end_reachable(node: Node) -> bool {
+/// in it. Returns whether its end can be reached, and fills in `reach` for its statements and cases.
+pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
     let (file, store) = (node.file(), &Store::default());
+    let (enter, exit) = match reach {
+        Some(_) => (
+            StmtTag::ALL
+                .iter()
+                .fold(NodeTags::EMPTY, |all, &tag| all | tag.into()),
+            NodeTags::CASE,
+        ),
+        None => (NodeTags::EMPTY, NodeTags::EMPTY),
+    };
     let mut recorder = Recorder {
         builder: Builder::new(file, store),
         steps: Vec::new(),
-        enter: NodeTags::EMPTY,
-        exit: NodeTags::EMPTY,
+        enter,
+        exit,
     };
     let tell_nobody = &mut |_| {};
     let cx = &mut Cx::new(file, store, node, tell_nobody);
@@ -1128,8 +1179,42 @@ pub(super) fn is_end_reachable(node: Node) -> bool {
     let mut children = node.children();
     children.reverse();
     let matters = file.lazy.code_paths.what_matters_to_nobody(file);
-    recorder.walk(children, matters, true);
-    matches!(recorder.builder.states.last(), Some(state) if state.is_reachable(store))
+    recorder.walk(children, Some(matters), true);
+    let is_end_reachable =
+        matches!(recorder.builder.states.last(), Some(state) if state.is_reachable(store));
+    let Some(reach) = reach else {
+        return is_end_reachable;
+    };
+    // The code paths that have started and not ended. That of `node` is the first of the store.
+    let mut paths = vec![0];
+    for step in recorder.steps {
+        match step {
+            Step::Event(event) => {
+                store.follow(event);
+                match event {
+                    Event::CodePathStart(path, _) => paths.push(path.id()),
+                    Event::CodePathEnd(..) => {
+                        paths.pop();
+                    }
+                    _ => {}
+                }
+            }
+            // The code path of a function declaration has started already.
+            Step::Enter(Node::Stmt(stmt)) => {
+                let is_inside = matches!(stmt.kind(), StmtKind::Fn(func) if has_code_path(func));
+                if let Some(&path) = paths.iter().rev().nth(usize::from(is_inside)) {
+                    reach.set_statement(stmt, store.is_current_reachable(path));
+                }
+            }
+            Step::Exit(Node::Case(case)) => {
+                if let Some(&path) = paths.last() {
+                    reach.set_case_end(case, store.is_current_reachable(path));
+                }
+            }
+            _ => {}
+        }
+    }
+    is_end_reachable
 }
 
 /// See [`steps`].

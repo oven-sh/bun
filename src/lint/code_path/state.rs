@@ -65,11 +65,24 @@ impl Store {
         segments.reserve(statements);
     }
 
-    /// To be called when the graphs are finished.
-    pub(super) fn finish(&self) {
-        for segment in self.segments.borrow_mut().iter_mut() {
+    pub(super) fn segment_count(&self) -> usize {
+        self.segments.borrow().len()
+    }
+
+    /// To be called when the graphs of the segments from `first` on are finished.
+    pub(super) fn finish(&self, first: usize) {
+        for segment in self.segments.borrow_mut().iter_mut().skip(first) {
             segment.looped_prev.sort_unstable();
         }
+    }
+
+    pub(super) fn is_current_reachable(&self, path: u32) -> bool {
+        let segments = self.segments.borrow();
+        (self.paths.borrow().get(path as usize)).is_some_and(|path| {
+            path.current_segments
+                .iter()
+                .any(|&id| segments[id as usize].is_reachable)
+        })
     }
 
     /// Keeps `current_segments` up to date while the events are told to the rules.

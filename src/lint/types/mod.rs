@@ -774,6 +774,9 @@ impl bun_sema::atom::Intern for WrittenNames<'_> {
     fn number(&self) -> u64 {
         self.0.number()
     }
+    fn of_this_thread(&self) -> &dyn bun_sema::atom::Intern {
+        self
+    }
 }
 
 /// Calls `then` with `file` of the program that `checker` checks, with its types.

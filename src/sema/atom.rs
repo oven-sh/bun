@@ -365,6 +365,8 @@ pub trait Intern: Sync {
     fn bytes(&self, atom: Atom) -> &[u8];
     /// See `Interner::number`.
     fn number(&self) -> u64;
+    /// The same for the calling thread, without a look at which thread that is on every call.
+    fn of_this_thread(&self) -> &dyn Intern;
 }
 
 impl Intern for Interner<'_> {
@@ -379,6 +381,77 @@ impl Intern for Interner<'_> {
     #[inline]
     fn number(&self) -> u64 {
         Interner::number(self)
+    }
+    #[inline]
+    fn of_this_thread(&self) -> &dyn Intern {
+        self
+    }
+}
+
+/// An interner for each thread, for work in which no atom goes from one thread to another: what a
+/// thread interns is written and read by that thread only.
+pub struct InternerPerThread<'s> {
+    all: Box<[Interner<'s>]>,
+    /// `Interner::number` of the first.
+    number: u64,
+    /// How many threads have asked.
+    threads: std::sync::atomic::AtomicUsize,
+}
+
+thread_local! {
+    /// `InternerPerThread::number` of the one that the thread has used last, and which of its
+    /// interners is the thread's.
+    static OWN: std::cell::Cell<(u64, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+impl<'s> InternerPerThread<'s> {
+    /// With one interner in each of `sessions`, of which there is at least one. More threads than
+    /// that share them.
+    pub fn new_in(sessions: &'s [Session]) -> Self {
+        let all: Box<[Interner<'s>]> = sessions.iter().map(Interner::new_in).collect();
+        InternerPerThread {
+            number: all.first().map_or(0, Interner::number),
+            all,
+            threads: Default::default(),
+        }
+    }
+
+    /// The interner of the calling thread.
+    #[inline]
+    fn own(&self) -> &Interner<'s> {
+        let (of, at) = OWN.get();
+        match self.all.get(at) {
+            Some(own) if of == self.number => own,
+            _ => self.assign(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn assign(&self) -> &Interner<'s> {
+        let asked = self.threads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let at = asked % self.all.len();
+        OWN.set((self.number, at));
+        &self.all[at]
+    }
+}
+
+impl Intern for InternerPerThread<'_> {
+    #[inline]
+    fn intern(&self, text: &[u8]) -> Atom {
+        self.own().intern(text)
+    }
+    #[inline]
+    fn bytes(&self, atom: Atom) -> &[u8] {
+        self.own().bytes(atom)
+    }
+    #[inline]
+    fn number(&self) -> u64 {
+        self.own().number()
+    }
+    #[inline]
+    fn of_this_thread(&self) -> &dyn Intern {
+        self.own()
     }
 }
 

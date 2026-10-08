@@ -430,7 +430,11 @@ thread_local! {
 /// Per-thread buffers reused from one file to the next to reduce allocation. A pool thread outlives
 /// a check, so the check owns this: a thread holds one only while it works for the check.
 #[derive(Default)]
-pub struct ThreadCaches(notes::Notes, builder::Recycled);
+pub struct ThreadCaches(
+    notes::Notes,
+    builder::Recycled,
+    Option<Box<bun_sema_parser::Scratch>>,
+);
 
 impl ThreadCaches {
     /// Takes the caches from the calling thread, and frees the arena it parsed in. Only the thread
@@ -445,6 +449,7 @@ impl ThreadCaches {
         ThreadCaches(
             notes::replace_recycled(self.0),
             builder::replace_recycled(self.1),
+            DIRECT.replace(self.2),
         )
     }
 }
@@ -476,7 +481,8 @@ pub fn summarize<'s>(
 
 thread_local! {
     /// What `bun_sema_parser` keeps from one file to the next.
-    static DIRECT: core::cell::RefCell<bun_sema_parser::Scratch> = Default::default();
+    static DIRECT: core::cell::RefCell<Option<Box<bun_sema_parser::Scratch>>> =
+        const { core::cell::RefCell::new(None) };
 }
 
 /// How many files `summarize_as` has handed to `bun_sema_parser`, and how many of them that parser
@@ -528,11 +534,9 @@ fn summarize_directly<'s>(
         dialect,
     };
     let parsed = DIRECT.with_borrow_mut(|scratch| {
+        let scratch = scratch.get_or_insert_default();
         if is_json {
             return Err(bun_sema_parser::Refusal::Json);
-        }
-        if is_js {
-            return Err(bun_sema_parser::Refusal::JavaScript);
         }
         let first = bun_sema_parser::parse(text, options, atoms, scratch).map_err(|it| it.why)?;
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
@@ -566,7 +570,7 @@ fn summarize_directly<'s>(
     let (mut file, emptied) = file.into_arena(arena, session);
     // A very large file would leave its capacity to every later file.
     if text.len() < 4 << 20 {
-        DIRECT.with_borrow_mut(|scratch| scratch.recycle(emptied));
+        DIRECT.with_borrow_mut(|scratch| scratch.get_or_insert_default().recycle(emptied));
     }
     file.finish_nodes();
     Some(file)

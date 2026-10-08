@@ -3,7 +3,7 @@
 
 use super::program::{JsType, Key, Literal, Names, Property};
 use crate::ast::File;
-use crate::estree::{Dialect, Nodes, Object, VNode, Value};
+use crate::estree::{Dialect, FieldEntry, Nodes, Object, VNode, Value};
 use crate::span::Span;
 use crate::utils::text;
 use std::cmp::Ordering;
@@ -25,7 +25,9 @@ pub(super) enum Val<'a> {
     },
     Object(Object<'a>),
     Node(VNode<'a>),
-    Nodes(Nodes<'a>),
+    /// The list that this field of this node is. It is computed again when it is looked at: a list is several times the size of
+    /// everything else here, and few selectors look at one.
+    List(VNode<'a>, &'static FieldEntry),
     /// `node.range`
     Range(VNode<'a>),
     /// `node.loc`
@@ -77,24 +79,6 @@ impl Short {
     }
 }
 
-impl<'a> From<Value<'a>> for Val<'a> {
-    #[inline]
-    fn from(value: Value<'a>) -> Val<'a> {
-        match value {
-            Value::Undefined => Val::Undefined,
-            Value::Null => Val::Null,
-            Value::Bool(value) => Val::Bool(value),
-            Value::Number(value) => Val::Number(value),
-            Value::Str(value) => Val::Str(value),
-            Value::Regex { pattern, flags } => Val::Regex { pattern, flags },
-            Value::BigInt(digits) => Val::BigInt(digits),
-            Value::Object(object) => Val::Object(object),
-            Value::Node(node) => Val::Node(node),
-            Value::Nodes(nodes) => Val::Nodes(nodes),
-        }
-    }
-}
-
 /// `offset` as ESLint counts: in UTF-16 code units, without a byte order mark.
 fn utf16_offset(file: &File, offset: u32) -> f64 {
     let units = text::utf16_len(file.slice(Span::new(0, offset)));
@@ -119,6 +103,37 @@ fn unit_at(text: &[u8], index: u32) -> Option<Short> {
 }
 
 impl<'a> Val<'a> {
+    /// The value of the field of `entry` in `node`, which is of the type that `entry` is of.
+    #[inline]
+    pub(super) fn of_field(node: VNode<'a>, entry: &'static FieldEntry, dialect: Dialect) -> Val<'a> {
+        if !entry.is_in(dialect) {
+            return Val::Undefined;
+        }
+        match (entry.get)(node) {
+            Value::Undefined => Val::Undefined,
+            Value::Null => Val::Null,
+            Value::Bool(value) => Val::Bool(value),
+            Value::Number(value) => Val::Number(value),
+            Value::Str(value) => Val::Str(value),
+            Value::Regex { pattern, flags } => Val::Regex { pattern, flags },
+            Value::BigInt(digits) => Val::BigInt(digits),
+            Value::Object(object) => Val::Object(object),
+            Value::Node(node) => Val::Node(node),
+            Value::Nodes(_) => Val::List(node, entry),
+        }
+    }
+
+    /// The elements, if it is a list.
+    pub(super) fn elements(self) -> Option<Nodes<'a>> {
+        match self {
+            Val::List(node, entry) => match (entry.get)(node) {
+                Value::Nodes(nodes) => Some(nodes),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// `value == null`
     #[inline]
     pub(super) fn is_nullish(self) -> bool {
@@ -153,10 +168,13 @@ impl<'a> Val<'a> {
             (Val::Node(node), P::Loc) => Val::Loc(node),
             (Val::Node(node), P::Start) if is_espree => Val::Number(utf16_offset(node.file(), node.span().start)),
             (Val::Node(node), P::End) if is_espree => Val::Number(utf16_offset(node.file(), node.span().end)),
-            (Val::Node(node), _) => key.field.map_or(Val::Undefined, |field| node.field(field).into()),
+            (Val::Node(node), _) => {
+                let entry = key.field.and_then(|field| node.node_type().field(field));
+                entry.map_or(Val::Undefined, |entry| Val::of_field(node, entry, dialect))
+            }
 
-            (Val::Nodes(nodes), P::Length) => Val::Number(nodes.len() as f64),
-            (Val::Nodes(nodes), P::Index(index)) => match nodes.get(index as usize) {
+            (Val::List(..), P::Length) => Val::Number(self.elements().map_or(0, Nodes::len) as f64),
+            (Val::List(..), P::Index(index)) => match self.elements().and_then(|it| it.get(index as usize)) {
                 Some(Some(node)) => Val::Node(node),
                 Some(None) => Val::Null,
                 None => Val::Undefined,
@@ -200,9 +218,9 @@ impl<'a> Val<'a> {
             Val::Regex { pattern, flags } => {
                 then(&[b"/", pattern, b"/", Short::of_flags(flags).as_bytes()].concat())
             }
-            Val::Nodes(nodes) => {
+            Val::List(..) => {
                 let mut joined = Vec::new();
-                for (i, node) in nodes.enumerate() {
+                for (i, node) in self.elements().into_iter().flatten().enumerate() {
                     if i > 0 {
                         joined.push(b',');
                     }
@@ -233,7 +251,7 @@ impl<'a> Val<'a> {
                 literal.names == Names::Number && (value == literal.number || value.is_nan() && literal.number.is_nan())
             }
             Val::Object(_) | Val::Node(_) | Val::Loc(_) | Val::Position(..) => literal.names == Names::Object,
-            Val::Short(_) | Val::Regex { .. } | Val::Nodes(_) | Val::Range(_) => {
+            Val::Short(_) | Val::Regex { .. } | Val::List(..) | Val::Range(_) => {
                 self.with_string(|text| *text == *literal.text)
             }
         }

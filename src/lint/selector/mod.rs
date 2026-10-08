@@ -42,7 +42,7 @@ mod value;
 pub use listen::{OnNode, listen, sort_as_called};
 
 use crate::ast::Node;
-use crate::estree::{NodeType, VNode};
+use crate::estree::{Dialect, NodeType, VNode};
 use crate::rule::NodeTags;
 use crate::span::{Span, Spanned};
 use crate::utils::text;
@@ -93,21 +93,29 @@ impl std::error::Error for Error {}
 
 /// A node of the ESTree that ESLint's parser would make of the file. There is no such tree: this is a node of [`crate::ast`] and
 /// which part of it is meant.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct EsNode<'a> {
     node: VNode<'a>,
+    // What follows from `node`, to compute it once.
     node_type: NodeType,
+    dialect: Dialect,
+}
+
+impl PartialEq for EsNode<'_> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+    }
+}
+impl Eq for EsNode<'_> {}
+impl std::hash::Hash for EsNode<'_> {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.node.hash(state);
+    }
 }
 
 impl<'a> EsNode<'a> {
-    #[inline]
-    fn new(node: VNode<'a>) -> EsNode<'a> {
-        EsNode {
-            node,
-            node_type: node.node_type(),
-        }
-    }
-
     /// ESTree's `type`.
     #[inline]
     pub fn type_name(self) -> &'static str {
@@ -129,7 +137,14 @@ impl<'a> EsNode<'a> {
     /// Calls `visit` with each node of the ESTree that is made of `node`, an outer one before what is in it. Over all the nodes
     /// of a file, these are all the nodes of the ESTree, each once.
     pub fn for_each_at(node: Node<'a>, mut visit: impl FnMut(EsNode<'a>)) {
-        VNode::for_each_at(node, &mut |it| visit(EsNode::new(it)));
+        let dialect = Dialect::of(node.file());
+        VNode::for_each_with_type_at(node, &mut |node, node_type| {
+            visit(EsNode {
+                node,
+                node_type,
+                dialect,
+            });
+        });
     }
 }
 
@@ -233,7 +248,7 @@ impl Selector {
     fn matches_slowly(&self, node: EsNode<'_>) -> bool {
         let matcher = Matcher {
             program: &self.program,
-            dialect: node.node.dialect(),
+            dialect: node.dialect,
             limit: None,
         };
         matcher.matches(self.root, node.node, node.node_type)

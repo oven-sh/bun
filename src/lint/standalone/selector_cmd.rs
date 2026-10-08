@@ -5,7 +5,8 @@
 //! - `match <cases.jsonl>`: a line of the input is `{"id", "filename", "code", "sourceType", "parser", "selectors"}`, a line of the
 //!   output `{"id", "matches": [[selector, type, start, end], ..]}` in the order of the reports of a rule that listens as
 //!   `no-restricted-syntax` does, or `{"id", "error"}`. Positions are in UTF-16 code units.
-//! - `bench <path> [--repeat=n] [--espree] <selector>..`: what each selector costs on the files in `path`.
+//! - `bench <path> [--repeat=n] [--espree] <selector>..`: what each selector costs on the files in `path`, beyond what a rule that
+//!   finds nothing to listen for costs.
 
 use bun_lint::context::Severity;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
@@ -49,7 +50,9 @@ fn parse(path: &str) {
 // ───────────────────────────── a rule that reports what matches ─────────────────────────────
 
 /// Reports each match of each of its options, which are selectors, with the index of the selector and the type of the node.
-struct Probe {
+///
+/// `COUNTS`: it counts what it is called with, which takes time.
+struct Probe<const COUNTS: bool> {
     /// With the index among the options, in the order of `Selector::compare`.
     selectors: Vec<(usize, Selector)>,
 }
@@ -60,18 +63,22 @@ const FOUND: Message = Message::new("found", "{{selector}} {{type}}");
 static LISTENED: AtomicU64 = AtomicU64::new(0);
 static EXAMINED: AtomicU64 = AtomicU64::new(0);
 
-impl selector::OnNode for Probe {
+impl<const COUNTS: bool> selector::OnNode for Probe<COUNTS> {
     fn on_node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        LISTENED.fetch_add(1, Relaxed);
+        if COUNTS {
+            LISTENED.fetch_add(1, Relaxed);
+        }
         EsNode::for_each_at(node, |it| {
-            EXAMINED.fetch_add(1, Relaxed);
+            if COUNTS {
+                EXAMINED.fetch_add(1, Relaxed);
+            }
             let matching = self.selectors.iter().enumerate().filter(|(_, selector)| selector.1.matches(it));
             cx.state.extend(matching.map(|(i, _)| (it, i)));
         });
     }
 }
 
-impl Rule for Probe {
+impl<const COUNTS: bool> Rule for Probe<COUNTS> {
     const META: Meta = Meta::eslint("probe", Kind::Problem);
     type State<'a> = Vec<(EsNode<'a>, usize)>;
 
@@ -95,7 +102,8 @@ impl Rule for Probe {
     }
 }
 
-const PROBE: RuleEntry = RuleEntry::of::<Probe>();
+const PROBE: RuleEntry = RuleEntry::of::<Probe<false>>();
+const COUNTING_PROBE: RuleEntry = RuleEntry::of::<Probe<true>>();
 
 // ───────────────────────────── match ─────────────────────────────
 
@@ -192,6 +200,14 @@ fn match_cases(path: &str) {
 
 // ───────────────────────────── bench ─────────────────────────────
 
+/// The time that this thread has been running, in nanoseconds: what others do on the machine does not count. Where the system does
+/// not tell, the time that has passed.
+fn cpu_nanos(started: std::time::Instant) -> u64 {
+    let stat = std::fs::read_to_string("/proc/thread-self/schedstat").ok();
+    let running = stat.and_then(|it| it.split_whitespace().next()?.parse().ok());
+    running.unwrap_or_else(|| started.elapsed().as_nanos() as u64)
+}
+
 fn bench(path: &str, rest: &[String]) {
     let flag = |name: &str| rest.iter().find_map(|it| it.strip_prefix(name));
     let repeat: u32 = flag("--repeat=").and_then(|it| it.parse().ok()).unwrap_or(5);
@@ -202,10 +218,16 @@ fn bench(path: &str, rest: &[String]) {
     let files: Vec<(String, Vec<u8>)> = (paths.iter())
         .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
         .collect();
-    let selectors: Vec<&String> = rest.iter().filter(|it| !it.starts_with("--")).collect();
+    // The first has next to nothing to listen for: what it takes is what running a rule and measuring take.
+    let baseline = "DebuggerStatement".to_owned();
+    let selectors: Vec<&String> = std::iter::once(&baseline).chain(rest.iter().filter(|it| !it.starts_with("--"))).collect();
     let rules: Vec<_> = (selectors.iter())
-        .map(|it| (PROBE.build)(&Options::new(&[Json::String(it.as_bytes().to_vec().into())])))
+        .map(|it| {
+            let options = [Json::String(it.as_bytes().to_vec().into())];
+            ((PROBE.build)(&Options::new(&options)), (COUNTING_PROBE.build)(&Options::new(&options)))
+        })
         .collect();
+    let started = std::time::Instant::now();
     let mut nanos = vec![0u64; rules.len()];
     let mut counts = vec![(0u64, 0u64, 0u64); rules.len()];
     for (path, code) in &files {
@@ -213,21 +235,22 @@ fn bench(path: &str, rest: &[String]) {
             if file.has_parse_errors() {
                 return;
             }
-            for (i, rule) in rules.iter().enumerate() {
-                let enabled = Enabled {
-                    rule: &**rule,
+            for (i, (rule, counting)) in rules.iter().enumerate() {
+                let enabled = |rule| Enabled {
+                    rule,
                     severity: Severity::Error,
                 };
                 // The first run computes what the file keeps.
                 let (listened, examined) = (LISTENED.load(Relaxed), EXAMINED.load(Relaxed));
-                counts[i].2 += bun_lint::runner::run(file, &[enabled], false).len() as u64;
+                counts[i].2 += bun_lint::runner::run(file, &[enabled(&**counting)], false).len() as u64;
+                let enabled = enabled(&**rule);
                 counts[i].0 += LISTENED.load(Relaxed) - listened;
                 counts[i].1 += EXAMINED.load(Relaxed) - examined;
-                let started = std::time::Instant::now();
+                let before = cpu_nanos(started);
                 for _ in 0..repeat {
                     std::hint::black_box(bun_lint::runner::run(file, &[enabled], false));
                 }
-                nanos[i] += started.elapsed().as_nanos() as u64 / u64::from(repeat);
+                nanos[i] += (cpu_nanos(started) - before) / u64::from(repeat);
             }
         });
     }
@@ -235,10 +258,11 @@ fn bench(path: &str, rest: &[String]) {
     println!("{} files, {:.1} MB", files.len(), bytes as f64 / 1e6);
     for (i, selector) in selectors.iter().enumerate() {
         let (listened, examined, found) = counts[i];
+        let net = nanos[i].saturating_sub(nanos[0]);
         println!(
             "{selector}: {:.2} ms, {listened} nodes listened for, {examined} ESTree nodes, {found} matches, {:.0} ns a node listened for",
-            nanos[i] as f64 / 1e6,
-            nanos[i] as f64 / listened.max(1) as f64,
+            net as f64 / 1e6,
+            net as f64 / listened.max(1) as f64,
         );
     }
 }

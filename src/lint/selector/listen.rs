@@ -117,5 +117,19 @@ pub fn sort_as_called(matches: &mut [(EsNode<'_>, usize)], is_exit: impl Fn(usiz
             (Relation::Above, false, _) | (Relation::Below, _, true) | (Relation::Before, ..) => Ordering::Less,
             (Relation::Above, true, _) | (Relation::Below, _, false) | (Relation::After, ..) => Ordering::Greater,
         });
+        // For espree both names of `import { a }` are one node, which is visited twice: all the listeners are called for the
+        // first visit, then all for the second.
+        for visits in same.chunk_by_mut(|a, b| a.0 == b.0) {
+            let mut visit = 0;
+            let numbered = (0..visits.len()).map(|i| {
+                visit = if i > 0 && visits[i].1 == visits[i - 1].1 { visit + 1 } else { 0 };
+                (visit, visits[i])
+            });
+            let mut numbered: SmallVec<[(u32, (EsNode<'_>, usize)); 8]> = numbered.collect();
+            if numbered.iter().any(|it| it.0 > 0) {
+                numbered.sort_by_key(|it| it.0);
+                visits.iter_mut().zip(numbered).for_each(|(to, from)| *to = from.1);
+            }
+        }
     }
 }

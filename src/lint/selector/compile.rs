@@ -113,13 +113,17 @@ pub(super) fn always_matches(program: &Program, id: Id) -> bool {
 /// How much it takes to find out whether a node matches `op`, roughly.
 fn cost(op: Op) -> u8 {
     match op {
-        Op::Wildcard | Op::Identifier { .. } | Op::ExactNode | Op::UnknownClass(_) => 0,
-        Op::Class { .. } => 1,
+        Op::Wildcard => 0,
+        Op::Identifier { .. } | Op::ExactNode | Op::UnknownClass(_) | Op::Class { .. } => 1,
         Op::Attribute { .. } => 2,
         Op::Field(_) | Op::NthChild(_) => 3,
         Op::Has { .. } => 5,
         _ => 4,
     }
+}
+
+fn cost_of_op(ops: &[Op], id: Id) -> u8 {
+    ops.get(id as usize).map_or(0, |it| cost(*it))
 }
 
 /// Changes `program` so that it finds the same with less work.
@@ -128,9 +132,26 @@ pub(super) fn optimize(program: &mut Program) {
         match program.ops[id] {
             Op::All(list) => {
                 let ops = &program.ops;
-                let cost_of = |id: &Id| ops.get(*id as usize).map_or(0, |it| cost(*it));
+                let cost_of = |id: &Id| cost_of_op(ops, *id);
                 list.of_mut(&mut program.lists).sort_by_key(cost_of);
                 bind(program, list);
+                // `*` adds nothing, except on its own.
+                let wildcards = list.of(&program.lists).iter().take_while(|it| cost_of_op(&program.ops, **it) == 0).count() as u32;
+                let skipped = wildcards.min(list.len.saturating_sub(1));
+                let rest = Run {
+                    start: list.start + skipped,
+                    len: list.len - skipped,
+                };
+                program.ops[id] = match *rest.of(&program.lists) {
+                    [only] => program.ops.get(only as usize).copied().unwrap_or(Op::All(rest)),
+                    _ => Op::All(rest),
+                };
+            }
+            Op::Attribute { path, test, first: Bound::No } => {
+                if let Some(key) = path.of(&program.keys).first().filter(|it| !it.property.is_of_nodes()) {
+                    let first = key.field.map_or(Bound::Missing, Bound::Field);
+                    program.ops[id] = Op::Attribute { path, test, first };
+                }
             }
             Op::Has { selectors, .. } => {
                 let is_about_children = selectors.of(&program.lists).iter().all(|&it| {

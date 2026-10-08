@@ -2,7 +2,6 @@
 
 use super::program::{Bound, Id, Key, Op, Program, Relation, Test};
 use super::value::Val;
-use crate::ast::Node;
 use crate::estree::{Dialect, FieldEntry, NodeType, Nodes, VNode, Value};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
@@ -71,15 +70,6 @@ impl<'s, 'a> Matcher<'s, 'a> {
         }
     }
 
-    /// The value of the field of `entry` in `node`, which is of the type that `entry` is of.
-    #[inline]
-    fn value_of(&self, entry: &FieldEntry, node: VNode<'a>) -> Val<'a> {
-        match entry.is_in(self.dialect) {
-            true => (entry.get)(node).into(),
-            false => Val::Undefined,
-        }
-    }
-
     /// `getPath`
     fn follow(&self, mut value: Val<'a>, path: &[Key]) -> Val<'a> {
         for &key in path {
@@ -120,24 +110,12 @@ impl<'s, 'a> Matcher<'s, 'a> {
                 return false;
             }
             current = current.get(key, self.dialect);
-            if let Val::Nodes(mut nodes) = current {
+            if let Some(mut nodes) = current.elements() {
                 let rest = path.get(i + 1..).unwrap_or_default();
                 return nodes.any(|it| self.is_in_path(node, it.map_or(Val::Null, Val::Node), rest));
             }
         }
-        matches!(current, Val::Node(found) if self.is_same(found, node))
-    }
-
-    /// `a === b`. For espree the `imported` and the `local` of `import { a }` are one object, which is visited twice, and so are
-    /// the `local` and the `exported` of `export { a }`.
-    // TODO(api): replace by `==` once estree has one `VNode` for the two.
-    fn is_same(&self, a: VNode<'a>, b: VNode<'a>) -> bool {
-        a == b
-            || (self.dialect == Dialect::Espree
-                && a.base() == b.base()
-                && matches!(a.base(), Node::ImportSpec(_) | Node::ExportSpec(_))
-                && a.span() == b.span()
-                && a.node_type() == b.node_type())
+        matches!(current, Val::Node(found) if found == node)
     }
 
     /// The fields of the parent of `node` that are lists.
@@ -221,15 +199,45 @@ impl<'s, 'a> Matcher<'s, 'a> {
         matches!(self.program.ops.get(id as usize), Some(Op::Wildcard)) || self.matches(id, node, node.node_type())
     }
 
+    fn attribute(&self, path: &[Key], test: u32, first: Bound, node: VNode<'a>, node_type: NodeType) -> bool {
+        let rest = path.get(1..).unwrap_or_default();
+        let value = match first {
+            Bound::Entry(entry) => self.follow(Val::of_field(node, entry, self.dialect), rest),
+            Bound::Missing => Val::Undefined,
+            Bound::Field(field) => match node_type.field(field) {
+                Some(entry) => self.follow(Val::of_field(node, entry, self.dialect), rest),
+                None => Val::Undefined,
+            },
+            Bound::No => self.follow(Val::Node(node), path),
+        };
+        self.test(test, value)
+    }
+
     /// Whether `node`, which is of the type `node_type`, matches the selector `id`.
     pub(super) fn matches(&self, id: Id, node: VNode<'a>, node_type: NodeType) -> bool {
         let program = self.program;
-        let Some(&op) = program.ops.get(id as usize) else {
-            return false;
-        };
-        match op {
-            Op::Wildcard => true,
-            Op::Identifier { node_type: wanted, .. } => wanted == Some(node_type),
+        match program.ops.get(id as usize) {
+            None => false,
+            Some(Op::Wildcard) => true,
+            Some(Op::Identifier { node_type: wanted, .. }) => *wanted == Some(node_type),
+            Some(Op::All(list)) => list.of(&program.lists).iter().all(|&it| self.matches(it, node, node_type)),
+            Some(Op::Any(list)) => list.of(&program.lists).iter().any(|&it| self.matches(it, node, node_type)),
+            Some(Op::NotAny(list)) => !list.of(&program.lists).iter().any(|&it| self.matches(it, node, node_type)),
+            Some(Op::Attribute { path, test, first }) => {
+                self.attribute(path.of(&program.keys), *test, *first, node, node_type)
+            }
+            Some(&Op::Child(left, right)) => {
+                self.matches(right, node, node_type) && self.parent(node).is_some_and(|it| self.matches_node(left, it))
+            }
+            Some(op) => self.matches_other(op, node, node_type),
+        }
+    }
+
+    /// The rest of [`Matcher::matches`], apart so that what most selectors consist of needs little room on the stack.
+    #[inline(never)]
+    fn matches_other(&self, op: &Op, node: VNode<'a>, node_type: NodeType) -> bool {
+        let program = self.program;
+        match *op {
             Op::Class {
                 types,
                 excludes_names_of_meta_properties,
@@ -240,23 +248,16 @@ impl<'s, 'a> Matcher<'s, 'a> {
                         && node_type == NodeType::Identifier
                         && self.parent(node).is_some_and(|it| it.node_type() == NodeType::MetaProperty))
             }
-            Op::UnknownClass(_) => false,
             Op::ExactNode => self.limit == Some(node),
             Op::Field(path) => {
                 let path = path.of(&program.keys);
                 let ancestor = path.iter().try_fold(node, |at, _| self.parent(at));
                 ancestor.is_some_and(|it| self.is_in_path(node, Val::Node(it), path))
             }
-            Op::Any(list) => list.of(&program.lists).iter().any(|&it| self.matches(it, node, node_type)),
-            Op::All(list) => list.of(&program.lists).iter().all(|&it| self.matches(it, node, node_type)),
-            Op::NotAny(list) => !list.of(&program.lists).iter().any(|&it| self.matches(it, node, node_type)),
             Op::Has {
                 selectors,
                 is_about_children,
             } => self.has(selectors.of(&program.lists), is_about_children, node, node_type),
-            Op::Child(left, right) => {
-                self.matches(right, node, node_type) && self.parent(node).is_some_and(|it| self.matches_node(left, it))
-            }
             Op::Descendant(left, right) => {
                 self.matches(right, node, node_type)
                     && std::iter::successors(self.parent(node), |it| self.parent(*it))
@@ -282,23 +283,9 @@ impl<'s, 'a> Matcher<'s, 'a> {
                         && self.matches(left, node, node_type)
                         && self.has_adjacent(node, right, Side::Right))
             }
-            Op::Attribute { path, test, first } => {
-                let path = path.of(&program.keys);
-                let rest = path.get(1..).unwrap_or_default();
-                let value = match first {
-                    Bound::Entry(entry) => self.follow(self.value_of(entry, node), rest),
-                    Bound::Missing => Val::Undefined,
-                    Bound::No => match path.first() {
-                        Some(key) if !key.property.is_of_nodes() => {
-                            let entry = key.field.and_then(|it| node_type.field(it));
-                            self.follow(entry.map_or(Val::Undefined, |it| self.value_of(it, node)), rest)
-                        }
-                        _ => self.follow(Val::Node(node), path),
-                    },
-                };
-                self.test(test, value)
-            }
             Op::NthChild(nth) => self.is_nth_child(node, nth),
+            // The others are in `matches`.
+            _ => false,
         }
     }
 }

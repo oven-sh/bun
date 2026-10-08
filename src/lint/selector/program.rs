@@ -142,9 +142,12 @@ pub(super) enum Op {
 /// `CallExpression[callee.name="a"]` the `callee` is that of a `CallExpression`.
 #[derive(Copy, Clone)]
 pub(super) enum Bound {
+    /// It is a property that nodes have besides their fields.
     No,
+    /// It is this field, of whatever type the node is.
+    Field(Field),
     Entry(&'static FieldEntry),
-    /// Nodes of that type have no such field.
+    /// No node, or none of that type, has such a field.
     Missing,
 }
 

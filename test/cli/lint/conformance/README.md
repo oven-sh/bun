@@ -22,7 +22,7 @@ of oxlint's port of the rule: see `extract-plugins.ts`.
 
 | directory                | cases | what                                                                                             |
 | ------------------------ | ----- | ------------------------------------------------------------------------------------------------ |
-| `more/reviews`           | 68062 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
+| `more/reviews`           | 68102 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
 | `more/oxlint-tsgolint`   | 8728  | the tests that oxlint and tsgolint have for their ports of the rules. What those expect is not used |
 | `more/typescript-parser` | 30880 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                     |
 

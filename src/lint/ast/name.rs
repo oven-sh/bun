@@ -139,9 +139,9 @@ impl<'a> Ident<'a> {
     pub fn span(self) -> Span {
         let (text, name) = (self.name.file.text(), self.name.bytes());
         let written = text.get(self.start as usize..).unwrap_or_default();
-        let len = match !name.is_empty() && written.starts_with(name) {
+        let len = match !name.is_empty() && !self.is_string() && written.starts_with(name) {
             true => name.len(),
-            // It is written with escapes, or in quotes.
+            // It is written with escapes, or in quotes, where it can start with the name and go on: `"\""`.
             false => crate::tokens::token_len(written),
         };
         Span::new(self.start, self.start + len as u32)

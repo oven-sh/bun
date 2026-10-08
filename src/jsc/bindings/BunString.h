@@ -34,6 +34,18 @@ public:
     // The same, and throws `RangeError: Out of memory` when the conversion fails.
     static std::optional<UTF8View> tryCreate(JSC::JSGlobalObject*, JSC::ThrowScope&, WTF::StringView);
 
+    // Calls `function` with the UTF-8 bytes, which live until it returns: no copy is kept. std::nullopt when the string does not convert.
+    template<typename Function>
+    static std::optional<std::invoke_result_t<Function, std::span<const char>>> tryWith(WTF::StringView view, NOESCAPE const Function& function)
+    {
+        if (view.is8Bit() && view.containsOnlyASCII())
+            return function(byteCast<char>(view.span8()));
+        auto result = view.tryGetUTF8([&](std::span<const char8_t> utf8) { return function(byteCast<char>(utf8)); });
+        if (!result) [[unlikely]]
+            return std::nullopt;
+        return WTF::move(result.value());
+    }
+
     std::span<const uint8_t> bytes() const { return byteCast<uint8_t>(span()); }
 
     std::span<const char> span() const

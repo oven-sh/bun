@@ -41,7 +41,16 @@ describe.concurrent("HEAD for a Response with an S3 file body", () => {
       "error() fulfilled promise",
       "routes GET",
     ];
-    const head = { status: 200, contentLength: "0", transferEncoding: null, s3Requests: [], bodyUsed: false };
+    const head = {
+      status: 200,
+      contentLength: "0",
+      transferEncoding: null,
+      s3Requests: [],
+      bodyUsed: false,
+      // After the HEAD, the Response still reads as the whole object.
+      body: "0123456789",
+      s3RequestsForBody: ["GET"],
+    };
     expect(lines.map(line => JSON.parse(line))).toEqual(
       producers.flatMap(producer => entries.map(entry => ({ producer, entry, ...head }))),
     );

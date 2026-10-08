@@ -15,7 +15,8 @@ using s3Origin = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
   async fetch(req) {
-    s3Requests.push(req.method);
+    const range = req.headers.get("range");
+    s3Requests.push(range ? `${req.method} ${range}` : req.method);
     onS3Asked();
     if (mode === "gc") await gate;
     return new Response("0123456789");
@@ -69,6 +70,11 @@ if (mode === "gc") {
       using app = Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, ...options(res) } as any);
       const asked = s3Requests.length;
       const head = await fetch(app.url, { method: "HEAD" });
+      const askedForHead = s3Requests.slice(asked);
+      const bodyUsed = res.bodyUsed;
+      // HEAD writes no size into the Response's blob, so a read of the body
+      // still asks S3 for the whole object.
+      const body = await res.text();
       console.log(
         JSON.stringify({
           producer,
@@ -76,8 +82,10 @@ if (mode === "gc") {
           status: head.status,
           contentLength: head.headers.get("content-length"),
           transferEncoding: head.headers.get("transfer-encoding"),
-          s3Requests: s3Requests.slice(asked),
-          bodyUsed: res.bodyUsed,
+          s3Requests: askedForHead,
+          bodyUsed,
+          body,
+          s3RequestsForBody: s3Requests.slice(asked + askedForHead.length),
         }),
       );
     }

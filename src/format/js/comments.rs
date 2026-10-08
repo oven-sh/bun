@@ -704,8 +704,11 @@ impl<'a> Comments<'a> {
     /// their line. None if one before them does not.
     pub(crate) fn comments_leading_property(&self, key_end: u32, value_start: u32) -> &'a [Comment] {
         let comments = self.comments_in_range(key_end, value_start);
-        // One that starts its line leads the value.
-        let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
+        // One that starts its line leads the value, and so does a type comment: Prettier's
+        // `handleClosureTypeCastComments` comes first.
+        let count = (comments.iter())
+            .take_while(|comment| !comment.preceded_by_newline() && !self.looks_like_type_cast_comment(comment))
+            .count();
         let comments = &comments[..count];
         let count = comments.iter().rposition(|comment| comment.followed_by_newline()).map_or(0, |last| last + 1);
         let comments = &comments[..count];
@@ -716,11 +719,7 @@ impl<'a> Comments<'a> {
                         self.source_text.all_bytes_match(comment.end(), next.start(), |b| matches!(b, b' ' | b'\t'))
                     }))
         };
-        // `a: /** @type {T} */ ( // comment`: what is behind the `(` of a type cast is in it.
-        let is_type_cast = |comment: &Comment| {
-            self.is_type_cast_comment(comment) && self.source_text.next_non_whitespace_byte_is(comment.end(), b'(')
-        };
-        match comments.iter().enumerate().all(ends_line) && !comments.iter().any(is_type_cast) {
+        match comments.iter().enumerate().all(ends_line) {
             true => comments,
             false => &[],
         }

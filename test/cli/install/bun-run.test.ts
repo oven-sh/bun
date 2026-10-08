@@ -1322,9 +1322,10 @@ describe.concurrent("bun run", () => {
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).not.toContain("arg=");
-        expect(stderr).toContain("cmd.exe special character");
-        expect(stderr).toContain("%CMD_METACHAR_PROBE%");
-        expect(exitCode).not.toBe(0);
+        expect(stderr).toContain(
+          'argument "%CMD_METACHAR_PROBE%" contains a cmd.exe special character and cannot be passed to a batch file',
+        );
+        expect(exitCode).toBe(255);
       }
 
       // The same launcher runs inside bun.exe for `bun run <name>`.
@@ -1338,9 +1339,10 @@ describe.concurrent("bun run", () => {
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).not.toContain("arg=");
-        expect(stderr).toContain("cmd.exe special character");
-        expect(stderr).toContain("%CMD_METACHAR_PROBE%");
-        expect(exitCode).not.toBe(0);
+        expect(stderr).toContain(
+          'argument "%CMD_METACHAR_PROBE%" contains a cmd.exe special character and cannot be passed to a batch file',
+        );
+        expect(exitCode).toBe(255);
       }
     },
   );

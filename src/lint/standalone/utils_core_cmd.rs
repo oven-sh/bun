@@ -268,7 +268,7 @@ pub(crate) fn run(args: &[String]) {
         println!("cannot read {path}");
         return;
     };
-    for line in input.split(|&c| c == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         let Some(json) = bun_lint::json::parse(line) else {
             continue;
         };

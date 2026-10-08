@@ -21,6 +21,7 @@
 //! | `require("natural-compare")`, `esutils.keyword.isIdentifierES5/ES6`, `require("escape-string-regexp")` | [`text`] | `text::natural_compare(a, b)`, `text::is_identifier_es6(name)`, `text::escape_string_regexp(s)` |
 //! | `require("ignore")` | [`ignore`] | `Ignore::new(&patterns, ignores_case, IgnoreVersion::V5).ignores(path)` |
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::sequence_expressions(e)`, `utils::Target` |
+//! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
 //!
 //! A function that takes two handles has one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`:
@@ -75,6 +76,7 @@
 //! | `isImportAttributeKey(node)` | `is_import_attribute_key(prop)` |
 //! | `isSurroundedBy`, `hasOctalOrNonOctalDecimalEscapeSequence` | the same, on `&[u8]` |
 
+pub mod array;
 pub mod ast_utils;
 pub mod char_source;
 pub mod directives;
@@ -91,6 +93,7 @@ pub mod ts_scope;
 pub mod ts_utils;
 pub mod unicode;
 
+pub use array::array_sort_by;
 pub use estree_compat::{
     Target, TargetElement, TargetKind, catch_clause_span, chain_root, estree_ancestors,
     estree_parent, estree_span, estree_type_name, get_node_by_range_index, is_assignment_target,

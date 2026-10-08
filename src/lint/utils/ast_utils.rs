@@ -209,7 +209,7 @@ fn is_decimal_integer_text(raw: &[u8]) -> bool {
     match raw {
         [b'0'] => true,
         [b'0', rest @ ..] => {
-            rest.iter().all(u8::is_ascii_digit) && rest.iter().any(|c| matches!(c, b'8' | b'9'))
+            rest.iter().all(u8::is_ascii_digit) && strings::index_of_any(rest, b"89").is_some()
         }
         [b'1'..=b'9', rest @ ..] => {
             let mut after_separator = false;

@@ -699,6 +699,8 @@ impl<'a> Formatter<'a> {
             interned
         };
         self.cleaned.insert(interned, cleaned);
+        // What has been cleaned stays as it is.
+        self.cleaned.insert(cleaned, cleaned);
         cleaned
     }
 }

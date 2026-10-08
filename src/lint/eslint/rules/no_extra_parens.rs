@@ -1,11 +1,12 @@
 use bun_lint::prelude::*;
 use bun_lint::tokens::token_len;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ast_utils::{
     can_tokens_be_adjacent, get_precedence, get_static_property_name, is_decimal_integer,
     is_mixed_logical_and_coalesce_expressions, is_top_level_expression_statement,
 };
 use bun_lint::utils::estree_compat::{is_assignment_target, is_chain_root};
-use smallvec::SmallVec;
+use rustc_hash::FxHashSet;
 
 /// Disallow unnecessary parentheses.
 pub struct NoExtraParens {
@@ -112,12 +113,36 @@ fn is_immediate_function_prototype_method_call(e: Expr<'_>) -> bool {
             .is_some_and(|name| matches!(&*name, b"call" | b"apply"))
 }
 
-fn is_in_return_statement(e: Expr<'_>) -> bool {
-    Node::Expr(e).ancestors().any(|ancestor| match ancestor {
-        Node::Stmt(statement) => statement.tag() == StmtTag::Return,
-        Node::Func(func) => matches!(func.body(), FnBody::Expr(_)),
-        _ => false,
-    })
+/// What has been found out about a file.
+#[derive(Default)]
+pub struct State<'a> {
+    /// What is to be reported in the initializer of a `for`.
+    reports: Vec<Found<'a>>,
+    is_in_return_statement: AncestorMemo<'a, bool>,
+    is_in_initializer: AncestorMemo<'a, bool>,
+}
+
+impl<'a> State<'a> {
+    fn is_in_return_statement(&mut self, e: Expr<'a>) -> bool {
+        let found = self.is_in_return_statement.find(Node::Expr(e), |_, ancestor| match ancestor {
+            Node::Stmt(statement) => (statement.tag() == StmtTag::Return).then_some(true),
+            Node::Func(func) => matches!(func.body(), FnBody::Expr(_)).then_some(true),
+            _ => None,
+        });
+        found.is_some()
+    }
+
+    /// Whether `e` is in the initializer of a `for` statement.
+    fn is_in_initializer(&mut self, e: Expr<'a>) -> bool {
+        let found = self.is_in_initializer.find(Node::Expr(e), |child, ancestor| match ancestor {
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::For { init: Some(init), .. } => init.span().contains(child.span()).then_some(true),
+                _ => None,
+            },
+            _ => None,
+        });
+        found.is_some()
+    }
 }
 
 fn contains_assignment(e: Expr<'_>) -> bool {
@@ -217,21 +242,6 @@ impl<'a> Found<'a> {
         })
     }
 
-    /// The `for` statements in whose initializer it is, each with the initializer, the innermost
-    /// first.
-    fn enclosing_initializers(self) -> impl Iterator<Item = (Stmt<'a>, Stmt<'a>)> {
-        let span = self.node.span();
-        Node::Expr(self.node).ancestors().filter_map(move |ancestor| match ancestor {
-            Node::Stmt(statement) => match statement.kind() {
-                StmtKind::For {
-                    init: Some(init), ..
-                } if init.span().contains(span) => Some((statement, init)),
-                _ => None,
-            },
-            _ => None,
-        })
-    }
-
     /// Whether without the parentheses its first token would start a statement, the body of an
     /// arrow function or the head of a `for` with another meaning: ESLint's `tokensToIgnore`.
     fn is_first_token_ignored(self) -> bool {
@@ -307,49 +317,33 @@ fn is_safely_enclosing_in_expression<'a>(node: Node<'a>, child: Node<'a>) -> boo
     }
 }
 
-fn collect_in_expressions<'a>(node: Node<'a>, into: &mut Vec<Expr<'a>>) {
-    if let Node::Expr(e) = node
-        && matches!(e.kind(), ExprKind::Binary { op: BinOp::In, .. })
-    {
-        into.push(e);
-    }
-    node.for_each_child(|child| collect_in_expressions(child, into));
-}
-
-/// `for (let a = (b in c);;);` must not become `for (let a = b in c;;);`. Of `reports`, the one
-/// whose parentheses have to stay for `in_expression`, which is in the initializer of
-/// `for_statement`.
-fn node_to_exclude<'a>(
-    for_statement: Stmt<'a>,
-    in_expression: Expr<'a>,
-    reports: &[Found<'a>],
-) -> Option<Expr<'a>> {
-    let mut path: SmallVec<[Node<'a>; 16]> = SmallVec::new();
-    path.push(Node::Expr(in_expression));
-    path.extend(
-        Node::Expr(in_expression)
-            .ancestors()
-            .take_while(|&ancestor| ancestor != Node::Stmt(for_statement)),
-    );
-    let mut excluded = None;
-    let mut parent: Option<Node<'a>> = None;
-    for &node in path.iter().rev() {
-        if parent.is_some_and(|parent| is_safely_enclosing_in_expression(parent, node)) {
-            return None;
+/// `for (let a = (b in c);;);` must not become `for (let a = b in c;;);`. Takes out of `reported` those whose parentheses have to
+/// stay for an `in` in `initializer`. It goes down from the initializer, not into what cannot have such an `in`.
+fn keep_parens_around_in_expressions<'a>(initializer: Stmt<'a>, reported: &mut FxHashSet<Expr<'a>>) {
+    let root = match initializer.kind() {
+        StmtKind::Expr(e) => Node::Expr(e),
+        _ => Node::Stmt(initializer),
+    };
+    // Each with the outermost of `reported` around it. Only that has to stay.
+    let mut pending: Vec<(Node<'a>, Option<Expr<'a>>)> = vec![(root, None)];
+    while let Some((node, mut excluded)) = pending.pop() {
+        if let Node::Expr(e) = node {
+            match paren_count(e) {
+                0 => {}
+                1 if reported.contains(&e) => excluded = excluded.or(Some(e)),
+                // These stay, or one pair of them does.
+                _ => continue,
+            }
+            if let (ExprKind::Binary { op: BinOp::In, .. }, Some(excluded)) = (e.kind(), excluded) {
+                reported.remove(&excluded);
+            }
         }
-        parent = Some(node);
-        let Node::Expr(e) = node else {
-            continue;
-        };
-        match paren_count(e) {
-            0 => {}
-            // Only the outermost has to stay.
-            1 if reports.iter().any(|it| it.node == e) => excluded = excluded.or(Some(e)),
-            // These stay, or one pair of them does.
-            _ => return None,
-        }
+        node.for_each_child(|child| {
+            if !is_safely_enclosing_in_expression(node, child) {
+                pending.push((child, excluded));
+            }
+        });
     }
-    excluded
 }
 
 fn requires_leading_space<'a>(file: &'a File<'a>, left_paren: Span) -> bool {
@@ -509,7 +503,7 @@ impl NoExtraParens {
     }
 
     /// What the listener of ESLint's rule for the parent decides about the parentheses.
-    fn has_excess_parens(&self, found: Found<'_>) -> bool {
+    fn has_excess_parens<'a>(&self, found: Found<'a>, state: &mut State<'a>) -> bool {
         let Found { node, count, .. } = found;
         let file = node.file();
         let is_twice = count >= 2;
@@ -567,14 +561,14 @@ impl NoExtraParens {
                                 || is_twice
                                 || !is_anonymous_function_assignment_exception(node, op, value))
                     } else {
-                        (is_pattern || !self.except_return_assign || !is_in_return_statement(parent))
+                        (is_pattern || !self.except_return_assign || !state.is_in_return_statement(parent))
                             && has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR)
                     }
                 }
                 ExprKind::Cond { test, .. } => {
                     if (self.except_return_assign
                         && contains_assignment(parent)
-                        && is_in_return_statement(parent))
+                        && state.is_in_return_statement(parent))
                         || (self.except_cond_ternary && is_binary_or_logical(node))
                     {
                         return false;
@@ -661,7 +655,7 @@ impl NoExtraParens {
         if !self.rule_applies(e) {
             return;
         }
-        let Some(found) = Found::new(e).filter(|found| self.has_excess_parens(*found)) else {
+        let Some(found) = Found::new(e).filter(|found| self.has_excess_parens(*found, &mut cx.state)) else {
             return;
         };
         if found.count < 2 {
@@ -682,40 +676,39 @@ impl NoExtraParens {
                 return;
             }
         }
-        match found.enclosing_initializers().next() {
-            Some(_) => cx.state.push(found),
-            None => finish_report(found, cx),
+        match cx.file().has_stmts([StmtTag::For]) && cx.state.is_in_initializer(found.node) {
+            true => cx.state.reports.push(found),
+            false => finish_report(found, cx),
         }
     }
 
     /// Reports what is in the initializer of a `for`, except where the parentheses keep an `in`
     /// from ending the initializer.
     fn check_initializers<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mut reports = std::mem::take(&mut cx.state);
-        let mut loops: Vec<(Stmt<'a>, Stmt<'a>)> = Vec::new();
-        for found in &reports {
-            for it in found.enclosing_initializers() {
-                if !loops.contains(&it) {
-                    loops.push(it);
-                }
-            }
+        let reports = std::mem::take(&mut cx.state.reports);
+        if reports.is_empty() {
+            return;
         }
+        let mut reported: FxHashSet<Expr<'a>> = reports.iter().map(|it| it.node).collect();
+        let mut starts: Vec<u32> = reports.iter().map(|it| it.node.span().start).collect();
+        starts.sort_unstable();
+        let for_statements = cx.file().stmts_of_kind(StmtTag::For);
+        let mut initializers: Vec<Stmt<'a>> = for_statements
+            .filter_map(|it| match it.kind() {
+                StmtKind::For { init, .. } => init,
+                _ => None,
+            })
+            .filter(|init| {
+                let first = starts.partition_point(|start| *start < init.span().start);
+                starts.get(first).is_some_and(|start| *start < init.span().end)
+            })
+            .collect();
         // A loop in the initializer of another comes first.
-        loops.sort_by_key(|(_, init)| init.span().end);
-        let mut in_expressions = Vec::new();
-        for (for_statement, init) in loops {
-            if !reports.iter().any(|it| init.span().contains(it.node.span())) {
-                continue;
-            }
-            in_expressions.clear();
-            collect_in_expressions(Node::Stmt(init), &mut in_expressions);
-            for &in_expression in &in_expressions {
-                if let Some(excluded) = node_to_exclude(for_statement, in_expression, &reports) {
-                    reports.retain(|it| it.node != excluded);
-                }
-            }
+        initializers.sort_by_key(|init| init.span().end);
+        for initializer in initializers {
+            keep_parens_around_in_expressions(initializer, &mut reported);
         }
-        for found in reports {
+        for found in reports.into_iter().filter(|it| reported.contains(&it.node)) {
             finish_report(found, cx);
         }
     }
@@ -725,8 +718,7 @@ impl Rule for NoExtraParens {
     const META: Meta = Meta::eslint("no-extra-parens", Kind::Layout)
         .fixable(Fixable::Code)
         .deprecated();
-    /// What is to be reported in the initializer of a `for`.
-    type State<'a> = Vec<Found<'a>>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let all_nodes = options.str(0) != Some("functions");
@@ -758,7 +750,7 @@ impl Rule for NoExtraParens {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Found<'a>> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.exprs([ExprTag::ImportCall], |rule, e, cx| {
             if let ExprKind::ImportCall { args } = e.kind()
                 && let Some(source) = args.first()
@@ -772,6 +764,6 @@ impl Rule for NoExtraParens {
             file.parenthesized().for_each(|e| rule.check(e, cx));
             rule.check_initializers(cx);
         });
-        Vec::new()
+        State::default()
     }
 }

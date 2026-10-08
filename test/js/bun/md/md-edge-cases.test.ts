@@ -1835,3 +1835,9 @@ describe("list items with code in them", () => {
     );
   });
 });
+
+describe("indented HTML in a paragraph", () => {
+  test("a tag that is indented by four columns does not end the paragraph", () => {
+    expect(Markdown.html("a\n    <!-- b -->\n\nc\n    <div>\n")).toBe("<p>a\n<!-- b --></p>\n<p>c\n<div></p>\n");
+  });
+});

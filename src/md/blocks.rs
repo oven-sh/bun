@@ -473,7 +473,11 @@ impl Parser<'_> {
             }
 
             // Check for HTML block start
-            if off < self.size && self.text[off as usize] == b'<' && !self.flags.no_html_blocks {
+            if line.indent < self.code_indent_offset
+                && off < self.size
+                && self.text[off as usize] == b'<'
+                && !self.flags.no_html_blocks
+            {
                 self.html_block_type = self.is_html_block_start_condition(off);
 
                 // Type 7 can't interrupt paragraph

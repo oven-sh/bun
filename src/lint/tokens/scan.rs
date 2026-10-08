@@ -10,8 +10,8 @@
 //!
 //! The result is what the parser that ESLint uses for the file produces: see [`Dialect`].
 //!
-//! [`comments`] finds only the comments, which is all that many files are asked for. Between
-//! comments it jumps from one string, template, regular expression or JSX element to the next.
+//! [`comments`] has only the comments, which is all that many files are asked for, without a scan:
+//! the parser lists them.
 
 use super::{RawToken, TokenKind, skip_trivia, skip_trivia_back};
 use crate::ast::File;
@@ -107,23 +107,6 @@ fn operator_after(text: &[u8], mut at: u32) -> u32 {
 }
 
 impl Marks {
-    /// Only what tells where comments cannot be: `regexes` and `elements`.
-    fn for_comments(file: &File) -> Marks {
-        let mut marks = Marks::default();
-        for e in file.hir.exprs {
-            match e.kind {
-                ExprKind::Regex => marks.regexes.push((e.pos, e.end)),
-                ExprKind::Jsx(_) => marks.elements.push(e.pos),
-                _ => {}
-            }
-        }
-        if !marks.regexes.is_sorted() {
-            marks.regexes.sort_unstable();
-        }
-        marks.elements.sort();
-        marks
-    }
-
     fn new(file: &File, dialect: Dialect) -> Marks {
         let (hir, text) = (&file.hir, file.text());
         let is_typescript = dialect == Dialect::TypeScript;
@@ -315,22 +298,16 @@ impl Marks {
         }
     }
 
-    /// The first regular expression that starts at `at` or after it.
+    /// The end of the regular expression that starts at `at`.
     #[inline]
-    fn next_regex(&mut self, at: usize) -> Option<(usize, usize)> {
+    fn regex_end(&mut self, at: usize) -> Option<usize> {
         while let Some(&(start, end)) = self.regexes.get(self.next_regex) {
-            if start as usize >= at && end > start {
-                return Some((start as usize, end as usize));
+            if start as usize >= at {
+                return (start as usize == at && end > start).then_some(end as usize);
             }
             self.next_regex += 1;
         }
         None
-    }
-
-    /// The end of the regular expression that starts at `at`.
-    #[inline]
-    fn regex_end(&mut self, at: usize) -> Option<usize> {
-        self.next_regex(at).filter(|regex| regex.0 == at).map(|regex| regex.1)
     }
 }
 
@@ -574,8 +551,7 @@ struct Frame {
     angles: u32,
 }
 
-/// `TOKENS`: whether the tokens are wanted, or only the comments.
-struct Scanner<'a, const TOKENS: bool> {
+struct Scanner<'a> {
     text: &'a [u8],
     at: usize,
     tokens: Vec<RawToken>,
@@ -597,7 +573,7 @@ struct Scanner<'a, const TOKENS: bool> {
 pub(super) fn scan(file: &File) -> (Vec<RawToken>, Vec<RawToken>) {
     let dialect = Dialect::of(file);
     let capacity = file.text().len() / 5 + 1;
-    let scanner = Scanner::<true>::run(file, dialect, Marks::new(file, dialect), capacity);
+    let scanner = Scanner::run(file, dialect, Marks::new(file, dialect), capacity);
     (scanner.tokens, scanner.comments)
 }
 
@@ -607,7 +583,40 @@ pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
     if has_html_comments(file) && (strings::contains(text, b"<!--") || strings::contains(text, b"-->")) {
         return None;
     }
-    Some(Scanner::<false>::run(file, Dialect::of(file), Marks::for_comments(file), 0).comments)
+    let listed = file.hir.comments;
+    let mut comments = Vec::with_capacity(listed.len() + 1);
+    if text.starts_with(b"#!") {
+        let end = line_end(text, 2);
+        if end > 2 || Dialect::of(file) != Dialect::TypeScript {
+            comments.push(RawToken {
+                start: 0,
+                end: end as u32,
+                kind: TokenKind::Shebang,
+            });
+        }
+    }
+    comments.extend(listed.iter().map(|&(start, end)| RawToken {
+        start,
+        end,
+        kind: match text.get(start as usize + 1) {
+            Some(b'*') => TokenKind::Block,
+            _ => TokenKind::Line,
+        },
+    }));
+    Some(comments)
+}
+
+/// Where the line ends that `from` is in.
+fn line_end(text: &[u8], from: usize) -> usize {
+    let mut end = from;
+    loop {
+        // 0xE2 starts U+2028 and U+2029, which end a line too.
+        end = find(text, end, b"\n\r\xE2");
+        if text.get(end) != Some(&0xE2) || lexer::starts_with_line_break(&text[end..]) {
+            return end;
+        }
+        end += 1;
+    }
 }
 
 /// Whether the tokens of `file` are those of espree.
@@ -630,7 +639,7 @@ impl Dialect {
     }
 }
 
-impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
+impl<'a> Scanner<'a> {
     fn run(file: &File<'a>, dialect: Dialect, marks: Marks, capacity: usize) -> Self {
         let text = file.text();
         let mut scanner = Scanner {
@@ -655,8 +664,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
         let mut mode = Mode::Code;
         while scanner.at < text.len() {
             mode = match mode {
-                Mode::Code if TOKENS => scanner.code(),
-                Mode::Code => scanner.skip_code(),
+                Mode::Code => scanner.code(),
                 Mode::OpeningTag => scanner.tag(false),
                 Mode::ClosingTag => scanner.tag(true),
                 Mode::Children => scanner.children(),
@@ -669,13 +677,11 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
     #[inline]
     fn token(&mut self, kind: TokenKind, start: usize, end: usize) {
         let end = end.min(self.text.len());
-        if TOKENS {
-            self.tokens.push(RawToken {
-                start: start as u32,
-                end: end as u32,
-                kind,
-            });
-        }
+        self.tokens.push(RawToken {
+            start: start as u32,
+            end: end as u32,
+            kind,
+        });
         self.at = end;
     }
 
@@ -751,59 +757,6 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
             self.leave();
             Mode::OpeningTag
         })
-    }
-
-    /// `code` without the tokens: from one character that can start or end something in which
-    /// `//` and `/*` are not comments to the next.
-    fn skip_code(&mut self) -> Mode {
-        let text = self.text;
-        loop {
-            let regex = self.marks.next_regex(self.at);
-            let code = &text[..regex.map_or(text.len(), |regex| regex.0)];
-            let at = match (self.frames.is_empty(), self.marks.elements.list.is_empty()) {
-                (true, true) => find(code, self.at, b"/\"'`"),
-                (true, false) => find(code, self.at, b"/\"'`<"),
-                (false, _) => find(code, self.at, b"/\"'`<>{}"),
-            };
-            if at == code.len() {
-                self.at = regex.map_or(text.len(), |regex| regex.1);
-                if regex.is_none() {
-                    return Mode::Code;
-                }
-                continue;
-            }
-            self.at = at;
-            match text[at] {
-                b'/' => match self.byte(at + 1) {
-                    b'/' => self.line_comment(TokenKind::Line),
-                    b'*' => self.block_comment(),
-                    _ => self.at += 1,
-                },
-                quote @ (b'"' | b'\'') => self.string(quote),
-                b'`' => self.template(),
-                b'{' => {
-                    self.braces += 1;
-                    self.at += 1;
-                }
-                b'}' => {
-                    if let Some(mode) = self.close_brace() {
-                        return mode;
-                    }
-                }
-                b'<' if self.marks.elements.has(at) => return self.open_element(Mode::Code),
-                b'<' => {
-                    self.angles += u32::from(self.angles > 0);
-                    self.at += 1;
-                }
-                // Not the `>` of `=>`.
-                _ if at > 0 && text[at - 1] == b'=' => self.at += 1,
-                _ => {
-                    if let Some(mode) = self.close_angle() {
-                        return mode;
-                    }
-                }
-            }
-        }
     }
 
     /// Tokens of JavaScript and TypeScript, until something else starts or continues.
@@ -1125,17 +1078,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
 
     /// From `//` or `#!` to the end of the line.
     fn line_comment(&mut self, kind: TokenKind) {
-        let text = self.text;
-        let mut end = self.at + 2;
-        loop {
-            // 0xE2 starts U+2028 and U+2029, which end a line too.
-            end = find(text, end, b"\n\r\xE2");
-            if self.byte(end) != 0xE2 || lexer::starts_with_line_break(&text[end..]) {
-                break;
-            }
-            end += 1;
-        }
-        self.comment(kind, end);
+        self.comment(kind, line_end(self.text, self.at + 2));
     }
 
     fn block_comment(&mut self) {

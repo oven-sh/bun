@@ -78,10 +78,10 @@ fn batch(path: &str) {
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
         let path = String::from_utf8_lossy(path);
         let line = crate::with_file(&path, code, &language_of(&case), |file| {
-            // Before the tokens are asked for, this is the scan that only finds comments.
+            // Before the tokens are asked for, these are the comments that the parser lists.
             let mut comments = String::new();
             write_tokens(&mut comments, code, file.comments());
-            assert!(bun_lint::tokens::scan_comments_again(file).is_some(), "the scans disagree on the comments");
+            assert!(bun_lint::tokens::scan_comments_again(file).is_some(), "the parser and the scan disagree on the comments");
             let mut out = format!("{{\"errors\":{},\"tokens\":", file.has_parse_errors());
             write_tokens(&mut out, code, file.tokens());
             // Where `token.value` is not the text: the index of the token, and the value.
@@ -234,7 +234,7 @@ fn check<'a>(file: &'a File<'a>) -> Option<String> {
         end = token.end();
     }
     if !file.has_parse_errors() && bun_lint::tokens::scan_comments_again(file).is_none() {
-        return Some("the scans disagree on the comments".to_owned());
+        return Some("the parser and the scan disagree on the comments".to_owned());
     }
     None
 }

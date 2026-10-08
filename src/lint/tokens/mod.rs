@@ -7,7 +7,7 @@
 //! - The methods of [`File`] below are those of ESLint's `SourceCode`, as iterators. The first
 //!   call scans the whole file, so a rule should decide from the syntax whether there is anything
 //!   to report, and look at tokens only then. After that a call is a binary search. The methods
-//!   that only return comments (`comments*`) need a scan that is several times cheaper.
+//!   that only return comments (`comments*`) need no scan: the parser lists the comments.
 //!
 //! The tokens have the ranges and the types that ESLint's parser for the file gives them:
 //! typescript-estree for TypeScript and where `languageOptions.parser` says so, otherwise espree.
@@ -454,13 +454,13 @@ pub fn scan_again(file: &File) -> usize {
     tokens.len() + comments.len()
 }
 
-/// The same for the scan that finds only the comments.
+/// The same for the comments alone, which are made from the list of the parser.
 #[doc(hidden)]
 pub fn comments_again(file: &File) -> usize {
     scan::comments(file).map_or(0, |comments| comments.len())
 }
 
-/// Whether the two scans find the same comments: their number, `None` if not.
+/// Whether the parser lists the comments that the scan finds: their number, `None` if not.
 #[doc(hidden)]
 pub fn scan_comments_again(file: &File) -> Option<usize> {
     let Some(comments) = scan::comments(file) else {

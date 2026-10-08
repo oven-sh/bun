@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashSet;
 
 /// Disallow specified names in exports.
 pub struct NoRestrictedExports {
@@ -22,19 +23,6 @@ const RESTRICTED_NAMED: Message = Message::new(
 );
 const RESTRICTED_DEFAULT: Message =
     Message::new("restrictedDefault", "Exporting 'default' is restricted.");
-
-/// Whether `binding` is the first in `declarations` that binds its name.
-fn is_first_binding_of_name<'a>(declarations: List<'a, VarDecl<'a>>, binding: Pat<'a>) -> bool {
-    let mut first = None;
-    for declaration in declarations {
-        declaration.pat().for_each_binding(&mut |it| {
-            if first.is_none() && it.as_ident() == binding.as_ident() {
-                first = Some(it);
-            }
-        });
-    }
-    first == Some(binding)
-}
 
 impl NoRestrictedExports {
     fn is_restricted_name(&self, name: Name) -> bool {
@@ -110,12 +98,14 @@ impl NoRestrictedExports {
                 }
             }
             StmtKind::Var(declarations) => {
+                // A name is reported where it is bound first.
+                let mut reported: FxHashSet<Name<'a>> = FxHashSet::default();
                 for declaration in declarations {
                     declaration.pat().for_each_binding(&mut |binding| {
                         let Some(name) = binding.as_ident() else {
                             return;
                         };
-                        if !self.is_restricted_name(name) || !is_first_binding_of_name(declarations, binding) {
+                        if !self.is_restricted_name(name) || !reported.insert(name) {
                             return;
                         }
                         // The type annotation is part of the `Identifier`.

@@ -184,7 +184,15 @@ impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let param = self.0;
         format_node(param.span(), || param.as_ast_nodes().parent(), f, |f| {
-            write!(f, [source_text(param.pat().span()), param.ty().map(FormatTypeAnnotation)]);
+            write!(
+                f,
+                [
+                    param.is_rest().then_some("..."),
+                    source_text(param.pat().span()),
+                    param.is_optional().then_some("?"),
+                    param.ty().map(FormatTypeAnnotation)
+                ]
+            );
         });
     }
 }

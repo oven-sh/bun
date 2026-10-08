@@ -70,6 +70,7 @@ use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::rule::Meta;
 use crate::runner::{AnyRule, Enabled, RuleEntry};
+use crate::span::Span;
 use directives::{ConfigComment, Label};
 use message::Locator;
 use std::borrow::Cow;
@@ -467,55 +468,99 @@ impl Linter {
 
         let report_unused = (options.report_unused_disable_directives)
             .unwrap_or(config.linter.report_unused_disable_directives);
-        let mut has_directives = !disable_directives.is_empty();
-        if config.understands_oxlint_comments && !config.linter.no_inline_config {
-            let is_directive = |it: &&ConfigComment| {
-                matches!(
-                    it.label,
-                    Label::Disable | Label::Enable | Label::DisableLine | Label::DisableNextLine
-                )
-            };
-            has_directives = comments.iter().any(|it| is_directive(&it));
-            let can_tell = |name: &[u8]| {
-                let slash = bun_core::strings::last_index_of_char(name, b'/');
-                match config.find_js_rule(name) {
-                    Some(_) => true,
-                    None if config.find_rule(&self.registry, name).is_some() => true,
-                    // One of a plugin that is skipped.
-                    None if slash.is_some() && config.has_skipped_rules => false,
-                    None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
+        let understands_oxlint_comments =
+            config.understands_oxlint_comments && !config.linter.no_inline_config;
+        let is_directive = |it: &&ConfigComment| {
+            matches!(
+                it.label,
+                Label::Disable | Label::Enable | Label::DisableLine | Label::DisableNextLine
+            )
+        };
+        let has_directives = match understands_oxlint_comments {
+            true => comments.iter().any(|it| is_directive(&it)),
+            false => !disable_directives.is_empty(),
+        };
+        let can_tell = |name: &[u8]| {
+            let slash = bun_core::strings::last_index_of_char(name, b'/');
+            match config.find_js_rule(name) {
+                Some(_) => true,
+                None if config.find_rule(&self.registry, name).is_some() => true,
+                // One of a plugin that is skipped.
+                None if slash.is_some() && config.has_skipped_rules => false,
+                None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
+            }
+        };
+        // Adds to each of `messages`, which are sorted by position, what suppresses it.
+        let apply_comments =
+            |report_unused, wants_fixes, wants_suppressions, messages: &mut Vec<LintMessage>| {
+                if understands_oxlint_comments {
+                    disable_oxlint::apply(
+                        &disable_oxlint::Input {
+                            file,
+                            report_unused,
+                            wants_fixes,
+                            rules_to_ignore: &rules_to_ignore,
+                            has_skipped_rules: config.has_skipped_rules,
+                            can_tell: &can_tell,
+                        },
+                        comments.iter().filter(is_directive),
+                        messages,
+                    );
+                    messages.sort_by_key(|it| (it.line, it.column));
+                } else {
+                    disable::apply_disable_directives(
+                        &disable::Input {
+                            file,
+                            parents: &parents,
+                            directives: &disable_directives,
+                            report_unused,
+                            wants_fixes,
+                            wants_suppressions,
+                            rules_to_ignore: &rules_to_ignore,
+                            has_skipped_rules: config.has_skipped_rules,
+                        },
+                        messages,
+                    );
                 }
             };
-            disable_oxlint::apply(
-                &disable_oxlint::Input {
-                    file,
-                    report_unused,
-                    wants_fixes: fixes_comments,
-                    rules_to_ignore: &rules_to_ignore,
-                    has_skipped_rules: config.has_skipped_rules,
-                    can_tell: &can_tell,
-                },
-                comments.iter().filter(is_directive),
-                &mut problems,
-            );
-            problems.sort_by_key(|it| (it.line, it.column));
+        apply_comments(
+            report_unused,
+            fixes_comments,
+            options.wants_suppressions,
+            &mut problems,
+        );
+
+        // What is missing of a rule is not known. The reports that are kept can all be in a part of the file in which the rule is
+        // disabled, and the missing ones after the `eslint-enable`. So a message of the rule is tried wherever there is code.
+        let mut off_everywhere = if has_directives {
+            cut.clone()
         } else {
-            disable::apply_disable_directives(
-                &disable::Input {
-                    file,
-                    parents: &parents,
-                    directives: &disable_directives,
-                    report_unused,
-                    wants_fixes: fixes_comments,
-                    wants_suppressions: options.wants_suppressions,
-                    rules_to_ignore: &rules_to_ignore,
-                    has_skipped_rules: config.has_skipped_rules,
-                },
-                &mut problems,
-            );
+            Vec::new()
+        };
+        // Only then: to ask for the tokens of a file splits it into tokens.
+        let mut places = (!off_everywhere.is_empty())
+            .then(|| places_to_probe(file))
+            .into_iter()
+            .flatten();
+        while !off_everywhere.is_empty() {
+            let places = places
+                .by_ref()
+                .take(PROBES_AT_A_TIME)
+                .map(|it| (locator.position(it.start), locator.position(it.end)));
+            let mut probes: Vec<LintMessage> = places
+                .flat_map(|at| off_everywhere.iter().map(move |rule| probe(rule, at)))
+                .collect();
+            if probes.is_empty() {
+                break;
+            }
+            apply_comments(Severity::Off, false, false, &mut probes);
+            off_everywhere.retain(|rule| {
+                let mut of_rule = probes.iter().filter(|it| it.rule_id.as_ref() == Some(rule));
+                of_rule.all(|it| !it.suppressions.is_empty())
+            });
         }
         for rule in &cut {
-            suppress_closing_like_the_rest(&mut problems, rule);
+            suppress_closing_like_the_rest(&mut problems, rule, off_everywhere.contains(rule));
         }
         if !has_directives {
             result.messages = problems;
@@ -539,13 +584,49 @@ fn is_closing(message: &LintMessage) -> bool {
         )
 }
 
-/// That reports of `rule` are missing is not shown if and only if none of those that are kept is shown: then comments switch the
-/// rule off here. Which comment happens to be where the first missing report would be does not count.
-fn suppress_closing_like_the_rest(problems: &mut [LintMessage], rule: &RuleId) {
+/// How many places are tried in one go whether comments switch a rule off there.
+const PROBES_AT_A_TIME: usize = 1 << 16;
+
+/// The tokens at which what the comments do with a message can be something else than at the token before: the first of a line,
+/// and one after a comment.
+fn places_to_probe<'a>(file: &'a File<'a>) -> impl Iterator<Item = Span> + 'a {
+    let mut end_of_the_last = None;
+    file.tokens().filter_map(move |token| {
+        let span = token.span();
+        let is_next_to_the_last = end_of_the_last.replace(span.end).is_some_and(|end| {
+            file.slice(Span::before(end, span))
+                .iter()
+                .all(|it| matches!(it, b' ' | b'\t'))
+        });
+        (!is_next_to_the_last).then_some(span)
+    })
+}
+
+/// A message of `rule` from a line and a column to another, for the comments to suppress or not. It is not reported.
+///
+/// It has an end: for oxlint a comment is about what overlaps its range, which nothing without a length does at the start of it.
+fn probe(rule: &RuleId, ((line, column), end): ((u32, u32), (u32, u32))) -> LintMessage {
+    LintMessage {
+        rule_id: Some(rule.clone()),
+        line,
+        column,
+        end: Some(end),
+        ..LintMessage::default()
+    }
+}
+
+/// That reports of `rule` are missing is not shown if and only if none of those that are kept is shown and comments switch the rule
+/// off wherever there is code. Which comment happens to be where the first missing report would be does not count.
+fn suppress_closing_like_the_rest(
+    problems: &mut [LintMessage],
+    rule: &RuleId,
+    is_off_everywhere: bool,
+) {
     let mut kept = problems
         .iter()
         .filter(|it| it.rule_id.as_ref() == Some(rule) && !is_closing(it));
-    let suppressions = match kept.clone().all(|it| !it.suppressions.is_empty()) {
+    let suppressions = match is_off_everywhere && kept.clone().all(|it| !it.suppressions.is_empty())
+    {
         true => kept
             .next_back()
             .map(|it| it.suppressions.clone())

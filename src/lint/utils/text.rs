@@ -12,6 +12,7 @@
 //! | `String(n)` | [`number_to_string`] |
 //! | `Number(s)` | [`string_to_number`] |
 //! | `JSON.stringify(s)` | [`json_stringify`] |
+//! | `String.fromCodePoint(...values)`, `String.fromCharCode(...values)` | [`string_from_code_points`], [`push_code_point`] |
 //! | `a < b`, `a.localeCompare`-free sorting | [`compare`] |
 //! | `require("natural-compare")` | [`natural_compare`] |
 //! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
@@ -360,9 +361,12 @@ pub fn is_identifier_name(text: &[u8]) -> bool {
 
 /// `JSON.stringify(text)`
 pub fn json_stringify(text: &[u8]) -> Vec<u8> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = Vec::with_capacity(text.len() + 2);
     out.push(b'"');
-    for &c in text {
+    let mut at = 0;
+    while let Some(&c) = text.get(at) {
+        at += 1;
         match c {
             b'"' => out.extend_from_slice(b"\\\""),
             b'\\' => out.extend_from_slice(b"\\\\"),
@@ -372,16 +376,69 @@ pub fn json_stringify(text: &[u8]) -> Vec<u8> {
             0x08 => out.extend_from_slice(b"\\b"),
             0x0C => out.extend_from_slice(b"\\f"),
             0..0x20 => {
-                const HEX: &[u8; 16] = b"0123456789abcdef";
                 out.extend_from_slice(b"\\u00");
                 out.push(HEX[usize::from(c >> 4)]);
                 out.push(HEX[usize::from(c & 15)]);
+            }
+            // Half of a surrogate pair.
+            0xED if matches!(code_point_at(text, at - 1), (0xD800..=0xDFFF, 3)) => {
+                let half = code_point_at(text, at - 1).0;
+                out.extend_from_slice(b"\\u");
+                out.extend(
+                    (0..4)
+                        .rev()
+                        .map(|digit| HEX[(half >> (4 * digit) & 15) as usize]),
+                );
+                at += 2;
             }
             c => out.push(c),
         }
     }
     out.push(b'"');
     out
+}
+
+/// Appends the code point `c` to `text`. Half of a surrogate pair is the three bytes that its code
+/// point would have, as in the value of a string literal.
+pub fn push_code_point(text: &mut Vec<u8>, c: u32) {
+    match char::from_u32(c) {
+        Some(c) => text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+        None => text.extend_from_slice(&[
+            0xE0 | ((c >> 12) & 0x0F) as u8,
+            0x80 | ((c >> 6) & 0x3F) as u8,
+            0x80 | (c & 0x3F) as u8,
+        ]),
+    }
+}
+
+/// `String.fromCodePoint(...values)`, also `String.fromCharCode(...values)`: a lead and a trail
+/// surrogate in a row are one character.
+pub fn string_from_code_points(values: impl IntoIterator<Item = u32>) -> Vec<u8> {
+    let mut text = Vec::new();
+    let mut lead: Option<u32> = None;
+    for value in values {
+        match (lead.take(), value) {
+            (Some(lead), 0xDC00..=0xDFFF) => {
+                push_code_point(
+                    &mut text,
+                    0x10000 + ((lead - 0xD800) << 10) + (value - 0xDC00),
+                );
+            }
+            (alone, _) => {
+                if let Some(alone) = alone {
+                    push_code_point(&mut text, alone);
+                }
+                match value {
+                    0xD800..=0xDBFF => lead = Some(value),
+                    _ => push_code_point(&mut text, value),
+                }
+            }
+        }
+    }
+    if let Some(alone) = lead {
+        push_code_point(&mut text, alone);
+    }
+    text
 }
 
 /// The length in bytes of the line break that `text` starts with: `\r\n`, `\r`, `\n`, U+2028 or

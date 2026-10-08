@@ -239,6 +239,25 @@ impl<'a> StaticValue<'a> {
         }
     }
 
+    /// `a === b`. `None` if that cannot be told: two objects that are written the same.
+    #[inline]
+    pub fn js_strict_equals(&self, other: &StaticValue<'a>) -> Option<bool> {
+        self.strict_equals(other).ok()
+    }
+
+    /// `a == b`. `None` if a conversion throws, or if it cannot be told.
+    #[inline]
+    pub fn js_loose_equals(&self, other: &StaticValue<'a>) -> Option<bool> {
+        self.loose_equals(other).ok()
+    }
+
+    /// How `a` compares with `b` for `<`, `<=`, `>` and `>=`. `Some(None)` if one is `NaN`, so that
+    /// all four are false. `None` if a conversion throws.
+    #[inline]
+    pub fn js_compare(&self, other: &StaticValue<'a>) -> Option<Option<Ordering>> {
+        self.compare(other).ok()
+    }
+
     /// The name of the property `object[value]`: the symbol, or `String(value)`. `None` if the
     /// conversion throws.
     pub fn to_js_property_key(&self) -> Option<PropertyKey<'a>> {

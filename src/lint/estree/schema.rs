@@ -673,7 +673,17 @@ estree_schema! {
         node TypeAnnotation = assertion_type(v)?;
     }
     TSNonNullExpression [ExprTag::NonNull] (v) {
-        node Expression = VNode::of_expr(of!(expr v, ExprKind::NonNull(e) => e));
+        part Expression = {
+            // The next `!` to the left in `x!!!`, if there is one.
+            let inner = match v.part {
+                Part::NonNull(i) => i,
+                _ => v.expr()?.inner_non_null_spans().len() as u32,
+            };
+            match inner.checked_sub(1) {
+                Some(next) => Some(v.with(Part::NonNull(next))),
+                None => VNode::of_expr(of!(expr v, ExprKind::NonNull(e) => e)),
+            }
+        };
     }
     TSInstantiationExpression [ExprTag::Instantiation] (v) {
         node Expression = VNode::of_expr(of!(expr v, ExprKind::Instantiation { expr, .. } => expr));

@@ -93,7 +93,8 @@ pub enum ExprKind<'a> {
     },
     /// `expr as const`, `<const>expr`
     AsConst(Expr<'a>),
-    /// `expr!`
+    /// `expr!`. Also `expr!!` and so on, which is one expression that ends with the last `!`: see
+    /// [`Expr::inner_non_null_spans`]. `(expr!)!` is two.
     NonNull(Expr<'a>),
     /// `f<T>` that is not called.
     Instantiation {
@@ -538,6 +539,32 @@ impl<'a> Expr<'a> {
     pub fn is_in_type_query(self) -> bool {
         let operands = self.file.bound.type_query_operands;
         !operands.is_empty() && operands.binary_search(&self.id).is_ok()
+    }
+
+    /// `x!!!` is one `NonNull` of `x`. ESLint has a `TSNonNullExpression` for each `!`, one in the
+    /// other. These are the ranges of those in this one, the innermost first: `x!`, `x!!`. The `!`
+    /// of each is its last character. Empty for `x!`, as it almost always is, and for anything that
+    /// is not a `NonNull`.
+    pub fn inner_non_null_spans(self) -> impl DoubleEndedIterator<Item = Span> + ExactSizeIterator + 'a {
+        let all = self.file.hir.non_null_ends;
+        let ends = match all.is_empty() {
+            true => all,
+            false => {
+                let first = all.partition_point(|it| it.0.0 < self.id.0);
+                let count = all[first..].partition_point(|it| it.0 == self.id);
+                &all[first..first + count]
+            }
+        };
+        let start = self.span().start;
+        ends.iter().map(move |it| Span::new(start, it.1))
+    }
+
+    /// The number of `!` of a `NonNull`: 2 for `x!!`. 0 for anything else.
+    pub fn non_null_count(self) -> usize {
+        match self.tag() {
+            ExprTag::NonNull => self.inner_non_null_spans().len() + 1,
+            _ => 0,
+        }
     }
 
     /// Without the syntax around it that only concerns types: `e as T`, `<T>e`, `e as const`,

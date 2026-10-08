@@ -98,6 +98,8 @@ pub(super) enum Part {
     /// `Expr`: of a JSX element or fragment.
     Opening,
     Closing,
+    /// `Expr`: the `TSNonNullExpression` at this index of those in `x!!!`, the innermost first.
+    NonNull(u32),
     /// `Expr`: the `JSXText` that starts here and has no expression of its own.
     Whitespace(u32),
     /// The `TemplateElement` at this index.
@@ -709,6 +711,7 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
             };
         }
         Part::ConstType => return TSTypeReference,
+        Part::NonNull(_) => return TSNonNullExpression,
         Part::Whitespace(_) => return JSXText,
         Part::Opening | Part::Closing => {
             let is_fragment = matches!(e.kind(), ExprKind::Jsx(jsx) if jsx.is_fragment());
@@ -962,6 +965,7 @@ impl<'a> VNode<'a> {
                 Part::Container => e.jsx_container_span(),
                 Part::Main if e.is_missing() => Some(e.jsx_container_span()?.shrink(1, 1)),
                 Part::ConstType => e.const_keyword_span(),
+                Part::NonNull(i) => e.inner_non_null_spans().nth(i as usize),
                 Part::Whitespace(start) => {
                     let rest = file.text().get(start as usize..)?;
                     let len = bun_core::strings::index_of_any(rest, b"<{").unwrap_or(rest.len());

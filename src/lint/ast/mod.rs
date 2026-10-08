@@ -23,6 +23,7 @@
 //!   called with them, a walk passes over them, and nothing has them as its parent.
 //! - Placeholders are [`ExprKind::Missing`] and [`PatKind::Missing`]: a hole in an array, the empty
 //!   `{}` of JSX. They are not nodes either.
+//! - `x!!` is one [`ExprKind::NonNull`]: see [`Expr::inner_non_null_spans`].
 //! - The default of the shorthand `{ a = 1 }` is an [`ExprKind::Assign`] that is the value of the
 //!   property. A [`TupleElem`] is there for every element of a tuple type, also for a plain `T`.
 //!
@@ -116,6 +117,7 @@ slices! {
         modifiers: hir::Modifier,
         names: hir::Name,
         parens: (hir::ExprId, u32, u32),
+        non_null_ends: (hir::ExprId, u32),
         jsx_expressions: (hir::ExprId, u32, u32),
         body_starts: (hir::FnId, u32),
         modifiers_of_params: hir::Span<hir::ModifierId>,

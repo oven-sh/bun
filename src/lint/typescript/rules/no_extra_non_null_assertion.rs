@@ -8,6 +8,11 @@ const NO_EXTRA_NON_NULL_ASSERTION: Message =
 
 impl NoExtraNonNullAssertion {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // All but the last `!` of `x!!!`.
+        for inner in e.inner_non_null_spans() {
+            cx.report(inner, NO_EXTRA_NON_NULL_ASSERTION)
+                .fix(|fixer| fixer.remove(Span::new(inner.end - 1, inner.end)));
+        }
         let Node::Expr(parent) = e.parent() else {
             return;
         };

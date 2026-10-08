@@ -46,6 +46,10 @@ impl Rule for NoNonNullAssertion {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.exprs([ExprTag::NonNull], |_, e, cx| {
+            // All but the last `!` of `x!!!`. What is around each is an assertion: nothing to suggest.
+            for inner in e.inner_non_null_spans() {
+                cx.report(inner, NO_NON_NULL);
+            }
             let report = cx.report(e, NO_NON_NULL);
             let Some(suggestion) = suggestion(e) else {
                 return;

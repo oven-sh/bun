@@ -85,6 +85,7 @@ fn above_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
             ExprKind::Jsx(jsx) if jsx.tag() == Some(e) => VNode::new(above, Part::Opening),
             ExprKind::Jsx(jsx) if jsx.close_tag() == Some(e) => VNode::new(above, Part::Closing),
             ExprKind::Spread(_) if above.jsx_container_span().is_some() => VNode::new(above, Part::Container),
+            ExprKind::NonNull(_) if above.inner_non_null_spans().len() > 0 => VNode::new(above, Part::NonNull(0)),
             _ => VNode::new(above, Part::Main),
         },
         Node::Stmt(statement) => (attribute(parent, statement.import_attributes()))
@@ -213,6 +214,7 @@ impl<'a> VNode<'a> {
                 Chain => return above_chain(e),
                 Container => return above_expr(e),
                 ConstName => self.with(ConstType),
+                NonNull(i) if (i as usize) + 1 < e.inner_non_null_spans().len() => self.with(NonNull(i + 1)),
                 TypeArgs if matches!(e.kind(), ExprKind::Jsx(_)) => self.with(Opening),
                 _ => main,
             },

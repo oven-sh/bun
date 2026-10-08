@@ -1046,17 +1046,28 @@ impl Parser<'_> {
     fn template_expression(&mut self) -> ExprId {
         // A `NoSubstitutionTemplateLiteral` is a string.
         if self.token() == T::NoSubstitutionTemplate {
+            self.piece_of_template_without_tag();
             return self.token_expr(ExprKind::String(self.lx.atom));
         }
         let start = self.pos();
-        let exprs = self.template_parts();
+        let exprs = self.template_parts(false);
         self.finish_expr(ExprKind::Template { exprs }, start)
     }
 
+    /// The token is a piece of a template in which every escape has to be valid.
+    pub(crate) fn piece_of_template_without_tag(&mut self) {
+        if self.lx.has_escape {
+            self.report();
+        }
+    }
+
     /// The substitutions of the template at the token. The texts follow them in the list of ids.
-    fn template_parts(&mut self) -> IdList<ExprId> {
+    fn template_parts(&mut self, has_tag: bool) -> IdList<ExprId> {
         // The first text, then each substitution and the text after it.
         let base = self.s.ids.len();
+        if !has_tag {
+            self.piece_of_template_without_tag();
+        }
         self.s.ids.push(self.lx.atom.0);
         let mut goes_on = self.token() == T::TemplateHead;
         self.next();
@@ -1067,6 +1078,9 @@ impl Parser<'_> {
                 break;
             }
             self.lx.rescan_template_continuation();
+            if !has_tag {
+                self.piece_of_template_without_tag();
+            }
             self.s.ids.push(expression.0);
             self.s.ids.push(self.lx.atom.0);
             goes_on = self.token() == T::TemplateMiddle;
@@ -1090,7 +1104,7 @@ impl Parser<'_> {
     ) -> ExprId {
         let backtick = self.pos();
         let head = self.lx.atom;
-        let exprs = self.template_parts();
+        let exprs = self.template_parts(true);
         // A `NoSubstitutionTemplateLiteral` is a string, as it is without a tag.
         let kind = match exprs.is_empty() {
             true => ExprKind::String(head),

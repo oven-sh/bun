@@ -445,7 +445,9 @@ impl Parser<'_> {
             T::Null => return self.token_type(TypeNodeKind::Keyword(Keyword::Null)),
             T::True => return self.token_type(TypeNodeKind::BoolLit(true)),
             T::False => return self.token_type(TypeNodeKind::BoolLit(false)),
-            T::String | T::NoSubstitutionTemplate => {
+            T::String => return self.token_type(TypeNodeKind::StringLit(self.lx.atom)),
+            T::NoSubstitutionTemplate => {
+                self.piece_of_template_without_tag();
                 return self.token_type(TypeNodeKind::StringLit(self.lx.atom));
             }
             T::Number => {
@@ -793,6 +795,7 @@ impl Parser<'_> {
         let start = self.pos();
         // The first text, then each type and the text after it.
         let base = self.s.ids.len();
+        self.piece_of_template_without_tag();
         self.s.ids.push(self.lx.atom.0);
         self.next();
         loop {
@@ -802,6 +805,7 @@ impl Parser<'_> {
                 break;
             }
             self.lx.rescan_template_continuation();
+            self.piece_of_template_without_tag();
             self.s.ids.push(ty.0);
             self.s.ids.push(self.lx.atom.0);
             let goes_on = self.token() == T::TemplateMiddle;

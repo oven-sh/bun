@@ -190,6 +190,7 @@ impl<'a> Parser<'a> {
         lx.comments = std::mem::take(&mut file.comments);
         let is_ecmascript = options.dialect.ecmascript && options.is_javascript;
         lx.is_ecmascript = is_ecmascript;
+        lx.is_typescript_5 = options.dialect.typescript_5;
         lx.is_script = is_ecmascript && options.dialect.script;
         let mut context = ctx::TOP_LEVEL;
         if options.is_declaration_file {

@@ -116,6 +116,9 @@ pub(crate) enum T {
     Var,
     Void,
     While,
+    /// A reserved word that is written with an escape: a name where any word is one, and nothing
+    /// else.
+    EscapedReservedWord,
     With,
     // The words that are reserved in strict mode, from here to `Yield`.
     Implements,

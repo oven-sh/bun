@@ -390,7 +390,8 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
 /// `b = { a = 1 }`, which is an error.
 fn is_default_in_assignment_target(e: Expr<'_>) -> bool {
     let is_element = match e.parent() {
-        Node::Expr(parent) => parent.tag() == ExprTag::Array,
+        // `[...a = 1] = b` is an error.
+        Node::Expr(parent) => matches!(parent.tag(), ExprTag::Array | ExprTag::Spread),
         Node::Prop(prop) if prop.kind() == PropKind::Shorthand => return prop.value() == Some(e),
         Node::Prop(prop) => prop.value() == Some(e) && !prop.is_jsx_attribute(),
         _ => false,

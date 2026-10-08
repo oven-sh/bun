@@ -545,6 +545,11 @@ impl Subcommand {
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
     }
+
+    /// Its pack, version or publish scripts get the directory bun was started in as `INIT_CWD`.
+    pub(crate) fn records_launch_dir(self) -> bool {
+        matches!(self, Self::Pack | Self::Pm | Self::Publish)
+    }
 }
 
 /// The resolved outcome of `--filter` for one install: the importer ids whose dependencies get installed.
@@ -1495,7 +1500,7 @@ pub fn init(
     // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::instance();
-    if matches!(subcommand, Subcommand::Pm | Subcommand::Publish) {
+    if subcommand.records_launch_dir() {
         // The walk to the project root below changes the top-level directory.
         bun_core::set_launch_dir(fs.top_level_dir());
     }

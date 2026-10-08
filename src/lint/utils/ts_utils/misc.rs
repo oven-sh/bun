@@ -146,6 +146,16 @@ impl<'a> NodeWithKey<'a> {
         }
     }
 
+    /// The text of the `key` of a `Member` or a `Prop`, without the brackets.
+    fn key_text(self) -> &'a [u8] {
+        let (key, file) = match self {
+            NodeWithKey::Member(member) => (member.key(), member.file()),
+            NodeWithKey::Prop(prop) => (prop.key(), prop.file()),
+            NodeWithKey::MemberExpression(_) => return b"",
+        };
+        key.map_or(b"", |key| file.slice(key.inner_span(file)))
+    }
+
     pub(super) fn is_constructor(self) -> bool {
         matches!(self, NodeWithKey::Member(member) if member.kind() == MemberKind::Constructor)
     }
@@ -192,6 +202,11 @@ pub fn get_name_from_member<'a>(member: impl Into<NodeWithKey<'a>>) -> MemberNam
             name: Cow::Borrowed(name.bytes()),
             kind: MemberNameType::Private,
         },
+        // A template is not a `Literal`.
+        Some(KeyKind::ComputedString(_)) if member.key_text().starts_with(b"`") => MemberName {
+            name: Cow::Borrowed(member.key_text()),
+            kind: MemberNameType::Expression,
+        },
         Some(
             KeyKind::String(name)
             | KeyKind::Number(name)
@@ -200,7 +215,6 @@ pub fn get_name_from_member<'a>(member: impl Into<NodeWithKey<'a>>) -> MemberNam
         ) => literal_member_name(Cow::Borrowed(name.bytes())),
         Some(KeyKind::Computed(e)) => match (e.kind(), get_static_string_value(e)) {
             (ExprKind::Ident(name), _) => normal(name.bytes()),
-            // A template is not a `Literal`.
             (ExprKind::Template(_), _) | (_, None) => MemberName {
                 name: Cow::Borrowed(e.text()),
                 kind: MemberNameType::Expression,

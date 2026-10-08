@@ -92,6 +92,8 @@ pub fn get_function_head_loc(func: Func<'_>) -> Span {
             Node::Prop(prop) if prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() => {
                 Some(prop.span().start)
             }
+            // A computed key. A default value is in an `AssignmentPattern`.
+            Node::PatProp(prop) if prop.default() != Some(e) => Some(prop.span().start),
             _ => None,
         },
         _ => None,
@@ -111,10 +113,9 @@ pub fn get_member_head_loc(member: Member<'_>) -> Span {
     let file = member.file();
     let text = file.text();
     let start = start_after_decorators(member.modifiers(), text, member.span().start);
-    let end = match (member.key(), member.func().and_then(Func::open_paren)) {
+    let end = match (member.key(), member.constructor_keyword()) {
         (Some(key), _) => key.span(file).end,
-        // A constructor.
-        (None, Some(paren)) => skip_trivia_back(text, paren),
+        (None, Some(keyword)) => keyword.span().end,
         (None, None) => member.span().end,
     };
     Span::new(start, end)

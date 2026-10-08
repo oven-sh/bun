@@ -1,6 +1,6 @@
 //! `getOperatorPrecedence.ts`, `getWrappedCode.ts`, `isHigherPrecedenceThanAwait.ts`.
 
-use crate::ast::{BinOp, Expr, ExprKind, Node, PropKind, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, FnKind, Node, PropKind, UnOp};
 use std::borrow::Cow;
 
 /// typescript-eslint's `OperatorPrecedence`, which is TypeScript's. It is ordered: a greater one
@@ -180,9 +180,12 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
         ExprKind::TaggedTemplate(_) => K::TaggedTemplateExpression,
         ExprKind::Array(_) => K::ArrayLiteralExpression,
         ExprKind::Object(_) => K::ObjectLiteralExpression,
-        ExprKind::Fn(func) => match func.is_arrow() {
-            true => K::ArrowFunction,
-            false => K::FunctionExpression,
+        ExprKind::Fn(func) => match func.kind() {
+            FnKind::Arrow => K::ArrowFunction,
+            FnKind::Expr => K::FunctionExpression,
+            // The value of a method or an accessor of an object literal is the `MethodDeclaration`
+            // or the accessor itself.
+            _ => K::Unknown,
         },
         ExprKind::Class(_) => K::ClassExpression,
         ExprKind::Dot { .. } => K::PropertyAccessExpression,

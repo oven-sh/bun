@@ -1,6 +1,6 @@
 //! `getWrappingFixer.ts`.
 
-use super::estree::{is_chain_expression, is_expression_statement};
+use super::estree::is_expression_statement;
 use super::precedence::parenthesize;
 use crate::ast::{BinOp, Expr, ExprKind, FnBody, FnKind, Node, Stmt, StmtKind, TypeKind, UnOp};
 use crate::context::IntoText;
@@ -19,16 +19,26 @@ pub struct WrappingFixerParams<'a, 'i, W> {
     pub wrap: W,
 }
 
-/// The code of the inner nodes of a wrapping fixer.
-fn inner_codes<'a>(node: Expr<'a>, inner_nodes: &[Expr<'a>]) -> SmallVec<[Cow<'a, [u8]>; 2]> {
+/// The code of the inner nodes of a wrapping fixer. With `is_chain_element`, a `node` that is all of
+/// an optional chain is the call or the member access, not the `ChainExpression`.
+fn inner_codes<'a>(
+    node: Expr<'a>,
+    inner_nodes: &[Expr<'a>],
+    is_chain_element: bool,
+) -> SmallVec<[Cow<'a, [u8]>; 2]> {
     let itself = [node];
     let inner_nodes: &[Expr<'a>] = if inner_nodes.is_empty() { &itself } else { inner_nodes };
     inner_nodes
         .iter()
         .map(|&inner| {
-            match is_strong_precedence_node(inner)
-                && !is_object_expression_in_one_line_return(node, inner)
-            {
+            let is_strong = is_strong_precedence_node(inner)
+                || (is_chain_element
+                    && inner == node
+                    && matches!(
+                        inner.kind(),
+                        ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_)
+                    ));
+            match is_strong && !is_object_expression_in_one_line_return(node, inner) {
                 true => Cow::Borrowed(inner.text()),
                 false => Cow::Owned(parenthesize(inner.text())),
             }
@@ -50,11 +60,11 @@ where
         inner_nodes,
         wrap,
     } = params;
-    let codes = inner_codes(node, inner_nodes);
+    let codes = inner_codes(node, inner_nodes, is_chain_element);
     let codes: SmallVec<[&[u8]; 2]> = codes.iter().map(|code| &**code).collect();
     let mut code = wrap(&codes).into_text();
     // A `ChainExpression` is neither a weak parent nor the left of anything.
-    let is_in_chain_expression = is_chain_element && is_chain_expression(node);
+    let is_in_chain_expression = is_chain_element && node.is_chain_root();
     if !is_in_chain_expression && is_weak_precedence_parent(node) && !node.is_parenthesized() {
         code = Cow::Owned(parenthesize(&code));
     }
@@ -118,7 +128,7 @@ pub fn get_wrapping_fixer_without_wrap<'a>(
     inner_nodes: &[Expr<'a>],
 ) -> Fix {
     let mut code = Vec::new();
-    for inner in inner_codes(node, inner_nodes) {
+    for inner in inner_codes(node, inner_nodes, false) {
         code.extend_from_slice(&inner);
     }
     fixer.replace(node, code)
@@ -161,7 +171,7 @@ pub fn is_strong_precedence_node<'a>(node: impl Into<Node<'a>>) -> bool {
             | ExprKind::TaggedTemplate(_)
             | ExprKind::Instantiation { .. } => true,
             ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => {
-                !is_chain_expression(e)
+                !e.is_chain_root()
             }
             _ => false,
         },
@@ -212,7 +222,7 @@ pub fn is_missing_semicolon_before(node: Expr<'_>) -> bool {
             _ => return false,
         };
         // The parent of `parent` is a `ChainExpression`, which `parent` is not the left of.
-        if !is_left_hand_side(node) || is_chain_expression(parent) {
+        if !is_left_hand_side(node) || parent.is_chain_root() {
             return false;
         }
         node = parent;

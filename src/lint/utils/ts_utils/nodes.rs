@@ -1,6 +1,6 @@
 //! The small files of `util/`, one function each.
 
-use super::estree::{is_chain_expression, is_pattern};
+use super::estree::is_pattern;
 use crate::ast::{
     BinOp, Expr, ExprKind, File, Flags, Func, Ident, Node, PropKind, Stmt, StmtKind, UnOp,
 };
@@ -52,7 +52,7 @@ pub fn is_undefined_identifier(e: Expr<'_>) -> bool {
 pub fn is_node_equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     let (mut a, mut b) = (a, b);
     loop {
-        if is_chain_expression(a) || is_chain_expression(b) {
+        if a.is_chain_root() || b.is_chain_root() {
             return false;
         }
         let is_private = |name: Ident<'a>| name.bytes().starts_with(b"#");
@@ -115,7 +115,7 @@ pub fn is_type_import(declaration: Declaration<'_>) -> bool {
 pub fn is_assignee(e: Expr<'_>) -> bool {
     let mut node = e;
     loop {
-        if is_chain_expression(node) {
+        if node.is_chain_root() {
             return false;
         }
         node = match node.parent() {

@@ -2,12 +2,11 @@
 //! on them: `hasOverloadSignatures.ts`, and the syntactic halves of
 //! `isArrayMethodCallWithPredicate.ts` and `isPromiseAggregatorMethod.ts`.
 
-use super::estree::{is_chain_expression, sibling_statements};
+use super::estree::sibling_statements;
 use super::misc::NodeWithKey;
-use super::predicates::{is_function_type, is_variable_declarator};
-use crate::ast::{Expr, ExprKind, Flags, Func, KeyKind, Member, Node, Stmt, StmtKind, VarKind};
-use crate::semantic::Declaration;
-use crate::utils::ast_utils::get_static_string_value;
+use super::predicates::is_function_type;
+use crate::ast::{Expr, ExprKind, Flags, Func, KeyKind, Member, Node, Stmt, StmtKind};
+use crate::utils::eslint_utils::{StaticSymbol, StaticValue, get_static_value};
 use std::borrow::Cow;
 
 /// What [`get_static_member_access_value`] returns: upstream's `string | symbol`.
@@ -31,113 +30,17 @@ impl MemberAccessValue<'_> {
     }
 }
 
-const WELL_KNOWN_SYMBOLS: [&str; 15] = [
-    "asyncDispose",
-    "asyncIterator",
-    "dispose",
-    "hasInstance",
-    "isConcatSpreadable",
-    "iterator",
-    "match",
-    "matchAll",
-    "metadata",
-    "replace",
-    "search",
-    "species",
-    "split",
-    "toPrimitive",
-    "toStringTag",
-];
-
-/// How many constants and nested expressions the value of a computed key is followed through.
-const MAX_DEPTH: u32 = 16;
-
-/// Whether `e` is the global `Symbol`.
-fn is_global_symbol(e: Expr<'_>) -> bool {
-    e.is_ident("Symbol") && e.symbol().is_none()
-}
-
-/// The initializer of the variable that the identifier `e` refers to, if eslint-utils considers it
-/// constant: it is declared once, as `name = init`, with `const` or without ever being written to
-/// again.
-fn initializer_of_constant(e: Expr<'_>) -> Option<Expr<'_>> {
-    let symbol = e.symbol()?;
-    let mut declarations = symbol.declarations();
-    let (Some(Declaration::Var(pat)), None) = (declarations.next(), declarations.next()) else {
-        return None;
-    };
-    let Node::VarDecl(declaration) = pat.parent() else {
-        return None;
-    };
-    if !is_variable_declarator(declaration) {
-        return None;
-    }
-    let is_constant = declaration.var_kind() == VarKind::Const || {
-        let (mut inits, mut others) = (0, 0);
-        for reference in symbol.references() {
-            match reference.is_init() {
-                true => inits += 1,
-                false if reference.is_read_only() => {}
-                false => others += 1,
-            }
+/// `getStaticValue(e, scope)`, with `String()` applied to what is not a symbol.
+fn static_key_value(e: Expr<'_>) -> Option<MemberAccessValue<'_>> {
+    Some(match get_static_value(e, Some(e.file().scope()))? {
+        StaticValue::Symbol(StaticSymbol::WellKnown(name)) => {
+            MemberAccessValue::WellKnownSymbol(name.as_bytes())
         }
-        inits == 1 && others == 0
-    };
-    declaration.init().filter(|_| is_constant)
-}
-
-/// The property key that `e` evaluates to: `getStaticValue(e, scope)`, with `String()` applied to
-/// what is not a symbol. It knows literals, templates, `undefined`, `Symbol.name`, `Symbol.for()`
-/// and constants that are initialized with one of these.
-fn static_key_value(e: Expr<'_>, depth: u32) -> Option<MemberAccessValue<'_>> {
-    use MemberAccessValue::{RegisteredSymbol, String, WellKnownSymbol};
-    if depth > MAX_DEPTH {
-        return None;
-    }
-    match e.kind() {
-        ExprKind::Ident(name) => match initializer_of_constant(e) {
-            Some(init) => static_key_value(init, depth + 1),
-            None if e.symbol().is_none() && name.is_any(&["undefined", "NaN", "Infinity"]) => {
-                Some(String(Cow::Borrowed(name.bytes())))
-            }
-            None => None,
-        },
-        ExprKind::Template(template) if !template.exprs().is_empty() => {
-            let mut out = Vec::new();
-            for (i, substitution) in template.exprs().iter().enumerate() {
-                out.extend_from_slice(template.cooked(i)?.bytes());
-                match static_key_value(substitution, depth + 1)? {
-                    String(value) => out.extend_from_slice(&value),
-                    // A `TypeError`.
-                    WellKnownSymbol(_) | RegisteredSymbol(_) => return None,
-                }
-            }
-            out.extend_from_slice(template.cooked(template.exprs().len())?.bytes());
-            Some(String(Cow::Owned(out)))
+        StaticValue::Symbol(StaticSymbol::Registered(key)) => {
+            MemberAccessValue::RegisteredSymbol(key)
         }
-        ExprKind::Dot { obj, name, .. }
-            if is_global_symbol(obj) && name.name().is_any(&WELL_KNOWN_SYMBOLS) =>
-        {
-            Some(WellKnownSymbol(name.bytes()))
-        }
-        ExprKind::Call(call) => match (call.callee().kind(), call.args().first()) {
-            (ExprKind::Dot { obj, name, .. }, Some(key))
-                if is_global_symbol(obj) && name.name().is("for") =>
-            {
-                match static_key_value(key, depth + 1)? {
-                    String(key) => Some(RegisteredSymbol(key)),
-                    WellKnownSymbol(_) | RegisteredSymbol(_) => None,
-                }
-            }
-            _ => None,
-        },
-        ExprKind::As { expr, .. }
-        | ExprKind::Satisfies { expr, .. }
-        | ExprKind::Instantiation { expr, .. }
-        | ExprKind::AsConst(expr)
-        | ExprKind::NonNull(expr) => static_key_value(expr, depth + 1),
-        _ => get_static_string_value(e).map(String),
-    }
+        value => MemberAccessValue::String(value.to_js_string()?),
+    })
 }
 
 /// typescript-eslint's `getStaticMemberAccessValue`: the key that a member access (an `Expr`)
@@ -159,7 +62,7 @@ pub fn get_static_member_access_value<'a>(
             | KeyKind::ComputedString(name)
             | KeyKind::ComputedNumber(name),
         ) => string(name.bytes()),
-        Some(KeyKind::Computed(e)) => static_key_value(e, 0),
+        Some(KeyKind::Computed(e)) => static_key_value(e),
     }
 }
 
@@ -182,7 +85,7 @@ pub fn is_static_member_access_of_value<'a>(
 fn object_of_called_method<'a>(call: Expr<'a>, names: &[&str]) -> Option<Expr<'a>> {
     let callee = call.as_call()?.callee();
     // `(a?.b)()` calls a `ChainExpression`.
-    if is_chain_expression(callee) {
+    if callee.is_chain_root() {
         return None;
     }
     let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {

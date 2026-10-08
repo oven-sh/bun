@@ -368,9 +368,17 @@ impl<'h> Graph<'h> {
             for record in pending.drain(..) {
                 let module = all.intern(&record.path);
                 let mut imports: Vec<Import> = Vec::new();
+                // Where each module is in `imports`, as soon as they are more than a few.
+                let mut positions: FxHashMap<ModuleId, usize> = FxHashMap::default();
                 for (target, declaration, kind) in record.requests {
                     let target = all.intern(&target);
-                    let existing = imports.iter_mut().find(|it| it.module == target);
+                    if imports.len() > 16 && positions.len() < imports.len() {
+                        positions.extend(imports.iter().enumerate().skip(positions.len()).map(|(at, it)| (it.module, at)));
+                    }
+                    let existing = match positions.is_empty() {
+                        true => imports.iter_mut().find(|it| it.module == target),
+                        false => positions.get(&target).and_then(|at| imports.get_mut(*at)),
+                    };
                     match (kind, existing) {
                         (RequestKind::Other, _) => {}
                         // As eslint-plugin-import: the last of these replaces the others.

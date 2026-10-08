@@ -347,6 +347,17 @@ impl<'s> Builder<'s> {
             declaring: None,
         }
     }
+    /// To add to `shape`.
+    fn of(shape: Shape<'s>, arena: &'s Arena) -> Builder<'s> {
+        let mut b = Builder {
+            shape,
+            ..Builder::new_in(arena)
+        };
+        if b.shape.props.len() > FEW {
+            b.reserve_names(b.shape.props.len());
+        }
+        b
+    }
     /// Position of the property `name`.
     #[inline]
     fn position(&self, name: Atom) -> Option<usize> {
@@ -3868,8 +3879,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `shape`, which has no properties, extended with `getExportsOfSymbol(owner)`, which are
-    /// declared by assignments, in the order of `getNamedMembers`.
+    /// `shape`, of a function or of an object literal with its members, extended with
+    /// `getExportsOfSymbol(owner)`, which are declared by assignments, in the order of
+    /// `getNamedMembers`.
     pub(super) fn with_expandos(
         &mut self,
         shape: Shape<'s>,
@@ -3880,10 +3892,7 @@ impl<'p, 's> Checker<'p, 's> {
         if owner.is_none() || self.bound(file).symbols[owner.idx()].exports.is_none() {
             return shape;
         }
-        let mut b = Builder {
-            shape,
-            ..Builder::new_in(self.arena)
-        };
+        let mut b = Builder::of(shape, self.arena);
         let before = b.shape.props.len();
         let owner = self.files().sym(file, owner);
         self.add_namespace_exports(&mut b, owner);

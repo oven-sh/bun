@@ -130,7 +130,7 @@ impl MethodSignatureStyle {
             };
             let siblings = siblings(member)?;
             let few: Vec<Member<'a>>;
-            let overloads: &[Member<'a>] = if siblings.len() <= 16 {
+            let overloads: &[Member<'a>] = if !cx.state.contains_key(&member.parent()) && siblings.len() <= 16 {
                 few = siblings.iter().filter(|it| key_of_method(it) == Some(key)).collect();
                 &few
             } else {

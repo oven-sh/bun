@@ -97,11 +97,14 @@ impl ClassLiteralPropertyStyle {
         }
         if let Some(name) = truthy_name(get_static_member_access_value(member)) {
             let members = class.members();
-            let has_setter = match members.len() <= 16 {
-                true => members.iter().any(|element| name_of_setter(element).as_ref() == Some(&name)),
-                false => {
-                    let setters = cx.state.setters.entry(class).or_insert_with(|| members.iter().filter_map(name_of_setter).collect());
-                    setters.contains(&name)
+            let has_setter = match cx.state.setters.get(&class) {
+                Some(setters) => setters.contains(&name),
+                None if members.len() <= 16 => members.iter().any(|element| name_of_setter(element).as_ref() == Some(&name)),
+                None => {
+                    let setters: FxHashSet<MemberAccessValue<'a>> = members.iter().filter_map(name_of_setter).collect();
+                    let has_setter = setters.contains(&name);
+                    cx.state.setters.insert(class, setters);
+                    has_setter
                 }
             };
             if has_setter {

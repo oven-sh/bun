@@ -24,9 +24,10 @@ fn is_self_enum_member<'a>(declaration: Enum<'a>, e: Expr<'a>, names: &mut Membe
     let is_the_enum = |obj: Expr<'a>| obj.as_ident() == Some(declaration.name().name());
     let mut has_enum_member = |name: &[u8]| {
         let mut names_of_members = declaration.members().iter().filter_map(|member| Some(member.key()?.name()?.bytes()));
-        match declaration.members().len() <= 16 {
+        let start = declaration.name().span().start;
+        match !names.contains_key(&start) && declaration.members().len() <= 16 {
             true => names_of_members.any(|it| it == name),
-            false => names.entry(declaration.name().span().start).or_insert_with(|| names_of_members.collect()).contains(name),
+            false => names.entry(start).or_insert_with(|| names_of_members.collect()).contains(name),
         }
     };
     match e.kind() {

@@ -86,7 +86,7 @@ impl<'a> OverloadSignatures<'a> {
             },
             _ => return None,
         };
-        if siblings.len() <= Self::FEW {
+        if !self.functions.contains_key(&parent) && siblings.len() <= Self::FEW {
             return None;
         }
         let declared = self.functions.entry(parent).or_insert_with(|| {
@@ -104,7 +104,7 @@ impl<'a> OverloadSignatures<'a> {
         let Node::Class(class) = member.parent() else {
             return None;
         };
-        if class.members().len() <= Self::FEW {
+        if !self.methods.contains_key(&class) && class.members().len() <= Self::FEW {
             return None;
         }
         let declared = self.methods.entry(class).or_insert_with(|| {

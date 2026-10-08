@@ -10,6 +10,7 @@
 //! [Prettier](https://github.com/prettier/prettier), also under the MIT license, which is the
 //! specification wherever they differ from it.
 
+pub mod css;
 mod ir;
 mod js;
 pub mod json;

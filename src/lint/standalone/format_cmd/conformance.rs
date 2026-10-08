@@ -197,18 +197,20 @@ fn parse_snapshots(text: &str) -> Vec<Case> {
         let Some(body) = body.rsplit_once("\n`;").map(|it| it.0) else {
             continue;
         };
-        let Some(title) = title.strip_suffix(" 1") else {
+        // The number tells apart what has the same title: the same options with other parsers.
+        let Some((title, number)) = title.rsplit_once(' ') else {
             continue;
         };
         // `format`, or `format[acorn]` for a parser that rejects what the first one takes.
-        let Some((key, kind)) = title.rsplit_once(' ') else {
+        let Some((title, kind)) = title.rsplit_once(' ') else {
             continue;
         };
+        let key = &format!("{title} {number}");
         let Some(parser) = kind.strip_prefix("format") else {
             continue;
         };
         let parser = parser.trim_matches(['[', ']']);
-        let name = unescape(key.split_once(" - {").map_or(key, |it| it.0));
+        let name = unescape(title.split_once(" - {").map_or(title, |it| it.0));
         let body = unescape(body);
 
         let Some((options_text, input, output)) = sections(&body) else {
@@ -247,6 +249,23 @@ fn parse_snapshots(text: &str) -> Vec<Case> {
         cases.insert(key.to_owned(), case);
     }
     cases.into_values().collect()
+}
+
+/// Takes the placeholders out of `original`. Where they were goes into the options, in UTF-16 code
+/// units.
+fn replace_placeholders(original: &str, options: &mut FormatOptions) -> String {
+    let placeholders = [("cursorOffset", CURSOR), ("rangeStart", RANGE_START), ("rangeEnd", RANGE_END)];
+    let mut found: Vec<_> = placeholders.iter().filter_map(|it| Some((original.find(it.1)?, it.0, it.1))).collect();
+    found.sort_unstable();
+    let mut text = String::with_capacity(original.len());
+    let mut end_of_previous = 0;
+    for (at, name, placeholder) in found {
+        text.push_str(&original[end_of_previous..at]);
+        end_of_previous = at + placeholder.len();
+        let _ = options.set(name.as_bytes(), text.encode_utf16().count().to_string().as_bytes());
+    }
+    text.push_str(&original[end_of_previous..]);
+    text
 }
 
 fn find_snapshot_files(dir: &Path, found: &mut Vec<PathBuf>) {
@@ -376,7 +395,7 @@ pub(super) fn run(args: &Args) {
                 }
                 let ours = parser_of(&case.name, language);
                 // Another language.
-                let is_json = case.parsers.first().is_some_and(|it| it.starts_with("json"));
+                let is_json = case.parsers.first().is_some_and(|it| it.starts_with("json") || matches!(it.as_str(), "css" | "less" | "scss"));
                 let is_ours = |it: &String| matches!(it.as_str(), "babel" | "typescript" | "flow" | "babel-ts" | "babel-flow" | "acorn" | "espree" | "meriyah" | "oxc" | "oxc-ts");
                 if !case.parsers.is_empty() && !is_json && !case.parsers.iter().any(is_ours) {
                     continue;
@@ -411,7 +430,7 @@ pub(super) fn run(args: &Args) {
                             let _ = options.set(b"filepath", name.as_bytes());
                         }
                         let extension = match language {
-                            _ if is_json => "json",
+                            _ if is_json => case.parsers.first().map_or("json", |it| if it.starts_with("json") { "json" } else { it.as_str() }),
                             "typescript" => "ts",
                             "jsx" => "jsx",
                             _ if case.parsers.first().is_some_and(|it| it == "typescript" || it == "babel-ts") => "ts",
@@ -420,16 +439,21 @@ pub(super) fn run(args: &Args) {
                         (format!("snippet.{extension}"), case.input.clone())
                     }
                 };
-                let without_placeholders = |text: &str| text.replacen(CURSOR, "", 1).replacen(RANGE_START, "", 1).replacen(RANGE_END, "", 1);
-                let input = without_placeholders(&original);
-                let format = |input: &str| format_text_or_panic(&path, input.as_bytes(), &options).map(|it| crate::text(&it));
+                // Of a snippet with a range, the snapshot does not have the text with the placeholders.
+                let has_placeholders = options.range_start.is_none() && options.range_end.is_none() || original.contains(RANGE_START) || original.contains(RANGE_END);
+                let input = replace_placeholders(&original, &mut options.clone());
+                let format = |original: &str| {
+                    let mut options = options.clone();
+                    let input = replace_placeholders(original, &mut options);
+                    format_text_or_panic(&path, input.as_bytes(), &options).map(|it| crate::text(&it))
+                };
 
                 let expected = match case.expected {
                     Expected::Output(expected) => expected,
                     Expected::Error(parsers) => {
                         // A snippet that is rejected is not in the snapshot.
                         if (parsers.is_empty() || parsers.iter().any(|it| it == ours)) && on_disk.is_file() {
-                            let is_rejected = format(&input).is_err_and(|it| it == "SyntaxError");
+                            let is_rejected = format(&original).is_err_and(|it| it == "SyntaxError");
                             tally.errors.add(is_rejected);
                             if !is_rejected {
                                 fail("not rejected", &id, &described);
@@ -441,7 +465,7 @@ pub(super) fn run(args: &Args) {
 
                 let is_visualized = case.options.iter().any(|it| it.0 == "endOfLine");
                 let shown = |text: String| if is_visualized { visualize_end_of_line(&text) } else { text };
-                let output = format(&input);
+                let output = format(&original);
                 let actual = match &output {
                     Ok(actual) => shown(actual.clone()),
                     Err(error) => {
@@ -474,23 +498,27 @@ pub(super) fn run(args: &Args) {
                         fail("second format", &id, &described);
                     }
                 }
-                // The positions in the options are those with `\n` and without a byte order mark.
-                if has_position {
+                if !has_placeholders {
                     continue;
                 }
-                for (end_of_line, count, kind) in [("\r\n", &mut tally.crlf, "CRLF"), ("\r", &mut tally.cr, "CR")] {
+                let is_left_alone = options.require_pragma
+                    || options.check_ignore_pragma
+                    || matches!((options.range_start, options.range_end), (Some(start), Some(end)) if start >= end);
+                let skips_end_of_line = input.trim().is_empty() || input.contains('\r') || is_left_alone;
+                let ends_of_line = [("\r\n", &mut tally.crlf, "CRLF"), ("\r", &mut tally.cr, "CR")];
+                for (end_of_line, count, kind) in ends_of_line.into_iter().filter(|_| !skips_end_of_line) {
                     let expected = match options.line_ending {
                         bun_format::options::LineEnding::Auto => output.replace('\n', end_of_line),
                         _ => output.clone(),
                     };
-                    let is_same = format(&input.replace('\n', end_of_line)).is_ok_and(|it| it == expected);
+                    let is_same = format(&original.replace('\n', end_of_line)).is_ok_and(|it| it == expected);
                     count.add(is_same);
                     if !is_same {
                         fail(kind, &id, &described);
                     }
                 }
                 if !input.starts_with(BOM) {
-                    let is_same = format(&format!("{BOM}{input}")).is_ok_and(|it| it.strip_prefix(BOM) == Some(&output));
+                    let is_same = format(&format!("{BOM}{original}")).is_ok_and(|it| it.strip_prefix(BOM) == Some(&output));
                     tally.bom.add(is_same);
                     if !is_same {
                         fail("BOM", &id, &described);

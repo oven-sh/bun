@@ -40,6 +40,14 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
         let mut out = Vec::new();
         return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| out);
     }
+    let css_parser = match &options.parser {
+        Some(parser) => bun_format::css::Parser::from_name(parser),
+        None => bun_format::css::parser_for_path(name),
+    };
+    if let Some(parser) = css_parser {
+        let mut out = Vec::new();
+        return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| out);
+    }
     let code = match bun_format::pragma::before_parsing(code, options) {
         bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok(code.to_vec()),
         bun_format::pragma::BeforeParsing::Format(code) => code,
@@ -109,6 +117,12 @@ impl Args {
 
 const EXTENSIONS: &[&str] = &["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"];
 
+/// JSON or a style sheet.
+fn is_other_language(path: &Path) -> bool {
+    let path = path.as_os_str().as_encoded_bytes();
+    bun_format::json::parser_for_path(path).is_some() || bun_format::css::parser_for_path(path).is_some()
+}
+
 /// The files at `paths` and in the directories at `paths` that can be formatted.
 fn collect_files(paths: &[String]) -> Vec<PathBuf> {
     fn visit(path: &Path, found: &mut Vec<PathBuf>) {
@@ -119,7 +133,9 @@ fn collect_files(paths: &[String]) -> Vec<PathBuf> {
             let mut entries: Vec<_> = std::fs::read_dir(path).into_iter().flatten().flatten().map(|it| it.path()).collect();
             entries.sort();
             entries.iter().for_each(|it| visit(it, found));
-        } else if path.extension().and_then(|it| it.to_str()).is_some_and(|it| EXTENSIONS.contains(&it)) {
+        } else if path.extension().and_then(|it| it.to_str()).is_some_and(|it| EXTENSIONS.contains(&it))
+            || is_other_language(path)
+        {
             found.push(path.to_owned());
         }
     }

@@ -29,7 +29,8 @@ enum IsComputedName {
     Yes,
 }
 
-pub(super) struct Binder<'f, 's> {
+/// `LINT`: for a linter without types. See [`bind_for_lint`].
+pub(super) struct Binder<'f, 's, const LINT: bool> {
     f: &'f File<'s>,
     options: BindOptions,
     atoms: &'f dyn crate::atom::Intern,
@@ -56,6 +57,8 @@ pub(super) struct Binder<'f, 's> {
     is_unchecked: bool,
     /// Until the file is finished, `start` of a label's flow node identifies its entry here.
     label_edges: Vec<Label>,
+    /// With `LINT`, in place of `label_edges`: whether the label has an antecedent.
+    label_reached: Vec<bool>,
     /// `FlowFlagsReferenced`, a bit for each flow node.
     referenced: Vec<u64>,
     /// The start flow node of the functions without a body in which no outer narrowing holds.
@@ -125,22 +128,24 @@ struct ReachedBy {
     is_checked: bool,
 }
 
-impl<'f, 's> Binder<'f, 's> {
+impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     pub(super) fn run(
         f: &'f File<'s>,
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
     ) -> BoundBuilder {
+        // The length of a list that only the checker reads.
+        let for_checker = |len: usize| if LINT { 0 } else { len };
         let mut b = BoundBuilder {
             expr_symbol: vec![SymbolId::NONE; f.exprs.len()],
             expr_parent: vec![Parent::None; f.exprs.len()],
-            expr_flow: vec![UNREACHABLE; f.exprs.len()],
+            expr_flow: vec![UNREACHABLE; for_checker(f.exprs.len())],
             stmt_parent: vec![Parent::None; f.stmts.len()],
-            stmt_scope: vec![ScopeId::NONE; f.stmts.len()],
+            stmt_scope: vec![ScopeId::NONE; for_checker(f.stmts.len())],
             stmt_flow: vec![UNREACHABLE; f.stmts.len()],
             case_fallthrough: vec![FlowId::NONE; f.cases.len()],
             type_scope: vec![ScopeId::NONE; f.types.len()],
-            type_by_alias: vec![false; f.types.len()],
+            type_by_alias: vec![false; for_checker(f.types.len())],
             pat_parent: vec![PatParent::None; f.pats.len()],
             pat_symbol: vec![SymbolId::NONE; f.pats.len()],
             prop_owner: vec![ExprId::NONE; f.props.len()],
@@ -187,9 +192,11 @@ impl<'f, 's> Binder<'f, 's> {
             export_scope: vec![ScopeId::NONE; f.exports.len()],
             ..Default::default()
         };
-        b.flow.push(Flow::Unreachable);
+        if !LINT {
+            b.flow.push(Flow::Unreachable);
+        }
 
-        let mut this = Binder {
+        let mut this = Self {
             f,
             options,
             atoms,
@@ -204,6 +211,7 @@ impl<'f, 's> Binder<'f, 's> {
             is_reached: false,
             is_unchecked: false,
             label_edges: Vec::new(),
+            label_reached: Vec::new(),
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
@@ -766,11 +774,18 @@ impl<'f, 's> Binder<'f, 's> {
     // ───────────────────────────── flow ─────────────────────────────
 
     fn new_flow(&mut self, node: Flow) -> FlowId {
+        if LINT {
+            return REACHABLE;
+        }
         self.b.flow.push(node);
         FlowId(self.b.flow.len() as u32 - 1)
     }
 
     fn new_label(&mut self, is_loop: bool) -> FlowId {
+        if LINT {
+            self.label_reached.push(false);
+            return FlowId(PENDING | (self.label_reached.len() as u32 - 1));
+        }
         self.label_edges.push(Label {
             edges: Default::default(),
             node: FlowId::NONE,
@@ -794,6 +809,9 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// The flow node of `label`.
     fn node_of(&mut self, label: FlowId) -> FlowId {
+        if LINT {
+            return REACHABLE;
+        }
         let at = self.edges_of(label);
         if self.label_edges[at].node.is_none() {
             let (start, len) = (at as u32, 0);
@@ -809,6 +827,9 @@ impl<'f, 's> Binder<'f, 's> {
     /// The start flow node of a function without a body, if no outer narrowing holds in it: one
     /// node serves all of them.
     fn start_of_signature(&mut self) -> FlowId {
+        if LINT {
+            return REACHABLE;
+        }
         if self.start_of_signatures.is_none() {
             self.start_of_signatures = self.new_flow(Flow::Start {
                 outer: FlowId::NONE,
@@ -831,6 +852,9 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `setFlowNodeReferenced`
     fn set_flow_node_referenced(&mut self, flow: FlowId) {
+        if LINT {
+            return;
+        }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         if word >= self.referenced.len() {
             self.referenced.resize(word + 1, 0);
@@ -845,6 +869,10 @@ impl<'f, 's> Binder<'f, 's> {
             return;
         }
         let at = self.edges_of(label);
+        if LINT {
+            self.label_reached[at] = true;
+            return;
+        }
         let edges = &mut self.label_edges[at].edges;
         if !edges.contains(&from) {
             edges.push(from);
@@ -853,6 +881,9 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     fn finish_label(&mut self, label: FlowId) -> FlowId {
+        if LINT {
+            return if self.has_edges(label) { REACHABLE } else { UNREACHABLE };
+        }
         let edges = &self.label_edges[self.edges_of(label)].edges;
         match edges.len() {
             0 => UNREACHABLE,
@@ -862,6 +893,9 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     fn has_edges(&self, label: FlowId) -> bool {
+        if LINT {
+            return self.label_reached[self.edges_of(label)];
+        }
         !self.label_edges[self.edges_of(label)].edges.is_empty()
     }
 
@@ -984,7 +1018,7 @@ impl<'f, 's> Binder<'f, 's> {
         {
             return UNREACHABLE;
         }
-        if !self.is_narrowing_expression(expr) {
+        if LINT || !self.is_narrowing_expression(expr) {
             return before;
         }
         self.set_flow_node_referenced(before);
@@ -1838,6 +1872,9 @@ impl<'f, 's> Binder<'f, 's> {
                 continue;
             };
             self.b.expr_symbol[expr.idx()] = symbol;
+            if LINT {
+                continue;
+            }
             // There are two for every `<div></div>`, and only the baseline writers resolve them.
             if matches!(self.b.expr_parent[expr.idx()], Parent::Expr(x)
                 if matches!(self.f[x].kind, ExprKind::Jsx(j) if self.f[j].tag == expr || self.f[j].close_tag == expr))
@@ -1858,7 +1895,9 @@ impl<'f, 's> Binder<'f, 's> {
             let symbol = self.b.expr_symbol[expr.idx()];
             if symbol.is_some() {
                 self.b.symbols[symbol.idx()].flags |= SymFlags::ASSIGNED;
-                self.b.assignments.push((symbol, expr));
+                if !LINT {
+                    self.b.assignments.push((symbol, expr));
+                }
             }
         }
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
@@ -1876,11 +1915,12 @@ impl<'f, 's> Binder<'f, 's> {
         // strictly.
         let f = self.f;
         // FOR SPEED: no identifier is named `arguments` unless the text has the word or an escape.
-        let has_the_name = !f.functions_with_param_tags.is_empty()
+        let has_the_name = !LINT
+            && !f.functions_with_param_tags.is_empty()
             && (bun_core::strings::contains(&f.text, b"arguments")
                 || bun_core::strings::contains(&f.text, b"\\u"));
         let mut errors = f.jsdoc_param_errors.iter().enumerate().peekable();
-        for &func in f.functions_with_param_tags.iter() {
+        for &func in f.functions_with_param_tags.iter().filter(|_| !LINT) {
             let contains_arguments = has_the_name && self.contains_arguments_reference(func);
             while let Some((index, (_, diagnostic))) = errors.next_if(|error| error.1.0 == func) {
                 if (diagnostic.code == 8029) == contains_arguments {
@@ -1893,6 +1933,10 @@ impl<'f, 's> Binder<'f, 's> {
             .as_mut_slice()
             .sort_unstable_by_key(|p| p.0);
         self.bind_deferred_expando_assignments();
+        // Nothing looks a name up any more, there is no flow graph, and nobody loads the modules.
+        if LINT {
+            return self.b;
+        }
         // Tables, flat.
         self.b.tables.reserve_exact(self.tables.len());
         self.b
@@ -2020,7 +2064,9 @@ impl<'f, 's> Binder<'f, 's> {
             return;
         }
         self.b.stmt_parent[id.idx()] = parent;
-        self.b.stmt_scope[id.idx()] = self.scope;
+        if !LINT {
+            self.b.stmt_scope[id.idx()] = self.scope;
+        }
         self.b.stmt_flow[id.idx()] = self.flow;
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Stmt(id);
@@ -2249,7 +2295,9 @@ impl<'f, 's> Binder<'f, 's> {
                 self.enter_loop(pre);
                 self.add_edge(post, self.flow);
                 self.b.stmt_parent[left.idx()] = me;
-                self.b.stmt_scope[left.idx()] = self.scope;
+                if !LINT {
+                    self.b.stmt_scope[left.idx()] = self.scope;
+                }
                 match self.f[left].kind {
                     StmtKind::Var(decls) => {
                         for d in decls.iter() {
@@ -2390,7 +2438,9 @@ impl<'f, 's> Binder<'f, 's> {
                 } else {
                     self.bind_anonymous_declaration(decl, flags, self.get_declaration_name(decl));
                 }
-                self.b.expr_scope.insert(e, self.scope);
+                if !LINT {
+                    self.b.expr_scope.insert(e, self.scope);
+                }
             }
             StmtKind::ExportAsNamespace(name) => {
                 // `bindNamespaceExportDeclaration`: only at the top level of a declaration file
@@ -2500,9 +2550,9 @@ impl<'f, 's> Binder<'f, 's> {
         self.pre_switch = self.flow;
         self.push_scope(ScopeKind::Block, SymbolId::NONE);
         // `bindCaseBlock`: the bare keyword, which `(true)` is not.
-        let is_narrowing = matches!(self.f[expr].kind, ExprKind::True)
-            && !is_parenthesized(self.f, expr)
-            || self.is_narrowing_expression(expr);
+        let is_narrowing = !LINT
+            && (matches!(self.f[expr].kind, ExprKind::True) && !is_parenthesized(self.f, expr)
+                || self.is_narrowing_expression(expr));
         let mut fallthrough = UNREACHABLE;
         let n = cases.len();
         let mut i = 0;
@@ -2616,6 +2666,10 @@ impl<'f, 's> Binder<'f, 's> {
             // of the lists is an antecedent twice.
             let combined = self.edges_of(finally_label);
             for from in [normal_exit, exception_label, return_label] {
+                if LINT {
+                    self.label_reached[combined] |= self.has_edges(from);
+                    continue;
+                }
                 let edges = self.label_edges[self.edges_of(from)].edges.clone();
                 self.label_edges[combined].edges.extend(edges);
             }
@@ -3016,7 +3070,9 @@ impl<'f, 's> Binder<'f, 's> {
                         || matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::Fn(f)
                             if self.f[f].kind == FnKind::StaticBlock)
                     {
-                        self.b.hoisted_vars.push((pat, self.scope));
+                        if !LINT {
+                            self.b.hoisted_vars.push((pat, self.scope));
+                        }
                     }
                     (
                         Decl::Var(pat),
@@ -3491,10 +3547,14 @@ impl<'f, 's> Binder<'f, 's> {
             // `requiresScopeChangeWorker` treats the `extends` expression as a type.
             let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
             let base_expression = self.push_scope(ScopeKind::BaseExpression, SymbolId::NONE);
-            self.b.expr_scope.insert(c.extends, base_expression);
+            if !LINT {
+                self.b.expr_scope.insert(c.extends, base_expression);
+            }
             self.expr(c.extends, Parent::ClassExtends(id));
             for other in self.f.ids(c.other_extends) {
-                self.b.expr_scope.insert(other, base_expression);
+                if !LINT {
+                    self.b.expr_scope.insert(other, base_expression);
+                }
                 self.unchecked_expr(other, Parent::ClassExtends(id));
             }
             self.pop_scope();
@@ -3788,7 +3848,9 @@ impl<'f, 's> Binder<'f, 's> {
                     matches!(owner, MemberOwner::Class(_) | MemberOwner::Interface(_));
                 if is_of_class_or_interface {
                     let computed_name = self.push_scope(ScopeKind::ComputedName, SymbolId::NONE);
-                    self.b.expr_scope.insert(key, computed_name);
+                    if !LINT {
+                        self.b.expr_scope.insert(key, computed_name);
+                    }
                 }
                 if member.func.is_some() {
                     self.push_scope(ScopeKind::FunctionName(member.func), SymbolId::NONE);
@@ -3920,7 +3982,8 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     fn note_infer(&mut self, node: TypeNodeId, position: InferPosition) {
-        if node.is_some()
+        if !LINT
+            && node.is_some()
             && let TypeNodeKind::Infer(param) = self.f[node].kind
         {
             self.b.infer_positions.push((param, position));
@@ -3972,13 +4035,15 @@ impl<'f, 's> Binder<'f, 's> {
     /// Binds `id`. If `id` is a type operator, returns its operand unbound, with `by_alias` and `scope_change_of` set for it.
     fn ty_or_operand(&mut self, id: TypeNodeId) -> Option<TypeNodeId> {
         self.b.type_scope[id.idx()] = self.scope;
-        if self.is_unchecked {
+        if !LINT && self.is_unchecked {
             self.b.unchecked_types.push(id);
         }
         // `requiresScopeChangeWorker` does not descend into types.
         let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
         let by_alias = self.by_alias;
-        self.b.type_by_alias[id.idx()] = by_alias;
+        if !LINT {
+            self.b.type_by_alias[id.idx()] = by_alias;
+        }
         self.by_alias = by_alias
             && matches!(
                 self.f[id].kind,
@@ -3996,7 +4061,7 @@ impl<'f, 's> Binder<'f, 's> {
         match self.f[id].kind {
             TypeNodeKind::Keyword(Keyword::This) => {
                 self.seen_this = true;
-                if self.type_literal_depth > 0 {
+                if !LINT && self.type_literal_depth > 0 {
                     self.b.this_in_type_literal.insert(id);
                 }
             }
@@ -4018,7 +4083,9 @@ impl<'f, 's> Binder<'f, 's> {
                 let parent = self.parent_of_expression_in_type();
                 let saved = (self.true_target, self.false_target);
                 (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
-                self.b.expr_scope.insert(expr, self.scope);
+                if !LINT {
+                    self.b.expr_scope.insert(expr, self.scope);
+                }
                 self.unchecked_expr(expr, parent);
                 (self.true_target, self.false_target) = saved;
                 self.tys(args)
@@ -4029,7 +4096,9 @@ impl<'f, 's> Binder<'f, 's> {
                 (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
                 // The `this` of `typeof this.x` is a name, not the keyword.
                 let seen_this = self.seen_this;
-                self.b.expr_scope.insert(expr, self.scope);
+                if !LINT {
+                    self.b.expr_scope.insert(expr, self.scope);
+                }
                 self.expr(expr, parent);
                 self.seen_this = seen_this;
                 (self.true_target, self.false_target) = saved;
@@ -4228,7 +4297,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// `bind` for `a.b` and `a[b]`: only a narrowable reference gets a flow node. Any other has its
     /// declared type.
     fn access_flow(&mut self, id: ExprId) {
-        if is_narrowable_reference(self.f, id) {
+        if !LINT && is_narrowable_reference(self.f, id) {
             self.b.expr_flow[id.idx()] = self.flow;
         }
     }
@@ -4259,6 +4328,9 @@ impl<'f, 's> Binder<'f, 's> {
     /// The start of `expr`: the part that does not depend on flow or on the enclosing expression.
     fn enter_expr(&mut self, id: ExprId, parent: Parent) {
         self.b.expr_parent[id.idx()] = parent;
+        if LINT {
+            return;
+        }
         if self.is_unchecked {
             self.b.unchecked_exprs.push(id);
         }
@@ -4357,18 +4429,26 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
             ExprKind::Ident(_) => {
-                self.b.expr_flow[id.idx()] = self.flow;
                 self.idents.push((id, self.scope));
                 let (name, func) = self.associated_declaration;
-                if name.is_some() {
+                if !LINT {
+                    self.b.expr_flow[id.idx()] = self.flow;
+                }
+                if !LINT && name.is_some() {
                     self.b.identifiers_in_parameters.push((id, name, func));
                 }
             }
             ExprKind::This => {
                 self.seen_this = true;
-                self.b.expr_flow[id.idx()] = self.flow;
+                if !LINT {
+                    self.b.expr_flow[id.idx()] = self.flow;
+                }
             }
-            ExprKind::Super => self.b.expr_flow[id.idx()] = self.flow,
+            ExprKind::Super => {
+                if !LINT {
+                    self.b.expr_flow[id.idx()] = self.flow;
+                }
+            }
             ExprKind::Template { exprs, .. } => self.exprs(exprs, me),
             ExprKind::TaggedTemplate(c) => {
                 let call = self.f[c];
@@ -4544,7 +4624,9 @@ impl<'f, 's> Binder<'f, 's> {
                         if let Decl::ModuleExports(_) = decl {
                             Self::set_value_declaration(&mut self.b.symbols[symbol.idx()]);
                         }
-                        self.b.expr_scope.insert(value, self.scope);
+                        if !LINT {
+                            self.b.expr_scope.insert(value, self.scope);
+                        }
                     }
                 }
                 // As the default of a pattern element it is not an assignment itself: the
@@ -4632,7 +4714,9 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::Jsx(j) => {
                 // The JSX factory, and the namespace that contains `JSX`, are resolved from this
                 // scope. `markJsxAliasReferenced`
-                self.b.expr_scope.insert(id, self.scope);
+                if !LINT {
+                    self.b.expr_scope.insert(id, self.scope);
+                }
                 let jsx = &self.f[j];
                 if jsx.tag.is_some() {
                     self.jsx_tag_name(jsx.tag, me);

@@ -1042,6 +1042,8 @@ pub type Bound<'s> = BoundIn<InArena<'s>>;
 pub type BoundBuilder = BoundIn<Growable>;
 
 pub const UNREACHABLE: FlowId = FlowId(0);
+/// What [`bind_for_lint`] has in place of every flow node other than [`UNREACHABLE`].
+pub const REACHABLE: FlowId = FlowId(1);
 
 /// What the binder also calls while it binds.
 /// The text of `PropertyNameOrName()` of the binding element whose name is `pat`. `NONE` if that is
@@ -1860,5 +1862,28 @@ pub fn bind<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
-    binder::Binder::run(file, options, atoms).into_arena(arena)
+    binder::Binder::<false>::run(file, options, atoms).into_arena(arena)
+}
+
+/// [`bind`] for a linter or a formatter that has no checker: without what only a checker reads.
+///
+/// The same as in the result of `bind`: the symbols with their declarations and flags,
+/// `redeclarations`, every `*_symbol`, `*_parent` and `*_owner` list, `param_fn`, `var_stmt`,
+/// `case_stmt`, `type_query_operands`, `ids`, `scopes`, `requires_scope_change`, and of `fns`
+/// everything but `end` and `exit`.
+///
+/// There is no flow graph. Where `bind` has a flow node in `stmt_flow`, `case_fallthrough`,
+/// `FnInfo::end` and `FnInfo::exit`, this has [`REACHABLE`]. [`UNREACHABLE`] and `FlowId::NONE` are
+/// where `bind` has them.
+///
+/// Empty: the tables of names, `expr_flow`, `stmt_scope`, `type_by_alias`, `expr_scope`,
+/// `free_idents`, `alias_idents`, `assignments`, and what is listed for the checker to skip, to
+/// report or to look at again. `specifiers` is not complete.
+pub fn bind_for_lint<'s>(
+    file: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    binder::Binder::<true>::run(file, options, atoms).into_arena(arena)
 }

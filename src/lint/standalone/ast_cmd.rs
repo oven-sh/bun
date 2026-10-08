@@ -9,6 +9,8 @@
 //! - `check <file>..`: whether `bun_lint::ast` is consistent with itself for these files.
 //! - `check-batch <inputs.jsonl>`: the same for many, summarized by the kind of problem.
 //! - `bench <file>`: how long the ways through a file take.
+//! - `bind-check <inputs.jsonl> [--espree]`: whether `bind_for_lint` has what `bind` has, in all that
+//!   `bun_lint::ast` and `bun_lint::semantic` read of it.
 
 #[path = "estree/json.rs"]
 mod estree_json;
@@ -39,6 +41,7 @@ pub(crate) fn run(args: &[String]) {
         [command, paths @ ..] if command == "check" && !paths.is_empty() => check_files(paths),
         [command, path] if command == "check-batch" => check_batch(path),
         [command, path] if command == "bench" => bench(path),
+        [command, path, flags @ ..] if command == "bind-check" => bind_check(path, &language_of(flags)),
         _ => println!("usage: bun-lint ast estree|estree-batch|check|check-batch|bench <path>"),
     }
 }
@@ -701,6 +704,136 @@ fn check_batch(path: &str) {
         }
     }
     println!("{checked} checked, {rejected} rejected by the parser, {with_problems} with problems, {} kinds", ranked.len());
+}
+
+// ───────────────────────────── the binder without a checker ─────────────────────────────
+
+/// The names of the side tables in which `lint`, from `bind_for_lint`, differs from `full`, from `bind`.
+fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Vec<String> {
+    use bun_sema::bind::UNREACHABLE;
+    let mut different = Vec::new();
+    macro_rules! same {
+        ($($field:ident)*) => {$(
+            if full.$field[..] != lint.$field[..] {
+                let at = full.$field.iter().zip(lint.$field.iter()).position(|(a, b)| a != b);
+                different.push(format!(
+                    "{}: {} and {} long, first at {at:?}: {:?} and {:?}",
+                    stringify!($field),
+                    full.$field.len(),
+                    lint.$field.len(),
+                    at.map(|at| &full.$field[at]),
+                    at.map(|at| &lint.$field[at]),
+                ));
+            }
+        )*};
+    }
+    same! {
+        ids expr_symbol expr_parent stmt_parent type_scope pat_parent pat_symbol prop_owner member_owner param_fn
+        type_param_symbol type_param_scope fn_symbol class_symbol class_owner class_scope interface_symbol alias_symbol
+        enum_symbol enum_member_symbol enum_member_owner module_symbol var_stmt case_stmt type_query_operands
+        requires_scope_change
+    }
+    let mut truth = |name: &str, full: Vec<bool>, lint: Vec<bool>| {
+        if full != lint {
+            let at = full.iter().zip(&lint).position(|(a, b)| a != b);
+            different.push(format!("{name}: {} and {} long, first at {at:?}", full.len(), lint.len()));
+        }
+    };
+    let reached = |of: &bun_sema::bind::Bound| of.stmt_flow.iter().map(|it| *it != UNREACHABLE).collect();
+    truth("stmt_flow", reached(full), reached(lint));
+    let falls = |of: &bun_sema::bind::Bound| of.case_fallthrough.iter().map(|it| it.is_some()).collect();
+    truth("case_fallthrough", falls(full), falls(lint));
+    let ends = |of: &bun_sema::bind::Bound| of.fns.iter().map(|it| it.end != UNREACHABLE).collect();
+    truth("fns.end", ends(full), ends(lint));
+    let exits = |of: &bun_sema::bind::Bound| of.fns.iter().flat_map(|it| [it.exit.is_some(), it.exit != UNREACHABLE]).collect();
+    truth("fns.exit", exits(full), exits(lint));
+    let functions = |of: &bun_sema::bind::Bound| -> Vec<String> {
+        let one = |it: &bun_sema::bind::FnInfo| {
+            let lists = (it.returns.start, it.returns.len, it.yields.start, it.yields.len);
+            format!("{:?} {:?} {:?} {lists:?} {}", it.owner, it.scope, it.enclosing, it.contains_this)
+        };
+        of.fns.iter().map(one).collect()
+    };
+    if functions(full) != functions(lint) {
+        different.push("fns".to_owned());
+    }
+    let symbols = |of: &bun_sema::bind::Bound| -> Vec<String> {
+        let one = |it: &bun_sema::bind::Symbol| {
+            let links = (it.value_declaration, it.parent, it.export_symbol);
+            format!("{:?} {:?} {:?} {links:?}", it.name, it.flags, it.decls.as_slice())
+        };
+        of.symbols.iter().map(one).collect()
+    };
+    let (all, ours) = (symbols(full), symbols(lint));
+    if all != ours {
+        let at = all.iter().zip(&ours).position(|(a, b)| a != b);
+        let (a, b) = (at.map(|at| &all[at]), at.map(|at| &ours[at]));
+        different.push(format!("symbols: {} and {}, first at {at:?}: {a:?} and {b:?}", all.len(), ours.len()));
+    }
+    let refused = |of: &bun_sema::bind::Bound| -> Vec<String> {
+        of.redeclarations.iter().map(|it| format!("{:?} {} {:?} {}", it.symbol, it.count, it.decl, it.code)).collect()
+    };
+    if refused(full) != refused(lint) {
+        different.push("redeclarations".to_owned());
+    }
+    if full.ran_out_of_stack != lint.ran_out_of_stack {
+        different.push("ran_out_of_stack".to_owned());
+    }
+    different
+}
+
+fn bind_check(path: &str, language: &LanguageOptions) {
+    use bun_sema::bind::{BindOptions, bind, bind_for_lint};
+    std::panic::set_hook(Box::new(|_| {}));
+    let inputs = read_inputs(path);
+    let (mut same, mut by_kind) = (0, BTreeMap::<String, (usize, Vec<String>)>::new());
+    for input in &inputs {
+        let language = LanguageOptions {
+            parser: language.parser,
+            source_type: input.source_type,
+            jsx: language.parser == Parser::Espree,
+            ..LanguageOptions::default()
+        };
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let session = bun_sema::session::Session::new();
+            let atoms = bun_sema::atom::Interner::new_in(&session);
+            let arena = session.arena();
+            let how = language.parse_options(input.filename.as_bytes());
+            let mut hir = bun_js_parser::sema::summarize_as(
+                how.dialect,
+                arena,
+                input.filename.as_bytes(),
+                how.script_kind,
+                &input.code,
+                &atoms,
+                how.experimental_decorators,
+                how.every_file_is_a_module,
+            )
+            .0;
+            hir.text = input.code.clone().into();
+            let options = BindOptions {
+                emit_standard_class_fields: true,
+                before_es2020: false,
+                before_es2017: false,
+            };
+            differences(&bind(&hir, options, &atoms, arena), &bind_for_lint(&hir, options, &atoms, arena))
+        }));
+        let different = outcome.unwrap_or_else(|_| vec!["panic".to_owned()]);
+        same += usize::from(different.is_empty());
+        for it in different {
+            let name = it.split(':').next().unwrap_or_default().to_owned();
+            let (count, examples) = by_kind.entry(name).or_default();
+            *count += 1;
+            if examples.len() < 3 {
+                examples.push(format!("{}: {it}", input.id));
+            }
+        }
+    }
+    for (name, (count, examples)) in &by_kind {
+        println!("{count:6} {name}");
+        examples.iter().for_each(|it| println!("         {it}"));
+    }
+    println!("{} inputs, {same} the same, {} tables differ", inputs.len(), by_kind.len());
 }
 
 // ───────────────────────────── timing ─────────────────────────────

@@ -4,6 +4,7 @@
 use super::ast::{EscapeSet, Flags, INFINITY, ModifierFlags, Reference};
 use super::{unicode, wtf8};
 use bun_core::strings;
+use rustc_hash::FxHashMap;
 
 /// How deep groups and classes may nest. regexpp has no limit of its own: it overflows the stack.
 const MAX_DEPTH: u32 = 250;
@@ -209,23 +210,23 @@ type Consumed<T = bool> = Result<T, Raised>;
 
 const EOF: i32 = -1;
 
-/// A branch of a disjunction, to tell whether two groups with the same name can both take part in
-/// a match.
+/// A disjunction that is being parsed, to tell whether two groups with the same name can both take part in a match: not if
+/// they are in different alternatives of it.
 #[derive(Copy, Clone)]
-struct Branch {
-    parent: u32,
-    /// The first of the branches of the same disjunction.
-    base: u32,
+struct Disjunction {
+    /// How many groups with a name there were before it, and before its current alternative.
+    groups_before: u32,
+    groups_before_alternative: u32,
 }
-
-const NO_BRANCH: u32 = u32::MAX;
 
 #[derive(Copy, Clone)]
 struct GroupName {
     start: u32,
     len: u32,
-    branch: u32,
 }
+
+/// With more names than this, they are looked up in a map.
+const FEW_NAMES: usize = 16;
 
 /// `{ mayContainStrings }`
 #[derive(Copy, Clone, Default)]
@@ -264,10 +265,12 @@ struct Validator<'s, 'h> {
     num_capturing_parens: i32,
     depth: u32,
 
-    branches: Vec<Branch>,
-    branch: u32,
+    /// Outermost first.
+    disjunctions: Vec<Disjunction>,
     names: Vec<u8>,
     group_names: Vec<GroupName>,
+    /// The last group of each name, as an index into `group_names`, if there are more than `FEW_NAMES` groups.
+    last_group_of_name: FxHashMap<Box<[u8]>, u32>,
     backreference_names: Vec<(u32, u32)>,
 }
 
@@ -453,10 +456,10 @@ impl<'s, 'h> Validator<'s, 'h> {
             last_assertion_is_quantifiable: false,
             num_capturing_parens: 0,
             depth: 0,
-            branches: Vec::new(),
-            branch: NO_BRANCH,
+            disjunctions: Vec::new(),
             names: Vec::new(),
             group_names: Vec::new(),
+            last_group_of_name: FxHashMap::default(),
             backreference_names: Vec::new(),
         }
     }
@@ -704,14 +707,10 @@ impl<'s, 'h> Validator<'s, 'h> {
     // == the names of groups ==
 
     fn clear_group_specifiers(&mut self) {
-        self.branches.clear();
-        self.branches.push(Branch {
-            parent: NO_BRANCH,
-            base: 0,
-        });
-        self.branch = 0;
+        self.disjunctions.clear();
         self.names.clear();
         self.group_names.clear();
+        self.last_group_of_name.clear();
         self.backreference_names.clear();
     }
 
@@ -719,49 +718,26 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.ecma_version() >= 2025
     }
 
-    fn new_branch(&mut self, parent: u32, base: Option<u32>) {
-        let id = self.branches.len() as u32;
-        self.branches.push(Branch {
-            parent,
-            base: base.unwrap_or(id),
-        });
-        self.branch = id;
-    }
-
     fn enter_disjunction(&mut self) {
         if self.tracks_branches() {
-            self.new_branch(self.branch, None);
+            let groups = self.group_names.len() as u32;
+            self.disjunctions.push(Disjunction {
+                groups_before: groups,
+                groups_before_alternative: groups,
+            });
         }
     }
 
     fn enter_alternative(&mut self, index: u32) {
-        if self.tracks_branches()
-            && index != 0
-            && let Some(current) = self.branches.get(self.branch as usize).copied()
+        if index != 0
+            && let Some(current) = self.disjunctions.last_mut()
         {
-            self.new_branch(current.parent, Some(current.base));
+            current.groups_before_alternative = self.group_names.len() as u32;
         }
     }
 
     fn leave_disjunction(&mut self) {
-        if self.tracks_branches()
-            && let Some(current) = self.branches.get(self.branch as usize)
-        {
-            self.branch = current.parent;
-        }
-    }
-
-    /// Whether the branches, or any of their ancestors, are different branches of one disjunction.
-    fn separated(&self, a: u32, b: u32) -> bool {
-        let up = |id: &u32| self.branches.get(*id as usize).map(|branch| branch.parent);
-        let base = |id: u32| self.branches.get(id as usize).map(|branch| branch.base);
-        std::iter::successors(Some(a), up)
-            .take_while(|id| *id != NO_BRANCH)
-            .any(|x| {
-                std::iter::successors(Some(b), up)
-                    .take_while(|id| *id != NO_BRANCH)
-                    .any(|y| x != y && base(x) == base(y))
-            })
+        self.disjunctions.pop();
     }
 
     fn name(&self, start: u32, len: u32) -> &[u8] {
@@ -770,16 +746,43 @@ impl<'s, 'h> Validator<'s, 'h> {
             .unwrap_or_default()
     }
 
-    fn has_in_pattern(&self, name: &[u8]) -> bool {
-        self.group_names
-            .iter()
-            .any(|group| self.name(group.start, group.len) == name)
+    /// The last group so far that is called `name`.
+    fn last_group_called(&self, name: &[u8]) -> Option<u32> {
+        if self.group_names.len() > FEW_NAMES {
+            return self.last_group_of_name.get(name).copied();
+        }
+        let is_it = |group: &GroupName| self.name(group.start, group.len) == name;
+        self.group_names.iter().rposition(is_it).map(|it| it as u32)
     }
 
+    fn add_group_name(&mut self) {
+        let (start, len) = self.intern_last_str();
+        self.group_names.push(GroupName { start, len });
+        let count = self.group_names.len();
+        let newly_mapped = match count {
+            _ if count <= FEW_NAMES => return,
+            _ if count == FEW_NAMES + 1 => 0,
+            _ => count - 1,
+        };
+        for (i, group) in self.group_names.iter().enumerate().skip(newly_mapped) {
+            let name = self.names.get(group.start as usize..(group.start + group.len) as usize);
+            self.last_group_of_name.insert(name.unwrap_or_default().into(), i as u32);
+        }
+    }
+
+    fn has_in_pattern(&self, name: &[u8]) -> bool {
+        self.last_group_called(name).is_some()
+    }
+
+    /// Whether a group that is called `name` can take part in a match together with what is being parsed. If the last one
+    /// cannot, none can: it was accepted, so those before it are in other alternatives than it is, of disjunctions that are
+    /// still being parsed.
     fn has_in_scope(&self, name: &[u8]) -> bool {
-        self.group_names.iter().any(|group| {
-            self.name(group.start, group.len) == name
-                && !(self.tracks_branches() && self.separated(group.branch, self.branch))
+        self.last_group_called(name).is_some_and(|group| {
+            // What each has before its current alternative is before the next one starts.
+            let inner = self.disjunctions.partition_point(|it| it.groups_before <= group);
+            let around = inner.checked_sub(1).and_then(|it| self.disjunctions.get(it));
+            !around.is_some_and(|it| group < it.groups_before_alternative)
         })
     }
 
@@ -1224,12 +1227,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         if self.eat(b'?') {
             if self.eat_group_name()? {
                 if !self.has_in_scope(&self.last_str_value) {
-                    let (name_start, len) = self.intern_last_str();
-                    self.group_names.push(GroupName {
-                        start: name_start,
-                        len,
-                        branch: self.branch,
-                    });
+                    self.add_group_name();
                     return Ok(true);
                 }
                 return self.raise("Duplicate capture group name");

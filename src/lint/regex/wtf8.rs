@@ -195,6 +195,49 @@ pub fn utf16_index(s: &[u8], offset: usize) -> usize {
     units
 }
 
+/// For [`utf16_index`] of many offsets in one text.
+#[derive(Debug)]
+pub(crate) struct Utf16Index {
+    /// Up to here a byte is a code unit.
+    ascii: usize,
+    /// After that, for every `Utf16Index::STEP` bytes: the first offset from there on where a code unit starts, and its index.
+    marks: Vec<(u32, u32)>,
+}
+
+impl Utf16Index {
+    const STEP: usize = 128;
+
+    pub(crate) fn new(s: &[u8]) -> Self {
+        let ascii = bun_core::strings::first_non_ascii(s).map_or(s.len(), |i| i as usize);
+        let mut marks = Vec::with_capacity((s.len() - ascii) / Self::STEP + 1);
+        let (mut i, mut units) = (ascii, ascii);
+        while i < s.len() {
+            if i >= ascii + marks.len() * Self::STEP {
+                marks.push((i as u32, units as u32));
+            }
+            units += 1;
+            i += unit_at(s, i).1;
+        }
+        Utf16Index { ascii, marks }
+    }
+
+    /// `utf16_index(s, offset)` for the `s` that it was made of.
+    pub(crate) fn of(&self, s: &[u8], offset: usize) -> usize {
+        let offset = offset.min(s.len());
+        if offset <= self.ascii {
+            return offset;
+        }
+        let after = ((offset - self.ascii) / Self::STEP + 1).min(self.marks.len());
+        let mark = self.marks.get(..after).unwrap_or_default().iter().rev().find(|it| it.0 as usize <= offset);
+        let (mut i, mut units) = mark.map_or((self.ascii, self.ascii), |it| (it.0 as usize, it.1 as usize));
+        while i < offset {
+            units += 1;
+            i += unit_at(s, i).1;
+        }
+        units
+    }
+}
+
 /// The byte offset in `s` that the index `index` in its UTF-16 form corresponds to.
 pub fn byte_offset(s: &[u8], index: usize) -> usize {
     let ascii = bun_core::strings::first_non_ascii(s).map_or(s.len(), |i| i as usize);

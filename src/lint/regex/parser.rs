@@ -2,6 +2,7 @@
 
 use super::ast::{Ast, Data, EscapeSet, Flags, ModifierFlags, NodeData, NodeId, Reference, Run};
 use super::validator::{self, Handler, Mode, Options, SyntaxError};
+use std::cell::OnceCell;
 
 /// `new RegExpParser(options).parseLiteral(source)`, `parseRegExpLiteral(source, options)`
 pub fn parse_literal(source: &[u8], options: Options) -> Result<Ast<'_>, SyntaxError> {
@@ -64,6 +65,7 @@ impl<'s> Builder<'s> {
                 lists: Vec::new(),
                 text: Vec::new(),
                 root: NodeId::NONE,
+                utf16: OnceCell::new(),
             },
             node: NodeId::NONE,
             flags: NodeId::NONE,
@@ -220,14 +222,108 @@ impl<'s> Builder<'s> {
             *expression = id;
         }
     }
+}
 
-    fn group_name(&self, group: NodeId) -> Option<&[u8]> {
-        let Data::CapturingGroup { name, .. } = self.data(group)? else {
-            return None;
+/// The groups of one name.
+struct Named {
+    name: Run,
+    /// Where they are in the list of all groups with a name.
+    first: usize,
+    len: usize,
+    /// They, as the list that every backreference by this name resolves to.
+    groups: Option<Run>,
+    /// The backreferences by this name.
+    references: Vec<NodeId>,
+}
+
+impl Builder<'_> {
+    /// Gives each backreference its groups and each group its backreferences. Backreferences by one name share their list, and
+    /// so do the groups of one name that no number refers to: n groups and n backreferences of one name take room for 2 n.
+    fn resolve_backreferences(&mut self) {
+        let text = std::mem::take(&mut self.ast.text);
+        let text_of = |run: Run| text.get(run.start as usize..run.start as usize + run.len as usize);
+        let name_of = |nodes: &[NodeData], group: NodeId| match nodes.get(group.0 as usize).map(|it| it.data) {
+            Some(Data::CapturingGroup { name, .. }) if name.start != Run::NONE.start => Some(name),
+            _ => None,
         };
-        self.ast
-            .text
-            .get(name.start as usize..(name.start as usize) + name.len as usize)
+        let is_by_name = |it: &NodeId| {
+            matches!(self.data(*it), Some(Data::Backreference { name, .. }) if name.start != Run::NONE.start)
+        };
+        let (mut with_name, mut names): (Vec<(Run, NodeId)>, Vec<Named>) = (Vec::new(), Vec::new());
+        if self.backreferences.iter().any(is_by_name) {
+            let all = self.capturing_groups.iter();
+            with_name.extend(all.filter_map(|&group| Some((name_of(&self.ast.nodes, group)?, group))));
+            with_name.sort_by_key(|it| text_of(it.0));
+            let mut first = 0;
+            for same in with_name.chunk_by(|a, b| text_of(a.0) == text_of(b.0)) {
+                names.push(Named {
+                    name: same[0].0,
+                    first,
+                    len: same.len(),
+                    groups: None,
+                    references: Vec::new(),
+                });
+                first += same.len();
+            }
+        }
+        // (group, reference), in the order of the references.
+        let mut by_number: Vec<(NodeId, NodeId)> = Vec::new();
+        for i in 0..self.backreferences.len() {
+            let reference = self.backreferences[i];
+            let Some(Data::Backreference { number, name, .. }) = self.data(reference) else {
+                continue;
+            };
+            let groups = if name.start == Run::NONE.start {
+                let group = (number as usize).checked_sub(1).and_then(|i| self.capturing_groups.get(i)).copied();
+                by_number.extend(group.map(|group| (group, reference)));
+                self.list(group.into_iter())
+            } else {
+                match names.binary_search_by_key(&text_of(name), |it| text_of(it.name)) {
+                    Ok(at) => {
+                        let named = &mut names[at];
+                        named.references.push(reference);
+                        let groups = &with_name[named.first..named.first + named.len];
+                        *named.groups.get_or_insert_with(|| self.list(groups.iter().map(|it| it.1)))
+                    }
+                    Err(_) => Run::default(),
+                }
+            };
+            if let Some(NodeData {
+                data: Data::Backreference { resolved, .. },
+                ..
+            }) = self.get_mut(reference)
+            {
+                *resolved = groups;
+            }
+        }
+        let set_references = |this: &mut Self, group: NodeId, list: Run| {
+            if let Some(NodeData {
+                data: Data::CapturingGroup { references, .. },
+                ..
+            }) = this.get_mut(group)
+            {
+                *references = list;
+            }
+        };
+        for named in names.iter().filter(|it| !it.references.is_empty()) {
+            let list = self.list(named.references.iter().copied());
+            for &(_, group) in &with_name[named.first..named.first + named.len] {
+                set_references(self, group, list);
+            }
+        }
+        by_number.sort_by_key(|(group, _)| group.0);
+        for same in by_number.chunk_by(|a, b| a.0 == b.0) {
+            let group = same[0].0;
+            let by_name = name_of(&self.ast.nodes, group)
+                .and_then(|name| names.binary_search_by_key(&text_of(name), |it| text_of(it.name)).ok())
+                .map_or(&[][..], |at| &names[at].references);
+            // Nodes are numbered in the order of the source.
+            let mut all: Vec<NodeId> = same.iter().map(|it| it.1).chain(by_name.iter().copied()).collect();
+            all.sort_by_key(|it| it.0);
+            let list = self.list(all.into_iter());
+            set_references(self, group, list);
+        }
+        self.ast.text = text;
     }
 }
 
@@ -264,56 +360,7 @@ impl Handler for Builder<'_> {
         self.close(end);
         self.node = pattern;
 
-        // (group, reference), in the order of the references.
-        let mut pairs: Vec<(NodeId, NodeId)> = Vec::new();
-        for i in 0..self.backreferences.len() {
-            let reference = self.backreferences[i];
-            let Some(Data::Backreference { number, name, .. }) = self.data(reference) else {
-                continue;
-            };
-            let first = pairs.len();
-            if name.start == Run::NONE.start {
-                let group = (number as usize)
-                    .checked_sub(1)
-                    .and_then(|i| self.capturing_groups.get(i));
-                pairs.extend(group.map(|group| (*group, reference)));
-            } else {
-                let start = name.start as usize;
-                let wanted = self.ast.text.get(start..start + name.len as usize);
-                pairs.extend(
-                    self.capturing_groups
-                        .iter()
-                        .filter(|group| self.group_name(**group) == wanted)
-                        .map(|group| (*group, reference)),
-                );
-            }
-            let groups = self.list(
-                pairs
-                    .get(first..)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|pair| pair.0),
-            );
-            if let Some(NodeData {
-                data: Data::Backreference { resolved, .. },
-                ..
-            }) = self.get_mut(reference)
-            {
-                *resolved = groups;
-            }
-        }
-        pairs.sort_by_key(|(group, _)| group.0);
-        for same in pairs.chunk_by(|a, b| a.0 == b.0) {
-            let list = self.list(same.iter().map(|pair| pair.1));
-            if let Some((group, _)) = same.first()
-                && let Some(NodeData {
-                    data: Data::CapturingGroup { references, .. },
-                    ..
-                }) = self.get_mut(*group)
-            {
-                *references = list;
-            }
-        }
+        self.resolve_backreferences();
     }
 
     fn on_alternative_enter(&mut self, start: u32, _index: u32) {

@@ -22,6 +22,7 @@
 
 use super::wtf8;
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 
 /// The `max` of `*`, `+` and `{n,}`.
 pub const INFINITY: u32 = u32::MAX;
@@ -265,6 +266,7 @@ pub struct Ast<'s> {
     /// Names that are not written as such in the source.
     pub(super) text: Vec<u8>,
     pub(super) root: NodeId,
+    pub(super) utf16: OnceCell<wtf8::Utf16Index>,
 }
 
 impl<'s> Ast<'s> {
@@ -272,6 +274,12 @@ impl<'s> Ast<'s> {
     #[inline]
     pub fn source(&self) -> &'s [u8] {
         self.source
+    }
+
+    /// [`utf16_index`](super::utf16_index) in the source, in constant time after the first time.
+    fn utf16_index(&self, offset: u32) -> u32 {
+        let index = self.utf16.get_or_init(|| wtf8::Utf16Index::new(self.source));
+        index.of(self.source, offset as usize) as u32
     }
 
     /// The `RegExpLiteral` for [`parse_literal`](super::parse_literal), the `Pattern` for
@@ -546,12 +554,12 @@ impl<'a> Node<'a> {
 
     /// regexpp's `start`: an index in the UTF-16 form of the source.
     pub fn utf16_start(self) -> u32 {
-        wtf8::utf16_index(self.ast.source, self.start() as usize) as u32
+        self.ast.utf16_index(self.start())
     }
 
     /// regexpp's `end`.
     pub fn utf16_end(self) -> u32 {
-        wtf8::utf16_index(self.ast.source, self.end() as usize) as u32
+        self.ast.utf16_index(self.end())
     }
 
     /// The source text of the node.

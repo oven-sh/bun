@@ -53,11 +53,21 @@ impl Finder {
     /// A list of children in source order. `is_open`: what follows the list follows its last
     /// element.
     fn list<'a, T: Handle<'a> + Spanned>(&mut self, list: List<'a, T>, is_open: bool) -> &mut Self {
+        self.list_of(list, is_open, |it| Some(it.span()))
+    }
+
+    /// The same. `span_of`: where an element is. `None` if it is no child, like a hole in an array.
+    fn list_of<'a, T: Handle<'a> + Spanned>(
+        &mut self,
+        list: List<'a, T>,
+        is_open: bool,
+        span_of: impl Fn(T) -> Option<Span>,
+    ) -> &mut Self {
         if self.following.is_some() {
             return self;
         }
         if self.is_found {
-            self.following = list.first().map(|first| first.span().start);
+            self.following = list.iter().find_map(&span_of).map(|first| first.start);
             return self;
         }
         // A binary search for the first element that does not end before `me` does.
@@ -65,14 +75,17 @@ impl Finder {
         while low < high {
             let middle = low + (high - low) / 2;
             match list.get(middle) {
-                Some(it) if it.span().end < self.me.end => low = middle + 1,
+                Some(it) if span_of(it).unwrap_or_else(|| it.span()).end < self.me.end => {
+                    low = middle + 1;
+                }
                 _ => high = middle,
             }
         }
-        if list.get(low).is_some_and(|it| it.span().contains(self.me)) {
+        if (list.get(low).and_then(&span_of)).is_some_and(|it| it.contains(self.me)) {
             self.is_found = true;
-            self.following = match list.get(low + 1) {
-                Some(next) => Some(next.span().start),
+            let next = (low + 1..list.len()).find_map(|at| list.get(at).and_then(&span_of));
+            self.following = match next {
+                Some(next) => Some(next.start),
                 None if is_open => None,
                 None => Some(0),
             };
@@ -197,13 +210,9 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             let is_target = matches!(parent, N::ArrayAssignmentTarget(_));
             inherits = !is_target;
             if let ExprKind::Array(elements) = e.kind() {
-                f.spans(
-                    elements
-                        .iter()
-                        .filter(|it| !it.is_missing())
-                        .map(|it| it.span()),
-                    is_target,
-                );
+                f.list_of(elements, is_target, |it| {
+                    (!it.is_missing()).then(|| it.span())
+                });
             }
         }
         N::ObjectExpression(e) | N::ObjectAssignmentTarget(e) => {
@@ -305,12 +314,9 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
         N::JSXElement(e) | N::JSXFragment(e) => {
             if let ExprKind::Jsx(jsx) = e.kind() {
                 f.one(Some(jsx.opening_span()))
-                    .spans(
-                        jsx.children()
-                            .iter()
-                            .map(|it| it.jsx_container_span().unwrap_or_else(|| it.span())),
-                        false,
-                    )
+                    .list_of(jsx.children(), false, |it| {
+                        Some(it.jsx_container_span().unwrap_or_else(|| it.span()))
+                    })
                     .one(jsx.closing_span());
             }
         }
@@ -389,13 +395,9 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             inherits = false;
             match pat.kind() {
                 PatKind::Object(props) => f.list(props, true),
-                PatKind::Array(elements) => f.spans(
-                    elements
-                        .iter()
-                        .filter(|it| it.pat().is_some())
-                        .map(|it| it.span()),
-                    true,
-                ),
+                PatKind::Array(elements) => {
+                    f.list_of(elements, true, |it| it.pat().is_some().then(|| it.span()))
+                }
                 _ => f,
             };
         }

@@ -19,6 +19,7 @@ use bun_lint::ast::{
 };
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::TokenKind;
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum CommentKind {
@@ -205,9 +206,9 @@ fn type_casts_are_kept_in_typescript(flavor: Flavor) -> bool {
 struct NodeFinder<'a> {
     file: &'a File<'a>,
     flavor: Flavor,
-    /// The statement of the file that the last position was in. The next one is likely to be in it
-    /// too, and a file can have many statements.
-    statement: Option<Node<'a>>,
+    /// The nodes that the last position was in, from the statement of the file inwards. The next one
+    /// is likely to be in most of them too, and a chain of operators can be deep.
+    path: Vec<Node<'a>>,
     /// Where the `(` are that follow a type cast comment.
     cast_parentheses: Vec<u32>,
 }
@@ -215,7 +216,7 @@ struct NodeFinder<'a> {
 impl<'a> NodeFinder<'a> {
     fn child_at(node: Node<'a>, offset: u32) -> Option<Node<'a>> {
         let mut found = None;
-        node.for_each_child(|child| {
+        node.for_each_child_near(offset, |child| {
             if found.is_none() && child.span().contains_offset(offset) {
                 found = Some(child);
             }
@@ -247,16 +248,14 @@ impl<'a> NodeFinder<'a> {
 
     /// The innermost node that `offset` is in.
     fn innermost_node_at(&mut self, offset: u32) -> Node<'a> {
-        if !self
-            .statement
-            .is_some_and(|it| it.span().contains_offset(offset))
+        while let Some(last) = self.path.last()
+            && !last.span().contains_offset(offset)
         {
-            self.statement = Self::child_at(Node::File(self.file), offset);
+            self.path.pop();
         }
-        let Some(mut node) = self.statement else {
-            return Node::File(self.file);
-        };
+        let mut node = self.path.last().copied().unwrap_or(Node::File(self.file));
         while let Some(child) = Self::child_at(node, offset) {
+            self.path.push(child);
             node = child;
         }
         node
@@ -379,6 +378,18 @@ fn attach_between_sides_of_assignment<'a>(
         )
         && right_start == right.span().start;
 
+    // Whether it starts its line, or follows one that does on the same line.
+    let mut starts_line: SmallVec<[bool; 8]> = SmallVec::with_capacity(gap.len());
+    for (at, comment) in gap.iter().enumerate() {
+        let follows_one_that_does = at.checked_sub(1).is_some_and(|previous| {
+            starts_line.get(previous) == Some(&true)
+                && gap
+                    .get(previous)
+                    .is_some_and(|it| is_on_same_line(it, comment))
+        });
+        starts_line.push(comment.preceded_by_newline() || follows_one_that_does);
+    }
+
     // From the end: whether it ends its line, and how far what leads the right side reaches back.
     let (mut ends_line, mut leading_start, mut is_tie_broken) = (false, right_start, false);
     for at in (0..gap.len()).rev() {
@@ -388,14 +399,7 @@ fn attach_between_sides_of_assignment<'a>(
                 && gap
                     .get(at + 1)
                     .is_some_and(|next| is_on_same_line(&comment, next)));
-        let starts_line = (0..=at)
-            .rev()
-            .find_map(|it| match gap[it].preceded_by_newline() {
-                true => Some(true),
-                false if it == 0 || !is_on_same_line(&gap[it - 1], &gap[it]) => Some(false),
-                false => None,
-            });
-        let trails_left_side = if starts_line == Some(true) {
+        let trails_left_side = if starts_line.get(at) == Some(&true) {
             false
         } else if ends_line {
             match is_assignment {
@@ -532,7 +536,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
     let mut nodes = NodeFinder {
         file,
         flavor,
-        statement: None,
+        path: Vec::new(),
         cast_parentheses: (comments.iter())
             .filter(|comment| comment.flags & TYPE_CAST != 0)
             .filter_map(|comment| {
@@ -1048,9 +1052,15 @@ impl<'a> Comments<'a> {
         &comments[count_that_end_before(comments, pos)..]
     }
 
+    /// The comments in `span`.
+    pub(crate) fn comments_in(&self, span: Span) -> &'a [Comment] {
+        let comments = self.comments_after(span.start);
+        &comments[..count_that_end_before(comments, span.end.saturating_add(1))]
+    }
+
+    /// The same as [`Comments::comments_in`].
     pub(crate) fn comments_in_range(&self, start: u32, end: u32) -> &'a [Comment] {
-        let comments = self.comments_after(start);
-        &comments[..count_that_end_before(comments, end.saturating_add(1))]
+        self.comments_in(Span::new(start, end))
     }
 
     /// The comments after `start` that are before the first `character` outside of a comment.
@@ -1227,12 +1237,19 @@ impl<'a> Comments<'a> {
             .is_some_and(|comment| comment.is_line() && comment.span.start > pos)
     }
 
-    /// Whether there is a comment from `start` to `end`, written or not.
-    pub(crate) fn has_any_comment_in_range(&self, start: u32, end: u32) -> bool {
-        let first = self.inner.partition_point(|comment| comment.end() < start);
+    /// Whether there is a comment in `span`, written or not.
+    pub(crate) fn has_any_comment_in(&self, span: Span) -> bool {
+        let first = self
+            .inner
+            .partition_point(|comment| comment.end() < span.start);
         self.inner
             .get(first)
-            .is_some_and(|comment| comment.end() <= end)
+            .is_some_and(|comment| comment.end() <= span.end)
+    }
+
+    /// The same as [`Comments::has_any_comment_in`].
+    pub(crate) fn has_any_comment_in_range(&self, start: u32, end: u32) -> bool {
+        self.has_any_comment_in(Span::new(start, end))
     }
 
     /// The position behind the first `character` after `start` that is not in a comment. `start` if

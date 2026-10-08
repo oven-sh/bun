@@ -39,6 +39,21 @@ pub fn code_points(text: &[u8]) -> CodePoints<'_> {
     CodePoints { text, at: 0 }
 }
 
+/// The code point that starts at `at`, and its length in bytes, which is 0 at the end of `text`. See
+/// [`code_points`].
+#[inline]
+pub fn code_point_at(text: &[u8], at: usize) -> (u32, usize) {
+    match text.get(at..) {
+        Some(&[0xED, b @ 0xA0..=0xBF, c @ 0x80..=0xBF, ..]) => {
+            (0xD000 | u32::from(b & 0x3F) << 6 | u32::from(c & 0x3F), 3)
+        }
+        _ => {
+            let (c, size) = char_and_size(text, at);
+            (c as u32, size)
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct CodePoints<'t> {
     text: &'t [u8],
@@ -51,15 +66,7 @@ impl Iterator for CodePoints<'_> {
     #[inline]
     fn next(&mut self) -> Option<(usize, u32)> {
         let at = self.at;
-        let (c, size) = match self.text.get(at..) {
-            Some(&[0xED, b @ 0xA0..=0xBF, c @ 0x80..=0xBF, ..]) => {
-                (0xD000 | u32::from(b & 0x3F) << 6 | u32::from(c & 0x3F), 3)
-            }
-            _ => {
-                let (c, size) = char_and_size(self.text, at);
-                (c as u32, size)
-            }
-        };
+        let (c, size) = code_point_at(self.text, at);
         if size == 0 {
             return None;
         }
@@ -341,7 +348,8 @@ pub fn is_identifier_start(c: u32) -> bool {
 /// ECMAScript's `IdentifierPart`, without escapes.
 #[inline]
 pub fn is_identifier_part(c: u32) -> bool {
-    bun_core::lexer::is_identifier_part(c)
+    // `ID_Continue` since Unicode 15.1.
+    bun_core::lexer::is_identifier_part(c) || matches!(c, 0x30FB | 0xFF65)
 }
 
 /// Whether `text` is an `IdentifierName` without escapes. Reserved words are.

@@ -1,8 +1,7 @@
 //! ESLint's `lib/shared/string-utils.js` and `lib/rules/utils/string-utils.js`.
 
-use super::text::code_points;
+use super::text::{code_point_at, code_points};
 use super::unicode::is_in_runs;
-use bun_core::lexer::char_and_size;
 use bun_core::strings;
 use std::ops::Range;
 
@@ -21,7 +20,7 @@ pub fn is_letter(c: u32) -> bool {
 /// letter of `text`.
 pub fn find_letter(text: &[u8]) -> Option<Range<usize>> {
     let (at, _) = code_points(text).find(|&(_, c)| is_letter(c))?;
-    Some(at..at + char_and_size(text, at).1)
+    Some(at..at + code_point_at(text, at).1)
 }
 
 /// ESLint's `containsLetter`.
@@ -57,11 +56,11 @@ impl<'t> Iterator for Graphemes<'t> {
 
     fn next(&mut self) -> Option<&'t [u8]> {
         use Class::*;
-        let (first, mut at) = char_and_size(self.text, 0);
+        let (first, mut at) = code_point_at(self.text, 0);
         if at == 0 {
             return None;
         }
-        let mut previous = Class::of(first as u32);
+        let mut previous = Class::of(first);
         // `previous` ends `\p{Extended_Pictographic} Extend*`, or that and a `ZWJ`.
         let mut is_after_pictographic = previous == Pictographic;
         // `previous` ends `\p{InCB=Consonant} [\p{InCB=Extend}\p{InCB=Linker}]*`, and whether there
@@ -70,11 +69,11 @@ impl<'t> Iterator for Graphemes<'t> {
         // A cluster starts with an even number of regional indicators before it.
         let mut is_second_regional_indicator = false;
         loop {
-            let (c, size) = char_and_size(self.text, at);
+            let (c, size) = code_point_at(self.text, at);
             if size == 0 {
                 break;
             }
-            let next = Class::of(c as u32);
+            let next = Class::of(c);
             let is_joined = match (previous, next) {
                 (Cr, Lf) => true,
                 (Cr | Lf | Control, _) | (_, Cr | Lf | Control) => false,
@@ -170,6 +169,7 @@ impl Class {
             0x20..0x7F => Class::Other,
             0xAC00..=0xD7A3 if (c - 0xAC00) % 28 == 0 => Class::Lv,
             0xAC00..=0xD7A3 => Class::Lvt,
+            0xD800..=0xDFFF => Class::Control,
             _ => {
                 let after = GRAPHEME_CLASSES.partition_point(|&run| run >> 5 <= c);
                 let run = after.checked_sub(1).and_then(|at| GRAPHEME_CLASSES.get(at));

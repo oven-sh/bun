@@ -15,7 +15,8 @@ use super::{
 };
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Handle, Key, KeyKind, Module,
-    ModuleName, Name, Node, Pat, Stmt, StmtKind, StmtTag, TypeKind, TypeTag, UnOp,
+    ModuleName, Name, Node, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
+    TypeTag, UnOp,
 };
 use crate::semantic::{Declaration, Reference, Scope, ScopeKind, SymFlags, Symbol};
 use crate::span::Span;
@@ -812,4 +813,67 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
         }
     }
     analysis
+}
+
+// ───────────────────────────── where an identifier is in a pattern ─────────────────────────────
+
+/// Whether the parent of the identifier `pat` is an `ArrayPattern`.
+fn is_array_pattern_element(pat: Pat<'_>) -> bool {
+    matches!(pat.parent(), Node::PatElem(it) if !it.is_rest() && it.default().is_none())
+}
+
+/// `no-unused-vars`' `def.name.parent.type === "ArrayPattern"`.
+pub fn is_defined_in_array_pattern(def: Declaration<'_>) -> bool {
+    match def {
+        Declaration::Var(pat) | Declaration::Param(pat) => is_array_pattern_element(pat),
+        _ => false,
+    }
+}
+
+/// `no-unused-vars`' `ref.identifier.parent.type === "ArrayPattern"`.
+pub fn is_referenced_in_array_pattern(reference: Reference<'_>) -> bool {
+    match reference.node() {
+        Node::Pat(pat) => is_array_pattern_element(pat),
+        Node::Expr(id) => matches!(
+            id.parent(),
+            Node::Expr(parent) if parent.tag() == ExprTag::Array && is_assignment_target(parent)
+        ),
+        _ => false,
+    }
+}
+
+/// Whether the last property of the object pattern that `property` is in is a rest element.
+fn is_followed_by_rest(property: PatProp<'_>) -> bool {
+    matches!(
+        property.parent(),
+        Node::Pat(object) if matches!(
+            object.kind(),
+            PatKind::Object(properties) if properties.last().is_some_and(PatProp::is_rest)
+        )
+    )
+}
+
+/// `no-unused-vars`' `hasRestSibling(id.parent)`, for the identifier of a definition (a `Node::Pat`)
+/// or of a reference (`reference.node()`): it is a property of an object pattern that ends with a
+/// rest element.
+pub fn has_rest_sibling(id: Node<'_>) -> bool {
+    match (id, id.parent()) {
+        (Node::Pat(_), Node::PatProp(property)) => {
+            !property.is_rest() && property.default().is_none() && is_followed_by_rest(property)
+        }
+        // A computed key.
+        (Node::Expr(key), Node::PatProp(property)) => {
+            property.default() != Some(key) && is_followed_by_rest(property)
+        }
+        (Node::Expr(_), Node::Prop(property)) if property.kind() != PropKind::Spread => {
+            match property.parent().as_expr().map(|object| (object, object.kind())) {
+                Some((object, ExprKind::Object(properties))) => {
+                    properties.last().is_some_and(|last| last.kind() == PropKind::Spread)
+                        && is_assignment_target(object)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }

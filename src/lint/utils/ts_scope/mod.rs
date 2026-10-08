@@ -28,6 +28,7 @@
 //! | `isExported`, `isMergeableExported` | [`is_exported`], [`is_mergeable_exported`] |
 //! | `isSelfReference`, `isInsideOneOf` | [`get_self_reference_ranges`] |
 //! | `isReadForItself`, `getRhsNode`, `isUnusedExpression` | [`is_read_for_itself`], [`get_rhs_node`], [`is_unused_expression`] |
+//! | `hasRestSibling(id.parent)`, `def.name.parent.type === "ArrayPattern"`, `ref.identifier.parent.type === "ArrayPattern"` | [`has_rest_sibling`], [`is_defined_in_array_pattern`], [`is_referenced_in_array_pattern`] |
 //! | `isInsideOfStorableFunction`, `isStorableFunction` | [`is_inside_of_storable_function`], [`is_storable_function`] |
 //! | `analyzeClassMemberUsage`, `ClassScopeResult` | [`analyze_class_member_usage`], [`ClassMemberUsage`], [`ClassScopeResult`] |
 //! | `Member`, `MemberNode` of `class-scope-analyzer` | [`ClassMember`], [`MemberNode`] |

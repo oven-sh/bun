@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+// `$` and `{{` are one string, in a text. In the value of an attribute they are not.
+@Component({
+  template: `<span>\${{ price }}</span
+    ><b>$</b>{{ x }} <a href="\${x}">$ {{ y }} a\${{ z }}</a>
+    <p b="${{ c }}" (d)="e = \`\${f}\`"></p>`,
+})
+class C {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// `$` and `{{` are one string, in a text. In the value of an attribute they are not.
+@Component({
+  template: `<span>\${{ price }}</span
+    ><b>$</b>{{ x }} <a href="\${x}">$ {{ y }} a\${{ z }}</a>
+    <p b="${{ c }}" (d)="e = \`\${f}\`"></p>`,
+})
+class C {}
+
+===================== End =====================

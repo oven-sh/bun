@@ -19,15 +19,11 @@ mod utils_ts_cmd;
 mod utils_core_cmd;
 mod utils_small_cmd;
 
-use bun_lint::ast::File;
-use bun_lint::context::{Diagnostic, Severity};
+use bun_lint::context::Severity;
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
 use bun_lint::rule::Plugin;
 use bun_lint::runner::{Enabled, RuleEntry};
-use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind};
-use bun_sema::session::Session;
 use std::fmt::Write as _;
 
 fn text(bytes: &[u8]) -> String {
@@ -48,6 +44,8 @@ struct Outcome {
 
 #[derive(PartialEq, Eq, Debug)]
 struct Reported {
+    /// `None`: the rule that is tested. Empty: the linter itself.
+    rule_id: Option<String>,
     message_id: String,
     message: String,
     line: u32,
@@ -57,68 +55,40 @@ struct Reported {
     suggestions: Vec<(String, String)>,
 }
 
-/// Parses and binds `code`, without types, and calls `then` with the file.
-pub(crate) fn with_file<R>(
+pub(crate) use linter_cmd::with_file;
+
+fn lint(
+    entry: &'static RuleEntry,
     path: &str,
     code: &[u8],
-    language: &LanguageOptions,
-    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
-) -> R {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let arena = session.arena();
-    let mut hir = bun_js_parser::sema::summarize(arena, path.as_bytes(), None, code, &atoms, false, false).0;
-    hir.text = code.to_vec().into();
-    let bind_options = BindOptions {
-        emit_standard_class_fields: true,
-        before_es2020: false,
-        before_es2017: false,
-    };
-    let bound = bind(&hir, bind_options, &atoms, arena);
-    let file = File::new(path.as_bytes(), &hir, &bound, &atoms, language, None);
-    then(&file)
-}
-
-fn lint(entry: &RuleEntry, path: &str, code: &[u8], options: &[Json]) -> Outcome {
-    with_file(path, code, &LanguageOptions::default(), |file| lint_file(entry, file, code, options))
-}
-
-fn lint_file<'a>(entry: &RuleEntry, file: &'a File<'a>, code: &[u8], options: &[Json]) -> Outcome {
-    if file.has_parse_errors() {
-        return Outcome {
-            messages: Vec::new(),
-            output: None,
-            has_parse_errors: true,
-        };
-    }
-    let rule = (entry.build)(&Options::new(options));
-    let rules = [Enabled {
-        rule: &*rule,
-        severity: Severity::Error,
-    }];
-    let diagnostics = bun_lint::runner::run(file, &rules, true);
+    options: &[Json],
+    language_options: &Json,
+    settings: &Json,
+) -> Outcome {
+    let outcome = linter_cmd::lint_case(entry, code, path, options, language_options, settings);
     let apply = |fix: &bun_lint::fix::Fix| {
         bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec())
     };
-    let messages = diagnostics.iter().map(|it: &Diagnostic| {
-        let (start, end) = (file.position(it.span.start), file.position(it.span.end));
-        Reported {
-            message_id: it.message_id.to_owned(),
-            message: text(&it.message),
-            line: start.line,
-            column: start.column + 1,
-            end: (!it.has_no_end).then_some((end.line, end.column + 1)),
-            suggestions: (it.suggestions.iter())
-                .map(|s| (s.message_id.to_owned(), text(&apply(&s.fix))))
-                .collect(),
-        }
-    });
-    let messages = messages.collect();
-    let mut fixes: Vec<_> = diagnostics.iter().filter_map(|it| it.fix.as_ref()).collect();
     Outcome {
-        messages,
-        output: bun_lint::fix::apply_fixes(code, &mut fixes),
-        has_parse_errors: false,
+        has_parse_errors: (outcome.messages.iter()).any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
+        messages: (outcome.messages.iter())
+            .map(|it| Reported {
+                rule_id: match &it.rule_id {
+                    Some(id) if *id == bun_lint::linter::RuleId::Known(entry.meta) => None,
+                    Some(id) => Some(text(&id.to_vec())),
+                    None => Some(String::new()),
+                },
+                message_id: it.message_id.unwrap_or_default().to_owned(),
+                message: text(&it.message),
+                line: it.line,
+                column: it.column,
+                end: it.end,
+                suggestions: (it.suggestions.iter())
+                    .map(|s| (s.message_id.to_owned(), text(&apply(&s.fix))))
+                    .collect(),
+            })
+            .collect(),
+        output: outcome.output,
     }
 }
 
@@ -136,6 +106,7 @@ fn number_of(json: &Json, key: &str) -> Option<u32> {
 fn expected_messages(case: &Json) -> Vec<Reported> {
     let messages = case.get(b"messages").and_then(Json::as_array).unwrap_or_default();
     let reported = messages.iter().map(|it| Reported {
+        rule_id: it.get(b"ruleId").map(|id| id.as_str().map(text).unwrap_or_default()),
         message_id: str_of(it, "messageId").unwrap_or_default().to_owned(),
         message: str_of(it, "message").unwrap_or_default().to_owned(),
         line: number_of(it, "line").unwrap_or(0),
@@ -161,7 +132,7 @@ struct Tally {
 }
 
 /// Runs the cases of one fixture file. Returns the tally and a description of each failure.
-fn run_fixture(fixture: &Json, entry: &RuleEntry) -> (Tally, String) {
+fn run_fixture(fixture: &Json, entry: &'static RuleEntry) -> (Tally, String) {
     let (mut tally, mut failures) = (Tally::default(), String::new());
     let cases = fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default();
     for (index, case) in cases.iter().enumerate() {
@@ -174,7 +145,9 @@ fn run_fixture(fixture: &Json, entry: &RuleEntry) -> (Tally, String) {
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = str_of(case, "filename").unwrap_or("file.js");
         let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
-        let outcome = std::panic::catch_unwind(|| lint(entry, path, code, options));
+        let language_options = case.get(b"languageOptions").unwrap_or(&Json::Null);
+        let settings = case.get(b"settings").unwrap_or(&Json::Null);
+        let outcome = std::panic::catch_unwind(|| lint(entry, path, code, options, language_options, settings));
         // The order of what starts at the same place depends on the order in which ESLint visits the nodes.
         let in_order = |mut messages: Vec<Reported>| {
             messages.sort_by(|a, b| {
@@ -296,7 +269,7 @@ fn run_one(args: &[String]) {
     let code = std::fs::read(path).expect("the file");
     let options = rest.first().and_then(|it| bun_lint::json::parse(it.as_bytes()));
     let options = options.as_ref().and_then(Json::as_array).unwrap_or_default();
-    let outcome = lint(entry, path, &code, options);
+    let outcome = lint(entry, path, &code, options, &Json::Null, &Json::Null);
     if outcome.has_parse_errors {
         println!("the parser rejects the code");
     }

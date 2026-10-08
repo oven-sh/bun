@@ -12,6 +12,7 @@ bun_alloc.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true
 bun_paths.workspace = true
+bun_threading.workspace = true
 bstr.workspace = true
 bitflags.workspace = true
 smallvec.workspace = true

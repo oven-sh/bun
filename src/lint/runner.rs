@@ -9,7 +9,6 @@ use crate::code_path::{Analyzer, Event};
 use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
 use crate::rule::{Entry, Listeners, Meta, NodeTags, Rule};
-use bun_sema::bind::{FnOwner, MemberOwner, Parent, PatParent};
 use std::cell::OnceCell;
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
@@ -67,67 +66,57 @@ impl File<'_> {
         self.lazy.by_kind.get_or_init(ByKind::default)
     }
 
-    #[inline]
-    fn is_written(&self, pos: u32) -> bool {
-        !self.has_synthetic_nodes() || !self.is_in_jsdoc(pos)
-    }
-
     fn exprs_of(&self, tag: ExprTag) -> &[u32] {
-        let (hir, bound) = (&self.hir, &self.bound);
-        let grouped = self.by_kind().exprs.get_or_init(|| {
-            Grouped::new(hir.exprs.len(), |i| {
-                let is_reached = !matches!(bound.expr_parent.get(i), None | Some(Parent::None));
-                (is_reached && self.is_written(hir.exprs[i].pos)).then(|| hir.exprs[i].kind.tag() as usize)
-            })
-        });
+        let grouped = (self.by_kind().exprs)
+            .get_or_init(|| Grouped::new(self.hir.exprs.len(), |i| self.expr_in_tree(i).map(|tag| tag as usize)));
         grouped.of(tag as usize)
     }
 
     fn stmts_of(&self, tag: StmtTag) -> &[u32] {
-        let (hir, bound) = (&self.hir, &self.bound);
-        let grouped = self.by_kind().stmts.get_or_init(|| {
-            Grouped::new(hir.stmts.len(), |i| {
-                let is_reached = !matches!(bound.stmt_parent.get(i), None | Some(Parent::None));
-                (is_reached && self.is_written(hir.stmts[i].start)).then(|| StmtTag::of(&hir.stmts[i].kind) as usize)
-            })
-        });
+        let grouped = (self.by_kind().stmts)
+            .get_or_init(|| Grouped::new(self.hir.stmts.len(), |i| self.stmt_in_tree(i).map(|tag| tag as usize)));
         grouped.of(tag as usize)
     }
 
     fn types_of(&self, tag: TypeTag) -> &[u32] {
-        let (hir, bound) = (&self.hir, &self.bound);
-        let grouped = self.by_kind().types.get_or_init(|| {
-            Grouped::new(hir.types.len(), |i| {
-                let is_reached = bound.type_scope.get(i).is_some_and(|scope| scope.is_some());
-                (is_reached && self.is_written(hir.types[i].pos)).then(|| TypeTag::of(&hir.types[i].kind) as usize)
-            })
-        });
+        let grouped = (self.by_kind().types)
+            .get_or_init(|| Grouped::new(self.hir.types.len(), |i| self.type_in_tree(i).map(|tag| tag as usize)));
         grouped.of(tag as usize)
     }
 
+    /// Whether the file has an expression of one of these kinds. For a rule that has nothing to do otherwise, and whose listeners
+    /// are not free: those for code paths make the linter walk and analyze the whole file.
+    pub fn has_exprs(&self, tags: impl IntoIterator<Item = ExprTag>) -> bool {
+        tags.into_iter().any(|tag| !self.exprs_of(tag).is_empty())
+    }
+
+    /// The same for statements.
+    pub fn has_stmts(&self, tags: impl IntoIterator<Item = StmtTag>) -> bool {
+        tags.into_iter().any(|tag| !self.stmts_of(tag).is_empty())
+    }
+
+    /// The same for classes.
+    pub fn has_classes(&self) -> bool {
+        !self.hir.classes.is_empty()
+    }
+
     fn pats_of(&self, tag: PatTag) -> &[u32] {
-        let (hir, bound) = (&self.hir, &self.bound);
-        let grouped = self.by_kind().pats.get_or_init(|| {
-            Grouped::new(hir.pats.len(), |i| {
-                let is_reached = !matches!(bound.pat_parent.get(i), None | Some(PatParent::None));
-                (is_reached && self.is_written(hir.pats[i].pos)).then(|| PatTag::of(&hir.pats[i].kind) as usize)
-            })
-        });
+        let grouped = (self.by_kind().pats)
+            .get_or_init(|| Grouped::new(self.hir.pats.len(), |i| self.pat_in_tree(i).map(|tag| tag as usize)));
         grouped.of(tag as usize)
     }
 }
 
 /// Declares `File::$method`, which calls a function with every `$handle` of the file that is part of the tree.
 macro_rules! every {
-    ($($method:ident $handle:ident $field:ident |$hir:ident, $bound:ident, $i:ident| $is_reached:expr;)*) => {
+    ($($method:ident $handle:ident $field:ident;)*) => {
         impl<'a> File<'a> {
             $(
                 #[inline]
                 fn $method(&'a self, mut visit: impl FnMut($handle<'a>)) {
-                    let ($hir, $bound) = (&self.hir, &self.bound);
-                    for $i in 0..$hir.$field.len() {
-                        let it = <$handle as Handle>::from_raw(self, $i as u32);
-                        if $is_reached && !it.is_synthetic() {
+                    for i in 0..self.hir.$field.len() {
+                        let it = <$handle as Handle>::from_raw(self, i as u32);
+                        if it.is_in_tree() {
                             visit(it);
                         }
                     }
@@ -138,24 +127,46 @@ macro_rules! every {
 }
 
 every! {
-    every_func Func fns |hir, bound, i| bound.fns.get(i).is_some_and(|f| f.owner != FnOwner::None);
-    every_class Class classes |hir, bound, i| bound.class_scope.get(i).is_some_and(|scope| scope.is_some());
-    every_member Member members |hir, bound, i| !matches!(bound.member_owner.get(i), None | Some(MemberOwner::None));
-    every_prop Prop props |hir, bound, i| bound.prop_owner.get(i).is_some_and(|owner| owner.is_some());
-    every_param Param params |hir, bound, i| bound.param_fn.get(i).is_some_and(|f| f.is_some());
-    every_type_param TypeParam type_params |hir, bound, i| bound.type_param_scope.get(i).is_some_and(|scope| scope.is_some());
-    every_var_decl VarDecl var_decls |hir, bound, i| bound.var_stmt.get(i).is_some_and(|s| s.is_some());
-    every_case Case cases |hir, bound, i| bound.case_stmt.get(i).is_some_and(|s| s.is_some());
-    every_enum_member EnumMember enum_members |hir, _bound, _i| true;
-    every_import_spec ImportSpec import_specs |hir, _bound, _i| true;
-    every_export_spec ExportSpec export_specs |hir, _bound, _i| true;
-    every_tuple_elem TupleElem tuple_elems |hir, _bound, _i| true;
-    every_pat_prop PatProp pat_props |hir, bound, i| {
-        !matches!(bound.pat_parent.get(hir.pat_props[i].value.idx()), None | Some(PatParent::None))
-    };
-    every_pat_elem PatElem pat_elems |hir, bound, i| {
-        !matches!(bound.pat_parent.get(hir.pat_elems[i].pat.idx()), None | Some(PatParent::None))
-    };
+    every_func Func fns;
+    every_class Class classes;
+    every_member Member members;
+    every_prop Prop props;
+    every_param Param params;
+    every_type_param TypeParam type_params;
+    every_var_decl VarDecl var_decls;
+    every_case Case cases;
+    every_enum_member EnumMember enum_members;
+    every_import_spec ImportSpec import_specs;
+    every_export_spec ExportSpec export_specs;
+}
+
+impl<'a> File<'a> {
+    fn every_tuple_elem(&'a self, mut visit: impl FnMut(TupleElem<'a>)) {
+        for i in 0..self.hir.tuple_elems.len() {
+            let it = TupleElem::from_raw(self, i as u32);
+            if self.type_in_tree(it.ty().id().idx()).is_some() {
+                visit(it);
+            }
+        }
+    }
+
+    fn every_pat_prop(&'a self, mut visit: impl FnMut(PatProp<'a>)) {
+        for i in 0..self.hir.pat_props.len() {
+            let it = PatProp::from_raw(self, i as u32);
+            if self.pat_in_tree(it.value().id().idx()).is_some() {
+                visit(it);
+            }
+        }
+    }
+
+    fn every_pat_elem(&'a self, mut visit: impl FnMut(PatElem<'a>)) {
+        for i in 0..self.hir.pat_elems.len() {
+            let it = PatElem::from_raw(self, i as u32);
+            if it.pat().is_none_or(|pat| self.pat_in_tree(pat.id().idx()).is_some()) {
+                visit(it);
+            }
+        }
+    }
 }
 
 // ───────────────────────────── a rule, whatever its type ─────────────────────────────

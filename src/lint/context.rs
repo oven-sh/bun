@@ -179,23 +179,35 @@ impl Drop for Report<'_> {
     }
 }
 
-/// ESLint's `interpolate`: replaces `{{ name }}` by `data(name)`, and leaves it if there is none.
+/// ESLint's `interpolate`: replaces each `{{ name }}` by `data(name)`, and leaves it if there is none. A name has no braces in it,
+/// so `{{{name}}}` is `{`, the value, `}`.
 fn interpolate<'d>(text: &str, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
+    let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len() + 16);
-    let mut rest = text;
-    while let Some(open) = bun_core::strings::index_of(rest.as_bytes(), b"{{") {
-        let Some(len) = bun_core::strings::index_of(&rest.as_bytes()[open..], b"}}") else {
-            break;
+    let mut at = 0;
+    while let Some(found) = bun_core::strings::index_of(&bytes[at..], b"{{") {
+        let open = at + found;
+        let name_start = open + 2;
+        let name_len = bun_core::strings::index_of_any(&bytes[name_start..], b"{}").unwrap_or(bytes.len() - name_start);
+        let name_end = name_start + name_len;
+        let value = match name_len > 0 && bytes[name_end..].starts_with(b"}}") {
+            true => data(text[name_start..name_end].trim()),
+            false => None,
         };
-        let name = rest[open + 2..open + len].trim();
-        out.extend_from_slice(&rest.as_bytes()[..open]);
-        match data(name) {
-            Some(value) => out.extend_from_slice(value),
-            None => out.extend_from_slice(&rest.as_bytes()[open..open + len + 2]),
+        match value {
+            Some(value) => {
+                out.extend_from_slice(&bytes[at..open]);
+                out.extend_from_slice(value);
+                at = name_end + 2;
+            }
+            // The second brace can be the first of the next pair.
+            None => {
+                out.extend_from_slice(&bytes[at..=open]);
+                at = open + 1;
+            }
         }
-        rest = &rest[open + len + 2..];
     }
-    out.extend_from_slice(rest.as_bytes());
+    out.extend_from_slice(&bytes[at..]);
     out
 }
 

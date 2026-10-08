@@ -1035,6 +1035,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_lint",
+ "bun_lint_eslint",
  "rustc-hash",
  "smallvec",
 ]

@@ -1,7 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::types::utils::{
-    get_enum_key_for_literal, get_enum_literals, is_mismatched_enum_comparison_types,
-};
+use bun_lint::types::utils::{EnumComparisons, get_enum_key_for_literal, get_enum_literals};
 use bun_lint::types::{Literal, Type};
 use bun_lint::utils::eslint_utils::{StaticValue, get_static_value};
 
@@ -35,13 +33,13 @@ impl Rule for NoUnsafeEnumComparison {
         .has_suggestions()
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    type State<'a> = EnumComparisons<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnsafeEnumComparison
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> EnumComparisons<'a> {
         on.exprs([ExprTag::Binary], |_, node, cx| {
             let ExprKind::Binary {
                 op:
@@ -60,7 +58,7 @@ impl Rule for NoUnsafeEnumComparison {
                 return;
             };
             let (left_type, right_type) = (left.ty(), right.ty());
-            if !is_mismatched_enum_comparison_types(left_type, right_type) {
+            if !cx.state.is_mismatched(left_type, right_type) {
                 return;
             }
             cx.report(node, MISMATCHED_CONDITION).suggest(REPLACE_VALUE_WITH_ENUM, |fixer| {
@@ -84,9 +82,10 @@ impl Rule for NoUnsafeEnumComparison {
             let StmtKind::Switch { expr: discriminant, .. } = parent.kind() else {
                 return;
             };
-            if is_mismatched_enum_comparison_types(discriminant.ty(), test.ty()) {
+            if cx.state.is_mismatched(discriminant.ty(), test.ty()) {
                 cx.report(node, MISMATCHED_CASE);
             }
         });
+        EnumComparisons::default()
     }
 }

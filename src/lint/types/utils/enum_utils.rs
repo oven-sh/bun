@@ -3,7 +3,9 @@
 use super::{is_number_like, is_string_like};
 use crate::types::tsutils::union_constituents;
 use crate::types::{Literal, SymbolFlags, SyntaxKind, Type, TypeFlags};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::rc::Rc;
 
 /// The enum for a member of an enum, any other type as it is: `Fruit` for `Fruit.Apple`.
 fn get_base_enum_type(ty: Type<'_>) -> Type<'_> {
@@ -60,6 +62,86 @@ pub fn is_mismatched_enum_comparison_types<'a>(left_type: Type<'a>, right_type: 
         return false;
     }
     type_violates(left_type, right_type) || type_violates(right_type, left_type)
+}
+
+/// What [`is_mismatched_enum_comparison_types`] looks for in a type.
+struct ComparedType<'a> {
+    /// `getEnumTypes(typeChecker, type)`
+    enum_types: FxHashSet<Type<'a>>,
+    constituents: FxHashSet<Type<'a>>,
+    /// A constituent is an enum, or a member of one, whose value is a number.
+    has_number_enum: bool,
+    /// The same for a string.
+    has_string_enum: bool,
+    is_number_like: bool,
+    is_string_like: bool,
+}
+
+impl<'a> ComparedType<'a> {
+    fn new(ty: Type<'a>) -> Self {
+        let mut it = ComparedType {
+            enum_types: FxHashSet::default(),
+            constituents: FxHashSet::default(),
+            has_number_enum: false,
+            has_string_enum: false,
+            is_number_like: is_number_like(ty),
+            is_string_like: is_string_like(ty),
+        };
+        for constituent in union_constituents(ty) {
+            it.constituents.insert(constituent);
+            if constituent.has_flags(TypeFlags::ENUM_LITERAL) {
+                it.enum_types.insert(get_base_enum_type(constituent));
+            }
+            match get_enum_value_type(constituent) {
+                Some(value_type) if value_type == TypeFlags::NUMBER => it.has_number_enum = true,
+                Some(_) => it.has_string_enum = true,
+                None => {}
+            }
+        }
+        it
+    }
+
+    /// [`type_violates`]
+    fn violates(&self, right: &ComparedType) -> bool {
+        self.has_number_enum && right.is_number_like || self.has_string_enum && right.is_string_like
+    }
+}
+
+fn have_one_in_common<'a>(a: &FxHashSet<Type<'a>>, b: &FxHashSet<Type<'a>>) -> bool {
+    let (few, many) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    few.iter().any(|it| many.contains(it))
+}
+
+/// [`is_mismatched_enum_comparison_types`] for a file. What it finds in a union of many is kept: to go through an enum of 10,000
+/// members for each `case` of a `switch` over it takes long.
+#[derive(Default)]
+pub struct EnumComparisons<'a> {
+    of_many: FxHashMap<Type<'a>, Rc<ComparedType<'a>>>,
+}
+
+impl<'a> EnumComparisons<'a> {
+    const MANY: usize = 16;
+
+    fn compared(&mut self, ty: Type<'a>) -> Rc<ComparedType<'a>> {
+        match union_constituents(ty).len() > Self::MANY {
+            true => Rc::clone(self.of_many.entry(ty).or_insert_with(|| Rc::new(ComparedType::new(ty)))),
+            false => Rc::new(ComparedType::new(ty)),
+        }
+    }
+
+    pub fn is_mismatched(&mut self, left_type: Type<'a>, right_type: Type<'a>) -> bool {
+        if union_constituents(left_type).len() <= Self::MANY && union_constituents(right_type).len() <= Self::MANY {
+            return is_mismatched_enum_comparison_types(left_type, right_type);
+        }
+        let (left, right) = (self.compared(left_type), self.compared(right_type));
+        if left.enum_types.is_empty() && right.enum_types.is_empty()
+            || have_one_in_common(&left.enum_types, &right.enum_types)
+            || have_one_in_common(&left.constituents, &right.constituents)
+        {
+            return false;
+        }
+        left.violates(&right) || right.violates(&left)
+    }
 }
 
 /// Whether the right type is an unsafe comparison against any constituent of the left type.

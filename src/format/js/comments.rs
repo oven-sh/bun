@@ -47,6 +47,8 @@ const TYPE_CAST: u8 = 1 << 3;
 const LOOKS_LIKE_TYPE_CAST: u8 = 1 << 4;
 /// `prettier-ignore`, or `oxfmt-ignore`, which means the same.
 const SUPPRESSION: u8 = 1 << 5;
+/// It is between the two sides of a declarator or an assignment and trails the left one.
+const TRAILS_LEFT_SIDE: u8 = 1 << 6;
 
 impl Comment {
     /// Without the delimiters.
@@ -197,6 +199,13 @@ impl<'a> NodeFinder<'a> {
             && e.parens().any(|it| it.end >= comment.span.end && self.cast_parentheses.binary_search(&it.start).is_ok())
     }
 
+    /// Where `e` starts, with the parentheses around it that follow a type cast comment.
+    fn start_with_cast_parentheses(&self, e: Expr<'a>) -> u32 {
+        let parentheses = (!self.cast_parentheses.is_empty() && e.is_parenthesized())
+            .then(|| e.parens().rev().find(|it| self.cast_parentheses.binary_search(&it.start).is_ok()));
+        parentheses.flatten().map_or_else(|| e.span().start, |it| it.start)
+    }
+
     /// The innermost node that `offset` is in.
     fn innermost_node_at(&mut self, offset: u32) -> Node<'a> {
         if !self.statement.is_some_and(|it| it.span().contains_offset(offset)) {
@@ -246,6 +255,73 @@ fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comme
         }
     }
     Some(member.span().start)
+}
+
+/// Where the comments between the two sides of a declarator or an assignment belong, if
+/// `comments[index]` is the first of them. Returns the index of the first comment after them.
+///
+/// Prettier's `attachComments` with `handleAssignmentLikeComments`: a comment that starts its line
+/// leads the right side. So does one that ends its line, if it is a block or the right side is an
+/// object, an array or a template. Otherwise it trails the left side. One with code on both sides
+/// leads the right side if only blanks and `(` are in between. Those that trail the left side are
+/// written first: `a = /* b */ // c ⏎ d` is `a = // c ⏎ /* b */ d`.
+fn attach_between_sides_of_assignment<'a>(nodes: &mut NodeFinder<'a>, comments: &mut [Comment], index: usize) -> Option<usize> {
+    let first = *comments.get(index)?;
+    let (left_end, right) = match nodes.innermost_node_at(first.span.start) {
+        Node::VarDecl(declarator) => {
+            (declarator.ty().map_or_else(|| declarator.pat().span().end, |ty| ty.span().end), declarator.init()?)
+        }
+        Node::Expr(assignment) => match assignment.kind() {
+            ExprKind::Assign { target, value, .. } if !assignment.is_assignment_target() => (target.span().end, value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let right_start = nodes.start_with_cast_parentheses(right);
+    if first.span.start < left_end || right_start < first.span.end {
+        return None;
+    }
+    let text = nodes.file.text();
+    let between = |start: u32, end: u32| text.get(start as usize..end as usize).unwrap_or_default();
+    let is_on_same_line = |a: &Comment, b: &Comment| between(a.span.end, b.span.start).iter().all(|b| matches!(b, b' ' | b'\t'));
+    let count = comments[index..].iter().take_while(|comment| comment.span.end <= right_start).count();
+    let gap = comments.get_mut(index..index + count)?;
+    let is_right_complex =
+        matches!(right.kind(), ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Template(_) | ExprKind::TaggedTemplate(_))
+            && right_start == right.span().start;
+
+    // From the end: whether it ends its line, and how far what leads the right side reaches back.
+    let (mut ends_line, mut leading_start, mut is_tie_broken) = (false, right_start, false);
+    for at in (0..gap.len()).rev() {
+        let comment = gap[at];
+        ends_line = comment.followed_by_newline() || (ends_line && gap.get(at + 1).is_some_and(|next| is_on_same_line(&comment, next)));
+        let starts_line = (0..=at).rev().find_map(|it| match gap[it].preceded_by_newline() {
+            true => Some(true),
+            false if it == 0 || !is_on_same_line(&gap[it - 1], &gap[it]) => Some(false),
+            false => None,
+        });
+        let trails_left_side = if starts_line == Some(true) {
+            false
+        } else if ends_line {
+            comment.is_line() && !is_right_complex
+        } else {
+            is_tie_broken = is_tie_broken
+                || !between(comment.span.end, leading_start).iter().all(|b| b.is_ascii_whitespace() || *b == b'(');
+            if !is_tie_broken {
+                leading_start = comment.span.start;
+            }
+            is_tie_broken
+        };
+        if trails_left_side {
+            gap[at].flags |= TRAILS_LEFT_SIDE;
+        }
+    }
+    if let Some(first_leading) = gap.iter().find(|comment| comment.flags & TRAILS_LEFT_SIDE == 0).map(|it| it.span.start) {
+        for comment in gap.iter_mut().filter(|it| it.flags & TRAILS_LEFT_SIDE != 0 && it.span.start > first_leading) {
+            comment.moved_to = first_leading;
+        }
+    }
+    Some(index + count)
 }
 
 /// oxfmt has no `handleMemberExpressionComments`: `a ⏎ // comment ⏎ .b` stays as it is.
@@ -331,6 +407,8 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
     let mut run_start = 0;
     // The index of the last comment that follows this one with nothing in between.
     let mut run_last = 0;
+    // The comments before this index are dealt with.
+    let mut attached_until = 0;
 
     for index in 0..comments.len() {
         let comment = comments[index];
@@ -345,7 +423,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     between.unwrap_or_default().iter().all(|b| matches!(b, b' ' | b'\t'))
                 }));
         is_after_own_line_comment = is_own_line;
-        if (!is_own_line && !is_typescript && !comment.followed_by_newline()) || comment.flags & TYPE_CAST != 0 {
+        if index < attached_until {
             continue;
         }
 
@@ -359,6 +437,22 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         }
         let after = text.get(comments.get(run_last).map_or(0, |last| last.span.end as usize)..).unwrap_or_default();
         let after = after.trim_ascii_start();
+
+        // The first of its run, after `=`, `= (` or before an assignment operator.
+        if run_start == comment.span.start
+            && (starts_with_assignment_operator(after) || {
+                let before = text.get(..run_start as usize).unwrap_or_default();
+                before.iter().rev().find(|b| !b.is_ascii_whitespace() && **b != b'(') == Some(&b'=')
+            })
+            && let Some(end) = attach_between_sides_of_assignment(&mut nodes, comments, index)
+        {
+            has_moved = has_moved || comments[index..end].iter().any(|it| it.is_moved());
+            attached_until = end;
+            continue;
+        }
+        if (!is_own_line && !is_typescript && !comment.followed_by_newline()) || comment.flags & TYPE_CAST != 0 {
+            continue;
+        }
 
         let moved_to = match after {
             [b'(', ..] if is_typescript => moved_over_parenthesis(&mut nodes, comment, (text.len() - after.len()) as u32),
@@ -394,8 +488,15 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         }
     }
     if has_moved {
-        comments.sort_by_key(|comment| comment.start());
+        // A moved comment comes before one that starts where it is.
+        comments.sort_by_key(|comment| (comment.start(), !comment.is_moved()));
     }
+}
+
+/// `=`, `+=`, `>>>=`, `??=`. Also `<=` and `>=`.
+fn starts_with_assignment_operator(text: &[u8]) -> bool {
+    let operator = text.iter().take_while(|b| matches!(b, b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'&' | b'|' | b'^' | b'?'));
+    matches!(text.get(operator.take(4).count()..), Some([b'=', after, ..]) if !matches!(after, b'=' | b'>'))
 }
 
 /// The lines of `text`, which end with `\n`, `\r\n` or `\r`.
@@ -570,6 +671,16 @@ impl<'a> Comments<'a> {
     /// `,` is in between.
     pub(crate) fn end_of_line_comments_after(&self, pos: u32) -> &'a [Comment] {
         self.end_of_line_comments_after_bytes(pos, |b| matches!(b, b'\t' | b' ' | b'=' | b':' | b','))
+    }
+
+    /// The comments that trail the left side of a declarator or an assignment whose right side starts
+    /// at `right_start`. The left side is written.
+    pub(crate) fn comments_trailing_left_side(&self, right_start: u32) -> &'a [Comment] {
+        let comments = self.unprinted_comments();
+        let count = (comments.iter())
+            .take_while(|comment| comment.flags & TRAILS_LEFT_SIDE != 0 && comment.start() < right_start)
+            .count();
+        &comments[..count]
     }
 
     /// The same after the left side of an assignment or the key of a property, which ends at `pos`:

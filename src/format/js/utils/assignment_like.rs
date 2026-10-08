@@ -6,6 +6,7 @@ use super::member_chain::is_member_call_chain;
 use super::object::{FormatKey, format_computed_or_property_key, write_member_name};
 use super::operators::assign_op_text;
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
+use super::suppressed::FormatSuppressedNode;
 use super::typecast::is_cast_target;
 use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::parentheses::expression::expression_needs_parentheses;
@@ -49,29 +50,11 @@ pub(crate) enum AssignmentLikeLayout {
     ChainTailArrowFunction,
 }
 
-/// Prettier's `handleAssignmentLikeComments`: which of the comments between the left side, which
-/// ends at `start`, and `right` trail the left side.
-fn format_left_trailing_comments<'a>(start: u32, right: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.is_quiet() {
-        return;
+/// The comments between the left side, which is written, and `right` that trail the left side.
+fn format_left_trailing_comments<'a>(right: Expr<'a>, f: &mut Formatter<'a>) {
+    if !f.is_quiet() {
+        FormatTrailingComments::Comments(f.comments().comments_trailing_left_side(right.span().start)).fmt(f);
     }
-    // A `(` after the operator can be the first token of the right side.
-    let end_of_line_comments = Some(f.comments().end_of_line_comments_after_left_side(start))
-        .filter(|comments| comments.last().is_none_or(|last| !last.is_moved() && last.end() <= right.span().start))
-        .unwrap_or_default();
-    let comments = if end_of_line_comments.is_empty() {
-        let comments = f.comments().comments_before_character(start, b'=');
-        if comments.iter().any(|c| c.preceded_by_newline()) { &[] } else { comments }
-    } else if should_print_as_leading(right) || end_of_line_comments.last().is_some_and(|c| c.is_block()) {
-        &[]
-    } else {
-        end_of_line_comments
-    };
-    FormatTrailingComments::Comments(comments).fmt(f);
-}
-
-fn should_print_as_leading(e: Expr<'_>) -> bool {
-    matches!(e.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Template | ExprTag::TaggedTemplate)
 }
 
 /// A name is short if it is less than this much wider than the indentation: breaking after the
@@ -292,16 +275,20 @@ impl<'a> AssignmentLike<'a> {
                     write!(f, [id, definite, ty.map(FormatTypeAnnotation)]);
                     return false;
                 };
-                write!(f, [FormatNodeWithoutTrailingComments(&id), definite]);
-                let end = match ty {
+                match ty {
+                    // `a: T = // prettier-ignore`: the comment trails the name, which the type is part of.
+                    Some(ty) if !f.is_quiet() && f.comments().has_trailing_suppression_comment(ty.span().end) => {
+                        let span = Span::new(id.span().start, ty.span().end);
+                        write!(f, [format_leading_comments(span), FormatSuppressedNode(span)]);
+                    }
                     Some(ty) => {
                         let type_annotation = WithSpan(FormatTypeAnnotation(ty), ty.span());
+                        write!(f, [FormatNodeWithoutTrailingComments(&id), definite]);
                         write!(f, FormatNodeWithoutTrailingComments(&type_annotation));
-                        ty.span().end
                     }
-                    None => id.span().end,
-                };
-                format_left_trailing_comments(end, init, f);
+                    None => write!(f, [FormatNodeWithoutTrailingComments(&id), definite]),
+                }
+                format_left_trailing_comments(init, f);
                 false
             }
             AssignmentLike::AssignmentExpression(assignment) => {
@@ -309,7 +296,7 @@ impl<'a> AssignmentLike<'a> {
                     return false;
                 };
                 write!(f, FormatNodeWithoutTrailingComments(&target));
-                format_left_trailing_comments(target.span().end, value, f);
+                format_left_trailing_comments(value, f);
                 false
             }
             AssignmentLike::ObjectProperty(property) => match property.key() {

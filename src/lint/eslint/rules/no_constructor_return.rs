@@ -15,14 +15,15 @@ impl Rule for NoConstructorReturn {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Return], |_, stmt, cx| {
-            if matches!(stmt.kind(), StmtKind::Return(Some(_)))
-                && let Some(func) = Node::Stmt(stmt).enclosing_function()
-                && func.kind() == FnKind::Constructor
-                // `static constructor() {}` is a method.
-                && !func.flags().contains(Flags::STATIC)
-            {
-                cx.report(stmt, UNEXPECTED);
+        on.funcs(|_, func, cx| {
+            // `static constructor() {}` is a method.
+            if func.kind() != FnKind::Constructor || func.flags().contains(Flags::STATIC) {
+                return;
+            }
+            for stmt in func.returns() {
+                if matches!(stmt.kind(), StmtKind::Return(Some(_))) {
+                    cx.report(stmt, UNEXPECTED);
+                }
             }
         });
     }

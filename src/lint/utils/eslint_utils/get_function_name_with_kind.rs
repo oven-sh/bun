@@ -59,6 +59,12 @@ pub fn get_function_name_with_kind(func: Func<'_>, with_key_text: bool) -> Vec<u
                 MemberKind::Constructor => return b"static method 'constructor'".to_vec(),
                 MemberKind::Getter => property = Some((member.key(), "getter")),
                 MemberKind::Setter => property = Some((member.key(), "setter")),
+                // `"constructor"<T>() {}`
+                MemberKind::Method
+                    if !is_static && member.key().is_some_and(|key| !key.is_computed() && key.is("constructor")) =>
+                {
+                    return b"constructor".to_vec();
+                }
                 MemberKind::Method => property = Some((member.key(), "method")),
                 _ => {}
             }

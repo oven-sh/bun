@@ -45,6 +45,23 @@ tags_in_tree! {
 }
 
 impl File<'_> {
+    /// [`File::expr_tags_in_tree`], with what `of_node` makes of the kind and the expression in place of the kind.
+    #[inline]
+    pub(crate) fn expr_tags_in_tree_as(&self, out: &mut Vec<u8>, mut of_node: impl FnMut(ExprTag, &hir::Expr) -> u8) {
+        let all = self.hir.exprs.iter().enumerate();
+        out.clear();
+        match self.has_synthetic_nodes() {
+            true => out.extend(all.map(|(i, raw)| match self.expr_tag_in_tree::<true>(i as u32) {
+                Some(tag) => of_node(tag, raw),
+                None => NOT_IN_TREE,
+            })),
+            false => out.extend(all.map(|(i, raw)| match self.expr_tag_in_tree::<false>(i as u32) {
+                Some(tag) => of_node(tag, raw),
+                None => NOT_IN_TREE,
+            })),
+        }
+    }
+
     /// The kind of the expression at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn expr_in_tree(&self, i: usize) -> Option<ExprTag> {
         self.expr_tag_in_tree::<true>(i as u32)

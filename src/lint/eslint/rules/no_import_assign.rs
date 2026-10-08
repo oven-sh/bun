@@ -98,6 +98,9 @@ impl Rule for NoImportAssign {
             for variable in Node::Stmt(stmt).declared_symbols() {
                 let should_check_members =
                     variable.declarations().any(|it| matches!(it, Declaration::ImportNamespace(_)));
+                if !should_check_members && !variable.has_writes() {
+                    continue;
+                }
                 // `[a = 0] = b` writes to `a` twice.
                 let mut previous = None;
                 for reference in variable.references() {

@@ -12,7 +12,7 @@ impl NoFuncAssign {
         }
         // A parameter is declared before anything else of its name, so only the name of the
         // function can be a variable whose first definition is a function.
-        let Some(symbol) = func.symbol() else {
+        let Some(symbol) = func.symbol().filter(|it| it.has_modifying_references()) else {
             return;
         };
         if !matches!(symbol.declarations().next(), Some(Declaration::Fn(_))) {

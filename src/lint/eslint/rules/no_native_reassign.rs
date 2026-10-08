@@ -41,7 +41,7 @@ impl Rule for NoNativeReassign {
             let file = cx.file();
             rule.check(file.unresolved_references(), cx);
             // What a script declares at its top level is the global variable of that name.
-            for symbol in file.scope().symbols() {
+            for symbol in file.scope().symbols().filter(|it| it.has_modifying_references()) {
                 rule.check(symbol.references(), cx);
             }
         });

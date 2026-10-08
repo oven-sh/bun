@@ -7,7 +7,7 @@ const CLASS: Message = Message::new("class", "'{{name}}' is a class.");
 
 impl NoClassAssign {
     fn check<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(symbol) = class.symbol() else {
+        let Some(symbol) = class.symbol().filter(|it| it.has_modifying_references()) else {
             return;
         };
         for reference in ast_utils::get_modifying_references(symbol.references()) {

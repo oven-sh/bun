@@ -17,7 +17,10 @@ impl Rule for NoUnsafeFunctionType {
         NoUnsafeFunctionType
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.has_entity_named("Function") {
+            return;
+        }
         // Also what a class implements and what an interface extends.
         on.types([TypeTag::Ref], |_, ty, cx| {
             if let TypeKind::Ref { name, .. } = ty.kind()

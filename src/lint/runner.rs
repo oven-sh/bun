@@ -17,7 +17,6 @@ use std::cell::OnceCell;
 
 /// Indices into one vector of the HIR, grouped by the kind of the node.
 pub(crate) struct Grouped<const KINDS: usize> {
-    /// After the nodes of all kinds come those that are left out.
     ids: Vec<u32>,
     /// Where each kind starts in `ids`, and where the last ends.
     starts: [u32; MOST_KINDS + 2],
@@ -30,34 +29,42 @@ impl<const KINDS: usize> Grouped<KINDS> {
     fn new(tags: impl FnOnce(&mut Vec<u8>)) -> Self {
         let mut kinds = Vec::new();
         tags(&mut kinds);
-        kinds.iter_mut().for_each(|kind| *kind = (*kind).min(KINDS as u8));
         Grouped::of_kinds(0..kinds.len() as u32, &kinds)
     }
 
     /// `kind_of(id)`: the kind of the node `id`, which is one of `all`, or `None` to leave it out.
     fn of_ids(all: impl ExactSizeIterator<Item = u32> + Clone, kind_of: impl Fn(u32) -> Option<usize>) -> Self {
-        let kinds: Vec<u8> = all.clone().map(|id| kind_of(id).map_or(KINDS, |kind| kind.min(KINDS)) as u8).collect();
+        let kinds: Vec<u8> = all.clone().map(|id| kind_of(id).map_or(NOT_IN_TREE, |kind| kind as u8)).collect();
         Grouped::of_kinds(all, &kinds)
     }
 
-    /// `kinds`: the kind of each of `all`, `KINDS` to leave it out.
+    /// `kinds`: the kind of each of `all`, `NOT_IN_TREE` to leave it out.
     fn of_kinds(all: impl Iterator<Item = u32>, kinds: &[u8]) -> Self {
-        const { assert!(KINDS <= MOST_KINDS) };
-        let mut starts = [0u32; MOST_KINDS + 2];
+        let mut counts = [0u32; MOST_KINDS + 2];
         for &kind in kinds {
-            starts[kind as usize + 1] += 1;
+            if let Some(count) = counts.get_mut(kind as usize + 1) {
+                *count += 1;
+            }
         }
-        for kind in 0..=KINDS {
+        Grouped::of_counted_kinds(all, kinds, counts)
+    }
+
+    /// `counts`: at `kind + 1`, how many of `kinds` are `kind`.
+    fn of_counted_kinds(all: impl Iterator<Item = u32>, kinds: &[u8], counts: [u32; MOST_KINDS + 2]) -> Self {
+        const { assert!(KINDS <= MOST_KINDS) };
+        let mut starts = counts;
+        for kind in 0..KINDS {
             starts[kind + 1] += starts[kind];
         }
         let mut next = starts;
-        let mut ids = vec![0u32; kinds.len()];
+        let mut ids = vec![0u32; starts[KINDS] as usize];
         for (id, &kind) in all.zip(kinds) {
-            let at = &mut next[kind as usize];
-            if let Some(place) = ids.get_mut(*at as usize) {
+            if let Some(at) = next.get_mut(kind as usize)
+                && let Some(place) = ids.get_mut(*at as usize)
+            {
                 *place = id;
+                *at += 1;
             }
-            *at += 1;
         }
         Grouped { ids, starts }
     }
@@ -94,15 +101,9 @@ impl Names {
 
 impl Exprs {
     fn new(file: &File) -> Exprs {
-        const LEFT_OUT: u8 = 2 * ExprTag::COUNT as u8;
         let mut names = Names(Box::new([0; Names::BITS / 64]));
-        let mut kinds = Vec::new();
-        file.expr_tags_in_tree(&mut kinds);
-        for (kind, raw) in kinds.iter_mut().zip(file.hir.exprs) {
-            if *kind == NOT_IN_TREE {
-                *kind = LEFT_OUT;
-                continue;
-            }
+        let (mut kinds, mut counts) = (Vec::new(), [0u32; MOST_KINDS + 2]);
+        file.expr_tags_in_tree_as(&mut kinds, |tag, raw| {
             let chain = match raw.kind {
                 hir::ExprKind::Ident(name) | hir::ExprKind::PrivateIdentifier(name) | hir::ExprKind::String(name) => {
                     names.add(name);
@@ -116,10 +117,12 @@ impl Exprs {
                 hir::ExprKind::Call(call) => file.hir.calls.get(call.idx()).map_or(Chain::No, |call| call.chain),
                 _ => Chain::No,
             };
-            *kind = 2 * *kind + u8::from(chain != Chain::No);
-        }
+            let kind = 2 * tag as u8 + u8::from(chain != Chain::No);
+            counts[kind as usize + 1] += 1;
+            kind
+        });
         Exprs {
-            grouped: Grouped::of_kinds(0..kinds.len() as u32, &kinds),
+            grouped: Grouped::of_counted_kinds(0..kinds.len() as u32, &kinds, counts),
             names,
         }
     }

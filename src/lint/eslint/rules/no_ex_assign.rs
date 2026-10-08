@@ -19,7 +19,7 @@ impl Rule for NoExAssign {
                 return;
             };
             param.pat().for_each_binding(&mut |pat| {
-                let Some(symbol) = pat.symbol() else {
+                let Some(symbol) = pat.symbol().filter(|it| it.has_modifying_references()) else {
                     return;
                 };
                 for reference in ast_utils::get_modifying_references(symbol.references()) {

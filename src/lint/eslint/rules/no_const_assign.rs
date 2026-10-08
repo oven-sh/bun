@@ -12,7 +12,7 @@ impl NoConstAssign {
             return;
         }
         decl.pat().for_each_binding(&mut |pat| {
-            let Some(symbol) = pat.symbol() else {
+            let Some(symbol) = pat.symbol().filter(|it| it.has_modifying_references()) else {
                 return;
             };
             for reference in get_modifying_references(symbol.references()) {

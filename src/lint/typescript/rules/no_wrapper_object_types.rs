@@ -28,7 +28,10 @@ impl Rule for NoWrapperObjectTypes {
         NoWrapperObjectTypes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.has_entity_named_any(&["BigInt", "Boolean", "Number", "Object", "String", "Symbol"]) {
+            return;
+        }
         on.types([TypeTag::Ref], |_, ty, cx| {
             let TypeKind::Ref { name, .. } = ty.kind() else {
                 return;

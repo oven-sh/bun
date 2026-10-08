@@ -28,8 +28,9 @@ fn is_same_literal(value: Expr, ty: TypeNode) -> bool {
 }
 
 /// `name: ty = value`
-fn check_annotation<'a>(value: Option<Expr<'a>>, ty: Option<TypeNode<'a>>, cx: &Cx<'a, PreferAsConst>) {
-    if let (Some(value), Some(ty)) = (value, ty)
+fn check_annotation<'a>(value: impl FnOnce() -> Option<Expr<'a>>, ty: Option<TypeNode<'a>>, cx: &Cx<'a, PreferAsConst>) {
+    if let Some(ty) = ty
+        && let Some(value) = value()
         && is_same_literal(value, ty)
     {
         cx.report(ty, VARIABLE_CONST_ASSERTION).suggest(VARIABLE_SUGGEST, |fixer| {
@@ -60,13 +61,13 @@ impl Rule for PreferAsConst {
                 cx.report(ty, PREFER_CONST_ASSERTION).fix(|fixer| fixer.replace(ty, "const"));
             }
         });
-        on.var_decls(|_, declaration, cx| check_annotation(declaration.init(), declaration.ty(), cx));
+        on.var_decls(|_, declaration, cx| check_annotation(|| declaration.init(), declaration.ty(), cx));
         on.members(|_, member, cx| {
             if member.kind() == MemberKind::Property
                 && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
                 && !member.is_signature()
             {
-                check_annotation(member.init(), member.ty(), cx);
+                check_annotation(|| member.init(), member.ty(), cx);
             }
         });
     }

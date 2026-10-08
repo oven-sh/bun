@@ -78,7 +78,16 @@ impl NoIrregularWhitespace {
         let rest_from = |at: usize| text.get(at..).unwrap_or_default();
         // ESLint takes a byte order mark off the text.
         let mut at = if text.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
-        while let Some(found) = strings::index_of_any(rest_from(at), FIRST_BYTES) {
+        // Most files are ASCII, in which there are two such characters.
+        let ascii_end = strings::first_non_ascii(rest_from(at)).map_or(text.len(), |first| at + first as usize);
+        loop {
+            let found = match text.get(at..ascii_end) {
+                Some(ascii) if !ascii.is_empty() => strings::index_of_any(ascii, b"\x0B\x0C").unwrap_or(ascii.len()),
+                _ => match strings::index_of_any(rest_from(at), FIRST_BYTES) {
+                    Some(found) => found,
+                    None => return,
+                },
+            };
             let start = at + found;
             let Some((kind, len)) = irregular_at(rest_from(start)) else {
                 at = start + 1;

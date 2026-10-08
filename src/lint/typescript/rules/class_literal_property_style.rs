@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_utils::{
     FixOrSuggest, MemberAccessValue, get_fix_or_suggest, get_static_member_access_value, is_assignee,
 };
@@ -18,6 +19,9 @@ pub struct State<'a> {
     properties: Vec<Member<'a>>,
     /// The names of the setters of the classes that have many members.
     setters: FxHashMap<Class<'a>, FxHashSet<MemberAccessValue<'a>>>,
+    /// What is around something: the function, and the class whose body it is in.
+    functions: AncestorMemo<'a, Func<'a>>,
+    class_bodies: AncestorMemo<'a, Class<'a>>,
 }
 
 /// The name of a setter.
@@ -140,27 +144,16 @@ impl ClassLiteralPropertyStyle {
         if !matches!(access.tag(), ExprTag::Dot | ExprTag::Index) || !is_assignee(access) {
             return;
         }
-        let (mut is_in_constructor, mut class) = (false, None);
-        let mut inner = Node::Expr(access);
-        for node in inner.ancestors() {
-            match node {
-                Node::Func(func) if !is_in_constructor && func.kind() != FnKind::StaticBlock => {
-                    if func.kind() != FnKind::Constructor || func.flags().contains(Flags::STATIC) {
-                        return;
-                    }
-                    is_in_constructor = true;
-                }
-                // What is in the heritage clause is not in the body.
-                Node::Class(it) if class.is_none() && matches!(inner, Node::Member(_)) => class = Some(it),
-                _ => {}
-            }
-            if is_in_constructor && class.is_some() {
-                break;
-            }
-            inner = node;
+        let function = (cx.state.functions).find(Node::Expr(access), |_, it| it.as_func().filter(|it| it.kind() != FnKind::StaticBlock));
+        if !function.is_some_and(|it| it.kind() == FnKind::Constructor && !it.flags().contains(Flags::STATIC)) {
+            return;
         }
-        if is_in_constructor
-            && let Some(class) = class
+        let class = cx.state.class_bodies.find(Node::Expr(access), |inner, it| match it {
+            // What is in the heritage clause is not in the body.
+            Node::Class(class) if matches!(inner, Node::Member(_)) => Some(class),
+            _ => None,
+        });
+        if let Some(class) = class
             && let Some(name) = truthy_name(get_static_member_access_value(access))
         {
             cx.state.excluded.insert((class, name));

@@ -4,7 +4,7 @@
 use crate::ast::{File, Ident, Name};
 use crate::fix::{Fix, Fixer, IntoFix};
 use crate::rule::{Message, Rule};
-use crate::span::{Span, Spanned};
+use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -27,6 +27,8 @@ pub struct Diagnostic {
     pub span: Span,
     /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
     pub has_no_end: bool,
+    /// The end that is reported in place of that of `span`: [`Report::end_at`].
+    pub end_position: Option<Position>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
 }
@@ -92,6 +94,7 @@ impl<'a, R: Rule> Cx<'a, R> {
                 message: Vec::new(),
                 span: at.span(),
                 has_no_end: false,
+                end_position: None,
                 fix: None,
                 suggestions: Vec::new(),
             }),
@@ -124,6 +127,14 @@ impl<'a> Report<'a> {
     /// What `{{name}}` in the message stands for.
     pub fn data(mut self, name: &'static str, value: impl IntoText<'a>) -> Self {
         self.data.push((name, value.into_text()));
+        self
+    }
+
+    /// Reports `end` as the end, for the rare rule whose `loc.end` is a line and a column that are not in the text.
+    pub fn end_at(mut self, end: Position) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.end_position = Some(end);
+        }
         self
     }
 

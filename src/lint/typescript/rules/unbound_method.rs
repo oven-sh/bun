@@ -2,6 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{intersection_constituents, union_constituents};
 use bun_lint::types::utils::{is_builtin_symbol_like, is_symbol_from_default_library};
 use bun_lint::types::{ModifierFlags, NameOf, SyntaxKind, TsNode, TsSymbol, Type};
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Enforce unbound methods are called with their expected scope.
 pub struct UnboundMethod {
@@ -277,41 +278,43 @@ fn is_member_of(node: Expr, is_object: fn(ExprKind) -> bool) -> bool {
 
 /// A `ChainExpression` has the answer of what is in it, so it makes no difference that it is not a
 /// node here.
-fn is_safe_use(mut node: Expr) -> bool {
-    loop {
-        let parent = match node.parent() {
-            Node::Stmt(parent) => {
-                return matches!(parent.tag(), StmtTag::If | StmtTag::For | StmtTag::Switch | StmtTag::While);
+fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let decide = |node: Node<'a>, parent: Node<'a>| {
+        let (node, parent) = match (node, parent) {
+            (_, Node::Stmt(parent)) => {
+                return Some(matches!(parent.tag(), StmtTag::If | StmtTag::For | StmtTag::Switch | StmtTag::While));
             }
-            Node::Expr(parent) => parent,
-            _ => return false,
+            (Node::Expr(node), Node::Expr(parent)) => (node, parent),
+            _ => return Some(false),
         };
         match parent.kind() {
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => return true,
-            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => return call.callee() == node,
-            ExprKind::Cond { test, .. } => return test == node,
-            ExprKind::Unary { op, .. } => return !matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot),
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => Some(true),
+            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => Some(call.callee() == node),
+            ExprKind::Cond { test, .. } => Some(test == node),
+            ExprKind::Unary { op, .. } => Some(!matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot)),
             ExprKind::Binary { op, left, .. } => match op {
-                BinOp::NotEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::EqEqEq | BinOp::Instanceof => return true,
+                BinOp::NotEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::EqEqEq | BinOp::Instanceof => Some(true),
                 // `&&` returns its left operand only if that is falsy.
-                BinOp::And if left == node => return true,
+                BinOp::And if left == node => Some(true),
                 // It is likely to return the method, so it is as safe as its own use.
-                BinOp::And | BinOp::Or | BinOp::Nullish => {}
-                _ => return false,
+                BinOp::And | BinOp::Or | BinOp::Nullish => None,
+                _ => Some(false),
             },
             ExprKind::Assign { op, target, .. } => {
                 // A default in a pattern is an `AssignmentPattern`.
-                return op.is_none()
-                    && !parent.is_assignment_target()
-                    && (target == node
-                        || (is_member_of(node, |object| matches!(object, ExprKind::Super))
-                            && is_member_of(target, |object| matches!(object, ExprKind::This))));
+                Some(
+                    op.is_none()
+                        && !parent.is_assignment_target()
+                        && (target == node
+                            || (is_member_of(node, |object| matches!(object, ExprKind::Super))
+                                && is_member_of(target, |object| matches!(object, ExprKind::This)))),
+                )
             }
-            ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::AsConst(_) => {}
-            _ => return false,
+            ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::AsConst(_) => None,
+            _ => Some(false),
         }
-        node = parent;
-    }
+    };
+    known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
 /// The name of a key that is an `Identifier`, which it also is in `[key]`, and the key as a node.
@@ -354,7 +357,7 @@ impl UnboundMethod {
     }
 
     fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if is_safe_use(node) || node.is_jsx_tag_name() || node.is_in_type_query() {
+        if is_safe_use(node, &mut cx.state) || node.is_jsx_tag_name() || node.is_in_type_query() {
             return;
         }
         match node.kind() {
@@ -521,7 +524,8 @@ impl Rule for UnboundMethod {
     const META: Meta = Meta::typescript("unbound-method", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    /// [`is_safe_use`]
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         UnboundMethod {
@@ -529,7 +533,7 @@ impl Rule for UnboundMethod {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorMemo<'a, bool> {
         on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
         on.pats([PatTag::Object], Self::check_binding_pattern);
         on.exprs([ExprTag::Object], Self::check_assignment_target);
@@ -539,5 +543,6 @@ impl Rule for UnboundMethod {
                 interface.extends().iter().for_each(|it| rule.check_heritage(it, cx));
             }
         });
+        AncestorMemo::default()
     }
 }

@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{get_well_known_symbol_property_of_type, is_thenable_type};
 use bun_lint::types::{Locate, Type};
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::get_function_name_with_kind;
 use bun_lint::utils::ts_utils::{
     get_function_head_loc, is_start_of_expression_statement, needs_preceding_semicolon,
@@ -19,12 +20,14 @@ pub struct State<'a> {
     /// The async functions that are not empty.
     candidates: Vec<Func<'a>>,
     with_await: FxHashSet<Func<'a>>,
+    /// The function that something is directly in.
+    functions: AncestorMemo<'a, Func<'a>>,
 }
 
 /// `node` awaits something: so does the function that it is directly in.
 fn mark_as_has_await<'a>(node: Node<'a>, cx: &mut Cx<'a, RequireAwait>) {
-    let mut functions = node.ancestors().filter_map(Node::as_func);
-    if let Some(func) = functions.find(|func| func.kind() != FnKind::StaticBlock)
+    let as_function = |_, parent: Node<'a>| parent.as_func().filter(|func| func.kind() != FnKind::StaticBlock);
+    if let Some(func) = cx.state.functions.find(node, as_function)
         && func.is_async()
     {
         cx.state.with_await.insert(func);
@@ -188,6 +191,7 @@ impl Rule for RequireAwait {
         State {
             candidates,
             with_await: FxHashSet::default(),
+            functions: AncestorMemo::default(),
         }
     }
 }

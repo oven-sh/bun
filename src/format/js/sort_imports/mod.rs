@@ -13,6 +13,7 @@ mod compare;
 mod generator;
 mod ianvs;
 mod layout;
+mod organize;
 mod oxfmt;
 mod settings;
 mod sort;
@@ -28,6 +29,7 @@ enum How {
     Trivago(trivago::Options),
     Ianvs(ianvs::Options),
     Oxfmt(oxfmt::Options),
+    Organize(organize::Options),
 }
 
 /// How to sort imports: [`Settings`] that have been checked, with their regular expressions
@@ -37,22 +39,33 @@ pub struct SortImports {
     how: How,
 }
 
+impl SortImports {
+    /// Whether it is `format` that sorts the imports, and not [`sorted_text`]: then what it writes
+    /// has the tokens of the file in another order.
+    pub fn is_applied_by_format(&self) -> bool {
+        matches!(self.how, How::Oxfmt(_))
+    }
+}
+
 /// The text of `file` with its imports sorted. It has to be parsed and formatted in place of
 /// `file`. `None`: formatting `file` gives the same.
 pub fn sorted_text<'a>(file: &'a File<'a>, how: &SortImports) -> Option<Vec<u8>> {
     if file.has_parse_errors() || matches!(how.how, How::Oxfmt(_)) {
         return None;
     }
-    let mut model = babel::Model::new(file)?;
     // Prettier's `guessEndOfLine`
     let text = file.text();
     let end_of_line: &[u8] = match bun_core::strings::index_of_char_usize(text, b'\n') {
         Some(at) if at > 0 && text[at - 1] == b'\r' => b"\r\n",
         _ => b"\n",
     };
+    if let How::Organize(options) = &how.how {
+        return organize::preprocess(file, options, end_of_line);
+    }
+    let mut model = babel::Model::new(file)?;
     match &how.how {
         How::Trivago(options) => trivago::preprocess(&mut model, options, end_of_line),
         How::Ianvs(options) => ianvs::preprocess(&mut model, options, end_of_line),
-        How::Oxfmt(_) => None,
+        How::Oxfmt(_) | How::Organize(_) => None,
     }
 }

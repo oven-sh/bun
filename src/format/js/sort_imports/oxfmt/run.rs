@@ -41,6 +41,46 @@ impl Line {
     }
 }
 
+/// An import, and what oxc makes of what is written for it: it goes by the text in the document,
+/// where a comment is text like any other.
+#[derive(Copy, Clone)]
+struct Written<'a> {
+    import: Import<'a>,
+    /// The first text after the `from`, or after the `import` if there is none.
+    source: &'a [u8],
+    /// There is text before the `*`.
+    has_comment_for_default: bool,
+}
+
+impl<'a> Written<'a> {
+    fn new(statement: Stmt<'a>, import: Import<'a>, f: &Formatter<'a>) -> Self {
+        let source = import.spec_span().unwrap_or_default();
+        let mut written = Written {
+            import,
+            source: f.file().slice(source),
+            has_comment_for_default: false,
+        };
+        if f.comments().has_comment_before(source.start) {
+            let keyword_end = statement.span().start + "import".len() as u32;
+            // Without a `from`, everything is after it.
+            let mut is_after_from = import.is_side_effect();
+            let mut position = if is_after_from { keyword_end } else { import.clause_span().end };
+            let comment = f.comments().comments_in_range(position, source.start).iter().find(|comment| {
+                is_after_from |= bun_core::strings::contains(f.file().slice(Span::new(position, comment.span.start)), b"from");
+                position = comment.span.end;
+                is_after_from
+            });
+            if let Some(comment) = comment {
+                let text = f.file().slice(comment.span);
+                written.source = bun_core::strings::index_of_char_usize(text, b'\n').map_or(text, |end| text[..end].trim_ascii_end());
+            }
+            let star = import.namespace_span().filter(|_| import.default().is_none());
+            written.has_comment_for_default = star.is_some_and(|star| !f.comments().comments_in_range(keyword_end, star.start).is_empty());
+        }
+        written
+    }
+}
+
 /// oxc's `SortableImport`
 struct Unit<'a> {
     /// The comments directly before it, without an empty line between: a range of the lines.
@@ -92,7 +132,8 @@ fn is_style(source: &[u8]) -> bool {
 }
 
 /// `compute_import_metadata`: the group, and whether the import stays where it is.
-fn classify(import: Import, source: &[u8], options: &Options) -> (usize, bool) {
+fn classify(written: Written, source: &[u8], options: &Options) -> (usize, bool) {
+    let import = written.import;
     let (is_side_effect, is_style) = (import.is_side_effect(), is_style(source));
     let mut selectors = Selector::Import.bit();
     let mut add = |selector: Selector, is_one: bool| selectors |= if is_one { selector.bit() } else { 0 };
@@ -122,7 +163,7 @@ fn classify(import: Import, source: &[u8], options: &Options) -> (usize, bool) {
     let mut modifiers = if import.is_type_only() { Modifier::Type.bit() } else { Modifier::Value.bit() };
     let mut add = |modifier: Modifier, is_one: bool| modifiers |= if is_one { modifier.bit() } else { 0 };
     add(Modifier::SideEffect, is_side_effect);
-    add(Modifier::Default, import.default().is_some());
+    add(Modifier::Default, import.default().is_some() || written.has_comment_for_default);
     add(Modifier::Wildcard, import.namespace().is_some());
     add(Modifier::Named, !import.named().is_empty());
 
@@ -182,7 +223,7 @@ fn should_insert_newline_between(options: &Options, previous: usize, current: us
 /// Writes the lines of a chunk, in which nothing is a boundary, with its imports sorted.
 fn write_sorted<'a>(
     lines: &[Line],
-    imports: &[(Import<'a>, &'a [u8])],
+    imports: &[Written<'a>],
     options: &Options,
     is_before_boundary: bool,
     out: &mut Vec<FormatElement>,
@@ -206,11 +247,11 @@ fn write_sorted<'a>(
                 if !orphan.is_empty() {
                     orphans.push(Orphan { lines: orphan, after_slot });
                 }
-                let Some(&(import, written)) = imports.get(index as usize) else {
+                let Some(&written) = imports.get(index as usize) else {
                     continue;
                 };
-                let source = source_path(written);
-                let (group, is_ignored) = classify(import, source, options);
+                let (import, source) = (written.import, source_path(written.source));
+                let (group, is_ignored) = classify(written, source, options);
                 units.push(Unit {
                     leading: current_pending..at,
                     line,
@@ -259,7 +300,7 @@ fn write_sorted<'a>(
 }
 
 /// oxc's `transform`
-fn transform<'a>(lines: &[Line], imports: &[(Import<'a>, &'a [u8])], options: &Options, out: &mut Vec<FormatElement>) {
+fn transform<'a>(lines: &[Line], imports: &[Written<'a>], options: &Options, out: &mut Vec<FormatElement>) {
     let is_boundary = |line: &Line| match line {
         Line::Import { .. } => false,
         Line::Empty => options.partition_by_newline,
@@ -290,8 +331,7 @@ pub(crate) struct ImportRun<'a> {
     /// Whether the next statement can be part of a run, if that is known.
     is_next_sortable: Option<bool>,
     lines: Vec<Line>,
-    /// With their sources as they are written.
-    imports: Vec<(Import<'a>, &'a [u8])>,
+    imports: Vec<Written<'a>>,
     /// Where the line that is being written starts.
     line_start: usize,
 }
@@ -391,7 +431,7 @@ impl<'a> ImportRun<'a> {
             Some(_) if f.elements().last() == Some(&FormatElement::Line(LineMode::Empty)) => self.lines.push(Line::Empty),
             Some(_) => {}
         }
-        self.imports.push((import, import.spec_span().map_or(&[][..], |span| f.file().slice(span))));
+        self.imports.push(Written::new(statement, import, f));
         self.line_start = f.elements().len();
 
         // One line at a time. What is left for the statement to write is its own line.
@@ -403,6 +443,11 @@ impl<'a> ImportRun<'a> {
             let (now, later) = comments.split_at(count);
             comments = later;
             write!(f, FormatLeadingComments::Comments(now));
+            // oxc does not see the line break after a block comment that the file starts with.
+            let starts_file = |it: &Comment| it.is_block() && f.file().text()[..it.span.start as usize].trim_ascii().is_empty();
+            if f.elements().last() == Some(&FormatElement::Line(LineMode::Hard)) && now.last().is_some_and(starts_file) {
+                continue;
+            }
             if let Some(&FormatElement::Line(mode @ (LineMode::Hard | LineMode::Empty))) = f.elements().last() {
                 self.lines.push(Line::Comment(self.line_until(f.elements().len() - 1)));
                 if mode == LineMode::Empty {

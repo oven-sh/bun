@@ -1,6 +1,6 @@
 // What the real plugins make of a text: the text that they hand to Prettier, and what Prettier prints.
 //
-// `modules`: a directory with node_modules/{prettier,@trivago/prettier-plugin-sort-imports,@ianvs/prettier-plugin-sort-imports}.
+// `modules`: a directory with node_modules/prettier and the plugins that are asked about.
 // Run with Node.js: `<BUILTIN_MODULES>` is `require("module").builtinModules` of what runs Prettier.
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -9,6 +9,8 @@ import { pathToFileURL } from "node:url";
 export const PACKAGES = {
   trivago: "@trivago/prettier-plugin-sort-imports",
   ianvs: "@ianvs/prettier-plugin-sort-imports",
+  // Needs a `typescript` with a language service next to it: 5.9.
+  organize: "prettier-plugin-organize-imports",
 };
 
 /// A few sets of options for each plugin.
@@ -35,7 +37,13 @@ export async function load(modules) {
   const prettier = imported.format ? imported : imported.default;
   const plugins = {};
   for (const [name, specifier] of Object.entries(PACKAGES)) {
-    const module = await import(pathToFileURL(require.resolve(specifier)).href);
+    let resolved;
+    try {
+      resolved = require.resolve(specifier);
+    } catch {
+      continue;
+    }
+    const module = await import(pathToFileURL(resolved).href);
     const plugin = module.default?.parsers ? module.default : module;
     const captured = { text: undefined };
     const parsers = {};

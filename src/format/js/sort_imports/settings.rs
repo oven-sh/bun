@@ -1,6 +1,7 @@
 //! The options, as they are in a configuration file.
 
 use super::ianvs::{self, Matcher};
+use super::organize::{self, TypeOrder};
 use super::trivago::{self, ByLength, Exclude, Group};
 use super::{How, SortImports};
 use bun_core::strings;
@@ -17,6 +18,7 @@ use std::sync::Arc;
 /// | both plugins | `plugins`, `importOrder`, `importOrderParserPlugins` |
 /// | `@trivago/prettier-plugin-sort-imports` | `importOrderSeparation`, `importOrderSortSpecifiers`, `importOrderGroupNamespaceSpecifiers`, `importOrderCaseInsensitive`, `importOrderSideEffects`, `importOrderSortByLength`, `importOrderImportAttributesKeyword`, `importOrderExclude` |
 /// | `@ianvs/prettier-plugin-sort-imports` | `importOrderTypeScriptVersion`, `importOrderCaseSensitive`, `importOrderSafeSideEffects` |
+/// | `prettier-plugin-organize-imports` | `organizeImportsSkipDestructiveCodeActions`, `organizeImportsTypeOrder` |
 /// | oxfmt | `sortImports`, which used to be `experimentalSortImports` |
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Settings {
@@ -44,6 +46,7 @@ impl Settings {
     /// Takes the option `name` if it is about imports. A later value replaces an earlier one.
     pub fn set(&mut self, name: &[u8], value: &[u8]) -> bool {
         let is_known = matches!(name, b"plugins" | b"importOrder" | b"importOrderParserPlugins" | b"sortImports" | b"experimentalSortImports")
+            || name.starts_with(b"organizeImports")
             || OF_TRIVAGO.contains(&name)
             || OF_IANVS.contains(&name);
         if is_known {
@@ -197,7 +200,22 @@ impl Settings {
         let plugins = self.get(b"plugins").unwrap_or_default();
         let is_plugin_named = strings::contains(plugins, b"/prettier-plugin-sort-imports");
         if !is_plugin_named && !self.entries.iter().any(|entry| entry.0.starts_with(b"importOrder")) {
-            return Ok(None);
+            let is_asked_for = strings::contains(plugins, b"prettier-plugin-organize-imports")
+                || self.entries.iter().any(|entry| entry.0.starts_with(b"organizeImports"));
+            if !is_asked_for {
+                return Ok(None);
+            }
+            let options = organize::Options {
+                skips_destructive_code_actions: self.boolean(b"organizeImportsSkipDestructiveCodeActions", false)?,
+                type_order: match self.get(b"organizeImportsTypeOrder") {
+                    None => None,
+                    Some(b"last") => Some(TypeOrder::Last),
+                    Some(b"first") => Some(TypeOrder::First),
+                    Some(b"inline") => Some(TypeOrder::Inline),
+                    Some(value) => return Err(invalid(b"organizeImportsTypeOrder", value)),
+                },
+            };
+            return Ok(Some(Arc::new(SortImports { how: How::Organize(options) })));
         }
         let order = self.strings(b"importOrder")?;
         let how = match self.is_ianvs(order.as_deref()) {

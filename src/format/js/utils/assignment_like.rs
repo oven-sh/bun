@@ -653,7 +653,7 @@ fn should_break_after_operator<'a>(
     let breaks_as_binary_expression = |e: Expr<'a>| match e.binary_op()? {
         BinOp::Comma => None,
         BinOp::And | BinOp::Or | BinOp::Nullish => {
-            Some(!BinaryLikeExpression::new(e).is_some_and(|it| it.should_inline_logical_expression()))
+            Some(!BinaryLikeExpression::new(e).is_some_and(|it| it.should_inline_logical_expression(f)))
         }
         _ => Some(true),
     };

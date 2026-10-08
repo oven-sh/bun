@@ -2,6 +2,7 @@
 
 use super::expressions::{is_last_binary_operand_comment, unary_argument_has_comments};
 use crate::js::format::write_trailing_comments_of;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
@@ -53,29 +54,31 @@ impl<'a> BinaryLikeExpression<'a> {
     }
 
     /// Whether the left side is written as part of the same chain: `a + b` in `a + b + c`.
-    fn can_flatten(&self) -> Option<BinaryLikeExpression<'a>> {
-        BinaryLikeExpression::new(self.left).filter(|left| should_flatten(self.operator, left.operator))
+    fn can_flatten(&self, f: &Formatter<'a>) -> Option<BinaryLikeExpression<'a>> {
+        BinaryLikeExpression::new(self.left)
+            .filter(|left| should_flatten(self.operator, left.operator) && !is_cast_target(left.expr, f))
     }
 
     /// Whether the right side is a logical expression with the same operator: `a && (b && c)`.
     /// Prettier rebalances the tree after parsing: to it, that is `(a && b) && c`.
-    fn right_with_same_operator(&self) -> Option<BinaryLikeExpression<'a>> {
+    fn right_with_same_operator(&self, f: &Formatter<'a>) -> Option<BinaryLikeExpression<'a>> {
         match self.is_logical() {
-            true => BinaryLikeExpression::new(self.right).filter(|right| right.operator == self.operator),
+            true => BinaryLikeExpression::new(self.right)
+                .filter(|right| right.operator == self.operator && !is_cast_target(right.expr, f)),
             false => None,
         }
     }
 
     /// Prettier's `shouldInlineLogicalExpression`: `a && { b }`, `a || [b]`, `a && <b />`.
-    pub(crate) fn should_inline_logical_expression(&self) -> bool {
+    pub(crate) fn should_inline_logical_expression(&self, f: &Formatter<'a>) -> bool {
         if !self.is_logical() {
             return false;
         }
         let mut last = *self;
-        while let Some(right) = last.right_with_same_operator() {
+        while let Some(right) = last.right_with_same_operator(f) {
             last = right;
         }
-        is_inlined_operand(last.right)
+        is_inlined_operand(last.right) && !is_cast_target(last.right, f)
     }
 
     /// Whether `parent` indents it already.
@@ -124,9 +127,11 @@ pub(crate) fn write_binary_like_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a
 impl<'a> Format<'a> for BinaryLikeExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let parent = self.parent();
+        // For Prettier it is in a `ParenthesizedExpression` then, which is none of what is asked for.
+        let is_in_type_cast = is_cast_target(self.expr, f);
 
         // A condition has its own indentation and group.
-        if self.is_inside_condition(parent) {
+        if !is_in_type_cast && self.is_inside_condition(parent) {
             return format_flattened_logical_expression(*self, true, f);
         }
 
@@ -137,21 +142,21 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
             AstNodes::UnaryExpression(unary) => !unary_argument_has_comments(unary, self.expr, f),
             _ => parent.is_call_like_callee(self.expr),
         };
-        if is_inside_parenthesis {
+        if is_inside_parenthesis && !is_in_type_cast {
             return write!(
                 f,
                 group(&soft_block_indent(&format_with(|f| format_flattened_logical_expression(*self, false, f))))
             );
         }
 
-        if self.should_not_indent_if_parent_indents(parent) {
+        if !is_in_type_cast && self.should_not_indent_if_parent_indents(parent) {
             return write!(f, group(&format_with(|f| format_flattened_logical_expression(*self, false, f))));
         }
 
-        let inline_logical_expression = self.should_inline_logical_expression();
-        let should_indent_if_inlines = should_indent_if_parent_inlines(parent);
-        let parts = split_into_left_and_right_sides(*self, false);
-        let flattened = parts.len() > 2 || self.right_with_same_operator().is_some();
+        let inline_logical_expression = self.should_inline_logical_expression(f);
+        let should_indent_if_inlines = !is_in_type_cast && should_indent_if_parent_inlines(parent);
+        let parts = split_into_left_and_right_sides(*self, false, f);
+        let flattened = parts.len() > 2 || self.right_with_same_operator(f).is_some();
 
         if (inline_logical_expression && !flattened) || (!inline_logical_expression && should_indent_if_inlines) {
             return write!(
@@ -166,8 +171,8 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
             return;
         };
         // A JSX element at the end has a group of its own, so that it does not break the chain.
-        let jsx_element = rest.last().and_then(|part| part.only_last_operand()).filter(|part| part.is_jsx());
-        let before_jsx_element = rest.last().filter(|_| jsx_element.is_some()).and_then(|part| part.without_last_operand());
+        let jsx_element = rest.last().and_then(|part| part.only_last_operand()).filter(|part| part.is_jsx(f));
+        let before_jsx_element = rest.last().filter(|_| jsx_element.is_some()).and_then(|part| part.without_last_operand(f));
         let tail_parts = if jsx_element.is_some() { &rest[..rest.len() - 1] } else { rest };
 
         let group_id = f.group_id("logicalChain");
@@ -176,7 +181,7 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
         // the operator, which is in the chain.
         let should_expand_chain = !f.is_quiet()
             && jsx_element.as_ref().is_some_and(|jsx| {
-                (f.comments().comments_before_iter(jsx.span().start))
+                (f.comments().comments_before_iter(jsx.last_operand(f).span().start))
                     .any(|comment| {
                         comment.is_line() && (!comment.preceded_by_newline() || any_line_comment_before_jsx_breaks_chain(f))
                     })
@@ -240,7 +245,8 @@ fn format_flattened_logical_expression<'a>(
     inside_condition: bool,
     f: &mut Formatter<'a>,
 ) {
-    f.join().entries(split_into_left_and_right_sides(binary, inside_condition).iter());
+    let parts = split_into_left_and_right_sides(binary, inside_condition, f);
+    f.join().entries(parts.iter());
 }
 
 impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
@@ -262,13 +268,15 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         // `a && (b && c)` is written like `a && b && c`, in one group. Prettier rebalances the
         // tree for that after parsing.
         while let Some(operator) = logical_operator
-            && let Some(right_logical) = binary_like_expression.right_with_same_operator()
+            && let Some(right_logical) = binary_like_expression.right_with_same_operator(f)
         {
             if operands != Operands::Last {
                 write_trailing_comments_of_nested(binary_like_expression.left, f);
                 let (left, right) = (binary_like_expression.left, right_logical.left);
                 write_operator(operator, left, right, is_inlined_operand(right), f);
-                match BinaryLikeExpression::new(right_logical.left).filter(|left| left.operator == operator) {
+                match BinaryLikeExpression::new(right_logical.left)
+                    .filter(|left| left.operator == operator && !is_cast_target(left.expr, f))
+                {
                     Some(left_logical_child) => {
                         format_flattened_logical_expression(left_logical_child, inside_parenthesis, f);
                     }
@@ -285,7 +293,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         let is_jsx = right.tag() == ExprTag::Jsx;
 
         let operator_and_right_expression = format_with(|f| {
-            let is_inlined = binary_like_expression.should_inline_logical_expression();
+            let is_inlined = binary_like_expression.should_inline_logical_expression(f);
             write_operator(binary_like_expression.operator, left, right, is_inlined, f);
             if is_inlined && !is_jsx && f.comments().has_leading_own_line_comment(right.span().start) {
                 return write!(f, soft_line_indent_or_space(&right));
@@ -429,12 +437,12 @@ fn write_trailing_comments_of_nested<'a>(left: Expr<'a>, f: &mut Formatter<'a>) 
 
 impl<'a> BinaryLeftOrRightSide<'a> {
     /// The operand that is written last.
-    fn last_operand(&self) -> Expr<'a> {
+    fn last_operand(&self, f: &Formatter<'a>) -> Expr<'a> {
         match *self {
             BinaryLeftOrRightSide::Left { parent } => parent.left,
             BinaryLeftOrRightSide::Right { parent, .. } => {
                 let mut last = parent;
-                while let Some(right) = last.right_with_same_operator() {
+                while let Some(right) = last.right_with_same_operator(f) {
                     last = right;
                 }
                 last.right
@@ -442,8 +450,8 @@ impl<'a> BinaryLeftOrRightSide<'a> {
         }
     }
 
-    fn is_jsx(&self) -> bool {
-        matches!(self.last_operand().kind(), ExprKind::Jsx(_))
+    fn is_jsx(&self, f: &Formatter<'a>) -> bool {
+        matches!(self.last_operand(f).kind(), ExprKind::Jsx(_))
     }
 
     fn with_operands(&self, operands: Operands) -> Option<Self> {
@@ -466,9 +474,9 @@ impl<'a> BinaryLeftOrRightSide<'a> {
     }
 
     /// `None` if there is only one.
-    fn without_last_operand(&self) -> Option<Self> {
+    fn without_last_operand(&self, f: &Formatter<'a>) -> Option<Self> {
         match self {
-            BinaryLeftOrRightSide::Right { parent, .. } if parent.right_with_same_operator().is_some() => {
+            BinaryLeftOrRightSide::Right { parent, .. } if parent.right_with_same_operator(f).is_some() => {
                 self.with_operands(Operands::AllButLast)
             }
             _ => None,
@@ -476,25 +484,13 @@ impl<'a> BinaryLeftOrRightSide<'a> {
     }
 }
 
-impl Spanned for BinaryLeftOrRightSide<'_> {
-    fn span(&self) -> Span {
-        match self {
-            BinaryLeftOrRightSide::Left { parent } => parent.left.span(),
-            BinaryLeftOrRightSide::Right {
-                operands: Operands::Last,
-                ..
-            } => self.last_operand().span(),
-            BinaryLeftOrRightSide::Right { parent, .. } => parent.right.span(),
-        }
-    }
-}
-
 /// The operands of a chain, in order: the leftmost that is not part of the chain, and then the
 /// right side of each expression on the way up.
-fn split_into_left_and_right_sides(
-    binary: BinaryLikeExpression<'_>,
+fn split_into_left_and_right_sides<'a>(
+    binary: BinaryLikeExpression<'a>,
     inside_condition: bool,
-) -> SmallVec<[BinaryLeftOrRightSide<'_>; 4]> {
+    f: &Formatter<'a>,
+) -> SmallVec<[BinaryLeftOrRightSide<'a>; 4]> {
     let mut items = SmallVec::new();
     let mut current = binary;
     loop {
@@ -503,7 +499,7 @@ fn split_into_left_and_right_sides(
             inside_condition,
             operands: Operands::All,
         });
-        match current.can_flatten() {
+        match current.can_flatten(f) {
             Some(left) => current = left,
             None => break,
         }

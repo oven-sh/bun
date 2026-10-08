@@ -839,3 +839,15 @@ describe("blanks at the end of table rows", () => {
     );
   });
 });
+
+// GFM: "The table is broken at the first empty line, or beginning of another block-level structure"
+describe("what ends a table", () => {
+  const table = "<table>\n<thead>\n<tr><th>a</th></tr>\n</thead>\n<tbody>\n<tr><td>b</td></tr>\n</tbody>\n</table>\n";
+  test.each([
+    ["HTML", "<!-- c -->\n", "<!-- c -->\n"],
+    ["a heading", "# c\n", "<h1>c</h1>\n"],
+    ["fenced code", "```\nc\n```\n", "<pre><code>c\n</code></pre>\n"],
+  ])("%s", (_, block, html) => {
+    expect(markdown.html("| a |\n| --- |\n| b |\n" + block)).toBe(table + html);
+  });
+});

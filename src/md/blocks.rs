@@ -431,12 +431,6 @@ impl Parser<'_> {
                 }
             }
 
-            // Check for table continuation
-            if effective_pivot_type == LineType::Table && n_parents == self.n_containers {
-                line.r#type = LineType::Table;
-                break;
-            }
-
             // Check for ATX header
             if line.indent < self.code_indent_offset
                 && off < self.size
@@ -508,6 +502,12 @@ impl Parser<'_> {
                     line.r#type = LineType::Html;
                     break;
                 }
+            }
+
+            // Check for table continuation
+            if effective_pivot_type == LineType::Table && n_parents == self.n_containers {
+                line.r#type = LineType::Table;
+                break;
             }
 
             // Check for table underline

@@ -148,7 +148,11 @@ impl Ignored {
             if flavor == Flavor::Oxfmt && options.ignore_path.is_some() && !fs::is_file(&file) {
                 return Err(Fatal([&file[..], b": File not found"].concat()));
             }
-            files.extend(gitignore::with_file(None, paths::dirname(&file), &file, flavor == Flavor::Oxfmt).map(Some));
+            match fs::read(&file) {
+                Ok(text) => files.extend(gitignore::with_text(None, paths::dirname(&file), &text, flavor == Flavor::Oxfmt).map(Some)),
+                Err(error) if error.get_errno() == bun_sys::E::ENOENT => {}
+                Err(error) => return Err(Fatal([b"Unable to read '", &paths::relative(cwd, &file)[..], b"': ", &fs::describe(&error)].concat())),
+            }
         }
         Ok(Ignored {
             directories,
@@ -316,18 +320,24 @@ pub(crate) fn expand(
             Some((fs::LinkKind::File, size)) => entries.push((Entry::File(path, size), pattern)),
             Some((fs::LinkKind::Directory, _)) => entries.push((Entry::Directory(path), pattern)),
             None => match pattern.strip_prefix(b"!") {
-                Some(negative) => ignored.negative.push(Glob::new(negative)),
+                Some(negative) => ignored.negative.push(Glob::new(negative.strip_prefix(b"./").unwrap_or(negative))),
                 None => entries.push((Entry::Pattern, pattern)),
             },
         }
     }
     let ignored = &*ignored;
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut is_anything_ignored = false;
     for (entry, input) in entries {
         // What the paths that `fast-glob` returns start with, which they are sorted by.
         let mut written_base: (Vec<u8>, Vec<u8>) = (Vec::new(), cwd.clone());
         let (mut found, nothing): (Vec<Target>, &[u8]) = match entry {
             Entry::File(path, size) => {
+                // The configuration of a file that is ignored is not even read.
+                if ignored.ignores_file(&path, &None) {
+                    is_anything_ignored = true;
+                    continue;
+                }
                 let found = match ignored.is_negated(&path) {
                     true => Vec::new(),
                     false => vec![Target {
@@ -347,8 +357,10 @@ pub(crate) fn expand(
                 (found, b"No supported files were found in the directory")
             }
             Entry::Pattern => {
-                let glob = Glob::new(&input);
-                let parent = paths::glob_parent(&input);
+                // `removeLeadingDotSegment` of `fast-glob`
+                let pattern = input.strip_prefix(b"./").unwrap_or(&input);
+                let glob = Glob::new(pattern);
+                let parent = paths::glob_parent(pattern);
                 let base = paths::resolve(&cwd, &parent);
                 if parent != b"." {
                     written_base = (parent, base.clone());
@@ -379,7 +391,7 @@ pub(crate) fn expand(
             }
         }
     }
-    if expanded.is_empty() && error_on_unmatched_pattern {
+    if expanded.is_empty() && !is_anything_ignored && error_on_unmatched_pattern {
         let patterns = patterns.join(&b' ');
         expanded.push(Expanded::Error([b"No matching files. Patterns: ", &patterns[..]].concat()));
     }

@@ -48,7 +48,7 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--type-aware                    Run the rules that need types, whatever the configuration says"),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
     clap::param!("-p, --project/--tsconfig <path>  The tsconfig.json for the rules that need types"),
-    clap::param!("--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"),
+    clap::param!("--threads <n>                   Number of threads <d>(default: one per CPU core, at most 16 with plugins in JavaScript)<r>"),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),
     clap::param!("-h, --help                      Print this help menu"),

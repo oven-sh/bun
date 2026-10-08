@@ -91,7 +91,7 @@ fn check_and_lint(
         script_kinds_by_extension: &[],
         conditions: &[],
         compiler_options: &command_line.compiler_options,
-        threads: context.options.threads,
+        threads: crate::run::threads_to_lint_on(context.options, context.js_plugins),
         libs: environment.libs,
         progress: None,
         only: None,

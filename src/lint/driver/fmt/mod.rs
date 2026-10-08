@@ -16,7 +16,7 @@ use bun_format::pragma::BeforeParsing;
 use bun_format::{FormatError, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
-use bun_sema::atom::{Intern, Interner};
+use bun_sema::atom::{Intern, Interner, InternerPerThread};
 use bun_sema::bind::{BindOptions, bind, bind_for_format};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
@@ -62,7 +62,7 @@ struct How<'h> {
     is_script: bool,
     resolved: &'h Resolved,
     verifies: bool,
-    /// The names in all files. They are freed when the run ends.
+    /// For the names in a file with syntax errors. They are freed when the run ends.
     atoms: &'h dyn Intern,
 }
 
@@ -78,28 +78,31 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
     let session = Session::new();
     let arena = session.arena();
     let options = language.parse_options(path);
-    let (mut hir, _) = bun_js_parser::sema::summarize_in(
+    bun_js_parser::sema::with_summary(
         Dialect::babel(how.is_script),
         (arena, &session),
         path,
         options.script_kind,
         text,
-        how.atoms,
+        how.atoms.of_this_thread(),
         options.experimental_decorators,
         options.every_file_is_a_module,
-    );
-    hir.text = Cow::Borrowed(text);
-    let bind_options = BindOptions {
-        emit_standard_class_fields: true,
-        before_es2020: false,
-        before_es2017: false,
-    };
-    // To tell which imports are used takes symbols.
-    let bound = match how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols()) {
-        true => bind(&hir, bind_options, how.atoms, arena),
-        false => bind_for_format(&hir, bind_options, how.atoms, arena),
-    };
-    then(&File::new(path, &hir, &bound, how.atoms, &language, None), hir.diagnostics.first())
+        // The names are the file's own.
+        |mut hir, atoms| {
+            hir.text = Cow::Borrowed(text);
+            let bind_options = BindOptions {
+                emit_standard_class_fields: true,
+                before_es2020: false,
+                before_es2017: false,
+            };
+            // To tell which imports are used takes symbols.
+            let bound = match how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols()) {
+                true => bind(&hir, bind_options, atoms, arena),
+                false => bind_for_format(&hir, bind_options, atoms, arena),
+            };
+            then(&File::new(path, &hir, &bound, atoms, &language, None), hir.diagnostics.first())
+        },
+    )
 }
 
 /// `SyntaxError: ';' expected. (1:7)`
@@ -198,6 +201,9 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
     {
         let message = error.message.strip_prefix(b"Parsing error: ").unwrap_or(&error.message);
         return Err(Failure::Syntax(format!("SyntaxError: {} ({}:{})", BStr::new(message), error.line, error.column).into_bytes()));
+    }
+    if bun_lint::linter::refused_by_prettier(file) {
+        return Err(Failure::Syntax(syntax_error(file, first_error)));
     }
     let mut out = Vec::new();
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _| then(file));
@@ -335,7 +341,13 @@ impl Run<'_> {
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
         if files::language_of(&path) == Language::Unknown && options.options.parser.is_none() {
-            return self.fail_to_start(configs.flavor, &[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
+            let only_looks = self.options.check || self.options.list_different;
+            let mut out = self.fail_to_start(configs.flavor, &[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
+            // As Prettier's `handleError`.
+            if configs.flavor == Flavor::Prettier && only_looks {
+                out.exit_code = 0;
+            }
+            return out;
         }
         let names = Session::new();
         match format(&path, &text, &options, &Interner::new_in(&names), &mut Scratches::default(), self.options.verify) {
@@ -422,8 +434,8 @@ impl Run<'_> {
         work.sort_by_key(|it| std::cmp::Reverse(it.1.size));
         let started = Instant::now();
         let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
-        let names = Session::new();
-        let atoms = Interner::new_in(&names);
+        let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
+        let atoms = InternerPerThread::new_in(&names);
         let mut results = Guarded::new(done);
         pool.for_each(work.len(), 1, &|at| {
             let (index, target) = work[at];
@@ -517,7 +529,7 @@ impl Run<'_> {
                 finding.as_secs_f64() * 1e3,
                 formatting.as_secs_f64() * 1e3,
                 self.began.elapsed().as_secs_f64() * 1e3,
-                pool.threads,
+                pool.threads(),
             );
         }
         self.out
@@ -531,6 +543,11 @@ impl Run<'_> {
         }
         if !options.plugins.is_empty() {
             self.warn(b"Plugins are not supported: --plugin has no effect.");
+        }
+        if options.config.is_some() && !options.config_lookup {
+            let mut out = self.fail(b"Cannot use --no-config and --config together.");
+            out.exit_code = 1;
+            return out;
         }
         let configs = Configs::new(options, environment);
         if let Some(file) = &options.find_config_path {

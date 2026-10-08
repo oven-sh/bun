@@ -350,7 +350,7 @@ bun lint [flags] [...files, directories or patterns]
 | `--type-aware`, `--no-type-aware`         | Run or skip the rules that need types                              |
 | `-p`, `--project <path>`                  | The `tsconfig.json` for the rules that need types                  |
 | `-A`, `-W`, `-D <rule or category>`       | Allow, warn about, or deny a rule, with an `.oxlintrc.json`        |
-| `--threads <n>`                           | Number of threads. Default: one per CPU core                       |
+| `--threads <n>`                           | Number of threads. Default: one per CPU core, at most 16 with plugins in JavaScript |
 | `--timing`                                | Print how long each phase took                                     |
 | `--cwd <path>`                            | Set the working directory                                          |
 | `-h`, `--help`                            | Print the help menu                                                |

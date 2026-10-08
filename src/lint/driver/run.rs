@@ -16,7 +16,7 @@ use bun_lint::linter::{FileConfig, Linter, Registry};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
 macro_rules! pretty {
@@ -81,23 +81,39 @@ pub(crate) struct Fatal(pub(crate) Vec<u8>);
 /// The threads.
 pub(crate) struct Pool {
     caches: bun_sema_driver::ThreadCaches,
-    pub(crate) threads: usize,
+    threads: AtomicUsize,
+}
+
+/// With rules in JavaScript, more threads than this take more time and memory, and are no faster:
+/// the engines of a process share what hands out memory for compiled code.
+const MOST_THREADS_WITH_JS_PLUGINS: usize = 16;
+
+/// How many threads lint. 0: one for each core.
+pub(crate) fn threads_to_lint_on(options: &Options, js_plugins: &Host) -> usize {
+    match options.threads {
+        0 if js_plugins.has_plugins() => usize::from(bun_core::get_thread_count()).min(MOST_THREADS_WITH_JS_PLUGINS),
+        threads => threads,
+    }
 }
 
 impl Pool {
     pub(crate) fn new(threads: usize) -> Pool {
         Pool {
             caches: Default::default(),
-            threads: match threads {
+            threads: AtomicUsize::new(match threads {
                 0 => usize::from(bun_core::get_thread_count()),
                 threads => threads,
-            },
+            }),
         }
+    }
+
+    pub(crate) fn threads(&self) -> usize {
+        self.threads.load(Ordering::Relaxed)
     }
 
     /// Calls `work` with every index below `count`, `run` consecutive ones at a time.
     pub(crate) fn for_each(&self, count: usize, run: usize, work: &(dyn Fn(usize) + Sync)) {
-        bun_sema_driver::for_each_parallel_in_runs(&self.caches, self.threads, count, run, work);
+        bun_sema_driver::for_each_parallel_in_runs(&self.caches, self.threads(), count, run, work);
     }
 }
 
@@ -300,6 +316,10 @@ impl Run<'_> {
         let is_oxlint = loader.for_directory(&self.environment.cwd).is_ok_and(|it| it.flavor == Flavor::Oxlint);
         let targets = discover::find_files(loader, pool, patterns, self.options.error_on_unmatched_pattern && !is_oxlint)?;
         phases.discovery = started.elapsed().as_secs_f64();
+        // Every configuration is loaded by now.
+        if let threads @ 1.. = threads_to_lint_on(self.options, context.js_plugins) {
+            pool.threads.store(threads, Ordering::Relaxed);
+        }
         if is_oxlint && self.options.error_on_unmatched_pattern && !targets.iter().any(|it| matches!(it.status, Status::Matched(_))) {
             return Err(Fatal(NO_FILES_FOR_OXLINT.to_vec()));
         }
@@ -443,7 +463,7 @@ impl Run<'_> {
             is_on: options.timing,
             ..Timing::default()
         };
-        let names: Vec<_> = (0..pool.threads.max(1))
+        let names: Vec<_> = (0..pool.threads().max(1))
             .map(|_| bun_sema::session::Session::new())
             .collect();
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
@@ -583,7 +603,7 @@ impl Run<'_> {
                         _ => None,
                     }
                 }),
-                threads: pool.threads,
+                threads: pool.threads(),
                 seconds: self.began.elapsed().as_secs_f64(),
             },
             pool: &pool,
@@ -687,7 +707,7 @@ impl Run<'_> {
             phases.linting * 1e3,
             phases.formatting * 1e3,
             self.began.elapsed().as_secs_f64() * 1e3,
-            pool.threads,
+            pool.threads(),
             cpu(&timing.read),
             cpu(&timing.parse),
             cpu(&timing.rules),

@@ -730,7 +730,8 @@ The renamed symbols are then used during final code generation to produce output
 - Walks the import graph once per such entry point, over the same edges as `EntryWalk` (`for_each_edge`), and compares the order in which each evaluates what runs when the group loads: the files with side effects, the wrapped files that the group's files call at their top level, and, inside an import cycle, every file that initializes a binding
 - A group whose first loaders disagree becomes lazy: `wrap_live_files_as_esm` turns each file into `var init_x = __esm(() => { ... })` and every `import` of it into a call, as `scanImportsAndExports()` does for a file that is wrapped from the start
 - An `import` of a chunk runs ahead of the code that makes those calls. So a group becomes lazy too when an entry point that can be the first to load it evaluates one of its files after a file of a lazy group
-- Repeats until nothing more is wrapped: the importer of a wrapper now runs something, and an `import` of a `"sideEffects": false` file now loads it, so `assign_entry_bits` runs again after each round
+- `assign_entry_bits` runs again afterwards: the wrappers use `__esm` from the runtime. An `import` of a `"sideEffects": false` file loaded nothing and the call of its wrapper does, so when such a file was wrapped, who loads what has changed and the pass looks again
+- A file that an HTML file names in a `<script src>` stays unwrapped, with what comes ahead of it: an HTML file prints nothing for the tag, so nothing would call the wrapper
 
 #### `computeChunks.rs`
 

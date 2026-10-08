@@ -23,11 +23,19 @@ pub(crate) fn wrap_order_conflicts(c: &mut LinkerContext) -> crate::Result<()> {
         return Ok(());
     }
     let mut wrapped = AutoBitSet::init_empty(c.graph.files.len())?;
-    // Again after each round: the importer of a wrapper runs it, so a file that ran nothing now
-    // does, and an `import` of a `"sideEffects": false` file now loads it.
     while let Some(files) = files_to_wrap(c, &wrapped)? {
         c.wrap_live_files_as_esm(&files)?;
         c.assign_entry_bits()?;
+        // An `import` of a `"sideEffects": false` file loaded nothing, and the call of its wrapper
+        // does. That changes who loads what, so look again.
+        let mut iter = files.iterator::<true, true>();
+        let mut loads_changed = false;
+        while let Some(id) = iter.next() {
+            loads_changed |= c.file_has_no_side_effects(id as IndexInt);
+        }
+        if !loads_changed {
+            break;
+        }
         wrapped.set_union(&files);
     }
     Ok(())
@@ -117,6 +125,10 @@ fn files_to_wrap(c: &LinkerContext, wrapped: &AutoBitSet) -> crate::Result<Optio
             groups[group as usize].lazy = true;
             continue;
         }
+        // One loader has one order.
+        if groups[group as usize].first_loaders.count() < 2 {
+            continue;
+        }
 
         inits.clear();
         if !c.loading_file_side_effects(source_index, Some(&mut inits)) {
@@ -134,6 +146,7 @@ fn files_to_wrap(c: &LinkerContext, wrapped: &AutoBitSet) -> crate::Result<Optio
             if group != NO_GROUP
                 && in_cycle[id]
                 && !wrapped.is_set(id)
+                && groups[group as usize].first_loaders.count() >= 2
                 && initializes_at_load(c, id as IndexInt)
             {
                 runs.push((id as IndexInt, group));
@@ -143,14 +156,12 @@ fn files_to_wrap(c: &LinkerContext, wrapped: &AutoBitSet) -> crate::Result<Optio
     runs.sort_unstable();
     runs.dedup();
 
-    // One loader has one order, and so does one thing that runs.
+    // One thing that runs has one order.
     let mut count: Vec<u32> = vec![0; groups.len()];
     for &(_, group) in &runs {
         count[group as usize] += 1;
     }
-    runs.retain(|&(_, group)| {
-        count[group as usize] >= 2 && groups[group as usize].first_loaders.count() >= 2
-    });
+    runs.retain(|&(_, group)| count[group as usize] >= 2);
 
     let mut walks = Walks::new(c, &group_of_file, &runs);
     let mut compared = AutoBitSet::init_empty(entry_points.len())?;

@@ -2506,6 +2506,34 @@ describe("bundler", () => {
     ],
   });
 
+  // e3.js evaluates g, b and the others b, g, so both are wrappers, and so is f.js, which e1.js and
+  // e2.js evaluate with them. e3.js uses nothing from f.js, and "sideEffects": false kept it from
+  // loading f.js and d.js. Now b.js calls the wrapper of f.js, so e3.js loads them, after g.js.
+  itBundled("splitting/WrappedSideEffectsFalseFileLoadsWhatItImportsInOrder", {
+    files: {
+      "/node_modules/pure/package.json": JSON.stringify({ name: "pure", sideEffects: false }),
+      "/node_modules/pure/f.js": `import "../../d.js"; export const x = "x";`,
+      "/d.js": `console.log("d");`,
+      "/b.js": `export { x } from "pure/f.js"; console.log("b");`,
+      "/g.js": `console.log("g");`,
+      "/h.js": `console.log("h");`,
+      "/e1.js": `import "./d.js"; import { x } from "./b.js"; import "./g.js"; import "./h.js"; console.log("e1", x);`,
+      "/e2.js": `import "./d.js"; import { x } from "./b.js"; import "./h.js"; import "./g.js"; console.log("e2", x);`,
+      "/e3.js": `import "./g.js"; import "./b.js"; console.log("e3");`,
+      "/e4.js": `import "./d.js"; console.log("e4");`,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js", "/e4.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "d\nb\ng\nh\ne1 x" },
+      { file: "/out/e2.js", stdout: "d\nb\nh\ng\ne2 x" },
+      { file: "/out/e3.js", stdout: "g\nd\nb\ne3" },
+      { file: "/out/e4.js", stdout: "d\ne4" },
+    ],
+  });
+
   // An HTML file prints nothing for a <script src>, so nothing would call a wrapper of a.js or
   // b.js. They stay as they are, and so does first.js, which would otherwise run after them.
   itBundled("splitting/ScriptsOfTwoPagesAreNotWrapped", {

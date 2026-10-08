@@ -1077,30 +1077,40 @@ pub struct SignOptions<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl S3Credentials {
-    /// The bucket that `S3File.bucket` and `Bun.inspect` report, when the
-    /// credentials alone decide it. A virtual-hosted endpoint has the bucket in
-    /// its host. When the host does not name it, this is the `bucket` option,
-    /// which `sign_request` does not send in that mode.
+    /// The bucket in the host of a virtual-hosted endpoint, when `guess_bucket`
+    /// recognises the host.
+    #[inline]
+    fn endpoint_bucket(&self) -> Option<&[u8]> {
+        if self.virtual_hosted_style && !self.endpoint.is_empty() {
+            guess_bucket(&self.endpoint)
+        } else {
+            None
+        }
+    }
+
+    /// The bucket that `Bun.inspect` prints: the bucket in the host of a
+    /// virtual-hosted endpoint, or else the `bucket` option, which
+    /// `sign_request` does not send in that mode.
     #[inline]
     pub fn configured_bucket(&self) -> Option<&[u8]> {
-        if self.virtual_hosted_style && !self.endpoint.is_empty() {
-            if let Some(bucket) = guess_bucket(&self.endpoint) {
-                return Some(bucket);
-            }
+        if let Some(bucket) = self.endpoint_bucket() {
+            return Some(bucket);
         }
         (!self.bucket.is_empty()).then_some(&*self.bucket)
     }
 
-    /// The bucket of the object at `path()`. `path` runs only for path-style
-    /// credentials with no bucket, where the first `/` segment of the path is
-    /// the bucket. A virtual-hosted path is all key.
+    /// The bucket that `S3File.bucket` reports. The `bucket` option comes
+    /// first: a guess from the host never replaces a configured name here.
+    /// Without the option, a virtual-hosted path is all key, so only the host
+    /// of the endpoint can name the bucket. In path style the first `/`
+    /// segment of `path()` is the bucket, and `path` runs only in that case.
     #[inline]
     pub fn bucket_for<'a>(&'a self, path: impl FnOnce() -> &'a [u8]) -> Option<&'a [u8]> {
-        if let Some(bucket) = self.configured_bucket() {
-            return Some(bucket);
+        if !self.bucket.is_empty() {
+            return Some(&*self.bucket);
         }
         if self.virtual_hosted_style {
-            return None;
+            return self.endpoint_bucket();
         }
         let path = path();
         let path = path.strip_prefix(b"/").unwrap_or(path);

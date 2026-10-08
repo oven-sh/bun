@@ -635,10 +635,12 @@ declare module "bun" {
     /**
      * The bucket name containing the file.
      *
-     * With `virtualHostedStyle`, the path is not read for a bucket. With an
-     * `endpoint` too, this is the bucket in the hostname of the endpoint when
-     * Bun recognizes the hostname (AWS S3 and Cloudflare R2), otherwise the
-     * `bucket` option. It is `undefined` when neither names a bucket.
+     * With `virtualHostedStyle`, the path is not read for a bucket. This is
+     * then the `bucket` option when it is set. Otherwise it is the bucket in
+     * the hostname of the `endpoint` when the hostname has a form such as
+     * `<bucket>.s3.<region>.amazonaws.com` or
+     * `<bucket>.<account-id>.r2.cloudflarestorage.com`, and `undefined` for
+     * any other hostname.
      *
      * @example
      * ```ts

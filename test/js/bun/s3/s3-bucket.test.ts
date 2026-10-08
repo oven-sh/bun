@@ -34,18 +34,21 @@ const r2Jurisdictions = ["eu", "fedramp", "us"] as const;
 const r2 = (labels: string) => `https://${labels}.r2.cloudflarestorage.com`;
 
 /**
- * A virtual-hosted client on `endpoint`, with the key "dir/f.txt". `bucket` is what
- * `S3File.bucket` and both inspects report. `option` is the `bucket` option of the client.
+ * A virtual-hosted client on `endpoint`, with the key "dir/f.txt". `inHost` is the
+ * bucket that Bun reads in the host of the endpoint, or null. `option` is the
+ * `bucket` option of the client. `S3File.bucket` is the option, or else `inHost`.
+ * Both inspects show `inHost`, or else the option.
  */
-function hosted(endpoint: string, bucket: string | null, option?: string): [Case, Report] {
+function hosted(endpoint: string, inHost: string | null, option?: string): [Case, Report] {
   const { host, pathname } = new URL(endpoint);
+  const shown = inHost ?? option;
   return [
     { client: { ...virtualHosted, endpoint, ...(option && { bucket: option }) } },
     {
       url: `${host}${pathname === "/" ? "" : pathname}/dir/f.txt`,
-      bucket,
-      file: bucket ? `S3Ref ("${bucket}/dir/f.txt")` : 'S3Ref ("dir/f.txt")',
-      client: bucket ? `S3Client ("${bucket}")` : "S3Client",
+      bucket: option ?? inHost,
+      file: shown ? `S3Ref ("${shown}/dir/f.txt")` : 'S3Ref ("dir/f.txt")',
+      client: shown ? `S3Client ("${shown}")` : "S3Client",
     },
   ];
 }
@@ -136,7 +139,9 @@ testCases(
         client: 'S3Client ("prod-bucket")',
       },
     ],
-    "AWS host, bucket option: the request ignores the option": hosted(aws.endpoint, "prod-bucket", "opt-bucket"),
+    "AWS host, bucket option with the same name": hosted(aws.endpoint, "prod-bucket", "prod-bucket"),
+    // The request ignores the option. `S3File.bucket` still reports it, and the inspects show the host.
+    "AWS host, bucket option with another name": hosted(aws.endpoint, "prod-bucket", "opt-bucket"),
     "AWS host, endpoint with a port and a path": hosted(
       "https://prod-bucket.s3.us-east-1.amazonaws.com:8443/prefix",
       "prod-bucket",
@@ -164,20 +169,20 @@ testCases(
   {},
   {
     "custom domain, no bucket option": hosted("https://files.example.com", null),
-    "custom domain, bucket option": hosted("https://files.example.com", "opt-bucket", "opt-bucket"),
+    "custom domain, bucket option": hosted("https://files.example.com", null, "opt-bucket"),
     "host of another provider, bucket option with the same name": hosted(
       "https://my-bucket.oss-cn-hangzhou.aliyuncs.com",
-      "my-bucket",
+      null,
       "my-bucket",
     ),
     // Bun does not read this host, so it cannot see that the option names another bucket.
     "host of another provider, bucket option with another name": hosted(
       "http://real-bucket.localhost:9000",
-      "other-bucket",
+      null,
       "other-bucket",
     ),
     "R2 account host": hosted(r2("acct123"), null),
-    "R2 account host, bucket option": hosted(r2("acct123"), "opt-bucket", "opt-bucket"),
+    "R2 account host, bucket option": hosted(r2("acct123"), null, "opt-bucket"),
     // The account is not a bucket.
     ...Object.fromEntries(
       r2Jurisdictions.map(jurisdiction => [
@@ -204,7 +209,7 @@ testCases(
     ),
     "AWS path-style host, bucket in the path of the endpoint, bucket option with the same name": hosted(
       "https://s3.us-east-1.amazonaws.com/my-bucket",
-      "my-bucket",
+      null,
       "my-bucket",
     ),
   },
@@ -311,10 +316,19 @@ testCases(
   {},
   {
     "path-style client, virtual-hosted file": [
-      { client: { bucket: "opt-bucket" }, file: aws },
+      { file: aws },
       {
         url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
         bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: "S3Client",
+      },
+    ],
+    "path-style client with a bucket option, virtual-hosted file: the file has the option of its client": [
+      { client: { bucket: "opt-bucket" }, file: aws },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "opt-bucket",
         file: 'S3Ref ("prod-bucket/dir/f.txt")',
         client: 'S3Client ("opt-bucket")',
       },
@@ -372,18 +386,9 @@ testCases(
 );
 
 testCases(
-  "S3_BUCKET and S3_ENDPOINT in the environment",
-  { S3_BUCKET: "env-bucket", S3_ENDPOINT: aws.endpoint },
+  "S3_ENDPOINT in the environment",
+  { S3_ENDPOINT: aws.endpoint },
   {
-    "path style: the bucket of the environment": [
-      {},
-      {
-        url: "prod-bucket.s3.us-east-1.amazonaws.com/env-bucket/dir/f.txt",
-        bucket: "env-bucket",
-        file: 'S3Ref ("env-bucket/dir/f.txt")',
-        client: 'S3Client ("env-bucket")',
-      },
-    ],
     "virtual-hosted style: the bucket in the host of the endpoint": [
       { client: virtualHosted },
       {
@@ -393,7 +398,40 @@ testCases(
         client: 'S3Client ("prod-bucket")',
       },
     ],
-    "virtual-hosted style, endpoint option with a host that names no bucket: the bucket of the environment": [
+    "Bun.s3.file(), virtual-hosted style": [
+      { via: "Bun.s3.file", client: virtualHosted },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+      },
+    ],
+  },
+);
+
+testCases(
+  "S3_BUCKET and S3_ENDPOINT in the environment: S3_BUCKET is a bucket option",
+  { S3_BUCKET: "env-bucket", S3_ENDPOINT: aws.endpoint },
+  {
+    "path style": [
+      {},
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/env-bucket/dir/f.txt",
+        bucket: "env-bucket",
+        file: 'S3Ref ("env-bucket/dir/f.txt")',
+        client: 'S3Client ("env-bucket")',
+      },
+    ],
+    "virtual-hosted style": [
+      { client: virtualHosted },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: "env-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+    "virtual-hosted style, endpoint option with a host that names no bucket": [
       { client: { ...virtualHosted, endpoint: "https://files.example.com" } },
       {
         url: "files.example.com/dir/f.txt",
@@ -406,7 +444,7 @@ testCases(
       { via: "Bun.s3.file", client: virtualHosted },
       {
         url: "prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
-        bucket: "prod-bucket",
+        bucket: "env-bucket",
         file: 'S3Ref ("prod-bucket/dir/f.txt")',
       },
     ],

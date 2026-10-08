@@ -123,10 +123,6 @@ pub(crate) fn indent<'a>(contents: impl Into<Doc<'a>>) -> Doc<'a> {
     Doc::Indent(Box::new(contents.into()))
 }
 
-pub(crate) fn dedent<'a>(contents: impl Into<Doc<'a>>) -> Doc<'a> {
-    Doc::Dedent(Box::new(contents.into()))
-}
-
 pub(crate) fn group<'a>(contents: impl Into<Doc<'a>>) -> Doc<'a> {
     group_with(contents, false)
 }
@@ -147,18 +143,6 @@ pub(crate) fn align_with_spaces<'a>(width: u32, contents: impl Into<Doc<'a>>) ->
 
 pub(crate) fn fill(parts: Vec<Doc<'_>>) -> Doc<'_> {
     Doc::Fill(parts)
-}
-
-pub(crate) fn if_break<'a>(break_contents: impl Into<Doc<'a>>) -> Doc<'a> {
-    Doc::IfBreak {
-        break_contents: Box::new(break_contents.into()),
-        flat_contents: Box::new(Doc::EMPTY),
-        group_id: 0,
-    }
-}
-
-pub(crate) fn line_suffix<'a>(contents: impl Into<Doc<'a>>) -> Doc<'a> {
-    Doc::LineSuffix(Box::new(contents.into()))
 }
 
 pub(crate) fn join<'a>(separator: &Doc<'a>, docs: Vec<Doc<'a>>) -> Vec<Doc<'a>> {
@@ -338,6 +322,10 @@ enum Element {
     /// A range of `Elements::texts`, and its width.
     Text { start: u32, len: u32, width: u32 },
     Line(Line),
+    /// `hardline`
+    HardLine,
+    /// It has done what it does when it was written.
+    BreakParent,
     LineSuffixBoundary,
     /// What has been taken out.
     Nothing,
@@ -421,12 +409,17 @@ impl Elements {
 
     /// `hardline`
     pub(crate) fn hard_line(&mut self) {
-        self.list.push(Element::Line(Line::Hard));
-        self.break_parent();
+        self.list.push(Element::HardLine);
+        self.break_groups();
     }
 
-    /// `breakParent`, with what Prettier's `propagateBreaks` makes of it.
     pub(crate) fn break_parent(&mut self) {
+        self.list.push(Element::BreakParent);
+        self.break_groups();
+    }
+
+    /// What Prettier's `propagateBreaks` makes of a `breakParent`.
+    fn break_groups(&mut self) {
         for &group in self.open_groups.iter().rev() {
             match &mut self.list[group as usize] {
                 // So are the groups around it.
@@ -466,7 +459,7 @@ impl Elements {
 
     pub(crate) fn start_group(&mut self, should_break: bool, id: u32, is_conditional: bool) {
         if should_break {
-            self.break_parent();
+            self.break_groups();
         }
         self.open_groups.push(self.list.len() as u32);
         self.start(Element::StartGroup {
@@ -621,11 +614,11 @@ impl Elements {
                 Element::StartItem { end: at + 1 },
                 Element::EndItem,
                 Element::StartItem { end: at + 4 },
-                Element::Line(Line::Hard),
+                Element::HardLine,
                 Element::EndItem,
             ],
         );
-        self.break_parent();
+        self.break_groups();
     }
 
     /// Ends a `fill` that is to be an array of its items after all.
@@ -700,7 +693,26 @@ impl Elements {
         }
     }
 
-    /// The document as a tree. A `breakParent` is a group that is broken.
+    /// Writes `self.list[start..end]`, which is complete, once more.
+    pub(crate) fn duplicate(&mut self, start: usize, end: usize) {
+        let shift = (self.list.len() - start) as u32;
+        for index in start..end {
+            let mut element = self.list[index];
+            match &mut element {
+                Element::StartGroup { end, .. } | Element::StartItem { end } | Element::Else { end } | Element::StartLineSuffix { end } => {
+                    *end += shift;
+                }
+                Element::StartIfBreak { otherwise, end, .. } => {
+                    *otherwise += shift;
+                    *end += shift;
+                }
+                _ => {}
+            }
+            self.list.push(element);
+        }
+    }
+
+    /// The document as a tree.
     pub(crate) fn to_tree(&self) -> Doc<'static> {
         let mut at = 1;
         Doc::Array(self.tree_up_to(&mut at, self.list.len()))
@@ -719,7 +731,8 @@ impl Elements {
             };
             parts.push(match element {
                 Element::Text { start, len, .. } => Doc::from(self.texts[start as usize..(start + len) as usize].to_vec()),
-                Element::Line(Line::Hard) => hardline(),
+                Element::HardLine => hardline(),
+                Element::BreakParent => Doc::BreakParent,
                 Element::Line(line) => Doc::Line(line),
                 Element::LineSuffixBoundary => Doc::LineSuffixBoundary,
                 Element::StartGroup {
@@ -1031,6 +1044,7 @@ impl<'o> Printer<'o> {
                     }
                     remaining_width -= width as isize;
                 }
+                Element::HardLine => return true,
                 Element::Line(line) => {
                     if mode == Mode::Break || matches!(line, Line::Hard | Line::Literal) {
                         return true;
@@ -1089,7 +1103,7 @@ impl<'o> Printer<'o> {
                         return false;
                     }
                 }
-                Element::Nothing => {}
+                Element::BreakParent | Element::Nothing => {}
             }
         }
         false
@@ -1218,7 +1232,11 @@ impl<'o> Printer<'o> {
                         (at, end) = (0, 1);
                     }
                 }
-                Element::Line(line) => {
+                Element::Line(_) | Element::HardLine => {
+                    let line = match element {
+                        Element::Line(line) => line,
+                        _ => Line::Hard,
+                    };
                     let is_hard = matches!(line, Line::Hard | Line::Literal);
                     if mode == Mode::Flat && !is_hard {
                         if line == Line::Space {
@@ -1250,7 +1268,7 @@ impl<'o> Printer<'o> {
                         position = self.write_indent(indent);
                     }
                 }
-                Element::Nothing => {}
+                Element::BreakParent | Element::Nothing => {}
             }
         }
         position

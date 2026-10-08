@@ -7,7 +7,7 @@ mod cst;
 mod lexer;
 mod printer;
 
-use crate::css::doc::{self, Doc};
+use crate::css::doc::{self, Doc, Elements};
 use crate::css::text;
 use crate::options::{QuoteStyle, TrailingCommas};
 use crate::{FormatError, FormatOptions};
@@ -47,8 +47,13 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
     NAMES.contains(&name) || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
 }
 
+/// The document for `text`, whose line breaks are `\n`, as a tree.
+pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
+    elements(text, options).map(|elements| elements.to_tree())
+}
+
 /// The document for `text`, whose line breaks are `\n`.
-pub(crate) fn document<'a>(text: &'a [u8], options: &FormatOptions) -> Result<Doc<'a>, FormatError> {
+fn elements(text: &[u8], options: &FormatOptions) -> Result<Elements, FormatError> {
     let lexemes = lexer::lex(text);
     let tokens = cst::parse(text, &lexemes).map_err(|error| match error {
         cst::ParseError::Syntax => FormatError::SyntaxError,
@@ -66,8 +71,10 @@ pub(crate) fn document<'a>(text: &'a [u8], options: &FormatOptions) -> Result<Do
         tab_width: u32::from(options.indent_width.value()),
         printed_empty_lines: Default::default(),
         last_group_id: 0,
+        out: Elements::default(),
     };
-    Ok(printer.print(tree.root, true))
+    printer.print(tree.root, true);
+    Ok(printer.out)
 }
 
 /// `/^\s*#[^\S\n]*@(?:a|b)\s*?(?:\n|$)/`
@@ -122,7 +129,7 @@ pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out:
         return Ok(());
     }
     // It has to be YAML in any case.
-    let document = document(&text, options).inspect_err(|_| out.truncate(start))?;
+    let document = elements(&text, options).inspect_err(|_| out.truncate(start))?;
     if is_range {
         doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(&text)), options, original, out);
         return Ok(());
@@ -134,6 +141,6 @@ pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out:
         }
         out.truncate(end);
     }
-    doc::print(document, options, original, out);
+    doc::Printer::new(options, original, out).print(&document, 0, 0);
     Ok(())
 }

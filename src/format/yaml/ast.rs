@@ -103,17 +103,46 @@ pub(crate) enum Chomping {
     Strip,
 }
 
+/// An index into `Tree::nodes`.
 pub(crate) type Id = u32;
+
+/// Nodes that follow each other by their `next`. Each node is in one list at most.
+#[derive(Debug, Copy, Clone, Default)]
+pub(crate) struct List {
+    first: Option<Id>,
+    last: Option<Id>,
+    len: u32,
+}
+
+impl List {
+    pub(crate) fn is_empty(self) -> bool {
+        self.first.is_none()
+    }
+
+    pub(crate) fn len(self) -> usize {
+        self.len as usize
+    }
+
+    pub(crate) fn first(self) -> Option<Id> {
+        self.first
+    }
+
+    pub(crate) fn last(self) -> Option<Id> {
+        self.last
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct Node<'a> {
     pub(crate) kind: Kind,
     pub(crate) position: Position,
     pub(crate) parent: Option<Id>,
-    pub(crate) children: Vec<Id>,
-    pub(crate) leading_comments: Vec<Id>,
-    pub(crate) middle_comments: Vec<Id>,
-    pub(crate) end_comments: Vec<Id>,
+    /// What follows in the list that it is in.
+    pub(crate) next: Option<Id>,
+    pub(crate) children: List,
+    pub(crate) leading_comments: List,
+    pub(crate) middle_comments: List,
+    pub(crate) end_comments: List,
     pub(crate) trailing_comment: Option<Id>,
     pub(crate) indicator_comment: Option<Id>,
     pub(crate) tag: Option<Id>,
@@ -136,6 +165,44 @@ pub(crate) struct Tree<'a> {
     pub(crate) root: Id,
 }
 
+/// The nodes of `list`.
+fn items<'t>(nodes: &'t [Node<'_>], list: List) -> impl Iterator<Item = Id> + 't {
+    std::iter::successors(list.first, |&id| nodes[id as usize].next)
+}
+
+/// Which list of a node.
+#[derive(Copy, Clone)]
+enum Which {
+    Children,
+    LeadingComments,
+    MiddleComments,
+    EndComments,
+}
+
+/// Adds `id` to a list of `owner`, which is its parent from now on.
+fn append(nodes: &mut [Node<'_>], owner: Id, which: Which, id: Id) {
+    let node = &mut nodes[owner as usize];
+    let list = match which {
+        Which::Children => &mut node.children,
+        Which::LeadingComments => &mut node.leading_comments,
+        Which::MiddleComments => &mut node.middle_comments,
+        Which::EndComments => &mut node.end_comments,
+    };
+    list.len += 1;
+    match list.last.replace(id) {
+        None => list.first = Some(id),
+        Some(last) => nodes[last as usize].next = Some(id),
+    }
+    nodes[id as usize].parent = Some(owner);
+}
+
+impl Tree<'_> {
+    /// The nodes of `list`.
+    pub(crate) fn items(&self, list: List) -> impl Iterator<Item = Id> + '_ {
+        items(&self.nodes, list)
+    }
+}
+
 impl<'a> std::ops::Index<Id> for Tree<'a> {
     type Output = Node<'a>;
 
@@ -145,14 +212,19 @@ impl<'a> std::ops::Index<Id> for Tree<'a> {
 }
 
 /// The properties of a node: tokens that are a comment, a tag or an anchor.
-type Props = Vec<SourceToken>;
+type Props = smallvec::SmallVec<[SourceToken; 4]>;
 
 struct Context<'a> {
     text: &'a [u8],
+    is_ascii: bool,
     /// Where the lines start.
     line_starts: Vec<u32>,
+    /// The line that has been asked for last.
+    last_line: std::cell::Cell<usize>,
     nodes: Vec<Node<'a>>,
     comments: Vec<Id>,
+    /// The nodes whose parents are not made yet.
+    pending: Vec<Id>,
 }
 
 /// `tokens(..)`: without spaces and line breaks.
@@ -173,11 +245,19 @@ fn is_empty_node(node: Option<&Composed<'_, '_>>, props: &[SourceToken]) -> bool
 impl<'a> Context<'a> {
     /// `transformOffset`
     fn point(&self, offset: u32) -> Point {
-        let line = self.line_starts.partition_point(|&start| start <= offset);
+        // Most of the time it is the same line as the last time, or the next one.
+        let starts_at_or_before = |line: usize| self.line_starts.get(line).is_some_and(|&start| start <= offset);
+        let mut line = self.last_line.get();
+        if !starts_at_or_before(line - 1) || starts_at_or_before(line + 1) {
+            line = self.line_starts.partition_point(|&start| start <= offset);
+        } else if starts_at_or_before(line) {
+            line += 1;
+        }
+        self.last_line.set(line.max(1));
         let start = self.line_starts.get(line.wrapping_sub(1)).copied().unwrap_or(0);
         let before = self.text.get(start as usize..offset as usize).unwrap_or_default();
         // Columns count UTF-16 code units.
-        let column = match before.is_ascii() {
+        let column = match self.is_ascii || before.is_ascii() {
             true => before.len(),
             false => before.iter().filter(|&&b| b & 0xC0 != 0x80).count() + before.iter().filter(|&&b| b >= 0xF0).count(),
         };
@@ -201,10 +281,11 @@ impl<'a> Context<'a> {
             kind,
             position,
             parent: None,
-            children: Vec::new(),
-            leading_comments: Vec::new(),
-            middle_comments: Vec::new(),
-            end_comments: Vec::new(),
+            next: None,
+            children: List::default(),
+            leading_comments: List::default(),
+            middle_comments: List::default(),
+            end_comments: List::default(),
             trailing_comment: None,
             indicator_comment: None,
             tag: None,
@@ -225,6 +306,24 @@ impl<'a> Context<'a> {
 
     fn position_of(&self, id: Id) -> Position {
         self.nodes[id as usize].position
+    }
+
+    fn add_child(&mut self, parent: Id, child: Id) {
+        append(&mut self.nodes, parent, Which::Children, child);
+    }
+
+    /// Makes `self.pending[from..]` the children of `parent`.
+    fn add_pending_children(&mut self, parent: Id, from: usize) {
+        for index in from..self.pending.len() {
+            self.add_child(parent, self.pending[index]);
+        }
+        self.pending.truncate(from);
+    }
+
+    /// `related` belongs to `owner`.
+    fn own(&mut self, owner: Id, related: Id) -> Option<Id> {
+        self.node(related).parent = Some(owner);
+        Some(related)
     }
 
     fn transform_comment(&mut self, token: SourceToken) -> Id {
@@ -257,19 +356,19 @@ impl<'a> Context<'a> {
                     first_tag_or_anchor_start.get_or_insert(token.offset);
                     let tag = self.new_node(Kind::Tag, self.position(token.offset, token.end));
                     self.node(tag).is_set_tag = node.has_set_tag;
-                    self.node(id).tag = Some(tag);
+                    self.node(id).tag = self.own(id, tag);
                 }
                 TokenType::Anchor => {
                     first_tag_or_anchor_start.get_or_insert(token.offset);
                     let anchor = self.new_node(Kind::Anchor, self.position(token.offset, token.end));
                     let (start, end) = node.anchor.ok_or(Unexpected)?;
                     self.node(anchor).value = Cow::Borrowed(self.text.get(start as usize..end as usize).unwrap_or_default());
-                    self.node(id).anchor = Some(anchor);
+                    self.node(id).anchor = self.own(id, anchor);
                 }
                 TokenType::Comment => {
                     let comment = self.transform_comment(token);
                     if first_tag_or_anchor_start.is_some_and(|start| start <= token.offset) && token.end <= node.range[0] {
-                        self.node(id).middle_comments.push(comment);
+                        append(&mut self.nodes, id, Which::MiddleComments, comment);
                     }
                 }
                 _ => return Err(Unexpected),
@@ -337,6 +436,9 @@ impl<'a> Context<'a> {
                     None => Chomping::Clip,
                 };
                 block.indicator_comment = indicator_comment;
+                if let Some(comment) = indicator_comment {
+                    self.own(id, comment);
+                }
                 Ok(id)
             }
             NodeKind::Scalar(ScalarType::Plain) if start == end => {
@@ -374,9 +476,10 @@ impl<'a> Context<'a> {
         let Some(Token::FlowCollection { start, items, end, .. }) = node.src_token else {
             return Err(Unexpected);
         };
-        let mut children = Vec::with_capacity(pairs.len());
+        let children = self.pending.len();
         for (pair, item) in pairs.iter().zip(items) {
-            children.push(self.transform_pair(pair, item, Kind::FlowMappingItem)?);
+            let child = self.transform_pair(pair, item, Kind::FlowMappingItem)?;
+            self.pending.push(child);
         }
         self.extract_comments_of_rest(items, pairs.len(), true)?;
         self.finish_flow_collection(Kind::FlowMapping, TokenType::FlowMapEnd, node, *start, end, children, props)
@@ -389,14 +492,15 @@ impl<'a> Context<'a> {
         node: &Composed<'_, 'a>,
         start: SourceToken,
         end: &[SourceToken],
-        children: Vec<Id>,
+        // Where they start in `self.pending`.
+        children: usize,
         props: &[SourceToken],
     ) -> Result<Id> {
         self.extract_comments(end, |kind| kind == end_kind)?;
         let close = tokens(end).filter(|token| token.kind == end_kind).last().ok_or(Unexpected)?;
         let id = self.new_node(kind, self.position(start.offset, close.end));
         self.transform_content_properties(id, node, props)?;
-        self.node(id).children = children;
+        self.add_pending_children(id, children);
         Ok(id)
     }
 
@@ -404,7 +508,7 @@ impl<'a> Context<'a> {
         let Some(Token::FlowCollection { start, items, end, .. }) = node.src_token else {
             return Err(Unexpected);
         };
-        let mut children = Vec::with_capacity(nodes.len());
+        let children = self.pending.len();
         for (item_node, item) in nodes.iter().zip(items) {
             let child = match item_node {
                 SeqItem::Pair(pair) => self.transform_pair(pair, item, Kind::FlowMappingItem)?,
@@ -425,11 +529,11 @@ impl<'a> Context<'a> {
                     }
                     let content = self.transform_node(item_node, &item_props)?;
                     let id = self.new_node(Kind::FlowSequenceItem, self.position_of(content));
-                    self.node(id).children.push(content);
+                    self.add_child(id, content);
                     id
                 }
             };
-            children.push(child);
+            self.pending.push(child);
         }
         self.extract_comments_of_rest(items, nodes.len(), true)?;
         self.finish_flow_collection(Kind::FlowSequence, TokenType::FlowSeqEnd, node, *start, end, children, props)
@@ -439,19 +543,20 @@ impl<'a> Context<'a> {
         let Some(Token::BlockMap { items, .. }) = node.src_token else {
             return Err(Unexpected);
         };
-        let mut children = Vec::with_capacity(pairs.len());
+        let children = self.pending.len();
         for (pair, item) in pairs.iter().zip(items) {
-            children.push(self.transform_pair(pair, item, Kind::MappingItem)?);
+            let child = self.transform_pair(pair, item, Kind::MappingItem)?;
+            self.pending.push(child);
         }
         self.extract_comments_of_rest(items, pairs.len(), false)?;
-        let (&first, &last) = children.first().zip(children.last()).ok_or(Unexpected)?;
+        let (&first, &last) = self.pending.get(children).zip(self.pending.last()).ok_or(Unexpected)?;
         let position = Position {
             start: self.position_of(first).start,
             end: self.position_of(last).end,
         };
         let id = self.new_node(Kind::Mapping, position);
         self.transform_content_properties(id, node, props)?;
-        self.node(id).children = children;
+        self.add_pending_children(id, children);
         Ok(id)
     }
 
@@ -459,7 +564,7 @@ impl<'a> Context<'a> {
         let Some(Token::BlockSeq { items, .. }) = node.src_token else {
             return Err(Unexpected);
         };
-        let mut children = Vec::with_capacity(nodes.len());
+        let children = self.pending.len();
         for (item_node, item) in nodes.iter().zip(items) {
             let mut item_props = Props::new();
             let mut indicator = None;
@@ -481,7 +586,7 @@ impl<'a> Context<'a> {
                     let mapping_item = self.transform_pair(pair, pair.src_token.ok_or(Unexpected)?, Kind::MappingItem)?;
                     let mapping = self.new_node(Kind::Mapping, self.position_of(mapping_item));
                     self.transform_content_properties(mapping, &pair.key, &item_props)?;
-                    self.node(mapping).children.push(mapping_item);
+                    self.add_child(mapping, mapping_item);
                     Some(mapping)
                 }
             };
@@ -498,18 +603,20 @@ impl<'a> Context<'a> {
                 },
             };
             let id = self.new_node(Kind::SequenceItem, position);
-            self.node(id).children.extend(content);
-            children.push(id);
+            if let Some(content) = content {
+                self.add_child(id, content);
+            }
+            self.pending.push(id);
         }
         self.extract_comments_of_rest(items, nodes.len(), false)?;
-        let (&first, &last) = children.first().zip(children.last()).ok_or(Unexpected)?;
+        let (&first, &last) = self.pending.get(children).zip(self.pending.last()).ok_or(Unexpected)?;
         let position = Position {
             start: self.position_of(first).start,
             end: self.position_of(last).end,
         };
         let id = self.new_node(Kind::Sequence, position);
         self.transform_content_properties(id, node, props)?;
-        self.node(id).children = children;
+        self.add_pending_children(id, children);
         Ok(id)
     }
 
@@ -566,7 +673,9 @@ impl<'a> Context<'a> {
         };
         let key_position = self.position(key_start, key_content.map_or(key_end, |it| self.position_of(it).end.offset));
         let mapping_key = self.new_node(Kind::MappingKey, key_position);
-        self.node(mapping_key).children.extend(key_content);
+        if let Some(content) = key_content {
+            self.add_child(mapping_key, content);
+        }
         let value_position = match (value_start, value_content) {
             (Some(start), Some(content)) => self.position(start, self.position_of(content).end.offset),
             (Some(start), None) => self.position(start, start + 1),
@@ -580,7 +689,9 @@ impl<'a> Context<'a> {
             },
         };
         let mapping_value = self.new_node(Kind::MappingValue, value_position);
-        self.node(mapping_value).children.extend(value_content);
+        if let Some(content) = value_content {
+            self.add_child(mapping_value, content);
+        }
         let id = self.new_node(
             kind,
             Position {
@@ -588,7 +699,8 @@ impl<'a> Context<'a> {
                 end: value_position.end,
             },
         );
-        self.node(id).children = vec![mapping_key, mapping_value];
+        self.add_child(id, mapping_key);
+        self.add_child(id, mapping_value);
         Ok(id)
     }
 }
@@ -625,6 +737,7 @@ impl<'a> Context<'a> {
                             let directive = self.node(last);
                             directive.trailing_comment = Some(comment);
                             directive.position.end = position.end;
+                            self.own(last, comment);
                         }
                         _ => end_comment_candidates.push(comment),
                     }
@@ -672,11 +785,17 @@ impl<'a> Context<'a> {
             between_tokens.remove(0);
         }
         let head = self.new_node(Kind::DocumentHead, head_position);
-        {
-            let head = self.node(head);
-            head.children = directives;
-            head.end_comments = if doc_start.is_some() { end_comment_candidates } else { Vec::new() };
-            head.trailing_comment = head_trailing_comment;
+        for directive in directives {
+            self.add_child(head, directive);
+        }
+        if doc_start.is_some() {
+            for comment in end_comment_candidates {
+                append(&mut self.nodes, head, Which::EndComments, comment);
+            }
+        }
+        self.node(head).trailing_comment = head_trailing_comment;
+        if let Some(comment) = head_trailing_comment {
+            self.own(head, comment);
         }
 
         // `transformDocumentBody`
@@ -740,10 +859,11 @@ impl<'a> Context<'a> {
         }
         let body_position = self.position(body_start, body_end);
         let body = self.new_node(Kind::DocumentBody, body_position);
-        {
-            let body = self.node(body);
-            body.children.extend(content);
-            body.end_comments = end_comments;
+        if let Some(content) = content {
+            self.add_child(body, content);
+        }
+        for comment in end_comments {
+            append(&mut self.nodes, body, Which::EndComments, comment);
         }
         let document_end_point = match doc_end {
             Some(doc_end) => self.point(doc_end.end),
@@ -760,7 +880,11 @@ impl<'a> Context<'a> {
         node.trailing_comment = document_trailing_comment;
         node.directives_end_marker = doc_start.is_some();
         node.document_end_marker = doc_end.is_some();
-        node.children = vec![head, body];
+        if let Some(comment) = document_trailing_comment {
+            self.own(document, comment);
+        }
+        self.add_child(document, head);
+        self.add_child(document, body);
         Ok(document)
     }
 
@@ -836,27 +960,6 @@ struct Line {
     trailing_node: Option<Id>,
 }
 
-/// `defineParents`, for everything in `id`.
-fn define_parents(nodes: &mut [Node<'_>], id: Id, parent: Option<Id>) {
-    let node = &nodes[id as usize];
-    let related: Vec<Id> = node
-        .children
-        .iter()
-        .chain(&node.anchor)
-        .chain(&node.tag)
-        .chain(&node.leading_comments)
-        .chain(&node.middle_comments)
-        .chain(&node.indicator_comment)
-        .chain(&node.trailing_comment)
-        .chain(&node.end_comments)
-        .copied()
-        .collect();
-    for child in related {
-        define_parents(nodes, child, Some(id));
-    }
-    nodes[id as usize].parent = parent;
-}
-
 fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
     let node = &nodes[id as usize];
     let Position { start, end } = node.position;
@@ -891,7 +994,7 @@ fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
             }
         }
     }
-    for &child in &node.children {
+    for child in items(nodes, node.children) {
         init_node_table(nodes, table, child);
     }
 }
@@ -899,7 +1002,7 @@ fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
 /// `isExplicitMappingKey`
 fn is_explicit_mapping_key(nodes: &[Node<'_>], id: Id) -> bool {
     let node = &nodes[id as usize];
-    node.children.first().is_none_or(|&child| node.position.start.offset != nodes[child as usize].position.start.offset)
+    node.children.first().is_none_or(|child| node.position.start.offset != nodes[child as usize].position.start.offset)
 }
 
 fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool {
@@ -908,7 +1011,7 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
         && node.position.end.offset > comment.end.offset
         && matches!(node.kind, Kind::FlowMapping | Kind::FlowSequence)
     {
-        return node.children.last().is_none_or(|&last| comment.start.line > nodes[last as usize].position.end.line);
+        return node.children.last().is_none_or(|last| comment.start.line > nodes[last as usize].position.end.line);
     }
     if comment.end.offset < node.position.end.offset {
         return false;
@@ -918,9 +1021,9 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
         Kind::MappingKey | Kind::MappingValue => {
             let parent_column = node.parent.map_or(0, |parent| nodes[parent as usize].position.start.column);
             comment.start.column > parent_column
-                && match node.children[..] {
-                    [] => true,
-                    [child] => !matches!(nodes[child as usize].kind, Kind::BlockFolded | Kind::BlockLiteral),
+                && match (node.children.first(), node.children.len()) {
+                    (None, _) => true,
+                    (Some(child), 1) => !matches!(nodes[child as usize].kind, Kind::BlockFolded | Kind::BlockLiteral),
                     _ => false,
                 }
                 && (node.kind == Kind::MappingValue || is_explicit_mapping_key(nodes, id))
@@ -957,18 +1060,18 @@ fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], next_leading: &[u32], 
             },
         };
         if matches!(nodes[current as usize].kind, Kind::Sequence | Kind::Mapping) {
-            current = *nodes[current as usize].children.first().ok_or(Unexpected)?;
+            current = nodes[current as usize].children.first().ok_or(Unexpected)?;
         }
         if nodes[current as usize].kind == Kind::MappingItem {
-            let [key, value] = nodes[current as usize].children[..] else {
+            let children = nodes[current as usize].children;
+            let (Some(key), Some(value), 2) = (children.first(), children.last(), children.len()) else {
                 return Err(Unexpected);
             };
             current = if is_explicit_mapping_key(nodes, key) { key } else { value };
         }
         loop {
             if should_own_end_comment(nodes, current, position) {
-                nodes[comment as usize].parent = Some(current);
-                nodes[current as usize].end_comments.push(comment);
+                append(nodes, current, Which::EndComments, comment);
                 return Ok(());
             }
             match nodes[current as usize].parent {
@@ -983,19 +1086,17 @@ fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], next_leading: &[u32], 
         && index < document_position.end.line
         && let Some(node) = table.get(index as usize).and_then(|line| line.leading_attachable_node)
     {
-        nodes[comment as usize].parent = Some(node);
-        nodes[node as usize].leading_comments.push(comment);
+        append(nodes, node, Which::LeadingComments, comment);
         return Ok(());
     }
-    let body = *nodes[document as usize].children.get(1).ok_or(Unexpected)?;
-    nodes[comment as usize].parent = Some(body);
-    nodes[body as usize].end_comments.push(comment);
+    let body = nodes[document as usize].children.last().filter(|_| nodes[document as usize].children.len() > 1).ok_or(Unexpected)?;
+    append(nodes, body, Which::EndComments, comment);
     Ok(())
 }
 
 /// `updatePositions`
 fn update_positions(nodes: &mut [Node<'_>], id: Id) {
-    let children = nodes[id as usize].children.clone();
+    let children = nodes[id as usize].children;
     let has_children_field = !matches!(
         nodes[id as usize].kind,
         Kind::Directive
@@ -1012,18 +1113,20 @@ fn update_positions(nodes: &mut [Node<'_>], id: Id) {
     if !has_children_field {
         return;
     }
-    for &child in &children {
-        update_positions(nodes, child);
+    let mut child = children.first();
+    while let Some(id) = child {
+        update_positions(nodes, id);
+        child = nodes[id as usize].next;
     }
-    if let (Kind::Document, [head, body]) = (nodes[id as usize].kind, &children[..]) {
-        let (head_position, body_position) = (nodes[*head as usize].position, nodes[*body as usize].position);
+    if let (Kind::Document, Some(head), Some(body), 2) = (nodes[id as usize].kind, children.first(), children.last(), children.len()) {
+        let (head_position, body_position) = (nodes[head as usize].position, nodes[body as usize].position);
         if head_position.start.offset == head_position.end.offset {
-            nodes[*head as usize].position = Position {
+            nodes[head as usize].position = Position {
                 start: body_position.start,
                 end: body_position.start,
             };
         } else if body_position.start.offset == body_position.end.offset {
-            nodes[*body as usize].position = Position {
+            nodes[body as usize].position = Position {
                 start: head_position.end,
                 end: head_position.end,
             };
@@ -1037,7 +1140,7 @@ fn update_positions(nodes: &mut [Node<'_>], id: Id) {
     };
     let position_of = |id: Id| nodes[id as usize].position;
     let node = &nodes[id as usize];
-    let first_child = children.first().map(|&child| &nodes[child as usize]);
+    let first_child = children.first().map(|child| &nodes[child as usize]);
     update_start_points(node, first_child, &position_of, &mut update_start);
     let mut end = position.end;
     let mut update_end = |point: Point| {
@@ -1045,10 +1148,10 @@ fn update_positions(nodes: &mut [Node<'_>], id: Id) {
             end = point;
         }
     };
-    if let Some(&last) = node.end_comments.last() {
+    if let Some(last) = node.end_comments.last() {
         update_end(position_of(last).end);
     }
-    if let Some(&last) = children.last() {
+    if let Some(last) = children.last() {
         update_end(position_of(last).end);
         if let Some(comment) = nodes[last as usize].trailing_comment {
             update_end(position_of(comment).end);
@@ -1064,12 +1167,12 @@ fn update_start_points(
     position_of: &impl Fn(Id) -> Position,
     update_start: &mut impl FnMut(Point),
 ) {
-    if let Some(&first) = node.end_comments.first() {
+    if let Some(first) = node.end_comments.first() {
         update_start(position_of(first).start);
     }
     if let Some(first_child) = first_child {
         update_start(first_child.position.start);
-        for &related in first_child.leading_comments.first().iter().copied().chain(&first_child.tag).chain(&first_child.anchor) {
+        for related in first_child.leading_comments.first().into_iter().chain(first_child.tag).chain(first_child.anchor) {
             update_start(position_of(related).start);
         }
     }
@@ -1085,20 +1188,24 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
     }
     let mut context = Context {
         text,
+        is_ascii: text.is_ascii(),
         line_starts,
-        nodes: Vec::new(),
+        last_line: std::cell::Cell::new(1),
+        nodes: Vec::with_capacity(text.len() / 6 + 8),
         comments: Vec::new(),
+        pending: Vec::new(),
     };
     let children = context.transform_documents(documents, cst_tokens)?;
     let root = context.new_node(Kind::Root, context.position(0, text.len() as u32));
-    context.node(root).children.clone_from(&children);
+    for &child in &children {
+        context.add_child(root, child);
+    }
     let Context {
         mut nodes, mut comments, ..
     } = context;
     comments.sort_by_key(|&comment| nodes[comment as usize].position.start.offset);
 
     // `attachComments`
-    define_parents(&mut nodes, root, None);
     let mut table = vec![Line::default(); nodes[root as usize].position.end.line as usize];
     for &comment in &comments {
         if let Some(line) = table.get_mut(nodes[comment as usize].position.start.line as usize - 1) {

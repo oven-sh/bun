@@ -1,7 +1,7 @@
 //! Prettier's `language-yaml`: `printer-yaml.js`, `print/*.js` and `utilities.js`.
 
-use super::ast::{Chomping, Id, Kind, Node, Tree};
-use crate::css::doc::{Doc, Line, align_with_spaces, dedent, docs, fill, group, hardline, if_break, join, line_suffix};
+use super::ast::{Chomping, Id, Kind, List, Node, Tree};
+use crate::css::doc::{Alignment, Elements, IndentCommand, Line};
 use crate::css::text;
 use crate::options::ProseWrap;
 use bun_core::strings;
@@ -20,6 +20,8 @@ pub(crate) struct Printer<'t, 'a> {
     /// `printedEmptyLineCache`: where the nodes end whose next line has been looked at.
     pub(crate) printed_empty_lines: rustc_hash::FxHashSet<u32>,
     pub(crate) last_group_id: u32,
+    /// The document.
+    pub(crate) out: Elements,
 }
 
 /// `isInlineNode`
@@ -86,21 +88,42 @@ fn split_with_single_space(text: &[u8]) -> Vec<&[u8]> {
 
 /// A line of a scalar: its words, or all of it.
 enum Words<'c> {
+    None,
+    One(&'c [u8]),
     Slices(Vec<&'c [u8]>),
     Joined(Vec<u8>),
 }
 
 impl<'c> Words<'c> {
-    fn is_empty(&self) -> bool {
-        matches!(self, Words::Slices(words) if words.is_empty())
+    /// All of a line.
+    fn line(line: &'c [u8]) -> Self {
+        if line.is_empty() { Words::None } else { Words::One(line) }
     }
 
-    /// `fill(join(line, words))`. `is_source`: the slices are parts of the text that is formatted.
-    fn into_fill<'a>(self, to_doc: impl Fn(&'c [u8]) -> Doc<'a>) -> Doc<'a> {
-        match self {
-            Words::Slices(words) => fill(join(&Doc::LINE, words.into_iter().map(to_doc).collect())),
-            Words::Joined(text) => fill(vec![Doc::from(text)]),
+    fn is_empty(&self) -> bool {
+        matches!(self, Words::None) || matches!(self, Words::Slices(words) if words.is_empty())
+    }
+
+    /// `fill(join(line, words))`
+    fn write_fill(&self, out: &mut Elements) {
+        let words = match self {
+            Words::None => &[][..],
+            Words::One(word) => std::slice::from_ref(word),
+            Words::Slices(words) => words,
+            Words::Joined(text) => &[&text[..]],
+        };
+        out.start_fill();
+        for (index, word) in words.iter().enumerate() {
+            if index > 0 {
+                out.start_item();
+                out.line(Line::Space);
+                out.end_item();
+            }
+            out.start_item();
+            out.text(word);
+            out.end_item();
         }
+        out.end_fill();
     }
 }
 
@@ -121,7 +144,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `node.content`, `node.key`, `node.head`: the first child.
     fn first_child(&self, node: &Node<'a>) -> Option<&'t Node<'a>> {
-        node.children.first().map(|&id| self.node(id))
+        node.children.first().map(|id| self.node(id))
     }
 
     fn source(&self, node: &Node<'a>) -> &'a [u8] {
@@ -134,21 +157,37 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `getLastDescendantNode`
     fn last_descendant(&self, mut node: &'t Node<'a>) -> &'t Node<'a> {
-        while let Some(&last) = node.children.last() {
+        while let Some(last) = node.children.last() {
             node = self.node(last);
         }
         node
     }
 
-    fn print_all(&mut self, ids: &[Id]) -> Vec<Doc<'a>> {
-        // Of a comment, nobody asks whether it is the last.
-        ids.iter().map(|&id| self.print(id, false)).collect()
+    fn start_align(&mut self, width: u32) {
+        self.out.start_indent(IndentCommand::Align(Alignment::Spaces(width)));
     }
 
-    /// `path.map(print, "children")`
-    fn print_children(&mut self, node: &Node<'a>, is_last_descendant: bool) -> Vec<Doc<'a>> {
-        let count = node.children.len();
-        (0..count).map(|index| self.print(node.children[index], is_last_descendant && index + 1 == count)).collect()
+    /// `join(hardline, path.map(print, ..))`, for comments.
+    fn print_comments(&mut self, comments: List) {
+        let tree = self.tree;
+        for (index, comment) in tree.items(comments).enumerate() {
+            if index > 0 {
+                self.out.hard_line();
+            }
+            // Of a comment, nobody asks whether it is the last.
+            self.print(comment, false);
+        }
+    }
+
+    /// `join(hardline, path.map(print, "children"))`
+    fn print_children(&mut self, node: &Node<'a>, is_last_descendant: bool) {
+        let tree = self.tree;
+        for (index, child) in tree.items(node.children).enumerate() {
+            if index > 0 {
+                self.out.hard_line();
+            }
+            self.print(child, is_last_descendant && node.children.last() == Some(child));
+        }
     }
 
     /// `isNextLineEmpty`
@@ -173,76 +212,76 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         false
     }
 
-    /// `printNextEmptyLine`
-    fn print_next_empty_line(&mut self, node: &Node<'a>) -> Doc<'a> {
-        let end = node.position.end.offset;
-        if self.printed_empty_lines.insert(end) {
-            if self.is_next_line_empty(node) && !self.parent(node).is_some_and(should_print_end_comments) {
-                return Doc::SOFTLINE;
-            }
-        }
-        Doc::EMPTY
+    /// `printNextEmptyLine`: whether it is a `softline`.
+    fn has_next_empty_line(&mut self, node: &Node<'a>) -> bool {
+        self.printed_empty_lines.insert(node.position.end.offset)
+            && self.is_next_line_empty(node)
+            && !self.parent(node).is_some_and(should_print_end_comments)
     }
 
     /// `hasPrettierIgnore`
     fn has_prettier_ignore(&self, node: &Node<'a>) -> bool {
         let comments = match node.kind {
             Kind::DocumentBody => match self.parent(node).and_then(|document| self.first_child(document)) {
-                Some(head) => &head.end_comments,
+                Some(head) => head.end_comments,
                 None => return false,
             },
-            _ => &node.leading_comments,
+            _ => node.leading_comments,
         };
-        comments.last().is_some_and(|&comment| matches!(text::trim(&self.node(comment).value), b"prettier-ignore" | b"oxfmt-ignore"))
+        comments.last().is_some_and(|comment| matches!(text::trim(&self.node(comment).value), b"prettier-ignore" | b"oxfmt-ignore"))
     }
 
     /// `genericPrint`. `is_last_descendant`: `isLastDescendantNode(path)`, for what is not a comment, a tag
     /// or an anchor.
-    pub(crate) fn print(&mut self, id: Id, is_last_descendant: bool) -> Doc<'a> {
+    pub(crate) fn print(&mut self, id: Id, is_last_descendant: bool) {
         let node = self.node(id);
-        let mut parts: Vec<Doc<'a>> = Vec::new();
         if node.kind != Kind::MappingValue && !node.leading_comments.is_empty() {
-            parts.push(docs![join(&hardline(), self.print_all(&node.leading_comments)), hardline()]);
+            self.print_comments(node.leading_comments);
+            self.out.hard_line();
         }
         if let Some(tag) = node.tag {
-            parts.push(self.print(tag, false));
+            self.print(tag, false);
         }
         if node.tag.is_some() && node.anchor.is_some() {
-            parts.push(Doc::from(" "));
+            self.out.text(b" ");
         }
         if let Some(anchor) = node.anchor {
-            parts.push(self.print(anchor, false));
+            self.print(anchor, false);
         }
 
-        let mut next_empty_line = Doc::EMPTY;
-        if matches!(
+        let has_next_empty_line = matches!(
             node.kind,
             Kind::Mapping | Kind::Sequence | Kind::Comment | Kind::Directive | Kind::MappingItem | Kind::SequenceItem
         ) && !(is_last_descendant && node.kind != Kind::Comment)
-        {
-            next_empty_line = self.print_next_empty_line(node);
-        }
+            && self.has_next_empty_line(node);
 
         if node.tag.is_some() || node.anchor.is_some() {
             match matches!(node.kind, Kind::Sequence | Kind::Mapping) && node.middle_comments.is_empty() {
-                true => parts.push(hardline()),
-                false => parts.push(Doc::from(" ")),
+                true => self.out.hard_line(),
+                false => self.out.text(b" "),
             }
         }
         if !node.middle_comments.is_empty() {
-            parts.push(docs![
-                if node.middle_comments.len() == 1 { Doc::EMPTY } else { hardline() },
-                join(&hardline(), self.print_all(&node.middle_comments)),
-                hardline(),
-            ]);
+            if node.middle_comments.len() != 1 {
+                self.out.hard_line();
+            }
+            self.print_comments(node.middle_comments);
+            self.out.hard_line();
         }
 
         if self.has_prettier_ignore(node) {
             // `replaceEndOfLine`
-            let lines = strings::split(text::trim_end(self.source(node)), b"\n").map(Doc::from).collect();
-            parts.push(Doc::Array(join(&docs![Doc::Line(Line::Literal), Doc::BreakParent], lines)));
+            for (index, line) in strings::split(text::trim_end(self.source(node)), b"\n").enumerate() {
+                if index > 0 {
+                    self.out.line(Line::Literal);
+                    self.out.break_parent();
+                }
+                self.out.text(line);
+            }
         } else {
-            parts.push(group(self.print_node(node, is_last_descendant)));
+            self.out.start_group(false, 0, false);
+            self.print_node(node, is_last_descendant);
+            self.out.end_group();
         }
 
         if let Some(comment) = node.trailing_comment
@@ -253,66 +292,73 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 parent.kind == Kind::MappingKey
                     && self.parent(parent).and_then(|item| self.parent(item)).is_some_and(|it| it.kind == Kind::Mapping)
             });
-            parts.push(line_suffix(docs![
-                if node.kind == Kind::MappingValue && node.children.is_empty() { "" } else { " " },
-                if is_key_of_mapping && is_inline_node(Some(node)) { Doc::EMPTY } else { Doc::BreakParent },
-                self.print(comment, false),
-            ]));
+            self.out.start_line_suffix();
+            if !(node.kind == Kind::MappingValue && node.children.is_empty()) {
+                self.out.text(b" ");
+            }
+            if !(is_key_of_mapping && is_inline_node(Some(node))) {
+                self.out.break_parent();
+            }
+            self.print(comment, false);
+            self.out.end_line_suffix();
         }
 
         if should_print_end_comments(node) {
-            let mut comments = Vec::with_capacity(node.end_comments.len());
-            for &comment in &node.end_comments {
-                let start = self.node(comment).position.start.offset as usize;
-                comments.push(docs![
-                    if is_previous_line_empty(self.text, start) { hardline() } else { Doc::EMPTY },
-                    self.print(comment, false),
-                ]);
+            let is_aligned = node.kind == Kind::SequenceItem;
+            if is_aligned {
+                self.start_align(2);
             }
-            let width = if node.kind == Kind::SequenceItem { 2 } else { 0 };
-            parts.push(align_with_spaces(width, docs![hardline(), join(&hardline(), comments)]));
+            let tree = self.tree;
+            for comment in tree.items(node.end_comments) {
+                self.out.hard_line();
+                if is_previous_line_empty(self.text, self.node(comment).position.start.offset as usize) {
+                    self.out.hard_line();
+                }
+                self.print(comment, false);
+            }
+            if is_aligned {
+                self.out.end_indent();
+            }
         }
-        parts.push(next_empty_line);
-        Doc::Array(parts)
+        if has_next_empty_line {
+            self.out.line(Line::Soft);
+        }
     }
 
-    fn print_node(&mut self, node: &'t Node<'a>, is_last_descendant: bool) -> Doc<'a> {
+    fn print_node(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
+        let tree = self.tree;
         match node.kind {
             Kind::Root => {
                 let last = self.last_descendant(node);
                 let should_print_hardline =
                     !(matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded) && last.chomping == Chomping::Keep);
-                let mut parts = Vec::new();
-                let count = node.children.len();
-                for (index, &child) in node.children.iter().enumerate() {
+                for (index, child) in tree.items(node.children).enumerate() {
                     if index > 0 {
-                        parts.push(hardline());
+                        self.out.hard_line();
                     }
-                    parts.push(self.print(child, index + 1 == count));
                     let document = self.node(child);
-                    let next = node.children.get(index + 1).map(|&next| self.node(next));
-                    if self.should_print_document_end_marker(document, next) {
+                    self.print(child, document.next.is_none());
+                    if self.should_print_document_end_marker(document, document.next.map(|next| self.node(next))) {
                         if should_print_hardline {
-                            parts.push(hardline());
+                            self.out.hard_line();
                         }
-                        parts.push(Doc::from("..."));
+                        self.out.text(b"...");
                         if let Some(comment) = document.trailing_comment {
-                            parts.push(Doc::from(" "));
-                            parts.push(self.print(comment, false));
+                            self.out.text(b" ");
+                            self.print(comment, false);
                         }
                     }
                 }
                 if should_print_hardline {
-                    parts.push(hardline());
+                    self.out.hard_line();
                 }
-                Doc::Array(parts)
             }
             Kind::Document => {
-                let [head_id, body_id] = node.children[..] else {
-                    return Doc::EMPTY;
+                let (Some(head_id), Some(body_id), 2) = (node.children.first(), node.children.last(), node.children.len()) else {
+                    return;
                 };
                 let (head, body) = (self.node(head_id), self.node(body_id));
-                let mut parts = Vec::new();
+                let mut has_head = false;
                 // `shouldPrintDocumentHeadEndMarker`
                 if node.directives_end_marker
                     || !head.children.is_empty()
@@ -320,77 +366,90 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     || head.trailing_comment.is_some()
                 {
                     if !head.children.is_empty() || !head.end_comments.is_empty() {
-                        parts.push(self.print(head_id, is_last_descendant));
+                        self.print(head_id, is_last_descendant);
+                        self.out.hard_line();
                     }
-                    parts.push(match head.trailing_comment {
-                        Some(comment) => docs!["---", " ", self.print(comment, false)],
-                        None => Doc::from("---"),
-                    });
+                    self.out.text(b"---");
+                    if let Some(comment) = head.trailing_comment {
+                        self.out.text(b" ");
+                        self.print(comment, false);
+                    }
+                    has_head = true;
                 }
                 if !body.children.is_empty() || !body.end_comments.is_empty() {
-                    parts.push(self.print(body_id, is_last_descendant));
+                    if has_head {
+                        self.out.hard_line();
+                    }
+                    self.print(body_id, is_last_descendant);
                 }
-                Doc::Array(join(&hardline(), parts))
             }
             Kind::DocumentHead => {
-                let mut parts = self.print_children(node, is_last_descendant);
-                parts.extend(self.print_all(&node.end_comments));
-                Doc::Array(join(&hardline(), parts))
+                self.print_children(node, is_last_descendant);
+                if !node.children.is_empty() && !node.end_comments.is_empty() {
+                    self.out.hard_line();
+                }
+                self.print_comments(node.end_comments);
             }
             Kind::DocumentBody => {
-                let mut separator = Doc::EMPTY;
-                if let (Some(&last_child), Some(&first_comment)) = (node.children.last(), node.end_comments.first()) {
+                self.print_children(node, is_last_descendant);
+                if let (Some(last_child), Some(first_comment)) = (node.children.last(), node.end_comments.first()) {
                     let last = self.last_descendant(node);
-                    if matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral) {
+                    let hard_lines = if matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral) {
                         // There is a line break at the end of a block scalar that keeps its line breaks.
-                        if last.chomping != Chomping::Keep {
-                            separator = docs![hardline(), hardline()];
-                        }
+                        if last.chomping == Chomping::Keep { 0 } else { 2 }
                     } else {
                         let start = self.node(first_comment).position.start.offset as usize;
                         let keeps_empty_line =
                             self.node(last_child).kind == Kind::Mapping && is_previous_line_empty(self.text, start);
-                        separator = if keeps_empty_line { docs![hardline(), hardline()] } else { hardline() };
+                        if keeps_empty_line { 2 } else { 1 }
+                    };
+                    for _ in 0..hard_lines {
+                        self.out.hard_line();
                     }
                 }
-                docs![
-                    join(&hardline(), self.print_children(node, is_last_descendant)),
-                    separator,
-                    join(&hardline(), self.print_all(&node.end_comments)),
-                ]
+                self.print_comments(node.end_comments);
             }
             Kind::Directive => {
                 // The name without the `%`, and the parameters.
-                let source: &'a [u8] = match &node.value {
-                    Cow::Borrowed(source) => source,
-                    Cow::Owned(_) => b"",
-                };
-                let parts: Vec<Doc<'a>> = strings::split_any(text::trim(source), b" \t")
-                    .filter(|part| !part.is_empty())
-                    .enumerate()
-                    .map(|(index, part)| Doc::from(if index == 0 { part.strip_prefix(b"%").unwrap_or(part) } else { part }))
-                    .collect();
-                docs!["%", join(&Doc::from(" "), parts)]
+                self.out.text(b"%");
+                let parts = strings::split_any(text::trim(&node.value), b" \t").filter(|part| !part.is_empty());
+                for (index, part) in parts.enumerate() {
+                    if index > 0 {
+                        self.out.text(b" ");
+                    }
+                    self.out.text(if index == 0 { part.strip_prefix(b"%").unwrap_or(part) } else { part });
+                }
             }
-            Kind::Comment => docs!["#", node.value.clone()],
-            Kind::Alias => docs!["*", node.value.clone()],
-            Kind::Tag => Doc::from(self.source(node)),
-            Kind::Anchor => docs!["&", node.value.clone()],
-            Kind::Plain => self.print_flow_scalar_content(node.kind, Cow::Borrowed(self.source(node))),
+            Kind::Comment => {
+                self.out.text(b"#");
+                self.out.text(&node.value);
+            }
+            Kind::Alias => {
+                self.out.text(b"*");
+                self.out.text(&node.value);
+            }
+            Kind::Tag => self.out.text(self.source(node)),
+            Kind::Anchor => {
+                self.out.text(b"&");
+                self.out.text(&node.value);
+            }
+            Kind::Plain => self.print_flow_scalar_content(node.kind, self.source(node)),
             Kind::QuoteDouble | Kind::QuoteSingle => self.print_quoted(node),
             Kind::BlockFolded | Kind::BlockLiteral => self.print_block(node, is_last_descendant),
-            Kind::Mapping | Kind::Sequence => Doc::Array(join(&hardline(), self.print_children(node, is_last_descendant))),
+            Kind::Mapping | Kind::Sequence => self.print_children(node, is_last_descendant),
             Kind::SequenceItem => {
-                let content = match node.children.first() {
-                    Some(&content) => self.print(content, is_last_descendant),
-                    None => Doc::EMPTY,
-                };
-                docs!["- ", align_with_spaces(2, content)]
+                self.out.text(b"- ");
+                self.start_align(2);
+                if let Some(content) = node.children.first() {
+                    self.print(content, is_last_descendant);
+                }
+                self.out.end_indent();
             }
-            Kind::MappingKey | Kind::MappingValue | Kind::FlowSequenceItem => match node.children.first() {
-                Some(&content) => self.print(content, is_last_descendant),
-                None => Doc::EMPTY,
-            },
+            Kind::MappingKey | Kind::MappingValue | Kind::FlowSequenceItem => {
+                if let Some(content) = node.children.first() {
+                    self.print(content, is_last_descendant);
+                }
+            }
             Kind::MappingItem | Kind::FlowMappingItem => self.print_mapping_item(node, is_last_descendant),
             Kind::FlowMapping | Kind::FlowSequence => self.print_flow_mapping(node, is_last_descendant),
         }
@@ -404,18 +463,16 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         next.and_then(|next| self.first_child(next)).is_some_and(|head| !head.children.is_empty() || !head.end_comments.is_empty())
     }
 
-    fn print_quoted(&mut self, node: &Node<'a>) -> Doc<'a> {
+    fn print_quoted(&mut self, node: &Node<'a>) {
         let source = self.source(node);
         let raw = source.get(1..source.len().saturating_sub(1)).unwrap_or_default();
         let is_double = node.kind == Kind::QuoteDouble;
         // `/\\[^"]/`
         let has_escape = |raw: &[u8]| (1..raw.len()).any(|i| raw[i - 1] == b'\\' && raw[i] != b'"');
-        if (!is_double && strings::contains_char(raw, b'\\')) || (is_double && has_escape(raw)) {
+        let (quote, content): (&[u8], Cow<'_, [u8]>) = if (!is_double && strings::contains_char(raw, b'\\')) || (is_double && has_escape(raw)) {
             // Only in double quotes are there escapes, and in single quotes a backslash needs none.
-            let quote = if is_double { "\"" } else { "'" };
-            return docs![quote, self.print_flow_scalar_content(node.kind, Cow::Borrowed(raw)), quote];
-        }
-        if strings::contains_char(raw, b'"') {
+            (if is_double { b"\"" } else { b"'" }, Cow::Borrowed(raw))
+        } else if strings::contains_char(raw, b'"') {
             let content = match is_double {
                 false => Cow::Borrowed(raw),
                 true => {
@@ -436,9 +493,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     Cow::Owned(content)
                 }
             };
-            return docs!["'", self.print_flow_scalar_content(node.kind, content), "'"];
-        }
-        if strings::contains_char(raw, b'\'') {
+            (b"'", content)
+        } else if strings::contains_char(raw, b'\'') {
             let content = match is_double {
                 true => Cow::Borrowed(raw),
                 false => {
@@ -452,24 +508,26 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     Cow::Owned(content)
                 }
             };
-            return docs!["\"", self.print_flow_scalar_content(node.kind, content), "\""];
-        }
-        let quote = if self.single_quote { "'" } else { "\"" };
-        docs![quote, self.print_flow_scalar_content(node.kind, Cow::Borrowed(raw)), quote]
+            (b"\"", content)
+        } else {
+            (if self.single_quote { b"'" } else { b"\"" }, Cow::Borrowed(raw))
+        };
+        self.out.text(quote);
+        self.print_flow_scalar_content(node.kind, &content);
+        self.out.text(quote);
     }
 
     /// `printFlowScalarContent`
-    fn print_flow_scalar_content(&self, kind: Kind, content: Cow<'a, [u8]>) -> Doc<'a> {
-        match content {
-            Cow::Borrowed(content) => {
-                let lines = self.flow_scalar_line_contents(kind, content);
-                Doc::Array(join(&hardline(), lines.into_iter().map(|words| words.into_fill(Doc::from)).collect()))
+    fn print_flow_scalar_content(&mut self, kind: Kind, content: &[u8]) {
+        // Most are one line that stays as it is.
+        if self.prose_wrap == ProseWrap::Preserve && !strings::contains_char(content, b'\n') {
+            return Words::line(content).write_fill(&mut self.out);
+        }
+        for (index, words) in self.flow_scalar_line_contents(kind, content).iter().enumerate() {
+            if index > 0 {
+                self.out.hard_line();
             }
-            Cow::Owned(content) => {
-                let lines = self.flow_scalar_line_contents(kind, &content);
-                let lines = lines.into_iter().map(|words| words.into_fill(|word| Doc::from(word.to_vec()))).collect();
-                Doc::Array(join(&hardline(), lines))
-            }
+            words.write_fill(&mut self.out);
         }
     }
 
@@ -486,7 +544,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             };
         }
         if self.prose_wrap == ProseWrap::Preserve {
-            return raw_lines.into_iter().map(|line| Words::Slices(if line.is_empty() { Vec::new() } else { vec![line] })).collect();
+            return raw_lines.into_iter().map(Words::line).collect();
         }
         let mut lines: Vec<Vec<&'c [u8]>> = Vec::new();
         for (index, line) in raw_lines.iter().enumerate() {
@@ -535,7 +593,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             strings::split(content, b"\n").map(|line| line.get(leading_space_count..).unwrap_or_default()).collect();
 
         let lines: Vec<Words<'a>> = if self.prose_wrap == ProseWrap::Preserve || node.kind == Kind::BlockLiteral {
-            raw_lines.iter().map(|&line| Words::Slices(if line.is_empty() { Vec::new() } else { vec![line] })).collect()
+            raw_lines.iter().map(|&line| Words::line(line)).collect()
         } else {
             let mut lines: Vec<Vec<&'a [u8]>> = Vec::new();
             for (index, line) in raw_lines.iter().enumerate() {
@@ -600,6 +658,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let is_blank = |words: &Words<'a>| {
             let is_blank = |word: &[u8]| word.iter().all(|b| matches!(b, b' ' | b'\t'));
             match words {
+                Words::None => true,
+                Words::One(word) => is_blank(word),
                 Words::Slices(words) => words.iter().all(|word| is_blank(word)),
                 Words::Joined(text) => is_blank(text),
             }
@@ -616,95 +676,111 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// `printBlock`
-    fn print_block(&mut self, node: &'t Node<'a>, is_last_descendant: bool) -> Doc<'a> {
+    fn print_block(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
         let mut parent_indent = 0;
         let mut ancestor = self.parent(node);
         while let Some(it) = ancestor {
             parent_indent += usize::from(matches!(it.kind, Kind::Sequence | Kind::Mapping));
             ancestor = self.parent(it);
         }
-        let mut parts: Vec<Doc<'a>> = vec![Doc::from(if node.kind == Kind::BlockFolded { ">" } else { "|" })];
+        self.out.text(if node.kind == Kind::BlockFolded { b">" } else { b"|" });
         if let Some(indent) = node.indent {
-            parts.push(Doc::from(indent.to_string().into_bytes()));
+            self.out.text(indent.to_string().as_bytes());
         }
         match node.chomping {
             Chomping::Clip => {}
-            Chomping::Keep => parts.push(Doc::from("+")),
-            Chomping::Strip => parts.push(Doc::from("-")),
+            Chomping::Keep => self.out.text(b"+"),
+            Chomping::Strip => self.out.text(b"-"),
         }
         if let Some(comment) = node.indicator_comment {
-            parts.push(Doc::from(" "));
-            parts.push(self.print(comment, false));
+            self.out.text(b" ");
+            self.print(comment, false);
         }
         let lines = self.block_value_line_contents(node, parent_indent, is_last_descendant);
-        let count = lines.len();
-        let mut contents: Vec<Doc<'a>> = Vec::with_capacity(count * 2 + 1);
-        let literalline = || docs![Doc::Line(Line::Literal), Doc::BreakParent];
-        for (index, words) in lines.into_iter().enumerate() {
-            if index == 0 {
-                contents.push(hardline());
+        match node.indent {
+            None => {
+                self.out.start_indent(IndentCommand::Dedent);
+                self.start_align(self.tab_width);
             }
-            let is_empty = words.is_empty();
-            contents.push(words.into_fill(Doc::from));
-            if index + 1 != count {
-                contents.push(if is_empty { hardline() } else { Doc::MarkAsRoot(Box::new(literalline())) });
-            } else if node.chomping == Chomping::Keep && is_last_descendant {
-                contents.push(Doc::DedentToRoot(Box::new(if is_empty { hardline() } else { literalline() })));
+            Some(indent) => {
+                self.out.start_indent(IndentCommand::DedentToRoot);
+                self.start_align((indent + parent_indent as u32).saturating_sub(1));
             }
         }
-        parts.push(match node.indent {
-            None => dedent(align_with_spaces(self.tab_width, contents)),
-            Some(indent) => Doc::DedentToRoot(Box::new(align_with_spaces(
-                (indent + parent_indent as u32).saturating_sub(1),
-                contents,
-            ))),
-        });
-        Doc::Array(parts)
+        let out = &mut self.out;
+        let literal_line = |out: &mut Elements| {
+            out.line(Line::Literal);
+            out.break_parent();
+        };
+        for (index, words) in lines.iter().enumerate() {
+            if index == 0 {
+                out.hard_line();
+            }
+            words.write_fill(out);
+            if index + 1 != lines.len() {
+                match words.is_empty() {
+                    true => out.hard_line(),
+                    false => {
+                        out.start_indent(IndentCommand::MarkAsRoot);
+                        literal_line(out);
+                        out.end_indent();
+                    }
+                }
+            } else if node.chomping == Chomping::Keep && is_last_descendant {
+                out.start_indent(IndentCommand::DedentToRoot);
+                match words.is_empty() {
+                    true => out.hard_line(),
+                    false => literal_line(out),
+                }
+                out.end_indent();
+            }
+        }
+        out.end_indent();
+        out.end_indent();
     }
 
     /// `printFlowMapping` and `printFlowSequence`
-    fn print_flow_mapping(&mut self, node: &'t Node<'a>, is_last_descendant: bool) -> Doc<'a> {
+    fn print_flow_mapping(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
         let is_mapping = node.kind == Kind::FlowMapping;
         let bracket_spacing = match is_mapping && !node.children.is_empty() && self.bracket_spacing {
-            true => Doc::LINE,
-            false => Doc::SOFTLINE,
+            true => Line::Space,
+            false => Line::Soft,
         };
-        let is_last_item_empty_mapping_item = node.children.last().is_some_and(|&last| {
+        let tree = self.tree;
+        let is_last_item_empty_mapping_item = node.children.last().is_some_and(|last| {
             let last = self.node(last);
-            last.kind == Kind::FlowMappingItem && last.children.iter().all(|&child| is_empty_node(self.node(child)))
+            last.kind == Kind::FlowMappingItem && tree.items(last.children).all(|child| is_empty_node(self.node(child)))
         });
-        let count = node.children.len();
-        let mut children = Vec::with_capacity(count);
-        for (index, &child) in node.children.iter().enumerate() {
-            let printed = self.print(child, is_last_descendant && index + 1 == count);
-            let Some(&next) = node.children.get(index + 1) else {
-                children.push(printed);
+        self.out.text(if is_mapping { b"{" } else { b"[" });
+        self.start_align(self.tab_width);
+        self.out.line(bracket_spacing);
+        for id in tree.items(node.children) {
+            let child = self.node(id);
+            self.print(id, is_last_descendant && child.next.is_none());
+            let Some(next) = child.next else {
                 break;
             };
-            let child = self.node(child);
-            let empty_line = match child.position.start.line != self.node(next).position.start.line {
-                true => self.print_next_empty_line(child),
-                false => Doc::EMPTY,
-            };
-            children.push(docs![printed, ",", Doc::LINE, empty_line]);
+            self.out.text(b",");
+            self.out.line(Line::Space);
+            if child.position.start.line != self.node(next).position.start.line && self.has_next_empty_line(child) {
+                self.out.line(Line::Soft);
+            }
         }
-        docs![
-            if is_mapping { "{" } else { "[" },
-            align_with_spaces(
-                self.tab_width,
-                docs![
-                    bracket_spacing.clone(),
-                    children,
-                    if self.trailing_comma { if_break(",") } else { Doc::EMPTY },
-                    match node.end_comments.is_empty() {
-                        true => Doc::EMPTY,
-                        false => docs![hardline(), join(&hardline(), self.print_all(&node.end_comments))],
-                    },
-                ],
-            ),
-            if is_last_item_empty_mapping_item { Doc::EMPTY } else { bracket_spacing },
-            if is_mapping { "}" } else { "]" },
-        ]
+        if self.trailing_comma {
+            self.out.start_if_break(0);
+            self.out.text(b",");
+            self.out.otherwise();
+            self.out.end_if_break();
+        }
+        if !node.end_comments.is_empty() {
+            self.out.hard_line();
+            self.print_comments(node.end_comments);
+        }
+        self.out.end_indent();
+        if !is_last_item_empty_mapping_item {
+            self.out.line(bracket_spacing);
+        }
+        self.out.text(if is_mapping { b"}" } else { b"]" });
     }
 
     /// `isAbsolutelyPrintedAsSingleLineNode`
@@ -732,24 +808,23 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// `printMappingItem`
-    fn print_mapping_item(&mut self, node: &'t Node<'a>, is_last_descendant: bool) -> Doc<'a> {
-        let [key_id, value_id] = node.children[..] else {
-            return Doc::EMPTY;
+    fn print_mapping_item(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
+        let (Some(key_id), Some(value_id), 2) = (node.children.first(), node.children.last(), node.children.len()) else {
+            return;
         };
         let (key, value) = (self.node(key_id), self.node(value_id));
         let parent = self.parent(node);
         let (is_empty_key, is_empty_value) = (is_empty_node(key), is_empty_node(value));
         if is_empty_key && is_empty_value {
-            return Doc::from(": ");
+            return self.out.text(b": ");
         }
         let (key_content, value_content) = (self.first_child(key), self.first_child(value));
-        let printed_key = self.print(key_id, is_last_descendant);
         // `needsSpaceInFrontOfMappingValue`
-        let space_before_colon = if key_content.is_some_and(|it| it.kind == Kind::Alias) { " " } else { "" };
+        let space_before_colon: &[u8] = if key_content.is_some_and(|it| it.kind == Kind::Alias) { b" " } else { b"" };
 
         if is_empty_value {
             if node.kind == Kind::FlowMappingItem && parent.is_some_and(|it| it.kind == Kind::FlowMapping) {
-                return printed_key;
+                return self.print(key_id, is_last_descendant);
             }
             let is_in_set = parent.and_then(|it| it.tag).is_some_and(|tag| self.node(tag).is_set_tag);
             if node.kind == Kind::MappingItem
@@ -757,31 +832,39 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 && key_content.is_none_or(|it| it.trailing_comment.is_none())
                 && !is_in_set
             {
-                return docs![printed_key, space_before_colon, ":"];
+                self.print(key_id, is_last_descendant);
+                self.out.text(space_before_colon);
+                return self.out.text(b":");
             }
-            return docs!["? ", align_with_spaces(2, printed_key)];
+            self.out.text(b"? ");
+            self.start_align(2);
+            self.print(key_id, is_last_descendant);
+            return self.out.end_indent();
         }
 
-        let printed_value = self.print(value_id, is_last_descendant);
         if is_empty_key {
-            return docs![": ", align_with_spaces(2, printed_value)];
+            self.out.text(b": ");
+            self.start_align(2);
+            self.print(value_id, is_last_descendant);
+            return self.out.end_indent();
         }
 
         // An explicit key.
         if !value.leading_comments.is_empty() || !is_inline_node(key_content) {
-            let mut comments = Vec::new();
-            for &comment in &value.leading_comments {
-                comments.push(self.print(comment, false));
-                comments.push(hardline());
+            self.out.text(b"? ");
+            self.start_align(2);
+            self.print(key_id, is_last_descendant);
+            self.out.end_indent();
+            self.out.hard_line();
+            let tree = self.tree;
+            for comment in tree.items(value.leading_comments) {
+                self.print(comment, false);
+                self.out.hard_line();
             }
-            return docs![
-                "? ",
-                align_with_spaces(2, printed_key),
-                hardline(),
-                comments,
-                ": ",
-                align_with_spaces(2, printed_value),
-            ];
+            self.out.text(b": ");
+            self.start_align(2);
+            self.print(value_id, is_last_descendant);
+            return self.out.end_indent();
         }
 
         let has_no_comments_before_or_in =
@@ -804,63 +887,78 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             && self.is_absolutely_printed_as_single_line(value_content)
             && self.is_absolutely_printed_as_single_line(key_content)
         {
-            return docs![printed_key, space_before_colon, ": ", printed_value];
+            self.print(key_id, is_last_descendant);
+            self.out.text(space_before_colon);
+            self.out.text(b": ");
+            return self.print(value_id, is_last_descendant);
         }
 
-        // Everything from the colon on is taken for the value.
-        let mut implicit_value: Vec<Doc<'a>> = vec![Doc::from(space_before_colon), Doc::from(":")];
+        // Everything from the colon on is taken for the value: what is between the colon and the value.
         let is_block_collection = |it: &Node<'a>| matches!(it.kind, Kind::Mapping | Kind::Sequence);
         let has_end_comments = !value.end_comments.is_empty();
-        if has_end_comments
-            && value_content.is_some_and(|it| matches!(it.kind, Kind::FlowMapping | Kind::FlowSequence) && it.children.is_empty())
-        {
-            implicit_value.push(Doc::from(" "));
-        } else if value_content.is_some_and(|it| !it.leading_comments.is_empty())
-            || (has_end_comments && value_content.is_some_and(|it| !is_block_collection(it)))
-            || (parent.is_some_and(|it| it.kind == Kind::Mapping)
-                && key_content.is_some_and(|it| it.trailing_comment.is_some())
-                && is_inline_node(value_content))
-            || value_content.is_some_and(|it| is_block_collection(it) && it.tag.is_none() && it.anchor.is_none())
-        {
-            implicit_value.push(hardline());
-        } else if value_content.is_some() {
-            implicit_value.push(Doc::LINE);
-        } else if value.trailing_comment.is_some() {
-            implicit_value.push(Doc::from(" "));
-        }
-        let conditional_group = |contents: Doc<'a>| Doc::Group {
-            contents: Box::new(contents),
-            should_break: false,
-            id: 0,
-            is_conditional: true,
+        let write_colon = |out: &mut Elements| {
+            out.text(space_before_colon);
+            out.text(b":");
+            if has_end_comments
+                && value_content.is_some_and(|it| matches!(it.kind, Kind::FlowMapping | Kind::FlowSequence) && it.children.is_empty())
+            {
+                out.text(b" ");
+            } else if value_content.is_some_and(|it| !it.leading_comments.is_empty())
+                || (has_end_comments && value_content.is_some_and(|it| !is_block_collection(it)))
+                || (parent.is_some_and(|it| it.kind == Kind::Mapping)
+                    && key_content.is_some_and(|it| it.trailing_comment.is_some())
+                    && is_inline_node(value_content))
+                || value_content.is_some_and(|it| is_block_collection(it) && it.tag.is_none() && it.anchor.is_none())
+            {
+                out.hard_line();
+            } else if value_content.is_some() {
+                out.line(Line::Space);
+            } else if value.trailing_comment.is_some() {
+                out.text(b" ");
+            }
         };
 
+        // `conditionalGroup`
+        self.out.start_group(false, 0, true);
         // A key that is on one line for sure is implicit, however long it is.
         if self.is_absolutely_printed_as_single_line(key_content) && key_has_no_comments {
-            implicit_value.push(printed_value);
-            return conditional_group(docs![printed_key, align_with_spaces(self.tab_width, implicit_value)]);
+            self.print(key_id, is_last_descendant);
+            self.start_align(self.tab_width);
+            write_colon(&mut self.out);
+            self.print(value_id, is_last_descendant);
+            self.out.end_indent();
+            return self.out.end_group();
         }
 
         // Explicit if the key breaks, implicit otherwise.
-        implicit_value.push(printed_value.clone());
         self.last_group_id += 1;
         let group_id = self.last_group_id;
-        let grouped_key = group(docs![
-            if_break("? "),
-            Doc::Group {
-                contents: Box::new(align_with_spaces(2, printed_key)),
-                should_break: false,
-                id: group_id,
-                is_conditional: false,
-            },
-        ]);
-        conditional_group(docs![
-            grouped_key,
-            Doc::IfBreak {
-                break_contents: Box::new(docs![hardline(), ": ", align_with_spaces(2, printed_value)]),
-                flat_contents: Box::new(align_with_spaces(self.tab_width, implicit_value)),
-                group_id,
-            },
-        ])
+        self.out.start_group(false, 0, false);
+        self.out.start_if_break(0);
+        self.out.text(b"? ");
+        self.out.otherwise();
+        self.out.end_if_break();
+        self.out.start_group(false, group_id, false);
+        self.start_align(2);
+        self.print(key_id, is_last_descendant);
+        self.out.end_indent();
+        self.out.end_group();
+        self.out.end_group();
+
+        self.out.start_if_break(group_id);
+        self.out.hard_line();
+        self.out.text(b": ");
+        self.start_align(2);
+        let value_start = self.out.len();
+        self.print(value_id, is_last_descendant);
+        let value_end = self.out.len();
+        self.out.end_indent();
+        self.out.otherwise();
+        self.start_align(self.tab_width);
+        write_colon(&mut self.out);
+        self.out.duplicate(value_start, value_end);
+        self.out.end_indent();
+        self.out.end_if_break();
+        self.out.end_group();
     }
 }

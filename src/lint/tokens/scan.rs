@@ -9,8 +9,11 @@
 //! marks: a stack of [`Frame`]s follows their nesting.
 //!
 //! The result is what the parser that ESLint uses for the file produces: see [`Dialect`].
+//!
+//! [`comments`] finds only the comments, which is all that many files are asked for. Between
+//! comments it jumps from one string, template, regular expression or JSX element to the next.
 
-use super::{RawToken, TokenKind, TokenStore, skip_trivia, skip_trivia_back};
+use super::{RawToken, TokenKind, skip_trivia, skip_trivia_back};
 use crate::ast::File;
 use bun_core::{lexer, strings};
 use bun_sema::atom::known;
@@ -102,6 +105,23 @@ fn operator_after(text: &[u8], mut at: u32) -> u32 {
 }
 
 impl Marks {
+    /// Only what tells where comments cannot be: `regexes` and `elements`.
+    fn for_comments(file: &File) -> Marks {
+        let mut marks = Marks::default();
+        for e in file.hir.exprs {
+            match e.kind {
+                ExprKind::Regex => marks.regexes.push((e.pos, e.end)),
+                ExprKind::Jsx(_) => marks.elements.push(e.pos),
+                _ => {}
+            }
+        }
+        if !marks.regexes.is_sorted() {
+            marks.regexes.sort_unstable();
+        }
+        marks.elements.sort();
+        marks
+    }
+
     #[inline(never)]
     fn new(file: &File, dialect: Dialect) -> Marks {
         let (hir, text) = (&file.hir, file.text());
@@ -195,9 +215,9 @@ impl Marks {
     /// Marks the name at `at` if it is a reserved word.
     #[inline]
     fn name(&mut self, text: &[u8], at: u32) {
-        let len = Chunk::at(text, at as usize).count(identifier_parts);
-        let word = text.get(at as usize..at as usize + len).unwrap_or_default();
-        if !matches!(Word::of(word), Word::Name | Word::Strict | Word::StrictAndEspree) {
+        let chunk = Chunk::at(text, at as usize);
+        let word = Word::of_chunk(chunk, chunk.count(identifier_parts));
+        if !matches!(word, Word::Name | Word::Strict | Word::StrictAndEspree) {
             self.names.push(at);
         }
     }
@@ -295,16 +315,22 @@ impl Marks {
         }
     }
 
-    /// The end of the regular expression that starts at `at`.
+    /// The first regular expression that starts at `at` or after it.
     #[inline]
-    fn regex_end(&mut self, at: usize) -> Option<usize> {
+    fn next_regex(&mut self, at: usize) -> Option<(usize, usize)> {
         while let Some(&(start, end)) = self.regexes.get(self.next_regex) {
-            if start as usize >= at {
-                return (start as usize == at && end > start).then_some(end as usize);
+            if start as usize >= at && end > start {
+                return Some((start as usize, end as usize));
             }
             self.next_regex += 1;
         }
         None
+    }
+
+    /// The end of the regular expression that starts at `at`.
+    #[inline]
+    fn regex_end(&mut self, at: usize) -> Option<usize> {
+        self.next_regex(at).filter(|regex| regex.0 == at).map(|regex| regex.1)
     }
 }
 
@@ -333,6 +359,34 @@ const fn identifier_parts(bytes: u64) -> u64 {
 #[inline]
 const fn blanks(bytes: u64) -> u64 {
     !(bytes + ONES * (0x7F - b' ' as u64))
+}
+
+/// For any 8 bytes: the high bit of the first that is `byte`, and possibly of some after it.
+#[inline]
+const fn first_equal_to(bytes: u64, byte: u8) -> u64 {
+    let difference = bytes ^ (ONES * byte as u64);
+    difference.wrapping_sub(ONES) & !difference
+}
+
+/// The position of the first byte of `text` from `at` that is one of `stops`, or the end of `text`.
+///
+/// What is searched for is some tens of bytes away: too near for a call of a vectorized search of
+/// `bun_core::strings` to pay off.
+#[inline]
+fn find<const N: usize>(text: &[u8], mut at: usize, stops: [u8; N]) -> usize {
+    let first = |bytes: u64| {
+        let found = stops.iter().fold(0, |found, &stop| found | first_equal_to(bytes, stop));
+        (found & HIGH_BITS).trailing_zeros() / 8
+    };
+    loop {
+        let chunk = Chunk::at(text, at);
+        let (low, high) = (first(chunk.0), first(chunk.1));
+        let plain = (low + if low == 8 { high } else { 0 }) as usize;
+        at += plain;
+        if plain < Chunk::LEN || at >= text.len() {
+            return at.min(text.len());
+        }
+    }
 }
 
 /// 16 bytes of the text, to classify at once: a loop over the bytes of a word or of an indentation
@@ -444,26 +498,42 @@ impl Word {
         (first as usize * 11 + second as usize * 123 + len) % 128
     }
 
-    const BY_HASH: [(&'static [u8], Word); 128] = {
-        let mut table: [(&[u8], Word); 128] = [(b"", Word::Name); 128];
+    /// By `hash`: the bytes of the word as two little-endian numbers, and what it is.
+    const BY_HASH: [(u64, u64, Word); 128] = {
+        let mut table = [(0, 0, Word::Name); 128];
         let mut i = 0;
         while i < Word::ALL.len() {
             let word = Word::ALL[i].0;
             let hash = Word::hash(word[0], word[1], word.len());
-            assert!(table[hash].0.is_empty());
-            table[hash] = Word::ALL[i];
+            assert!(table[hash].0 == 0);
+            let mut bytes = [0; 16];
+            let mut j = 0;
+            while j < word.len() {
+                bytes[j] = word[j];
+                j += 1;
+            }
+            let bytes = u128::from_le_bytes(bytes);
+            table[hash] = (bytes as u64, (bytes >> 64) as u64, Word::ALL[i].1);
             i += 1;
         }
         table
     };
 
+    /// What the first `len` bytes of `chunk` are.
+    #[inline]
+    fn of_chunk(chunk: Chunk, len: usize) -> Word {
+        if !(2..=10).contains(&len) {
+            return Word::Name;
+        }
+        let low = if len < 8 { chunk.0 & ((1 << (8 * len)) - 1) } else { chunk.0 };
+        let high = if len > 8 { chunk.1 & ((1 << (8 * (len - 8))) - 1) } else { 0 };
+        let candidate = Word::BY_HASH[Word::hash(low as u8, (low >> 8) as u8, len)];
+        if (candidate.0, candidate.1) == (low, high) { candidate.2 } else { Word::Name }
+    }
+
     #[inline]
     fn of(word: &[u8]) -> Word {
-        let &[first, second, ..] = word else {
-            return Word::Name;
-        };
-        let (candidate, kind) = Word::BY_HASH[Word::hash(first, second, word.len())];
-        if candidate == word { kind } else { Word::Name }
+        Word::of_chunk(Chunk::at(word, 0), word.len())
     }
 }
 
@@ -498,7 +568,8 @@ struct Frame {
     angles: u32,
 }
 
-struct Scanner<'a> {
+/// `TOKENS`: whether the tokens are wanted, or only the comments.
+struct Scanner<'a, const TOKENS: bool> {
     text: &'a [u8],
     at: usize,
     tokens: Vec<RawToken>,
@@ -516,58 +587,84 @@ struct Scanner<'a> {
     elements: u32,
 }
 
-pub(super) fn scan(file: &File) -> TokenStore {
+/// The tokens and the comments of `file`.
+pub(super) fn scan(file: &File) -> (Vec<RawToken>, Vec<RawToken>) {
+    let dialect = Dialect::of(file);
+    let capacity = file.text().len() / 5 + 1;
+    let scanner = Scanner::<true>::run(file, dialect, Marks::new(file, dialect), capacity);
+    (scanner.tokens, scanner.comments)
+}
+
+/// The comments of `file`. `None`: they cannot be told without the tokens.
+pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
     let text = file.text();
-    let dialect = match file.is_javascript() {
-        true => Dialect::Espree {
-            is_es5: file.language().ecma_version <= 5,
-        },
-        false => Dialect::TypeScript,
-    };
-    let mut scanner = Scanner {
-        text,
-        at: 0,
-        tokens: Vec::with_capacity(text.len() / 5 + 1),
-        comments: Vec::new(),
-        marks: Marks::new(file, dialect),
-        dialect,
-        has_html_comments: file.is_javascript() && !file.is_module(),
-        frames: Vec::new(),
-        braces: 0,
-        angles: 0,
-        elements: 0,
-    };
-    if text.starts_with(b"#!") {
-        scanner.line_comment(TokenKind::Shebang);
-        if scanner.at == 2 && dialect == Dialect::TypeScript {
-            scanner.comments.clear();
+    if has_html_comments(file) && (strings::contains(text, b"<!--") || strings::contains(text, b"-->")) {
+        return None;
+    }
+    Some(Scanner::<false>::run(file, Dialect::of(file), Marks::for_comments(file), 0).comments)
+}
+
+fn has_html_comments(file: &File) -> bool {
+    file.is_javascript() && !file.is_module()
+}
+
+impl Dialect {
+    fn of(file: &File) -> Dialect {
+        match file.is_javascript() {
+            true => Dialect::Espree {
+                is_es5: file.language().ecma_version <= 5,
+            },
+            false => Dialect::TypeScript,
         }
-    }
-    let mut mode = Mode::Code;
-    while scanner.at < text.len() {
-        mode = match mode {
-            Mode::Code => scanner.code(),
-            Mode::OpeningTag => scanner.tag(false),
-            Mode::ClosingTag => scanner.tag(true),
-            Mode::Children => scanner.children(),
-        };
-    }
-    TokenStore {
-        tokens: scanner.tokens,
-        comments: scanner.comments,
     }
 }
 
-impl Scanner<'_> {
+impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
+    fn run(file: &File<'a>, dialect: Dialect, marks: Marks, capacity: usize) -> Self {
+        let text = file.text();
+        let mut scanner = Scanner {
+            text,
+            at: 0,
+            tokens: Vec::with_capacity(capacity),
+            comments: Vec::new(),
+            marks,
+            dialect,
+            has_html_comments: has_html_comments(file),
+            frames: Vec::new(),
+            braces: 0,
+            angles: 0,
+            elements: 0,
+        };
+        if text.starts_with(b"#!") {
+            scanner.line_comment(TokenKind::Shebang);
+            if scanner.at == 2 && dialect == Dialect::TypeScript {
+                scanner.comments.clear();
+            }
+        }
+        let mut mode = Mode::Code;
+        while scanner.at < text.len() {
+            mode = match mode {
+                Mode::Code if TOKENS => scanner.code(),
+                Mode::Code => scanner.skip_code(),
+                Mode::OpeningTag => scanner.tag(false),
+                Mode::ClosingTag => scanner.tag(true),
+                Mode::Children => scanner.children(),
+            };
+        }
+        scanner
+    }
+
     /// Adds the token from `start` to `end`, and continues there.
     #[inline]
     fn token(&mut self, kind: TokenKind, start: usize, end: usize) {
         let end = end.min(self.text.len());
-        self.tokens.push(RawToken {
-            start: start as u32,
-            end: end as u32,
-            kind,
-        });
+        if TOKENS {
+            self.tokens.push(RawToken {
+                start: start as u32,
+                end: end as u32,
+                kind,
+            });
+        }
         self.at = end;
     }
 
@@ -597,16 +694,123 @@ impl Scanner<'_> {
         }
     }
 
+    /// At a `}` in code. Returns what it returns to, if that is not code.
+    #[inline]
+    fn close_brace(&mut self) -> Option<Mode> {
+        if self.braces > 0 {
+            self.braces -= 1;
+            self.punctuator(1);
+            return None;
+        }
+        match self.frames.last().map(|frame| frame.kind) {
+            Some(FrameKind::Substitution) => {
+                self.leave();
+                self.template();
+                None
+            }
+            Some(FrameKind::Container(mode)) => {
+                self.leave();
+                self.punctuator(1);
+                Some(mode)
+            }
+            _ => {
+                self.punctuator(1);
+                None
+            }
+        }
+    }
+
+    /// At the `<` of a JSX element that is in `outer`.
+    fn open_element(&mut self, outer: Mode) -> Mode {
+        self.punctuator(1);
+        self.enter(FrameKind::Element(outer));
+        self.elements += 1;
+        Mode::OpeningTag
+    }
+
+    /// At a `>` in code that is a token of its own. Returns what it returns to, if that is not code.
+    #[inline]
+    fn close_angle(&mut self) -> Option<Mode> {
+        self.punctuator(1);
+        if self.angles == 0 {
+            return None;
+        }
+        self.angles -= 1;
+        (self.angles == 0).then(|| {
+            self.leave();
+            Mode::OpeningTag
+        })
+    }
+
+    /// `code` without the tokens: from one character that can start or end something in which
+    /// `//` and `/*` are not comments to the next.
+    fn skip_code(&mut self) -> Mode {
+        let text = self.text;
+        loop {
+            let regex = self.marks.next_regex(self.at);
+            let code = &text[..regex.map_or(text.len(), |regex| regex.0)];
+            let at = match (self.frames.is_empty(), self.marks.elements.list.is_empty()) {
+                (true, true) => find(code, self.at, [b'/', b'"', b'\'', b'`']),
+                (true, false) => find(code, self.at, [b'/', b'"', b'\'', b'`', b'<']),
+                (false, _) => find(code, self.at, [b'/', b'"', b'\'', b'`', b'<', b'>', b'{', b'}']),
+            };
+            if at == code.len() {
+                self.at = regex.map_or(text.len(), |regex| regex.1);
+                if regex.is_none() {
+                    return Mode::Code;
+                }
+                continue;
+            }
+            self.at = at;
+            match text[at] {
+                b'/' => match self.byte(at + 1) {
+                    b'/' => self.line_comment(TokenKind::Line),
+                    b'*' => self.block_comment(),
+                    _ => self.at += 1,
+                },
+                quote @ (b'"' | b'\'') => self.string(quote),
+                b'`' => self.template(),
+                b'{' => {
+                    self.braces += 1;
+                    self.at += 1;
+                }
+                b'}' => {
+                    if let Some(mode) = self.close_brace() {
+                        return mode;
+                    }
+                }
+                b'<' if self.marks.elements.has(at) => return self.open_element(Mode::Code),
+                b'<' => {
+                    self.angles += u32::from(self.angles > 0);
+                    self.at += 1;
+                }
+                // Not the `>` of `=>`.
+                _ if at > 0 && text[at - 1] == b'=' => self.at += 1,
+                _ => {
+                    if let Some(mode) = self.close_angle() {
+                        return mode;
+                    }
+                }
+            }
+        }
+    }
+
     /// Tokens of JavaScript and TypeScript, until something else starts or continues.
     fn code(&mut self) -> Mode {
         let text = self.text;
         loop {
             let mut at = self.at;
-            loop {
-                let blank = Chunk::at(text, at).count(blanks);
-                at += blank;
-                if blank < Chunk::LEN || at >= text.len() {
-                    break;
+            // Whether a token is followed by no blank, by one, or by more is mostly predictable.
+            if self.byte(at) <= b' ' {
+                at += 1;
+                if self.byte(at) <= b' ' {
+                    loop {
+                        let blank = Chunk::at(text, at).count(blanks);
+                        at += blank;
+                        if blank < Chunk::LEN || at >= text.len() {
+                            break;
+                        }
+                    }
                 }
             }
             let Some(&first) = text.get(at) else {
@@ -622,22 +826,11 @@ impl Scanner<'_> {
                     self.braces += 1;
                     self.punctuator(1);
                 }
-                b'}' if self.braces > 0 => {
-                    self.braces -= 1;
-                    self.punctuator(1);
-                }
-                b'}' => match self.frames.last().map(|frame| frame.kind) {
-                    Some(FrameKind::Substitution) => {
-                        self.leave();
-                        self.template();
-                    }
-                    Some(FrameKind::Container(mode)) => {
-                        self.leave();
-                        self.punctuator(1);
+                b'}' => {
+                    if let Some(mode) = self.close_brace() {
                         return mode;
                     }
-                    _ => self.punctuator(1),
-                },
+                }
                 b'.' if next.is_ascii_digit() => self.number(),
                 b'.' => self.punctuator(if next == b'.' && self.byte(at + 2) == b'.' { 3 } else { 1 }),
                 b'0'..=b'9' => self.number(),
@@ -683,10 +876,7 @@ impl Scanner<'_> {
                 }
                 b'<' => {
                     if self.marks.elements.has(at) {
-                        self.punctuator(1);
-                        self.enter(FrameKind::Element(Mode::Code));
-                        self.elements += 1;
-                        return Mode::OpeningTag;
+                        return self.open_element(Mode::Code);
                     }
                     if next == b'<' && self.marks.shifts.has(at) {
                         self.punctuator(if self.byte(at + 2) == b'=' { 3 } else { 2 });
@@ -701,15 +891,8 @@ impl Scanner<'_> {
                     if matches!(next, b'>' | b'=') && self.marks.shifts.has(at) {
                         let same = text[at..].iter().take(3).take_while(|&&b| b == b'>').count();
                         self.punctuator(same + usize::from(self.byte(at + same) == b'='));
-                        continue;
-                    }
-                    self.punctuator(1);
-                    if self.angles > 0 {
-                        self.angles -= 1;
-                        if self.angles == 0 {
-                            self.leave();
-                            return Mode::OpeningTag;
-                        }
+                    } else if let Some(mode) = self.close_angle() {
+                        return mode;
                     }
                 }
                 b'#' => {
@@ -761,8 +944,9 @@ impl Scanner<'_> {
     #[inline(always)]
     fn word(&mut self) {
         let (text, start) = (self.text, self.at);
-        let mut end = start;
-        loop {
+        let chunk = Chunk::at(text, start);
+        let mut end = start + chunk.count(identifier_parts);
+        while end - start >= Chunk::LEN {
             let parts = Chunk::at(text, end).count(identifier_parts);
             end += parts;
             if parts < Chunk::LEN {
@@ -773,7 +957,7 @@ impl Scanner<'_> {
             return self.unusual_word(end);
         }
         let mut kind = TokenKind::Identifier;
-        let word = Word::of(&text[start..end]);
+        let word = Word::of_chunk(chunk, end - start);
         if word != Word::Name {
             kind = self.kind_of_word(word);
         }
@@ -880,16 +1064,9 @@ impl Scanner<'_> {
         let (text, start) = (self.text, self.at);
         let mut end = start + 1;
         loop {
-            let plain = Chunk::at(text, end).count(|bytes| {
-                !(equal_to(bytes, quote) | equal_to(bytes, b'\\') | equal_to(bytes, b'\n') | equal_to(bytes, b'\r') | equal_to(bytes, 0))
-            });
-            end += plain;
-            if plain == Chunk::LEN {
-                continue;
-            }
+            end = find(text, end, [quote, b'\\', b'\n', b'\r']);
             match text.get(end) {
                 Some(b'\\') => end += if text[end + 1..].starts_with(b"\r\n") { 3 } else { 2 },
-                Some(0 | 0x80..) => end += 1,
                 Some(&b) => {
                     end += usize::from(b == quote);
                     break;
@@ -906,20 +1083,16 @@ impl Scanner<'_> {
         let (text, start) = (self.text, self.at);
         let mut end = start + 1;
         loop {
-            let Some(found) = strings::index_of_any(text.get(end..).unwrap_or_default(), b"`\\$") else {
-                end = text.len();
-                break;
-            };
-            end += found + 1;
-            match text[end - 1] {
-                b'`' => break,
+            end = find(text, end, [b'`', b'\\', b'$']) + 1;
+            match self.byte(end - 1) {
                 b'\\' => end += 1,
-                _ if self.byte(end) == b'{' => {
+                b'$' if self.byte(end) == b'{' => {
                     end += 1;
                     self.enter(FrameKind::Substitution);
                     break;
                 }
-                _ => {}
+                b'$' => {}
+                _ => break,
             }
         }
         self.token(TokenKind::Template, start, end);
@@ -939,12 +1112,9 @@ impl Scanner<'_> {
         let text = self.text;
         let mut end = self.at + 2;
         loop {
-            let Some(found) = strings::index_of_any(&text[end..], b"\n\r\xE2") else {
-                end = text.len();
-                break;
-            };
-            end += found;
-            if text[end] != 0xE2 || lexer::starts_with_line_break(&text[end..]) {
+            // 0xE2 starts U+2028 and U+2029, which end a line too.
+            end = find(text, end, [b'\n', b'\r', 0xE2]);
+            if self.byte(end) != 0xE2 || lexer::starts_with_line_break(&text[end..]) {
                 break;
             }
             end += 1;
@@ -953,9 +1123,15 @@ impl Scanner<'_> {
     }
 
     fn block_comment(&mut self) {
-        let rest = &self.text[self.at + 2..];
-        let len = strings::index_of(rest, b"*/").map_or(rest.len(), |found| found + 2);
-        self.comment(TokenKind::Block, self.at + 2 + len);
+        let text = self.text;
+        let mut end = self.at + 3;
+        loop {
+            end = find(text, end, [b'/']) + 1;
+            if end > text.len() || text[end - 2] == b'*' {
+                break;
+            }
+        }
+        self.comment(TokenKind::Block, end.min(text.len()));
     }
 
     /// Past whitespace and comments.
@@ -1009,21 +1185,15 @@ impl Scanner<'_> {
                     self.enter(FrameKind::Container(Mode::OpeningTag));
                     return Mode::Code;
                 }
+                b'<' if self.marks.elements.has(at) => return self.open_element(Mode::OpeningTag),
                 b'<' => {
                     self.punctuator(1);
-                    if self.marks.elements.has(at) {
-                        self.enter(FrameKind::Element(Mode::OpeningTag));
-                        self.elements += 1;
-                        return Mode::OpeningTag;
-                    }
                     self.enter(FrameKind::TypeArguments);
                     self.angles = 1;
                     return Mode::Code;
                 }
                 b'"' | b'\'' => {
-                    let rest = &self.text[at + 1..];
-                    let len = strings::index_of_char_usize(rest, first).map_or(rest.len(), |found| found + 1);
-                    self.token(TokenKind::JsxText, at, at + 1 + len);
+                    self.token(TokenKind::JsxText, at, find(self.text, at + 1, [first]) + 1);
                 }
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80.. => self.jsx_name(),
                 _ => self.punctuator(1),
@@ -1068,7 +1238,7 @@ impl Scanner<'_> {
     /// The text between JSX tags, up to and including the `{` or the `<` that ends it.
     fn children(&mut self) -> Mode {
         let (text, start) = (self.text, self.at);
-        let end = strings::index_of_any(&text[start..], b"{<").map_or(text.len(), |found| start + found);
+        let end = find(text, start, [b'{', b'<']);
         if end > start {
             self.token(TokenKind::JsxText, start, end);
         }

@@ -6,7 +6,8 @@
 //!   nothing up front. Each says where it cannot be used.
 //! - The methods of [`File`] below are those of ESLint's `SourceCode`, as iterators. The first
 //!   call scans the whole file, so a rule should decide from the syntax whether there is anything
-//!   to report, and look at tokens only then. After that a call is a binary search.
+//!   to report, and look at tokens only then. After that a call is a binary search. The methods
+//!   that only return comments (`comments*`) need a scan that is several times cheaper.
 //!
 //! The tokens have the ranges and the types that ESLint's parser for the file gives them: espree
 //! for JavaScript, typescript-estree for TypeScript. See [`TokenKind`] for where the two differ.
@@ -59,6 +60,7 @@ mod scan;
 use crate::ast::File;
 use crate::span::{Span, Spanned};
 use bun_sema::check::spans;
+use std::cell::OnceCell;
 
 /// From `at`, past whitespace and comments: the start of the next token, or the end of the text.
 ///
@@ -169,11 +171,11 @@ pub(crate) struct RawToken {
     pub(crate) kind: TokenKind,
 }
 
-/// The tokens and the comments of a file, each in source order.
+/// The tokens and the comments of a file, each in source order, each once it is asked for.
 #[derive(Default)]
 pub(crate) struct TokenStore {
-    pub(crate) tokens: Vec<RawToken>,
-    pub(crate) comments: Vec<RawToken>,
+    tokens: OnceCell<Vec<RawToken>>,
+    comments: OnceCell<Vec<RawToken>>,
 }
 
 /// A token or a comment.
@@ -282,7 +284,7 @@ impl<'a> Tokens<'a> {
     /// ESLint's `{ includeComments: true }`. To be called before anything is taken from the
     /// iterator.
     pub fn with_comments(mut self) -> Self {
-        self.comments = within(&self.file.token_store().comments, self.within);
+        self.comments = within(self.file.raw_comments(), self.within);
         self
     }
 
@@ -290,7 +292,7 @@ impl<'a> Tokens<'a> {
     /// there are: ESLint's `getTokens(node, before, after)`. To be called before anything is taken
     /// from the iterator. Comments are not included, as in ESLint.
     pub fn padded(mut self, before: usize, after: usize) -> Self {
-        let all = &self.file.token_store().tokens[..];
+        let all = self.file.raw_tokens();
         let first = all.partition_point(|token| token.start < self.within.start);
         let end = (first + self.tokens.len() + after).min(all.len());
         self.tokens = &all[first.saturating_sub(before)..end];
@@ -362,17 +364,64 @@ fn within(all: &[RawToken], span: Span) -> &[RawToken] {
     &all[first..first + count]
 }
 
+/// Whether there is nothing but whitespace in `text`, which is next to a comment.
+fn is_whitespace(text: &[u8]) -> bool {
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        at += match bun_core::lexer::char_and_size(text, at) {
+            _ if byte <= b' ' => 1,
+            (0x2028 | 0x2029, size) => size,
+            (c @ 0x80.., size) if bun_core::lexer::is_white_space_single_line(c) => size,
+            _ => return false,
+        };
+    }
+    true
+}
+
 /// Scans `file` without keeping the result, to measure it. Returns the number of tokens and
 /// comments.
 #[doc(hidden)]
 pub fn scan_again(file: &File) -> usize {
-    let store = scan::scan(file);
-    store.tokens.len() + store.comments.len()
+    let (tokens, comments) = scan::scan(file);
+    tokens.len() + comments.len()
+}
+
+/// The same for the scan that finds only the comments.
+#[doc(hidden)]
+pub fn comments_again(file: &File) -> usize {
+    scan::comments(file).map_or(0, |comments| comments.len())
+}
+
+/// Whether the two scans find the same comments: their number, `None` if not.
+#[doc(hidden)]
+pub fn scan_comments_again(file: &File) -> Option<usize> {
+    let Some(comments) = scan::comments(file) else {
+        return Some(0);
+    };
+    let range = |comment: &RawToken| (comment.start, comment.end, comment.kind);
+    comments.iter().map(range).eq(scan::scan(file).1.iter().map(range)).then_some(comments.len())
 }
 
 impl<'a> File<'a> {
-    pub(crate) fn token_store(&self) -> &TokenStore {
-        self.lazy.tokens.get_or_init(|| scan::scan(self))
+    fn raw_tokens(&self) -> &[RawToken] {
+        let store = self.lazy.tokens.get_or_init(TokenStore::default);
+        store.tokens.get_or_init(|| {
+            let (tokens, comments) = scan::scan(self);
+            // Already there if the comments were asked for first.
+            let _ = store.comments.set(comments);
+            tokens
+        })
+    }
+
+    fn raw_comments(&self) -> &[RawToken] {
+        let store = self.lazy.tokens.get_or_init(TokenStore::default);
+        if store.comments.get().is_none()
+            && let Some(comments) = scan::comments(self)
+        {
+            return store.comments.get_or_init(|| comments);
+        }
+        self.raw_tokens();
+        store.comments.get().map_or(&[], |comments| comments)
     }
 
     #[inline]
@@ -383,7 +432,7 @@ impl<'a> File<'a> {
     fn tokens_within(&'a self, span: Span, is_reversed: bool) -> Tokens<'a> {
         Tokens {
             file: self,
-            tokens: within(&self.token_store().tokens, span),
+            tokens: within(self.raw_tokens(), span),
             comments: &[],
             within: span,
             is_reversed,
@@ -394,7 +443,7 @@ impl<'a> File<'a> {
     pub fn tokens(&'a self) -> Tokens<'a> {
         Tokens {
             file: self,
-            tokens: &self.token_store().tokens,
+            tokens: self.raw_tokens(),
             comments: &[],
             within: self.span(),
             is_reversed: false,
@@ -423,14 +472,14 @@ impl<'a> File<'a> {
 
     /// The first token of a node.
     pub fn first_token(&'a self, at: impl Spanned) -> Option<Token<'a>> {
-        let (tokens, span) = (&self.token_store().tokens, at.span());
+        let (tokens, span) = (self.raw_tokens(), at.span());
         let first = tokens.get(tokens.partition_point(|token| token.start < span.start));
         self.token(first.filter(|token| token.end <= span.end))
     }
 
     /// The last token of a node.
     pub fn last_token(&'a self, at: impl Spanned) -> Option<Token<'a>> {
-        let (tokens, span) = (&self.token_store().tokens, at.span());
+        let (tokens, span) = (self.raw_tokens(), at.span());
         let after = tokens.partition_point(|token| token.end <= span.end);
         let last = after.checked_sub(1).and_then(|last| tokens.get(last));
         self.token(last.filter(|token| token.start >= span.start))
@@ -438,20 +487,20 @@ impl<'a> File<'a> {
 
     /// The token before a node, a token or a comment.
     pub fn token_before(&'a self, at: impl Spanned) -> Option<Token<'a>> {
-        let (tokens, start) = (&self.token_store().tokens, at.span().start);
+        let (tokens, start) = (self.raw_tokens(), at.span().start);
         let after = tokens.partition_point(|token| token.end <= start);
         self.token(after.checked_sub(1).and_then(|before| tokens.get(before)))
     }
 
     /// The token after a node, a token or a comment.
     pub fn token_after(&'a self, at: impl Spanned) -> Option<Token<'a>> {
-        let (tokens, end) = (&self.token_store().tokens, at.span().end);
+        let (tokens, end) = (self.raw_tokens(), at.span().end);
         self.token(tokens.get(tokens.partition_point(|token| token.start < end)))
     }
 
     /// The token that starts at `offset`.
     pub fn token_at(&'a self, offset: u32) -> Option<Token<'a>> {
-        let tokens = &self.token_store().tokens;
+        let tokens = self.raw_tokens();
         let at = tokens.binary_search_by_key(&offset, |token| token.start).ok()?;
         self.token(tokens.get(at))
     }
@@ -459,7 +508,7 @@ impl<'a> File<'a> {
     /// The token or the comment that starts at `offset`.
     pub fn token_or_comment_at(&'a self, offset: u32) -> Option<Token<'a>> {
         self.token_at(offset).or_else(|| {
-            let comments = &self.token_store().comments;
+            let comments = self.raw_comments();
             let at = comments.binary_search_by_key(&offset, |comment| comment.start).ok()?;
             self.token(comments.get(at))
         })
@@ -469,7 +518,7 @@ impl<'a> File<'a> {
         Tokens {
             file: self,
             tokens: &[],
-            comments: within(&self.token_store().comments, span),
+            comments: within(self.raw_comments(), span),
             within: span,
             is_reversed: false,
         }
@@ -492,7 +541,7 @@ impl<'a> File<'a> {
 
     /// Whether there is a comment between the end of `a` and the start of `b`.
     pub fn comments_exist_between(&'a self, a: impl Spanned, b: impl Spanned) -> bool {
-        let (comments, between) = (&self.token_store().comments, a.span().between(b.span()));
+        let (comments, between) = (self.raw_comments(), a.span().between(b.span()));
         let first = comments.get(comments.partition_point(|comment| comment.start < between.start));
         first.is_some_and(|comment| comment.end <= between.end)
     }
@@ -500,16 +549,40 @@ impl<'a> File<'a> {
     /// The comments directly before a node, a token or a comment: after the token that precedes
     /// it. In source order.
     pub fn comments_before(&'a self, at: impl Spanned) -> Tokens<'a> {
-        let start = at.span().start;
-        let previous = self.token_before(Span::empty(start));
-        self.comments_within(Span::new(previous.map_or(0, Token::end), start))
+        let (comments, end) = (self.raw_comments(), at.span().start);
+        let after = comments.partition_point(|comment| comment.end <= end);
+        let (mut first, mut start) = (after, end);
+        while let Some(comment) = first.checked_sub(1).and_then(|before| comments.get(before))
+            && is_whitespace(self.slice(Span::new(comment.end, start)))
+        {
+            (first, start) = (first - 1, comment.start);
+        }
+        Tokens {
+            file: self,
+            tokens: &[],
+            comments: &comments[first..after],
+            within: Span::new(start, end),
+            is_reversed: false,
+        }
     }
 
     /// The comments directly after a node, a token or a comment: before the token that follows it.
     pub fn comments_after(&'a self, at: impl Spanned) -> Tokens<'a> {
-        let end = at.span().end;
-        let next = self.token_after(Span::empty(end));
-        self.comments_within(Span::new(end, next.map_or(self.span().end, Token::start)))
+        let (comments, start) = (self.raw_comments(), at.span().end);
+        let first = comments.partition_point(|comment| comment.start < start);
+        let (mut after, mut end) = (first, start);
+        while let Some(comment) = comments.get(after)
+            && is_whitespace(self.slice(Span::new(end, comment.start)))
+        {
+            (after, end) = (after + 1, comment.end);
+        }
+        Tokens {
+            file: self,
+            tokens: &[],
+            comments: &comments[first..after],
+            within: Span::new(start, end),
+            is_reversed: false,
+        }
     }
 
     /// ESLint's `isSpaceBetween`: whether there is whitespace between `a` and `b`, in either order,

@@ -75,11 +75,13 @@ fn batch(path: &str) {
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
         let path = String::from_utf8_lossy(path);
         let line = crate::with_file(&path, code, &language_of(&case), |file| {
+            // Before the tokens are asked for, this is the scan that only finds comments.
+            let mut comments = String::new();
+            write_tokens(&mut comments, code, file.comments());
+            assert!(bun_lint::tokens::scan_comments_again(file).is_some(), "the scans disagree on the comments");
             let mut out = format!("{{\"errors\":{},\"tokens\":", file.has_parse_errors());
             write_tokens(&mut out, code, file.tokens());
-            out.push_str(",\"comments\":");
-            write_tokens(&mut out, code, file.comments());
-            out.push('}');
+            let _ = write!(out, ",\"comments\":{comments}}}");
             out
         });
         let _ = writeln!(stdout, "{line}");
@@ -158,6 +160,7 @@ fn dump(path: &str) {
 
 fn bench(paths: &[String]) {
     let (mut bytes, mut tokens, mut seconds, mut parse_seconds) = (0usize, 0usize, 0f64, 0f64);
+    let mut comments_seconds = 0f64;
     const ROUNDS: usize = 20;
     for path in paths {
         let Ok(code) = std::fs::read(path) else {
@@ -175,16 +178,25 @@ fn bench(paths: &[String]) {
             }
             seconds += best;
             bytes += code.len();
+            let mut best = f64::MAX;
+            for _ in 0..ROUNDS {
+                let started = std::time::Instant::now();
+                std::hint::black_box(bun_lint::tokens::comments_again(file));
+                best = best.min(started.elapsed().as_secs_f64());
+            }
+            comments_seconds += best;
         });
     }
     println!(
-        "{} files, {:.1} MB, {} tokens: {:.1} ms, {:.0} MB/s, {:.1} ns per token (parse and bind: {:.1} ms)",
+        "{} files, {:.1} MB, {} tokens: {:.1} ms, {:.0} MB/s, {:.1} ns per token. Only comments: {:.1} ms, {:.0} MB/s. Parse and bind: {:.1} ms",
         paths.len(),
         bytes as f64 / 1e6,
         tokens / ROUNDS,
         seconds * 1e3,
         bytes as f64 / 1e6 / seconds,
         seconds * 1e9 / (tokens / ROUNDS).max(1) as f64,
+        comments_seconds * 1e3,
+        bytes as f64 / 1e6 / comments_seconds,
         parse_seconds * 1e3,
     );
 }
@@ -197,6 +209,9 @@ fn check<'a>(file: &'a File<'a>) -> Option<String> {
             return Some(format!("{token:?} at {}..{} after {end}", token.start(), token.end()));
         }
         end = token.end();
+    }
+    if !file.has_parse_errors() && bun_lint::tokens::scan_comments_again(file).is_none() {
+        return Some("the scans disagree on the comments".to_owned());
     }
     None
 }

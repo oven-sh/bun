@@ -1,5 +1,6 @@
 use super::accessor_pairs::{MAX_KEYS_TO_COMPARE_IN_PAIRS, key_groups};
 use bun_lint::prelude::*;
+use smallvec::SmallVec;
 
 /// Require grouped accessor pairs in object literals and classes.
 pub struct GroupedAccessorPairs {
@@ -81,13 +82,15 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
 impl GroupedAccessorPairs {
     /// ESLint's `checkList`.
     fn check_list<'a>(&self, accessors: &(impl Iterator<Item = Accessor<'a>> + Clone), cx: &Cx<'a, Self>) {
+        let few: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> =
+            accessors.clone().take(MAX_KEYS_TO_COMPARE_IN_PAIRS + 1).collect();
         // Nothing is reported for a name that has several getters or several setters.
-        if accessors.clone().nth(MAX_KEYS_TO_COMPARE_IN_PAIRS).is_none() {
-            for getter in accessors.clone().filter(|it| it.is_getter) {
-                let mut others = (accessors.clone())
-                    .filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
+        if few.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
+            for getter in few.iter().filter(|it| it.is_getter) {
+                let mut others =
+                    few.iter().filter(|it| it.index != getter.index && are_equal_keys(cx.file(), getter.key, it.key));
                 if let (Some(setter), None) = (others.next(), others.next()) {
-                    self.check_pair(getter, setter, cx);
+                    self.check_pair(*getter, *setter, cx);
                 }
             }
             return;

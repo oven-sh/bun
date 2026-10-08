@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::token_key::push_token_key;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
 /// Enforce getter and setter pairs in objects and classes.
@@ -135,12 +136,14 @@ impl AccessorPairs {
             cx.report(ast_utils::get_function_head_loc(accessor.func), message)
                 .data("name", ast_utils::get_function_name_with_kind(accessor.func));
         };
-        if accessors.clone().nth(MAX_KEYS_TO_COMPARE_IN_PAIRS).is_none() {
-            for accessor in accessors.clone() {
-                let is_paired = |other: Accessor<'a>| {
+        let few: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> =
+            accessors.clone().take(MAX_KEYS_TO_COMPARE_IN_PAIRS + 1).collect();
+        if few.len() <= MAX_KEYS_TO_COMPARE_IN_PAIRS {
+            for &accessor in &few {
+                let is_paired = |other: &Accessor<'a>| {
                     other.is_getter != accessor.is_getter && are_equal_keys(cx.file(), other.key, accessor.key)
                 };
-                if is_checked(accessor) && !accessors.clone().any(is_paired) {
+                if is_checked(accessor) && !few.iter().any(is_paired) {
                     report(accessor);
                 }
             }

@@ -1099,86 +1099,115 @@ impl<'a> Checks<'a> {
 
     fn expressions(&mut self) {
         let file = self.file;
-        for it in file.exprs_of_kind(ExprTag::TaggedTemplate) {
-            let ExprKind::TaggedTemplate(call) = it.kind() else {
-                continue;
-            };
-            let tag = call.callee();
-            // `node.tag.flags & ts.NodeFlags.OptionalChain`
-            let is_chain = matches!(tag.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call)
-                && tag.chain() != Chain::No;
-            if is_chain && !tag.is_parenthesized() {
-                let message = "Tagged template expressions are not permitted in an optional chain.";
-                self.fail(it.span(), it.span().start, message);
+        if !self.is_of_prettier {
+            let kinds = [
+                ExprTag::TaggedTemplate,
+                ExprTag::PrivateIdentifier,
+                ExprTag::Unary,
+                ExprTag::ImportCall,
+            ];
+            for kind in kinds {
+                file.exprs_of_kind(kind).for_each(|it| self.expression(it));
             }
+            return;
         }
-        for it in file.exprs_of_kind(ExprTag::PrivateIdentifier) {
-            let Node::Expr(parent) = it.parent() else {
-                continue;
-            };
-            let (is_in, left, right) = match parent.try_raw().map(|it| it.kind) {
-                Some(hir::ExprKind::Binary { op, left, right }) => (op == BinOp::In, left, right),
-                Some(hir::ExprKind::Assign { target, value, .. }) => (false, target, value),
-                _ => continue,
-            };
-            let is_private = |id: hir::ExprId| {
-                matches!(
-                    file.hir.exprs.get(id.idx()).map(|it| it.kind),
-                    Some(hir::ExprKind::PrivateIdentifier(_))
-                )
-            };
-            if left == it.id() && !is_in {
-                let message = "Private identifiers cannot appear on the right-hand-side of an 'in' expression.";
-                self.fail(parent.span(), it.span().start, message);
-            } else if right == it.id() && (is_in || !is_private(left)) {
-                let message = "Private identifiers are only allowed on the left-hand-side of an 'in' expression.";
-                self.fail(parent.span(), it.span().start, message);
-            }
-        }
-        for it in file.exprs_of_kind(ExprTag::Unary) {
-            let Some(hir::ExprKind::Unary { op, operand }) = it.try_raw().map(|it| it.kind) else {
-                continue;
-            };
-            let is_update = matches!(
-                op,
-                UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+        // Nothing else of `bun format` wants the expressions by kind, and which error is the first does not count.
+        for (i, raw) in file.hir.exprs.iter().enumerate() {
+            let is_checked = matches!(
+                raw.kind,
+                hir::ExprKind::TaggedTemplate(_)
+                    | hir::ExprKind::PrivateIdentifier(_)
+                    | hir::ExprKind::Unary { .. }
+                    | hir::ExprKind::ImportCall { .. }
             );
-            if is_update && !self.is_valid_assignment_target(operand) {
-                self.fail(
-                    it.span(),
-                    self.start_of(operand),
-                    "Invalid left-hand side expression in unary operation",
-                );
+            if is_checked && file.expr_in_tree(i).is_some() {
+                self.expression(Expr::from_raw(file, i as u32));
             }
         }
-        for it in file.exprs_of_kind(ExprTag::ImportCall) {
-            let Some(hir::ExprKind::ImportCall { args }) = it.try_raw().map(|it| it.kind) else {
-                continue;
-            };
-            let args = file.hir.ids.get(args.range()).unwrap_or_default();
-            let is_missing = |id: u32| {
-                matches!(
-                    file.hir.exprs.get(id as usize).map(|it| it.kind),
-                    Some(hir::ExprKind::Missing)
-                )
-            };
-            let has_none = matches!(*args, [only] if is_missing(only));
-            let is_deferred = file
-                .hir
-                .deferred_import_calls
-                .iter()
-                .any(|call| Some(&call.0.0) == args.first());
-            if (has_none || args.len() > 2) && !is_deferred {
-                let at = args.get(2).map_or_else(
-                    || it.span().start,
-                    |&third| self.start_of(hir::ExprId(third)),
-                );
-                self.fail(
-                    it.span(),
-                    at,
-                    "Dynamic import requires exactly one or two arguments.",
-                );
+    }
+
+    fn expression(&mut self, it: Expr<'a>) {
+        let file = self.file;
+        match it.try_raw().map(|it| it.kind) {
+            Some(hir::ExprKind::TaggedTemplate(_)) => {
+                let ExprKind::TaggedTemplate(call) = it.kind() else {
+                    return;
+                };
+                let tag = call.callee();
+                // `node.tag.flags & ts.NodeFlags.OptionalChain`
+                let is_chain = matches!(tag.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call)
+                    && tag.chain() != Chain::No;
+                if is_chain && !tag.is_parenthesized() {
+                    let message =
+                        "Tagged template expressions are not permitted in an optional chain.";
+                    self.fail(it.span(), it.span().start, message);
+                }
             }
+            Some(hir::ExprKind::PrivateIdentifier(_)) => {
+                let Node::Expr(parent) = it.parent() else {
+                    return;
+                };
+                let (is_in, left, right) = match parent.try_raw().map(|it| it.kind) {
+                    Some(hir::ExprKind::Binary { op, left, right }) => {
+                        (op == BinOp::In, left, right)
+                    }
+                    Some(hir::ExprKind::Assign { target, value, .. }) => (false, target, value),
+                    _ => return,
+                };
+                let is_private = |id: hir::ExprId| {
+                    matches!(
+                        file.hir.exprs.get(id.idx()).map(|it| it.kind),
+                        Some(hir::ExprKind::PrivateIdentifier(_))
+                    )
+                };
+                if left == it.id() && !is_in {
+                    let message = "Private identifiers cannot appear on the right-hand-side of an 'in' expression.";
+                    self.fail(parent.span(), it.span().start, message);
+                } else if right == it.id() && (is_in || !is_private(left)) {
+                    let message = "Private identifiers are only allowed on the left-hand-side of an 'in' expression.";
+                    self.fail(parent.span(), it.span().start, message);
+                }
+            }
+            Some(hir::ExprKind::Unary { op, operand }) => {
+                let is_update = matches!(
+                    op,
+                    UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+                );
+                if is_update && !self.is_valid_assignment_target(operand) {
+                    self.fail(
+                        it.span(),
+                        self.start_of(operand),
+                        "Invalid left-hand side expression in unary operation",
+                    );
+                }
+            }
+            Some(hir::ExprKind::ImportCall { args }) => {
+                let args = file.hir.ids.get(args.range()).unwrap_or_default();
+                let is_missing = |id: u32| {
+                    matches!(
+                        file.hir.exprs.get(id as usize).map(|it| it.kind),
+                        Some(hir::ExprKind::Missing)
+                    )
+                };
+                let has_none = matches!(*args, [only] if is_missing(only));
+                let is_deferred = file
+                    .hir
+                    .deferred_import_calls
+                    .iter()
+                    .any(|call| Some(&call.0.0) == args.first());
+                if (has_none || args.len() > 2) && !is_deferred {
+                    let at = args.get(2).map_or_else(
+                        || it.span().start,
+                        |&third| self.start_of(hir::ExprId(third)),
+                    );
+                    self.fail(
+                        it.span(),
+                        at,
+                        "Dynamic import requires exactly one or two arguments.",
+                    );
+                }
+            }
+            _ => {}
         }
     }
 

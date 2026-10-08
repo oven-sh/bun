@@ -228,7 +228,7 @@ fn min_not_present_backtick_run(text: &[u8]) -> usize {
             current = 0;
         }
     }
-    present.iter().skip(1).position(|is_present| !is_present).map_or(present.len().max(1), |at| at + 1)
+    present.iter().skip(1).position(|is_present| !is_present).map_or_else(|| present.len().max(1), |at| at + 1)
 }
 
 struct Serializer<'a> {

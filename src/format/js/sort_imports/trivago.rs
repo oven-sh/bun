@@ -117,23 +117,23 @@ fn sorted_by_import_order(model: &mut Model, nodes: &[u32], options: &Options, o
         model.specifiers_of(declaration).iter().any(|it| model.specifiers[*it as usize].kind == SpecifierKind::Namespace)
     };
     let length = |declaration: &Declaration| declaration.span.map_or(0, |span| utf16_len(model.file.slice(span)));
-    // `getSortedNodesGroup`
-    stable_sort_by(&mut grouped, |a, b| {
-        if a.0 != b.0 {
-            return a.0.cmp(&b.0);
-        }
-        let (a, b) = (&model.declarations[a.1 as usize], &model.declarations[b.1 as usize]);
-        let by_namespace = match options.group_namespace_specifiers {
-            true => has_namespace(b).cmp(&has_namespace(a)),
-            false => Ordering::Equal,
-        };
-        let (a_source, b_source) = (model.source_of(a), model.source_of(b));
-        by_namespace.then_with(|| match options.sort_by_length {
-            Some(ByLength::Ascending) => length(a).cmp(&length(b)).then_with(|| locale_compare(a_source, b_source)),
-            Some(ByLength::Descending) => length(b).cmp(&length(a)).then_with(|| locale_compare(a_source, b_source)),
-            None => natural_sort(a_source, b_source, options.is_case_insensitive),
-        })
-    });
+    // `getSortedNodesGroup`, for each group.
+    grouped.sort_by_key(|it| it.0);
+    for group in grouped.chunk_by_mut(|a, b| a.0 == b.0) {
+        stable_sort_by(group, |a, b| {
+            let (a, b) = (&model.declarations[a.1 as usize], &model.declarations[b.1 as usize]);
+            let by_namespace = match options.group_namespace_specifiers {
+                true => has_namespace(b).cmp(&has_namespace(a)),
+                false => Ordering::Equal,
+            };
+            let (a_source, b_source) = (model.source_of(a), model.source_of(b));
+            by_namespace.then_with(|| match options.sort_by_length {
+                Some(ByLength::Ascending) => length(a).cmp(&length(b)).then_with(|| locale_compare(a_source, b_source)),
+                Some(ByLength::Descending) => length(b).cmp(&length(a)).then_with(|| locale_compare(a_source, b_source)),
+                None => natural_sort(a_source, b_source, options.is_case_insensitive),
+            })
+        });
+    }
 
     if options.sort_specifiers {
         for &(_, index) in &grouped {

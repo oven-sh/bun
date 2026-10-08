@@ -5367,494 +5367,939 @@
   "output": "import * as ns from \"ns\";\n/* c */ import z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/9/0",
+  "name": "oxfmt-tokens/8/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import/* c */ z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport /* c */ z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "// c\n// d\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "// c\n// d\nimport * as ns from \"ns\";\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/18/0",
+  "name": "oxfmt-tokens/17/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import /* c */z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport /* c */ z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import// c\n// d\n z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import { b, a as c, type C } from \"./x\";\n\nimport // c\n// d\nz from \"z\";\nimport * as ns from \"ns\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/27/0",
+  "name": "oxfmt-tokens/26/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import z/* c */ from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z /* c */ from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import // c\n// d\nz from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport // c\n// d\nz from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/50/0",
+  "name": "oxfmt-tokens/45/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import z from/*\n   * c\n   */ \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import z from /*\n * c\n */ \"z\";\nimport * as ns from \"ns\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import z from/* c */ \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import z from /* c */ \"z\";\n\nimport * as ns from \"ns\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/67/0",
+  "name": "oxfmt-tokens/66/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import z from \"z\"\n\n// c\n\n;\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\n// c\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\"\n/* c */\n;\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\n/* c */\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/76/0",
+  "name": "oxfmt-tokens/75/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import z from \"z\";\n\n// c\n\n\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\n// c\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\n/* c */\n\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\n/* c */\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/85/0",
+  "name": "oxfmt-tokens/84/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import z from \"z\";\n\n\n// c\n\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\n// c\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\n\n/* c */\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import z from \"z\";\n\n/* c */\nimport * as ns from \"ns\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/95/0",
+  "name": "oxfmt-tokens/93/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import z from \"z\";\nimport/*\n   * c\n   */ { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  /*\n   * c\n   */ b,\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport\n/* c */\n { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport {\n  /* c */\n  b,\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/105/0",
+  "name": "oxfmt-tokens/104/1",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
+  },
+  "input": "import z from \"z\";\nimport /*\n   * c\n   */{ b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import z from \"z\";\nimport * as ns from \"ns\";\n\nimport {\n  /*\n   * c\n   */ b,\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/114/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import z from \"z\";\nimport \n/**\n * c\n */\n{ b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "input": "import z from \"z\";\nimport {\n/**\n * c\n */\n b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
   "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  /**\n   * c\n   */\n  b,\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/115/0",
+  "name": "oxfmt-tokens/123/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import z from \"z\";\nimport {/* c */ /* d */ b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { /* c */ /* d */ b, a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { \n/**\n * c\n */\nb, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport {\n  /**\n   * c\n   */\n  b,\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/125/0",
+  "name": "oxfmt-tokens/133/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import z from \"z\";\nimport { // c\n// d\nb, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  // c\n  // d\n  b,\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b/* c */ /* d */, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import { b /* c */ /* d */, a as c, type C } from \"./x\";\n\nimport z from \"z\";\nimport * as ns from \"ns\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/135/0",
+  "name": "oxfmt-tokens/143/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import z from \"z\";\nimport { b,/* c */ a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, /* c */ a as c, type C } from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b,// c\n// d\n a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b, // c\n  // d\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/145/0",
+  "name": "oxfmt-tokens/153/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import z from \"z\";\nimport { b, // c\na as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b, // c\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a/* c */ as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import z from \"z\";\n\nimport * as ns from \"ns\";\n\nimport { b, a /* c */ as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/155/0",
+  "name": "oxfmt-tokens/167/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a\n// c\n as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  // c\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a /*\n   * c\n   */as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  a /*\n   * c\n   */ as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/170/0",
+  "name": "oxfmt-tokens/180/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a // c\n// d\nas c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  // c\n  // d\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as /* c */c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport { b, a as /* c */ c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/182/0",
+  "name": "oxfmt-tokens/192/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a as \n// c\nc, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  // c\n  a as c,\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c\n/* c */\n, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  a as c,\n  /* c */\n  type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/195/0",
+  "name": "oxfmt-tokens/203/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a as c\n/**\n * c\n */\n, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  a as c,\n  /**\n   * c\n   */\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c,/*\n   * c\n   */ type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport {\n  b,\n  a as c,\n  /*\n   * c\n   */ type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/205/0",
+  "name": "oxfmt-tokens/213/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a as c,/* c */ /* d */ type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, /* c */ /* d */ type C } from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c, \n/**\n * c\n */\ntype C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import z from \"z\";\nimport * as ns from \"ns\";\n\nimport {\n  b,\n  a as c,\n  /**\n   * c\n   */\n  type C,\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/215/0",
+  "name": "oxfmt-tokens/225/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import z from \"z\";\nimport { b, a as c, // c\n// d\ntype C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  a as c, // c\n  // d\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c, type /* c */C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type /* c */ C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/227/0",
+  "name": "oxfmt-tokens/236/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a as c, type \n// c\nC } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  a as c,\n  // c\n  type C,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c, type C\n// c\n } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport {\n  b,\n  a as c,\n  type C,\n  // c\n} from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/239/0",
+  "name": "oxfmt-tokens/245/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a as c, type C/*\n   * c\n   */ } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  a as c,\n  type C /*\n   * c\n   */,\n} from \"./x\";\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c, type C \n// c\n} from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import {\n  b,\n  a as c,\n  type C,\n  // c\n} from \"./x\";\n\nimport z from \"z\";\nimport * as ns from \"ns\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/248/0",
+  "name": "oxfmt-tokens/277/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import z from \"z\";\nimport { b, a as c, type C /*\n   * c\n   */} from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport {\n  b,\n  a as c,\n  type C /*\n   * c\n   */,\n} from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/286/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from /* c */ /* d */\"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from/* c */ /* d */ \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n",
   "output": "import { b, a as c, type C } from /* c */ /* d */ \"./x\";\nimport * as ns from \"ns\";\nimport z from \"z\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/296/0",
+  "name": "oxfmt-tokens/293/6",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\"/*\n   * c\n   */;\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import z from \"z\";\n\nimport * as ns from \"ns\";\n\nimport { b, a as c, type C } from \"./x\"; /*\n * c\n */\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/302/5",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";/*\n   * c\n   */\nimport * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\"; /*\n * c\n */\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/311/4",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n/*\n   * c\n   */import * as ns from \"ns\";\n\nfoo();\n",
+  "output": "/*\n * c\n */ import * as ns from \"ns\";\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/320/3",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByComment": true
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport/*\n   * c\n   */ * as ns from \"ns\";\n\nfoo();\n",
+  "output": "import /*\n * c\n */ * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/329/2",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport /*\n   * c\n   */* as ns from \"ns\";\n\nfoo();\n",
+  "output": "import /*\n * c\n */ * as ns from \"ns\";\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/338/1",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport */*\n   * c\n   */ as ns from \"ns\";\n\nfoo();\n",
+  "output": "import z from \"z\";\nimport * as /*\n * c\n */ ns from \"ns\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/347/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\"// c\n// d\n;\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "// d\nimport * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\"; // c\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * /*\n   * c\n   */as ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as /*\n * c\n */ ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/305/0",
+  "name": "oxfmt-tokens/355/9",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as\n\n// c\n\n ns from \"ns\";\n\nfoo();\n",
+  "output": "import * as // c\n\nns from \"ns\";\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/364/8",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as \n\n// c\n\nns from \"ns\";\n\nfoo();\n",
+  "output": "import { b, a as c, type C } from \"./x\";\n\nimport z from \"z\";\nimport * as // c\n\nns from \"ns\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/378/7",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns /* c */from \"ns\";\n\nfoo();\n",
+  "output": "import * as ns /* c */ from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/403/6",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from /* c */ /* d */\"ns\";\n\nfoo();\n",
+  "output": "import z from \"z\";\n\nimport * as ns from /* c */ /* d */ \"ns\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/417/5",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n/* c */\n\n\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n/* c */\n\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/426/4",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\n\n/* c */\nfoo();\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\n/* c */\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/441/3",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByComment": true
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo(/* c */);\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo(/* c */);\n"
+ },
+ {
+  "name": "oxfmt-tokens/450/2",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo()/* c */;\n",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\nfoo(); /* c */\n"
+ },
+ {
+  "name": "oxfmt-tokens/459/1",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
+  },
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();/* c */\n",
+  "output": "import z from \"z\";\nimport * as ns from \"ns\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo(); /* c */\n"
+ },
+ {
+  "name": "oxfmt-tokens/468/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";// c\n// d\n\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n// d\n\nimport { b, a as c, type C } from \"./x\"; // c\n\nfoo();\n"
+  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n/* c */",
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n/* c */\n"
  },
  {
-  "name": "oxfmt-tokens/314/0",
+  "name": "oxfmt-tokens/476/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n// c\n// d\nimport * as ns from \"ns\";\n\nfoo();\n",
-  "output": "// c\n// d\nimport * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/323/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport// c\n// d\n * as ns from \"ns\";\n\nfoo();\n",
-  "output": "import // c\n// d\n* as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/332/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport // c\n// d\n* as ns from \"ns\";\n\nfoo();\n",
-  "output": "import // c\n// d\n* as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/341/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport *// c\n// d\n as ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as // c\n// d\nns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/350/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * // c\n// d\nas ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as // c\n// d\nns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/359/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as// c\n// d\n ns from \"ns\";\n\nfoo();\n",
-  "output": "import * as // c\n// d\nns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/368/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as // c\n// d\nns from \"ns\";\n\nfoo();\n",
-  "output": "import * as // c\n// d\nns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/387/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from/* c */ \"ns\";\n\nfoo();\n",
-  "output": "import * as ns from /* c */ \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/410/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\"/*\n   * c\n   */;\n\nfoo();\n",
-  "output": "import * as ns from \"ns\"; /*\n * c\n */\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/421/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";/* c */ /* d */\n\nfoo();\n",
-  "output": "import * as ns from \"ns\"; /* c */ /* d */\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/430/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\n/* c */ /* d */foo();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\n/* c */ /* d */ foo();\n"
- },
- {
-  "name": "oxfmt-tokens/440/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo// c\n// d\n();\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo // c\n// d\n();\n"
- },
- {
-  "name": "oxfmt-tokens/449/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo(// c\n// d\n);\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo(\n  // c\n  // d\n);\n"
- },
- {
-  "name": "oxfmt-tokens/458/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo()// c\n// d\n;\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo(); // c\n// d\n"
- },
- {
-  "name": "oxfmt-tokens/467/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();// c\n// d\n\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo(); // c\n// d\n"
- },
- {
-  "name": "oxfmt-tokens/476/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
   "input": "import z from \"z\";\nimport { b, a as c, type C } from \"./x\";\nimport * as ns from \"ns\";\n\nfoo();\n// c\n// d\n",
-  "output": "import * as ns from \"ns\";\nimport z from \"z\";\n\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n// c\n// d\n"
+  "output": "import * as ns from \"ns\";\nimport z from \"z\";\nimport { b, a as c, type C } from \"./x\";\n\nfoo();\n// c\n// d\n"
  },
  {
-  "name": "oxfmt-tokens/485/0",
+  "name": "oxfmt-tokens/485/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
   "input": "// c\n// d\nimport d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "// c\n// d\nimport d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "output": "import json from \"./a.json\" with { type: \"json\" };\n\nimport type { T, S } from \"t\";\nimport \"side\";\n// c\n// d\nimport d, { e } from \"d\";\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/494/0",
+  "name": "oxfmt-tokens/494/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
   "input": "import// c\n// d\n d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
   "output": "import // c\n// d\nd, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/503/0",
+  "name": "oxfmt-tokens/503/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
   "input": "import // c\n// d\nd, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import // c\n// d\nd, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "output": "import \"side\";\n\nimport type { T, S } from \"t\";\n\nimport // c\n// d\nd, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/513/0",
+  "name": "oxfmt-tokens/513/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
   "input": "import d,/* c */ { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d /* c */, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "output": "import type { T, S } from \"t\";\n\nimport d /* c */, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\n\nimport \"side\";\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/523/0",
+  "name": "oxfmt-tokens/523/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
   "input": "import d, // c\n{ e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\"; // c\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "output": "import d, { e } from \"d\"; // c\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/533/0",
+  "name": "oxfmt-tokens/533/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
   "input": "import d, {\n// c\n e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
   "output": "import d, {\n  // c\n  e,\n} from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/543/0",
+  "name": "oxfmt-tokens/543/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
   "input": "import d, { \n/* c */\ne } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, {\n  /* c */\n  e,\n} from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "output": "import d, {\n  /* c */\n  e,\n} from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/553/0",
+  "name": "oxfmt-tokens/553/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
   "input": "import d, { e\n\n// c\n\n } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, {\n  e,\n\n  // c\n} from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "output": "import type { T, S } from \"t\";\nimport \"side\";\nimport d, {\n  e,\n\n  // c\n} from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
   "name": "oxfmt-tokens/562/0",
@@ -5867,494 +6312,921 @@
   "output": "import d, {\n  e,\n\n  // c\n} from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/599/0",
+  "name": "oxfmt-tokens/594/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import d, { e } from /*\n   * c\n   */\"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from /*\n * c\n */ \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from /* c */\"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from /* c */ \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/610/0",
+  "name": "oxfmt-tokens/609/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import d, { e } from \"d\"/* c */ /* d */;\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\"; /* c */ /* d */\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\"\n/**\n * c\n */\n;\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import json from \"./a.json\" with { type: \"json\" };\n\nimport type { T, S } from \"t\";\n/**\n * c\n */\nimport \"side\";\nimport d, { e } from \"d\";\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/619/0",
+  "name": "oxfmt-tokens/618/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";/* c */ /* d */\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\"; /* c */ /* d */\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\n/**\n * c\n */\n\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\n/**\n * c\n */\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/628/0",
+  "name": "oxfmt-tokens/627/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";\n/* c */ /* d */import \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\n/* c */ /* d */ import \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\n\n/**\n * c\n */\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "/**\n * c\n */\nimport \"side\";\n\nimport type { T, S } from \"t\";\n\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/637/0",
+  "name": "oxfmt-tokens/636/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport/* c */ /* d */ \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport /* c */ /* d */ \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport\n/**\n * c\n */\n \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import type { T, S } from \"t\";\n\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\n\nimport /**\n * c\n */\n\"side\";\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/646/0",
+  "name": "oxfmt-tokens/645/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport /* c */ /* d */\"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport /* c */ /* d */ \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \n/**\n * c\n */\n\"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import /**\n * c\n */\n\"side\";\nimport d, { e } from \"d\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/655/0",
+  "name": "oxfmt-tokens/654/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\"/* c */ /* d */;\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\"; /* c */ /* d */\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\"\n/**\n * c\n */\n;\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\n/**\n * c\n */\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/664/0",
+  "name": "oxfmt-tokens/663/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";/* c */ /* d */\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\"; /* c */ /* d */\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\n/**\n * c\n */\n\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\n/**\n * c\n */\n\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/673/0",
+  "name": "oxfmt-tokens/672/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\n/* c */ /* d */import type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\n/* c */ /* d */ import type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\n\n/**\n * c\n */\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "/**\n * c\n */\nimport type { T, S } from \"t\";\nimport \"side\";\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/683/0",
+  "name": "oxfmt-tokens/682/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport// c\n// d\n type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  // c\n  // d\n  T,\n  S,\n} from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport/* c */ /* d */ type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { /* c */ /* d */ T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/693/0",
+  "name": "oxfmt-tokens/691/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type/* c */ { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport /* c */ /* d */type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { /* c */ /* d */ T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/711/7",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type {/* c */ T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
   "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { /* c */ T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/703/0",
+  "name": "oxfmt-tokens/721/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type // c\n{ T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  // c\n  T,\n  S,\n} from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { // c\nT, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import \"side\";\n\nimport type {\n  // c\n  T,\n  S,\n} from \"t\";\n\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/713/0",
+  "name": "oxfmt-tokens/731/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n// c\n T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  // c\n  T,\n  S,\n} from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T\n// c\n, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import type {\n  T,\n  // c\n  S,\n} from \"t\";\n\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\n\nimport \"side\";\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/723/0",
+  "name": "oxfmt-tokens/741/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { \n/* c */\nT, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  /* c */\n  T,\n  S,\n} from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T,\n/* c */\n S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  T,\n  /* c */\n  S,\n} from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/734/0",
+  "name": "oxfmt-tokens/752/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T/*\n   * c\n   */, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  T /*\n   * c\n   */,\n  S,\n} from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, /*\n   * c\n   */S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  T,\n  /*\n   * c\n   */ S,\n} from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/744/0",
+  "name": "oxfmt-tokens/761/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T,\n/**\n * c\n */\n S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  T,\n  /**\n   * c\n   */\n  S,\n} from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S/*\n   * c\n   */ } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type {\n  T,\n  S /*\n   * c\n   */,\n} from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/754/0",
+  "name": "oxfmt-tokens/770/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, /* c */ /* d */S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, /* c */ /* d */ S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S /*\n   * c\n   */} from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import type {\n  T,\n  S /*\n   * c\n   */,\n} from \"t\";\nimport \"side\";\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/763/0",
+  "name": "oxfmt-tokens/808/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S/* c */ /* d */ } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S /* c */ /* d */ } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from /* c */ /* d */\"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import type { T, S } from /* c */ /* d */ \"t\";\nimport \"side\";\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/772/0",
+  "name": "oxfmt-tokens/817/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S /* c */ /* d */} from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S /* c */ /* d */ } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\"/* c */ /* d */;\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\"; /* c */ /* d */\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/811/0",
+  "name": "oxfmt-tokens/826/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\"// c\n;\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\"; // c\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";/* c */ /* d */\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import json from \"./a.json\" with { type: \"json\" };\n\nimport type { T, S } from \"t\"; /* c */ /* d */\nimport \"side\";\nimport d, { e } from \"d\";\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/820/0",
+  "name": "oxfmt-tokens/835/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";// c\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\"; // c\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n/* c */ /* d */import json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\n/* c */ /* d */ import json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/829/0",
+  "name": "oxfmt-tokens/844/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n// c\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\n// c\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport/* c */ /* d */ json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import \"side\";\n\nimport type { T, S } from \"t\";\n\nimport d, { e } from \"d\";\n\nimport /* c */ /* d */ json from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/838/0",
+  "name": "oxfmt-tokens/853/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport// c\n json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport // c\njson from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport /* c */ /* d */json from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import type { T, S } from \"t\";\n\nimport d, { e } from \"d\";\n\nimport /* c */ /* d */ json from \"./a.json\" with { type: \"json\" };\n\nimport \"side\";\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/847/0",
+  "name": "oxfmt-tokens/871/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport // c\njson from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport // c\njson from \"./a.json\" with { type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json /* c */ /* d */from \"./a.json\" with { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json /* c */ /* d */ from \"./a.json\" with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/856/0",
+  "name": "oxfmt-tokens/896/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json// c\n from \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" }; // c\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/880/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from/* c */ /* d */ \"./a.json\" with { type: \"json\" };\nfoo();\n",
-  "output": "import json from /* c */ /* d */ \"./a.json\" with { type: \"json\" };\nimport \"side\";\nimport d, { e } from \"d\";\nimport type { T, S } from \"t\";\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/901/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" // c\nwith { type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" }; // c\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/923/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with /*\n   * c\n   */{ type: \"json\" };\nfoo();\n",
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\"/*\n   * c\n   */ with { type: \"json\" };\nfoo();\n",
   "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" /*\n * c\n */ with { type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/936/0",
+  "name": "oxfmt-tokens/916/2",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with/* c */ /* d */ { type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" /* c */ /* d */ with { type: \"json\" };\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/932/1",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with {/*\n   * c\n   */ type: \"json\" };\nfoo();\n",
+  "output": "import type { T, S } from \"t\";\nimport \"side\";\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with {\n  /*\n   * c\n   */ type: \"json\",\n};\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/943/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { /* c */type: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { /* c */ type: \"json\" };\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { /* c */ /* d */type: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { /* c */ /* d */ type: \"json\" };\nfoo();\n"
  },
  {
-  "name": "oxfmt-tokens/947/0",
+  "name": "oxfmt-tokens/952/9",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type/* c */ /* d */: \"json\" };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type /* c */ /* d */: \"json\" };\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/962/8",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type:// c\n// d\n \"json\" };\nfoo();\n",
+  "output": "import json from \"./a.json\" with {\n  type: // c\n    // d\n    \"json\",\n};\n\nimport type { T, S } from \"t\";\nimport \"side\";\nimport d, { e } from \"d\";\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/972/7",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\"/* c */ };\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" /* c */ };\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/981/6",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" /* c */};\nfoo();\n",
+  "output": "import \"side\";\n\nimport type { T, S } from \"t\";\n\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" /* c */ };\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/990/5",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" }/* c */;\nfoo();\n",
+  "output": "import type { T, S } from \"t\";\n\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" }; /* c */\n\nimport \"side\";\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/999/4",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };/* c */\nfoo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" }; /* c */\nfoo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/1008/3",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByComment": true
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\n/* c */foo();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\n/* c */ foo();\n"
+ },
+ {
+  "name": "oxfmt-tokens/1017/2",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo/* c */();\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo /* c */();\n"
+ },
+ {
+  "name": "oxfmt-tokens/1032/1",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
+  },
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo(\n/**\n * c\n */\n);\n",
+  "output": "import type { T, S } from \"t\";\nimport \"side\";\nimport d, { e } from \"d\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo(\n  /**\n   * c\n   */\n);\n"
+ },
+ {
+  "name": "oxfmt-tokens/1041/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type\n// c\n: \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with {\n  type:\n    // c\n    \"json\",\n};\nfoo();\n"
+  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo()\n/**\n * c\n */\n;\n",
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n/**\n * c\n */\n"
  },
  {
-  "name": "oxfmt-tokens/956/0",
+  "name": "oxfmt-tokens/1049/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type:\n// c\n \"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with {\n  type:\n    // c\n    \"json\",\n};\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/966/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \n/* c */\n\"json\" };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with {\n  type:\n    /* c */\n    \"json\",\n};\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/976/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\"\n\n// c\n\n };\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with {\n  type: \"json\",\n\n  // c\n};\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/985/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" \n\n// c\n\n};\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with {\n  type: \"json\",\n\n  // c\n};\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/994/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" }\n\n// c\n\n;\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\n\n// c\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/1003/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\n\n// c\n\n\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\n\n// c\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/1012/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\n\n\n// c\n\nfoo();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\n\n// c\n\nfoo();\n"
- },
- {
-  "name": "oxfmt-tokens/1022/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo/*\n   * c\n   */();\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo /*\n * c\n */();\n"
- },
- {
-  "name": "oxfmt-tokens/1031/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo(/*\n   * c\n   */);\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo(\n  /*\n   * c\n   */\n);\n"
- },
- {
-  "name": "oxfmt-tokens/1040/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo()/*\n   * c\n   */;\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo(); /*\n * c\n */\n"
- },
- {
-  "name": "oxfmt-tokens/1049/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
   "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();/*\n   * c\n   */\n",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo(); /*\n * c\n */\n"
+  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo(); /*\n * c\n */\n"
  },
  {
-  "name": "oxfmt-tokens/1058/0",
+  "name": "oxfmt-tokens/1058/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
   "input": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n/*\n   * c\n   */",
-  "output": "import d, { e } from \"d\";\nimport \"side\";\nimport type { T, S } from \"t\";\n\nimport json from \"./a.json\" with { type: \"json\" };\nfoo();\n/*\n * c\n */\n"
+  "output": "import json from \"./a.json\" with { type: \"json\" };\n\nimport type { T, S } from \"t\";\nimport \"side\";\nimport d, { e } from \"d\";\nfoo();\n/*\n * c\n */\n"
  },
  {
-  "name": "oxfmt-tokens/1068/0",
+  "name": "oxfmt-tokens/1068/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
   "input": "#!/usr/bin/env node\n/**\n * c\n */\n\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\";\n",
   "output": "#!/usr/bin/env node\n/**\n * c\n */\n\n\"use strict\";\nimport a from \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1077/0",
+  "name": "oxfmt-tokens/1077/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
   "input": "#!/usr/bin/env node\n\n/**\n * c\n */\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\";\n",
   "output": "#!/usr/bin/env node\n\n/**\n * c\n */\n\"use strict\";\nimport a from \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1087/0",
+  "name": "oxfmt-tokens/1087/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
   "input": "#!/usr/bin/env node\n\"use strict\"/* c */ /* d */;\nimport b from \"b\";\nimport a from \"a\";\n",
   "output": "#!/usr/bin/env node\n\"use strict\"; /* c */ /* d */\nimport a from \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1096/0",
+  "name": "oxfmt-tokens/1096/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
   "input": "#!/usr/bin/env node\n\"use strict\";/* c */ /* d */\nimport b from \"b\";\nimport a from \"a\";\n",
   "output": "#!/usr/bin/env node\n\"use strict\"; /* c */ /* d */\nimport a from \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1105/0",
+  "name": "oxfmt-tokens/1105/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
   "input": "#!/usr/bin/env node\n\"use strict\";\n/* c */ /* d */import b from \"b\";\nimport a from \"a\";\n",
   "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\n/* c */ /* d */ import b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1114/0",
+  "name": "oxfmt-tokens/1114/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
   "input": "#!/usr/bin/env node\n\"use strict\";\nimport/* c */ /* d */ b from \"b\";\nimport a from \"a\";\n",
   "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\nimport /* c */ /* d */ b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1123/0",
+  "name": "oxfmt-tokens/1123/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
   "input": "#!/usr/bin/env node\n\"use strict\";\nimport /* c */ /* d */b from \"b\";\nimport a from \"a\";\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\nimport /* c */ /* d */ b from \"b\";\n"
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport /* c */ /* d */ b from \"b\";\nimport a from \"a\";\n"
  },
  {
   "name": "oxfmt-tokens/1141/0",
@@ -6367,503 +7239,963 @@
   "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\nimport b /* c */ /* d */ from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1163/0",
+  "name": "oxfmt-tokens/1162/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\"\n// c\n;\nimport a from \"a\";\n",
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\"// c\n;\nimport a from \"a\";\n",
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\nimport b from \"b\"; // c\n"
+ },
+ {
+  "name": "oxfmt-tokens/1171/8",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
+  },
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";// c\n\nimport a from \"a\";\n",
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\"; // c\nimport a from \"a\";\n"
+ },
+ {
+  "name": "oxfmt-tokens/1180/7",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
+  },
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\n// c\nimport a from \"a\";\n",
   "output": "#!/usr/bin/env node\n\"use strict\";\n// c\nimport a from \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1172/0",
+  "name": "oxfmt-tokens/1189/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\n// c\n\nimport a from \"a\";\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\n// c\nimport b from \"b\";\n"
- },
- {
-  "name": "oxfmt-tokens/1181/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\n\n// c\nimport a from \"a\";\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\n// c\nimport a from \"a\";\nimport b from \"b\";\n"
- },
- {
-  "name": "oxfmt-tokens/1190/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport\n// c\n a from \"a\";\n",
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport// c\n a from \"a\";\n",
   "output": "#!/usr/bin/env node\n\"use strict\";\nimport // c\na from \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1199/0",
+  "name": "oxfmt-tokens/1198/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport \n// c\na from \"a\";\n",
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport // c\na from \"a\";\n",
   "output": "#!/usr/bin/env node\n\"use strict\";\nimport // c\na from \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1211/0",
+  "name": "oxfmt-tokens/1207/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a/*\n   * c\n   */ from \"a\";\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a /*\n * c\n */ from \"a\";\nimport b from \"b\";\n"
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a// c\n from \"a\";\n",
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\"; // c\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1233/0",
+  "name": "oxfmt-tokens/1231/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from /* c */\"a\";\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from /* c */ \"a\";\nimport b from \"b\";\n"
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from/* c */ /* d */ \"a\";\n",
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from /* c */ /* d */ \"a\";\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1248/0",
+  "name": "oxfmt-tokens/1247/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\"\n/**\n * c\n */\n;\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\n/**\n * c\n */\nimport b from \"b\";\n"
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\"/*\n   * c\n   */;\n",
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\"; /*\n * c\n */\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1257/0",
+  "name": "oxfmt-tokens/1256/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\";\n/**\n * c\n */\n\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\n/**\n * c\n */\nimport b from \"b\";\n"
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\";/*\n   * c\n   */\n",
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\"; /*\n * c\n */\n"
  },
  {
-  "name": "oxfmt-tokens/1266/0",
+  "name": "oxfmt-tokens/1265/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\";\n\n/**\n * c\n */\n",
-  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\n\n/**\n * c\n */\nimport b from \"b\";\n"
+  "input": "#!/usr/bin/env node\n\"use strict\";\nimport b from \"b\";\nimport a from \"a\";\n/*\n   * c\n   */",
+  "output": "#!/usr/bin/env node\n\"use strict\";\nimport a from \"a\";\n/*\n * c\n */\nimport b from \"b\";\n"
  },
  {
-  "name": "oxfmt-tokens/1275/0",
+  "name": "oxfmt-tokens/1273/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "\n/**\n * c\n */\nimport { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\n/**\n * c\n */\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "\n\n// c\n\nimport { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "// c\n\nimport fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1285/0",
+  "name": "oxfmt-tokens/1283/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import/* c */ /* d */ { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "input": "import/*\n   * c\n   */ { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport {\n  /*\n   * c\n   */ a,\n} from \"x\";\nexport const y = 1;\nimport c from \"./c\";\n\nimport w from \"w\";\n"
+ },
+ {
+  "name": "oxfmt-tokens/1293/7",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
+  },
+  "input": "import \n/**\n * c\n */\n{ a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import {\n  /**\n   * c\n   */\n  a,\n} from \"x\";\n\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+ },
+ {
+  "name": "oxfmt-tokens/1303/6",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
+  },
+  "input": "import {/* c */ /* d */ a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
   "output": "import fs from \"fs\";\n\nimport { /* c */ /* d */ a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1295/0",
+  "name": "oxfmt-tokens/1313/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import // c\n// d\n{ a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport {\n  // c\n  // d\n  a,\n} from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { // c\n// d\na } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport {\n  // c\n  // d\n  a,\n} from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1305/0",
+  "name": "oxfmt-tokens/1322/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { /* c */a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { /* c */ a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a// c\n// d\n } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport {\n  a, // c\n  // d\n} from \"x\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1315/0",
+  "name": "oxfmt-tokens/1331/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import { a// c\n } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport {\n  a, // c\n} from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a // c\n// d\n} from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport {\n  a, // c\n  // d\n} from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1324/0",
+  "name": "oxfmt-tokens/1370/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { a // c\n} from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport {\n  a, // c\n} from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\"\n// c\n;\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "// c\nimport fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1355/0",
+  "name": "oxfmt-tokens/1379/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "import { a } from/*\n   * c\n   */ \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from /*\n * c\n */ \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
- },
- {
-  "name": "oxfmt-tokens/1372/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import { a } from \"x\"\n\n// c\n\n;\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "input": "import { a } from \"x\";\n// c\n\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
   "output": "import fs from \"fs\";\n// c\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1381/0",
+  "name": "oxfmt-tokens/1388/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import { a } from \"x\";\n\n// c\n\n\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n// c\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\n\n// c\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "// c\nimport fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1390/0",
+  "name": "oxfmt-tokens/1396/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import { a } from \"x\";\n\n\n// c\n\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n// c\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport// c\n fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import // c\nfs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1399/0",
+  "name": "oxfmt-tokens/1405/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import { a } from \"x\";\nimport\n\n// c\n\n fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import // c\n\nfs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport // c\nfs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import // c\nfs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport c from \"./c\";\n\nimport w from \"w\";\n"
  },
  {
-  "name": "oxfmt-tokens/1408/0",
+  "name": "oxfmt-tokens/1414/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport \n\n// c\n\nfs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import // c\n\nfs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs// c\n from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import { a } from \"x\";\n\nimport fs from \"fs\"; // c\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1422/0",
+  "name": "oxfmt-tokens/1438/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs /* c */from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs /* c */ from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from/* c */ /* d */ \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from /* c */ /* d */ \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1447/0",
+  "name": "oxfmt-tokens/1454/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from /* c */ /* d */\"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from /* c */ /* d */ \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\"/*\n   * c\n   */;\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\"; /*\n * c\n */\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1457/0",
+  "name": "oxfmt-tokens/1463/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\"// c\n// d\n;\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\"; // c\n\nimport { a } from \"x\";\n// d\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";/*\n   * c\n   */\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\"; /*\n * c\n */\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1466/0",
+  "name": "oxfmt-tokens/1472/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";// c\n// d\n\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\"; // c\n\nimport { a } from \"x\";\n// d\n\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\n/*\n   * c\n   */export const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\n/*\n * c\n */ export const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1475/0",
+  "name": "oxfmt-tokens/1481/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\n// c\n// d\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\n// c\n// d\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport/*\n   * c\n   */ const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport /*\n * c\n */ const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1484/0",
+  "name": "oxfmt-tokens/1490/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport// c\n// d\n const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport // c\n// d\nconst y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport /*\n   * c\n   */const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport /*\n * c\n */ const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1493/0",
+  "name": "oxfmt-tokens/1500/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport // c\n// d\nconst y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport // c\n// d\nconst y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const\n/**\n * c\n */\n y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const /**\n   * c\n   */\n  y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1503/0",
+  "name": "oxfmt-tokens/1509/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const /* c */y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const /* c */ y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const \n/**\n * c\n */\ny = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const /**\n   * c\n   */\n  y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1513/0",
+  "name": "oxfmt-tokens/1518/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y// c\n = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1; // c\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y\n/**\n * c\n */\n = 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y =\n  /**\n   * c\n   */\n  1;\nimport c from \"./c\";\n\nimport w from \"w\";\n"
  },
  {
-  "name": "oxfmt-tokens/1523/0",
+  "name": "oxfmt-tokens/1528/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y \n// c\n= 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y =\n  // c\n  1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y /* c */ /* d */= 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import { a } from \"x\";\n\nimport fs from \"fs\";\nexport const y /* c */ /* d */ = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1533/0",
+  "name": "oxfmt-tokens/1538/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y =\n/* c */\n 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y =\n  /* c */\n  1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y =// c\n// d\n 1;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = // c\n  // d\n  1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1543/0",
+  "name": "oxfmt-tokens/1548/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = \n\n// c\n\n1;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y =\n  // c\n\n  1;\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1/* c */;\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1; /* c */\nimport w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1552/0",
+  "name": "oxfmt-tokens/1557/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1\n\n// c\n\n;\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\n\n// c\n\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;/* c */\nimport w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1; /* c */\nimport w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1561/0",
+  "name": "oxfmt-tokens/1566/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\n\n// c\n\n\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\n\n// c\n\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\n/* c */import w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\n/* c */ import w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1570/0",
+  "name": "oxfmt-tokens/1575/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\n\n\n// c\n\nimport w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\n\n// c\n\nimport w from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport/* c */ w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport /* c */ w from \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1579/0",
+  "name": "oxfmt-tokens/1584/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport\n\n// c\n\n w from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport // c\n\nw from \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport /* c */w from \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport /* c */ w from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1588/0",
+  "name": "oxfmt-tokens/1593/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport \n\n// c\n\nw from \"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport // c\n\nw from \"w\";\n\nimport c from \"./c\";\n"
- },
- {
-  "name": "oxfmt-tokens/1602/0",
-  "filename": "fuzz.ts",
-  "options": {
-   "printWidth": 100,
-   "sortImports": true
-  },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w /* c */from \"w\";\nimport c from \"./c\";\n",
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w/* c */ from \"w\";\nimport c from \"./c\";\n",
   "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w /* c */ from \"w\";\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1627/0",
+  "name": "oxfmt-tokens/1611/9",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from /* c */ /* d */\"w\";\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from /* c */ /* d */ \"w\";\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from/* c */ \"w\";\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from /* c */ \"w\";\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1637/0",
+  "name": "oxfmt-tokens/1632/8",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "unknown",
+     "external"
+    ],
+    "newlinesBetween": true,
+    "sortSideEffects": true,
+    "order": "desc"
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\"// c\n// d\n;\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\"; // c\n\n// d\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\"\n/* c */\n;\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\n/* c */\nimport c from \"./c\";\n\nimport w from \"w\";\n"
  },
  {
-  "name": "oxfmt-tokens/1646/0",
+  "name": "oxfmt-tokens/1641/7",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "customGroups": [
+     {
+      "groupName": "react",
+      "elementNamePattern": [
+       "react",
+       "react-*"
+      ]
+     },
+     {
+      "groupName": "scoped-types",
+      "elementNamePattern": [
+       "@*/**"
+      ],
+      "modifiers": [
+       "type"
+      ]
+     },
+     {
+      "groupName": "css",
+      "selector": "style"
+     }
+    ],
+    "groups": [
+     "react",
+     "scoped-types",
+     "external",
+     "unknown",
+     "css"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";// c\n// d\n\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\"; // c\n// d\n\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\n/* c */\n\nimport c from \"./c\";\n",
+  "output": "import { a } from \"x\";\n\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\n/* c */\n\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1655/0",
+  "name": "oxfmt-tokens/1650/6",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "side_effect_style",
+     "side_effect",
+     "value-builtin",
+     "type-import",
+     "default-external",
+     "wildcard-import",
+     "named-import",
+     "unknown"
+    ],
+    "internalPattern": [
+     "@core/",
+     "@ui/"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\n// c\n// d\nimport c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\n// c\n// d\nimport c from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\n\n/* c */\nimport c from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\n/* c */\nimport c from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1664/0",
+  "name": "oxfmt-tokens/1659/5",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "groups": [
+     "type",
+     [
+      "builtin",
+      "external"
+     ],
+     {
+      "newlinesBetween": false
+     },
+     "internal",
+     [
+      "parent",
+      "sibling",
+      "index"
+     ],
+     "side_effect",
+     "style",
+     "unknown"
+    ]
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport// c\n// d\n c from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport // c\n// d\nc from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport\n/* c */\n c from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport /* c */\nc from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1673/0",
+  "name": "oxfmt-tokens/1668/4",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "sortSideEffects": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport // c\n// d\nc from \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport // c\n// d\nc from \"./c\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport \n/* c */\nc from \"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\nimport /* c */\nc from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1692/0",
+  "name": "oxfmt-tokens/1681/3",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByComment": true
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from/* c */ \"./c\";\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport c from /* c */ \"./c\";\nimport w from \"w\";\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c/* c */ /* d */ from \"./c\";\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c /* c */ /* d */ from \"./c\";\n"
  },
  {
-  "name": "oxfmt-tokens/1713/0",
+  "name": "oxfmt-tokens/1706/2",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\"\n/* c */\n;\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n/* c */\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from /*\n   * c\n   */\"./c\";\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport c from /*\n * c\n */ \"./c\";\nimport w from \"w\";\n"
  },
  {
-  "name": "oxfmt-tokens/1722/0",
+  "name": "oxfmt-tokens/1717/1",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
-   "sortImports": true
+   "sortImports": {
+    "order": "desc",
+    "ignoreCase": false
+   }
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n/* c */\n\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n/* c */\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\"/* c */ /* d */;\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\"; /* c */ /* d */\n"
  },
  {
-  "name": "oxfmt-tokens/1731/0",
+  "name": "oxfmt-tokens/1726/0",
   "filename": "fuzz.ts",
   "options": {
    "printWidth": 100,
    "sortImports": true
   },
-  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n\n/* c */\n",
-  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\";\n\n/* c */\n"
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";/* c */ /* d */\n",
+  "output": "import fs from \"fs\";\n\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\nimport c from \"./c\"; /* c */ /* d */\n"
+ },
+ {
+  "name": "oxfmt-tokens/1734/9",
+  "filename": "fuzz.ts",
+  "options": {
+   "printWidth": 100,
+   "sortImports": {
+    "partitionByComment": true,
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "ignoreCase": false
+   }
+  },
+  "input": "import { a } from \"x\";\nimport fs from \"fs\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n\n/**\n * c\n */\n",
+  "output": "import fs from \"fs\";\nimport { a } from \"x\";\nexport const y = 1;\nimport w from \"w\";\nimport c from \"./c\";\n\n/**\n * c\n */\n"
  }
 ]

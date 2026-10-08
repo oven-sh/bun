@@ -6,7 +6,7 @@
 //! the lines that nodes and comments are on. This is as much of Babel's tree as that takes: the
 //! `#!` line, the directives and the import declarations that are not in a `declare module`.
 
-use bun_lint::ast::{File, Ident, Import, KeyKind, Prop, Stmt, StmtKind};
+use bun_lint::ast::{File, Ident, Import, KeyKind, Prop, Stmt, StmtKind, StmtTag};
 use bun_lint::span::Span;
 use bun_lint::tokens::TokenKind;
 
@@ -225,7 +225,7 @@ struct Group {
 impl<'a> Model<'a> {
     /// `None`: the file has no imports.
     pub(super) fn new(file: &'a File<'a>) -> Option<Model<'a>> {
-        let last_import = file.body().iter().rev().find(|it| matches!(it.kind(), StmtKind::Import(_)))?;
+        let last_import = file.body().iter().rev().find(|it| it.tag() == StmtTag::Import)?;
         let mut model = Model {
             file,
             text: file.text(),

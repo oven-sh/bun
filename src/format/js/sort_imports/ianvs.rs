@@ -238,10 +238,11 @@ fn sorted_by_import_order(model: &mut Model, nodes: &[u32], options: &Options, o
         let declaration = &model.declarations[index as usize];
         grouped.push((options.group_of(model.source_of(declaration), declaration.is_type)?, index));
     }
-    stable_sort_by(&mut grouped, |a, b| {
+    grouped.sort_by_key(|it: &(usize, u32)| it.0);
+    for group in grouped.chunk_by_mut(|a, b| a.0 == b.0) {
         let source = |index: u32| model.source_of(&model.declarations[index as usize]);
-        a.0.cmp(&b.0).then_with(|| options.compare(source(a.1), source(b.1)))
-    });
+        stable_sort_by(group, |a, b| options.compare(source(a.1), source(b.1)));
+    }
     for &(_, index) in &grouped {
         sort_specifiers(model, index, options);
     }

@@ -131,6 +131,14 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         let mut out = Vec::new();
         return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| (out, None));
     }
+    let is_yaml = match &options.parser {
+        Some(parser) => &parser[..] == b"yaml",
+        None => bun_format::yaml::is_yaml_path(name),
+    };
+    if is_yaml {
+        let mut out = Vec::new();
+        return bun_format::yaml::format(code, options, &mut Default::default(), &mut out).map(|()| (out, None));
+    }
     let is_graphql = match &options.parser {
         Some(parser) => &parser[..] == b"graphql",
         None => bun_format::graphql::is_graphql_path(name),
@@ -213,6 +221,7 @@ fn is_other_language(path: &Path) -> bool {
     bun_format::json::parser_for_path(path).is_some()
         || bun_format::css::parser_for_path(path).is_some()
         || bun_format::graphql::is_graphql_path(path)
+        || bun_format::yaml::is_yaml_path(path)
 }
 
 /// The files at `paths` and in the directories at `paths` that can be formatted.

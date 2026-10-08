@@ -1,5 +1,8 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
+use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 
 /// Require `let` or `const` instead of `var`.
 pub struct NoVar;
@@ -89,84 +92,116 @@ fn has_self_reference_in_tdz(declarator: VarDecl<'_>) -> bool {
     })
 }
 
-/// ESLint's `hasUnsafeHoistedFunctionReference`. `declaration_start`: where the declarator starts.
-fn has_unsafe_hoisted_function_reference(variable: Symbol<'_>, declaration_start: u32) -> bool {
-    let home = variable.scope();
-    for reference in variable.references() {
-        if reference.is_init() || reference.span().start < declaration_start {
-            continue;
+/// What the fixes of a file find out.
+#[derive(Default)]
+pub struct State<'a> {
+    /// Where a function is called first.
+    first_calls: RefCell<FxHashMap<Symbol<'a>, u32>>,
+    /// ESLint's `isInLoop`
+    loops: RefCell<AncestorMemo<'a, bool>>,
+}
+
+impl<'a> State<'a> {
+    /// Where the first call of `function` starts.
+    fn first_call(&self, function: Symbol<'a>) -> u32 {
+        *self.first_calls.borrow_mut().entry(function).or_insert_with(|| {
+            let calls = function.references().filter(|it| it.expr().is_some_and(ast_utils::is_callee));
+            calls.map(|it| it.span().start).min().unwrap_or(u32::MAX)
+        })
+    }
+
+    fn is_in_loop(&self, statement: Stmt<'a>) -> bool {
+        let is_in_loop = self.loops.borrow_mut().find(statement.into(), |_, parent| {
+            match ast_utils::is_function(parent) {
+                true => Some(false),
+                false => ast_utils::is_loop(parent).then_some(true),
+            }
+        });
+        is_in_loop == Some(true)
+    }
+
+    /// ESLint's `hasUnsafeHoistedFunctionReference`. `declaration_start`: where the declarator starts.
+    fn has_unsafe_hoisted_function_reference(&self, variable: Symbol<'a>, declaration_start: u32) -> bool {
+        let home = variable.scope();
+        for reference in variable.references() {
+            if reference.is_init() || reference.span().start < declaration_start {
+                continue;
+            }
+            let mut current = reference.scope().variable_scope();
+            while current != home {
+                if let Node::Func(func) = current.node()
+                    && func.kind() == FnKind::Decl
+                    && func.has_body()
+                    && let Some(name) = func.name()
+                    && let Some(function) = current.parent().and_then(|upper| upper.get_name(name.name()))
+                    && self.first_call(function) < declaration_start
+                {
+                    return true;
+                }
+                match current.parent() {
+                    Some(upper) => current = upper.variable_scope(),
+                    None => break,
+                }
+            }
         }
-        let mut current = reference.scope().variable_scope();
-        while current != home {
-            if let Node::Func(func) = current.node()
-                && func.kind() == FnKind::Decl
-                && func.has_body()
-                && let Some(name) = func.name()
-                && let Some(function) = current.parent().and_then(|upper| upper.get_name(name.name()))
-                && function.references().any(|it| {
-                    it.span().start < declaration_start && it.expr().is_some_and(ast_utils::is_callee)
-                })
+        false
+    }
+
+    /// ESLint's `canFix`.
+    fn can_fix(&self, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> bool {
+        let parent = statement.parent();
+        // Its parent is an `ExportNamedDeclaration`.
+        if statement.is_exported() || matches!(parent, Node::Case(_)) {
+            return false;
+        }
+        let is_in_statement_list = ast_utils::is_statement_list_parent(parent)
+            || matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Module);
+        if !is_in_statement_list && !utils::is_for_init(statement) {
+            return false;
+        }
+
+        // What takes no look at the references comes first: those of a variable that is declared once
+        // are then looked at for one declaration.
+        let variables = Node::Stmt(statement).declared_symbols();
+        let is_never_let = |variable: &Symbol<'a>| {
+            variable.scope().kind() == ScopeKind::Global
+                || variable.declarations().len() >= 2
+                || variable.name().is("let")
+        };
+        if variables.iter().any(is_never_let) || declarations.iter().any(has_self_reference_in_tdz) {
+            return false;
+        }
+
+        let scope_node = scope_node_span(statement);
+        let scope = Node::Stmt(statement).scope();
+        let cannot_be_let = |variable: Symbol<'a>| {
+            if variable.references().any(|reference| !scope_node.contains(reference.span()))
+                // A `catch` parameter shadows it.
+                || scope.resolve_name(variable.name()) != Some(variable)
             {
                 return true;
             }
-            match current.parent() {
-                Some(upper) => current = upper.variable_scope(),
-                None => break,
+            let Some(declarator) = variable.declarations().next().and_then(Declaration::node) else {
+                return true;
+            };
+            let declaration_start = declarator.span().start;
+            variable.references().any(|reference| !reference.is_init() && reference.span().start < declaration_start)
+                || self.has_unsafe_hoisted_function_reference(variable, declaration_start)
+        };
+        if variables.iter().any(|&variable| cannot_be_let(variable)) {
+            return false;
+        }
+
+        if self.is_in_loop(statement) {
+            if variables.iter().any(|&variable| is_referenced_in_closure(variable)) {
+                return false;
+            }
+            if !is_loop_assignee(statement) && !declarations.iter().all(|it| it.init().is_some()) {
+                return false;
             }
         }
+        true
     }
-    false
-}
-
-/// ESLint's `canFix`.
-fn can_fix<'a>(statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> bool {
-    let parent = statement.parent();
-    // Its parent is an `ExportNamedDeclaration`.
-    if statement.is_exported() || matches!(parent, Node::Case(_)) {
-        return false;
-    }
-    let is_in_statement_list = ast_utils::is_statement_list_parent(parent)
-        || matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Module);
-    if !is_in_statement_list && !utils::is_for_init(statement) {
-        return false;
-    }
-    if declarations.iter().any(has_self_reference_in_tdz) {
-        return false;
-    }
-
-    let variables = Node::Stmt(statement).declared_symbols();
-    let scope_node = scope_node_span(statement);
-    let scope = Node::Stmt(statement).scope();
-    let cannot_be_let = |variable: Symbol<'a>| {
-        if variable.scope().kind() == ScopeKind::Global
-            || variable.declarations().len() >= 2
-            || variable.name().is("let")
-            || variable.references().any(|reference| !scope_node.contains(reference.span()))
-            // A `catch` parameter shadows it.
-            || scope.resolve_name(variable.name()) != Some(variable)
-        {
-            return true;
-        }
-        let Some(declarator) = variable.declarations().next().and_then(Declaration::node) else {
-            return true;
-        };
-        let declaration_start = declarator.span().start;
-        variable.references().any(|reference| !reference.is_init() && reference.span().start < declaration_start)
-            || has_unsafe_hoisted_function_reference(variable, declaration_start)
-    };
-    if variables.iter().any(|&variable| cannot_be_let(variable)) {
-        return false;
-    }
-
-    if ast_utils::is_in_loop(statement) {
-        if variables.iter().any(|&variable| is_referenced_in_closure(variable)) {
-            return false;
-        }
-        if !is_loop_assignee(statement) && !declarations.iter().all(|it| it.init().is_some()) {
-            return false;
-        }
-    }
-    true
 }
 
 /// The `var` of `statement`, which modifiers can precede.
@@ -197,7 +232,7 @@ impl NoVar {
         let span = statement.span_without_export();
         cx.report(span, UNEXPECTED_VAR).fix(|fixer| {
             let var = var_keyword(statement)?;
-            can_fix(statement, declarations)
+            (cx.state.can_fix(statement, declarations))
                 .then(|| FixTracker::new(fixer).retain_range(span).replace_text_range(var, "let"))
         });
     }
@@ -205,13 +240,14 @@ impl NoVar {
 
 impl Rule for NoVar {
     const META: Meta = Meta::eslint("no-var", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoVar
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.stmts([StmtTag::Var], Self::check);
+        State::default()
     }
 }

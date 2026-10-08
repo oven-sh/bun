@@ -2,17 +2,18 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_ast::Log;
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap, index_sort};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{Mutex, UnboundedQueue, thread_pool};
+use bun_threading::{Guarded, Mutex, UnboundedQueue, thread_pool};
 
 use bun_semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
 
 use crate::bin_real;
+use crate::dependency::Behavior;
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
 use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
@@ -47,6 +48,8 @@ type ProgressNode = crate::bun_progress::Node;
 // ── Store id aliases ───────────────────────────────────────────────────────
 type StoreEntryId = store::entry::Id;
 type StoreNodeId = store::node::Id;
+/// The entry of a workspace member and its lifecycle scripts.
+type MemberScripts = (StoreEntryId, package::scripts::List);
 
 // ── Path option presets ───────────────────────────────────────────────────
 use paths::path_options::{AssumeOk as _, Kind as PathKind, PathSeparators};
@@ -117,6 +120,9 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// The lifecycle scripts of workspace members. Each member's task adds its list in `Step::RunPreinstall`; `run_member_scripts` runs them.
+    pub(crate) member_scripts: Guarded<Vec<MemberScripts>>,
 }
 
 impl<'a> Installer<'a> {
@@ -321,6 +327,13 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
+        self.report_failure(entry_id, err);
+        self.decrement_pending_tasks();
+        self.resume_unblocked_tasks(entry_id);
+    }
+
+    /// Called from main thread. Prints `err` and counts the failure. Does not release the entry's pending task.
+    fn report_failure(&mut self, entry_id: StoreEntryId, err: &TaskError) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -438,9 +451,6 @@ impl<'a> Installer<'a> {
         }
 
         self.summary.fail += 1;
-
-        self.decrement_pending_tasks();
-        self.resume_unblocked_tasks(entry_id);
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {
@@ -609,6 +619,184 @@ impl<'a> Installer<'a> {
             entry_steps[entry_id.get() as usize]
                 .store(Step::SymlinkDependencyBinaries as u32, Ordering::Relaxed);
             self.start_task(entry_id);
+        }
+    }
+
+    /// Whether the dependency that put `entry_id` in the store is optional.
+    pub(crate) fn is_optional(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        self.lockfile().buffers.dependencies[dep_id as usize]
+            .behavior
+            .contains(Behavior::OPTIONAL)
+    }
+
+    /// Main thread only, after every entry is `Done`: a member's scripts can use every package and every bin of the install, as the root's scripts can.
+    pub(crate) fn run_member_scripts(&mut self) {
+        let mut members = core::mem::take(self.member_scripts.get_mut());
+        if members.is_empty() {
+            return;
+        }
+        // Tasks add their lists in the order they finish.
+        index_sort::sort_vec_unstable_by(&mut members, |a, b| a.0.get().cmp(&b.0.get()));
+
+        // Only scripts are left, so each script updates the progress line.
+        self.manager()
+            .finished_installing
+            .store(true, Ordering::Relaxed);
+
+        while !members.is_empty() {
+            let (ready, waiting) = self.ready_members(members);
+            debug_assert!(!ready.is_empty());
+            members = waiting;
+
+            let dependents = self.bin_dependents(&ready);
+
+            // As in a task: preinstall, link bins, then the other scripts.
+            let mut others: Vec<MemberScripts> = Vec::new();
+            let mut ran_preinstall = false;
+            for (member, mut list) in ready {
+                // A failed script of an optional member does not end the install. Its scripts stay one chain, which stops at the failure.
+                if list.first_index != 0 || self.is_optional(member) {
+                    others.push((member, list));
+                    continue;
+                }
+                ran_preinstall = true;
+                let Some(next) = list.items[1..].iter().position(Option::is_some) else {
+                    self.spawn_member_scripts(member, list);
+                    continue;
+                };
+                let mut preinstall = list.clone();
+                preinstall.items[1..].fill(None);
+                list.first_index = u8::try_from(next + 1).expect("int cast");
+                if self.spawn_member_scripts(member, preinstall) {
+                    others.push((member, list));
+                }
+            }
+            if ran_preinstall {
+                self.finish_member_scripts(&dependents);
+            }
+
+            if !others.is_empty() {
+                for (member, list) in others {
+                    self.spawn_member_scripts(member, list);
+                }
+                self.finish_member_scripts(&dependents);
+            }
+        }
+
+        self.manager()
+            .finished_installing
+            .store(false, Ordering::Relaxed);
+    }
+
+    /// Splits `members` into those that can run now and those that wait: a member waits while a chain of dependencies leads to another of `members`. A cycle does not count, as in `is_task_blocked`.
+    fn ready_members(
+        &self,
+        members: Vec<MemberScripts>,
+    ) -> (Vec<MemberScripts>, Vec<MemberScripts>) {
+        let store = self.store;
+        let entry_parents = store.entries.items_parents();
+        let mut waits = bun_core::handle_oom(Bitset::init_empty(store.entries.len()));
+        let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
+
+        let mut stack: Vec<StoreEntryId> = members.iter().map(|(member, _)| *member).collect();
+        while let Some(entry_id) = stack.pop() {
+            for &parent_id in &entry_parents[entry_id.get() as usize] {
+                if parent_id == StoreEntryId::INVALID || waits.is_set(parent_id.get() as usize) {
+                    continue;
+                }
+                parent_dedupe.clear_retaining_capacity();
+                if store.is_cycle(parent_id, entry_id, &mut parent_dedupe) {
+                    continue;
+                }
+                waits.set(parent_id.get() as usize);
+                stack.push(parent_id);
+            }
+        }
+
+        members
+            .into_iter()
+            .partition(|(member, _)| !waits.is_set(member.get() as usize))
+    }
+
+    /// The entries that link a bin of one of `members`.
+    fn bin_dependents(&self, members: &[MemberScripts]) -> Vec<StoreEntryId> {
+        let entry_node_ids = self.store.entries.items_node_id();
+        let node_pkg_ids = self.store.nodes.items_pkg_id();
+        let pkg_bins = self.lockfile().packages.items_bin();
+        let pkg_id_of = |entry_id: StoreEntryId| {
+            node_pkg_ids[entry_node_ids[entry_id.get() as usize].get() as usize] as usize
+        };
+
+        let mut has_bin = bun_core::handle_oom(Bitset::init_empty(pkg_bins.len()));
+        let mut any = false;
+        for (member, _) in members {
+            let pkg_id = pkg_id_of(*member);
+            if pkg_bins[pkg_id].tag != bin::Tag::None {
+                has_bin.set(pkg_id);
+                any = true;
+            }
+        }
+        if !any {
+            return Vec::new();
+        }
+
+        let mut dependents = Vec::new();
+        for (entry_id, dependencies) in self.store.entries.items_dependencies().iter().enumerate() {
+            if dependencies
+                .slice()
+                .iter()
+                .any(|dep| has_bin.is_set(pkg_id_of(dep.entry_id)))
+            {
+                dependents.push(StoreEntryId::from(
+                    u32::try_from(entry_id).expect("int cast"),
+                ));
+            }
+        }
+        dependents
+    }
+
+    /// Returns false when the scripts did not start.
+    fn spawn_member_scripts(&mut self, member: StoreEntryId, list: package::scripts::List) -> bool {
+        let optional = self.is_optional(member);
+        let manager = self.manager_mut();
+        let command_ctx: Command::Context<'_> = &mut *self.command_ctx;
+        let output_in_foreground = false;
+        match manager.spawn_package_lifecycle_scripts(
+            command_ctx,
+            list,
+            optional,
+            output_in_foreground,
+            None,
+        ) {
+            Ok(()) => true,
+            Err(err) => {
+                self.report_failure(member, &TaskError::RunScripts(err));
+                false
+            }
+        }
+    }
+
+    /// Waits for the scripts that run, then links the bins of `dependents` again: a script can write or replace the file of a member's bin.
+    fn finish_member_scripts(&mut self, dependents: &[StoreEntryId]) {
+        let manager = self.manager_mut();
+        // .monotonic is okay because only this thread changes the value now.
+        while manager
+            .pending_lifecycle_script_tasks
+            .load(Ordering::Relaxed)
+            > 0
+        {
+            manager.report_slow_lifecycle_scripts();
+            manager.sleep();
+        }
+
+        for &dependent in dependents {
+            // `link_dependency_bins` writes to the staging path, which is gone for a global-store entry. No such entry depends on a member.
+            debug_assert!(!self.entry_uses_global_store(dependent));
+            if let Err(err) = self.link_dependency_bins(dependent) {
+                self.report_failure(dependent, &TaskError::Binaries(err));
+            }
         }
     }
 }
@@ -1662,19 +1850,6 @@ impl Task {
                         };
 
                         if let Some(list) = scripts_list {
-                            // Snapshot before boxing so the post-publish
-                            // `first_index` check needs no raw-pointer deref.
-                            let first_index = list.first_index;
-                            let clone: *mut package::scripts::List =
-                                bun_core::heap::into_raw(Box::new(list));
-                            // Each Task is the sole writer for its own `entry_id`'s
-                            // `scripts` slot; no other thread reads or writes it
-                            // until this Task reaches
-                            // `Step::RunPostInstallAndPrePostPrepare`. The column
-                            // is `Cell<Option<*mut _>>` (see Store.rs) so writing
-                            // through `&Store` provenance is a safe `.set()`.
-                            entry_scripts[self.entry_id.get() as usize].set(Some(clone));
-
                             if is_trusted_through_update_request {
                                 let (trusted_name, trusted_name_hash) =
                                     if pkg_res.tag == ResolutionTag::Npm {
@@ -1719,6 +1894,25 @@ impl Task {
                                     .unwrap()
                                     .insert(trusted_name_hash, Box::from(trusted_name));
                             }
+
+                            if pkg_res.tag == ResolutionTag::Workspace {
+                                installer.member_scripts.lock().push((self.entry_id, list));
+                                step = self.next_step(current_step);
+                                continue 'step;
+                            }
+
+                            // Snapshot before boxing so the post-publish
+                            // `first_index` check needs no raw-pointer deref.
+                            let first_index = list.first_index;
+                            let clone: *mut package::scripts::List =
+                                bun_core::heap::into_raw(Box::new(list));
+                            // Each Task is the sole writer for its own `entry_id`'s
+                            // `scripts` slot; no other thread reads or writes it
+                            // until this Task reaches
+                            // `Step::RunPostInstallAndPrePostPrepare`. The column
+                            // is `Cell<Option<*mut _>>` (see Store.rs) so writing
+                            // through `&Store` provenance is a safe `.set()`.
+                            entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if first_index != 0 {
                                 // has scripts but not a preinstall

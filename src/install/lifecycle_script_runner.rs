@@ -545,8 +545,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     &(*this).package_name,
                     ProgressStrings::SCRIPT_EMOJI.as_bytes(),
                 );
-                // .monotonic is okay because because this value is only used by hoisted installs, which
-                // only use this type on the main thread.
+                // .monotonic is okay because only the main thread reads and writes this value.
                 if (*manager).finished_installing.load(Ordering::Relaxed) {
                     scripts_node.activate();
                     (*manager).progress.refresh();
@@ -872,8 +871,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if !self.foreground
                     && let Some(scripts_node) = self.manager().scripts_node_mut()
                 {
-                    // .monotonic is okay because because this value is only used by hoisted
-                    // installs, which only use this type on the main thread.
+                    // .monotonic is okay because only the main thread reads and writes this value.
                     if self.manager().finished_installing.load(Ordering::Relaxed) {
                         scripts_node.complete_one();
                     } else {

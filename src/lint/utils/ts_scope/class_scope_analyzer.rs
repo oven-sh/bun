@@ -12,7 +12,7 @@ use crate::ast::{
 };
 use crate::semantic::Declaration;
 use crate::span::Span;
-use crate::tokens::{skip_trivia, skip_trivia_back};
+use crate::tokens::{skip_trivia, skip_trivia_back, token_len};
 use crate::utils::estree_compat::{estree_span, is_assignment_target};
 use crate::utils::text::number_to_string;
 use bun_sema::hir;
@@ -83,6 +83,18 @@ fn extract_name_for_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Extracte
 /// the name.
 pub fn extract_name_for_member<'a>(node: MemberNode<'a>) -> Option<ExtractedName<'a>> {
     match node {
+        // `static constructor() {}`, which is a method in ESTree.
+        MemberNode::Member(member) if member.kind() == MemberKind::Constructor => {
+            let text = member.file().text();
+            let before = member.modifiers().last().map_or(member.span().start, |it| it.span().end);
+            let start = skip_trivia(text, before);
+            let len = token_len(text.get(start as usize..).unwrap_or_default());
+            Some(ExtractedName {
+                code_name: Cow::Borrowed(b"constructor"),
+                is_private: false,
+                name_span: Span::new(start, start + len as u32),
+            })
+        }
         MemberNode::Member(member) => extract_name_for_key(member.file(), member.key()?),
         MemberNode::ParameterProperty(param) => Some(ExtractedName {
             code_name: Cow::Borrowed(param.pat().as_ident()?.bytes()),
@@ -252,7 +264,7 @@ impl<'a> ClassMemberUsage<'a> {
         };
         for member in class.members() {
             match member.kind() {
-                MemberKind::Constructor => {
+                MemberKind::Constructor if !member.is_static() => {
                     let params = member.func().map(Func::params).into_iter().flatten();
                     params
                         .filter(|param| param.is_parameter_property())
@@ -261,7 +273,8 @@ impl<'a> ClassMemberUsage<'a> {
                 MemberKind::Property
                 | MemberKind::Method
                 | MemberKind::Getter
-                | MemberKind::Setter => add(MemberNode::Member(member)),
+                | MemberKind::Setter
+                | MemberKind::Constructor => add(MemberNode::Member(member)),
                 _ => {}
             }
         }

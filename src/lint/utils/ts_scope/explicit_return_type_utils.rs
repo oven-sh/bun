@@ -5,11 +5,10 @@
 
 use super::estree::is_expression_statement;
 use crate::ast::{
-    Expr, ExprKind, Flags, FnBody, FnKind, Func, Member, MemberKind, Modifier, Node, Prop,
-    PropKind, Stmt, StmtKind,
+    Expr, ExprKind, Flags, FnBody, Func, Member, MemberKind, Node, Prop, PropKind, Stmt, StmtKind,
 };
 use crate::span::Span;
-use crate::tokens::{skip_trivia, skip_trivia_back};
+use crate::utils::ts_utils::get_function_head_loc;
 
 /// typescript-eslint's `FunctionInfo`. The `return` statements of a function are
 /// [`Func::returns`], so no rule has to collect them and the info is the function.
@@ -219,9 +218,11 @@ fn is_valid_function_return_type(func: FunctionInfo, options: &ReturnTypeOptions
     }
     func.return_type().is_some()
         || match parent_of(func) {
-            Parent::MethodDefinition(member) => {
-                matches!(member.kind(), MemberKind::Constructor | MemberKind::Setter)
-            }
+            // `static constructor() {}` is a method.
+            Parent::MethodDefinition(member) => match member.kind() {
+                MemberKind::Constructor => !member.is_static(),
+                kind => kind == MemberKind::Setter,
+            },
             Parent::Property(prop) => prop.kind() == PropKind::Setter,
             _ => false,
         }
@@ -275,59 +276,4 @@ pub fn ancestor_has_return_type(func: Func) -> bool {
         }
     }
     false
-}
-
-/// typescript-eslint's `getFunctionHeadLoc`.
-fn get_function_head_loc(func: Func) -> Span {
-    let (file, whole) = (func.file(), func.span());
-    let text = file.text();
-    let open_paren = || {
-        if func.is_arrow()
-            && func.params().len() == 1
-            && let Some(param) = func.params().first()
-        {
-            let start = param.span().start;
-            let before = skip_trivia_back(text, start).saturating_sub(1);
-            return match text.get(before as usize) {
-                Some(b'(') => before,
-                _ => start,
-            };
-        }
-        let from = match (func.name(), func.kind()) {
-            (Some(name), _) => name.span().end,
-            (None, FnKind::Arrow | FnKind::Expr | FnKind::Decl) => whole.start,
-            (None, _) => func.span_from_params().start,
-        };
-        let mut tokens = file.tokens_in(Span::new(from, whole.end));
-        tokens.find(|token| token.is_punctuator("(")).map_or(whole.end, |token| token.start())
-    };
-    let member = match func.owner() {
-        Node::Member(member) => Some(member),
-        Node::Expr(e) => match e.parent() {
-            Node::Member(member) if member.init() == Some(e) && is_property_definition(member) => {
-                Some(member)
-            }
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(member) = member {
-        let last_decorator = member.modifiers().iter().rev().find(|m| m.decorator().is_some());
-        let start = match last_decorator.map(Modifier::span) {
-            Some(decorator) => skip_trivia(text, decorator.end),
-            None => member.span().start,
-        };
-        return Span::new(start, open_paren());
-    }
-    if let Parent::Property(prop) = parent_of(func) {
-        return Span::new(prop.span().start, open_paren());
-    }
-    if let Some(arrow) = func.arrow_span() {
-        return arrow;
-    }
-    let start = match func.owner() {
-        Node::Stmt(statement) => statement.span_without_export().start,
-        owner => owner.span().start,
-    };
-    Span::new(start, open_paren())
 }

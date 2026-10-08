@@ -20,7 +20,8 @@ const expected: Record<string, string[]> = oxlint ? {} : JSON.parse(readFileSync
 
 /** `file:line:column rule` of each diagnostic, at its first label, which is what oxlint prints. */
 function run(command: string, before: string[], cwd: string): string[] {
-  const { stdout, stderr } = spawnSync(command, [...before, "-f", "json", "."], { cwd, encoding: "utf8" });
+  const { stdout, stderr, error } = spawnSync(command, [...before, "-f", "json", "."], { cwd, encoding: "utf8", timeout: 60_000, maxBuffer: 1 << 28 });
+  if (error) throw new Error(`${command} ${before.join(" ")}: ${error.message}`);
   let diagnostics;
   try {
     ({ diagnostics } = JSON.parse(stdout));
@@ -44,14 +45,18 @@ for (const project of projects) {
     }
     if (oxlint) expected[project.name] = run(oxlint, [], cwd);
     const wanted = expected[project.name] ?? [];
-    const actual = run(ours, oursArgs, cwd);
-    const missing = wanted.filter(it => !actual.includes(it));
-    const extra = actual.filter(it => !wanted.includes(it));
-    if (missing.length + extra.length > 0) {
-      failed++;
-      console.log(`FAIL ${project.name}: ${project.about}`);
-      for (const it of missing) console.log(`  only oxlint: ${it}`);
-      for (const it of extra) console.log(`  only ours:   ${it}`);
+    // With one thread, with fewer threads than files, and with as many as there are.
+    for (const threads of project.name.startsWith("no-cycle/") ? ["--threads=1", "--threads=2", ""] : [""]) {
+      const actual = run(ours, [...oursArgs, ...(threads ? [threads] : [])], cwd);
+      const missing = wanted.filter(it => !actual.includes(it));
+      const extra = actual.filter(it => !wanted.includes(it));
+      if (missing.length + extra.length > 0) {
+        failed++;
+        console.log(`FAIL ${project.name} ${threads}: ${project.about}`);
+        for (const it of missing.slice(0, 10)) console.log(`  only oxlint: ${it}`);
+        for (const it of extra.slice(0, 10)) console.log(`  only ours:   ${it}`);
+        break;
+      }
     }
   } finally {
     rmSync(cwd, { recursive: true, force: true });

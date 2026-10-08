@@ -14,6 +14,7 @@ use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind};
 use crate::options::Json;
 use crate::span::Span;
 use crate::utils::text::find_line_break;
+use bun_core::strings;
 use smallvec::SmallVec;
 
 /// Whose notion of what a module imports. All files of a run have the same.
@@ -61,7 +62,7 @@ pub struct Request<'a> {
     pub specifier: &'a [u8],
     /// Where the specifier is.
     pub span: Span,
-    /// The line that the specifier starts in, from 1.
+    /// The line that the specifier starts in, from 1. Not with [`Flavor::Oxlint`].
     pub line: u32,
     pub kind: RequestKind,
     /// `import type`, `import { type A, type B }`, `export type * from`. What else counts depends on the [`Flavor`].
@@ -139,9 +140,9 @@ impl<'a> File<'a> {
 pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
     // With the offset in place of the line.
     let mut requests = Vec::new();
-    for e in file.exprs_of_kind(ExprTag::ImportCall) {
-        if !flavor.ignores_dynamic_imports()
-            && let ExprKind::ImportCall { args } = e.kind()
+    let has_dynamic_imports = !flavor.ignores_dynamic_imports() && may_have_import_call(file.text());
+    for e in has_dynamic_imports.then(|| file.exprs_of_kind(ExprTag::ImportCall)).into_iter().flatten() {
+        if let ExprKind::ImportCall { args } = e.kind()
             && let Some(source) = args.first()
             && let Some(specifier) = source.as_string()
         {
@@ -156,11 +157,27 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
     }
     requests.sort_unstable_by_key(|it| it.line);
     match flavor {
-        Flavor::EslintPluginImport => add_static_requests(file, &mut requests),
+        Flavor::EslintPluginImport => {
+            add_static_requests(file, &mut requests);
+            set_lines(file.text(), &mut requests);
+        }
+        // Nobody asks for the lines.
         Flavor::Oxlint => add_static_requests_of_oxlint(file, &mut requests),
     }
-    set_lines(file.text(), &mut requests);
     requests
+}
+
+/// Whether an `import` in `text` is followed by something other than a name, a string, a `{` or a `*`. To look at the text costs far
+/// less than to look for the expressions of a kind, which few files have.
+fn may_have_import_call(text: &[u8]) -> bool {
+    let mut rest = text;
+    while let Some(at) = strings::index_of(rest, b"import") {
+        rest = &rest[at + 6..];
+        if matches!(rest.trim_ascii_start().first(), Some(b'(' | b'.' | b'/')) {
+            return true;
+        }
+    }
+    false
 }
 
 fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {

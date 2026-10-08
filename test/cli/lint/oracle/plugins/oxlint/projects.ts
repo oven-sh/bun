@@ -211,6 +211,20 @@ export const projects: Project[] = [
     files: pair(`// oxlint-disable-next-line import/no-cycle\nimport { b } from "./b";\n// eslint-disable-next-line import/no-cycle\nimport { b as c } from "./b.ts";`),
   },
   {
+    name: "no-cycle/many-files",
+    about: "far more files than threads, each directory with a tsconfig.json that includes files: nothing waits for a thread that waits",
+    config: noCycle(),
+    files: Object.fromEntries(
+      Array.from({ length: 40 }, (_, directory) => [
+        [`d${directory}/tsconfig.json`, JSON.stringify({ compilerOptions: { paths: { "~/*": ["./*"] } }, include: ["**/*"] })],
+        ...Array.from({ length: 10 }, (_, file) => [
+          `d${directory}/f${file}.ts`,
+          `import { x as next } from "${file < 9 ? `~/f${file + 1}` : `../d${(directory + 1) % 40}/f0`}";\nexport const x = next;\n`,
+        ]),
+      ]).flat(),
+    ),
+  },
+  {
     name: "rules-of-hooks/loop-in-callback",
     about: "no loops and conditions are looked for in a function that is passed to a call outside a component",
     config: hooks,

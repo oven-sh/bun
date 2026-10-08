@@ -312,12 +312,12 @@ impl<'a> VNode<'a> {
 
     /// Calls `visit` with each child, in the order in which ESLint traverses them.
     pub fn for_each_child(self, mut visit: impl FnMut(VNode<'a>)) {
-        let is_espree = self.dialect() == super::Dialect::Espree;
+        let dialect = self.dialect();
         for entry in self.node_type().fields() {
             if !entry.is_child {
                 break;
             }
-            if is_espree && entry.is_typescript_only {
+            if !entry.is_in(dialect) {
                 continue;
             }
             match (entry.get)(self) {

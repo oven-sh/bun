@@ -33,8 +33,7 @@ use crate::ast::File;
 pub enum Dialect {
     /// `@typescript-eslint/parser`
     TypeScript,
-    /// ESLint's own. Its nodes lack the fields that only TypeScript has a use for, and its `Program`
-    /// ends with the last token.
+    /// ESLint's own. Its nodes lack the fields that only TypeScript has a use for.
     Espree,
 }
 
@@ -45,6 +44,17 @@ impl Dialect {
         match file.language().parser {
             crate::language::Parser::Espree => Dialect::Espree,
             _ => Dialect::TypeScript,
+        }
+    }
+}
+
+impl FieldEntry {
+    /// Whether the nodes of `dialect` have the field.
+    #[inline]
+    pub fn is_in(&self, dialect: Dialect) -> bool {
+        match dialect {
+            Dialect::TypeScript => !self.is_espree_only,
+            Dialect::Espree => !self.is_typescript_only,
         }
     }
 }
@@ -70,15 +80,15 @@ impl<'a> VNode<'a> {
     /// The value of `field`. [`Value::Undefined`] if it has no such field.
     pub fn field(self, field: Field) -> Value<'a> {
         match self.node_type().field(field) {
-            Some(entry) if !entry.is_typescript_only || self.dialect() == Dialect::TypeScript => (entry.get)(self),
+            Some(entry) if entry.is_in(self.dialect()) => (entry.get)(self),
             _ => Value::Undefined,
         }
     }
 
     /// Its fields that are not `undefined`, except `type`, `range`, `loc` and `parent`.
     pub fn fields(self) -> impl Iterator<Item = (Field, Value<'a>)> {
-        let is_typescript = self.dialect() == Dialect::TypeScript;
-        let entries = self.node_type().fields().iter().filter(move |it| is_typescript || !it.is_typescript_only);
+        let dialect = self.dialect();
+        let entries = self.node_type().fields().iter().filter(move |it| it.is_in(dialect));
         entries.map(move |it| (it.field, (it.get)(self))).filter(|it| !matches!(it.1, Value::Undefined))
     }
 }

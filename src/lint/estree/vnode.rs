@@ -954,7 +954,7 @@ impl<'a> VNode<'a> {
         match (self.base, self.part) {
             (Node::File(file), _) => Some(match Dialect::of(file) {
                 Dialect::TypeScript => file.program_span(),
-                Dialect::Espree => espree_program_span(file),
+                Dialect::Espree => file.span(),
             }),
             (_, Part::Decorator(_)) => Some(self.modifier()?.span()),
             (_, Part::Attribute(_)) => Some(self.attribute()?.span()),
@@ -1070,12 +1070,4 @@ impl<'a> VNode<'a> {
             _ => None,
         }
     }
-}
-
-/// From the first statement to the end of the last token.
-fn espree_program_span(file: &File) -> Span {
-    let text = file.text();
-    let end = skip_trivia_back(text, text.len() as u32);
-    let start = skip_trivia(text, 0).min(end);
-    Span::new(start, end)
 }

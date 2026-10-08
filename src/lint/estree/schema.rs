@@ -6,6 +6,7 @@
 //!   of ESLint and typescript-eslint.
 //! - `data`: any other field.
 //! - `ts_node`, `ts_data`: the same for a field that only typescript-estree has.
+//! - `es_data`: a field that only espree has.
 //!
 //! The value is an expression of a type that converts to a [`Value`]. `None` converts to `null`.
 //! Where `?` meets a `None`, the field is `undefined`.
@@ -31,6 +32,8 @@ pub struct FieldEntry {
     pub is_child: bool,
     /// Only typescript-estree has it.
     pub is_typescript_only: bool,
+    /// Only espree has it.
+    pub is_espree_only: bool,
     /// Its value in a node of that type.
     pub get: for<'a> fn(VNode<'a>) -> Value<'a>,
 }
@@ -62,6 +65,7 @@ macro_rules! estree_schema {
                             field: Field::$field,
                             is_child: estree_schema!(@is_child $row),
                             is_typescript_only: estree_schema!(@is_typescript_only $row),
+                            is_espree_only: estree_schema!(@is_espree_only $row),
                             get: {
                                 fn get<'a>($v: VNode<'a>) -> Value<'a> {
                                     let _ = $v;
@@ -87,6 +91,10 @@ macro_rules! estree_schema {
     (@is_child ts_node) => { true };
     (@is_child data) => { false };
     (@is_child ts_data) => { false };
+    (@is_child es_data) => { false };
+    (@is_espree_only es_data) => { true };
+    (@is_espree_only $row:ident) => { false };
+    (@is_typescript_only es_data) => { false };
     (@is_typescript_only node) => { false };
     (@is_typescript_only data) => { false };
     (@is_typescript_only ts_node) => { true };
@@ -109,7 +117,7 @@ estree_schema! {
 
     Program [NodeTags::FILE] (v) {
         node Body = Nodes::stmts(v.file().body());
-        data SourceType = if v.file().is_module_program() { "module" } else { "script" };
+        data SourceType = source_type(v.file());
     }
     ExpressionStatement [StmtTag::Expr] (v) {
         node Expression = VNode::of_expr(of!(stmt v, StmtKind::Expr(e) => e));
@@ -1054,7 +1062,10 @@ estree_schema! {
     JSXClosingElement [ExprTag::Jsx] (v) {
         node Name = VNode::of_expr(jsx(v)?.close_tag()?);
     }
-    JSXOpeningFragment [ExprTag::Jsx] (v) {}
+    JSXOpeningFragment [ExprTag::Jsx] (v) {
+        es_data Attributes = Nodes::EMPTY;
+        es_data SelfClosing = false;
+    }
     JSXClosingFragment [ExprTag::Jsx] (v) {}
     JSXIdentifier [ExprTag::Ident, ExprTag::This, ExprTag::String, ExprTag::Dot, NodeTags::PROP] (v) {
         data Name = v.file().slice(v.span());

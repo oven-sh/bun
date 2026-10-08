@@ -157,9 +157,9 @@ fn schema() {
         types.push(format!(
             "{:?}:{{\"keys\":[{}],\"espreeKeys\":[{}],\"fields\":[{}],\"espreeFields\":[{}]}}",
             node_type.name(),
-            names(&|it| it.is_child),
+            names(&|it| it.is_child && !it.is_espree_only),
             names(&|it| it.is_child && !it.is_typescript_only),
-            names(&|_| true),
+            names(&|it| !it.is_espree_only),
             names(&|it| !it.is_typescript_only),
         ));
     }

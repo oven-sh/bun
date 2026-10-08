@@ -82,7 +82,7 @@ impl<'a> Writer<'a, '_> {
         while let Some(frame) = self.open.last_mut() {
             match frame {
                 Frame::Node(node, next) => {
-                    let (node, is_typescript) = (*node, node.dialect() == bun_lint::estree_for_tests::Dialect::TypeScript);
+                    let node = *node;
                     let Some(entry) = node.node_type().fields().get(*next) else {
                         self.out.push(b'}');
                         self.open.pop();
@@ -90,7 +90,7 @@ impl<'a> Writer<'a, '_> {
                     };
                     *next += 1;
                     let value = (entry.get)(node);
-                    if matches!(value, Value::Undefined) || entry.is_typescript_only && !is_typescript {
+                    if matches!(value, Value::Undefined) || !entry.is_in(node.dialect()) {
                         continue;
                     }
                     let _ = write!(self.out, ",\"{}\":", entry.field.name());

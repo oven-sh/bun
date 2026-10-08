@@ -4,7 +4,7 @@ use super::Dialect;
 use super::value::Nodes;
 use super::vnode::{Part, VNode};
 use crate::ast::{
-    Call, Case, Class, Expr, ExprKind, ExprTag, Flags, FnKind, Func, Jsx, Key, KeyKind, List, Member,
+    Call, Case, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Jsx, Key, KeyKind, List, Member,
     MemberKind, Modifier, Module, Node, Param, Prop, Stmt, StmtKind, StmtTag, TupleElem, TypeKind,
     TypeNode, TypeParam, TypeTag, VarDecl,
 };
@@ -163,6 +163,18 @@ pub(super) fn all_exprs() -> NodeTags {
 }
 
 // ───────────────────────────── statements ─────────────────────────────
+
+/// `Program.sourceType`
+pub(super) fn source_type(file: &File) -> &'static str {
+    use crate::language::SourceType;
+    match (Dialect::of(file), file.language().source_type) {
+        (Dialect::Espree, SourceType::Module) => "module",
+        (Dialect::Espree, SourceType::Script) => "script",
+        (Dialect::Espree, SourceType::CommonJs) => "commonjs",
+        (Dialect::TypeScript, _) if file.is_module_program() => "module",
+        (Dialect::TypeScript, _) => "script",
+    }
+}
 
 /// It has the modifier `declare`.
 pub(super) fn is_declared(statement: Stmt) -> bool {
@@ -417,10 +429,25 @@ pub(super) fn quasi<'a>(v: VNode<'a>) -> Option<Quasi<'a>> {
                 }
                 Dialect::Espree => template.cooked(i),
             };
+            // In the raw text of ECMAScript every line break is a line feed.
+            let raw = match (Dialect::of(e.file()), template.raw(i)) {
+                (Dialect::Espree, raw) if bun_core::strings::contains_char(raw, b'\r') => {
+                    let mut text = Vec::with_capacity(raw.len());
+                    for (at, &byte) in raw.iter().enumerate() {
+                        match byte {
+                            b'\r' if raw.get(at + 1) == Some(&b'\n') => {}
+                            b'\r' => text.push(b'\n'),
+                            _ => text.push(byte),
+                        }
+                    }
+                    e.file().intern(&text).bytes()
+                }
+                (_, raw) => raw,
+            };
             Quasi {
                 is_tail: i + 1 == template.quasi_count(),
                 cooked: cooked.map(|it| it.bytes()),
-                raw: template.raw(i),
+                raw,
             }
         }
         (Node::Type(ty), Part::Quasi(i)) => match (ty.as_template(), ty.kind()) {

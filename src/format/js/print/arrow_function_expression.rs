@@ -467,6 +467,10 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
         if let FnBody::Expr(body) = arrow.body()
             && let Some(next) = body.arrow_function()
         {
+            // It is not written by way of `Expr`.
+            if !f.context_mut().has_stack_left() {
+                return;
+            }
             write!(f, FormatCommentsBeforeArrow(next, cache_mode));
             return write_arrow(body, next, self.options, true, f);
         }

@@ -39,6 +39,8 @@ struct State {
     width: u32,
     /// A space is written before the next text.
     is_space_pending: bool,
+    /// There has been a [`FormatElement::Space`] since the last text.
+    is_space_element_pending: bool,
     /// The frames from here on have no text yet.
     without_text: u32,
     /// What forces the enclosing groups to break.
@@ -108,6 +110,7 @@ impl Pass<'_> {
                     FormatElement::Space => {
                         self.state.last_space = index;
                         self.state.is_space_pending = true;
+                        self.state.is_space_element_pending = true;
                     }
                     FormatElement::Line(LineMode::Soft) | FormatElement::Nop | FormatElement::Cursor(_) => {}
                     FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => {
@@ -271,6 +274,7 @@ impl Pass<'_> {
         }
         self.state.width = start.wrapping_add(width);
         self.state.is_space_pending = false;
+        self.state.is_space_element_pending = false;
     }
 
     /// A text starts at the width `start`, and it is the first of some frames.
@@ -305,10 +309,12 @@ impl Pass<'_> {
         if flags.has(FlatFlags::STARTS_WITH_SPACE) {
             self.state.last_space = index;
             self.state.is_space_pending = true;
+            self.state.is_space_element_pending = true;
         }
-        if flags.has(FlatFlags::HAS_TEXT) {
+        if flat.width > 0 {
             self.text(u32::from(flat.width), index);
             self.state.is_space_pending = flags.has(FlatFlags::ENDS_WITH_SPACE);
+            self.state.is_space_element_pending = flags.has(FlatFlags::ENDS_WITH_SPACE_ELEMENT);
         }
     }
 
@@ -333,9 +339,9 @@ impl Pass<'_> {
             Ok(width) => Flat {
                 width,
                 flags: flags
-                    .with(FlatFlags::HAS_TEXT, true)
                     .with(frame.start_flags, true)
-                    .with(FlatFlags::ENDS_WITH_SPACE, state.is_space_pending),
+                    .with(FlatFlags::ENDS_WITH_SPACE, state.is_space_pending)
+                    .with(FlatFlags::ENDS_WITH_SPACE_ELEMENT, state.is_space_element_pending),
             },
             Err(_) => Flat::default(),
         }

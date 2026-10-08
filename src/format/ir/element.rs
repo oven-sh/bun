@@ -77,7 +77,8 @@ impl Skip {
 /// the first text and after the last are not part of the width.
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub(crate) struct Flat {
-    /// The number of columns from the start of the first text to the end of the last.
+    /// The number of columns from the start of the first text to the end of the last. 0 if there
+    /// is no text: content with a text that has no width is not measured.
     pub(crate) width: u16,
     pub(crate) flags: FlatFlags,
 }
@@ -91,12 +92,13 @@ impl FlatFlags {
     /// something that depends on a group by its id, a line suffix, a forced line break in a
     /// variant.
     pub(crate) const MEASURED: FlatFlags = FlatFlags(1);
-    pub(crate) const HAS_TEXT: FlatFlags = FlatFlags(1 << 1);
+    /// A [`FormatElement::Space`] comes after the last text.
+    pub(crate) const ENDS_WITH_SPACE_ELEMENT: FlatFlags = FlatFlags(1 << 1);
     /// A line break that is a space on one line comes before the first text.
     pub(crate) const STARTS_WITH_LINE: FlatFlags = FlatFlags(1 << 2);
     /// A [`FormatElement::Space`] comes before the first text. It counts unless the line is empty.
     pub(crate) const STARTS_WITH_SPACE: FlatFlags = FlatFlags(1 << 3);
-    /// A space is pending after the last text.
+    /// A space is pending after the last text, be it for a line break or a [`FormatElement::Space`].
     pub(crate) const ENDS_WITH_SPACE: FlatFlags = FlatFlags(1 << 4);
     pub(crate) const HAS_LINE_SUFFIX_BOUNDARY: FlatFlags = FlatFlags(1 << 5);
     /// There is a group with an id in it.

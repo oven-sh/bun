@@ -22,6 +22,9 @@ pub(super) struct Measure {
     /// The width of the indentation that is due before the next text.
     pending_indent: usize,
     pending_space: bool,
+    /// It is pending because of a [`FormatElement::Space`], which is a text to Prettier: it counts
+    /// even if no text follows it on the line.
+    is_space_element_pending: bool,
     has_line_suffix: bool,
     pub(super) must_be_flat: bool,
     /// Groups that are measured are passed over.
@@ -48,6 +51,7 @@ impl Measure {
             line_width: printer.line_width,
             pending_indent: indent.level() as usize * printer.options.indent_width as usize + indent.align() as usize,
             pending_space: printer.pending_space,
+            is_space_element_pending: printer.pending_space,
             has_line_suffix: !printer.buffers.line_suffixes.is_empty(),
             must_be_flat: false,
             uses_flat,
@@ -258,6 +262,7 @@ impl<'d> Printer<'d> {
             FormatElement::Space => {
                 if measure.line_width > 0 {
                     measure.pending_space = true;
+                    measure.is_space_element_pending = true;
                 }
             }
             FormatElement::Line(line_mode) => {
@@ -273,7 +278,7 @@ impl<'d> Printer<'d> {
                     }
                 } else {
                     // This is past the end of what is measured, in content that is expanded.
-                    let width = measure.line_width + usize::from(measure.pending_space);
+                    let width = measure.line_width + usize::from(measure.is_space_element_pending);
                     return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
                 }
             }
@@ -385,6 +390,7 @@ impl<'d> Printer<'d> {
             return Fits::No;
         }
         measure.pending_space = false;
+        measure.is_space_element_pending = false;
         Fits::Maybe
     }
 
@@ -396,9 +402,10 @@ impl<'d> Printer<'d> {
             return Fits::No;
         }
         measure.has_passed_group_ids |= flags.has(FlatFlags::HAS_GROUP_IDS);
-        measure.pending_space |= flags.has(FlatFlags::STARTS_WITH_LINE)
-            || (flags.has(FlatFlags::STARTS_WITH_SPACE) && measure.line_width > 0);
-        if !flags.has(FlatFlags::HAS_TEXT) {
+        let starts_with_space = flags.has(FlatFlags::STARTS_WITH_SPACE) && measure.line_width > 0;
+        measure.pending_space |= starts_with_space || flags.has(FlatFlags::STARTS_WITH_LINE);
+        measure.is_space_element_pending |= starts_with_space;
+        if flat.width == 0 {
             return Fits::Maybe;
         }
         measure.line_width += measure.pending_indent + usize::from(measure.pending_space) + flat.width as usize;
@@ -407,6 +414,7 @@ impl<'d> Printer<'d> {
             return Fits::No;
         }
         measure.pending_space = flags.has(FlatFlags::ENDS_WITH_SPACE);
+        measure.is_space_element_pending = flags.has(FlatFlags::ENDS_WITH_SPACE_ELEMENT);
         Fits::Maybe
     }
 }

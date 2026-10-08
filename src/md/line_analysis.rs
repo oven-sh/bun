@@ -691,7 +691,7 @@ impl Parser<'_> {
     /// Count the number of pipe-delimited columns in a table row.
     /// Used to validate that header and delimiter row column counts match (GFM requirement).
     pub(crate) fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
-        let row = &self.text[beg as usize..end as usize];
+        let row = self.text[beg as usize..end as usize].trim_ascii_end();
         let mut col_count: u32 = 0;
         let mut pos: usize = 0;
 

@@ -831,3 +831,11 @@ describe("table alignment", () => {
     );
   });
 });
+
+describe("blanks at the end of table rows", () => {
+  test("blanks behind the last pipe of the header row are not a cell", () => {
+    expect(markdown.html("| a | b |  \n| --- | --- |  \n| c | d |  \n")).toBe(
+      "<table>\n<thead>\n<tr><th>a</th><th>b</th></tr>\n</thead>\n<tbody>\n<tr><td>c</td><td>d</td></tr>\n</tbody>\n</table>\n",
+    );
+  });
+});

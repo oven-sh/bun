@@ -78,7 +78,19 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
         | AstNodes::WithStatement(_)
         | AstNodes::LabeledStatement(_)
         | AstNodes::PropertyDefinition(_)
-        | AstNodes::AccessorProperty(_) => f.comments().without_semicolon(span),
+        | AstNodes::AccessorProperty(_)
+        | AstNodes::MethodDefinition(_) => f.comments().without_semicolon(span),
+        // What is exported ends where the `export` around it ends.
+        AstNodes::TSTypeAliasDeclaration(statement) | AstNodes::TSImportEqualsDeclaration(statement)
+            if statement.is_exported() =>
+        {
+            f.comments().without_semicolon(span)
+        }
+        AstNodes::Function(func)
+            if !func.has_body() && matches!(func.owner(), Node::Stmt(statement) if statement.is_exported()) =>
+        {
+            f.comments().without_semicolon(span)
+        }
         _ => span,
     }
 }
@@ -440,7 +452,7 @@ fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>
 fn format_declaration_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let is_exported = statement.is_exported();
     let span = match is_exported {
-        true => statement.span_without_export(),
+        true => f.comments().without_semicolon(statement.span_without_export()),
         false => span_for_comments(statement.as_ast_nodes(), f),
     };
     let parent = || match is_exported {

@@ -86,9 +86,14 @@ fn write_document<'a>(
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
     }
-    let mut comments = Vec::new();
-    js::comments::collect(file, &mut comments);
-    let context = js::context::JsFormatContext::new(file, options.clone(), comments.leak());
+    // The file keeps them, so that they live as long as the handles.
+    let comments = file.extension(|| {
+        let mut comments = Vec::new();
+        js::comments::collect(file, &mut comments);
+        comments
+    });
+    let comments = comments.map_or(&[][..], |comments: &Vec<js::comments::Comment>| comments);
+    let context = js::context::JsFormatContext::new(file, options.clone(), comments);
     let buffers = std::mem::take(&mut scratch.formatter);
     let mut formatter = ir::formatter::Formatter::new(context, buffers);
     js::format_file(file, &mut formatter);

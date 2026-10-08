@@ -975,6 +975,7 @@ impl<'a> AstNodes<'a> {
             },
             N::TSTypeParameterInstantiation(owner) | N::TSTypeParameterDeclaration(owner) => match owner {
                 Node::Stmt(statement) => inner_of_stmt(statement),
+                Node::Expr(e) if matches!(e.kind(), ExprKind::Jsx(_)) => N::JSXOpeningElement(e),
                 owner => node_as_ast_nodes(owner),
             },
         }

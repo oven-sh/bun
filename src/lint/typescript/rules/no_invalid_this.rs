@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::no_invalid_this::check;
+use bun_lint_eslint::rules::no_invalid_this::{Known, check};
 
 /// Disallow `this` keywords outside of classes or class-like objects.
 pub struct NoInvalidThis {
@@ -9,7 +9,7 @@ pub struct NoInvalidThis {
 impl Rule for NoInvalidThis {
     const META: Meta =
         Meta::typescript("no-invalid-this", Kind::Suggestion).extends_base_rule("no-invalid-this");
-    type State<'a> = ();
+    type State<'a> = Known<'a>;
 
     fn new(options: &Options) -> Self {
         NoInvalidThis {
@@ -17,7 +17,8 @@ impl Rule for NoInvalidThis {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Known<'a> {
         on.exprs([ExprTag::This], |rule, e, cx| check(e, rule.cap_is_constructor, true, cx));
+        Known::default()
     }
 }

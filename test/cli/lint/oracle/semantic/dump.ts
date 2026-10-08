@@ -5,8 +5,8 @@
 // With `--nodes` also `getScope(node)` for every node.
 //
 // A case is `{ id, filename, code, sourceType, ecmaVersion, jsx, globalReturn, impliedStrict, jsxPragma, jsxFragmentName }`.
-// `.js`, `.jsx`, `.mjs`, `.cjs` go through espree and eslint-scope the way ESLint calls them, everything else through
-// `@typescript-eslint/parser`.
+// `.js`, `.jsx`, `.mjs`, `.cjs` go through espree and eslint-scope the way ESLint calls them, everything else, and every case
+// with `parser: "typescript"`, through `@typescript-eslint/parser`.
 //
 // The model is normalized where `src/lint/semantic/mod.rs` documents a difference:
 // - the second variable that a class declaration has inside its own scope is left out, and what refers to it refers to the first
@@ -34,6 +34,7 @@ type Case = {
   id: number | string;
   filename: string;
   code: string;
+  parser?: "typescript";
   sourceType?: "module" | "script" | "commonjs";
   ecmaVersion?: number | "latest";
   jsx?: boolean;
@@ -46,7 +47,7 @@ type Case = {
 function analyze(it: Case) {
   const sourceType = it.sourceType ?? "module";
   const globalReturn = it.globalReturn || sourceType === "commonjs";
-  if (/\.[cm]?jsx?$/.test(it.filename)) {
+  if (/\.[cm]?jsx?$/.test(it.filename) && it.parser !== "typescript") {
     const ecmaVersion = typeof it.ecmaVersion === "number" ? it.ecmaVersion : espree.latestEcmaVersion;
     // `normalizeLanguageOptions` of ESLint turns `globalReturn` off in a module.
     const ecmaFeatures = {

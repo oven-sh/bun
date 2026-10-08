@@ -1,12 +1,12 @@
 // Collects the cases for `dump.ts` and `bun-lint semantic dump --batch`, one JSON object a line.
 //
 //   bun cases.ts --fixtures <test/cli/lint/conformance/fixtures> > cases.jsonl     the `code` of every conformance case
-//   bun cases.ts --files <directory or file>.. > cases.jsonl                       source files
+//   bun cases.ts --files <directory or file>.. [--parser=typescript] > cases.jsonl source files
 //   bun cases.ts --scope-manager <typescript-eslint/packages/scope-manager/tests/fixtures> > cases.jsonl
 //
 // The same code with the same options is listed once.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const seen = new Set<string>();
@@ -19,13 +19,18 @@ function emit(it: Record<string, unknown>) {
 }
 
 function* walk(path: string): Generator<string> {
+  // A link to nowhere.
+  if (!existsSync(path)) return;
   if (!statSync(path).isDirectory()) return yield path;
   for (const name of readdirSync(path).sort()) {
     if (name !== "node_modules" && name !== ".git") yield* walk(join(path, name));
   }
 }
 
-const [mode, ...paths] = process.argv.slice(2);
+const [mode, ...rest] = process.argv.slice(2);
+const paths = rest.filter(it => !it.startsWith("--"));
+// JavaScript files as `@typescript-eslint/parser` sees them.
+const parser = rest.includes("--parser=typescript") ? "typescript" : undefined;
 if (mode === "--fixtures") {
   for (const file of walk(paths[0])) {
     if (!file.endsWith(".json") || file.includes("typescript-eslint-project")) continue;
@@ -75,6 +80,8 @@ if (mode === "--fixtures") {
         filename: file,
         code: readFileSync(file, "utf8"),
         sourceType: /\.c[jt]s$/.test(file) ? "commonjs" : "module",
+        parser,
+        jsx: (parser && /\.jsx?$/.test(file)) || undefined,
       });
     }
   }

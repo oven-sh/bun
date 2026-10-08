@@ -219,7 +219,8 @@ fn language_of(case: &Json, path: &str) -> LanguageOptions {
     let features = Json::Object(object(&["jsx", "globalReturn", "impliedStrict"], case));
     parser_options.push((b"ecmaFeatures".to_vec(), features));
     let mut language = object(&["ecmaVersion", "sourceType"], case);
-    language.push((b"parser".to_vec(), string(if is_javascript { "espree" } else { "typescript" })));
+    let parser = case.get(b"parser").cloned();
+    language.push((b"parser".to_vec(), parser.unwrap_or(string(if is_javascript { "espree" } else { "typescript" }))));
     language.push((b"parserOptions".to_vec(), Json::Object(parser_options)));
     LanguageOptions::from_json(&Json::Object(language), &Json::Null)
 }

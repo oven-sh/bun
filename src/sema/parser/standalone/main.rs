@@ -164,14 +164,18 @@ fn difference_with_own_atoms(text: &[u8], options: Options, scratch: &mut Scratc
         if written != interner.bytes(atom) {
             return Some(format!("the text of its own {atom:?}"));
         }
-        if atoms.intern(written) != atom || own.file.may_mention(atom) != atoms.has(atom) {
+        let is_mentioned = own.file.may_mention(bun_sema::hir::mention_bit(written));
+        if atoms.intern(written) != atom
+            || atoms.find(written).is_some() != atoms.has(atom)
+            || atoms.has(atom) && !is_mentioned
+        {
             return Some(format!("its own {atom:?} is not found again"));
         }
     }
     let absent = atoms.intern(b"\0 a text that is in no file");
     if atoms.bytes(absent) != b"\0 a text that is in no file"
         || atoms.intern(b"\0 a text that is in no file") != absent
-        || own.file.may_mention(absent)
+        || atoms.find(b"\0 a text that is in no file").is_some()
     {
         return Some("a text that is not in the file".to_owned());
     }

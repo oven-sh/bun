@@ -2009,14 +2009,34 @@ arenas! {
 /// The number of bits of `FileIn::mentioned`.
 pub const MENTIONED_BITS: usize = 1 << 14;
 
+/// Which bit of `FileIn::mentioned` stands for `text`. It depends on nothing but the text, so for a
+/// text that is known when the program is compiled it is a constant.
+pub const fn mention_bit(text: &[u8]) -> u32 {
+    let mut words = [0u64; 2];
+    let mut at = 0;
+    while at < text.len() && at < 16 {
+        words[at / 8] |= (text[at] as u64) << (at % 8 * 8);
+        at += 1;
+    }
+    mention_bit_of(words, text.len())
+}
+
+/// `mention_bit` of the text with the length `len` whose first 16 bytes are `words`, little endian
+/// and padded with zeros.
+#[inline(always)]
+pub const fn mention_bit_of(words: [u64; 2], len: usize) -> u32 {
+    let rest = if len < 16 { 0 } else { len as u64 };
+    let mixed = words[0] ^ words[1].rotate_left(29) ^ rest.rotate_left(17);
+    (mixed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - MENTIONED_BITS.trailing_zeros())) as u32
+}
+
 impl<S: Storage> FileIn<S> {
-    /// False only if `atom` is the text of no name, keyword, private name or bigint, and the value
-    /// of no string, piece of a template or JSX text in the file. A filter: true says nothing.
+    /// `bit`: `mention_bit` of a text. False only if that is the text of no name, keyword, private
+    /// name or bigint, and the value of no string, piece of a template or JSX text in the file. A
+    /// filter: true says nothing.
     #[inline]
-    pub fn may_mention(&self, atom: Atom) -> bool {
-        let bit = atom.0 as usize % MENTIONED_BITS;
-        atom.0 & crate::atom::NOT_IN_THE_FILE == 0
-            && (self.mentioned.get(bit / 64)).is_none_or(|word| word >> (bit % 64) & 1 != 0)
+    pub fn may_mention(&self, bit: u32) -> bool {
+        (self.mentioned.get(bit as usize / 64)).is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
     /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.

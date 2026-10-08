@@ -12,6 +12,7 @@
 
 use crate::token::{T, keyword};
 use bun_sema::atom::{Atom, Intern, KNOWN_TEXTS, NOT_IN_THE_FILE};
+use bun_sema::hir::mention_bit_of;
 use bun_threading::Guarded;
 use std::sync::OnceLock;
 
@@ -64,6 +65,8 @@ pub(crate) struct Names {
     cooked: Vec<u8>,
     /// `hir::FileIn::mentioned` of the file, if the atoms are its own.
     mentioned: [u64; MENTIONED_WORDS],
+    /// Which of `KNOWN_TEXTS` are in the file, likewise.
+    known_in_file: [u64; KNOWN_TEXTS.len().div_ceil(64)],
     /// The short ones of `KNOWN_TEXTS`. An entry without an atom is free.
     known: Box<[([u64; 2], u32); 1 << KNOWN_BITS]>,
     /// The others.
@@ -117,6 +120,7 @@ impl Default for Names {
             spans: Vec::new(),
             cooked: Vec::new(),
             mentioned: [0; MENTIONED_WORDS],
+            known_in_file: Default::default(),
             known,
             known_others,
             late: Late::default(),
@@ -155,7 +159,8 @@ fn short_hash(words: [u64; 2]) -> u64 {
 
 #[inline(always)]
 fn short_place(words: [u64; 2]) -> usize {
-    (short_hash(words) >> (64 - SHORT_BITS)) as usize
+    const { assert!(1 << SHORT_BITS == bun_sema::hir::MENTIONED_BITS) };
+    mention_bit_of(words, 0) as usize
 }
 
 #[inline(always)]
@@ -271,6 +276,7 @@ impl Names {
         self.cooked.clear();
         self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];
+        self.known_in_file = Default::default();
     }
 
     #[inline(always)]
@@ -286,13 +292,17 @@ impl Names {
         }
     }
 
-    /// The atom of a text that is in no table yet.
-    fn new_atom(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
+    /// The atom of a text that is in no table yet. `bit`: its `hir::mention_bit`.
+    fn new_atom(&mut self, text: Text<'_>, bit: usize, atoms: &dyn Intern) -> Atom {
         if !self.is_own {
             return atoms.intern(text.text);
         }
+        self.mentioned[bit / 64 % MENTIONED_WORDS] |= 1 << (bit % 64);
         let atom = match self.known(text.text) {
-            Some(known) => known,
+            Some(known) => {
+                self.known_in_file[known as usize / 64] |= 1 << (known % 64);
+                known
+            }
             None => {
                 let start = text.start.unwrap_or_else(|| {
                     let start = self.cooked.len() as u32;
@@ -303,7 +313,6 @@ impl Names {
                 FIRST_OWN + (self.spans.len() as u32 - 1)
             }
         };
-        self.mentioned[(atom as usize / 64) % MENTIONED_WORDS] |= 1 << (atom % 64);
         Atom(atom)
     }
 
@@ -354,10 +363,11 @@ impl Names {
             }
         }
         let kind = keyword(text.text);
+        // `short_place` is `hir::mention_bit_of`.
         let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, atoms), at),
+            Some(at) => (self.new_atom(text, first, atoms), at),
             None if self.is_own => return (self.other(text, atoms), kind),
-            None => (self.new_atom(text, atoms), first),
+            None => (self.new_atom(text, first, atoms), first),
         };
         self.short[at] = Short {
             words,
@@ -401,10 +411,11 @@ impl Names {
                 return Atom(entry.atom);
             }
         }
+        let bit = mention_bit_of([words[0], words[1]], text.text.len()) as usize;
         let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, atoms), at),
+            Some(at) => (self.new_atom(text, bit, atoms), at),
             None if self.is_own => return self.other(text, atoms),
-            None => (self.new_atom(text, atoms), first),
+            None => (self.new_atom(text, bit, atoms), first),
         };
         self.long[at] = Long {
             words,
@@ -425,7 +436,11 @@ impl Names {
         if let Some(atom) = found {
             return Atom(atom);
         }
-        let atom = self.new_atom(text, atoms);
+        let bit = match long_words(text.text) {
+            Some(words) => mention_bit_of([words[0], words[1]], text.text.len()),
+            None => bun_sema::hir::mention_bit(text.text),
+        };
+        let atom = self.new_atom(text, bit as usize, atoms);
         self.other.insert(hash, atom.0);
         atom
     }
@@ -451,7 +466,7 @@ impl Names {
     /// The atom of `text` if it is in the file with the text `source`, whose atoms are its own.
     fn find(&self, text: &[u8], source: &[u8]) -> Option<Atom> {
         if let Some(known) = self.known(text) {
-            let word = self.mentioned[(known as usize / 64) % MENTIONED_WORDS];
+            let word = self.known_in_file[known as usize / 64];
             return (word >> (known % 64) & 1 != 0).then_some(Atom(known));
         }
         if is_short(text) {
@@ -645,7 +660,7 @@ impl FileAtoms<'_> {
     /// Whether the text of `atom` is in the file.
     pub fn has(&self, atom: Atom) -> bool {
         match atom.0 < FIRST_OWN {
-            true => self.names.mentioned[atom.0 as usize / 64] >> (atom.0 % 64) & 1 != 0,
+            true => self.names.known_in_file[atom.0 as usize / 64] >> (atom.0 % 64) & 1 != 0,
             false => atom.0 < self.len(),
         }
     }

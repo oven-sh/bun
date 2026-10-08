@@ -165,8 +165,9 @@ impl<'a> File<'a> {
     /// For [`Rule::register`](crate::rule::Rule::register): a rule that is about `eval` or `hasOwnProperty` has nothing to listen
     /// for in a file that does not mention it. That costs next to nothing, unlike a listener that is called with every call or
     /// every member access of the file.
+    #[inline]
     pub fn mentions(&self, text: &str) -> bool {
-        let bit = self.atoms.intern(text.as_bytes()).0 as usize % bun_sema::hir::MENTIONED_BITS;
+        let bit = bun_sema::hir::mention_bit(text.as_bytes()) as usize;
         self.hir.mentioned.get(bit / 64).is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 

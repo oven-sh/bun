@@ -7,6 +7,17 @@ use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
+/// The heritage clauses of a class: see `Class`.
+struct Heritage {
+    extends: ExprId,
+    extends_args: IdList<TypeNodeId>,
+    other_extends: IdList<ExprId>,
+    implements: IdList<TypeNodeId>,
+    other_implements: IdList<TypeNodeId>,
+    /// The checker has reported a clause or a second class, and looks no further.
+    has_error: bool,
+}
+
 impl Parser<'_> {
     /// `parseClassDeclaration`
     pub(crate) fn class_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
@@ -48,6 +59,123 @@ impl Parser<'_> {
         self.finish_expr(ExprKind::Class(class), keyword)
     }
 
+    /// `parseHeritageClauses` of a class, with what `checkGrammarClassDeclarationHeritageClauses`
+    /// reports.
+    fn class_heritage(&mut self) -> Heritage {
+        let mut heritage = Heritage {
+            extends: ExprId::NONE,
+            extends_args: IdList::EMPTY,
+            other_extends: IdList::EMPTY,
+            implements: IdList::EMPTY,
+            other_implements: IdList::EMPTY,
+            has_error: false,
+        };
+        let mut other_extends: Vec<ExprId> = Vec::new();
+        let mut other_implements: Vec<TypeNodeId> = Vec::new();
+        let (mut has_extends, mut has_implements) = (false, false);
+        while matches!(self.token(), T::Extends | T::Implements) {
+            let keyword = (self.lx.start, self.lx.end);
+            let is_extends = self.token() == T::Extends;
+            let misplaced = match (is_extends, has_extends, has_implements) {
+                (true, true, _) => 1172,
+                (true, false, true) => 1173,
+                (false, _, true) => 1175,
+                _ => 0,
+            };
+            if misplaced != 0 && !heritage.has_error {
+                self.flag(DiagnosticKind::Grammar, misplaced, keyword, &[]);
+                heritage.has_error = true;
+            }
+            self.next();
+            // `checkGrammarExpressionWithTypeArguments`, of the first element that has an error.
+            let mut element_error = None;
+            let base = self.s.ids.len();
+            let (count, comma) = match is_extends {
+                true => self.heritage_elements(|p, index| {
+                    let first_token = (p.lx.start, p.lx.end);
+                    // `parseExpressionWithTypeArguments`
+                    let saved = p.enter_context(ctx::NO_RECORD, 0);
+                    let extended = p.left_hand_side_expression();
+                    p.context = saved;
+                    if index > 0 || has_extends {
+                        // Type arguments that the expression has not taken are in no list.
+                        if p.token() == T::LessThan {
+                            p.refuse(Refusal::Reported);
+                        }
+                        other_extends.push(extended);
+                        if index == 1 && !heritage.has_error {
+                            match p.is_ecmascript {
+                                true => p.report(),
+                                false => p.flag(DiagnosticKind::Grammar, 1174, first_token, &[]),
+                            }
+                            heritage.has_error = true;
+                        }
+                        return;
+                    }
+                    heritage.extends = extended;
+                    if extended.idx() + 1 == p.f.exprs.len()
+                        && let Some(&Expr {
+                            kind: ExprKind::Instantiation { expr, type_args },
+                            ..
+                        }) = p.f.exprs.last()
+                        && p.f.parens.last().is_none_or(|last| last.0 != extended)
+                    {
+                        p.f.exprs.pop();
+                        (heritage.extends, heritage.extends_args) = (expr, type_args);
+                    } else if p.token() == T::LessThan {
+                        (heritage.extends_args, element_error) = p.type_arguments_unchecked();
+                    }
+                    p.check_js_type_arguments(heritage.extends_args);
+                }),
+                false => {
+                    let saved = self.enter_context(ctx::TYPE, 0);
+                    let list = self.heritage_elements(|p, _| {
+                        let ty = p.heritage_type(!has_implements, 2500);
+                        p.s.ids.push(ty.0);
+                    });
+                    self.context = saved;
+                    self.js_error((keyword.0, self.prev_end()), 8005, b"");
+                    list
+                }
+            };
+            // `checkGrammarHeritageClause`
+            match comma {
+                _ if heritage.has_error => {}
+                Some(_) if self.is_ecmascript => self.report(),
+                Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, comma, &[]),
+                None if count == 0 => {
+                    let at = (keyword.1, Diagnostic::NO_LENGTH);
+                    let keyword: &[u8] = if is_extends {
+                        b"extends"
+                    } else {
+                        b"implements"
+                    };
+                    self.flag(DiagnosticKind::Grammar, 1097, at, &[keyword]);
+                }
+                None => {
+                    if let Some((at, code)) = element_error {
+                        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+                    }
+                }
+            }
+            match (is_extends, has_implements) {
+                (true, _) => has_extends = true,
+                (false, false) => {
+                    heritage.implements = self.take_ids(base);
+                    has_implements = true;
+                }
+                (false, true) => {
+                    let types = self.s.ids.get(base..).unwrap_or_default();
+                    other_implements.extend(types.iter().map(|&ty| TypeNodeId(ty)));
+                    self.s.ids.truncate(base);
+                }
+            }
+        }
+        heritage.other_extends = self.f.list(&other_extends);
+        heritage.other_implements = self.f.list(&other_implements);
+        heritage
+    }
+
     /// `parseClassDeclarationOrExpression`, at `class`. Its modifiers are on the stack from `base`
     /// on.
     fn class(&mut self, start: u32, base: usize, flags: Flags) -> ClassId {
@@ -73,62 +201,15 @@ impl Parser<'_> {
         }
         let less_than = (self.token() == T::LessThan).then(|| self.pos());
         let type_params = self.type_parameters();
-        // `checkGrammarClassLikeDeclaration`. The checker finds the empty list of anything else in
-        // the text.
-        if let Some(less_than) = less_than
-            && type_params.is_empty()
+        let empty_list = less_than.filter(|_| type_params.is_empty());
+        let empty_list = empty_list.map(|less_than| (less_than, self.prev_end()));
+        let heritage = self.class_heritage();
+        // `checkGrammarClassLikeDeclaration`, which looks at the clauses first. The checker finds the
+        // empty list of anything else in the text.
+        if let Some(empty_list) = empty_list
+            && !heritage.has_error
         {
-            self.flag(
-                DiagnosticKind::Grammar,
-                1098,
-                (less_than, self.prev_end()),
-                &[],
-            );
-        }
-        let (mut extends, mut extends_args) = (ExprId::NONE, IdList::EMPTY);
-        if self.eat(T::Extends) {
-            // `isHeritageClauseExtendsOrImplementsKeyword`: the list is empty.
-            if matches!(self.token(), T::Extends | T::Implements) {
-                self.report();
-            }
-            // `isListElement`
-            if !self.is_start_of_left_hand_side_expression()
-                && !(self.is_ecmascript && self.token() == T::LessThan)
-            {
-                self.fail();
-            }
-            // `parseExpressionWithTypeArguments`
-            let saved = self.enter_context(ctx::NO_RECORD, 0);
-            extends = self.left_hand_side_expression();
-            self.context = saved;
-            if extends.idx() + 1 == self.f.exprs.len()
-                && let Some(&Expr {
-                    kind: ExprKind::Instantiation { expr, type_args },
-                    ..
-                }) = self.f.exprs.last()
-                && self.f.parens.last().is_none_or(|last| last.0 != extends)
-            {
-                self.f.exprs.pop();
-                (extends, extends_args) = (expr, type_args);
-            } else if self.token() == T::LessThan {
-                extends_args = self.type_arguments();
-            }
-            if self.token() == T::Comma {
-                self.refuse(Refusal::Reported);
-            }
-            self.check_js_type_arguments(extends_args);
-        }
-        let mut implements = IdList::EMPTY;
-        if self.token() == T::Implements {
-            let keyword = self.pos();
-            self.next();
-            let saved = self.enter_context(ctx::TYPE, 0);
-            implements = self.heritage_types();
-            self.context = saved;
-            self.js_error((keyword, self.prev_end()), 8005, b"");
-        }
-        if matches!(self.token(), T::Extends | T::Implements) {
-            self.refuse(Refusal::Reported);
+            self.flag(DiagnosticKind::Grammar, 1098, empty_list, &[]);
         }
         self.expect(T::OpenBrace);
         let members = self.s.members.len();
@@ -163,11 +244,11 @@ impl Parser<'_> {
             name_pos,
             flags,
             type_params,
-            extends,
-            extends_args,
-            other_extends: IdList::EMPTY,
-            implements,
-            other_implements: IdList::EMPTY,
+            extends: heritage.extends,
+            extends_args: heritage.extends_args,
+            other_extends: heritage.other_extends,
+            implements: heritage.implements,
+            other_implements: heritage.other_implements,
             members,
             start,
             modifiers,
@@ -268,7 +349,7 @@ impl Parser<'_> {
             let name_pos = written
                 .iter()
                 .find(is_keyword)
-                .map_or(self.pos(), |it| it.pos);
+                .map_or_else(|| self.pos(), |it| it.pos);
             let modifiers = self.take_modifiers(first_modifier);
             let mut member = self.index_signature(start, flags, modifiers);
             member.name_pos = name_pos;

@@ -723,34 +723,154 @@ impl Parser<'_> {
         self.finish_type(TypeNodeKind::Ref { name, args }, start)
     }
 
-    /// The elements of an `implements` clause, or of the `extends` clause of an interface.
-    pub(crate) fn heritage_types(&mut self) -> IdList<TypeNodeId> {
-        let base = self.s.ids.len();
-        loop {
-            // Anything but an entity name is an error. `isHeritageClauseExtendsOrImplementsKeyword`:
-            // either keyword can end the list.
-            if !self.is_identifier() || matches!(self.token(), T::Extends | T::Implements) {
-                self.refuse(Refusal::Reported);
-            }
-            let start = self.pos();
-            let name = self.entity_name();
-            let args = match self.token() {
-                T::LessThan => self.type_arguments(),
-                _ => IdList::EMPTY,
-            };
-            if matches!(
-                self.token(),
-                T::OpenParen | T::OpenBracket | T::QuestionDot | T::Exclamation
-            ) {
-                self.refuse(Refusal::Reported);
-            }
-            let ty = self.finish_type(TypeNodeKind::Ref { name, args }, start);
-            self.s.ids.push(ty.0);
-            if !self.eat(T::Comma) {
+    /// `isListElement(PCHeritageClauseElement)`
+    fn is_heritage_element(&mut self) -> bool {
+        match self.token() {
+            // `isValidHeritageClauseObjectLiteral`: `{}` is the body unless something follows that
+            // can follow an element.
+            T::OpenBrace => self.look_ahead(|p| {
+                p.next();
+                if p.token() != T::CloseBrace {
+                    return true;
+                }
+                p.next();
+                matches!(
+                    p.token(),
+                    T::Comma | T::OpenBrace | T::Extends | T::Implements
+                )
+            }),
+            T::Extends => false,
+            // `isHeritageClauseExtendsOrImplementsKeyword`
+            T::Implements => !self.look_ahead(|p| {
+                p.next();
+                p.is_start_of_expression()
+            }),
+            T::LessThan if self.is_ecmascript => true,
+            _ => self.is_start_of_left_hand_side_expression(),
+        }
+    }
+
+    /// `parseDelimitedList(PCHeritageClauseElement, ..)`, after `extends` or `implements`: calls
+    /// `element` for each, with its index. Returns their number, and the comma at the end of the
+    /// list if there is one.
+    pub(crate) fn heritage_elements(
+        &mut self,
+        mut element: impl FnMut(&mut Self, u32),
+    ) -> (u32, Option<(u32, u32)>) {
+        let (mut count, mut comma) = (0, None);
+        while self.is_heritage_element() {
+            element(self, count);
+            count += 1;
+            comma = (self.token() == T::Comma).then_some((self.lx.start, self.lx.end));
+            if !self.eat(T::Comma) || self.has_failed() {
                 break;
             }
         }
-        self.take_ids(base)
+        // `isListTerminator`
+        if !matches!(self.token(), T::OpenBrace | T::Extends | T::Implements) {
+            self.fail();
+        }
+        (count, comma)
+    }
+
+    /// `parseExpressionWithTypeArguments` in a clause whose elements are types: any of an interface,
+    /// `implements` of a class. `is_checked`: `checkTypeReferenceNode` gets to it.
+    /// `not_entity_name`: what it says about `A?.B`.
+    pub(crate) fn heritage_type(&mut self, is_checked: bool, not_entity_name: u32) -> TypeNodeId {
+        // Anything but an entity name is an error.
+        if !self.is_identifier() {
+            self.refuse(Refusal::Reported);
+        }
+        let start = self.pos();
+        let base = self.s.names.len();
+        let first = self.identifier_name();
+        self.note_identifier(first.0, first.1);
+        self.s.names.push(first);
+        let mut is_optional_chain = false;
+        while matches!(self.token(), T::Dot | T::QuestionDot) {
+            is_optional_chain |= self.token() == T::QuestionDot;
+            self.next();
+            if self.newline_before()
+                && self.token().is_identifier_or_keyword()
+                && self.is_followed_by_word_on_same_line()
+            {
+                self.refuse(Refusal::Reported);
+            }
+            let name = self.identifier_name();
+            self.s.names.push(name);
+        }
+        let names = self.s.names.get(base..).unwrap_or_default();
+        let name = self.f.entity_name(names.iter().copied());
+        self.s.names.truncate(base);
+        if is_optional_chain && is_checked {
+            let at = (start, self.prev_end());
+            self.flag(DiagnosticKind::Checker, not_entity_name, at, &[]);
+        }
+        let args = match self.token() {
+            T::LessThan if is_checked => self.type_arguments(),
+            T::LessThan => self.type_arguments_unchecked().0,
+            _ => IdList::EMPTY,
+        };
+        if matches!(
+            self.token(),
+            T::OpenParen
+                | T::OpenBracket
+                | T::Dot
+                | T::QuestionDot
+                | T::Exclamation
+                | T::NoSubstitutionTemplate
+                | T::TemplateHead
+        ) {
+            self.refuse(Refusal::Reported);
+        }
+        self.finish_type(TypeNodeKind::Ref { name, args }, start)
+    }
+
+    /// `parseHeritageClauses` of an interface, with what `checkGrammarInterfaceDeclaration` reports
+    /// but for `implements`, which the checker finds in the text: the types of the first `extends`
+    /// clause, and those of the other clauses.
+    fn interface_heritage(&mut self) -> (IdList<TypeNodeId>, IdList<TypeNodeId>) {
+        let mut extends = IdList::EMPTY;
+        let mut others: Vec<TypeNodeId> = Vec::new();
+        // The checker returns after 1172 or at `implements`.
+        let (mut has_extends, mut is_checked) = (false, true);
+        while matches!(self.token(), T::Extends | T::Implements) {
+            let keyword = (self.lx.start, self.lx.end);
+            let is_extends = self.token() == T::Extends;
+            let is_first_extends = is_extends && !has_extends;
+            if !is_first_extends && is_checked {
+                is_checked = false;
+                if is_extends {
+                    self.flag(DiagnosticKind::Grammar, 1172, (keyword.0, 0), &[]);
+                }
+            }
+            has_extends |= is_extends;
+            self.next();
+            let base = self.s.ids.len();
+            let (count, comma) = self.heritage_elements(|p, _| {
+                let ty = p.heritage_type(is_first_extends, 2499);
+                p.s.ids.push(ty.0);
+            });
+            // `checkGrammarHeritageClause`
+            match comma {
+                _ if !is_checked => {}
+                Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, (comma.0, 0), &[]),
+                None if count == 0 => {
+                    let at = (keyword.1, keyword.1);
+                    self.flag(DiagnosticKind::Grammar, 1097, at, &[b"extends"]);
+                }
+                None => {}
+            }
+            match is_first_extends {
+                true => extends = self.take_ids(base),
+                false => {
+                    let types = self.s.ids.get(base..).unwrap_or_default();
+                    others.extend(types.iter().map(|&ty| TypeNodeId(ty)));
+                    self.s.ids.truncate(base);
+                }
+            }
+        }
+        (extends, self.f.list(&others))
     }
 
     /// `parseTypeQuery`
@@ -1339,13 +1459,7 @@ impl Parser<'_> {
         let (name, name_pos) = self.identifier();
         let saved = self.enter_context(ctx::TYPE, 0);
         let type_params = self.type_parameters();
-        let extends = match self.eat(T::Extends) {
-            true => self.heritage_types(),
-            false => IdList::EMPTY,
-        };
-        if matches!(self.token(), T::Extends | T::Implements) {
-            self.refuse(Refusal::Reported);
-        }
+        let (extends, other_heritage) = self.interface_heritage();
         let members = self.object_type_members();
         self.context = saved;
         let interface = self.f.add_interface(Interface {
@@ -1354,7 +1468,7 @@ impl Parser<'_> {
             flags: flags | self.ambient(),
             type_params,
             extends,
-            other_heritage: IdList::EMPTY,
+            other_heritage,
             members,
             stmt: StmtId::NONE,
         });

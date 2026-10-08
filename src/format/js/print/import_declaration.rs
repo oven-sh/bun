@@ -290,7 +290,8 @@ fn write_import_attributes<'a>(entries: List<'a, Prop<'a>>, braces: Span, f: &mu
     let needs_space = f.options().bracket_spacing.value();
 
     // Prettier's `isSingleTypeImportAttributes`
-    if entries.len() == 1 && first.key().is_some_and(|key| key.is("type")) && !f.comments().has_comment_before(braces.end) {
+    let is_type = first.key().is_some_and(|key| key.is("type")) && first.value().is_some_and(|value| value.tag() == ExprTag::String);
+    if entries.len() == 1 && is_type && !f.comments().has_comment_before(braces.end) {
         return write!(f, ["{", maybe_space(needs_space), attribute_at(0, first), maybe_space(needs_space), "}"]);
     }
 

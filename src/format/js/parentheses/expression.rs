@@ -446,10 +446,11 @@ fn assignment_needs_parentheses<'a>(e: Expr<'a>, left: Expr<'a>, parent: AstNode
         N::ForStatement(statement) => !is_init_or_update(statement, e),
         // `({ a } = b);` would be a block otherwise. `() => (a = b)`
         N::ExpressionStatement(statement) => {
-            statement.is_arrow_function_body() || matches!(left.kind(), ExprKind::Object(_))
+            statement.is_arrow_function_body()
+                || (matches!(left.kind(), ExprKind::Object(_)) && is_assignment_target(left))
         }
-        // `interface A { [a = 1]; }`, `a = b = c`
-        N::TSPropertySignature(_) | N::AssignmentExpression(_) => false,
+        // `interface A { [a = 1]; }`, `a = b = c`. `({ a: (b = 1) } = c)`, which is an error.
+        N::TSPropertySignature(_) | N::AssignmentExpression(_) | N::AssignmentTargetPropertyProperty(_) => false,
         // `for (a = 1, b = 2; ; a++, b++)`
         N::SequenceExpression(sequence) => {
             !matches!(parent.parent(), N::ForStatement(statement) if is_init_or_update(statement, sequence))
@@ -595,6 +596,7 @@ fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
         | N::JSXExpressionContainer(_)
         | N::LogicalExpression(_)
         | N::ObjectProperty(_)
+        | N::AssignmentTargetPropertyProperty(_)
         | N::ReturnStatement(_)
         | N::ThrowStatement(_)
         | N::VariableDeclarator(_)

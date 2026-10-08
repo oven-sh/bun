@@ -103,6 +103,70 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
     })
 }
 
+/// Whether `statement` is an `import` or an `export`.
+fn is_module_syntax(statement: &Stmt) -> bool {
+    let is_export = |it: &hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
+    let modifiers = &statement.file().hir.modifiers;
+    matches!(
+        statement.tag(),
+        StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar | StmtTag::ExportDefault
+    ) || (statement.try_raw()).is_some_and(|raw| {
+        (modifiers
+            .get(raw.modifiers.range())
+            .unwrap_or_default()
+            .iter())
+        .any(is_export)
+    })
+}
+
+/// What the parser of oxlint says, in its words, about a file that is CommonJS by its name and has what only a module can have.
+/// `is_typescript`: `.cts`, in which `import` and `export` are written and mean `require` and `exports`.
+pub(super) fn module_syntax_in_commonjs<'a>(
+    file: &'a File<'a>,
+    is_typescript: bool,
+) -> Option<SyntaxError> {
+    let is_at_top_level = |node: Node<'a>| !node.ancestors().any(|it| matches!(it, Node::Func(_)));
+    let statement = (file.body().iter().find(is_module_syntax))
+        .filter(|_| !is_typescript)
+        .map(|it| {
+            let start = it.span().start;
+            match file
+                .text()
+                .get(start as usize..)
+                .is_some_and(|it| it.starts_with(b"import"))
+            {
+                true => (start, "Cannot use import statement outside a module"),
+                false => (start, "Cannot use export statement outside a module"),
+            }
+        });
+    let meta = (file.exprs_of_kind(ExprTag::ImportMeta))
+        .map(|it| (it.span().start, "Unexpected import.meta expression"));
+    let awaits = (file.exprs_of_kind(ExprTag::Await))
+        .filter(|it| is_at_top_level(Node::Expr(*it)))
+        .map(|it| {
+            let message =
+                "`await` is only allowed within async functions and at the top levels of modules";
+            (it.span().start, message)
+        });
+    let loops = (file.stmts_of_kind(StmtTag::ForOf))
+        .filter(|it| matches!(it.kind(), StmtKind::ForOf { is_await: true, .. }))
+        .filter(|it| is_at_top_level(Node::Stmt(*it)))
+        .map(|it| {
+            let message = "`for await` loops are only allowed within async functions and at the top levels of modules";
+            (skip_trivia(file.text(), it.span().start + 3), message)
+        });
+    let first = statement
+        .into_iter()
+        .chain(meta)
+        .chain(awaits)
+        .chain(loops)
+        .min_by_key(|it| it.0)?;
+    Some(SyntaxError {
+        at: first.0,
+        message: first.1.into(),
+    })
+}
+
 /// Whether Prettier's `babel` parser throws on a JavaScript file that the parser here, in that dialect, has nothing to say about.
 ///
 /// Prettier lets Babel go on after an error, and lets pass what is only wrong in strict mode, names that are declared twice or
@@ -621,23 +685,6 @@ impl<'a> Checks<'a> {
         if file.language().source_type == SourceType::Module {
             return;
         }
-        let is_module_syntax = |it: &Stmt| {
-            let is_export = |it: &hir::Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
-            matches!(
-                it.tag(),
-                StmtTag::Import
-                    | StmtTag::ExportNamed
-                    | StmtTag::ExportStar
-                    | StmtTag::ExportDefault
-            ) || (it.try_raw()).is_some_and(|raw| {
-                file.hir
-                    .modifiers
-                    .get(raw.modifiers.range())
-                    .unwrap_or_default()
-                    .iter()
-                    .any(is_export)
-            })
-        };
         if let Some(first) = file.body().iter().find(is_module_syntax) {
             self.fail(
                 first.span().start,

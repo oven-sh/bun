@@ -78,9 +78,19 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         )
     });
     let error = match (parser, of_parser) {
-        (_, of_parser) if !file.language().refuses_what_parser_refuses => (of_parser
-            .map(|it| it.1))
-        .or_else(|| espree::typescript_in_javascript(file).filter(|_| file.is_javascript())),
+        (_, of_parser) if !file.language().refuses_what_parser_refuses => {
+            let of_oxlint = || match file.path() {
+                _ if file.is_javascript()
+                    && let Some(it) = espree::typescript_in_javascript(file) =>
+                {
+                    Some(it)
+                }
+                [.., b'.', b'c', b'j', b's'] => espree::module_syntax_in_commonjs(file, false),
+                [.., b'.', b'c', b't', b's'] => espree::module_syntax_in_commonjs(file, true),
+                _ => None,
+            };
+            of_parser.map(|it| it.1).or_else(of_oxlint)
+        }
         // It converts a tree only if the parser has nothing to say.
         (Parser::TypeScript, None) => typescript_estree::first_error(file, false),
         (Parser::Espree, of_parser) => {

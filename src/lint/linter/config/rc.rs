@@ -50,6 +50,33 @@ pub(crate) fn is_rule_of_oxlint(name: &[u8]) -> bool {
     strings::split(categories::RULE_NAMES.as_bytes(), b" ").any(|it| it == name)
 }
 
+/// What an element of `plugins` can be for oxlint 1.80, after `eslint-plugin-` or `oxlint-plugin-`. Each was tried.
+const PLUGIN_NAMES: [&[u8]; 23] = [
+    b"eslint",
+    b"react",
+    b"react-hooks",
+    b"react_hooks",
+    b"unicorn",
+    b"typescript",
+    b"typescript-eslint",
+    b"@typescript-eslint",
+    b"oxc",
+    b"deepscan",
+    b"import",
+    b"import-x",
+    b"jsdoc",
+    b"jest",
+    b"vitest",
+    b"jsx-a11y",
+    b"jsx_a11y",
+    b"nextjs",
+    b"react-perf",
+    b"react_perf",
+    b"promise",
+    b"node",
+    b"vue",
+];
+
 /// The files that are linted if nothing else says so.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}";
 
@@ -266,7 +293,18 @@ impl Rc<'_, '_> {
                 ]));
             };
             let file = path::resolve(directory, name);
-            self.file(&extended, path::dirname(&file), true, depth + 1)?;
+            let read = self.file(&extended, path::dirname(&file), true, depth + 1);
+            read.map_err(|error| match self.flavor {
+                RcFlavor::Oxlint => ConfigError::new(&[
+                    b"invalid config file ",
+                    directory,
+                    b"/",
+                    name,
+                    b": ",
+                    &error.message,
+                ]),
+                RcFlavor::Eslint => error,
+            })?;
         }
         for (category, severity) in json
             .get(b"categories")
@@ -288,10 +326,8 @@ impl Rc<'_, '_> {
             self.categories.retain(|it| it.0 != *category);
             self.categories.push((category.clone(), severity));
         }
-        match json.get(b"plugins").and_then(Json::as_array) {
-            Some(plugins) => {
-                (self.plugins).extend(plugins.iter().filter_map(Json::as_str).map(<[u8]>::to_vec))
-            }
+        match self.plugin_names(json)? {
+            Some(plugins) => self.plugins.extend(plugins),
             None => {
                 (self.plugins).extend([&b"typescript"[..], b"unicorn", b"oxc"].map(<[u8]>::to_vec))
             }
@@ -357,8 +393,8 @@ impl Rc<'_, '_> {
                 item.get(b"excludeFiles")
                     .or_else(|| item.get(b"excludedFiles")),
             );
-            if let Some(plugins) = item.get(b"plugins").and_then(Json::as_array) {
-                (self.plugins).extend(plugins.iter().filter_map(Json::as_str).map(<[u8]>::to_vec));
+            if let Some(plugins) = self.plugin_names(item)? {
+                self.plugins.extend(plugins);
             }
             let object = ConfigObject {
                 base_path: base_path.clone(),
@@ -376,6 +412,28 @@ impl Rc<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// `plugins` of `json`. oxlint refuses a name that it does not know.
+    fn plugin_names(&self, json: &Json) -> Result<Option<Vec<Vec<u8>>>, ConfigError> {
+        let Some(plugins) = json.get(b"plugins").and_then(Json::as_array) else {
+            return Ok(None);
+        };
+        let mut names = Vec::with_capacity(plugins.len());
+        for written in plugins.iter().filter_map(Json::as_str) {
+            let name = (written.strip_prefix(b"eslint-plugin-"))
+                .or_else(|| written.strip_prefix(b"oxlint-plugin-"))
+                .unwrap_or(written);
+            if self.flavor == RcFlavor::Oxlint && !PLUGIN_NAMES.contains(&name) {
+                return Err(ConfigError::new(&[
+                    b"Failed to parse config with error Error(\"Unknown plugin: '",
+                    written,
+                    b"'.\", line: 0, column: 0)",
+                ]));
+            }
+            names.push(name.to_vec());
+        }
+        Ok(Some(names))
     }
 
     /// Whether the rules of `plugin` run.
@@ -405,7 +463,7 @@ impl Rc<'_, '_> {
                 settings.push(RuleSetting {
                     id: crate::linter::RuleId::Known(entry.meta).to_vec().into(),
                     plugin: Box::default(),
-                    written_for: None,
+                    written_for: Some(plugin),
                     severity,
                     options: Vec::new(),
                     has_only_severity: true,

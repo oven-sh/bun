@@ -1,44 +1,47 @@
-// Generates `oxlint_categories.rs`: the category that oxlint puts each rule in, of the plugins of which something is
-// implemented here, which is what `categories` in `.oxlintrc.json` goes by.
+// Generates `oxlint_categories.rs`: what `.oxlintrc.json` means depends on what oxlint knows about its rules.
 //
-//   OXC_DIR=<checkout of oxc> node generate-oxlint-categories.mjs
+//   OXLINT=<the oxlint executable> OXC_DIR=<checkout of oxc> node generate-oxlint-categories.mjs
+//
+// The executable is the judge: the rules, their plugins and their categories are what `oxlint --rules` prints. Only on which kinds
+// of files a rule runs (`should_run`) is not printed by anything. That is read from the source, which can be of another version:
+// see `corrections`.
 
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+const oxlint = resolve(process.env.OXLINT);
 const oxc = resolve(process.env.OXC_DIR);
+const version = /[\d.]+/.exec(execFileSync(oxlint, ["--version"]).toString())[0];
+const rules = JSON.parse(execFileSync(oxlint, ["--rules", "--format", "json"], { maxBuffer: 1 << 26 }).toString());
 const categories = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
+// The plugins of which something is implemented here.
+const plugins = ["eslint", "typescript", "react", "import", "node", "oxc"];
+// Where the executable does something else than the source says. Each was tried: a file of each kind that the rule reports.
+const corrections = {
+  // 1.80 reports `require()` in JavaScript files too.
+  "typescript/no-var-requires": undefined,
+};
 const table = {};
 const runsOn = {};
-const plugins = ["eslint", "typescript", "react", "import", "node", "oxc"];
-for (const plugin of plugins) {
-  const dir = join(oxc, "crates/oxc_linter/src/rules", plugin);
-  for (const entry of readdirSync(dir).sort()) {
-    const path = statSync(join(dir, entry)).isDirectory() ? join(dir, entry, "mod.rs") : join(dir, entry);
-    const text = readFileSync(path, "utf8");
-    const block = /declare_oxc_lint!\(([\s\S]*?)\n\);/.exec(text)?.[1];
-    if (!block) throw new Error(`${path}: no declare_oxc_lint!`);
-    const fields = block.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("//")).join(" ").split(",").map(field => field.trim());
-    if (fields[1] !== plugin || !categories.includes(fields[2])) throw new Error(`${path}: ${fields.slice(0, 3)}`);
-    const name = entry.replace(/\.rs$/, "").replaceAll("_", "-");
-    ((table[plugin] ??= {})[fields[2]] ??= []).push(name);
-    // `should_run`, as far as it is about the kind of file.
-    const body = /fn should_run\(&self, ctx: &[\w:]*ContextHost\) -> bool \{\n([\s\S]*?)\n    \}/.exec(text)?.[1] ?? "";
-    const code = body.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("//")).join(" ");
-    const kind = /^ctx\.source_type\(\)\.is_typescript\(\)|return false; \} ctx\.source_type\(\)\.is_typescript\(\)$/.test(code) ? "TYPESCRIPT_ONLY"
-      : code.startsWith("!ctx.source_type().is_typescript()") ? "NOT_TYPESCRIPT"
-      : code.startsWith("!ctx.source_type().is_typescript_definition()") ? "NOT_DECLARATIONS" : undefined;
-    if (kind) ((runsOn[kind] ??= {})[plugin] ??= []).push(name);
-  }
+for (const { scope: plugin, value: name, category } of rules) {
+  if (!plugins.includes(plugin)) continue;
+  if (!categories.includes(category)) throw new Error(`${plugin}/${name}: ${category}`);
+  ((table[plugin] ??= {})[category] ??= []).push(name);
+  // `should_run`, as far as it is about the kind of file.
+  const file = join(oxc, "crates/oxc_linter/src/rules", plugin, name.replaceAll("-", "_"));
+  const path = [`${file}.rs`, join(file, "mod.rs")].find(it => existsSync(it));
+  const text = path ? readFileSync(path, "utf8") : "";
+  const body = /fn should_run\(&self, ctx: &[\w:]*ContextHost\) -> bool \{\n([\s\S]*?)\n    \}/.exec(text)?.[1] ?? "";
+  const code = body.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("//")).join(" ");
+  const read = /^ctx\.source_type\(\)\.is_typescript\(\)|return false; \} ctx\.source_type\(\)\.is_typescript\(\)$/.test(code) ? "TYPESCRIPT_ONLY"
+    : code.startsWith("!ctx.source_type().is_typescript()") ? "NOT_TYPESCRIPT"
+    : code.startsWith("!ctx.source_type().is_typescript_definition()") ? "NOT_DECLARATIONS" : undefined;
+  const kind = `${plugin}/${name}` in corrections ? corrections[`${plugin}/${name}`] : read;
+  if (kind) ((runsOn[kind] ??= {})[plugin] ??= []).push(name);
 }
 // The names of all rules, whatever the plugin.
-const rulesDir = join(oxc, "crates/oxc_linter/src/rules");
-const allNames = new Set();
-for (const plugin of readdirSync(rulesDir)) {
-  if (!statSync(join(rulesDir, plugin)).isDirectory() || plugin === "shared") continue;
-  for (const entry of readdirSync(join(rulesDir, plugin))) allNames.add(entry.replace(/\.rs$/, "").replaceAll("_", "-"));
-}
+const allNames = new Set(rules.map(it => it.value));
 const commit = execFileSync("git", ["-C", oxc, "rev-parse", "--short", "HEAD"]).toString().trim();
 const wrap = names => {
   const lines = [];
@@ -50,7 +53,7 @@ const wrap = names => {
   lines.push(line.trimEnd());
   return lines.map(line => `        "${line}",`).join("\n");
 };
-writeFileSync(join(import.meta.dirname, "oxlint_categories.rs"), `//! Generated by \`generate-oxlint-categories.mjs\` from oxc ${commit}. Not edited by hand.
+writeFileSync(join(import.meta.dirname, "oxlint_categories.rs"), `//! Generated by \`generate-oxlint-categories.mjs\` from oxlint ${version}, and from oxc ${commit} for the kinds of files. Not edited by hand.
 
 /// For each category, the plugins as oxlint calls them, each with the names of its rules in the category, separated by spaces.
 #[rustfmt::skip]

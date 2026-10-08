@@ -59,7 +59,8 @@ use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::LanguageOptions;
 use crate::options::{Json, Options};
-use crate::rule::Plugin;
+use crate::rule::{Meta, Plugin};
+use crate::runner::RuleEntry;
 use cache::Cache;
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
@@ -481,6 +482,29 @@ impl Config {
         )
     }
 
+    /// [`ConfiguredRule::reported_as`]. `written_for`: the plugin that the configuration names the rule with.
+    fn reported_as(
+        &self,
+        registry: &Registry,
+        entry: &'static RuleEntry,
+        written_for: Option<Plugin>,
+    ) -> &'static Meta {
+        let meta = entry.meta;
+        let is_extension =
+            meta.plugin == Plugin::TypeScript && meta.extends_base_rule == Some(meta.name);
+        if !self.prefers_typescript_rules || !is_extension {
+            return meta;
+        }
+        // A few are in both plugins.
+        let is_in = |plugin: Plugin| oxlint_category(plugin, meta.name).is_some();
+        if !is_in(Plugin::Eslint)
+            || is_in(Plugin::TypeScript) && written_for == Some(Plugin::TypeScript)
+        {
+            return meta;
+        }
+        (registry.get(Plugin::Eslint, meta.name.as_bytes())).map_or(meta, |it| it.meta)
+    }
+
     /// ESLint's `throwRuleNotFoundError` for a plugin that is there. `plugins`: the prefixes of those that the file has.
     fn missing_js_rule(&self, registry: &Registry, id: &[u8], plugins: &[&[u8]]) -> Vec<u8> {
         let (prefix, name) = super::registry::parse_rule_id(id);
@@ -656,12 +680,11 @@ impl Config {
                     Arc::from((entry.build)(&Options::new(&options)))
                 })
             });
-            config.rules.push(ConfiguredRule::new(
-                entry,
-                setting.severity,
-                options,
-                instance,
-            ));
+            let reported_as = self.reported_as(registry, entry, setting.written_for);
+            config.rules.push(
+                ConfiguredRule::new(entry, setting.severity, options, instance)
+                    .report_as(reported_as),
+            );
         }
         if !self.js_plugins.is_empty() {
             // ESLint looks for a rule in the plugins that the objects for the file have.

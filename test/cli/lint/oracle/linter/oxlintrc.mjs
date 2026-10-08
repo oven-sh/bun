@@ -14,29 +14,35 @@ const oxlint = resolve(process.env.OXLINT ?? "oxlint");
 const implemented = new Set(JSON.parse(execFileSync(bunLint, ["linter", "rules"]).toString()));
 
 // A line for each rule, and one that `eqeqeq` reports unless it has the option "smart".
-const probes = { "no-debugger": "debugger;", eqeqeq: "a == b;\na == null;", "no-cond-assign": "if (a = b) {}", "@typescript-eslint/no-this-alias": "const self = this;" };
+const probes = { "no-debugger": "debugger;", eqeqeq: "a == b;\na == null;", "no-cond-assign": "if (a = b) {}", "@typescript-eslint/no-this-alias": "const self = this;", "no-array-constructor": "new Array(1, 2);" };
 for (const id of Object.keys(probes)) if (!implemented.has(id)) delete probes[id];
 const code = `${Object.values(probes).join("\n")}\n`;
 // After them, what oxlint parses and ESLint's default parser refuses: a file is not refused because of it.
 const typescript = "declare const i: any;\ninterface I { a: 1 }\nabstract class A { abstract m(): void; private b?: number }\nenum E { a }\nlet c = i as I;\n";
-const tails = { ".ts": typescript, ".tsx": `${typescript}<a b={1} />;\n`, ".jsx": "<a b={1} />;\n", ".js": "<a b={1} />;\n@d class B {}\n", ".mjs": "@d class B {}\n" };
+const tails = { ".ts": typescript, ".tsx": `${typescript}<a b={1} />;\n`, ".jsx": "<a b={1} />;\n", ".js": "<a b={1} />;\n@d class B {}\n", ".mjs": "@d class B {}\n", ".cjs": "@d class B {}\n", ".cts": typescript };
 // TypeScript in a JavaScript file, which oxlint refuses, apart from the last one. It says nothing about such a file with `@flow`.
 const inJavaScript = [
   "let t: number = 1;", "function g(a?: string) {}", "let u = b as c;", "enum F { a }", "interface J {}", "type T = 1;", 'import type { K } from "k";', "let v = b!;",
   "class P { m(): void {} }", "class P { private a = 1 }",
 ];
+// What only a module can have. oxlint refuses it in a file that is CommonJS by its name, in `.cts` only the last three.
+const ofModules = ['import n from "n";', "export const q = 1;", "export default 1;", 'export * from "n";', "foo(import.meta.url);", "await foo();", "for await (const r of s);", 'import("n");'];
 const other = random(17);
 const codeOf = name => {
   const extension = name.slice(name.lastIndexOf("."));
   const isMixed = !extension.startsWith(".ts") && other.int(6) === 0;
-  return (isMixed && other.int(3) === 0 ? "// @flow\n" : "") + code + tails[extension] + (isMixed ? `${other.pick(inJavaScript)}\n` : "");
+  const isCommonJs = extension === ".cjs" || extension === ".cts";
+  return (
+    (isMixed && other.int(3) === 0 ? "// @flow\n" : "") + code + tails[extension] + (isMixed ? `${other.pick(inJavaScript)}\n` : "") +
+    (isCommonJs && other.int(2) ? `${other.pick(ofModules)}\n` : "")
+  );
 };
 const ids = Object.keys(probes);
 
 const rng = random(11);
 const list = (make, max) => Array.from({ length: 1 + rng.int(max) }, make);
 const dirs = ["src", "lib", "test", "dist", "a", "b", ".hidden", "build"];
-const names = ["index.js", "a.js", "b.mjs", "d.ts", "e.tsx", "f.test.js", "j.jsx", "k.min.js"];
+const names = ["index.js", "a.js", "b.mjs", "d.ts", "e.tsx", "f.test.js", "j.jsx", "k.min.js", "l.cjs", "m.cts"];
 const path = () => [...Array.from({ length: rng.int(3) }, () => rng.pick(dirs)), rng.pick(names)].join("/");
 const glob = () => rng.pick(["*.js", "*.ts", "*.{js,ts}", "**/*.js", "src/**", "src/**/*.js", "src/*.js", "test/**/*.js", "*.test.js", "**/a/**", "./src/a.js", "lib/*", "*.d.ts", "index.js", "a/b/*.js", "**/*.{ts,tsx}"]);
 const ignorePattern = () => rng.pick(["dist", "dist/", "/dist", "build/**", "*.test.js", "**/a/*.js", "!dist/a.js", "/src/a.js", "lib/*.js", ".hidden", "a", "*.d.ts", "/a/", "**/build/**"]);
@@ -53,7 +59,7 @@ const file = canExtend => ({
   ...(rng.int(2) ? { categories: categories() } : {}),
   ...(rng.int(4) ? { rules: rules() } : {}),
   ...(rng.int(3) === 0 ? { ignorePatterns: list(ignorePattern, 3) } : {}),
-  ...(rng.int(3) === 0 ? { plugins: rng.pick([[], ["typescript"], ["unicorn"]]) } : {}),
+  ...(rng.int(3) === 0 ? { plugins: rng.pick([[], ["typescript"], ["unicorn"], ["eslint-plugin-typescript", "react_hooks"], ...(rng.int(6) ? [] : [["n"], ["./a.js"]])]) } : {}),
   overrides: Array.from({ length: rng.int(4) }, () => ({
     files: list(glob, 2),
     ...(rng.int(3) === 0 ? { excludeFiles: list(glob, 2) } : {}),
@@ -86,7 +92,12 @@ try {
     try {
       answer = JSON.parse(stdout.toString());
     } catch {
-      continue; // oxlint refuses the configuration.
+      // oxlint refuses the configuration. Why is compared for a plugin that it does not know.
+      const [, why] = /^\s+x (.*Unknown plugin.*)$/m.exec(stdout.toString()) ?? [];
+      if (why === undefined) continue;
+      cases.push({ basePath, flavor: "oxlint", config, extended, sources });
+      expected.push({ error: why });
+      continue;
     }
     const byFile = Object.fromEntries(Object.keys(sources).map(name => [name, []]));
     for (const { code, severity, filename, labels } of answer.diagnostics) {
@@ -107,7 +118,7 @@ const actual = runBunLint("project", cases);
 const flat = { cases: [], expected: [], actual: [] };
 cases.forEach(({ basePath, config, extended, sources }, i) => Object.keys(sources).forEach(name => {
   flat.cases.push({ file: relative(basePath, name), config, extended });
-  flat.expected.push(sorted(expected[i][name]));
+  flat.expected.push(expected[i].error ?? sorted(expected[i][name]));
   flat.actual.push(actual[i].error ?? sorted(actual[i][name]));
 }));
 report("oxlintrc", flat.cases, flat.expected, flat.actual, 6);

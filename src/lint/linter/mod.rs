@@ -62,6 +62,7 @@ use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
+use crate::rule::Meta;
 use crate::runner::{AnyRule, Enabled, RuleEntry};
 use directives::{ConfigComment, Label};
 use message::Locator;
@@ -143,6 +144,8 @@ pub struct Linter {
 /// A rule as it runs on the file: as it is configured, or as a comment changes that.
 struct Running<'r> {
     entry: &'static RuleEntry,
+    /// [`ConfiguredRule::reported_as`]
+    reported_as: &'static Meta,
     severity: Severity,
     rule: RuleRef<'r>,
     /// [`ConfiguredRule::refusal`]
@@ -280,6 +283,7 @@ impl Linter {
             if let Some(instance) = rule.instance() {
                 running.push(Running {
                     entry: rule.entry,
+                    reported_as: rule.reported_as(),
                     severity: rule.severity,
                     rule: RuleRef::Shared(instance),
                     refusal: rule.refusal().map(Cow::Borrowed),
@@ -346,7 +350,7 @@ impl Linter {
         let mut rules_to_ignore = Vec::new();
         if let Some(filter) = options.rule_filter {
             running.retain(|it| {
-                let id = RuleId::Known(it.entry.meta);
+                let id = RuleId::Known(it.reported_as);
                 let runs = it.severity == Severity::Off || filter(&id, it.severity);
                 if !runs {
                     rules_to_ignore.push(id);
@@ -439,7 +443,7 @@ impl Linter {
             let Some(rule) = running.get(diagnostic.rule as usize) else {
                 continue;
             };
-            problems.push(to_message(diagnostic, rule.entry, &locator));
+            problems.push(to_message(diagnostic, rule.reported_as, &locator));
         }
         problems.sort_by_key(|it| (it.line, it.column));
 
@@ -504,13 +508,13 @@ impl Linter {
     }
 }
 
-fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locator) -> LintMessage {
+fn to_message(diagnostic: Diagnostic, rule: &'static Meta, locator: &Locator) -> LintMessage {
     let (line, column) = match diagnostic.start_position {
         Some(start) => (start.line, start.column.wrapping_add(1)),
         None => locator.position(diagnostic.span.start),
     };
     LintMessage {
-        rule_id: Some(RuleId::Known(entry.meta)),
+        rule_id: Some(RuleId::Known(rule)),
         severity: diagnostic.severity,
         message: diagnostic.message,
         message_id: Some(Cow::Borrowed(diagnostic.message_id)),
@@ -815,6 +819,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             };
             let new = Running {
                 entry,
+                reported_as: existing.map_or(entry.meta, ConfiguredRule::reported_as),
                 severity,
                 rule,
                 refusal,

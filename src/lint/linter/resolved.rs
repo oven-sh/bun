@@ -5,7 +5,7 @@ use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::{LanguageOptions, Parser};
 use crate::options::{Json, Options};
-use crate::rule::Plugin;
+use crate::rule::{Meta, Plugin};
 use crate::runner::{AnyRule, RuleEntry};
 use std::sync::Arc;
 
@@ -57,6 +57,8 @@ pub struct ConfiguredRule {
     /// What ESLint's rule throws for these options, which its schema accepts: [`Rule::validate`](crate::rule::Rule::validate).
     /// ESLint stops at the first file on which the rule runs: [`LintResult::thrown`](super::LintResult::thrown).
     refusal: Option<Arc<[u8]>>,
+    /// See [`ConfiguredRule::reported_as`].
+    reported_as: &'static Meta,
 }
 
 impl ConfiguredRule {
@@ -79,7 +81,19 @@ impl ConfiguredRule {
             options,
             instance,
             refusal,
+            reported_as: entry.meta,
         }
+    }
+
+    /// The rule that its messages are of. oxlint has most of the rules that typescript-eslint extends under the names of ESLint,
+    /// and the extension runs in their place.
+    pub fn reported_as(&self) -> &'static Meta {
+        self.reported_as
+    }
+
+    pub(crate) fn report_as(mut self, meta: &'static Meta) -> Self {
+        self.reported_as = meta;
+        self
     }
 
     pub fn refusal(&self) -> Option<&[u8]> {

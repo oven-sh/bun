@@ -65,10 +65,10 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(statement: Stmt<'a>, expr
             return true;
         }
         if current.is_assignment_target {
-            return match e.kind() {
-                ExprKind::Array(_) | ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => true,
-                _ => false,
-            };
+            return matches!(
+                e.kind(),
+                ExprKind::Array(_) | ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. }
+            );
         }
         expression_needs_parentheses(e, f)
             || match e.kind() {

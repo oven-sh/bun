@@ -63,7 +63,7 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
             let is_return = matches!(argument.ast_parent(), AstNodes::ReturnStatement(_));
             let limit = (f.comments().comments_in_range(span.end, argument.outer_span().end).iter())
                 .find(|comment| !is_return || comment.preceded_by_newline())
-                .map_or(argument.outer_span().end, |comment| comment.span.start);
+                .map_or_else(|| argument.outer_span().end, |comment| comment.span.start);
             let previous_limit = f.comments_mut().limit_comments_up_to(limit);
             write!(f, format_argument);
             f.comments_mut().restore_view_limit(previous_limit);

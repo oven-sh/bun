@@ -57,7 +57,7 @@ pub fn format_with_cursor<'a>(
         return Err(FormatError::SyntaxError);
     }
 
-    let range = calculate_range(file, start as u32, end as u32).unwrap_or(Span::empty(first as u32));
+    let range = calculate_range(file, start as u32, end as u32).unwrap_or_else(|| Span::empty(first as u32));
     let (start, end) = (range.start as usize, range.end as usize);
     let (Some(before), Some(slice), Some(after)) = (text.get(..start), text.get(start..end), text.get(end..)) else {
         return Err(FormatError::InvalidDocument);
@@ -113,7 +113,7 @@ pub fn format_with_cursor<'a>(
 }
 
 /// How long `text` is after each `\r\n` in it has become `\n`.
-fn normalized_len(text: &[u8]) -> usize {
+pub(crate) fn normalized_len(text: &[u8]) -> usize {
     text.len() - bun_core::strings::count(text, b"\r\n")
 }
 
@@ -123,15 +123,15 @@ fn utf16_len(text: &[u8]) -> usize {
 }
 
 /// `rangeStart`, `rangeEnd` and `cursorOffset`, which count UTF-16 code units, as offsets in the text.
-struct Offsets {
-    start: usize,
-    end: usize,
-    cursor: Option<usize>,
+pub(crate) struct Offsets {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) cursor: Option<usize>,
 }
 
 impl Offsets {
     /// Prettier's `normalizeInputAndOptions`. `first`: where `text` starts after its byte order mark.
-    fn new(text: &[u8], first: usize, options: &FormatOptions) -> Offsets {
+    pub(crate) fn new(text: &[u8], first: usize, options: &FormatOptions) -> Offsets {
         // After `\r\n` has become `\n`, an offset between the two is behind it.
         let after_line_break = |at: usize| match text.get(at.wrapping_sub(1)..=at) {
             Some(b"\r\n") => at + 1,
@@ -173,7 +173,7 @@ fn offset_of_utf16_index(text: &[u8], index: u32) -> Option<usize> {
 }
 
 /// `\s` of a regular expression at the start of `text`: its length.
-fn white_space_len(text: &[u8]) -> usize {
+pub(crate) fn white_space_len(text: &[u8]) -> usize {
     match *text {
         [b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ', ..] => 1,
         [0xC2, 0xA0, ..] => 2,
@@ -186,7 +186,7 @@ fn white_space_len(text: &[u8]) -> usize {
     }
 }
 
-fn trim_start(mut text: &[u8]) -> &[u8] {
+pub(crate) fn trim_start(mut text: &[u8]) -> &[u8] {
     loop {
         match white_space_len(text) {
             0 => return text,
@@ -195,7 +195,7 @@ fn trim_start(mut text: &[u8]) -> &[u8] {
     }
 }
 
-fn trim_end(mut text: &[u8]) -> &[u8] {
+pub(crate) fn trim_end(mut text: &[u8]) -> &[u8] {
     'text: loop {
         for len in 1..=3.min(text.len()) {
             let at = text.len() - len;
@@ -209,7 +209,7 @@ fn trim_end(mut text: &[u8]) -> &[u8] {
 }
 
 /// Prettier's `getAlignmentSize` of the white space that the last line of `before` starts with.
-fn alignment_size(before: &[u8], tab_width: u8) -> usize {
+pub(crate) fn alignment_size(before: &[u8], tab_width: u8) -> usize {
     let last = |line_break| bun_core::strings::last_index_of_char(before, line_break).map_or(0, |at| at + 1);
     let line_start = last(b'\n').max(last(b'\r'));
     let (mut rest, mut size, tab_width) = (&before[line_start..], 0, usize::from(tab_width.max(1)));
@@ -225,7 +225,7 @@ fn alignment_size(before: &[u8], tab_width: u8) -> usize {
 }
 
 /// Appends `text` with each `\r\n`, `\r` and `\n` replaced by `line_ending`.
-fn write_with_line_ending(mut text: &[u8], line_ending: &[u8], out: &mut Vec<u8>) {
+pub(crate) fn write_with_line_ending(mut text: &[u8], line_ending: &[u8], out: &mut Vec<u8>) {
     while let Some(at) = bun_core::strings::index_of_any(text, b"\r\n") {
         out.extend_from_slice(&text[..at]);
         out.extend_from_slice(line_ending);

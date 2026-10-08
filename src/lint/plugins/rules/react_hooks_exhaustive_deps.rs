@@ -2,6 +2,7 @@ use crate::oxlint;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -1334,27 +1335,29 @@ where
     'a: 'd,
 {
     let component = component_scope.node();
+    // The innermost call in the component, around something, of what sets a state. `None` in it if there is none.
+    let mut set_state_call_around: AncestorMemo<'a, Option<(Name<'a>, StateVariable<'a>)>> = AncestorMemo::default();
     for missing_dep in missing {
         let used_dep = dependency_with_key(missing_dep)?;
         for reference in &used_dep.references {
             let Some(id) = reference.expr() else {
                 continue;
             };
-            for maybe_call in Node::Expr(id).ancestors().take_while(|it| *it != component) {
-                let Node::Expr(e) = maybe_call else {
-                    continue;
+            let found = set_state_call_around.find(Node::Expr(id), |_, maybe_call| {
+                if maybe_call == component {
+                    return Some(None);
+                }
+                let ExprKind::Call(call) = maybe_call.as_expr()?.kind() else {
+                    return None;
                 };
-                let ExprKind::Call(call) = e.kind() else {
-                    continue;
-                };
-                let Some(setter) = call.callee().as_ident() else {
-                    continue;
-                };
+                let setter = call.callee().as_ident()?;
+                match state.set_state_call_sites.get(&call.callee().span().start) {
+                    None | Some(StateVariable::Missing) => None,
+                    Some(&it) => Some(Some((setter, it))),
+                }
+            });
+            if let Some(Some((setter, state_variable))) = found {
                 let setter = setter.bytes();
-                let state_variable = match state.set_state_call_sites.get(&call.callee().span().start) {
-                    None | Some(StateVariable::Missing) => continue,
-                    Some(&it) => it,
-                };
                 if matches!(state_variable, StateVariable::Ident(name) if name.bytes() == &missing_dep[..]) {
                     // `setCount(count + 1)`
                     let length = match missing_dep.first() {
@@ -1398,7 +1401,6 @@ where
                         b"' in the reducer.",
                     ]));
                 }
-                break;
             }
         }
     }

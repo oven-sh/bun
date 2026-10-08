@@ -4,8 +4,8 @@ use bun_lint::code_path::{Event, Step, steps};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::ByName;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 use std::cell::OnceCell;
 
 /// Enforces the Rules of Hooks.
@@ -163,30 +163,13 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
     }
 }
 
-/// What is around a function is walked once: the answer is kept in `known` for each function on the way.
-fn is_inside_component_or_hook<'a>(node: Node<'a>, known: &mut FxHashMap<Func<'a>, bool>) -> bool {
-    let mut passed: SmallVec<[Func<'a>; 4]> = SmallVec::new();
-    let mut answer = false;
-    for it in std::iter::once(node).chain(node.ancestors()) {
-        let is_one = match it {
-            Node::Func(func) => {
-                if let Some(&known) = known.get(&func) {
-                    answer = known;
-                    break;
-                }
-                passed.push(func);
-                get_function_name(func).is_some_and(FunctionName::is_component_or_hook)
-            }
-            Node::Expr(e) => is_forward_ref_or_memo_callback(e),
-            _ => false,
-        };
-        if is_one {
-            answer = true;
-            break;
-        }
-    }
-    known.extend(passed.into_iter().map(|it| (it, answer)));
-    answer
+fn is_inside_component_or_hook<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>) -> bool {
+    let is_one = |it: Node<'a>| match it {
+        Node::Func(func) => get_function_name(func).is_some_and(FunctionName::is_component_or_hook),
+        Node::Expr(e) => is_forward_ref_or_memo_callback(e),
+        _ => false,
+    };
+    known.find(node, |it, _| is_one(it).then_some(())).is_some()
 }
 
 /// Ranges of the text, to ask in how many of them a position is.
@@ -223,8 +206,12 @@ pub(crate) struct Memo<'a> {
     pub(crate) effects: OnceCell<Ranges>,
     /// The lines after those on which a comment `$FlowFixMe[react-rule-hook]` ends, sorted.
     suppressed_lines: OnceCell<Vec<u32>>,
-    /// Whether a function is a component or a hook, or in one.
-    pub(crate) inside_component_or_hook: FxHashMap<Func<'a>, bool>,
+    /// Whether something is a component or a hook, or in one.
+    pub(crate) inside_component_or_hook: AncestorMemo<'a, ()>,
+    /// For oxlint: the function around something,
+    pub(crate) function_around: AncestorMemo<'a, Func<'a>>,
+    /// and whether it is in a call of `memo` or `forwardRef`.
+    pub(crate) in_memo_or_forward_ref: AncestorMemo<'a, ()>,
 }
 
 impl<'a> Memo<'a> {
@@ -807,7 +794,7 @@ impl RulesOfHooks {
         // The calls in which such a function can be referred to, in the order in which the walk enters them.
         let mut effects: Vec<Span> = Vec::new();
         let mut functions: Vec<Reference<'a>> = Vec::new();
-        let mut inside_component_or_hook = FxHashMap::default();
+        let mut inside_component_or_hook = AncestorMemo::default();
         for e in file.exprs_of_kind(ExprTag::Call) {
             let ExprKind::Call(call) = e.kind() else {
                 continue;

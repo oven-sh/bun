@@ -4,6 +4,7 @@
 //! oxlint walks the callback. Here the references in it are looked at, each with what is around it.
 
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
@@ -426,6 +427,7 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
     }
     idents.sort_unstable_by_key(|it| it.span().start);
     let mut found = Found::default();
+    let mut enclosing_function = AncestorMemo::default();
     for ident in idents {
         let Some(name) = ident.as_ident() else {
             continue;
@@ -458,7 +460,7 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
                 && let ExprKind::Call(call) = init.kind()
                 && func_call_without_react_namespace(call).is_some_and(|it| it.is_any(&["useState", "useReducer"]))
                 && is_second_of_array_pattern(declarator, name)
-                && Node::Expr(ident).enclosing_function() == Some(func)
+                && enclosing_function.find(Node::Expr(ident), |_, parent| parent.as_func()) == Some(func)
             {
                 found.has_set_state_call = true;
             }
@@ -478,15 +480,19 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
     found
 }
 
-/// In a function that a function in `callback` returns: `return () => ..`.
-fn is_inside_effect_cleanup<'a>(e: Expr<'a>, callback: Func<'a>) -> bool {
-    Node::Expr(e).ancestors().take_while(|it| *it != Node::Func(callback)).any(|it| match it {
+/// In a function that a function in `callback` returns: `return () => ..`. `known`: what is known for `callback`.
+fn is_inside_effect_cleanup<'a>(e: Expr<'a>, callback: Func<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let is_inside = known.find(Node::Expr(e), |_, parent| match parent {
+        Node::Func(func) if func == callback => Some(false),
         Node::Func(func) => match func.owner() {
-            Node::Expr(owner) => !owner.is_parenthesized() && matches!(owner.parent(), Node::Stmt(stmt) if stmt.tag() == StmtTag::Return),
-            _ => false,
+            Node::Expr(owner) if !owner.is_parenthesized() => {
+                matches!(owner.parent(), Node::Stmt(stmt) if stmt.tag() == StmtTag::Return).then_some(true)
+            }
+            _ => None,
         },
-        _ => false,
-    })
+        _ => None,
+    });
+    is_inside == Some(true)
 }
 
 /// What is the same for all calls in a file.
@@ -500,6 +506,8 @@ pub(crate) struct Memo<'a> {
     places_of_symbols: Option<Vec<(u32, u32)>>,
     /// The `a.current` of the file, in the order of the source.
     currents: Option<Vec<Expr<'a>>>,
+    /// The function around something.
+    function_around: AncestorMemo<'a, Func<'a>>,
 }
 
 struct Component<'a> {
@@ -739,7 +747,7 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
         _ => return,
     };
     let is_function = |it: &Func| !matches!(it.kind(), FnKind::StaticBlock);
-    let Some(component) = Node::Expr(node).ancestors().find_map(|it| it.as_func().filter(is_function)) else {
+    let Some(component) = memo.function_around.find(Node::Expr(node), |_, parent| parent.as_func().filter(is_function)) else {
         return;
     };
     let component = Component {
@@ -956,11 +964,12 @@ fn report_refs_in_cleanups<'a, R: Rule>(cx: &Cx<'a, R>, callback: Func<'a>, comp
         currents
     });
     let first = currents.partition_point(|it| it.span().start < within.start);
+    let mut inside_effect_cleanup = AncestorMemo::default();
     for &member in currents[first..].iter().take_while(|it| it.span().start < within.end) {
         let Some((obj, _)) = as_static_member_outside_tags(member).filter(|_| within.contains(member.span())) else {
             continue;
         };
-        if !is_inside_effect_cleanup(member, callback) {
+        if !is_inside_effect_cleanup(member, callback, &mut inside_effect_cleanup) {
             continue;
         }
         let obj = inner(obj);

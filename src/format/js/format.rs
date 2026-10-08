@@ -712,7 +712,10 @@ fn format_statement_with_comments<'a>(statement: Stmt<'a>, is_before_another: bo
     let mut span = span_for_comments(node, f);
     // Prettier's `locStart`: the decorators of a class can be before its `export`.
     span.start = span.start.min(statement.span().start);
-    if f.comments().has_trailing_suppression_comment(node.span().end) {
+    // The `;` can be behind the comment: `a() // prettier-ignore ⏎ ;`
+    if f.comments().has_trailing_suppression_comment(node.span().end)
+        || (span.end < node.span().end && f.comments().has_trailing_suppression_comment(span.end))
+    {
         format_leading_comments(span).fmt(f);
         write_ignored_statement(statement, span, f);
         return write_trailing_comments_of(node, f);
@@ -755,6 +758,10 @@ fn format_declaration_with_comments<'a>(statement: Stmt<'a>, is_before_another: 
 /// written as the options say.
 fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatter<'a>) {
     let has_semicolon = match statement.kind() {
+        // `export var a` is an `ExportNamedDeclaration`.
+        StmtKind::Var(_) if statement.is_exported() && span.start < statement.span_without_export().start => {
+            span.end < statement.span().end
+        }
         StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Debugger | StmtKind::Var(_) => true,
         _ => span.end < statement.span().end,
     };

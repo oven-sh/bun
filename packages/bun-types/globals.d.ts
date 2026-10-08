@@ -1433,7 +1433,8 @@ declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeO
 /**
  * Post a message to the parent thread.
  *
- * Only useful in a worker thread; calling this from the main thread does nothing.
+ * Only useful in a Web Worker thread; calling this from the main thread does nothing.
+ * A `node:worker_threads` worker does not have this global. Use `parentPort.postMessage()` there.
  */
 declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
 

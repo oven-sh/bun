@@ -1,5 +1,6 @@
 //! Expressions.
 
+use super::stmt::ModifiersOf;
 use super::{Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
@@ -1543,7 +1544,7 @@ impl Parser<'_> {
         let mut kind = PropKind::Init;
         let first_modifier = self.s.modifiers.len();
         if token.is_modifier() || token == T::At {
-            flags = self.modifiers(true, false, false);
+            flags = self.modifiers(ModifiersOf::Declaration);
             let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
             if self.s.modifiers[first_modifier..].iter().any(is_decorator) {
                 self.refuse(Refusal::Reported);

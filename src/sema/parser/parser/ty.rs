@@ -1,6 +1,6 @@
 //! Types, and the declarations that consist of types.
 
-use super::stmt::Start;
+use super::stmt::{ModifiersOf, Start};
 use super::{GrammarError, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
@@ -118,7 +118,7 @@ impl Parser<'_> {
         // `skipParameterStart`
         if self.token().is_modifier() {
             let base = self.s.modifiers.len();
-            self.modifiers(false, false, false);
+            self.modifiers(ModifiersOf::TypeMember);
             self.s.modifiers.truncate(base);
         }
         if self.is_identifier() || self.token() == T::This {
@@ -483,23 +483,7 @@ impl Parser<'_> {
                 };
                 return self.token_type(kind);
             }
-            T::Minus => {
-                let start = self.pos();
-                self.next();
-                let kind = match self.token() {
-                    T::Number => TypeNodeKind::NumberLit(self.f.number(-self.lx.number)),
-                    T::BigInt => TypeNodeKind::BigIntLit {
-                        text: self.lx.atom,
-                        negative: true,
-                    },
-                    _ => {
-                        self.fail();
-                        return TypeNodeId::NONE;
-                    }
-                };
-                self.next();
-                return self.finish_type(kind, start);
-            }
+            T::Minus => return self.negative_literal_type(),
             T::This => {
                 let start = self.pos();
                 let this = self.token_type(TypeNodeKind::Keyword(Keyword::This));
@@ -593,6 +577,25 @@ impl Parser<'_> {
             ty,
             asserts: true,
         };
+        self.finish_type(kind, start)
+    }
+
+    /// `-1` or `-1n`, at the `-`.
+    pub(crate) fn negative_literal_type(&mut self) -> TypeNodeId {
+        let start = self.pos();
+        self.next();
+        let kind = match self.token() {
+            T::Number => TypeNodeKind::NumberLit(self.f.number(-self.lx.number)),
+            T::BigInt => TypeNodeKind::BigIntLit {
+                text: self.lx.atom,
+                negative: true,
+            },
+            _ => {
+                self.fail();
+                return TypeNodeId::NONE;
+            }
+        };
+        self.next();
         self.finish_type(kind, start)
     }
 
@@ -1372,7 +1375,7 @@ impl Parser<'_> {
                 if !self.look_ahead(Self::scan_type_member_start) {
                     self.fail();
                 }
-                member.flags = self.modifiers(false, false, false);
+                member.flags = self.modifiers(ModifiersOf::TypeMember);
             }
             member.modifiers = self.take_modifiers(first_modifier);
             let mut fn_kind = FnKind::Method;

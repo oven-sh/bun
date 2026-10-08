@@ -35,6 +35,19 @@ pub(crate) fn modifier_flag(token: T) -> Flags {
     }
 }
 
+/// What `parseModifiersEx` is told, by what has the modifiers.
+#[derive(Copy, Clone, PartialEq)]
+pub(crate) enum ModifiersOf {
+    /// A statement, a class expression, a parameter or a member of an object literal. Decorators are
+    /// among them.
+    Declaration,
+    /// `const` is one.
+    TypeParameter,
+    TypeMember,
+    /// Decorators are among them, `const` is one, and `static {` is none.
+    ClassMember,
+}
+
 impl Parser<'_> {
     #[inline(always)]
     pub(crate) fn start(&self) -> Start {
@@ -349,12 +362,11 @@ impl Parser<'_> {
 
     /// `parseModifiers`: pushes the modifiers at the token on the stack of modifiers. Returns their
     /// flags. The caller pops them from `base`, the length of the stack before.
-    pub(crate) fn modifiers(
-        &mut self,
-        allow_decorators: bool,
-        permit_const: bool,
-        stop_on_static_block: bool,
-    ) -> Flags {
+    pub(crate) fn modifiers(&mut self, of: ModifiersOf) -> Flags {
+        use ModifiersOf::*;
+        let allow_decorators = matches!(of, Declaration | ClassMember);
+        let permit_const = matches!(of, TypeParameter | ClassMember);
+        let stop_on_static_block = of == ClassMember;
         let mut flags = Flags::empty();
         loop {
             let token = self.token();
@@ -437,7 +449,7 @@ impl Parser<'_> {
             | T::Import
             | T::Interface
             | T::Type => Flags::empty(),
-            _ => self.modifiers(true, false, false),
+            _ => self.modifiers(ModifiersOf::Declaration),
         };
         // No other modifier is before a declaration.
         if self.is_ecmascript

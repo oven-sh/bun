@@ -1,6 +1,6 @@
 //! Functions: declarations, expressions, arrow functions, parameters.
 
-use super::stmt::Start;
+use super::stmt::{ModifiersOf, Start};
 use super::{Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
@@ -184,7 +184,7 @@ impl Parser<'_> {
             let start = self.pos();
             let modifiers = self.s.modifiers.len();
             let flags = match self.token().is_modifier() {
-                true => self.modifiers(false, true, false),
+                true => self.modifiers(ModifiersOf::TypeParameter),
                 false => Flags::empty(),
             };
             // The checker reports the others, which are in the list.
@@ -297,7 +297,7 @@ impl Parser<'_> {
             // parsed in the function's [Await] context."
             let first = self.s.modifiers.len();
             let saved = self.enter_context(outer_await, ctx::AWAIT);
-            let seen = self.modifiers(true, false, false);
+            let seen = self.modifiers(ModifiersOf::Declaration);
             self.context = saved;
             let index = (self.s.params.len() - base) as u32;
             for modifier in first..self.s.modifiers.len() {
@@ -392,7 +392,7 @@ impl Parser<'_> {
     pub(crate) fn try_arrow_function(&mut self, allow_return_type: bool) -> Option<ExprId> {
         match self.look_ahead(Self::is_parenthesized_arrow_function) {
             Tristate::True => {
-                return self.parenthesized_arrow_function(true, true);
+                return self.parenthesized_arrow_function(Tristate::True, true);
             }
             Tristate::Unknown => {
                 // `parsePossibleParenthesizedArrowFunctionExpression`
@@ -403,8 +403,9 @@ impl Parser<'_> {
                     self.not_arrows.drain(..read);
                 }
                 if self.not_arrows.binary_search(&at).is_err() {
-                    let arrow = self
-                        .try_parse(|p| p.parenthesized_arrow_function(false, allow_return_type));
+                    let arrow = self.try_parse(|p| {
+                        p.parenthesized_arrow_function(Tristate::Unknown, allow_return_type)
+                    });
                     if arrow.is_some() {
                         return arrow;
                     }
@@ -529,12 +530,13 @@ impl Parser<'_> {
         }
     }
 
-    /// `parseParenthesizedArrowFunctionExpression`
+    /// `parseParenthesizedArrowFunctionExpression`. `is_one`: what the tokens ahead have said.
     fn parenthesized_arrow_function(
         &mut self,
-        allow_ambiguity: bool,
+        is_one: Tristate,
         allow_return_type: bool,
     ) -> Option<ExprId> {
+        let allow_ambiguity = is_one == Tristate::True;
         let start = self.pos();
         let mut flags = Flags::empty();
         if self.eat(T::Async) {

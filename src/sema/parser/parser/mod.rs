@@ -262,7 +262,8 @@ impl<'a> Parser<'a> {
         }
         f.comment_directives = comment_directives;
         let names = &mut scratch.names;
-        let mut intern = |it: &[u8]| names.atom(crate::names::Text::elsewhere(text, it), atoms);
+        let source = text;
+        let mut intern = |it: &[u8]| names.atom(crate::names::Text::elsewhere(source, it), atoms);
         if !crate::pragmas::process_pragmas_into_fields(
             text,
             &leading_comments,

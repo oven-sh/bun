@@ -29,6 +29,27 @@ pub(crate) struct Comparison<'a, A: Storage, B: Storage> {
     stack_check: bun_core::StackCheck,
 }
 
+/// What an import type says besides its lists.
+fn rest_of_import_type(
+    kind: TypeNodeKind,
+) -> Option<(
+    bun_sema::atom::Atom,
+    bool,
+    ResolutionMode,
+    ImportAttributesToken,
+)> {
+    match kind {
+        TypeNodeKind::Import {
+            spec,
+            is_typeof,
+            mode,
+            attributes,
+            ..
+        } => Some((spec, is_typeof, mode, attributes)),
+        _ => None,
+    }
+}
+
 macro_rules! seen {
     ($($field:ident,)*) => {
         #[derive(Default)]
@@ -145,7 +166,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
         }
         if a.comments[..] != b.comments[..] {
             let at = (a.comments.iter().zip(&b.comments[..])).position(|(x, y)| x != y);
-            let at = at.unwrap_or(a.comments.len().min(b.comments.len()));
+            let at = at.unwrap_or_else(|| a.comments.len().min(b.comments.len()));
             self.differ("comments", &a.comments.get(at), &b.comments.get(at));
         }
         if a.comment_directives[..] != b.comment_directives[..] {
@@ -1316,27 +1337,14 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 self.expr("expression", expr, expr2);
             }
             (
-                Import {
-                    spec,
-                    name,
-                    args,
-                    is_typeof,
-                    mode,
-                    attributes,
-                },
-                Import {
-                    spec: spec2,
+                x @ Import { name, args, .. },
+                y @ Import {
                     name: name2,
                     args: args2,
-                    is_typeof: is_typeof2,
-                    mode: mode2,
-                    attributes: attributes2,
+                    ..
                 },
             ) => {
-                let (x, y) = (
-                    (spec, is_typeof, mode, attributes),
-                    (spec2, is_typeof2, mode2, attributes2),
-                );
+                let (x, y) = (rest_of_import_type(x), rest_of_import_type(y));
                 if x != y {
                     self.differ("import type", &x, &y);
                 }

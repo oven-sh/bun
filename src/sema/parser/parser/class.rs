@@ -1,6 +1,6 @@
 //! Classes.
 
-use super::stmt::Start;
+use super::stmt::{ModifiersOf, Start};
 use super::{Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
@@ -49,7 +49,7 @@ impl Parser<'_> {
     pub(crate) fn decorated_expression(&mut self) -> ExprId {
         let start = self.pos();
         let base = self.s.modifiers.len();
-        let flags = self.modifiers(true, false, false);
+        let flags = self.modifiers(ModifiersOf::Declaration);
         if self.token() != T::Class {
             self.fail();
             return ExprId::NONE;
@@ -311,7 +311,7 @@ impl Parser<'_> {
             self.fail();
         }
         let mut flags = match token.is_modifier() || token == T::At {
-            true => self.modifiers(true, true, true),
+            true => self.modifiers(ModifiersOf::ClassMember),
             false => Flags::empty(),
         };
         let index = (self.s.members.len() - base) as u32;

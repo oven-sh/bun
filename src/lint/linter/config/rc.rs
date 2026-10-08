@@ -328,30 +328,26 @@ impl Rc<'_, '_> {
 
     /// The rules that `categories` turns on, which everything else overrides.
     fn category_rules(&self) -> Vec<RuleSetting> {
-        let has_typescript = self.plugins.as_ref().is_none_or(|all| {
-            all.iter().any(|it| {
-                matches!(
-                    &it[..],
-                    b"typescript" | b"@typescript-eslint" | b"typescript-eslint"
-                )
-            })
-        });
+        // Without `plugins`, oxlint has those of typescript, unicorn and oxc.
+        let is_enabled = |plugin: Plugin| match &self.plugins {
+            _ if plugin == Plugin::Eslint => true,
+            None => matches!(plugin, Plugin::TypeScript | Plugin::Oxc),
+            Some(all) => all.iter().any(|it| Plugin::of_prefix(it) == Some(plugin)),
+        };
         let mut settings = Vec::new();
         for (category, severity) in &self.categories {
-            let Some((_, eslint, typescript)) = categories::CATEGORIES
+            let Some((_, lists)) = categories::CATEGORIES
                 .iter()
                 .find(|it| it.0.as_bytes() == &category[..])
             else {
                 continue;
             };
-            let lists = [
-                (Plugin::Eslint, *eslint),
-                (
-                    Plugin::TypeScript,
-                    if has_typescript { *typescript } else { "" },
-                ),
-            ];
-            for (plugin, names) in lists {
+            for (plugin, names) in *lists {
+                let Some(plugin) =
+                    Plugin::of_prefix(plugin.as_bytes()).filter(|it| is_enabled(*it))
+                else {
+                    continue;
+                };
                 for name in strings::split(names.as_bytes(), b" ").filter(|it| !it.is_empty()) {
                     let Some(entry) = self.reader.registry.get_preferring(plugin, name, true)
                     else {

@@ -55,6 +55,7 @@ use super::resolved::{ConfiguredRule, LinterOptions, ResolvedConfig};
 use crate::context::Severity;
 use crate::language::LanguageOptions;
 use crate::options::{Json, Options};
+use crate::rule::Plugin;
 use cache::Cache;
 pub use flat::ConfigError;
 use merge::RuleSetting;
@@ -420,6 +421,7 @@ impl Config {
                 }
             }
             let Some(entry) = config.find_rule(registry, &setting.id) else {
+                config.has_skipped_rules |= setting.severity != Severity::Off;
                 continue;
             };
             let options: Arc<[Json]> = setting.options.into();
@@ -437,8 +439,15 @@ impl Config {
             ));
         }
         // From here on: a rule that is turned off can be configured without its plugin.
-        config.lacks_typescript_plugin =
-            !self.accepts_all_plugins && !plugins.iter().any(|it| ***it == *b"@typescript-eslint");
+        if !self.accepts_all_plugins {
+            let mut implemented: Vec<Plugin> = Vec::new();
+            for plugin in plugins.iter().filter_map(|it| Plugin::of_prefix(&it[..])) {
+                if !implemented.contains(&plugin) {
+                    implemented.push(plugin);
+                }
+            }
+            config.plugins = Some(implemented);
+        }
         config
     }
 }

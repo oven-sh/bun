@@ -58,6 +58,7 @@ use crate::options::{Json, Options};
 use crate::runner::{AnyRule, Enabled, RuleEntry};
 use directives::{ConfigComment, Label};
 use message::Locator;
+use std::borrow::Cow;
 
 /// What a test of this module can reach of its parts.
 #[doc(hidden)]
@@ -106,6 +107,9 @@ pub struct LintResult {
     /// Rules that comments of the file name, and that belong to a plugin that is configured but
     /// not implemented here. They are skipped.
     pub skipped_rules: Vec<Box<[u8]>>,
+    /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
+    /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)). There is nothing else in the result then.
+    pub thrown: Option<Vec<u8>>,
 }
 
 pub struct Linter {
@@ -117,6 +121,8 @@ struct Running<'r> {
     entry: &'static RuleEntry,
     severity: Severity,
     rule: RuleRef<'r>,
+    /// [`ConfiguredRule::refusal`]
+    refusal: Option<Cow<'r, [u8]>>,
 }
 
 enum RuleRef<'r> {
@@ -181,6 +187,7 @@ impl Linter {
                     entry: rule.entry,
                     severity: rule.severity,
                     rule: RuleRef::Shared(instance),
+                    refusal: rule.refusal().map(Cow::Borrowed),
                 });
             }
         }
@@ -242,6 +249,15 @@ impl Linter {
                 runs
             });
         }
+        // ESLint makes the rules that run, and one of them throws.
+        let mut refusals = (running.iter().filter(|it| it.severity != Severity::Off))
+            .filter_map(|it| it.refusal.as_deref());
+        if let Some(refusal) = refusals.next() {
+            return LintResult {
+                thrown: Some([refusal, b"\nOccurred while linting ", file.path()].concat()),
+                ..LintResult::default()
+            };
+        }
         // Nor can what disables a rule that does not run for lack of types be called unused.
         if file.types.is_none() {
             let without_types = running
@@ -277,6 +293,7 @@ impl Linter {
                     .unwrap_or(config.linter.report_unused_disable_directives),
                 wants_fixes: options.wants_fixes,
                 rules_to_ignore: &rules_to_ignore,
+                has_skipped_rules: config.has_skipped_rules,
             },
             &mut problems,
         );
@@ -473,6 +490,15 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             let shared = existing
                 .filter(|_| inline.len() == 1)
                 .and_then(ConfiguredRule::instance);
+            let refusal = match shared {
+                Some(_) => existing
+                    .and_then(ConfiguredRule::refusal)
+                    .map(Cow::Borrowed),
+                None if severity == Severity::Off => None,
+                None => (entry.validate)(&Options::new(options))
+                    .err()
+                    .map(Cow::Owned),
+            };
             let rule = match shared {
                 Some(rule) => RuleRef::Shared(rule),
                 None if severity == Severity::Off => {
@@ -485,6 +511,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 entry,
                 severity,
                 rule,
+                refusal,
             };
             match running.iter_mut().find(|it| is_same_rule(it.entry, entry)) {
                 Some(running) => *running = new,

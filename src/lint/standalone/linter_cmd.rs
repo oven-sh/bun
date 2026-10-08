@@ -224,6 +224,11 @@ fn verify(args: &[String]) {
                 })
             };
             let report = bun_lint::linter::verify_and_fix(code, &|_| true, &mut lint);
+            if let Some(thrown) = report.result.thrown {
+                let error = Json::Object(vec![(b"error".to_vec(), Json::String(thrown))]);
+                testing::write_json(&mut out, &error);
+                continue;
+            }
             out.extend_from_slice(b"{\"fixed\":");
             out.extend_from_slice(if report.is_fixed { b"true" } else { b"false" });
             out.extend_from_slice(b",\"output\":");
@@ -238,6 +243,11 @@ fn verify(args: &[String]) {
         let result = with_file(&filename, code, &config.language, |file| {
             linter().lint(file, &config, &options)
         });
+        if let Some(thrown) = result.thrown {
+            let error = Json::Object(vec![(b"error".to_vec(), Json::String(thrown))]);
+            testing::write_json(&mut out, &error);
+            continue;
+        }
         out.extend_from_slice(b"{\"messages\":");
         write_messages(&mut out, &result.messages, code);
         out.extend_from_slice(b",\"suppressedMessages\":");

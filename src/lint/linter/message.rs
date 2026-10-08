@@ -244,13 +244,15 @@ impl<'t> Utf16Offsets<'t> {
         if offset < start {
             return -1;
         }
-        let offset = offset.min(self.text.len() as u32);
+        // What is beyond the text counts as it is.
+        let beyond = offset.saturating_sub(self.text.len() as u32);
+        let offset = offset - beyond;
         if offset < self.last.0 || self.last.0 < start {
             self.last = (start, 0);
         }
         let between = &self.text[self.last.0 as usize..offset as usize];
         self.last = (offset, self.last.1 + crate::source::utf16_len(between));
-        i64::from(self.last.1)
+        i64::from(self.last.1) + i64::from(beyond)
     }
 }
 

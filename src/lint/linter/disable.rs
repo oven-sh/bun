@@ -59,6 +59,8 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) wants_fixes: bool,
     /// The rules that are enabled and were filtered out. What disables them is not reported.
     pub(crate) rules_to_ignore: &'i [RuleId],
+    /// There are more of them, which have no name here.
+    pub(crate) has_skipped_rules: bool,
 }
 
 impl Input<'_, '_> {
@@ -69,7 +71,7 @@ impl Input<'_, '_> {
     fn is_ignored(&self, rule: Option<&RuleId>) -> bool {
         match rule {
             // What applies to all rules may be used by one that did not run.
-            None => !self.rules_to_ignore.is_empty(),
+            None => !self.rules_to_ignore.is_empty() || self.has_skipped_rules,
             Some(rule) => self.rules_to_ignore.contains(rule),
         }
     }

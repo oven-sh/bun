@@ -41,15 +41,16 @@ pub fn apply_fixes(
         };
         is_fixed = true;
         let (start, end) = (fix.span.start as usize, fix.span.end as usize);
-        if last.is_some_and(|last| last >= start) || start > end || end > text.len() {
+        if last.is_some_and(|last| last >= start) || start > end {
             remaining.push(message);
             continue;
         }
-        output.extend_from_slice(&text[last.unwrap_or(0)..start]);
+        // A range can go beyond the text, as for `String.prototype.slice`.
+        output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..start.min(text.len())]);
         output.extend_from_slice(&fix.text);
         last = Some(end);
     }
-    output.extend_from_slice(&text[last.unwrap_or(0)..]);
+    output.extend_from_slice(&text[last.unwrap_or(0).min(text.len())..]);
     remaining.sort_by_key(|it| (it.line, it.column));
     Fixed {
         is_fixed,

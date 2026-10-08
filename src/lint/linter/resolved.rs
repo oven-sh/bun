@@ -53,6 +53,9 @@ pub struct ConfiguredRule {
     pub options: Arc<[Json]>,
     /// `None` if it is off.
     instance: Option<Arc<dyn AnyRule>>,
+    /// What ESLint's rule throws for these options, which its schema accepts: [`Rule::validate`](crate::rule::Rule::validate).
+    /// ESLint stops at the first file on which the rule runs: [`LintResult::thrown`](super::LintResult::thrown).
+    refusal: Option<Arc<[u8]>>,
 }
 
 impl ConfiguredRule {
@@ -63,12 +66,23 @@ impl ConfiguredRule {
         options: Arc<[Json]>,
         instance: Option<Arc<dyn AnyRule>>,
     ) -> Self {
+        let refusal = match severity {
+            Severity::Off => None,
+            _ => (entry.validate)(&Options::new(&options))
+                .err()
+                .map(Arc::from),
+        };
         ConfiguredRule {
             entry,
             severity,
             options,
             instance,
+            refusal,
         }
+    }
+
+    pub fn refusal(&self) -> Option<&[u8]> {
+        self.refusal.as_deref()
     }
 
     pub fn instance(&self) -> Option<&dyn AnyRule> {
@@ -89,14 +103,17 @@ pub struct ResolvedConfig {
     pub foreign_plugins: Vec<Box<[u8]>>,
     /// A rule that does not exist is skipped, whatever its name.
     pub skips_unknown_rules: bool,
+    /// A rule that is configured for the file, and not off, is skipped. Nobody can say then that an `eslint-disable` without
+    /// names is unused.
+    pub has_skipped_rules: bool,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     pub prefers_typescript_rules: bool,
     /// `oxlint-disable` and the like mean what `eslint-disable` means. ESLint ignores them, and so does a configuration of
     /// ESLint.
     pub understands_oxlint_comments: bool,
-    /// No configuration object that applies to the file has the plugin of typescript-eslint: for ESLint its rules do not exist
-    /// there, and a comment cannot name them.
-    pub lacks_typescript_plugin: bool,
+    /// The plugins, of those that are implemented here, that the configuration objects for the file have. For ESLint the rules
+    /// of any other do not exist there, and a comment cannot name them. `None`: all of them, as with `.oxlintrc.json`.
+    pub plugins: Option<Vec<Plugin>>,
     /// `language`, if it is configured: `js/js`, `json/json`, .. Only JavaScript can be linted.
     pub language_name: Option<Box<[u8]>>,
     /// The name of the `processor`, if one is configured. None is implemented.
@@ -138,8 +155,9 @@ impl ResolvedConfig {
     /// The rule that the configuration, or a comment of a file that it is for, calls `id`.
     pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
         let found = registry.find_preferring(id, self.prefers_typescript_rules);
-        if self.lacks_typescript_plugin {
-            return found.filter(|it| it.meta.plugin != Plugin::TypeScript);
+        if let Some(plugins) = &self.plugins {
+            let has = |plugin: Plugin| plugin == Plugin::Eslint || plugins.contains(&plugin);
+            return found.filter(|it| has(it.meta.plugin));
         }
         if found.is_some() || !self.prefers_typescript_rules {
             return found;
@@ -160,10 +178,16 @@ impl ResolvedConfig {
     }
 
     /// Whether the rule called `id`, which does not exist here, is skipped silently: it is of a
-    /// plugin that is configured.
+    /// plugin that is configured, and that is not implemented here or only in part.
     pub fn is_foreign(&self, id: &[u8]) -> bool {
-        let plugin = parse_rule_id(id).0;
-        self.skips_unknown_rules || self.foreign_plugins.iter().any(|it| **it == *plugin)
+        let prefix = parse_rule_id(id).0;
+        let is_implemented_in_part = match Plugin::of_prefix(prefix) {
+            None | Some(Plugin::Eslint | Plugin::TypeScript) => false,
+            Some(plugin) => (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin)),
+        };
+        self.skips_unknown_rules
+            || is_implemented_in_part
+            || self.foreign_plugins.iter().any(|it| **it == *prefix)
     }
 
     /// Whether the file at `path` can be linted: it is JavaScript or TypeScript, as it is. Not if a

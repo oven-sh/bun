@@ -5,6 +5,7 @@ use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
 use crate::linter::registry::{Registry, parse_rule_id};
 use crate::options::Json;
+use crate::rule::Plugin;
 
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -299,6 +300,14 @@ impl Reader<'_> {
                 Some(name) if is_typescript_plugin(name) => {
                     typescript_prefixes.push(prefix);
                     object.plugins.push(b"@typescript-eslint"[..].into());
+                }
+                // `eslint` and `typescript` are names that oxlint has, not what a plugin is called here.
+                _ if matches!(
+                    Plugin::of_prefix(prefix),
+                    Some(plugin) if !matches!(plugin, Plugin::Eslint | Plugin::TypeScript)
+                ) =>
+                {
+                    object.plugins.push(prefix[..].into());
                 }
                 _ => object.foreign_plugins.push(prefix[..].into()),
             }

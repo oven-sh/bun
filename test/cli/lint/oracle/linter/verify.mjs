@@ -202,6 +202,26 @@ function aliases() {
   return cases;
 }
 
+// ───────────────────────────── options that a rule refuses ─────────────────────────────
+
+/** What the schema of a rule accepts and the rule throws on. ESLint throws while it lints the file. Only if asked for by name. */
+function refusals() {
+  const rng = random(11);
+  const bad = ["Foo[", ":foo(", "a >", "[a=", { selector: "Foo[", message: "m" }];
+  const cases = [];
+  for (let i = 0; i < 300; i++) {
+    const options = Array.from({ length: 1 + rng.int(3) }, () => rng.pick([...bad, "Identifier", "VariableDeclaration > *"]));
+    const setting = [rng.pick([0, 1, 2, 2]), ...options];
+    const lines = Array.from({ length: rng.int(4) }, () => rng.pick([
+      "var a;", "foo(", "/* eslint no-restricted-syntax: 0 */", "/* eslint no-restricted-syntax: 2 */", `/* eslint no-restricted-syntax: ${JSON.stringify(setting)} */`,
+      "// eslint-disable-line no-restricted-syntax", "/* eslint-disable */",
+    ]));
+    const rules = rng.int(4) === 0 ? {} : { "no-restricted-syntax": setting };
+    cases.push({ code: lines.join("\n"), filename: "dir/file.js", config: { rules }, options: rng.pick([{}, {}, { quiet: true }, { allowInlineConfig: false }, { fix: true }]) });
+  }
+  return cases;
+}
+
 // ───────────────────────────── the comparison ─────────────────────────────
 
 function eslintAnswer({ code, filename, config, options }) {
@@ -233,8 +253,8 @@ function normalize(answer) {
   return { ...answer, messages: answer.messages.map(message), suppressedMessages: answer.suppressedMessages.map(message) };
 }
 
-for (const [name, make] of Object.entries({ generated, upstream, aliases })) {
-  if (only && only !== name) continue;
+for (const [name, make] of Object.entries({ generated, upstream, aliases, refusals })) {
+  if (only ? only !== name : name === "refusals") continue;
   const cases = [], expected = [];
   let invalid = 0;
   for (const it of make()) {

@@ -73,4 +73,18 @@ impl JSModuleLoader {
         ))
         .ok_or(JsError::Thrown)
     }
+
+    /// The promise of a load that threw before it had one, for a load whose starter reports its
+    /// promise: an entry point, a preload, a test file. Rejected with what was thrown and handled,
+    /// like the loader's own; a termination leaves through `?`.
+    #[cold]
+    #[inline(never)]
+    pub fn rejected_load(
+        global: &JSGlobalObject,
+        err: JsError,
+    ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
+        let rejected = JSInternalPromise::rejected_promise_with_caught_exception(global, err)?;
+        rejected.set_handled();
+        Ok(core::ptr::NonNull::from(rejected))
+    }
 }

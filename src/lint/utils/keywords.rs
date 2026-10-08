@@ -1,1 +1,72 @@
 //! ESLint's `lib/rules/utils/keywords.js`.
+
+/// ESLint's `keywords`: the reserved words of ES3, with `true`, `false` and `null`. Sorted.
+pub static KEYWORDS: &[&str] = &[
+    "abstract",
+    "boolean",
+    "break",
+    "byte",
+    "case",
+    "catch",
+    "char",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "final",
+    "finally",
+    "float",
+    "for",
+    "function",
+    "goto",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "int",
+    "interface",
+    "long",
+    "native",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "short",
+    "static",
+    "super",
+    "switch",
+    "synchronized",
+    "this",
+    "throw",
+    "throws",
+    "transient",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "volatile",
+    "while",
+    "with",
+];
+
+/// ESLint's `keywords.includes(name)`.
+#[inline]
+pub fn is_keyword(name: &[u8]) -> bool {
+    KEYWORDS
+        .binary_search_by(|keyword| keyword.as_bytes().cmp(name))
+        .is_ok()
+}

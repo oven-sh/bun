@@ -1135,14 +1135,16 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
     } else {
         // <bucket>.<account>.r2.cloudflarestorage.com
         // <bucket>.<account>.<jurisdiction>.r2.cloudflarestorage.com
-        // With no bucket label it is the account endpoint, which is path-style.
+        // Without the bucket label it is the account endpoint, which is
+        // path-style. Two labels are that endpoint when the second is an R2
+        // jurisdiction, so this list must have every jurisdiction that R2 has.
         let rest = host.strip_suffix(b".r2.cloudflarestorage.com")?;
-        let rest = rest
-            .strip_suffix(b".eu")
-            .or_else(|| rest.strip_suffix(b".fedramp"))
-            .unwrap_or(rest);
-        let (bucket, account) = strings::split_once_char(rest, b'.')?;
-        if strings::contains_char(account, b'.') {
+        let (bucket, rest) = strings::split_once_char(rest, b'.')?;
+        let named = match strings::split_once_char(rest, b'.') {
+            Some((_, jurisdiction)) => !strings::contains_char(jurisdiction, b'.'),
+            None => !matches!(rest, b"eu" | b"fedramp" | b"us"),
+        };
+        if !named {
             return None;
         }
         bucket

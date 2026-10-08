@@ -28,6 +28,26 @@ type Report = {
 const virtualHosted = { virtualHostedStyle: true } as const;
 const aws = { ...virtualHosted, endpoint: "https://prod-bucket.s3.us-east-1.amazonaws.com" } as const;
 
+// Each jurisdiction that R2 has. `guess_bucket` in src/s3_signing/credentials.rs has the same list.
+const r2Jurisdictions = ["eu", "fedramp", "us"] as const;
+
+/** A virtual-hosted client on `<labels>.r2.cloudflarestorage.com`, and the bucket that the labels name. */
+function r2Case(name: string, labels: string, bucket: string | null): [string, [Case, Report]] {
+  const host = `${labels}.r2.cloudflarestorage.com`;
+  return [
+    name,
+    [
+      { client: { ...virtualHosted, endpoint: `https://${host}` } },
+      {
+        url: `${host}/dir/f.txt`,
+        bucket,
+        file: bucket ? `S3Ref ("${bucket}/dir/f.txt")` : 'S3Ref ("dir/f.txt")',
+        client: bucket ? `S3Client ("${bucket}")` : "S3Client",
+      },
+    ],
+  ];
+}
+
 const probe = /* js */ `
   const credentials = { accessKeyId: "a", secretAccessKey: "b", region: "us-east-1" };
   const head = value => Bun.inspect(value).split(" {")[0];
@@ -185,15 +205,12 @@ testCases(
         client: 'S3Client ("my-bucket")',
       },
     ],
-    "R2 host with a jurisdiction": [
-      { client: { ...virtualHosted, endpoint: "https://my-bucket.acct123.eu.r2.cloudflarestorage.com" } },
-      {
-        url: "my-bucket.acct123.eu.r2.cloudflarestorage.com/dir/f.txt",
-        bucket: "my-bucket",
-        file: 'S3Ref ("my-bucket/dir/f.txt")',
-        client: 'S3Client ("my-bucket")',
-      },
-    ],
+    // The bucket label is in front of the account for each jurisdiction, also for one that Bun does not know.
+    ...Object.fromEntries(
+      [...r2Jurisdictions, "a-new-one"].map(jurisdiction =>
+        r2Case(`R2 host in the ${jurisdiction} jurisdiction`, `my-bucket.acct123.${jurisdiction}`, "my-bucket"),
+      ),
+    ),
   },
 );
 
@@ -222,15 +239,12 @@ testCases(
         client: "S3Client",
       },
     ],
-    "R2 account host with a jurisdiction": [
-      { client: { ...virtualHosted, endpoint: "https://acct123.eu.r2.cloudflarestorage.com" } },
-      {
-        url: "acct123.eu.r2.cloudflarestorage.com/dir/f.txt",
-        bucket: null,
-        file: 'S3Ref ("dir/f.txt")',
-        client: "S3Client",
-      },
-    ],
+    // The account is not a bucket.
+    ...Object.fromEntries(
+      r2Jurisdictions.map(jurisdiction =>
+        r2Case(`R2 account host in the ${jurisdiction} jurisdiction`, `acct123.${jurisdiction}`, null),
+      ),
+    ),
     "AWS PrivateLink host": [
       {
         client: {

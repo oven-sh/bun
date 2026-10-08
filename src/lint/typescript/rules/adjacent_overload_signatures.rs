@@ -1,7 +1,9 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::{MemberName, MemberNameType, get_name_from_member};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::hash::Hash;
 
 /// Require that function overload signatures be consecutive.
 pub struct AdjacentOverloadSignatures;
@@ -11,7 +13,7 @@ const ADJACENT_SIGNATURE: Message = Message::new(
     "All {{name}} signatures should be adjacent.",
 );
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Hash)]
 struct Method<'a> {
     name: MemberName<'a>,
     /// `None` for a call or a construct signature, which is never the same as a method.
@@ -44,8 +46,39 @@ fn get_member_method(member: Member<'_>) -> Option<Method<'_>> {
     }
 }
 
+/// The methods of a body, each with a number.
+struct SeenMethods<M> {
+    /// The number is the position.
+    few: SmallVec<[M; 8]>,
+    /// All of them, as soon as they are more than a few.
+    many: FxHashMap<M, usize>,
+}
+
+impl<M: Eq + Hash> SeenMethods<M> {
+    const FEW: usize = 16;
+
+    fn len(&self) -> usize {
+        self.few.len() + self.many.len()
+    }
+
+    fn position(&self, method: &M) -> Option<usize> {
+        match self.many.is_empty() {
+            true => self.few.iter().position(|seen| seen == method),
+            false => self.many.get(method).copied(),
+        }
+    }
+
+    fn push(&mut self, method: M) {
+        if self.few.len() < Self::FEW && self.many.is_empty() {
+            return self.few.push(method);
+        }
+        self.many.extend(self.few.drain(..).enumerate().map(|(at, seen)| (seen, at)));
+        self.many.insert(method, self.many.len());
+    }
+}
+
 /// Calls `report` with each of `members` whose method was seen before, but not just before.
-fn check_body_for_overload_methods<'a, T: Handle<'a>, M: PartialEq>(
+fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
     members: List<'a, T>,
     get_member_method: impl Fn(T) -> Option<M>,
     report: impl Fn(T, &M),
@@ -53,15 +86,18 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: PartialEq>(
     if members.len() < 3 {
         return;
     }
-    let mut seen_methods: SmallVec<[M; 8]> = SmallVec::new();
-    // Where it is in `seen_methods`.
+    let mut seen_methods = SeenMethods {
+        few: SmallVec::new(),
+        many: FxHashMap::default(),
+    };
+    // Its number in `seen_methods`.
     let mut last_method = None;
     for member in members {
         let Some(method) = get_member_method(member) else {
             last_method = None;
             continue;
         };
-        let index = seen_methods.iter().position(|seen| *seen == method);
+        let index = seen_methods.position(&method);
         match index {
             Some(_) if index != last_method => report(member, &method),
             Some(_) => {}

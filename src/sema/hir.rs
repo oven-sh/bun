@@ -289,19 +289,31 @@ impl<'s> Storage for InArena<'s> {
     type Lazy = Lazy<'s>;
 }
 
-/// A list that neither grows nor shrinks. It is in an arena and freed with it, or it is lent by one
-/// who still has it (`FileBuilder::lend`).
-pub struct Fixed<'s, T>(&'s mut [T]);
+/// A list that neither grows nor shrinks. It has a block of an arena, which it frees when it is
+/// dropped, or it is lent by one who still has it (`FileBuilder::lend`).
+pub struct Fixed<'s, T>(FixedIn<'s, T>);
+
+enum FixedIn<'s, T> {
+    /// No block if it is empty: a file without nodes is also made by a thread that the arena is
+    /// not of (`File::empty_in`).
+    Arena(ArenaBox<'s, [T]>),
+    Lent(&'s mut [T]),
+}
 
 impl<T> Default for Fixed<'_, T> {
     fn default() -> Self {
-        Fixed(&mut [])
+        Fixed(FixedIn::Lent(&mut []))
     }
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
     pub(crate) fn filled_in(arena: &'s Arena, len: usize, value: T) -> Self {
-        Fixed(arena.alloc_slice_fill_copy(len, value))
+        let values = std::iter::repeat_n(value, len);
+        Fixed(FixedIn::Arena(ArenaBox::from_iter_in(values, arena)))
+    }
+
+    fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
+        Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
 }
 
@@ -309,14 +321,20 @@ impl<T> Deref for Fixed<'_, T> {
     type Target = [T];
     #[inline(always)]
     fn deref(&self) -> &[T] {
-        self.0
+        match &self.0 {
+            FixedIn::Arena(list) => list,
+            FixedIn::Lent(list) => list,
+        }
     }
 }
 
 impl<T> DerefMut for Fixed<'_, T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut [T] {
-        self.0
+        match &mut self.0 {
+            FixedIn::Arena(list) => list,
+            FixedIn::Lent(list) => list,
+        }
     }
 }
 
@@ -325,7 +343,7 @@ impl<'a, T> IntoIterator for &'a Fixed<'_, T> {
     type IntoIter = std::slice::Iter<'a, T>;
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.iter()
     }
 }
 
@@ -2491,7 +2509,7 @@ impl FileBuilder {
     ) -> (File<'s>, FileBuilder) {
         macro_rules! copied {
             ($list:expr) => {{
-                let exact = Fixed(arena.alloc_slice_copy(&$list));
+                let exact = Fixed::copied_in(arena, &$list);
                 $list.clear();
                 exact
             }};
@@ -2515,7 +2533,7 @@ impl FileBuilder {
         self.class_nodes.resize(self.classes.len(), Node::NONE);
         macro_rules! lent {
             ($list:expr) => {
-                Fixed(&mut $list[..])
+                Fixed(FixedIn::Lent(&mut $list[..]))
             };
         }
         file_in_arena!(self, arena, session, lent)

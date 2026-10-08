@@ -29,7 +29,10 @@ const prettier = await import(resolve(prettierRoot, "node_modules/prettier/index
 
 const extensions = new Set((flags.get("extensions") ?? ".js,.jsx,.mjs,.cjs,.ts,.tsx,.mts,.cts").split(","));
 function* walk(path: string): Generator<string> {
-  if (statSync(path).isDirectory()) {
+  // A link to nothing is skipped.
+  const stats = statSync(path, { throwIfNoEntry: false });
+  if (!stats) return;
+  if (stats.isDirectory()) {
     for (const name of readdirSync(path).sort()) {
       if (name !== "node_modules" && name !== ".git") yield* walk(join(path, name));
     }

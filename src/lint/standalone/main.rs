@@ -5,8 +5,17 @@
 //!   with what ESLint reports for them.
 //! - `bun-lint run <rule> <file> [options as JSON]`: what one rule reports for one file.
 
+mod ast_cmd;
+mod code_path_cmd;
+mod linter_cmd;
+mod regex_cmd;
+mod semantic_cmd;
+mod tokens_cmd;
+mod types_cmd;
+
 use bun_lint::ast::File;
 use bun_lint::context::{Diagnostic, Severity};
+use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
 use bun_lint::rule::Plugin;
 use bun_lint::runner::{Enabled, RuleEntry};
@@ -42,7 +51,13 @@ struct Reported {
     suggestions: Vec<(String, String)>,
 }
 
-fn lint(entry: &RuleEntry, path: &str, code: &[u8], options: &[Json]) -> Outcome {
+/// Parses and binds `code`, without types, and calls `then` with the file.
+pub(crate) fn with_file<R>(
+    path: &str,
+    code: &[u8],
+    language: &LanguageOptions,
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> R {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
@@ -54,8 +69,15 @@ fn lint(entry: &RuleEntry, path: &str, code: &[u8], options: &[Json]) -> Outcome
         before_es2017: false,
     };
     let bound = bind(&hir, bind_options, &atoms, arena);
-    let language = bun_lint::language::LanguageOptions::default();
-    let file = File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None);
+    let file = File::new(path.as_bytes(), &hir, &bound, &atoms, language, None);
+    then(&file)
+}
+
+fn lint(entry: &RuleEntry, path: &str, code: &[u8], options: &[Json]) -> Outcome {
+    with_file(path, code, &LanguageOptions::default(), |file| lint_file(entry, file, code, options))
+}
+
+fn lint_file<'a>(entry: &RuleEntry, file: &'a File<'a>, code: &[u8], options: &[Json]) -> Outcome {
     if file.has_parse_errors() {
         return Outcome {
             messages: Vec::new(),
@@ -68,7 +90,7 @@ fn lint(entry: &RuleEntry, path: &str, code: &[u8], options: &[Json]) -> Outcome
         rule: &*rule,
         severity: Severity::Error,
     }];
-    let diagnostics = bun_lint::runner::run(&file, &rules, true);
+    let diagnostics = bun_lint::runner::run(file, &rules, true);
     let apply = |fix: &bun_lint::fix::Fix| {
         bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec())
     };
@@ -275,6 +297,13 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("conformance") => conformance(&args[1..]),
         Some("run") => run_one(&args[1..]),
+        Some("ast") => ast_cmd::run(&args[1..]),
+        Some("tokens") => tokens_cmd::run(&args[1..]),
+        Some("semantic") => semantic_cmd::run(&args[1..]),
+        Some("code-path") => code_path_cmd::run(&args[1..]),
+        Some("regex") => regex_cmd::run(&args[1..]),
+        Some("types") => types_cmd::run(&args[1..]),
+        Some("linter") => linter_cmd::run(&args[1..]),
         _ => println!("usage: bun-lint conformance <fixtures> | bun-lint run <rule> <file> [options]"),
     }
 }

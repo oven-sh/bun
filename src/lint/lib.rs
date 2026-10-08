@@ -13,9 +13,11 @@
 pub mod ast;
 pub mod code_path;
 pub mod context;
+pub mod estree;
 pub mod fix;
 pub mod json;
 pub mod language;
+pub mod linter;
 pub mod options;
 pub mod regex;
 pub mod rule;
@@ -25,6 +27,7 @@ pub mod source;
 pub mod span;
 pub mod tokens;
 pub mod types;
+pub mod utils;
 
 /// What a rule imports.
 pub mod prelude {

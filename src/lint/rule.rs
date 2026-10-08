@@ -14,7 +14,7 @@
 //!         NoDebugger
 //!     }
 //!
-//!     fn register<'a>(&'a self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+//!     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
 //!         on.stmts([StmtTag::Debugger], |_, stmt, cx| {
 //!             cx.report(stmt, UNEXPECTED);
 //!         });
@@ -193,20 +193,20 @@ pub trait Rule: Send + Sync + Sized + 'static {
     fn new(options: &Options) -> Self;
 
     /// Called for each file, like ESLint's `create`.
-    fn register<'a>(&'a self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a>;
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a>;
 }
 
 /// A function of the rule `R` that is called with an `N`.
-pub type Listener<'a, R, N> = fn(&'a R, N, &mut Cx<'a, R>);
+pub type Listener<'a, R, N> = fn(&R, N, &mut Cx<'a, R>);
 
 /// What a rule listens for in one file.
 pub struct Listeners<'a, R: Rule> {
     pub(crate) entries: Vec<Entry<'a, R>>,
 }
 
-type OnCodePath<'a, R> = fn(&'a R, CodePath<'a>, Node<'a>, &mut Cx<'a, R>);
-type OnSegment<'a, R> = fn(&'a R, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
-type OnSegmentLoop<'a, R> = fn(&'a R, Segment<'a>, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
+type OnCodePath<'a, R> = fn(&R, CodePath<'a>, Node<'a>, &mut Cx<'a, R>);
+type OnSegment<'a, R> = fn(&R, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
+type OnSegmentLoop<'a, R> = fn(&R, Segment<'a>, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
 
 macro_rules! sorts {
     ($($(#[$doc:meta])* $method:ident $variant:ident $handle:ident;)*) => {
@@ -225,7 +225,7 @@ macro_rules! sorts {
             UnreachableSegmentStart(OnSegment<'a, R>),
             UnreachableSegmentEnd(OnSegment<'a, R>),
             SegmentLoop(OnSegmentLoop<'a, R>),
-            Finish(fn(&'a R, &mut Cx<'a, R>)),
+            Finish(fn(&R, &mut Cx<'a, R>)),
         }
 
         impl<'a, R: Rule> Listeners<'a, R> {
@@ -330,7 +330,7 @@ impl<'a, R: Rule> Listeners<'a, R> {
     }
 
     /// Once, after everything else.
-    pub fn finish(&mut self, listener: fn(&'a R, &mut Cx<'a, R>)) {
+    pub fn finish(&mut self, listener: fn(&R, &mut Cx<'a, R>)) {
         self.entries.push(Entry::Finish(listener));
     }
 

@@ -104,7 +104,7 @@ impl Rule for Eqeqeq {
         }
     }
 
-    fn register<'a>(&'a self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.exprs([ExprTag::Binary], Self::check);
     }
 }

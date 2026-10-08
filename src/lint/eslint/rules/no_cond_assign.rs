@@ -74,7 +74,7 @@ impl Rule for NoCondAssign {
         }
     }
 
-    fn register<'a>(&'a self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         if self.is_always {
             on.exprs([ExprTag::Assign], Self::check_assignment);
         } else {

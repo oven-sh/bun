@@ -47,7 +47,7 @@ impl Rule for MaxDepth {
         }
     }
 
-    fn register<'a>(&'a self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<usize> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<usize> {
         on.enter(functions(), |_, _, cx| cx.state.push(0));
         on.exit(functions(), |_, _, cx| {
             cx.state.pop();

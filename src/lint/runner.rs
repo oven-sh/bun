@@ -101,7 +101,7 @@ pub trait AnyRule: Send + Sync {
     fn meta(&self) -> &'static Meta;
 
     #[doc(hidden)]
-    fn start<'a>(&'a self, start: Start<'a>) -> Box<dyn Running<'a> + 'a>;
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Box<dyn Running<'a> + 'r>;
 }
 
 /// What a rule is given to start on a file.
@@ -118,7 +118,7 @@ impl<R: Rule> AnyRule for R {
         &R::META
     }
 
-    fn start<'a>(&'a self, start: Start<'a>) -> Box<dyn Running<'a> + 'a> {
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Box<dyn Running<'a> + 'r> {
         let mut on = Listeners::new();
         let state = self.register(&mut on, start.file);
         Box::new(Run {
@@ -170,13 +170,13 @@ pub enum WalkListener {
     CodePath(u16),
 }
 
-struct Run<'a, R: Rule> {
-    rule: &'a R,
+struct Run<'r, 'a, R: Rule> {
+    rule: &'r R,
     entries: Vec<Entry<'a, R>>,
     cx: Cx<'a, R>,
 }
 
-impl<'a, R: Rule> Running<'a> for Run<'a, R> {
+impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
     fn run_unordered(&mut self) {
         let (rule, cx) = (self.rule, &mut self.cx);
         let file = cx.file;
@@ -321,8 +321,8 @@ impl<'a, R: Rule> Running<'a> for Run<'a, R> {
 // ───────────────────────────── the walk ─────────────────────────────
 
 /// Calls the listeners that depend on the order of the nodes.
-struct Walk<'r, 'a> {
-    running: &'r mut [Box<dyn Running<'a> + 'a>],
+struct Walk<'w, 'r, 'a> {
+    running: &'w mut [Box<dyn Running<'a> + 'r>],
     /// By `NodeTags::index_of`: the rule and its listener.
     enter: Vec<Vec<(u16, u16)>>,
     exit: Vec<Vec<(u16, u16)>>,
@@ -330,7 +330,7 @@ struct Walk<'r, 'a> {
     analyzer: Option<Analyzer<'a>>,
 }
 
-impl<'a> Walk<'_, 'a> {
+impl<'a> Walk<'_, '_, 'a> {
     fn analyze(
         &mut self,
         node: Node<'a>,
@@ -348,7 +348,7 @@ impl<'a> Walk<'_, 'a> {
     }
 }
 
-impl<'a> Visitor<'a> for Walk<'_, 'a> {
+impl<'a> Visitor<'a> for Walk<'_, '_, 'a> {
     fn enter(&mut self, node: Node<'a>) {
         self.analyze(node, Analyzer::enter);
         for &(rule, entry) in &self.enter[NodeTags::index_of(node) as usize] {
@@ -378,7 +378,7 @@ pub struct Enabled<'r> {
 /// into `rules`.
 ///
 /// `wants_fixes`: whether the fixes and suggestions are going to be read.
-pub fn run<'a>(file: &'a File<'a>, rules: &'a [Enabled<'a>], wants_fixes: bool) -> Vec<Diagnostic> {
+pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     run_rules(file, rules);
     let mut diagnostics = file.sink.diagnostics.take();
@@ -386,9 +386,9 @@ pub fn run<'a>(file: &'a File<'a>, rules: &'a [Enabled<'a>], wants_fixes: bool) 
     diagnostics
 }
 
-fn run_rules<'a>(file: &'a File<'a>, rules: &'a [Enabled<'a>]) {
+fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
     let has_types = file.types.is_some();
-    let mut running: Vec<Box<dyn Running<'a> + 'a>> = Vec::with_capacity(rules.len());
+    let mut running: Vec<Box<dyn Running<'a> + 'r>> = Vec::with_capacity(rules.len());
     for (i, enabled) in rules.iter().enumerate() {
         if enabled.severity == Severity::Off || enabled.rule.meta().requires_types && !has_types {
             continue;

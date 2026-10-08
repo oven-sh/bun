@@ -13,7 +13,7 @@ impl Rule for NoDebugger {
         NoDebugger
     }
 
-    fn register<'a>(&'a self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.stmts([StmtTag::Debugger], |_, stmt, cx| {
             cx.report(stmt, UNEXPECTED);
         });

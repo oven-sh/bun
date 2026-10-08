@@ -420,7 +420,8 @@ fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatt
         // A link is in a link: nothing that it would need parentheses in, unless an optional chain
         // ends with it.
         if (has_type_casts && is_type_cast_node(expression.span(), f).is_some())
-            || ((!is_link || is_chain_root(expression)) && expression_needs_parentheses(expression, f))
+            || ((!is_link || ((tag == ExprTag::NonNull || expression.chain() != Chain::No) && is_chain_root(expression)))
+                && expression_needs_parentheses(expression, f))
         {
             members.push(ChainMember::Node(expression));
             break;

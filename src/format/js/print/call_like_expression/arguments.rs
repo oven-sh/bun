@@ -74,9 +74,11 @@ impl<'a> Format<'a> for FormatArguments<'a> {
         let mut has = 0;
         // An empty line between two arguments is kept, which takes breaking them all.
         let mut has_empty_line = false;
+        let mut previous_end = None;
         for (index, argument) in self.iter().enumerate() {
             has |= kind(argument.tag());
-            has_empty_line = has_empty_line || (index != last_index && is_followed_by_empty_line(self.args, index, f));
+            has_empty_line = has_empty_line || previous_end.is_some_and(|end| is_empty_line_between(end, argument, f));
+            previous_end = (index != last_index).then(|| argument.span().end);
         }
         let has_function = has & kind(ExprTag::Fn) != 0;
 
@@ -157,14 +159,19 @@ fn counts_line_breaks_between_arguments(f: &Formatter<'_>) -> bool {
 
 /// Whether the arguments break because of what is between the one at `index` and the next.
 fn is_followed_by_empty_line<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Formatter<'a>) -> bool {
-    let Some(argument) = args.get(index) else {
-        return false;
-    };
-    match (counts_line_breaks_between_arguments(f), args.get(index + 1)) {
-        (true, Some(next)) => {
-            bun_core::strings::count_char(f.source_text().bytes_range(argument.span().end, next.span().start), b'\n') >= 2
-        }
-        _ => is_next_line_empty(f.source_text(), argument.span().end),
+    match (args.get(index), args.get(index + 1)) {
+        (Some(argument), Some(next)) => is_empty_line_between(argument.span().end, next, f),
+        (Some(argument), None) => is_next_line_empty(f.source_text(), argument.span().end),
+        (None, _) => false,
+    }
+}
+
+/// The same for an argument that ends at `end` and is followed by `next`.
+#[inline]
+fn is_empty_line_between<'a>(end: u32, next: Expr<'a>, f: &Formatter<'a>) -> bool {
+    match counts_line_breaks_between_arguments(f) {
+        true => bun_core::strings::count_char(f.source_text().bytes_range(end, next.span().start), b'\n') >= 2,
+        false => is_next_line_empty(f.source_text(), end),
     }
 }
 
@@ -489,7 +496,7 @@ fn write_grouped_arguments<'a>(
                     cache_mode: FunctionCacheMode::Cache,
                 }))
             }
-            Some(function) if is_grouped_argument && function.is_arrow() => {
+            Some(function) if is_grouped_argument && function.is_arrow() && !is_written_the_same_when_grouped(function, f) => {
                 Some(ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
                     ..FormatJsArrowFunctionExpressionOptions::default()
@@ -620,6 +627,17 @@ fn write_grouped_arguments<'a>(
         f.best_fitting_of(&[most_flat, middle_variant, most_expanded])
     };
     f.write_element(element);
+}
+
+/// `() => {}`, without comments: there is no signature to keep on one line, and only a body that is
+/// an expression depends on where the arrow function is.
+fn is_written_the_same_when_grouped<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
+    f.is_quiet()
+        && matches!(arrow.body(), FnBody::Block(_))
+        && arrow.params().is_empty()
+        && arrow.this_param().is_none()
+        && arrow.type_params().is_empty()
+        && arrow.return_type().is_none()
 }
 
 /// Takes the soft line breaks out of what is cached under `key`. Returns whether it is on one line

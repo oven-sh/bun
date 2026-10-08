@@ -28,7 +28,8 @@ type Report = {
 const virtualHosted = { virtualHostedStyle: true } as const;
 const aws = { ...virtualHosted, endpoint: "https://prod-bucket.s3.us-east-1.amazonaws.com" } as const;
 
-// Each jurisdiction that R2 has. `guess_bucket` in src/s3_signing/credentials.rs has the same list.
+// Each jurisdiction that R2 has: https://developers.cloudflare.com/r2/reference/data-location/#available-jurisdictions
+// `guess_bucket` in src/s3_signing/credentials.rs has the same list.
 const r2Jurisdictions = ["eu", "fedramp", "us"] as const;
 const r2 = (labels: string) => `https://${labels}.r2.cloudflarestorage.com`;
 
@@ -191,6 +192,7 @@ testCases(
       null,
     ),
     "AWS path-style host": hosted("https://s3.us-east-1.amazonaws.com", null),
+    "AWS host with an empty bucket label": hosted("https://.s3.us-east-1.amazonaws.com", null),
     "a path that looks like an AWS host": hosted(
       "https://files.example.com/prod-bucket.s3.us-east-1.amazonaws.com",
       null,
@@ -199,6 +201,11 @@ testCases(
     "AWS path-style host, bucket in the path of the endpoint": hosted(
       "https://s3.us-east-1.amazonaws.com/my-bucket",
       null,
+    ),
+    "AWS path-style host, bucket in the path of the endpoint, bucket option with the same name": hosted(
+      "https://s3.us-east-1.amazonaws.com/my-bucket",
+      "my-bucket",
+      "my-bucket",
     ),
   },
 );
@@ -238,6 +245,14 @@ testCases(
     "no bucket option, key with one segment: no request is possible": [
       { key: "f.txt" },
       { url: "ERR_S3_INVALID_PATH", bucket: null, file: 'S3Ref ("f.txt")', client: "S3Client" },
+    ],
+    "no bucket option, key that starts with //": [
+      { key: "//dir/f.txt" },
+      { url: "s3.us-east-1.amazonaws.com/dir/f.txt", bucket: "dir", file: 'S3Ref ("/dir/f.txt")', client: "S3Client" },
+    ],
+    "no bucket option, key that starts with ///: the first segment is empty": [
+      { key: "///f.txt" },
+      { url: "s3.us-east-1.amazonaws.com//f.txt", bucket: null, file: 'S3Ref ("//f.txt")', client: "S3Client" },
     ],
     "no bucket option, s3:// key": [
       { key: "s3://scratch-bucket/dir/f.txt" },

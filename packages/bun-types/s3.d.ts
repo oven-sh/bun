@@ -637,8 +637,8 @@ declare module "bun" {
      *
      * With `virtualHostedStyle`, the path is not read for a bucket. With an
      * `endpoint` too, this is the bucket in the hostname of the endpoint when
-     * Bun recognises the hostname, otherwise the `bucket` option. It is
-     * `undefined` when neither names a bucket.
+     * Bun recognizes the hostname (AWS S3 and Cloudflare R2), otherwise the
+     * `bucket` option. It is `undefined` when neither names a bucket.
      *
      * @example
      * ```ts

@@ -1120,6 +1120,8 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         .strip_suffix(b".amazonaws.com")
         .or_else(|| host.strip_suffix(b".amazonaws.com.cn"))
     {
+        // https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
+        // https://docs.aws.amazon.com/AmazonS3/latest/userguide/dual-stack-endpoints.html
         // <bucket>.s3.amazonaws.com
         // <bucket>.s3.<region>.amazonaws.com
         // <bucket>.s3.dualstack.<region>.amazonaws.com
@@ -1140,8 +1142,8 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         // <bucket>.<account>.<jurisdiction>.r2.cloudflarestorage.com
         // Without the bucket label it is the account endpoint, which is
         // path-style. Two labels are that endpoint when the second is an R2
-        // jurisdiction: keep this list equal to "Available jurisdictions" on
-        // the "Data location" page of the R2 docs.
+        // jurisdiction. Keep this list equal to "Available jurisdictions":
+        // https://developers.cloudflare.com/r2/reference/data-location/#available-jurisdictions
         let rest = host.strip_suffix(b".r2.cloudflarestorage.com")?;
         let (bucket, rest) = strings::split_once_char(rest, b'.')?;
         let named = match strings::split_once_char(rest, b'.') {

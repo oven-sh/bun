@@ -344,7 +344,7 @@ impl<'a> ClassMemberUsage<'a> {
             }
             if is_plain {
                 member.name.name_span = match candidate.node {
-                    MemberNode::Member(it) => it.key().map_or(Span::default(), |key| key.span(file)),
+                    MemberNode::Member(it) => it.key().map_or_else(Span::default, |key| key.span(file)),
                     MemberNode::ParameterProperty(it) => estree_span(Node::Pat(it.pat())),
                 };
             }

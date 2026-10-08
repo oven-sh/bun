@@ -315,7 +315,8 @@ impl<'a> Index<'a> {
         entries.sort_unstable();
         let mut index = Index { last_stop: vec![(0, 0); entries.len()], entries };
         let mut start = 0;
-        for len in index.entries.chunk_by(|a, b| a.0 == b.0).map(<[_]>::len).collect::<Vec<_>>() {
+        while let Some(&(name, _)) = index.entries.get(start) {
+            let len = index.entries[start..].partition_point(|it| it.0 == name);
             index.note_stops(places, start, start + len);
             start += len;
         }

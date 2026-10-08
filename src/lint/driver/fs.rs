@@ -15,14 +15,39 @@ pub(crate) enum Kind {
     Directory,
 }
 
-/// What is at `path`, following links. `None`: nothing, or neither a file nor a directory.
-pub(crate) fn kind(path: &[u8]) -> Option<Kind> {
+/// What is at `path`, following links, and its size. `None`: nothing, or neither a file nor a
+/// directory.
+pub(crate) fn kind_and_size(path: &[u8]) -> Option<(Kind, u64)> {
     let found = bun_sys::stat(z(path, &mut path_buffer_pool::get())).ok()?;
-    match bun_sys::kind_from_mode(found.st_mode as _) {
-        EntryKind::File => Some(Kind::File),
-        EntryKind::Directory => Some(Kind::Directory),
-        _ => None,
-    }
+    let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
+        EntryKind::File => Kind::File,
+        EntryKind::Directory => Kind::Directory,
+        _ => return None,
+    };
+    Some((kind, found.st_size as u64))
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum LinkKind {
+    File,
+    Directory,
+    Link,
+}
+
+/// What is at `path`, which can be a link, and its size.
+pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
+    let found = bun_sys::lstat(z(path, &mut path_buffer_pool::get())).ok()?;
+    let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
+        EntryKind::File => LinkKind::File,
+        EntryKind::Directory => LinkKind::Directory,
+        EntryKind::SymLink => LinkKind::Link,
+        _ => return None,
+    };
+    Some((kind, found.st_size as u64))
+}
+
+pub(crate) fn kind(path: &[u8]) -> Option<Kind> {
+    Some(kind_and_size(path)?.0)
 }
 
 /// The time of the last change of what is at `path` and its size, as text, and that time in
@@ -40,6 +65,15 @@ pub(crate) fn is_file(path: &[u8]) -> bool {
 
 pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
     File::read_from(Fd::cwd(), path)
+}
+
+/// The same for a file that is known to have `size` bytes, or had when it was looked at.
+pub(crate) fn read_sized(path: &[u8], size: u64) -> bun_sys::Result<Vec<u8>> {
+    let file = File::openat(Fd::cwd(), path, O::RDONLY, 0)?;
+    // One more, so that the end of the file is seen without growing.
+    let mut text = Vec::with_capacity(size as usize + 1);
+    file.read_to_end_into(&mut text)?;
+    Ok(text)
 }
 
 pub(crate) fn read_stdin() -> bun_sys::Result<Vec<u8>> {
@@ -60,8 +94,23 @@ pub(crate) struct Entry {
     pub(crate) is_link: bool,
 }
 
-/// The entries of the directory at `path`, in no particular order. `None` if it cannot be listed.
-pub(crate) fn list(path: &[u8]) -> Option<Vec<Entry>> {
+/// A directory that has been listed, and is still open.
+pub(crate) struct Listing {
+    directory: bun_sys::Dir,
+    /// In no particular order.
+    pub(crate) entries: Vec<Entry>,
+}
+
+impl Listing {
+    /// The size of the file called `name` in the directory. 0 if it cannot be told.
+    pub(crate) fn size_of(&self, name: &[u8]) -> u64 {
+        let found = bun_sys::fstatat(self.directory.fd(), z(name, &mut path_buffer_pool::get()));
+        found.map_or(0, |found| found.st_size as u64)
+    }
+}
+
+/// Lists the directory at `path`. `None` if it cannot be listed.
+pub(crate) fn list(path: &[u8]) -> Option<Listing> {
     let directory = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(path).ok()?);
     let mut found = Vec::new();
     let mut entries = bun_sys::iterate_dir(directory.fd());
@@ -81,7 +130,10 @@ pub(crate) fn list(path: &[u8]) -> Option<Vec<Entry>> {
             is_link: kind == EntryKind::SymLink,
         });
     }
-    Some(found)
+    Some(Listing {
+        directory,
+        entries: found,
+    })
 }
 
 /// `path` without links.

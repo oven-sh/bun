@@ -7,7 +7,7 @@
 use crate::cli::Options;
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
-use crate::{fs, paths};
+use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{Config, Linter, RcFlavor, ResolvedConfig};
@@ -70,8 +70,6 @@ const BUILT_IN: &[u8] = br#"[
 pub(crate) struct Loaded {
     pub(crate) config: Config,
     pub(crate) flavor: Flavor,
-    /// `None`: there is no file.
-    pub(crate) path: Option<Vec<u8>>,
     /// `options.typeAware` of an `.oxlintrc.json`.
     pub(crate) is_type_aware: bool,
 }
@@ -322,15 +320,26 @@ impl<'l> Loader<'l> {
                 entries.push((b"reportUnusedDisableDirectives".to_vec(), severity_name(severity)));
             }
         }
+        // A file that `--config` names is for the working directory, wherever it is. What it extends
+        // is next to it.
+        let base_path = if options.config.is_some() { self.cwd() } else { paths::dirname(path) };
+        let mut moved: Vec<(Vec<u8>, Vec<u8>)> = vec![(base_path.to_vec(), paths::dirname(path).to_vec())];
         let mut load = |directory: &[u8], name: &[u8]| {
             // A package, which would have to be run.
             if !name.starts_with(b".") && !paths::is_absolute(name) {
                 self.warn(&[b"\"", name, b"\", which ", path, b" extends, is not supported and was skipped"]);
                 return Some(Json::Object(Vec::new()));
             }
-            bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?)
+            // Where the reader takes a file to be, and where it is.
+            let real = moved.iter().find(|it| it.0 == directory).map_or(directory, |it| &it.1[..]);
+            let file = paths::resolve(real, name);
+            let taken_for = paths::resolve(directory, name);
+            if taken_for != file {
+                moved.push((paths::dirname(&taken_for).to_vec(), paths::dirname(&file).to_vec()));
+            }
+            bun_lint::json::parse(&fs::read(&file).ok()?)
         };
-        Config::from_rc_json(self.linter.registry(), paths::dirname(path), &json, flavor, &mut load)
+        Config::from_rc_json(self.linter.registry(), base_path, &json, flavor, &mut load)
             .map_err(|error| Fatal([b"Cannot use the configuration file ", path, b":\n", &error.message[..]].concat()))
     }
 
@@ -344,7 +353,6 @@ impl<'l> Loader<'l> {
         Ok(Arc::new(Loaded {
             config: self.flat(root, bun_lint::json::parse(&text).unwrap_or(Json::Null))?,
             flavor: Flavor::BuiltIn,
-            path: None,
             is_type_aware: false,
         }))
     }
@@ -358,7 +366,7 @@ impl<'l> Loader<'l> {
         let syntax = known.map_or(if is_json { Syntax::Json } else { Syntax::Program }, |it| it.1);
         let json = match syntax {
             Syntax::Program => {
-                crate::evaluate::evaluate(self, path)?
+                evaluate::evaluate(self.environment, evaluate::ESLINT, path, self.options.config_cache)?
             }
             Syntax::Json => {
                 let text = fs::read(path).map_err(|error| {
@@ -404,7 +412,6 @@ impl<'l> Loader<'l> {
         Ok(Arc::new(Loaded {
             config,
             flavor,
-            path: Some(path.to_vec()),
             is_type_aware: is_type_aware && flavor == Flavor::Oxlint,
         }))
     }
@@ -441,8 +448,7 @@ impl<'l> Loader<'l> {
             b"" if !self.options.config_lookup => Ok(Arc::new(Loaded {
                 config: self.flat(base_path, Json::Array(Vec::new()))?,
                 flavor: Flavor::Eslint,
-                path: None,
-                is_type_aware: false,
+                    is_type_aware: false,
             })),
             b"" => self.built_in(),
             path => self.read(path, base_path),
@@ -510,11 +516,6 @@ impl<'l> Loader<'l> {
             Flavor::Oxlint => loaded.is_type_aware,
             Flavor::BuiltIn => false,
         })
-    }
-
-    /// Whether what a configuration file that is a program evaluates to is kept for the next run.
-    pub(crate) fn keeps_configurations(&self) -> bool {
-        self.options.config_cache
     }
 
     /// Whether `.gitignore` counts for what has the configuration `loaded`.

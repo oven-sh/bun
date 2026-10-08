@@ -1,0 +1,27 @@
+// Prints the configuration of Prettier in a file that is not JSON: a program, YAML, TOML, JSON5, or
+// the name of a package that has the configuration.
+
+const { basename, dirname, extname } = require("node:path");
+
+const importDefault = async file => (await import(pathToFileURL(file).href)).default;
+const read = file => fs.readFileSync(file, "utf8").replace(/^﻿/, "");
+const loaders = {
+  ".toml": file => Bun.TOML.parse(read(file)),
+  ".json5": file => (Bun.JSON5 ? Bun.JSON5.parse(read(file)) : importDefault(file)),
+  ".json": file => JSON.parse(read(file)),
+  ".yaml": file => Bun.YAML.parse(read(file)),
+  ".yml": file => Bun.YAML.parse(read(file)),
+  "": file => Bun.YAML.parse(read(file)),
+};
+
+let config;
+if (basename(path) === "package.json") config = (await importDefault(path)).prettier;
+else if (basename(path) === "package.yaml") config = Bun.YAML.parse(read(path))?.prettier;
+else config = await (loaders[extname(path)] ?? importDefault)(path);
+// `"prettier": "my-prettier-config-package-or-file"`
+if (typeof config === "string") config = await importDefault(Bun.resolveSync(config, dirname(path)));
+if (config !== undefined && config !== null && typeof config !== "object") {
+  throw new TypeError(`Config is only allowed to be an object, but received ${typeof config} in "${path}"`);
+}
+// What is not JSON, like a plugin that is an object, is left out.
+finish(JSON.parse(JSON.stringify(config ?? null, (key, value) => (typeof value === "bigint" ? undefined : value))));

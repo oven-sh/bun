@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
-use bun_lint_driver::{Environment, Script, Stream};
+use bun_lint_driver::{Environment, Outcome, Script, Stream};
 
 use super::check_command::working_directory;
 
@@ -82,56 +82,68 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     }
 }
 
+/// Reports that the command line of `bun <command>` cannot be used.
+pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
+    Output::err_generic("{}", (BStr::new(message),));
+    bun_core::note!("run 'bun {} --help' for more information", command);
+    // As ESLint.
+    Global::exit(2);
+}
+
+/// Calls `run` with what it takes from this process, prints what it returns, and exits.
+/// `command`: `lint` or `format`. `cwd`: its `--cwd`.
+pub(crate) fn run_and_exit(
+    command: &[u8],
+    cwd: Option<&[u8]>,
+    run: impl FnOnce(&Environment) -> Outcome,
+) -> ! {
+    for cwd in cwd_before(command).into_iter().chain(cwd) {
+        change_directory(cwd);
+    }
+    // One at a time: a process is started with state that threads share.
+    let turn = bun_threading::Guarded::new(());
+    let run_script = |script: &Script| {
+        let _turn = turn.lock();
+        run_script(script)
+    };
+    let environment = Environment {
+        cwd: bun_lint_driver::from_native_path(&working_directory()),
+        stdout: Stream {
+            is_tty: Output::is_stdout_tty(),
+            colors: Output::enable_ansi_colors_stdout(),
+        },
+        stderr: Stream {
+            is_tty: Output::is_stderr_tty(),
+            colors: Output::enable_ansi_colors_stderr(),
+        },
+        is_ai_agent: Output::is_ai_agent(),
+        is_github_action: Output::is_github_action(),
+        libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
+        run_script: &run_script,
+        version: Global::package_json_version.as_bytes(),
+    };
+    let outcome = run(&environment);
+    // The report is the output. Everything else is printed separately.
+    let _ = Output::writer().write_all(&outcome.stdout);
+    let _ = Output::error_writer().write_all(&outcome.stderr);
+    Output::flush();
+    Global::exit(u32::from(outcome.exit_code));
+}
+
 impl LintCommand {
     /// `args`: what follows `lint`.
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         let options = match Options::parse(&args) {
             Ok(options) => options,
-            Err(UsageError(message)) => {
-                Output::err_generic("{}", (BStr::new(&message),));
-                bun_core::note!("run 'bun lint --help' for more information");
-                // As ESLint.
-                Global::exit(2);
-            }
+            Err(UsageError(message)) => usage_error("lint", &message),
         };
         if options.help {
             crate::cli::command::tag_print_help(crate::cli::command::Tag::LintCommand, true);
             Global::exit(0);
         }
-        if let Some(cwd) = cwd_before(b"lint") {
-            change_directory(cwd);
-        }
-        if let Some(cwd) = &options.cwd {
-            change_directory(cwd);
-        }
-        // One at a time: a process is started with state that threads share.
-        let turn = bun_threading::Guarded::new(());
-        let run_script = |script: &Script| {
-            let _turn = turn.lock();
-            run_script(script)
-        };
-        let environment = Environment {
-            cwd: bun_lint_driver::from_native_path(&working_directory()),
-            stdout: Stream {
-                is_tty: Output::is_stdout_tty(),
-                colors: Output::enable_ansi_colors_stdout(),
-            },
-            stderr: Stream {
-                is_tty: Output::is_stderr_tty(),
-                colors: Output::enable_ansi_colors_stderr(),
-            },
-            is_ai_agent: Output::is_ai_agent(),
-            is_github_action: Output::is_github_action(),
-            libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
-            run_script: &run_script,
-            version: Global::package_json_version.as_bytes(),
-        };
-        let outcome = bun_lint_driver::run(&options, &environment);
-        // The report is the output, as with ESLint. Everything else is printed separately.
-        let _ = Output::writer().write_all(&outcome.stdout);
-        let _ = Output::error_writer().write_all(&outcome.stderr);
-        Output::flush();
-        Global::exit(u32::from(outcome.exit_code));
+        run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
+            bun_lint_driver::run(&options, environment)
+        })
     }
 }

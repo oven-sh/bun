@@ -1,4 +1,4 @@
-//! `bun-lint cli ..`: behaves like `bun lint ..`.
+//! `bun-lint cli ..`: behaves like `bun lint ..`. `bun-lint cli @format ..`: like `bun format ..`.
 //!
 //! What is Bun's own in `bun lint` is replaced: configuration files that are programs are run by the `bun` in `PATH`, and
 //! TypeScript's `lib.*.d.ts` are read from the directory `BUN_SEMA_TS_LIB`.
@@ -30,28 +30,41 @@ fn stream(is_tty: bool) -> Stream {
     }
 }
 
-fn print_help() {
-    println!("Usage: bun lint [flags] [...files, directories or patterns]\n\nFlags:");
-    for param in PARAMS.iter().filter(|it| !it.id.msg_plain.is_empty()) {
+fn print_help(name: &str, params: &[bun_lint_driver::Param]) {
+    println!("Usage: bun {name} [flags] [...files, directories or patterns]\n\nFlags:");
+    for param in params.iter().filter(|it| !it.id.msg_plain.is_empty()) {
         let short = param.names.short.map_or("    ".to_owned(), |it| format!("-{}, ", it as char));
         let long = crate::text(param.names.long.unwrap_or_default());
         println!("  {short}--{long:<44} {}", crate::text(param.id.msg_plain));
     }
 }
 
+fn or_exit<T>(parsed: Result<T, UsageError>) -> T {
+    parsed.unwrap_or_else(|UsageError(message)| {
+        eprintln!("error: {}", crate::text(&message));
+        std::process::exit(2);
+    })
+}
+
+enum Command {
+    Lint(Box<Options>),
+    Format(Box<bun_lint_driver::fmt::cli::Options>),
+}
+
 pub(crate) fn run(args: &[String]) {
     let args: Vec<&[u8]> = args.iter().map(String::as_bytes).collect();
-    let options = match Options::parse(&args) {
-        Ok(options) => options,
-        Err(UsageError(message)) => {
-            eprintln!("error: {}", crate::text(&message));
-            std::process::exit(2);
-        }
+    let command = match &args[..] {
+        [b"@format", rest @ ..] => Command::Format(Box::new(or_exit(bun_lint_driver::fmt::cli::Options::parse(rest)))),
+        args => Command::Lint(Box::new(or_exit(Options::parse(args)))),
     };
-    if options.help {
-        return print_help();
+    let (help, cwd) = match &command {
+        Command::Lint(options) => (options.help.then_some(("lint", PARAMS)), &options.cwd),
+        Command::Format(options) => (options.help.then_some(("format", bun_lint_driver::fmt::cli::PARAMS)), &options.cwd),
+    };
+    if let Some((name, params)) = help {
+        return print_help(name, params);
     }
-    if let Some(cwd) = &options.cwd
+    if let Some(cwd) = cwd
         && let Err(error) = std::env::set_current_dir(os(cwd))
     {
         eprintln!("error: Could not change directory to \"{}\": {error}", crate::text(cwd));
@@ -71,7 +84,10 @@ pub(crate) fn run(args: &[String]) {
         run_script: &run_script,
         version: b"0.0.0-harness",
     };
-    let outcome = bun_lint_driver::run(&options, &environment);
+    let outcome = match &command {
+        Command::Lint(options) => bun_lint_driver::run(options, &environment),
+        Command::Format(options) => bun_lint_driver::fmt::run(options, &environment),
+    };
     let _ = std::io::stdout().write_all(&outcome.stdout);
     let _ = std::io::stderr().write_all(&outcome.stderr);
     std::process::exit(i32::from(outcome.exit_code));

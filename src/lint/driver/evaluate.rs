@@ -9,8 +9,7 @@
 //! is used again as long as none of these has changed. A program that does what cannot be checked
 //! again (starts a process, lists the environment) is run every time.
 
-use crate::configs::Loader;
-use crate::run::{Fatal, Script};
+use crate::run::{Environment, Fatal, Script};
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::linter::write_json;
@@ -18,7 +17,11 @@ use bun_lint::options::Json;
 
 /// What precedes the JSON. The file itself can print, too.
 const MARKER: &[u8] = b"\x1e--bun-lint-configuration--\x1e";
-const SOURCE: &str = include_str!("evaluate.js");
+
+/// For `eslint.config.*` and `oxlint.config.ts`.
+pub(crate) const ESLINT: &str = concat!(include_str!("evaluate-track.js"), include_str!("evaluate-eslint.js"));
+/// For the configuration files of Prettier.
+pub(crate) const PRETTIER: &str = concat!(include_str!("evaluate-track.js"), include_str!("fmt/evaluate-prettier.js"));
 
 /// FNV-1a.
 fn hash(parts: &[&[u8]]) -> u64 {
@@ -53,14 +56,14 @@ fn variable(name: &[u8]) -> Json {
 }
 
 /// What has to be the same for a result to be of any use.
-fn version(loader: &Loader) -> Json {
-    let version = format!("{:016x}", hash(&[loader.environment().version, SOURCE.as_bytes()]));
+fn version(environment: &Environment, source: &str) -> Json {
+    let version = format!("{:016x}", hash(&[environment.version, source.as_bytes()]));
     Json::String(version.into_bytes())
 }
 
 /// The configuration in `kept`, if what it depends on is as it was.
-fn still_valid(loader: &Loader, kept: Json) -> Option<Json> {
-    if kept.get(b"version") != Some(&version(loader)) {
+fn still_valid(version: &Json, kept: Json) -> Option<Json> {
+    if kept.get(b"version") != Some(version) {
         return None;
     }
     let is_same_file = |(path, before): &(Vec<u8>, Json)| stamp(path) == *before;
@@ -74,19 +77,22 @@ fn still_valid(loader: &Loader, kept: Json) -> Option<Json> {
     entries.into_iter().find(|it| it.0 == b"config").map(|it| it.1)
 }
 
-pub(crate) fn evaluate(loader: &Loader, path: &[u8]) -> Result<Json, Fatal> {
-    let cache_file = if loader.keeps_configurations() { cache_file(path) } else { None };
+/// What the script `source` makes of the configuration file at `path`. `keeps`: whether the result
+/// of an earlier run will do, and that of this one is kept.
+pub(crate) fn evaluate(environment: &Environment, source: &'static str, path: &[u8], keeps: bool) -> Result<Json, Fatal> {
+    let cache_file = if keeps { cache_file(path) } else { None };
+    let version = version(environment, source);
     let kept = cache_file.as_ref().and_then(|file| bun_lint::json::parse(&fs::read(file).ok()?));
-    if let Some(config) = kept.and_then(|kept| still_valid(loader, kept)) {
+    if let Some(config) = kept.and_then(|kept| still_valid(&version, kept)) {
         return Ok(config);
     }
     let script = Script {
-        source: SOURCE,
+        source,
         arguments: &[MARKER, path],
         cwd: paths::dirname(path),
     };
     let fail = |why: &[u8]| Fatal([b"Cannot load the configuration file ", path, b":\n", why.trim_ascii_end()].concat());
-    let printed = (loader.environment().run_script)(&script).map_err(|error| fail(&error))?;
+    let printed = (environment.run_script)(&script).map_err(|error| fail(&error))?;
     let json = strings::last_index_of(&printed, MARKER).map(|at| &printed[at + MARKER.len()..]);
     let Some(Json::Object(mut entries)) = json.and_then(bun_lint::json::parse) else {
         return Err(fail(b"It could not be evaluated."));
@@ -109,7 +115,7 @@ pub(crate) fn evaluate(loader: &Loader, path: &[u8]) -> Result<Json, Fatal> {
         let files = files.iter().filter_map(Json::as_str).map(|file| (file.to_vec(), stamp(file)));
         let environment = names.iter().filter_map(Json::as_str).map(|name| (name.to_vec(), variable(name)));
         let kept = Json::Object(vec![
-            (b"version".to_vec(), version(loader)),
+            (b"version".to_vec(), version),
             (b"files".to_vec(), Json::Object(files.collect())),
             (b"environment".to_vec(), Json::Object(environment.collect())),
             (b"config".to_vec(), config.clone()),

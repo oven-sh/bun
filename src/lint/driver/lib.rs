@@ -4,12 +4,15 @@
 //!
 //! - [`cli`]: the flags.
 //! - [`run`]: `bun lint`, given the flags and an [`Environment`].
+//! - [`fmt`]: the same for `bun format`.
 
+mod args;
 pub mod cli;
 mod configs;
 mod deprecated;
 mod discover;
 mod evaluate;
+pub mod fmt;
 mod format;
 mod fs;
 mod gitignore;
@@ -20,5 +23,6 @@ mod results;
 mod run;
 mod typed;
 
+pub use args::Param;
 pub use paths::from_native as from_native_path;
 pub use run::{Environment, Outcome, Script, Stream, run};

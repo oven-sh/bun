@@ -188,7 +188,7 @@ impl Context<'_> {
             return Ok(warns.then(|| self.ignored(&target.path, &target.status)));
         };
         let started = self.timing.now();
-        let text = fs::read(&target.path)
+        let text = fs::read_sized(&target.path, target.size)
             .map_err(|error| Fatal([b"Cannot read ", &target.path[..], b": ", &fs::describe(&error)].concat()))?;
         self.timing.add(&self.timing.read, started);
         Ok(Some(self.verify_text(target.path.clone(), &target.path, text, config, on_circular_fixes)))

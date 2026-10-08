@@ -96,7 +96,7 @@ pub(crate) struct Ignores {
 
 pub(crate) type Chain = Option<Arc<Ignores>>;
 
-fn with_text(chain: Chain, directory: &[u8], text: &[u8]) -> Chain {
+pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8]) -> Chain {
     let lines = strings::split(text, b"\n").map(|line| line.strip_suffix(b"\r").unwrap_or(line));
     let patterns: Vec<Pattern> = lines
         .filter(|line| !line.trim_ascii().is_empty() && !line.starts_with(b"#"))
@@ -163,4 +163,11 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
         next = ignores.above.as_ref();
     }
     false
+}
+
+/// Whether the file at `path` is ignored, or a directory that it is in: for a file that was not
+/// come to by way of its directories.
+pub(crate) fn is_file_ignored_anywhere(chain: &Chain, path: &[u8]) -> bool {
+    let directories: Vec<&[u8]> = paths::ancestors(paths::dirname(path)).collect();
+    directories.iter().rev().any(|directory| is_ignored(chain, directory, true)) || is_ignored(chain, path, false)
 }

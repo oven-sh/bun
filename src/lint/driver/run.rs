@@ -78,7 +78,7 @@ pub(crate) struct Pool {
 }
 
 impl Pool {
-    fn new(threads: usize) -> Pool {
+    pub(crate) fn new(threads: usize) -> Pool {
         Pool {
             caches: Default::default(),
             threads: match threads {
@@ -318,6 +318,8 @@ impl Run<'_> {
         phases.checking = started.elapsed().as_secs_f64();
 
         let started = Instant::now();
+        // The largest first, so that no thread begins it when the others are nearly done.
+        without_types.sort_by_key(|target| std::cmp::Reverse(target.size));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         pool.for_each(without_types.len(), 1, &|index| match context.lint_file(without_types[index], &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),

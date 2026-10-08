@@ -36,6 +36,8 @@ impl From<FileConfig> for Status {
 /// A file to lint, or one that is named on the command line and is not linted.
 pub(crate) struct Target {
     pub(crate) path: Vec<u8>,
+    /// In bytes, when it was found.
+    pub(crate) size: u64,
     pub(crate) loaded: Arc<Loaded>,
     pub(crate) status: Status,
 }
@@ -124,7 +126,7 @@ If you do want to lint these files, explicitly list one or more of the files fro
 fn matches_any_file(base_path: &[u8], matcher: &Matcher) -> bool {
     let mut pending = vec![(base_path.to_vec(), Vec::new())];
     while let Some((path, relative)) = pending.pop() {
-        for entry in fs::list(&path).unwrap_or_default() {
+        for entry in fs::list(&path).map_or_else(Vec::new, |it| it.entries) {
             let relative = if relative.is_empty() { entry.name.clone() } else { paths::join(&relative, &entry.name) };
             if entry.is_directory {
                 if matcher.matches_partially(&relative) {
@@ -164,9 +166,10 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
         let mut next = Guarded::new(Vec::new());
         pool.for_each(level.len(), 1, &|index| {
             let directory = &level[index];
-            let Some(entries) = fs::list(&directory.path) else {
+            let Some(mut listing) = fs::list(&directory.path) else {
                 return;
             };
+            let entries = std::mem::take(&mut listing.entries);
             let own = match directory.relative.is_empty() {
                 true => Ok(Arc::clone(&directory.inherited)),
                 false => {
@@ -203,7 +206,7 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                     continue;
                 }
                 let relative = match directory.relative.is_empty() {
-                    true => entry.name,
+                    true => entry.name.clone(),
                     false => paths::join(&directory.relative, &entry.name),
                 };
                 if entry.is_directory {
@@ -236,6 +239,7 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                 if let Some(FileConfig::Matched(config)) = config {
                     files.push(Target {
                         path,
+                        size: listing.size_of(&entry.name),
                         loaded: Arc::clone(&own),
                         status: Status::Matched(config),
                     });
@@ -288,13 +292,18 @@ pub(crate) fn find_files(
     for pattern in patterns {
         let pattern = paths::from_native(pattern);
         let path = paths::resolve(cwd, &pattern);
-        match fs::kind(&path) {
-            Some(fs::Kind::File) => {
+        match fs::kind_and_size(&path) {
+            Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
                 let status = loaded.config.get(loader.linter.registry(), &path).into();
-                found.push(Target { path, loaded, status });
+                found.push(Target {
+                    path,
+                    size,
+                    loaded,
+                    status,
+                });
             }
-            Some(fs::Kind::Directory) => add(path.clone(), paths::join(&path, b"**"), &pattern),
+            Some((fs::Kind::Directory, _)) => add(path.clone(), paths::join(&path, b"**"), &pattern),
             None if paths::is_glob(&pattern) => add(paths::resolve(cwd, &paths::glob_parent(&pattern)), path, &pattern),
             None => {
                 missing.get_or_insert(pattern);

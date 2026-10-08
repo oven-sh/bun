@@ -1,12 +1,12 @@
 //! The command line of `bun lint`: that of ESLint, what `bun check` has (`--threads`, `--timing`,
 //! `--cwd`), and the flags of oxlint that its users have in their scripts.
 
+pub use crate::args::UsageError;
+use crate::args::{Argument, Param, error};
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::options::Json;
-
-type Param = clap::Param<clap::Help>;
 
 /// A flag without a description is understood, and not listed in the help.
 pub const PARAMS: &[Param] = &[
@@ -212,46 +212,6 @@ impl Default for Options {
     }
 }
 
-/// Why the command line cannot be used: a line for the user. The exit code is 2, as ESLint's.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct UsageError(pub Vec<u8>);
-
-fn error<T>(parts: &[&[u8]]) -> Result<T, UsageError> {
-    Err(UsageError(parts.concat()))
-}
-
-fn find_long(name: &[u8]) -> Option<&'static Param> {
-    let is_it = |param: &&Param| param.names.long == Some(name) || param.names.long_aliases.contains(&name);
-    PARAMS.iter().find(is_it)
-}
-
-fn find_short(name: u8) -> Option<&'static Param> {
-    PARAMS.iter().find(|param| param.names.short == Some(name))
-}
-
-/// How many single-character edits turn `a` into `b`.
-fn distance(a: &[u8], b: &[u8]) -> usize {
-    let mut row: Vec<usize> = (0..=b.len()).collect();
-    for (i, x) in a.iter().enumerate() {
-        let mut diagonal = row[0];
-        row[0] = i + 1;
-        for (j, y) in b.iter().enumerate() {
-            let substituted = diagonal + usize::from(x != y);
-            diagonal = row[j + 1];
-            row[j + 1] = substituted.min(row[j] + 1).min(diagonal + 1);
-        }
-    }
-    row[b.len()]
-}
-
-fn unknown<T>(written: &[u8], name: &[u8]) -> Result<T, UsageError> {
-    let closest = (PARAMS.iter().filter_map(|param| param.names.long)).min_by_key(|long| distance(name, long));
-    match closest {
-        Some(closest) => error(&[b"Invalid option '", written, b"' - perhaps you meant '--", closest, b"'?"]),
-        None => error(&[b"Invalid option '", written, b"'."]),
-    }
-}
-
 /// The elements of optionator's `[String]`.
 fn list(value: &[u8]) -> Vec<Vec<u8>> {
     if value.trim_ascii().is_empty() {
@@ -389,87 +349,16 @@ impl Options {
         Ok(())
     }
 
-    /// `args`: what follows `lint` on the command line. They are read as optionator, which ESLint
-    /// uses, reads them.
+    /// `args`: what follows `lint` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = Options::default();
-        // The flag that the next argument is the value of.
-        let mut awaited: Option<&'static Param> = None;
-        let name_of = |param: &'static Param| param.names.long.unwrap_or_default();
-        let is_flag = |param: &Param| param.takes_value == clap::Values::None;
-        let boolean = |name: &[u8], value: &[u8]| match value {
-            b"true" => Ok(true),
-            b"false" => Ok(false),
-            _ => error(&[b"Invalid value for option '", name, b"' - expected type Boolean, received value: ", value, b"."]),
-        };
-        let mut args = args.iter().copied();
-        while let Some(arg) = args.next() {
-            if arg == b"--" {
-                options.patterns.extend(args.by_ref().map(<[u8]>::to_vec));
-                break;
+        crate::args::parse(PARAMS, args, &mut |argument| match argument {
+            Argument::Flag { name, value, is_on } => options.set(name, value, is_on),
+            Argument::Positional(pattern) => {
+                options.patterns.push(pattern.to_vec());
+                Ok(())
             }
-            // `/^(--?)([a-zA-Z][-a-zA-Z0-9]*)(=)?(.*)?$/`
-            let dashes = arg.iter().take_while(|byte| **byte == b'-').count().min(2);
-            let rest = &arg[dashes..];
-            let name_len = rest.iter().take_while(|byte| byte.is_ascii_alphanumeric() || **byte == b'-').count();
-            if dashes > 0 && rest.first().is_some_and(u8::is_ascii_alphabetic) {
-                if let Some(param) = awaited {
-                    return error(&[b"Value for '", name_of(param), b"' of type '", param.id.value, b"' required."]);
-                }
-                let (name, value) = (&rest[..name_len], rest[name_len..].strip_prefix(b"="));
-                if dashes == 1 {
-                    for (at, short) in name.iter().enumerate() {
-                        let Some(param) = find_short(*short) else {
-                            return unknown(&[b'-', *short], &name[at..=at]);
-                        };
-                        match (at + 1 == name.len(), is_flag(param), value) {
-                            (true, true, Some(value)) => options.set(name_of(param), None, boolean(name_of(param), value)?)?,
-                            (true, false, Some(value)) => options.set(name_of(param), Some(value), true)?,
-                            (true, false, None) => awaited = Some(param),
-                            (_, true, _) => options.set(name_of(param), None, true)?,
-                            (false, false, _) => {
-                                return error(&[
-                                    b"Can't set argument '",
-                                    &name[at..=at],
-                                    b"' when not last flag in a group of short flags.",
-                                ]);
-                            }
-                        }
-                    }
-                    continue;
-                }
-                let (positive, is_negated) = match name.strip_prefix(b"no-") {
-                    Some(positive) if !positive.is_empty() => (positive, true),
-                    _ => (name, false),
-                };
-                let Some(param) = find_long(positive) else {
-                    return unknown(&[b"--", positive].concat(), positive);
-                };
-                match (is_flag(param), value) {
-                    (true, Some(value)) => options.set(name_of(param), None, boolean(positive, value)? != is_negated)?,
-                    (true, None) => options.set(name_of(param), None, !is_negated)?,
-                    (false, _) if is_negated => {
-                        return error(&[b"Only use 'no-' prefix for Boolean options, not with '", positive, b"'."]);
-                    }
-                    (false, Some(value)) => options.set(name_of(param), Some(value), true)?,
-                    (false, None) => awaited = Some(param),
-                }
-            } else if let [b'-', number @ ..] = arg
-                && number.first().is_some_and(u8::is_ascii_digit)
-                && number.last().is_some_and(u8::is_ascii_digit)
-                && number.iter().all(|byte| byte.is_ascii_digit() || *byte == b'.')
-                && strings::count_char(number, b'.') <= 1
-            {
-                return error(&[b"No -NUM option defined."]);
-            } else if let Some(param) = awaited.take() {
-                options.set(name_of(param), Some(arg), true)?;
-            } else {
-                options.patterns.push(arg.to_vec());
-            }
-        }
-        if let Some(param) = awaited {
-            return error(&[b"Value for '", name_of(param), b"' of type '", param.id.value, b"' required."]);
-        }
+        })?;
         Ok(options)
     }
 }

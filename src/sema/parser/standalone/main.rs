@@ -9,6 +9,7 @@
 //! - `snippets <file.json>..`: the same comparison for the `code` strings of test fixtures.
 
 mod compare;
+mod fuzz;
 
 use bun_sema::atom::Interner;
 use bun_sema::resolve::{Dialect, ScriptKind};
@@ -330,6 +331,30 @@ fn compare(args: &[String]) {
         .print(flag(args, "show").unwrap_or(10), list);
 }
 
+/// `fuzz <file or directory>.. [--rounds=n] [--seed=n] [--jobs=n] [--keep=directory] [--dialect=..]`
+fn fuzz(args: &[String]) {
+    let files = files_of(args);
+    let how = (
+        flag(args, "rounds").unwrap_or(20),
+        flag(args, "seed").unwrap_or(1) as u64,
+        flag(args, "jobs").unwrap_or(8),
+    );
+    let option = |name: &str| args.iter().find_map(|arg| arg.strip_prefix(name));
+    let script = args.iter().any(|arg| arg == "--script");
+    let dialect = dialect_of(option("--dialect=").unwrap_or("tsc"), script).expect("a dialect");
+    fuzz::run(&files, how, option("--keep=").unwrap_or("fuzz-out"), &|path, text| {
+        thread_local! {
+            static SCRATCH: std::cell::RefCell<Scratch> = Default::default();
+        }
+        match SCRATCH.with_borrow_mut(|scratch| compare_one(path, text, false, dialect, scratch)) {
+            Outcome::Identical(_) => fuzz::Verdict::Identical,
+            Outcome::BothRefuse | Outcome::Refused(_) => fuzz::Verdict::Refused,
+            Outcome::Accepted(what) => fuzz::Verdict::Wrong(format!("accepted: {what}")),
+            Outcome::Different(what) => fuzz::Verdict::Wrong(format!("different: {what}")),
+        }
+    });
+}
+
 fn bench(args: &[String]) {
     let files = files_of(args);
     let texts: Vec<Vec<u8>> = files.iter().filter_map(|it| std::fs::read(it).ok()).collect();
@@ -387,6 +412,7 @@ fn main() {
         match args.first().map(String::as_str) {
             Some("compare") => compare(&args[1..]),
             Some("bench") => bench(&args[1..]),
+            Some("fuzz") => fuzz(&args[1..]),
             _ => eprintln!("usage: bun-hir compare|bench <paths>"),
         }
     };

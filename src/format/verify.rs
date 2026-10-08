@@ -105,7 +105,7 @@ impl<'a> Visitor<'a> for Places {
 type Item<'a> = (Cow<'a, [u8]>, u32);
 
 /// `name` with the characters that `\u0061` and `\u{61}` in it stand for.
-fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
+pub(crate) fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(name.len());
     let mut rest = name;
     while let Some((&byte, after)) = rest.split_first() {

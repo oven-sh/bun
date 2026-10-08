@@ -241,58 +241,31 @@ impl<'a> Format<'a> for FormatClass<'a> {
         }
         write!(f, "class");
 
+        let gaps = HeadGaps::new(class);
         let head = format_with(|f| {
             if let Some(id) = class.name() {
-                write!(f, [space(), identifier(id, node)]);
+                write!(f, [space(), FormatNodeWithoutTrailingComments(&identifier(id, node))]);
+                write!(f, indent(&FormatCommentsTrailingInHead(gaps.after_name)));
             }
-            if !class.type_params().is_empty() {
+            if let Some(span) = class.type_params().angle_brackets_span() {
                 let group_id = Some(f.group_id("type_parameters"));
                 let options = FormatTSTypeParametersOptions {
                     group_id,
                     is_type_or_interface_decl: false,
                 };
+                write!(f, format_leading_comments(span));
                 type_parameters(class.type_params(), Node::Class(class)).with_options(options).write_without_comments(f);
-                if super_class.is_some() || !implements.is_empty() {
-                    write_trailing_comments_of(AstNodes::TSTypeParameterDeclaration(Node::Class(class)), f);
-                }
-            }
-
-            // ```ts
-            // class A // comment
-            //   extends B {}
-            // ```
-            if let Some(super_class) = super_class {
-                let comments = f.comments().comments_before(super_class.span().start);
-                if comments.iter().any(|c| c.preceded_by_newline()) {
-                    indent(&FormatTrailingComments::Comments(comments)).fmt(f);
-                }
+                write!(f, indent(&FormatCommentsTrailingInHead(gaps.after_type_parameters)));
             }
         });
 
-        let group_mode = should_group(class, parent, f);
+        let group_mode = should_group(class, parent, &gaps, f);
 
         let format_heritage_clauses = format_with(|f| {
             if let Some(extends) = super_class {
                 let format_super = format_with(|f| {
-                    let super_type_arguments = type_arguments(class.extends_args(), Node::Class(class));
-                    let has_type_arguments = !class.extends_args().is_empty();
-
-                    let comments = match has_type_arguments || !implements.is_empty() {
-                        true => &[][..],
-                        false => f.comments().comments_in_range(extends.span().end, body_span.start),
-                    };
-                    let has_trailing_comments = comments.iter().any(|comment| comment.is_line());
-
-                    let content = format_with(|f| {
-                        if has_type_arguments || !implements.is_empty() {
-                            extends.fmt(f);
-                        } else {
-                            FormatNodeWithoutTrailingComments(&extends).fmt(f);
-                            if !has_trailing_comments {
-                                FormatTrailingComments::Comments(comments).fmt(f);
-                            }
-                        }
-                    });
+                    write!(f, format_leading_comments(extends.span()));
+                    let content = FormatNodeWithoutTrailingComments(&extends);
 
                     // Prettier's `printSuperClass`.
                     if matches!(parent, AstNodes::AssignmentExpression(_)) {
@@ -307,11 +280,11 @@ impl<'a> Format<'a> for FormatClass<'a> {
                     } else {
                         content.fmt(f);
                     }
-                    if has_type_arguments {
-                        match implements.is_empty() {
-                            true => super_type_arguments.write_without_comments(f),
-                            false => super_type_arguments.fmt(f),
-                        }
+                    write!(f, FormatCommentsTrailingInHead(gaps.after_super_class));
+                    if let Some(span) = class.extends_args().angle_brackets_span() {
+                        write!(f, format_leading_comments(span));
+                        type_arguments(class.extends_args(), Node::Class(class)).write_without_comments(f);
+                        write!(f, FormatCommentsTrailingInHead(gaps.after_super_type_arguments));
                     }
                 });
 
@@ -323,7 +296,10 @@ impl<'a> Format<'a> for FormatClass<'a> {
             }
 
             if let Some(first) = implements.first() {
-                let leading_comments = f.comments().comments_before(first.span().start);
+                // Those on a line with code, after the `implements`, lead the first type.
+                let comments = f.comments().comments_before(first.span().start);
+                let count = comments.iter().take_while(|it| it.preceded_by_newline() || it.followed_by_newline()).count();
+                let leading_comments = comments.get(..count).unwrap_or_default();
                 let implements = FormatClassImplements(implements);
 
                 if usize::from(super_class.is_some()) + implements.0.len() > 1 {
@@ -338,8 +314,18 @@ impl<'a> Format<'a> for FormatClass<'a> {
                         ]
                     );
                 } else {
-                    let format_inner =
-                        format_args!(FormatLeadingComments::Comments(leading_comments), "implements", space(), implements);
+                    let format_comments = FormatDanglingComments::Comments {
+                        comments: leading_comments,
+                        indent: DanglingIndentMode::None,
+                    };
+                    let needs_line_break = leading_comments.last().is_some_and(|it| it.is_line());
+                    let format_inner = format_args!(
+                        "implements",
+                        space(),
+                        format_comments,
+                        needs_line_break.then_some(hard_line_break()),
+                        implements
+                    );
                     match group_mode {
                         true => write!(f, [soft_line_break_or_space(), group(&format_inner)]),
                         false => write!(f, [space(), format_inner]),
@@ -367,10 +353,11 @@ impl<'a> Format<'a> for FormatClass<'a> {
             write!(f, [head, format_heritage_clauses, space()]);
         }
 
-        let leading_comments = f.comments().comments_before(body_span.start);
-        if leading_comments.iter().any(|c| !c.is_line()) {
-            write!(f, FormatLeadingComments::Comments(leading_comments));
-        }
+        // Prettier's `handleClassComments`: a comment before the `{` that starts or ends its line is
+        // moved into the body.
+        let comments = f.comments().comments_before(body_span.start);
+        let count = comments.iter().take_while(|it| !it.preceded_by_newline() && !it.followed_by_newline()).count();
+        write!(f, FormatLeadingComments::Comments(comments.get(..count).unwrap_or_default()));
 
         if class.members().is_empty() {
             write!(f, ["{", format_dangling_comments(node.span()).with_block_indent(), "}"]);
@@ -380,15 +367,116 @@ impl<'a> Format<'a> for FormatClass<'a> {
     }
 }
 
-/// Prettier's `shouldIndentOnlyHeritageClauses`' counterpart `shouldPrintHeritageClausesInGroupMode`:
-/// whether the head of the class is a group that can break before `extends` and `implements`.
-fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+/// What follows a part of the head of a class.
+#[derive(Copy, Clone)]
+enum HeadGap {
+    /// The `<` of type parameters or type arguments.
+    AngleBracket,
+    /// `extends` and the super class.
+    Extends {
+        /// It is an optional chain, which Prettier attaches no comments to. So what follows the
+        /// comment is not the super class, and `handleClassComments` has nothing to say.
+        is_chain: bool,
+    },
+    /// `implements` and the first type.
+    Implements {
+        /// What is before it is the name, the type parameters or the super class, as opposed to its
+        /// type arguments or what is in an optional chain.
+        follows_known_part: bool,
+    },
+}
+
+/// Between two parts of the head of a class: where the first ends, where the second starts, and
+/// what the second is. `None` if the `{` is next.
+type HeadGapAt = Option<(u32, u32, HeadGap)>;
+
+struct HeadGaps {
+    after_name: HeadGapAt,
+    after_type_parameters: HeadGapAt,
+    after_super_class: HeadGapAt,
+    after_super_type_arguments: HeadGapAt,
+}
+
+impl HeadGaps {
+    fn new(class: Class<'_>) -> Self {
+        let implements = |follows_known_part| {
+            class.implements().first().map(|it| {
+                (
+                    it.span().start,
+                    HeadGap::Implements {
+                        follows_known_part,
+                    },
+                )
+            })
+        };
+        let is_chain = class.extends().is_some_and(is_chain_root);
+        let heritage =
+            || class.extends().map(|it| (it.span().start, HeadGap::Extends { is_chain })).or_else(|| implements(true));
+        let angle_bracket = |span: Option<Span>| span.map(|it| (it.start, HeadGap::AngleBracket));
+        let type_parameters = class.type_params().angle_brackets_span();
+        let type_arguments = class.extends_args().angle_brackets_span();
+        let gap = |end: Option<u32>, next: Option<(u32, HeadGap)>| Some((end?, next?.0, next?.1));
+        HeadGaps {
+            after_name: gap(class.name().map(|it| it.span().end), angle_bracket(type_parameters).or_else(heritage)),
+            after_type_parameters: gap(type_parameters.map(|it| it.end), heritage()),
+            after_super_class: gap(
+                class.extends().map(|it| it.outer_span().end),
+                angle_bracket(type_arguments).or_else(|| implements(!is_chain)),
+            ),
+            after_super_type_arguments: gap(type_arguments.map(|it| it.end), implements(false)),
+        }
+    }
+}
+
+/// How many of `comments`, which are in `gap`, trail what is before them. The others lead what
+/// follows. Prettier's `handleClassComments`, and what it does with any comment.
+fn count_comments_trailing_in_head(comments: &[Comment], gap: HeadGap, next_start: u32, f: &Formatter<'_>) -> usize {
+    let is_before = |comment: &Comment, keyword: &[u8]| {
+        bun_core::strings::contains(f.source_text().slice_range(comment.end(), next_start), keyword)
+    };
+    (comments.iter())
+        .take_while(|comment| {
+            let starts_or_ends_line = comment.preceded_by_newline() || comment.followed_by_newline();
+            match gap {
+                HeadGap::AngleBracket => !comment.preceded_by_newline() && comment.followed_by_newline(),
+                HeadGap::Extends { is_chain } => match starts_or_ends_line {
+                    true => !is_chain || !comment.preceded_by_newline(),
+                    false => is_before(comment, b"extends"),
+                },
+                HeadGap::Implements {
+                    follows_known_part,
+                } => match starts_or_ends_line {
+                    true => follows_known_part,
+                    false => is_before(comment, b"implements"),
+                },
+            }
+        })
+        .count()
+}
+
+/// The comments in a gap that trail what is before them.
+struct FormatCommentsTrailingInHead(HeadGapAt);
+
+impl<'a> Format<'a> for FormatCommentsTrailingInHead {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if !f.is_quiet()
+            && let Some((_, next_start, gap)) = self.0
+        {
+            let comments = f.comments().comments_before(next_start);
+            let count = count_comments_trailing_in_head(comments, gap, next_start, f);
+            write!(f, FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()));
+        }
+    }
+}
+
+/// Prettier's `shouldPrintClassInGroupMode`: whether the head of the class is a group that can break
+/// before `extends` and `implements`.
+fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, gaps: &HeadGaps, f: &Formatter<'a>) -> bool {
     let (super_class, implements) = (class.extends(), class.implements());
     if usize::from(super_class.is_some()) + implements.len() > 1 {
         return true;
     }
 
-    let is_expression = matches!(class.owner(), Node::Expr(_));
     // Prettier's `isMemberExpression(stripChainElementWrappers(e))`.
     let is_member = |mut e: Expr<'a>| {
         while let ExprKind::NonNull(inner) = e.kind() {
@@ -396,38 +484,40 @@ fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -
         }
         matches!(e.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
     };
-    if ((!is_expression || !matches!(parent, AstNodes::AssignmentExpression(_)))
-        && super_class.is_some_and(is_member)
-        && class.extends_args().is_empty())
-        || implements.first().is_some_and(|implements| match implements.kind() {
+    let is_member_heritage = match (super_class, implements.first()) {
+        (Some(super_class), _) => {
+            !matches!(parent, AstNodes::AssignmentExpression(_)) && class.extends_args().is_empty() && is_member(super_class)
+        }
+        (None, Some(first)) => match first.kind() {
             TypeKind::Heritage { expr, args } => args.is_empty() && is_member(expr),
             TypeKind::Ref { name, args } => args.is_empty() && name.len() > 1,
             _ => false,
-        })
-    {
-        return true;
-    }
-    if f.is_quiet() {
-        return false;
+        },
+        (None, None) => false,
+    };
+    if is_member_heritage || f.is_quiet() {
+        return is_member_heritage;
     }
 
-    // There is a comment between two parts of the head.
-    let spans = [
-        class.name().map(|it| it.span()),
-        class.type_params().angle_brackets_span(),
-        super_class.map(|it| it.span()),
-        class.extends_args().angle_brackets_span(),
-        implements.first().map(|it| it.span()),
-    ];
-    let mut spans_iter = spans.iter().flatten().peekable();
-    while let Some(span) = spans_iter.next() {
-        if let Some(next_span) = spans_iter.peek()
-            && f.comments().has_comment_in_range(span.end, next_span.start)
-        {
-            return true;
+    // A comment trails the name or the type parameters, or is around the super class.
+    let counts = |gap: HeadGapAt| {
+        gap.map_or((0, 0), |(end, next_start, gap)| {
+            let comments = f.comments().comments_in_range(end, next_start);
+            (comments.len(), count_comments_trailing_in_head(comments, gap, next_start, f))
+        })
+    };
+    let before_super_class = match (gaps.after_type_parameters, gaps.after_name, super_class) {
+        (Some(gap), ..) | (None, Some(gap), _) if matches!(gap.2, HeadGap::Extends { .. }) => {
+            let (all, trailing) = counts(Some(gap));
+            all - trailing
         }
-    }
-    false
+        (None, None, Some(super_class)) => f.comments().comments_before(super_class.span().start).len(),
+        _ => 0,
+    };
+    counts(gaps.after_name).1 > 0
+        || counts(gaps.after_type_parameters).1 > 0
+        || before_super_class > 0
+        || counts(gaps.after_super_class).1 > 0
 }
 
 /// A member of a class and the `;` after it.
@@ -520,10 +610,7 @@ impl<'a> Format<'a> for FormatPropertyWithoutSemicolon<'a> {
 /// method.
 pub(crate) fn format_grouped_parameters_with_return_type_for_method<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     write!(f, type_parameters(func.type_params(), Node::Func(func)));
-    // Without a body, Prettier attaches no comments to the function, and the name is before them.
-    if !func.type_params().is_empty() || !func.has_body() {
-        write!(f, FormatCommentsBehindParenthesis(func));
-    }
+    write!(f, FormatCommentsBehindParenthesis(func));
 
     group(&format_with(|f| {
         let format_parameters = FormatFormalParameters(func).memoized();

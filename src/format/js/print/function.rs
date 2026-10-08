@@ -1,10 +1,11 @@
 use super::arrow_function_expression::{FormatMaybeCachedFunctionBody, FunctionCacheMode};
 use super::block_statement::is_empty_block;
-use super::parameters::FormatFormalParameters;
+use super::parameters::{FormatFormalParameters, follows_name_or_type_parameters};
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression};
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::end_of_line_comments;
 use crate::prelude::*;
@@ -32,7 +33,7 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
                 space(),
                 func.name().map(|name| identifier(name, node)),
                 group(&type_parameters(func.type_params(), Node::Func(func))),
-                (func.name().is_some() || !func.type_params().is_empty()).then_some(FormatCommentsBehindParenthesis(func)),
+                FormatCommentsBehindParenthesis(func),
             ]
         );
     });
@@ -48,7 +49,11 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
             let return_type = FormatTypeAnnotation(return_type);
             let content = format_with(move |f: &mut Formatter<'a>| {
                 let needs_space = f.comments().has_comment_before(return_type.span().start);
-                write!(f, [maybe_space(needs_space), return_type]);
+                // The comments before the `{` are written with the body.
+                match func.has_body() {
+                    true => write!(f, [maybe_space(needs_space), FormatNodeWithoutTrailingComments(&return_type)]),
+                    false => write!(f, [maybe_space(needs_space), return_type]),
+                }
             });
             FormatContentWithCacheMode::new(return_type.span(), content, options.cache_mode)
         })
@@ -98,6 +103,7 @@ impl<'a> Format<'a> for FormatCommentsBehindParenthesis<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if !f.is_quiet()
             && let Some(first) = self.0.params_with_this().next()
+            && follows_name_or_type_parameters(self.0)
         {
             let comments = end_of_line_comments(f.comments().comments_before(first.span().start));
             write!(f, FormatTrailingComments::Comments(comments));
@@ -135,7 +141,16 @@ pub(crate) fn write_called_function_with_comments<'a>(e: Expr<'a>, options: Expr
     f.comments_mut().restore_view_limit(None);
     f.comments_mut().limit_comments_up_to(end);
 
-    let has_comments = f.comments().has_comment_before(span.start) || f.comments().has_comment_in_range(span.end, end);
+    // On a line of its own, a comment leads what follows: the first argument or the template.
+    let is_followed = match e.ast_parent() {
+        AstNodes::CallExpression(call) => call.call().is_some_and(|it| !it.args().is_empty()),
+        _ => true,
+    };
+    let count_trailing = |f: &Formatter<'a>| {
+        let comments = f.comments().comments_in_range(span.end, end);
+        comments.iter().take_while(|it| !(is_followed && it.preceded_by_newline())).count()
+    };
+    let has_comments = f.comments().has_comment_before(span.start) || count_trailing(f) > 0;
     if has_comments {
         let is_suppressed = f.comments().is_suppressed(span.start);
         let content = format_with(|f| {
@@ -144,7 +159,8 @@ pub(crate) fn write_called_function_with_comments<'a>(e: Expr<'a>, options: Expr
                 true => write!(f, FormatSuppressedNode(span)),
                 false => write_expression(e, options, f),
             }
-            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));
+            let count = count_trailing(f);
+            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end).get(..count).unwrap_or_default()));
         });
         write!(f, ["(", soft_block_indent(&content), ")"]);
     }
@@ -163,8 +179,7 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
             return;
         };
         let write = |f: &mut Formatter<'a>| {
-            let comments = f.comments().block_comments_before(self.span().start);
-            write!(f, [space(), FormatLeadingComments::Comments(comments)]);
+            write!(f, [FormatCommentsBeforeBody(func), space()]);
             if is_empty_block(statements) {
                 write!(f, ["{", format_dangling_comments(self.span()).with_block_indent(), "}"]);
             } else {
@@ -172,6 +187,43 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
             }
         };
         format_node_without_comments(self.span(), || func.as_ast_nodes(), f, write);
+    }
+}
+
+/// The comments before the `{` of a function that stay there. A line comment right before the `{`
+/// does not: it is moved into the block. Prettier's `handleLastFunctionParameterComments`.
+struct FormatCommentsBeforeBody<'a>(Func<'a>);
+
+impl<'a> Format<'a> for FormatCommentsBeforeBody<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if f.is_quiet() {
+            return;
+        }
+        let comments = f.comments().comments_before(FormatFunctionBody(self.0).span().start);
+        if comments.is_empty() {
+            return;
+        }
+        // Those from before the `(` lead the block, whatever they are.
+        let parameters_start = FormatFormalParameters(self.0).span().start;
+        // After a `=>`, a comment at the end of the line is moved into the block as well:
+        // `handleArrowExpressionComments`.
+        let is_arrow = self.0.is_arrow();
+        let count = (comments.iter())
+            .take_while(|it| (it.is_block() && !(is_arrow && it.followed_by_newline())) || it.end() <= parameters_start)
+            .count();
+        let comments = comments.get(..count).unwrap_or_default();
+        let (moved, comments) = comments.split_at(comments.iter().take_while(|it| it.end() <= parameters_start).count());
+        let (trailing, leading) = comments.split_at(comments.iter().take_while(|it| !it.preceded_by_newline()).count());
+        write!(
+            f,
+            [
+                space(),
+                FormatLeadingComments::Comments(moved),
+                FormatTrailingComments::Comments(trailing),
+                space(),
+                FormatLeadingComments::Comments(leading)
+            ]
+        );
     }
 }
 

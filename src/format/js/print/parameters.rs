@@ -27,13 +27,13 @@ fn has_modifier(param: Param<'_>) -> bool {
 
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     let span = FormatFormalParameters(func).span();
-    // `function foo /**/ () {}`. In an arrow function, a signature and a function type, they lead the
-    // first parameter: Prettier's `handleFunctionNameComments`.
+    let has_parameters = func.params_with_this().next().is_some();
     let comments = f.comments().comments_before(span.start);
-    if !comments.is_empty()
-        && (func.params_with_this().next().is_none() || matches!(func.as_ast_nodes(), AstNodes::Function(_)))
-    {
-        write!(f, [space(), FormatTrailingComments::Comments(comments)]);
+    if !comments.is_empty() {
+        let count = comments_trailing_the_name(func, has_parameters, comments);
+        if count > 0 {
+            write!(f, [space(), FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())]);
+        }
     }
 
     let parentheses_not_needed = func.is_arrow() && can_avoid_parentheses(func, f);
@@ -72,13 +72,68 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
         {
             write!(f, [indent(&format_args!(soft_line_break(), "")), soft_line_break()]);
         }
-        ParameterLayout::NoParameters => write!(f, format_dangling_comments(span).with_soft_block_indent()),
+        // What is left of the comments before the `(` leads what follows the `)`.
+        ParameterLayout::NoParameters if f.is_quiet() || !f.comments().has_comment_in_span(span) => {}
+        // Prettier's `printDanglingCommentsInList`: they break along with the rest of the signature.
+        ParameterLayout::NoParameters => {
+            let ends_with_line_comment = f.comments().comments_before(span.end).last().is_some_and(|it| it.is_line());
+            write!(f, indent(&format_args!(soft_line_break(), format_dangling_comments(span))));
+            match ends_with_line_comment {
+                true => write!(f, hard_line_break()),
+                false => write!(f, soft_line_break()),
+            }
+        }
         ParameterLayout::Hug => write!(f, ParameterList::with_layout(func, layout)),
         ParameterLayout::Default => write!(f, soft_block_indent(&ParameterList::with_layout(func, layout))),
     }
     if !parentheses_not_needed {
         write!(f, ")");
     }
+}
+
+/// How many of `comments`, which are before the `(` of `func`, trail what is before them. The others
+/// lead what follows: the first parameter, the return type or the body.
+///
+/// Prettier's `handleFunctionNameComments`, and what it does with any comment: on a line of its own
+/// it leads what follows, at the end of a line it trails what is before.
+fn comments_trailing_the_name(func: Func<'_>, has_parameters: bool, comments: &[Comment]) -> usize {
+    match func.kind() {
+        FnKind::Decl | FnKind::Expr | FnKind::Arrow if func.has_body() => {
+            if !follows_name_or_type_parameters(func) {
+                return 0;
+            }
+            // There is no such rule for an arrow function: with nothing but a `(` between it and the
+            // first parameter, the comment leads that.
+            let leads_parameter = func.is_arrow() && has_parameters;
+            (comments.iter())
+                .take_while(|it| !it.preceded_by_newline() && (!leads_parameter || it.followed_by_newline()))
+                .count()
+        }
+        _ if has_parameters && !matches!(func.as_ast_nodes(), AstNodes::Function(_)) => 0,
+        _ => comments.len(),
+    }
+}
+
+/// Whether Prettier has a node before the `(` of `func`, in the node that the parameters are in. The
+/// function of a method with a body starts at the type parameters or the `(`.
+pub(crate) fn follows_name_or_type_parameters(func: Func<'_>) -> bool {
+    !func.type_params().is_empty()
+        || match func.kind() {
+            FnKind::Decl | FnKind::Expr => func.name().is_some(),
+            FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => !func.has_body(),
+            _ => false,
+        }
+}
+
+/// The comments from `start` to `end`, whether they are printed or not. For what is asked several
+/// times while a node is written, and has to get the same answer.
+pub(crate) fn comments_between<'a>(
+    start: u32,
+    end: u32,
+    f: &Formatter<'a>,
+) -> impl Iterator<Item = &'a Comment> + use<'a> {
+    let printed = f.comments().printed_comments().iter().rev().take_while(move |c| c.start() >= start);
+    printed.chain(f.comments().comments_before_iter(end)).filter(move |c| c.start() >= start && c.end() <= end)
 }
 
 /// `private a?: T = 1`, `...a: T`, `this: T`
@@ -213,10 +268,7 @@ pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> b
                 && param.default().is_none()
                 && matches!(param.pat().kind(), PatKind::Ident(_))
         })
-        && !f.comments().has_comment_in_range(
-            FormatFormalParameters(arrow).span().start,
-            arrow.arrow_span().map_or(0, |token| token.start),
-        )
+        && !f.comments().has_comment_before(arrow.arrow_span().map_or(0, |token| token.start))
 }
 
 /// Prettier's `shouldHugTheOnlyFunctionParameter`.
@@ -225,11 +277,34 @@ pub(crate) fn should_hug_function_parameters<'a>(func: Func<'a>, parentheses_not
     if list.len() > 1 || list.last().is_some_and(Param::is_rest) {
         return false;
     }
-    // Not if there are comments around the only parameter.
+    // Not if there are comments around the only parameter. Those before the `(` that do not trail
+    // the name lead it.
     let has_comments_around = |param: Param<'a>| {
         let span = FormatFormalParameters(func).span();
-        f.comments().has_comment_in_range(span.start, param.span().start)
-            || f.comments().has_comment_in_range(param.span().end, span.end)
+        let start = match func.kind() {
+            FnKind::Decl | FnKind::Expr | FnKind::Arrow if func.has_body() => (func.type_params().angle_brackets_span())
+                .or_else(|| func.name().map(|it| it.span()))
+                .map_or_else(|| func.span().start, |it| it.end),
+            _ => span.start,
+        };
+        let mut comments = comments_between(start, span.end, f).peekable();
+        if comments.peek().is_none() {
+            return false;
+        }
+        let follows_name = follows_name_or_type_parameters(func);
+        let leads_parameter = |comment: &Comment| {
+            if !follows_name || comment.preceded_by_newline() {
+                return true;
+            }
+            match comment.start() >= span.start || func.is_arrow() {
+                // At the end of the line it trails the name.
+                true => !comment.followed_by_newline(),
+                false => false,
+            }
+        };
+        comments.any(|comment| {
+            comment.start() >= param.span().end || (comment.end() <= param.span().start && leads_parameter(comment))
+        })
     };
 
     if let Some(this_param) = func.this_param() {

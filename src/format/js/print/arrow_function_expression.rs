@@ -1,5 +1,5 @@
 use super::function::{FormatContentWithCacheMode, FormatFunctionBody};
-use super::parameters::{FormatFormalParameters, has_only_simple_parameters};
+use super::parameters::{FormatFormalParameters, comments_between, has_only_simple_parameters};
 use super::type_parameters::type_parameters;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, write_expression};
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
@@ -125,7 +125,7 @@ fn write_arrow<'a>(
         }
         let trailing_comma = expand_last_arg.then_some(FormatTrailingCommas::All);
         // The `)` of the call, or the `}` in JSX, is on a line of its own if the body is.
-        let should_add_soft_line = expand_last_arg
+        let should_add_soft_line = (expand_last_arg && !has_dangling_comments(arrow, options.cache_mode, f))
             || matches!(
                 e.ast_parent(),
                 container @ AstNodes::JSXExpressionContainer(_)
@@ -239,23 +239,30 @@ fn has_complex_signature(arrow: Func<'_>) -> bool {
     arrow.return_type().is_some() && arrow.params_with_this().next().is_some()
 }
 
-/// The comments from `start` to `end`, whether they are printed or not. What is formatted a second
-/// time from the cache has to come to the same conclusions as the first time.
-fn comments_between<'a>(start: u32, end: u32, f: &Formatter<'a>) -> impl Iterator<Item = &'a Comment> + use<'a> {
-    let printed = f.comments().printed_comments().iter().rev().take_while(move |c| c.span.start >= start);
-    printed.chain(f.comments().comments_before_iter(end)).filter(move |c| c.span.start >= start && c.span.end <= end)
-}
-
 /// Whether a comment, printed or not, is the last thing before `e`. Before the parentheses of a
 /// callee, it belongs to the call.
 fn has_leading_comment<'a>(e: Expr<'a>, is_callee: bool, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
     let start = e.span().start;
     comments.comments_before(start).last().or_else(|| comments.printed_comments().last()).is_some_and(|comment| {
-        comment.span.end <= start
-            && (!is_callee || comment.span.start >= e.outer_span().start)
-            && f.source_text().all_bytes_match(comment.span.end, start, |b| b.is_ascii_whitespace() || b == b'(')
+        comment.end() <= start
+            && (!is_callee || comment.start() >= e.outer_span().start)
+            && f.source_text().all_bytes_match(comment.end(), start, |b| b.is_ascii_whitespace() || b == b'(')
     })
+}
+
+/// Whether there are comments in the `()` of `arrow`, or before its `=>`.
+fn has_dangling_comments<'a>(arrow: Func<'a>, cache_mode: FunctionCacheMode, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() && matches!(cache_mode, FunctionCacheMode::NoCache) {
+        return false;
+    }
+    let Some(arrow_token) = arrow.arrow_span() else {
+        return false;
+    };
+    let params = FormatFormalParameters(arrow).span();
+    let signature_end = arrow.return_type().map_or(params.end, |ty| ty.span().end);
+    comments_between(signature_end, arrow_token.start, f).next().is_some()
+        || (arrow.params_with_this().next().is_none() && comments_between(params.start, params.end, f).next().is_some())
 }
 
 /// Prettier's `hasLeadingOwnLineComment` for the body of `arrow`: then the body goes on the next
@@ -267,7 +274,17 @@ fn has_leading_own_line_comment<'a>(arrow: Func<'a>, cache_mode: FunctionCacheMo
     let Some(arrow_token) = arrow.arrow_span() else {
         return false;
     };
-    let mut comments = comments_between(arrow_token.end, AstNodes::FunctionBody(arrow).span().start, f);
+    let has_preceding_node =
+        arrow.params_with_this().next().is_some() || !arrow.type_params().is_empty() || arrow.return_type().is_some();
+    // If nothing else is between them and the body, the comments before the `(` lead it as well.
+    let start = match has_preceding_node {
+        true => arrow_token.end,
+        false => arrow.span().start,
+    };
+    let is_before_arrow_token =
+        |comment: &Comment| comment.start() >= FormatFormalParameters(arrow).span().start && comment.end() <= arrow_token.start;
+    let mut comments = comments_between(start, AstNodes::FunctionBody(arrow).span().start, f)
+        .filter(|comment| has_preceding_node || !is_before_arrow_token(comment));
     match arrow.body() {
         FnBody::Expr(body) if matches!(body.kind(), ExprKind::Jsx(_)) => {
             comments.any(|comment| f.comments().is_suppression_comment(comment))
@@ -275,14 +292,8 @@ fn has_leading_own_line_comment<'a>(arrow: Func<'a>, cache_mode: FunctionCacheMo
         FnBody::Expr(_) => comments.any(|comment| comment.followed_by_newline()),
         // A comment at the end of the line of the `=>` is moved into the block, if there is
         // anything before the `=>` that it could belong to.
-        _ => {
-            let has_preceding_node = arrow.params_with_this().next().is_some()
-                || !arrow.type_params().is_empty()
-                || arrow.return_type().is_some();
-            comments.any(|comment| {
-                comment.followed_by_newline() && (comment.preceded_by_newline() || !has_preceding_node)
-            })
-        }
+        _ => comments
+            .any(|comment| comment.followed_by_newline() && (comment.preceded_by_newline() || !has_preceding_node)),
     }
 }
 
@@ -396,7 +407,13 @@ impl<'a> Format<'a> for FormatSignature<'a> {
         let Some(arrow_token) = arrow.arrow_span() else {
             return;
         };
-        let content = FormatTrailingComments::Comments(f.comments().comments_before(arrow_token.start));
+        // If the first is from before the `(`, it leads the body, and takes the others along.
+        let comments = f.comments().comments_before(arrow_token.start);
+        let comments = match comments.first() {
+            Some(first) if first.start() < params.span().end => &[][..],
+            _ => comments,
+        };
+        let content = FormatTrailingComments::Comments(comments);
         write!(f, FormatContentWithCacheMode::new(arrow.as_ast_nodes().span(), content, cache_mode));
     }
 }

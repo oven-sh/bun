@@ -83,14 +83,16 @@ struct SourceImports<'a> {
 /// An import of values of which some are only used as types.
 struct ReportValueImport<'a> {
     import: Import<'a>,
-    /// At least one.
+    /// At least one, in the order of the source.
     type_specifiers: Vec<Specifier<'a>>,
     has_value_or_unused_specifiers: bool,
 }
 
 impl<'a> ReportValueImport<'a> {
+    /// `specifier`: one of the import.
     fn is_type(&self, specifier: Specifier<'a>) -> bool {
-        self.type_specifiers.contains(&specifier)
+        let start = |it: &Specifier<'a>| it.local().map(|it| it.span().start);
+        self.type_specifiers.binary_search_by_key(&start(&specifier), start).is_ok()
     }
 }
 
@@ -229,8 +231,8 @@ fn get_named_specifier_ranges<'a>(
     ))
 }
 
-/// How to remove `subset` from the named specifiers of `import`, and the text to put between braces
-/// to import them.
+/// How to remove `subset`, which is in the order of the source, from the named specifiers of
+/// `import`, and the text to put between braces to import them.
 fn get_fixes_named_specifiers<'a>(
     fixer: Fixer<'a>,
     import: Import<'a>,
@@ -254,8 +256,9 @@ fn get_fixes_named_specifiers<'a>(
         // Each run of adjacent specifiers.
         let mut groups: Vec<(ImportSpec, ImportSpec)> = Vec::new();
         let mut group: Option<(ImportSpec, ImportSpec)> = None;
+        let mut subset = subset.iter().peekable();
         for spec in all {
-            if subset.contains(&spec) {
+            if subset.next_if_eq(&&spec).is_some() {
                 group = Some((group.map_or(spec, |it| it.0), spec));
             } else {
                 groups.extend(group.take());

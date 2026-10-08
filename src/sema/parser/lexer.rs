@@ -68,6 +68,13 @@ pub(crate) struct Mark {
     number: f64,
 }
 
+/// The number of leading bytes of `bytes` that are tabs or spaces.
+#[inline(always)]
+fn blank_run(bytes: u8x16) -> u32 {
+    let blanks = bytes.simd_eq(u8x16::splat(b'\t')) | bytes.simd_eq(u8x16::splat(b' '));
+    (!blanks.to_bitmask() as u32 | 1 << 16).trailing_zeros()
+}
+
 /// The number of leading bytes of `bytes` that are ASCII letters, digits, `_` or `$`.
 #[inline(always)]
 fn name_run(bytes: u8x16) -> u32 {
@@ -269,6 +276,14 @@ impl<'a> Lexer<'a> {
                 b'\n' => {
                     self.newline_before = true;
                     pos = next;
+                    // How far a line is indented is hard to guess, so it is not asked byte by byte.
+                    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
+                        let len = blank_run(u8x16::from_array(*chunk)) as usize;
+                        pos += len;
+                        if len < 16 {
+                            break;
+                        }
+                    }
                     while matches!(src.get(pos), Some(b'\t' | b' ')) {
                         pos += 1;
                     }

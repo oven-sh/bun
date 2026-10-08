@@ -5271,7 +5271,9 @@ pub mod bv2_impl {
                     // Everything below keys on these bytes — the module map, the watcher
                     // (which compares change events against platform paths) and the pretty
                     // path — so the file is made one path, the platform's, as the resolver's are.
-                    if (result.namespace.is_empty() || result.namespace.as_ref() == b"file")
+                    // Not an external one: it is printed as the plugin wrote it (a URL, `/lib.js`).
+                    if !result.external
+                        && (result.namespace.is_empty() || result.namespace.as_ref() == b"file")
                         && bun_paths::is_absolute(result.path.as_ref())
                     {
                         bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut result.path);

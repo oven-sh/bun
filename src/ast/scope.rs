@@ -489,14 +489,23 @@ impl Scope {
         // "var foo; function foo() {}"
         // "function foo() {} var foo;"
         // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
-        if Symbol::is_kind_hoisted_or_function(new)
-            && Symbol::is_kind_hoisted_or_function(existing)
-            && (scope_kind == Kind::Entry
+        if Symbol::is_kind_hoisted_or_function(new) && Symbol::is_kind_hoisted_or_function(existing)
+        {
+            if scope_kind == Kind::Entry
                 || scope_kind == Kind::FunctionBody
                 || scope_kind == Kind::FunctionArgs
-                || (new == existing && Symbol::is_kind_hoisted(existing)))
-        {
-            return SymbolMergeResult::ReplaceWithNew;
+            {
+                return SymbolMergeResult::ReplaceWithNew;
+            }
+            if new == existing && Symbol::is_kind_hoisted(existing) {
+                // "{ function foo() {} function foo() {} }" is one binding of the block, and in
+                // sloppy code each statement assigns it to the enclosing `var` (Annex B.3.3).
+                // esbuild replaces the symbol here, which leaves the first statement without it.
+                if existing == Sk::HoistedFunction && (scope_kind as u8) < (Kind::Entry as u8) {
+                    return SymbolMergeResult::KeepExisting;
+                }
+                return SymbolMergeResult::ReplaceWithNew;
+            }
         }
 
         // "get #foo() {} set #foo() {}"

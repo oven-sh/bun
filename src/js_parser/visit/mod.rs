@@ -2,6 +2,7 @@
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 
+pub(crate) mod block_fn;
 pub mod visit_binary;
 pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
@@ -9,9 +10,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, InsideSwitch,
+    PrependTempRefsOpts, Ref, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap,
+    VisitArgsOpts, VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -23,15 +24,14 @@ use bun_ast::s::Kind as LocalKind;
 use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
-    AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Stmt, StmtData, Symbol,
+    AssignTarget, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S, Stmt,
+    StmtData, Symbol,
 };
 use bun_collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
 // `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::StrictModeKind;
-use bun_collections::HashMap;
 use core::ptr::NonNull;
 
 // In the AST crate, ListManaged is arena-backed.
@@ -1572,17 +1572,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             break 'list_getter &mut after;
                         }
                         StmtData::SFunction(data) => {
-                            // Manually hoist block-level function declarations to preserve semantics.
-                            // This is only done for function declarations that are not generators
-                            // or async functions, since this is a backwards-compatibility hack from
-                            // Annex B of the JavaScript standard.
-                            // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if !p.current_scope().kind_stops_hoisting()
-                                && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
-                                    .kind
-                                    == SymbolKind::HoistedFunction
-                            {
-                                break 'list_getter &mut before;
+                            // A plain function of a block is spelled with the others of its
+                            // block (`block_fn.rs`). Generators and async functions are not
+                            // part of Annex B.3.3 and stay as they are.
+                            if !p.current_scope().kind_stops_hoisting() {
+                                let symbol = &mut p.symbols
+                                    [data.func.name.unwrap().ref_.inner_index() as usize];
+                                if symbol.kind == SymbolKind::HoistedFunction {
+                                    // The functions of one name share the symbol, and the
+                                    // last one is its value.
+                                    symbol.set_call_ignores_this(false);
+                                    if kind == StmtsKind::SwitchStmt {
+                                        p.fn_or_arrow_data_visit.inside_switch =
+                                            InsideSwitch::WithClauseFunction;
+                                        let len = visited.len();
+                                        p.visit_and_append_stmt(&mut visited, stmt)?;
+                                        // What `s_function` put after the statement (the Fast
+                                        // Refresh signature) belongs at the head of the clause:
+                                        // the function can be called from there.
+                                        if visited.len() > len + 1 {
+                                            before.extend_from_slice(&visited[len + 1..]);
+                                            visited.truncate(len + 1);
+                                        }
+                                    } else {
+                                        p.visit_and_append_stmt(&mut before, stmt)?;
+                                        // Again, to mark where the statement stood.
+                                        visited.push(*stmt);
+                                    }
+                                    continue 'stmt_loop;
+                                }
                             }
                         }
                         StmtData::SEnum(_) => {
@@ -1602,128 +1620,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.visit_and_append_stmt(list, stmt)?;
             }
 
-            // Transform block-level function declarations into variable declarations
             if before.len() > 0 {
-                let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
-                let mut var_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
-                let mut non_fn_stmts: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
-                let mut fn_stmts: HashMap<Ref, u32> = HashMap::default();
-
-                for stmt in before.iter().copied() {
-                    match stmt.data {
-                        StmtData::SFunction(mut data) => {
-                            // This transformation of function declarations in nested scopes is
-                            // intended to preserve the hoisting semantics of the original code. In
-                            // JavaScript, function hoisting works differently in strict mode vs.
-                            // sloppy mode code. We want the code we generate to use the semantics of
-                            // the original environment, not the generated environment. However, if
-                            // direct "eval" is present then it's not possible to preserve the
-                            // semantics because we need two identifiers to do that and direct "eval"
-                            // means neither identifier can be renamed to something else. So in that
-                            // case we give up and do not preserve the semantics of the original code.
-                            let name = data.func.name.unwrap();
-                            let name_ref = name.ref_;
-                            // SAFETY: current_scope is a valid arena ptr for the parse.
-                            if p.current_scope().contains_direct_eval {
-                                if let Some(hoisted_ref) =
-                                    p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
-                                {
-                                    // Merge the two identifiers back into a single one
-                                    p.symbols[hoisted_ref.inner_index() as usize]
-                                        .link
-                                        .set(name_ref);
-                                }
-                                non_fn_stmts.push(stmt);
-                                continue;
-                            }
-
-                            let gpe = fn_stmts.get_or_put(name_ref).expect("oom");
-                            let mut index = *gpe.value_ptr;
-                            if !gpe.found_existing {
-                                index = u32::try_from(let_decls.len()).expect("int cast");
-                                *gpe.value_ptr = index;
-                                let_decls.push(G::Decl {
-                                    binding: p.b(B::Identifier { r#ref: name_ref }, name.loc),
-                                    value: None,
-                                });
-
-                                // Also write the function to the hoisted sibling symbol if applicable
-                                if let Some(&hoisted_ref) =
-                                    p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
-                                {
-                                    p.record_usage(name_ref);
-                                    let value = p.new_expr(
-                                        E::Identifier {
-                                            ref_: name_ref,
-                                            ..Default::default()
-                                        },
-                                        name.loc,
-                                    );
-                                    var_decls.push(G::Decl {
-                                        binding: p
-                                            .b(B::Identifier { r#ref: hoisted_ref }, name.loc),
-                                        value: Some(value),
-                                    });
-                                }
-                            }
-
-                            // The last function statement for a given symbol wins
-                            data.func.name = None;
-                            // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags)
-                            // with no `Drop`, so a bitwise read is a plain copy; the type just
-                            // lacks `derive(Copy)`.
-                            let func = unsafe { core::ptr::read(&raw const data.func) };
-                            let_decls[index as usize].value =
-                                Some(p.new_expr(E::Function { func }, stmt.loc));
-                        }
-                        _ => {
-                            non_fn_stmts.push(stmt);
-                        }
-                    }
-                }
-                before.clear();
-
-                before.reserve(
-                    usize::from(let_decls.len() > 0)
-                        + usize::from(var_decls.len() > 0)
-                        + non_fn_stmts.len(),
-                );
-
-                if let_decls.len() > 0 {
-                    let decls = G::DeclList::from_bump_vec(let_decls);
-                    let loc = decls.at(0).value.unwrap().loc;
-                    before.push(p.s(
-                        S::Local {
-                            kind: LocalKind::KLet,
-                            decls,
-                            ..Default::default()
-                        },
-                        loc,
-                    ));
-                }
-
-                if var_decls.len() > 0 {
-                    let relocated =
-                        p.maybe_relocate_vars_to_top_level(&var_decls, RelocateVarsMode::Normal);
-                    if relocated.ok {
-                        if let Some(new) = relocated.stmt {
-                            before.push(new);
-                        }
-                    } else {
-                        let decls = G::DeclList::from_bump_vec(var_decls);
-                        let loc = decls.at(0).value.unwrap().loc;
-                        before.push(p.s(
-                            S::Local {
-                                kind: LocalKind::KVar,
-                                decls,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-                    }
-                }
-
-                before.extend_from_slice(&non_fn_stmts);
+                p.lower_block_level_functions(&mut before, &mut visited);
             }
 
             let mut visited_count = visited.len();

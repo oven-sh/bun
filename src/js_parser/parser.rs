@@ -1475,13 +1475,24 @@ impl Default for FnOrArrowDataParse {
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum InsideSwitch {
+    #[default]
+    No,
+    Yes,
+    /// A case clause of the innermost `switch` holds a plain function declaration,
+    /// which `lower_case_clause_functions` spells once every clause is visited.
+    WithClauseFunction,
+}
+
 /// This is function-specific information used during visiting. It is saved and
 /// restored on the call stack around code that parses nested functions and
 /// arrow expressions.
 #[derive(Clone, Copy, Default)]
 pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_loop: bool,
-    pub(crate) is_inside_switch: bool,
+    pub(crate) inside_switch: InsideSwitch,
     pub(crate) is_outside_fn_or_arrow: bool,
 
     /// This is used to silence unresolvable imports due to "require" calls inside

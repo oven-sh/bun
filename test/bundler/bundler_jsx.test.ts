@@ -1454,5 +1454,63 @@ describe("bundler", () => {
       },
       run: { stdout: "1" },
     });
+
+    const refreshRuntime = {
+      "/node_modules/react-refresh/runtime.js": /* js */ `
+        export const createSignatureFunctionForTransform = () => fn => fn;
+        export const register = () => {};
+      `,
+    };
+
+    // A block can declare a function name twice. The binding has the last
+    // function, so that one gets the signature.
+    itBundled("jsx/FastRefreshBlockFunctionDeclaredTwice", {
+      files: {
+        "/index.tsx": /* js */ `
+          ${prelude}
+          function make() {
+            {
+              function Comp() { return useThing(); }
+              function Comp() { return useThing() + useThing(); }
+              return Comp;
+            }
+          }
+          console.log(make()());
+        `,
+        ...refreshRuntime,
+      },
+      backend: "api",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(1);
+      },
+      run: { stdout: "2" },
+    });
+
+    // The function of a case clause can be called before its statement runs,
+    // so its signature is ready at the head of the clause.
+    itBundled("jsx/FastRefreshCaseClauseFunctionCalledBeforeItsStatement", {
+      files: {
+        "/index.tsx": /* js */ `
+          ${prelude}
+          function make(k) {
+            switch (k) {
+              case 1:
+                var value = Comp();
+                function Comp() { return useThing(); }
+                return value;
+            }
+          }
+          console.log(make(1));
+        `,
+        ...refreshRuntime,
+      },
+      backend: "api",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(1);
+      },
+      run: { stdout: "1" },
+    });
   });
 });

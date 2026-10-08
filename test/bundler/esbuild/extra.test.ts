@@ -1636,6 +1636,329 @@ describe("bundler", () => {
     },
     run: true,
   });
+  // A sloppy block can declare a function name twice. The last declaration is
+  // the value, and each statement assigns it to the "var".
+  itBundled(`extra/FunctionHoistingDeclaredTwice1`, {
+    files: {
+      "in.js": `
+      if (1) {
+        function f() { return 1 }
+        function f() { return 2 }
+      }
+      if (typeof f !== 'function' || f() !== 2) throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  itBundled(`extra/FunctionHoistingDeclaredTwice2`, {
+    files: {
+      "in.js": `
+      if (1) {
+        function f() { return 1 }
+        f = null
+        function f() { return 2 }
+      }
+      if (f !== null) throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  itBundled(`extra/FunctionHoistingDeclaredTwice3`, {
+    files: {
+      "in.js": `
+      x: {
+        function f() { return 1 }
+        break x
+        function f() { return 2 }
+      }
+      if (typeof f !== 'function' || f() !== 2) throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  itBundled(`extra/FunctionHoistingDeclaredTwice4`, {
+    files: {
+      "in.js": `
+      function pick(k) {
+        switch (k) {
+          case 'a': function f() { return 'A' } break
+          case 'b': function f() { return 'B' } break
+        }
+        return typeof f === 'function' ? f() : typeof f
+      }
+      if (pick('a') !== 'B' || pick('b') !== 'B' || pick('c') !== 'undefined') throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  // The statement assigns the "var", not the start of the block.
+  itBundled(`extra/FunctionHoistingAssignsAtTheStatement1`, {
+    files: {
+      "in.js": `
+      if (1) {
+        f = null
+        function f() { return 1 }
+      }
+      if (f !== null) throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  itBundled(`extra/FunctionHoistingAssignsAtTheStatement2`, {
+    files: {
+      "in.js": `
+      x: {
+        break x
+        function f() { return 1 }
+      }
+      if (typeof f !== 'undefined') throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  // A sloppy block has one binding for each function name, and the last
+  // declaration is its value. Each declaration statement assigns that binding
+  // to the `var` of the function when it runs (Annex B.3.3). The expected
+  // output is what node prints for these files.
+  const blockFunctionFiles = {
+    "/entry.js": /* js */ `
+      import block from "./block.cjs";
+      import sw from "./switch.cjs";
+      import top from "./top.cjs";
+      import strict from "./strict.cjs";
+      console.log(JSON.stringify({ block, sw, top, strict }));
+    `,
+    "/block.cjs": /* js */ `
+      function leaveBetween() { exit: { function f() { return 1 } break exit; function f() { return 2 } } return f(); }
+      function reassignBetween() { { function h() { return 1 } h = 5; function h() { return 2 } } return h; }
+      function readBefore() { var a = typeof f; { function f() { return 1 } function f() { return 2 } } return a + "," + f(); }
+      function leaveBeforeAny() { x: { break x; function f() { return 1 } function f() { return 2 } } return typeof f; }
+      function inside() { var log = []; { log.push(typeof f); function f() { return 1 } log.push(f()); function f() { return 2 } log.push(f()); } log.push(f()); return log.join(); }
+      function closure() { var get; { get = function () { return f }; function f() { return 1 } function f() { return 2 } } return get()() + "," + f(); }
+      function loop() { var out = []; for (var i = 0; i < 2; i++) { out.push(typeof f); { function f() { return i } function f() { return i + 10 } } out.push(f()); } return out.join(); }
+      function enclosingLet() { let f = "let"; { function f() { return 1 } function f() { return 2 } } return f; }
+      function enclosingVar() { var f = "v"; { function f() { return 1 } function f() { return 2 } } return f(); }
+      function enclosingFunction() { function f() { return 0 } var a = f(); { function f() { return 1 } function f() { return 2 } } return a + "," + f(); }
+      function three() { { function f() { return 1 } function f() { return 2 } function f() { return 3 } } return f(); }
+      function callBefore() { var r; { r = f(); function f() { return 1 } function f() { return 2 } } return r + "," + f(); }
+      function tryFinally() { try { function f() { return 1 } throw 0; function f() { return 2 } } catch (e) { } finally { function g() { return 3 } function g() { return 4 } } return f() + "," + g(); }
+      // One declaration: the statement assigns, not the head of the block.
+      function assignBefore() { { f = 5; function f() { return 1 } } return typeof f; }
+      function leaveBefore() { a: { break a; function f() { return 1 } } return typeof f; }
+      // "f2" is not declared, so the binding of the block cannot take that name.
+      function notFirst() { var seen; { seen = typeof f2; function f() { return 1 } } return seen + "," + f(); }
+      module.exports = {
+        leaveBetween: leaveBetween(), reassignBetween: reassignBetween(), readBefore: readBefore(), leaveBeforeAny: leaveBeforeAny(),
+        inside: inside(), closure: closure(), loop: loop(), enclosingLet: enclosingLet(), enclosingVar: enclosingVar(),
+        enclosingFunction: enclosingFunction(), three: three(), callBefore: callBefore(), tryFinally: tryFinally(),
+        assignBefore: assignBefore(), leaveBefore: leaveBefore(), notFirst: notFirst(),
+      };
+    `,
+    // A switch body is one block, and a clause can run without the one before it.
+    "/switch.cjs": /* js */ `
+      function twoClauses(kind) { switch (kind) { case "a": function handler() { return "A" } break; case "b": function handler() { return "B" } break; } try { return handler(); } catch (e) { return e.name; } }
+      function fallthrough(k) { switch (k) { case 1: function h() { return 1 } case 2: function h() { return 2 } break; case 3: function h() { return 3 } } return typeof h === "function" ? h() : typeof h; }
+      function sameClause(k) { switch (k) { case 1: function h() { return 1 } function h() { return 2 } break; } return typeof h === "function" ? h() : typeof h; }
+      function leaveInClause(k) { switch (k) { case 1: function h() { return 1 } if (k) break; function h() { return 2 } } return typeof h === "function" ? h() : typeof h; }
+      function defaultFirst(k) { switch (k) { default: function h() { return "d" } break; case 1: function h() { return 1 } } return h(); }
+      function mixed(k) { var seen = []; switch (k) { case 1: seen.push(typeof h); function h() { return 1 } seen.push(h()); h = 7; case 2: function h() { return 2 } seen.push(typeof h); } seen.push(typeof h === "function" ? h() : h); return seen.join(); }
+      function otherClause(k) { switch (k) { case 1: return typeof h; case 2: function h() {} } return typeof h; }
+      function callOtherClause(k) { switch (k) { case 1: return h(); case 2: function h() { return "h" } } return typeof h; }
+      function dead(k) { if (false) { switch (k) { case 1: function fetch() {} } } return typeof fetch; }
+      module.exports = {
+        twoClauses: [twoClauses("a"), twoClauses("b"), twoClauses("c")], fallthrough: [fallthrough(1), fallthrough(2), fallthrough(3), fallthrough(4)],
+        sameClause: [sameClause(1), sameClause(2)], leaveInClause: [leaveInClause(1), leaveInClause(2)], defaultFirst: [defaultFirst(1), defaultFirst(2)],
+        mixed: [mixed(1), mixed(2), mixed(3)], otherClause: [otherClause(1), otherClause(2), otherClause(3)],
+        callOtherClause: [callOtherClause(1), callOtherClause(2), callOtherClause(3)], dead: dead(1),
+      };
+    `,
+    // At the top level of a file the `var` is a top-level variable.
+    "/top.cjs": /* js */ `
+      { a = 5; function a() { return 1 } }
+      { function f() { return 1 } function f() { return 2 } }
+      switch (1) { case 0: function g() { return "A" } break; case 1: function g() { return "B" } }
+      switch (2) { case 1: function unreached() {} }
+      module.exports = [typeof a, f(), g(), typeof unreached];
+    `,
+    // Strict code has the binding of the block only.
+    "/strict.cjs": /* js */ `
+      "use strict";
+      function otherClause(k) { try { switch (k) { case 1: return h(); case 2: function h() { return "ok" } } return "none"; } catch (e) { return e.name; } }
+      function block() { { function f() { return 1 } } return typeof f; }
+      function clause(k) { switch (k) { case 1: function f() { return 1 } return f(); } return typeof f; }
+      module.exports = { otherClause: [otherClause(1), otherClause(2), otherClause(3)], block: block(), clause: [clause(1), clause(2)] };
+    `,
+  };
+  const blockFunctionOutput = JSON.stringify({
+    block: {
+      leaveBetween: 2,
+      reassignBetween: 5,
+      readBefore: "undefined,2",
+      leaveBeforeAny: "undefined",
+      inside: "function,2,2,2",
+      closure: "2,2",
+      loop: "undefined,10,function,11",
+      enclosingLet: "let",
+      enclosingVar: 2,
+      enclosingFunction: "0,2",
+      three: 3,
+      callBefore: "2,2",
+      tryFinally: "2,4",
+      assignBefore: "number",
+      leaveBefore: "undefined",
+      notFirst: "undefined,1",
+    },
+    sw: {
+      twoClauses: ["B", "B", "TypeError"],
+      fallthrough: [3, 3, 3, "undefined"],
+      sameClause: [2, "undefined"],
+      leaveInClause: [2, "undefined"],
+      defaultFirst: [1, 1],
+      mixed: ["function,2,number,7", "function,2", ""],
+      otherClause: ["function", "function", "undefined"],
+      callOtherClause: ["h", "function", "undefined"],
+      dead: "undefined",
+    },
+    top: ["number", 2, "B", "undefined"],
+    strict: { otherClause: ["ok", "none", "none"], block: "undefined", clause: [1, "undefined"] },
+  });
+  for (const format of ["cjs", "esm", "iife"] as const) {
+    for (const minify of ["", "Syntax", "Identifiers"] as const) {
+      itBundled(`extra/SloppyBlockFunctionStatements${format.toUpperCase()}${minify && "Minify" + minify}`, {
+        files: blockFunctionFiles,
+        format,
+        minifySyntax: minify === "Syntax",
+        minifyIdentifiers: minify === "Identifiers",
+        // Bun transpiles the bundle again when it runs it. Node runs it as it is.
+        run: [{ stdout: blockFunctionOutput }, { stdout: blockFunctionOutput, runtime: "node" }],
+      });
+    }
+  }
+  // Direct eval reads the names, so the function has one name and the
+  // declarations stay. Strict code rejects two declarations of one name, and a
+  // bundle can run as strict code, so a bundle keeps the last function only:
+  // the first clause of "twoClauses" does not assign (the source prints "B").
+  // Node runs this bundle as sloppy code. Bun runs it as a module.
+  itBundled("extra/SloppyBlockFunctionStatementsDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        import direct from "./eval.cjs";
+        console.log(JSON.stringify(direct));
+      `,
+      "/eval.cjs": /* js */ `
+        function leaveBetween() { exit: { function f() { return 1 } eval(""); break exit; function f() { return 2 } } return f(); }
+        function assignBefore() { { f = 5; eval(""); function f() { return 1 } } return typeof f; }
+        function leaveBefore() { a: { eval(""); break a; function f() { return 1 } } return typeof f; }
+        function evalInLaterClause(k) { switch (k) { case 1: function h() { return "h" } break; case 2: eval(""); break; } return typeof h; }
+        function twoClauses(kind) { switch (kind) { case "a": function handler() { return "A" } eval(""); break; case "b": function handler() { return "B" } break; } try { return handler(); } catch (e) { return e.name; } }
+        module.exports = {
+          leaveBetween: leaveBetween(), assignBefore: assignBefore(), leaveBefore: leaveBefore(),
+          evalInLaterClause: [evalInLaterClause(1), evalInLaterClause(2), evalInLaterClause(3)],
+          twoClauses: [twoClauses("a"), twoClauses("b"), twoClauses("c")],
+        };
+      `,
+    },
+    format: "cjs",
+    run: {
+      runtime: "node",
+      stdout: JSON.stringify({
+        leaveBetween: 2,
+        assignBefore: "number",
+        leaveBefore: "undefined",
+        evalInLaterClause: ["function", "undefined", "undefined"],
+        twoClauses: ["TypeError", "B", "TypeError"],
+      }),
+    },
+  });
+  // Strict code accepts one declaration of a name in a block. Each of these
+  // files is strict, has two, and has to load.
+  itBundled("extra/StrictBlockFunctionDeclaredTwiceStillLoads", {
+    files: {
+      "/entry.js": /* js */ `
+        import { inModule } from "./module.js";
+        import useStrict from "./use-strict.cjs";
+        console.log(JSON.stringify([inModule(), useStrict]));
+      `,
+      "/module.js": /* js */ `
+        export function inModule() {
+          { function f() { return 1 } eval(""); function f() { return 2 } var block = f(); }
+          switch (1) { case 0: function g() { return 1 } case 1: function g() { return 2 } var clause = g(); }
+          class C { m() { { function h() { return 1 } eval(""); function h() { return 2 } return h(); } } }
+          return [block, clause, new C().m()];
+        }
+      `,
+      "/use-strict.cjs": /* js */ `
+        "use strict";
+        function block() { { function f() { return 1 } eval(""); function f() { return 2 } return f(); } }
+        function clause(k) { switch (k) { case 0: function g() { return 1 } case 1: function g() { return 2 } return g(); } }
+        module.exports = [block(), clause(1)];
+      `,
+    },
+    run: { stdout: "[[2,2,2],[2,2]]" },
+  });
+  // A function of a case clause stays a declaration, and sloppy code makes its
+  // printed name a `var` of the enclosing function too. So that name has to be
+  // free in the whole function, not only in the switch. Node runs the "cjs" and
+  // the "iife" output as sloppy code.
+  const caseClauseFunctionNames = JSON.stringify([
+    [
+      "number,function",
+      "number,undefined",
+      "outer,function",
+      "outer,undefined",
+      "outer,function",
+      "outer,undefined",
+      "keep,B",
+      "keep,B",
+      "keep,undefined",
+    ],
+    ["other", "function"],
+    "number,string",
+    "number,string",
+    "outer",
+    "outer",
+  ]);
+  for (const format of ["cjs", "esm", "iife"] as const) {
+    itBundled(`extra/CaseClauseFunctionNameIsFreeInItsFunction${format.toUpperCase()}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import sloppy from "./sloppy.cjs";
+          import top from "./top.cjs";
+          import { inModule, shadows } from "./module.js";
+          console.log(JSON.stringify([sloppy, top, inModule(1), inModule(2), shadows(1), shadows(2)]));
+        `,
+        "/sloppy.cjs": /* js */ `
+          var g2 = "outer";
+          function local(k) { var g2 = 1; switch (k) { case 1: function g() { return "g" } } return [typeof g2, typeof g].join(); }
+          function outer(k) { switch (k) { case 1: function g() { return "g" } } return [g2, typeof g].join(); }
+          function sibling(k) { switch (k) { case 1: function g() { return "g" } } { return [g2, typeof g].join(); } }
+          function twice(kind) {
+            var handler2 = "keep";
+            switch (kind) { case "a": function handler() { return "A" } break; case "b": function handler() { return "B" } break; }
+            return [handler2, typeof handler === "function" ? handler() : typeof handler].join();
+          }
+          module.exports = [local(1), local(2), outer(1), outer(2), sibling(1), sibling(2), twice("a"), twice("b"), twice("c")];
+        `,
+        "/top.cjs": /* js */ `
+          const other = require("./other.js");
+          var k = 1;
+          switch (k) { case 1: function g() { return "g" } }
+          module.exports = [other.read(), typeof g];
+        `,
+        "/other.js": /* js */ `
+          export var g2 = "other";
+          export function read() { return g2; }
+        `,
+        "/module.js": /* js */ `
+          let g = "outer";
+          export function inModule(k) { var g2 = 1; switch (k) { case 1: function g() { return "inner" } } return [typeof g2, typeof g].join(); }
+          export function shadows(k) { switch (k) { case 1: function g() { return "inner" } g(); } return g; }
+        `,
+      },
+      format,
+      run: [{ stdout: caseClauseFunctionNames }, { stdout: caseClauseFunctionNames, runtime: "node" }],
+    });
+  }
   itBundled(`extra/FunctionHoistingKeepNames1`, {
     todo: true, // keepNames requires Object.defineProperty implementation
     files: {
@@ -1661,6 +1984,12 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames3`, {
+    // keepNames requires Object.defineProperty implementation. The bundle has
+    // `let f2 = function() {}`, so this throws {..."f":"f2"}, as it always did in
+    // node. In bun it passed while `f = f2` was the next statement: the runtime
+    // transpiler made the pair `f = function() {}`. The assignment now stands
+    // where the declaration is, after the loops.
+    todo: true,
     files: {
       "in.ts": `
       if (1) {
@@ -1680,6 +2009,12 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/FunctionHoistingKeepNames4`, {
+    // keepNames requires Object.defineProperty implementation. The bundle has
+    // `let f2 = function() {}`, so this throws {..."f":"f2"}, as it always did in
+    // node. In bun it passed while `f = f2` was the next statement: the runtime
+    // transpiler made the pair `f = function() {}`. The assignment now stands
+    // where the declaration is, after the loops.
+    todo: true,
     files: {
       "in.ts": `
       if (1) {

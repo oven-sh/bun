@@ -2115,6 +2115,15 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Only a CommonJS file is sure to run as sloppy code. The REPL runs every input as
+        // sloppy code.
+        if !p.sloppy_block_fn_redeclarations.is_empty()
+            && exports_kind != js_ast::ExportsKind::Cjs
+            && !p.options.repl_mode
+        {
+            p.rename_sloppy_block_fn_redeclarations();
+        }
+
         // Handle dirname and filename at runtime.
         //
         // If we reach this point, it means:

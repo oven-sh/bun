@@ -5706,6 +5706,178 @@ describe("export of a block-scoped function declaration", () => {
   });
 });
 
+describe("function declarations in a block or a case clause", () => {
+  const plain = new Bun.Transpiler({ loader: "js" });
+  const renamed = new Bun.Transpiler({ loader: "js", minify: { identifiers: true } });
+  const twice =
+    "function t() { x: { function f() { return 1 } eval(''); break x; function f() { return 2 } } return f }";
+  const twoClauses =
+    "function t(k) { switch (k) { case 1: function f() { return 1 } break; case 2: function f() { return 2 } } return f }";
+
+  it("keeps both declarations of a name in a CommonJS file", () => {
+    expect(plain.transformSync(twice + "\nmodule.exports = t;")).toBe(
+      `function t() {
+  x: {
+    function f() {
+      return 1;
+    }
+    eval("");
+    break x;
+    function f() {
+      return 2;
+    }
+  }
+  return f;
+}
+module.exports = t;
+`,
+    );
+    expect(plain.transformSync(twoClauses + "\nmodule.exports = t;")).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      function f() {
+        return 1;
+      }
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+module.exports = t;
+`,
+    );
+  });
+
+  // A file with no CommonJS marker runs as a module. Strict code rejects two
+  // declarations of one name, so one stays: the last function, where the
+  // first statement of its list stood.
+  it("keeps one declaration of a name in a file that can run as a module", () => {
+    expect(plain.transformSync(twice)).toBe(
+      `function t() {
+  x: {
+    function f() {
+      return 2;
+    }
+    eval("");
+    break x;
+    function __bun_temp_ref_1$() {}
+  }
+  return f;
+}
+`,
+    );
+    expect(plain.transformSync(twoClauses)).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      function __bun_temp_ref_1$() {}
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+`,
+    );
+  });
+
+  it("keeps one declaration of a name in an ES module", () => {
+    expect(plain.transformSync(twoClauses + "\nexport { t };")).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+
+export { t };
+`,
+    );
+  });
+
+  it("keeps one declaration of a name in a class method", () => {
+    expect(
+      plain.transformSync(
+        "class C { m() { { function f() { return 1 } eval(''); function f() { return 2 } return f } } }\nmodule.exports = C;",
+      ),
+    ).toBe(
+      `class C {
+  m() {
+    {
+      function f() {
+        return 2;
+      }
+      eval("");
+      return f;
+    }
+  }
+}
+module.exports = C;
+`,
+    );
+  });
+
+  // A "let" in one clause is in its TDZ from the other clauses.
+  it("keeps a function of a case clause as a declaration", () => {
+    const input = "function t(k) { switch (k) { case 1: return f; case 2: function f() {} } }";
+    const output = `function t(k) {
+  switch (k) {
+    case 1:
+      return f;
+    case 2:
+      function f() {}
+  }
+}
+`;
+    expect(plain.transformSync(input)).toBe(output);
+    expect(plain.transformSync(input + "\nexport { t };")).toBe(output + "\nexport { t };\n");
+  });
+
+  // This output does not have the "use strict" directive, so it can run as
+  // sloppy code, where a declaration would also be a "var" of the function.
+  it.each([
+    ["a function-level", 'function t(k) { "use strict"; switch (k) { case 1: return f; case 2: function f() {} } }'],
+    ["a file-level", '"use strict"; function t(k) { switch (k) { case 1: return f; case 2: function f() {} } }'],
+  ])('keeps the "let" of a case clause under %s "use strict"', (_, input) => {
+    expect(plain.transformSync(input + "\nmodule.exports = t;")).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      return f;
+    case 2:
+      let f = function() {};
+  }
+}
+module.exports = t;
+`,
+    );
+  });
+
+  it("assigns the var where each declaration stood when the binding has its own name", () => {
+    expect(
+      renamed.transformSync(
+        "function t() { { function f() { return 1 } f = 5; function f() { return 2 } } return f }\nmodule.exports = t;",
+      ),
+    ).toMatch(
+      /\{\s+let (\w+) = function\(\) \{\s+return 2;\s+\};\s+var (\w+) = \1;\s+\1 = 5;\s+var \2 = \1;\s+\}\s+return \2;/,
+    );
+    expect(renamed.transformSync(twoClauses + "\nmodule.exports = t;")).toMatch(
+      /case 1:\s+var (\w+) = (\w+);\s+break;\s+case 2:\s+function \2\(\) \{\s+return 2;\s+\}\s+var \1 = \2;\s+\}\s+return \1;/,
+    );
+  });
+});
+
 describe("using declarations in switch statements", () => {
   const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
 

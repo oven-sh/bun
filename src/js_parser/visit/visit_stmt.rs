@@ -3,7 +3,7 @@ use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
-    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
+    InsideSwitch, PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -922,6 +922,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         let original_name: &'a [u8] = name_symbol.original_name.slice();
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration();
+        // The functions of one name in a block share a symbol instead (`can_merge_symbol_kinds`).
+        debug_assert!(!remove_overwritten || p.current_scope().kind_stops_hoisting());
 
         // Handle exporting this function from a namespace
         if data.func.flags.contains(flags::Function::IsExport)
@@ -1006,7 +1008,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         let mut rr: Result<(), Error> = Ok(());
         if p.options.features.react_fast_refresh {
-            if let Some(hook) = react_hook_data.as_mut() {
+            if let Some(hook) = react_hook_data.as_mut()
+                && p.block_binding_holds_function(original_name, data)
+            {
                 let signature_cb = hook.signature_cb;
                 stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
                 let init = p.get_react_refresh_hook_signal_init(
@@ -1290,7 +1294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 data.label = None;
             }
         } else if !p.fn_or_arrow_data_visit.is_inside_loop
-            && !p.fn_or_arrow_data_visit.is_inside_switch
+            && p.fn_or_arrow_data_visit.inside_switch == InsideSwitch::No
         {
             let r = js_lexer::range_of_identifier(p.source, stmt.loc);
             p.log()
@@ -2141,8 +2145,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
-            let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
-            p.fn_or_arrow_data_visit.is_inside_switch = true;
+            let old_inside_switch = p.fn_or_arrow_data_visit.inside_switch;
+            p.fn_or_arrow_data_visit.inside_switch = InsideSwitch::Yes;
             let cases = data.cases.slice_mut();
             for i in 0..cases.len() {
                 if let Some(val) = cases[i].value.as_mut() {
@@ -2156,7 +2160,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }
-            p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+            if p.fn_or_arrow_data_visit.inside_switch == InsideSwitch::WithClauseFunction {
+                p.lower_case_clause_functions(cases);
+            }
+            p.fn_or_arrow_data_visit.inside_switch = old_inside_switch;
 
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {

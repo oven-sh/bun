@@ -329,6 +329,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) macro_call_count: MacroCallCountType,
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
+    /// Sloppy function statements that stay declarations although a later statement of their
+    /// block declares the name again. See `rename_sloppy_block_fn_redeclarations`.
+    pub(crate) sloppy_block_fn_redeclarations:
+        List<'a, crate::visit::block_fn::SloppyRedeclaration>,
 
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
@@ -3602,7 +3606,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.runtime_imports.put(b"__require", ref_);
     }
 
-    fn will_use_renamer(&self) -> bool {
+    pub(crate) fn will_use_renamer(&self) -> bool {
         self.options.bundle || self.options.features.minify_identifiers
     }
 
@@ -9977,6 +9981,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
+            sloppy_block_fn_redeclarations: BumpVec::new_in(arena),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,

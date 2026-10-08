@@ -21,17 +21,21 @@ const config = join(option(args, "--scratch") ?? ".", "rules-config.json");
 writeFileSync(config, JSON.stringify({ categories: { correctness: "off" }, rules }));
 
 const files = readdirSync(directory).filter(it => it.endsWith(".js")).sort().slice(0, Number(option(args, "--count") ?? 1e9)); // prettier-ignore
-const paths = files.map(it => join(directory, it));
+const paths = files.map(it => resolve(directory, it));
 const output = spawnSync(bin, ["cli", "-c", config, "-f", "json", "--no-ignore", ...paths], { maxBuffer: 1 << 30 });
 const ours = new Map<string, string[]>(paths.map(it => [it, []]));
+let lost = 0;
 for (const it of JSON.parse(output.stdout.toString()).diagnostics) {
   const { line, column } = it.labels[0].span;
-  ours.get(it.filename)?.push(`${line}:${column} ${it.code?.replace(/^.*\((.*)\)$/, "$1") ?? "rejected"}`);
+  // `filename` is relative to the working directory.
+  const list = ours.get(resolve(it.filename));
+  list ? list.push(`${line}:${column} ${it.code?.replace(/^.*\((.*)\)$/, "$1") ?? "rejected"}`) : lost++;
 }
+if (lost > 0) throw new Error(`${lost} of our messages are about files that were not asked for`);
 
 const linter = new Linter();
 const found = new Map<string, string[]>();
-let [same, differ, skipped, messages] = [0, 0, 0, 0];
+let [same, differ, skipped, messages, own] = [0, 0, 0, 0, 0];
 for (const path of paths) {
   const options = { languageOptions: { ecmaVersion: "latest", sourceType: "script" }, rules };
   const theirs: any[] = linter.verify(readFileSync(path, "utf8"), options);
@@ -45,6 +49,7 @@ for (const path of paths) {
   for (const [, line, column] of alone.matchAll(/:(\d+):(\d+): /g)) actual.push(`${line}:${column} consistent-return`);
   const expected = theirs.map(it => `${it.line}:${it.column} ${it.ruleId}`);
   messages += expected.length;
+  own += actual.length;
   const only = [
     ...expected.filter(it => !actual.includes(it)).map(it => ["only ESLint", it]),
     ...actual.filter(it => !expected.includes(it)).map(it => ["only bun", it]),
@@ -56,4 +61,4 @@ for (const path of paths) {
   }
 }
 for (const [kind, where] of found) console.log(`${where.length} × ${kind}\n    ${where.slice(0, 3).join("\n    ")}`);
-console.log(`${same} files the same (${messages} messages), ${differ} differ, ${skipped} that one of the parsers rejects.`);
+console.log(`${same} files the same, ${differ} differ, ${skipped} that one of the parsers rejects. ESLint has ${messages} messages, we have ${own}.`);

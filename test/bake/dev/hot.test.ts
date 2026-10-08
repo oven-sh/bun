@@ -703,3 +703,33 @@ devTest("a file served can be saved by renaming another over it", {
     }
   },
 });
+devTest("import.meta.hot.accept(dep) sees every module between dep and the change loaded again in order", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    // Each computes its value from the one it imports, when it runs.
+    "list.ts": `
+      import group from "./group.ts";
+      export default "list:" + group;
+    `,
+    "group.ts": `
+      import item from "./item.ts";
+      export default "group:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:group:a");
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("accepted list:group:b");
+  },
+});

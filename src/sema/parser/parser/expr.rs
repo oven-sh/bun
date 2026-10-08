@@ -114,6 +114,7 @@ impl Parser<'_> {
         let start = self.pos();
         let mut expression = self.assignment_expression();
         while self.token() == T::Comma {
+            self.refuse_after_decorated_class(expression, start);
             self.next();
             let right = self.assignment_expression();
             let kind = ExprKind::Binary {
@@ -205,6 +206,14 @@ impl Parser<'_> {
             if !self.is_left_hand_side(expression) {
                 self.fail();
                 return expression;
+            }
+            if let Some(Expr {
+                kind: ExprKind::Fn(_),
+                ..
+            }) = self.f.exprs.get(expression.idx())
+                && !self.is_parenthesized(expression)
+            {
+                self.report();
             }
             self.next();
             let value = self.assignment_expression_or_higher(allow_return_type);
@@ -367,6 +376,11 @@ impl Parser<'_> {
                 _ => {
                     self.next();
                     let right = self.binary_expression(new_precedence);
+                    if token == T::QuestionQuestion
+                        && (self.is_logical_and_or_or(left) || self.is_logical_and_or_or(right))
+                    {
+                        self.report();
+                    }
                     let kind = ExprKind::Binary {
                         op: binary_operator(token),
                         left,
@@ -376,6 +390,20 @@ impl Parser<'_> {
                 }
             }
         }
+    }
+
+    /// `e` is `a || b` or `a && b`, not in parentheses: not an operand of `??`.
+    fn is_logical_and_or_or(&self, e: ExprId) -> bool {
+        matches!(
+            self.f.exprs.get(e.idx()),
+            Some(Expr {
+                kind: ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or,
+                    ..
+                },
+                ..
+            })
+        ) && !self.f.parens.iter().rev().take(2).any(|it| it.0 == e)
     }
 
     /// The `const` of `e as const` and of `<const>e`.
@@ -548,6 +576,23 @@ impl Parser<'_> {
     fn import_expression(&mut self) -> ExprId {
         let start = self.pos();
         self.next();
+        let mut is_deferred = false;
+        if self.token() == T::Dot {
+            self.next();
+            match self.lx.text() {
+                b"meta" if self.token() == T::Identifier => {
+                    self.next();
+                    return self.finish_expr(ExprKind::ImportMeta, start);
+                }
+                // For Babel `source` is a phase too. It is kept like `defer`: the text tells them
+                // apart.
+                b"defer" => {}
+                b"source" if self.options.dialect.babel => {}
+                _ => self.refuse(Refusal::Unsupported),
+            }
+            self.next();
+            is_deferred = true;
+        }
         match self.token() {
             T::OpenParen => {
                 self.next();
@@ -569,20 +614,17 @@ impl Parser<'_> {
                     }
                 }
                 self.context = saved;
+                let close = self.pos();
                 self.expect(T::CloseParen);
                 if !(1..=2).contains(&(self.s.ids.len() - base)) {
                     self.refuse(Refusal::Reported);
                 }
                 let args = self.take_ids(base);
-                self.finish_expr(ExprKind::ImportCall { args }, start)
-            }
-            T::Dot => {
-                self.next();
-                if self.token() != T::Identifier || self.lx.text() != b"meta" {
-                    self.refuse(Refusal::Unsupported);
+                if is_deferred && !args.is_empty() {
+                    let specifier = self.f.id_at(args, 0);
+                    self.f.deferred_import_calls.push((specifier, close));
                 }
-                self.next();
-                self.finish_expr(ExprKind::ImportMeta, start)
+                self.finish_expr(ExprKind::ImportCall { args }, start)
             }
             _ => {
                 self.fail();
@@ -654,6 +696,9 @@ impl Parser<'_> {
             match self.token() {
                 T::Dot => {
                     self.next();
+                    if chain != Chain::No && self.token() == T::PrivateIdentifier {
+                        self.report();
+                    }
                     let (name, name_pos) = self.right_side_of_dot();
                     let kind = ExprKind::Dot {
                         obj: expression,
@@ -714,6 +759,9 @@ impl Parser<'_> {
                             return expression;
                         }
                         _ => {
+                            if self.token() == T::PrivateIdentifier {
+                                self.report();
+                            }
                             let (name, name_pos) = self.right_side_of_dot();
                             let kind = ExprKind::Dot {
                                 obj: expression,
@@ -846,7 +894,7 @@ impl Parser<'_> {
             p.next();
             let base = p.s.ids.len();
             loop {
-                let ty = p.ty();
+                let ty = p.type_in_list();
                 p.s.ids.push(ty.0);
                 if !p.eat(T::Comma) {
                     break;
@@ -1040,6 +1088,9 @@ impl Parser<'_> {
         let start = self.pos();
         self.next();
         if self.eat(T::Dot) {
+            if self.lx.text() != b"target" {
+                self.report();
+            }
             let (name, _) = self.identifier_name();
             return self.finish_expr(ExprKind::NewTarget(name), start);
         }
@@ -1253,7 +1304,10 @@ impl Parser<'_> {
                     FnKind::Method
                 }
             };
-            let mut fn_flags = flags & Flags::ASYNC;
+            let mut fn_flags = match kind {
+                PropKind::Method => flags & Flags::ASYNC,
+                _ => Flags::empty(),
+            };
             if is_generator {
                 fn_flags |= Flags::GENERATOR;
             }

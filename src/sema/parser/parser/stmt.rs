@@ -97,6 +97,10 @@ impl Parser<'_> {
                 self.semicolon();
                 self.add_stmt(StmtKind::Debugger, start, Span::EMPTY)
             }
+            // Nothing but `function` follows it in a declaration.
+            T::Async if self.is_ecmascript && !self.next_is_function_on_same_line() => {
+                self.expression_or_labeled_statement()
+            }
             T::Async
             | T::Interface
             | T::Type
@@ -116,6 +120,14 @@ impl Parser<'_> {
                 if self.is_start_of_declaration() =>
             {
                 self.declaration()
+            }
+            // `isStartOfStatement`: "they may be the start of a class member if an identifier
+            // immediately follows. Otherwise they're an identifier in an expression statement."
+            T::Private | T::Protected | T::Public | T::Accessor | T::Static | T::Readonly
+                if !self.is_ecmascript && self.is_followed_by_word_on_same_line() =>
+            {
+                self.fail();
+                StmtId::NONE
             }
             _ => self.expression_or_labeled_statement(),
         }
@@ -148,7 +160,21 @@ impl Parser<'_> {
                 return self.expression_or_labeled_statement();
             }
         }
-        self.statement()
+        let statement = self.statement();
+        if let Some(Stmt {
+            kind:
+                StmtKind::Import(_)
+                | StmtKind::ImportEquals(_)
+                | StmtKind::ExportNamed(_)
+                | StmtKind::ExportStar { .. }
+                | StmtKind::ExportDefault(_)
+                | StmtKind::ExportAssign(_),
+            ..
+        }) = self.f.stmts.get(statement.idx())
+        {
+            self.report();
+        }
+        statement
     }
 
     /// `nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLine`
@@ -357,6 +383,9 @@ impl Parser<'_> {
                 return flags;
             }
             let flag = modifier_flag(token);
+            if flags.contains(flag) {
+                self.report();
+            }
             flags |= flag;
             self.s.modifiers.push(Modifier {
                 kind: ModifierKind::Keyword(flag),
@@ -401,6 +430,12 @@ impl Parser<'_> {
         if flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
             self.typescript_only();
         }
+        if flags.contains(Flags::ASYNC) && self.token() != T::Function {
+            self.report();
+        }
+        if self.options.is_javascript && self.s.modifiers.len() > base {
+            self.check_decorators_in_javascript(base);
+        }
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
@@ -408,6 +443,22 @@ impl Parser<'_> {
         let statement = self.declaration_worker(start, base, flags);
         self.context = saved;
         statement
+    }
+
+    /// What `getJSSyntacticDiagnosticsForFile` reports about the decorators of the declaration at
+    /// the token, whose modifiers are on the stack from `base` on: only a class has decorators, and
+    /// not both before and after `export`.
+    #[cold]
+    fn check_decorators_in_javascript(&mut self, base: usize) {
+        let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
+        let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
+        let Some(first) = modifiers.iter().position(is_decorator) else {
+            return;
+        };
+        let runs = modifiers[first..].chunk_by(|a, b| is_decorator(a) == is_decorator(b));
+        if self.token() != T::Class || runs.count() > 2 {
+            self.report();
+        }
     }
 
     /// `parseDeclarationWorker`
@@ -538,7 +589,10 @@ impl Parser<'_> {
             let member = self.start();
             let (name, name_kind) = match self.token() {
                 T::String => (self.lx.atom, NameKind::StringLiteral),
-                token if token.is_identifier_or_keyword() => (self.lx.atom, NameKind::Identifier),
+                token if token.is_identifier_or_keyword() => {
+                    let name = self.note_identifier(self.lx.atom, member.pos);
+                    (name, NameKind::Identifier)
+                }
                 // A number, a computed name and so on are errors.
                 _ => {
                     self.refuse(Refusal::Reported);
@@ -592,6 +646,9 @@ impl Parser<'_> {
             }
             keyword => {
                 self.next();
+                if self.token() == T::String && keyword == T::Namespace {
+                    self.report();
+                }
                 if self.token() != T::String {
                     let modifiers = self.take_modifiers(base);
                     return self.namespace_declaration(
@@ -766,8 +823,10 @@ impl Parser<'_> {
         }
         self.expect(T::OpenParen);
         let mut init = StmtId::NONE;
+        let mut starts_with_let = false;
         if self.token() != T::Semicolon {
             let at = self.start();
+            starts_with_let = self.token() == T::Let;
             let is_declaration = match self.token() {
                 T::Let if self.is_ecmascript => self.is_let_declaration(),
                 T::Var | T::Let | T::Const => true,
@@ -786,6 +845,10 @@ impl Parser<'_> {
             init = self.add_stmt(kind, at, Span::EMPTY);
         }
         let kind = if is_await || self.token() == T::Of {
+            let is_expression = |it: &Stmt| matches!(it.kind, StmtKind::Expr(_));
+            if starts_with_let && self.f.stmts.get(init.idx()).is_some_and(is_expression) {
+                self.report();
+            }
             self.expect(T::Of);
             let saved = self.enter_context(0, ctx::DISALLOW_IN);
             let expr = self.assignment_expression();
@@ -886,6 +949,7 @@ impl Parser<'_> {
         let expr = self.parenthesized_condition();
         self.expect(T::OpenBrace);
         let base = self.s.cases.len();
+        let mut has_default = false;
         while self.is_in_list(T::CloseBrace) {
             let pos = self.pos();
             let test = match self.token() {
@@ -894,6 +958,9 @@ impl Parser<'_> {
                     self.expression_allowing_in()
                 }
                 T::Default => {
+                    if std::mem::replace(&mut has_default, true) {
+                        self.report();
+                    }
                     self.next();
                     ExprId::NONE
                 }

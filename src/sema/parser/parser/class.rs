@@ -36,7 +36,28 @@ impl Parser<'_> {
         }
         let keyword = self.pos();
         let class = self.class(start, base, flags & Flags::ABSTRACT);
-        self.finish_expr(ExprKind::Class(class), keyword)
+        let expression = self.finish_expr(ExprKind::Class(class), keyword);
+        // The expression that goes on after it would start at the keyword too.
+        if !self.can_parse_semicolon()
+            && !matches!(self.token(), T::CloseParen | T::CloseBracket | T::Comma | T::Colon)
+        {
+            self.refuse(Refusal::Unsupported);
+        }
+        expression
+    }
+
+    /// `e`, which starts at `start`, is before the comma operator.
+    pub(crate) fn refuse_after_decorated_class(&mut self, e: ExprId, start: u32) {
+        if let Some(&Expr {
+            kind: ExprKind::Class(_),
+            pos,
+            ..
+        }) = self.f.exprs.get(e.idx())
+            && pos != start
+            && self.f.parens.last().is_none_or(|last| last.0 != e)
+        {
+            self.refuse(Refusal::Unsupported);
+        }
     }
 
     /// `parseClassDeclarationOrExpression`, at `class`. Its modifiers are on the stack from `base`
@@ -45,12 +66,18 @@ impl Parser<'_> {
         if self.is_too_deep() {
             return ClassId::NONE;
         }
-        let keyword = self.pos();
+        // A default export without a name is placed at `export`.
+        let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
+        let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
+        let unnamed_at = match modifiers.iter().find(is_export) {
+            Some(export) if flags.contains(Flags::DEFAULT) => export.pos,
+            _ => self.pos(),
+        };
         self.next();
         // `GetContainingClass`: its heritage clauses are inside it too.
         self.classes_around += 1;
         // `parseNameOfClassDeclarationOrExpression`
-        let (mut name, mut name_pos) = (Atom::NONE, keyword);
+        let (mut name, mut name_pos) = (Atom::NONE, unnamed_at);
         if self.is_binding_identifier() && !self.is_implements_clause() {
             (name, name_pos) = (self.lx.atom, self.pos());
             self.note_identifier(name, name_pos);
@@ -59,6 +86,9 @@ impl Parser<'_> {
         let type_params = self.type_parameters();
         let (mut extends, mut extends_args) = (ExprId::NONE, IdList::EMPTY);
         if self.eat(T::Extends) {
+            if self.token() == T::At {
+                self.refuse(Refusal::Unsupported);
+            }
             // `parseExpressionWithTypeArguments`
             extends = self.left_hand_side_expression();
             if extends.idx() + 1 == self.f.exprs.len()
@@ -229,7 +259,8 @@ impl Parser<'_> {
             let is_constructor = kind == MemberKind::Property
                 && !is_generator
                 && key == PropKey::Name(known::constructor)
-                && matches!(name_token, T::Constructor | T::String);
+                && (name_token == T::Constructor
+                    || name_token == T::String && self.token() == T::OpenParen);
             let fn_kind = match kind {
                 MemberKind::Getter => FnKind::Getter,
                 MemberKind::Setter => FnKind::Setter,
@@ -243,6 +274,11 @@ impl Parser<'_> {
                 }
             };
             // `parseClassElement`: `declare` does not make an accessor or a constructor ambient.
+            if member.kind == MemberKind::Constructor
+                && self.s.decorators.last().is_some_and(|last| last.0 == index)
+            {
+                self.typescript_only();
+            }
             if member.kind != MemberKind::Method {
                 self.context = saved;
                 member.flags.set(Flags::AMBIENT, is_parent_ambient);
@@ -257,6 +293,10 @@ impl Parser<'_> {
             let name = key.name().unwrap_or(Atom::NONE);
             member.func = self.function_rest(fn_kind, fn_flags, name, name_pos, start.pos);
         } else {
+            // `tryParseConstructorDeclaration` takes the keyword whatever follows it.
+            if name_token == T::Constructor || flags.contains(Flags::ASYNC) {
+                self.report();
+            }
             // `parsePropertyDeclaration`
             if !flags.contains(Flags::OPTIONAL)
                 && self.token() == T::Exclamation

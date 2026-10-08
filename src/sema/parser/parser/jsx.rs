@@ -114,6 +114,9 @@ impl Parser<'_> {
     /// A name in a tag or of an attribute, which may have a namespace: its text, its start and
     /// whether it is more than an identifier.
     fn jsx_name(&mut self) -> (Atom, u32, bool) {
+        if self.token().is_identifier_or_keyword() && self.lx.has_escape {
+            self.report();
+        }
         self.lx.scan_jsx_identifier();
         if self.token() != T::Identifier {
             self.fail();
@@ -156,6 +159,9 @@ impl Parser<'_> {
         let mut expression = self.finish_expr(kind, start);
         if is_special {
             return expression;
+        }
+        if self.token() == T::Dot {
+            self.note_identifier(name, start);
         }
         while self.eat(T::Dot) {
             let (name, name_pos) = self.identifier_name();
@@ -206,6 +212,9 @@ impl Parser<'_> {
                 self.lx.scan_jsx_attribute_value();
                 match self.token() {
                     T::String => {
+                        if bun_core::strings::contains_char(self.lx.text(), b'\\') {
+                            self.refuse(Refusal::Unsupported);
+                        }
                         let text = ExprKind::String(self.lx.atom);
                         value = self.add_expr(text, self.lx.start, self.lx.end);
                         self.next();

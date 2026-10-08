@@ -74,16 +74,14 @@ impl Parser<'_> {
         let mut mode = ResolutionMode::None;
         while self.is_in_list(T::CloseBrace) {
             let pos = self.pos();
-            let (key, name_kind) = match self.token() {
-                T::String => (self.lx.atom, NameKind::StringLiteral),
-                token if token.is_identifier_or_keyword() && token != T::PrivateIdentifier => {
-                    (self.lx.atom, NameKind::Identifier)
-                }
-                _ => {
-                    self.fail();
-                    break;
-                }
-            };
+            let token = self.token();
+            if token != T::String
+                && (!token.is_identifier_or_keyword() || token == T::PrivateIdentifier)
+            {
+                self.fail();
+                break;
+            }
+            let key = self.lx.atom;
             self.next();
             self.expect(T::Colon);
             if self.token() != T::String {
@@ -102,7 +100,7 @@ impl Parser<'_> {
             self.s.props.push(Prop {
                 kind: PropKind::Init,
                 key: PropKey::Name(key),
-                name_kind,
+                name_kind: NameKind::Identifier,
                 value,
                 pos,
                 start: pos,
@@ -213,7 +211,7 @@ impl Parser<'_> {
             identifier = Some((self.lx.atom, self.pos(), self.token()));
             self.next();
         }
-        let mut type_only = false;
+        let (mut type_only, mut is_deferred) = (false, false);
         if let Some((_, _, T::Type)) = identifier {
             let is_modifier = (self.token() != T::From
                 || self.is_identifier()
@@ -228,13 +226,24 @@ impl Parser<'_> {
                     self.next();
                 }
             }
-        } else if let Some((_, _, T::Defer)) = identifier {
-            let is_modifier = match self.token() {
+        } else if let Some((name, _, token)) = identifier
+            // For Babel `source` is a phase too. It is kept like `defer`: the text tells them apart.
+            && (token == T::Defer
+                || self.options.dialect.babel && self.lx.atoms.bytes(name) == b"source")
+        {
+            is_deferred = match self.token() {
                 T::From => self.peek() != T::String,
                 token => !matches!(token, T::Comma | T::Equals),
             };
-            if is_modifier {
-                self.refuse(Refusal::Unsupported);
+            if is_deferred {
+                if token != T::Defer && self.token() == T::Asterisk {
+                    self.report();
+                }
+                identifier = None;
+                if self.is_identifier() {
+                    identifier = Some((self.lx.atom, self.pos(), self.token()));
+                    self.next();
+                }
             }
         }
         if let Some((name, name_pos, _)) = identifier
@@ -294,6 +303,9 @@ impl Parser<'_> {
                 self.expect(T::CloseBrace);
             }
         }
+        if is_deferred && !has_clause {
+            self.report();
+        }
         let clause_end = match has_clause {
             true => self.prev_end(),
             false => clause_start,
@@ -331,7 +343,7 @@ impl Parser<'_> {
             named,
             has_named_imports,
             type_only,
-            is_deferred: false,
+            is_deferred,
             mode,
             stmt: StmtId::NONE,
         });

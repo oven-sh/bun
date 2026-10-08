@@ -594,10 +594,14 @@ impl Parser<'_> {
         self.next();
         let base = self.s.ids.len();
         while self.is_in_list(T::GreaterThan) {
-            let ty = self.ty();
+            let ty = self.type_in_list();
             self.s.ids.push(ty.0);
             if !self.eat(T::Comma) {
                 break;
+            }
+            // A comma at the end is an error.
+            if self.token() == T::GreaterThan {
+                self.report();
             }
         }
         if self.s.ids.len() == base {
@@ -606,6 +610,30 @@ impl Parser<'_> {
         }
         self.expect(T::GreaterThan);
         self.take_ids(base)
+    }
+
+    /// `parseType` for an element of a list. `isListElement` asks `isStartOfType` first, for which a
+    /// reserved word starts no type, although it can be the name in a type reference.
+    pub(crate) fn type_in_list(&mut self) -> TypeNodeId {
+        let token = self.token();
+        if token.is_reserved_word()
+            && !matches!(
+                token,
+                T::Void
+                    | T::Null
+                    | T::This
+                    | T::TypeOf
+                    | T::New
+                    | T::True
+                    | T::False
+                    | T::Import
+                    | T::Function
+            )
+        {
+            self.fail();
+            return TypeNodeId::NONE;
+        }
+        self.ty()
     }
 
     /// `parseTypeArgumentsOfTypeReference`
@@ -638,8 +666,9 @@ impl Parser<'_> {
     pub(crate) fn heritage_types(&mut self) -> IdList<TypeNodeId> {
         let base = self.s.ids.len();
         loop {
-            // Anything but an entity name is an error.
-            if !self.is_identifier() {
+            // Anything but an entity name is an error. `isHeritageClauseExtendsOrImplementsKeyword`:
+            // either keyword can end the list.
+            if !self.is_identifier() || matches!(self.token(), T::Extends | T::Implements) {
                 self.refuse(Refusal::Reported);
             }
             let start = self.pos();
@@ -853,7 +882,7 @@ impl Parser<'_> {
         } else {
             // `parseTupleElementType`: a `JSDocNullableType` that is the whole type is an
             // optional element.
-            ty = self.ty();
+            ty = self.type_in_list();
             if self.unclaimed_nullable_types > 0 && self.last_nullable_type == (ty, self.prev_end())
             {
                 self.unclaimed_nullable_types -= 1;

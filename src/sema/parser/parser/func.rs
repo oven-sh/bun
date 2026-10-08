@@ -31,7 +31,6 @@ fn signature_context(flags: Flags) -> u32 {
 impl Parser<'_> {
     /// `parseFunctionDeclaration`
     pub(crate) fn function_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
-        let keyword = self.pos();
         self.next();
         let mut fn_flags =
             self.ambient() | flags & (Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC);
@@ -43,11 +42,11 @@ impl Parser<'_> {
             self.note_identifier(name.0, name.1);
             self.next();
             name
-        } else if flags.contains(Flags::DEFAULT) {
-            (Atom::NONE, keyword)
         } else {
-            self.fail();
-            (Atom::NONE, keyword)
+            if !flags.contains(Flags::DEFAULT) {
+                self.fail();
+            }
+            (Atom::NONE, start.pos)
         };
         let func = self.function_rest(FnKind::Decl, fn_flags, name, name_pos, start.pos);
         let modifiers = self.take_modifiers(base);
@@ -228,6 +227,10 @@ impl Parser<'_> {
             self.parameter(base, outer_await);
             if !self.eat(T::Comma) {
                 break;
+            }
+            let is_rest = |it: &Param| it.flags.contains(Flags::REST);
+            if self.token() == close && self.s.params.last().is_some_and(is_rest) {
+                self.report();
             }
         }
         self.context = saved;

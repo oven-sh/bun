@@ -1,6 +1,7 @@
 //! Binding patterns.
 
 use super::{Parser, take_span};
+use crate::Refusal;
 use crate::token::T;
 use bun_sema::hir::*;
 
@@ -62,6 +63,9 @@ impl Parser<'_> {
                     start,
                     end: self.prev_end(),
                 });
+                if is_rest && self.token() == T::Comma && self.peek() == T::CloseBracket {
+                    self.report();
+                }
             }
             if !self.eat(T::Comma) {
                 break;
@@ -99,9 +103,13 @@ impl Parser<'_> {
                 }
             } else {
                 let is_identifier = self.is_binding_identifier();
+                let has_escape = is_identifier && self.lx.has_escape;
                 let name_end = self.lx.end;
                 let (key, name_kind, key_pos) = self.property_name();
                 let value = if is_identifier && self.token() != T::Colon {
+                    if has_escape {
+                        self.refuse(Refusal::Unsupported);
+                    }
                     match key {
                         PropKey::Name(name) => {
                             self.note_identifier(name, key_pos);
@@ -128,6 +136,9 @@ impl Parser<'_> {
             self.s.pat_props.push(property);
             if !self.eat(T::Comma) {
                 break;
+            }
+            if property.is_rest && self.token() == T::CloseBrace {
+                self.report();
             }
         }
         self.expect(T::CloseBrace);

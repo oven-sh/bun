@@ -48,7 +48,12 @@ struct PrivateModifiable<'a> {
 struct ClassScope<'a> {
     class_type: Option<Type<'a>>,
     private_modifiables: SmallVec<[PrivateModifiable<'a>; 4]>,
+    /// Where each is in `private_modifiables`, by its name and whether it is static, once there are more than [`FEW`].
+    positions: FxHashMap<(&'a [u8], bool), usize>,
 }
+
+/// So many members are searched one by one.
+const FEW: usize = 16;
 
 /// The classes that have a private member that is not `readonly`.
 pub struct ClassScopes<'a>(FxHashMap<Class<'a>, ClassScope<'a>>);
@@ -113,6 +118,24 @@ fn get_type_to_class_relation<'a>(ty: Type<'a>, class_type: Type<'a>) -> TypeToC
 }
 
 impl<'a> ClassScope<'a> {
+    fn position(&self, name: &[u8], is_static: bool) -> Option<usize> {
+        match self.private_modifiables.len() <= FEW {
+            true => self.private_modifiables.iter().position(|it| it.name == name && it.is_static == is_static),
+            false => self.positions.get(&(name, is_static)).copied(),
+        }
+    }
+
+    fn push(&mut self, member: PrivateModifiable<'a>) {
+        self.private_modifiables.push(member);
+        let known = match self.private_modifiables.len() {
+            0..=FEW => return,
+            len if len == FEW + 1 => 0,
+            len => len - 1,
+        };
+        let added = self.private_modifiables.iter().enumerate().skip(known);
+        self.positions.extend(added.map(|(i, it)| ((it.name, it.is_static), i)));
+    }
+
     fn add_declared_variable(
         &mut self,
         node: ParameterOrPropertyDeclaration<'a>,
@@ -140,10 +163,10 @@ impl<'a> ClassScope<'a> {
             return;
         };
         let is_static = flags.contains(Flags::STATIC);
-        let existing = self.private_modifiables.iter_mut().find(|it| it.name == member_name && it.is_static == is_static);
-        match existing {
+        let existing = self.position(member_name, is_static);
+        match existing.and_then(|i| self.private_modifiables.get_mut(i)) {
             Some(existing) => existing.node = node,
-            None => self.private_modifiables.push(PrivateModifiable {
+            None => self.push(PrivateModifiable {
                 name: member_name,
                 node,
                 is_static,
@@ -160,7 +183,8 @@ impl<'a> ClassScope<'a> {
         member_name: &[u8],
         is_directly_inside_constructor: bool,
     ) {
-        if !self.private_modifiables.iter().any(|it| it.name == member_name) {
+        let named = [false, true].map(|is_static| self.position(member_name, is_static));
+        if named == [None, None] {
             return;
         }
         let class_type = *self.class_type.get_or_insert_with(|| {
@@ -175,12 +199,14 @@ impl<'a> ClassScope<'a> {
             true => TypeToClassRelation::ClassAndInstance,
             false => get_type_to_class_relation(modifier_type, class_type),
         };
-        let named = self.private_modifiables.iter_mut().filter(|it| it.name == member_name);
-        if relation == TypeToClassRelation::Instance && is_directly_inside_constructor {
-            named.for_each(|it| it.has_constructor_modifications = true);
-            return;
-        }
-        for it in named {
+        for i in named.into_iter().flatten() {
+            let Some(it) = self.private_modifiables.get_mut(i) else {
+                continue;
+            };
+            if relation == TypeToClassRelation::Instance && is_directly_inside_constructor {
+                it.has_constructor_modifications = true;
+                continue;
+            }
             it.is_modified |= match it.is_static {
                 true => matches!(relation, TypeToClassRelation::Class | TypeToClassRelation::ClassAndInstance),
                 false => matches!(relation, TypeToClassRelation::Instance | TypeToClassRelation::ClassAndInstance),
@@ -362,6 +388,7 @@ impl PreferReadonly {
         let mut scope = ClassScope {
             class_type: None,
             private_modifiables: SmallVec::new(),
+            positions: FxHashMap::default(),
         };
         for member in class.members() {
             if member.kind() == MemberKind::Property {

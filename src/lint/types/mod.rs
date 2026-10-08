@@ -794,6 +794,18 @@ pub fn with_file<R>(
     read_library: Option<ReadLibrary<'_>>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
+    with_file_and_modules(checker, file, language, read_library, None, then)
+}
+
+/// The same, for a file that has [`File::modules`].
+pub fn with_file_and_modules<R>(
+    checker: &mut bun_sema::check::Checker<'_, '_>,
+    file: FileId,
+    language: &crate::language::LanguageOptions,
+    read_library: Option<ReadLibrary<'_>>,
+    modules: Option<&dyn crate::modules::Modules>,
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> Option<R> {
     let module = checker.p.files.module(file);
     let (hir, bound) = (checker.hir(file), checker.bound(file));
     if module.is_lib || hir.ran_out_of_stack || bound.ran_out_of_stack {
@@ -802,6 +814,10 @@ pub fn with_file<R>(
     let (path, atoms) = (module.file_name(), &WrittenNames(&checker.p.files.atoms));
     Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
-        then(&File::new(path, hir, bound, atoms, language, Some(types)))
+        let file = File::new(path, hir, bound, atoms, language, Some(types));
+        if let Some(modules) = modules {
+            file.set_modules(modules);
+        }
+        then(&file)
     }))
 }

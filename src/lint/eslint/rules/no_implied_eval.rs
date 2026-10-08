@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use smallvec::SmallVec;
 
 /// Disallow the use of `eval()`-like methods.
 pub struct NoImpliedEval;
@@ -18,11 +19,16 @@ fn is_eval_like(name: &[u8]) -> bool {
 
 /// ESLint's `isEvaluatedString`.
 fn is_evaluated_string(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::String(_) | ExprKind::Template(_) => true,
-        ExprKind::Binary { op: BinOp::Add, left, right } => is_evaluated_string(left) || is_evaluated_string(right),
-        _ => false,
+    let mut pending: SmallVec<[Expr<'_>; 8]> = SmallVec::new();
+    pending.push(e);
+    while let Some(operand) = pending.pop() {
+        match operand.kind() {
+            ExprKind::String(_) | ExprKind::Template(_) => return true,
+            ExprKind::Binary { op: BinOp::Add, left, right } => pending.extend([left, right]),
+            _ => {}
+        }
     }
+    false
 }
 
 /// Whether `object` is a global object: `window`, `window.window`, `window["window"].window`, ..

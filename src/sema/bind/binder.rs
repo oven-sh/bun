@@ -59,6 +59,8 @@ pub(super) struct Binder<'f, 's, const LINT: bool> {
     label_edges: Vec<Label>,
     /// With `LINT`, in place of `label_edges`: whether the label has an antecedent.
     label_reached: Vec<bool>,
+    /// With `LINT`, once everything is declared: `Bound::nested_names`.
+    nested_names: Vec<u64>,
     /// `FlowFlagsReferenced`, a bit for each flow node.
     referenced: Vec<u64>,
     /// The start flow node of the functions without a body in which no outer narrowing holds.
@@ -212,6 +214,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             is_unchecked: false,
             label_edges: Vec::new(),
             label_reached: Vec::new(),
+            nested_names: Vec::new(),
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
@@ -1029,6 +1032,15 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         })
     }
 
+    /// With `LINT`: `flow_mutation` and `flow_call` would leave everything as it is, so whether
+    /// there is one to record need not be found out.
+    #[inline]
+    fn is_past_flow_effects(&self) -> bool {
+        LINT && self.has_flow_effects
+            && self.flow != UNREACHABLE
+            && (self.exception_target.is_none() || self.has_edges(self.exception_target))
+    }
+
     fn flow_mutation(&mut self, node: Flow) {
         // `bindChildren`: unreachable code is ignored.
         if !self.is_reached {
@@ -1189,7 +1201,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             // `isNarrowableReference` are concerned.
             _ => {}
         }
-        if is_bound && is_narrowable_reference(self.f, e) {
+        if is_bound && !self.is_past_flow_effects() && is_narrowable_reference(self.f, e) {
             self.flow_mutation(Flow::Assign {
                 before: self.flow,
                 target: FlowTarget::Expr(e),
@@ -1616,6 +1628,21 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         let (b, tables) = (&self.b, &self.tables);
         // `lastLocation`: the kind of the scope the search has just left.
         let mut from = ScopeKind::Block;
+        // FOR SPEED: as in `Bound::scope_to_resolve_from`. All that is looked at in a scope without
+        // a symbol are its locals and those of a function, which are among `nested_names`, and
+        // whether the name is `arguments`.
+        if LINT && !self.nested_names.is_empty() && name != known::arguments {
+            let (word, bit) = bit_of_nested_name(self.nested_names.len(), name);
+            if self.nested_names[word] & bit == 0 {
+                while scope.is_some() {
+                    let s = &b.scopes[scope.idx()];
+                    if s.symbol.is_some() || s.parent.is_none() {
+                        break;
+                    }
+                    (from, scope) = (s.kind, s.parent);
+                }
+            }
+        }
         while scope.is_some() {
             let s = &b.scopes[scope.idx()];
             // `Bound::property_with_invalid_initializer`, while the tables are not flattened yet.
@@ -1856,6 +1883,18 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     }
 
     fn finish(mut self) -> BoundBuilder {
+        if LINT {
+            let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some();
+            let nested = || self.b.scopes.iter().filter(is_nested).map(|s| &self.tables[s.locals.idx()]);
+            let count: usize = nested().map(|table| table.len()).sum();
+            // One word that is empty: nothing is declared in there.
+            let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
+            for &name in nested().flat_map(|table| table.keys()) {
+                let (word, bit) = bit_of_nested_name(filter.len(), name);
+                filter[word] |= bit;
+            }
+            self.nested_names = filter;
+        }
         // Resolves names, now that everything is declared.
         let idents = std::mem::take(&mut self.idents);
         for &(expr, scope) in &idents {
@@ -2531,6 +2570,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     /// `maybeBindExpressionFlowIfCall`: only for an unparenthesized call, which `(f())` is not.
     fn maybe_call_flow(&mut self, e: ExprId) {
         if let ExprKind::Call(c) = self.f[e].kind
+            && !self.is_past_flow_effects()
             && !is_parenthesized(self.f, e)
         {
             let callee = self.f[c].callee;
@@ -4352,7 +4392,68 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         }
     }
 
+    #[inline]
     fn expr(&mut self, id: ExprId, parent: Parent) {
+        if !LINT {
+            return self.expr_with_operands(id, parent);
+        }
+        if let ExprKind::Ident(_) = self.f[id].kind {
+            self.b.expr_parent[id.idx()] = parent;
+            self.idents.push((id, self.scope));
+            return;
+        }
+        self.expr_for_lint(id, parent)
+    }
+
+    /// `expr_with_operands` with `LINT`, for which an expression without operands has a parent and
+    /// nothing else, and `a.b.c` is the same once more for each `.`: nothing that
+    /// `expr_with_operands` sets aside is looked at before it is restored.
+    fn expr_for_lint(&mut self, mut id: ExprId, mut parent: Parent) {
+        let outermost = id;
+        loop {
+            match self.f[id].kind {
+                ExprKind::Dot {
+                    obj,
+                    chain: Chain::No,
+                    ..
+                } => {
+                    self.b.expr_parent[id.idx()] = parent;
+                    (id, parent) = (obj, Parent::Expr(id));
+                    continue;
+                }
+                ExprKind::Ident(_) => self.idents.push((id, self.scope)),
+                ExprKind::This => self.seen_this = true,
+                ExprKind::Missing
+                | ExprKind::PrivateIdentifier(_)
+                | ExprKind::Super
+                | ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::BigInt(_)
+                | ExprKind::Regex
+                | ExprKind::ImportMeta
+                | ExprKind::NewTarget(_) => {}
+                _ => break,
+            }
+            self.b.expr_parent[id.idx()] = parent;
+            return;
+        }
+        if id == outermost {
+            return self.expr_with_operands(id, parent);
+        }
+        // What the object of a `Dot` finds.
+        let around = (
+            std::mem::replace(&mut self.true_target, FlowId::NONE),
+            std::mem::replace(&mut self.false_target, FlowId::NONE),
+            std::mem::replace(&mut self.in_assignment_pattern, false),
+        );
+        self.expr_with_operands(id, parent);
+        (self.true_target, self.false_target, self.in_assignment_pattern) = around;
+    }
+
+    fn expr_with_operands(&mut self, id: ExprId, parent: Parent) {
         if self.is_out_of_stack() {
             return;
         }
@@ -4407,7 +4508,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             }
         }
         // `bind`, `KindCallExpression`: a call in an optional chain is a call expression too.
-        if matches!(self.f[id].kind, ExprKind::Call(_)) {
+        if self.f.is_js && matches!(self.f[id].kind, ExprKind::Call(_)) {
             match assignment_declaration_kind(self.f, id) {
                 JsDeclarationKind::ObjectDefinePropertyValue => {
                     self.expando_assignments.push((id, self.scope));
@@ -4475,6 +4576,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                 self.optional_chain_flow(id, parent, targets);
                 if let ExprKind::Dot { obj, name, .. } = self.f[self.f[c].callee].kind
                     && (name == known::push || name == known::unshift)
+                    && !self.is_past_flow_effects()
                     && self.is_narrowable_operand(obj)
                 {
                     self.flow_mutation(Flow::ArrayMutation {
@@ -4513,6 +4615,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                 }
                 if let ExprKind::Dot { obj, name, .. } = self.f[call.callee].kind
                     && (name == known::push || name == known::unshift)
+                    && !self.is_past_flow_effects()
                     && self.is_narrowable_operand(obj)
                 {
                     self.flow_mutation(Flow::ArrayMutation {

@@ -9,7 +9,6 @@ use bun_lint::utils::ts_utils::{
     FixOrSuggest, OperatorPrecedence, get_fix_or_suggest, get_operator_precedence,
     get_operator_precedence_for_node, ts_operator_kind, ts_syntax_kind,
 };
-use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 
 /// Enforce using concise optional chain expressions instead of chained logical ands, negated logical ors, or empty objects.
@@ -224,23 +223,25 @@ fn compare_entity_names<'a>(a: EntityName<'a>, b: EntityName<'a>) -> bool {
 }
 
 /// For the `exprName` of two `TSTypeQuery`.
-fn compare_type_query_names<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
-    match (a.kind(), b.kind()) {
-        (ExprKind::Ident(a), ExprKind::Ident(b)) => a == b,
-        (ExprKind::This, ExprKind::This) => true,
-        (
-            ExprKind::Dot {
-                obj: left_a,
-                name: right_a,
-                ..
-            },
-            ExprKind::Dot {
-                obj: left_b,
-                name: right_b,
-                ..
-            },
-        ) => right_a.name() == right_b.name() && compare_type_query_names(left_a, left_b),
-        _ => false,
+fn compare_type_query_names<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
+    loop {
+        match (a.kind(), b.kind()) {
+            (ExprKind::Ident(a), ExprKind::Ident(b)) => return a == b,
+            (ExprKind::This, ExprKind::This) => return true,
+            (
+                ExprKind::Dot {
+                    obj: left_a,
+                    name: right_a,
+                    ..
+                },
+                ExprKind::Dot {
+                    obj: left_b,
+                    name: right_b,
+                    ..
+                },
+            ) if right_a.name() == right_b.name() => (a, b) = (left_a, left_b),
+            _ => return false,
+        }
     }
 }
 
@@ -263,141 +264,173 @@ fn as_type_operator(ty: TypeNode<'_>) -> Option<Option<TypeNode<'_>>> {
     }
 }
 
-/// `compareNodes` and its cache.
-#[derive(Default)]
-pub struct Comparer<'a> {
-    /// Of two `MemberExpression`s or two `CallExpression`s, each of which takes two comparisons of
-    /// what they consist of.
-    cache: FxHashMap<(Expr<'a>, Expr<'a>), NodeComparisonResult>,
+/// How many member accesses and calls `node` consists of, down to what the first of them is applied to.
+fn chain_length(node: Compared) -> u32 {
+    let (mut e, mut length) = (node.expr(), 0);
+    loop {
+        e = match e.kind() {
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(call) => call.callee(),
+            ExprKind::NonNull(operand) => {
+                e = operand;
+                continue;
+            }
+            _ => return length,
+        };
+        length += 1;
+    }
 }
 
-impl<'a> Comparer<'a> {
+/// `compareNodes`
+pub struct Comparer {
+    stack: bun_core::StackCheck,
+}
+
+impl Comparer {
     /// Whether `a` is equal to or a subset of `b`.
-    fn compare_nodes(&mut self, a: Compared<'a>, b: Compared<'a>) -> NodeComparisonResult {
-        let (type_a, type_b) = (a.es_type(), b.es_type());
-        if type_a == EsType::Incomparable || type_b == EsType::Incomparable {
+    ///
+    /// Upstream compares `a` with each of the chains that `b` begins with, and for each of these what the two begin with in
+    /// turn. Two chains that are equal have the same [length](chain_length), and a subset is not longer than what it is a subset
+    /// of. So the lengths tell which comparisons can succeed: one for each link of `b`, which a loop goes through.
+    fn compare_nodes<'a>(&self, mut a: Compared<'a>, mut b: Compared<'a>) -> NodeComparisonResult {
+        if !self.stack.is_safe_to_recurse() {
             return Invalid;
         }
-        if type_a == type_b {
-            return match (a, b) {
-                (Compared::Chain(_), Compared::Chain(b)) => self.compare_nodes(a, Compared::Expr(b)),
-                (Compared::Expr(a), Compared::Expr(b)) => self.compare_same_type(a, b),
-                _ => Invalid,
+        let (mut length_a, mut length_b) = (chain_length(a), chain_length(b));
+        // Links have been taken off `b`: whatever `a` is of the rest, it is a subset of the whole.
+        let mut is_shortened = false;
+        // What is left of the two has to be equal, and if it is, what has been taken off both is `if_equal`.
+        let (mut must_be_equal, mut if_equal) = (false, Equal);
+        loop {
+            if length_a > length_b || must_be_equal && length_a != length_b {
+                return Invalid;
+            }
+            let (type_a, type_b) = (a.es_type(), b.es_type());
+            if type_a == EsType::Incomparable || type_b == EsType::Incomparable {
+                return Invalid;
+            }
+
+            if type_a != type_b {
+                if let Compared::Chain(e) = a
+                    && is_valid_chain_expression_to_look_through(e)
+                {
+                    a = Compared::Expr(e);
+                    continue;
+                }
+                if let Compared::Chain(e) = b
+                    && is_valid_chain_expression_to_look_through(e)
+                {
+                    b = Compared::Expr(e);
+                    continue;
+                }
+                if let Some(expression) = a.non_null_operand() {
+                    a = expression;
+                    continue;
+                }
+                if let Some(expression) = b.non_null_operand() {
+                    b = expression;
+                    continue;
+                }
+                if must_be_equal
+                    || !matches!(
+                        type_a,
+                        EsType::Call | EsType::Identifier | EsType::Member | EsType::MetaProperty
+                    )
+                {
+                    return Invalid;
+                }
+                let Compared::Expr(longer) = b else {
+                    return Invalid;
+                };
+                let shorter = match (as_member_expression(longer), longer.kind()) {
+                    (Some((_, property)), _) if is_private_identifier(property) => return Invalid,
+                    (Some((object, _)), _) => object,
+                    (None, ExprKind::Call(call)) => call.callee(),
+                    _ => return Invalid,
+                };
+                (b, length_b, is_shortened) = (Compared::of(shorter), length_b.saturating_sub(1), true);
+                continue;
+            }
+
+            let (node_a, node_b) = match (a, b) {
+                (Compared::Chain(_), Compared::Chain(e)) => {
+                    b = Compared::Expr(e);
+                    continue;
+                }
+                (Compared::Expr(node_a), Compared::Expr(node_b)) => (node_a, node_b),
+                _ => return Invalid,
             };
-        }
-
-        if let Compared::Chain(e) = a
-            && is_valid_chain_expression_to_look_through(e)
-        {
-            return self.compare_nodes(Compared::Expr(e), b);
-        }
-        if let Compared::Chain(e) = b
-            && is_valid_chain_expression_to_look_through(e)
-        {
-            return self.compare_nodes(a, Compared::Expr(e));
-        }
-        if let Some(expression) = a.non_null_operand() {
-            return self.compare_nodes(expression, b);
-        }
-        if let Some(expression) = b.non_null_operand() {
-            return self.compare_nodes(a, expression);
-        }
-
-        if !matches!(
-            type_a,
-            EsType::Call | EsType::Identifier | EsType::Member | EsType::MetaProperty
-        ) {
-            return Invalid;
-        }
-        let Compared::Expr(b) = b else {
-            return Invalid;
-        };
-        let shorter = match (as_member_expression(b), b.kind()) {
-            (Some((_, property)), _) if is_private_identifier(property) => return Invalid,
-            (Some((object, _)), _) => object,
-            (None, ExprKind::Call(call)) => call.callee(),
-            _ => return Invalid,
-        };
-        match self.compare_nodes(a, Compared::of(shorter)) {
-            Invalid => Invalid,
-            _ => Subset,
+            match (node_a.kind(), node_b.kind()) {
+                (ExprKind::Call(call_a), ExprKind::Call(call_b)) => {
+                    // `foo() && foo()(bar)`
+                    if length_a < length_b {
+                        (b, length_b, is_shortened) = (Compared::of(call_b.callee()), length_b - 1, true);
+                        continue;
+                    }
+                    if !self.compare_arrays(call_a.args(), call_b.args())
+                        || !self.compare_type_lists(call_a.type_args(), call_b.type_args())
+                    {
+                        return Invalid;
+                    }
+                    (a, b) = (Compared::of(call_a.callee()), Compared::of(call_b.callee()));
+                }
+                (ExprKind::Dot { .. } | ExprKind::Index { .. }, ExprKind::Dot { .. } | ExprKind::Index { .. }) => {
+                    let (Some((object_a, property_a)), Some((object_b, property_b))) =
+                        (as_member_expression(node_a), as_member_expression(node_b))
+                    else {
+                        return Invalid;
+                    };
+                    if is_private_identifier(property_b) {
+                        return Invalid;
+                    }
+                    // `foo.bar && foo.bar.baz`
+                    if length_a < length_b {
+                        (b, length_b, is_shortened) = (Compared::of(object_b), length_b - 1, true);
+                        continue;
+                    }
+                    match (property_a, property_b) {
+                        (Property::Name(name_a), Property::Name(name_b)) if name_a.name() == name_b.name() => {}
+                        (Property::Computed(index_a), Property::Computed(index_b)) => {
+                            let result = self.compare_nodes(Compared::of(index_a), Compared::of(index_b));
+                            if result == Invalid || must_be_equal && result != Equal {
+                                return Invalid;
+                            }
+                            if !must_be_equal {
+                                if_equal = result;
+                            }
+                        }
+                        _ => return Invalid,
+                    }
+                    (a, b) = (Compared::of(object_a), Compared::of(object_b));
+                }
+                (ExprKind::NonNull(operand_a), ExprKind::NonNull(operand_b)) => {
+                    (a, b, must_be_equal) = (Compared::of(operand_a), Compared::of(operand_b), true);
+                    continue;
+                }
+                _ => {
+                    return match (self.compare_same_type(node_a, node_b), is_shortened) {
+                        (Invalid, _) => Invalid,
+                        (_, true) => Subset,
+                        (_, false) => if_equal,
+                    };
+                }
+            }
+            (length_a, length_b, must_be_equal) = (length_a.saturating_sub(1), length_b.saturating_sub(1), true);
         }
     }
 
-    fn is_equal(&mut self, a: Expr<'a>, b: Expr<'a>) -> bool {
+    fn is_equal<'a>(&self, a: Expr<'a>, b: Expr<'a>) -> bool {
         self.compare_nodes(Compared::of(a), Compared::of(b)) == Equal
     }
 
-    fn compare_arrays(&mut self, a: List<'a, Expr<'a>>, b: List<'a, Expr<'a>>) -> bool {
+    fn compare_arrays<'a>(&self, a: List<'a, Expr<'a>>, b: List<'a, Expr<'a>>) -> bool {
         all_equal(a.iter(), b.iter(), |a, b| self.is_equal(a, b))
     }
 
-    fn cached(
-        &mut self,
-        a: Expr<'a>,
-        b: Expr<'a>,
-        compare: fn(&mut Self, Expr<'a>, Expr<'a>) -> NodeComparisonResult,
-    ) -> NodeComparisonResult {
-        if let Some(&result) = self.cache.get(&(a, b)) {
-            return result;
-        }
-        let result = compare(self, a, b);
-        self.cache.insert((a, b), result);
-        result
-    }
-
-    fn compare_call_expressions(&mut self, a: Expr<'a>, b: Expr<'a>) -> NodeComparisonResult {
-        let (ExprKind::Call(call_a), ExprKind::Call(call_b)) = (a.kind(), b.kind()) else {
-            return Invalid;
-        };
-        // `foo() && foo()(bar)`
-        if self.compare_nodes(Compared::Expr(a), Compared::of(call_b.callee())) != Invalid {
-            return Subset;
-        }
-        let is_equal = self.is_equal(call_a.callee(), call_b.callee())
-            && self.compare_arrays(call_a.args(), call_b.args())
-            && self.compare_type_lists(call_a.type_args(), call_b.type_args());
-        if is_equal { Equal } else { Invalid }
-    }
-
-    fn compare_member_expressions(&mut self, a: Expr<'a>, b: Expr<'a>) -> NodeComparisonResult {
-        let (Some((object_a, property_a)), Some((object_b, property_b))) =
-            (as_member_expression(a), as_member_expression(b))
-        else {
-            return Invalid;
-        };
-        if is_private_identifier(property_b) {
-            return Invalid;
-        }
-        // `foo.bar && foo.bar.baz`
-        if self.compare_nodes(Compared::Expr(a), Compared::of(object_b)) != Invalid {
-            return Subset;
-        }
-        match (property_a, property_b) {
-            (Property::Name(name_a), Property::Name(name_b)) => {
-                match name_a.name() == name_b.name() && self.is_equal(object_a, object_b) {
-                    true => Equal,
-                    false => Invalid,
-                }
-            }
-            (Property::Computed(index_a), Property::Computed(index_b)) => {
-                match self.is_equal(object_a, object_b) {
-                    true => self.compare_nodes(Compared::of(index_a), Compared::of(index_b)),
-                    false => Invalid,
-                }
-            }
-            _ => Invalid,
-        }
-    }
-
-    /// For two nodes of the same type that is neither `ChainExpression` nor incomparable.
-    fn compare_same_type(&mut self, a: Expr<'a>, b: Expr<'a>) -> NodeComparisonResult {
+    /// For two nodes of the same type that is neither `ChainExpression` nor incomparable, and that are not links of a chain.
+    fn compare_same_type<'a>(&self, a: Expr<'a>, b: Expr<'a>) -> NodeComparisonResult {
         use ExprKind as K;
         let is_equal = match (a.kind(), b.kind()) {
-            (K::Call(_), K::Call(_)) => return self.cached(a, b, Self::compare_call_expressions),
-            (K::Dot { .. } | K::Index { .. }, K::Dot { .. } | K::Index { .. }) => {
-                return self.cached(a, b, Self::compare_member_expressions);
-            }
             (K::Ident(a), K::Ident(b)) | (K::PrivateIdentifier(a), K::PrivateIdentifier(b)) => a == b,
             // The `value` of each is an object of its own.
             (K::Regex(_), _) | (_, K::Regex(_)) => false,
@@ -415,7 +448,6 @@ impl<'a> Comparer<'a> {
             | (K::NewTarget, K::NewTarget) => true,
             (K::Await(a), K::Await(b))
             | (K::Spread(a), K::Spread(b))
-            | (K::NonNull(a), K::NonNull(b))
             | (K::AsConst(a), K::AsConst(b))
             // Nor are the operators.
             | (K::Unary { operand: a, .. }, K::Unary { operand: b, .. }) => self.is_equal(a, b),
@@ -475,11 +507,11 @@ impl<'a> Comparer<'a> {
     }
 
     /// Also for two `TSTypeParameterInstantiation` or `null`.
-    fn compare_type_lists(&mut self, a: List<'a, TypeNode<'a>>, b: List<'a, TypeNode<'a>>) -> bool {
+    fn compare_type_lists<'a>(&self, a: List<'a, TypeNode<'a>>, b: List<'a, TypeNode<'a>>) -> bool {
         all_equal(a.iter(), b.iter(), |a, b| self.compare_types(a, b))
     }
 
-    fn compare_optional_types(&mut self, a: Option<TypeNode<'a>>, b: Option<TypeNode<'a>>) -> bool {
+    fn compare_optional_types<'a>(&self, a: Option<TypeNode<'a>>, b: Option<TypeNode<'a>>) -> bool {
         match (a, b) {
             (None, None) => true,
             (Some(a), Some(b)) => self.compare_types(a, b),
@@ -489,8 +521,11 @@ impl<'a> Comparer<'a> {
 
     /// `compareByVisiting` for types: only what is a node of ESTree is compared, so `keyof T` is
     /// `readonly T`, and `(a: A) => R` is `(a?: B) => R`.
-    fn compare_types(&mut self, a: TypeNode<'a>, b: TypeNode<'a>) -> bool {
+    fn compare_types<'a>(&self, a: TypeNode<'a>, b: TypeNode<'a>) -> bool {
         use TypeKind as K;
+        if !self.stack.is_safe_to_recurse() {
+            return false;
+        }
         if let (Some(operand_a), Some(operand_b)) = (as_type_operator(a), as_type_operator(b)) {
             return match (operand_a, operand_b) {
                 (None, None) => true,
@@ -624,21 +659,21 @@ impl<'a> Comparer<'a> {
         }
     }
 
-    fn compare_tuple_elements(&mut self, a: TupleElem<'a>, b: TupleElem<'a>) -> bool {
+    fn compare_tuple_elements<'a>(&self, a: TupleElem<'a>, b: TupleElem<'a>) -> bool {
         a.is_rest() == b.is_rest()
             && a.name().map(Ident::name) == b.name().map(Ident::name)
             && (a.name().is_some() || a.is_optional() == b.is_optional())
             && self.compare_types(a.ty(), b.ty())
     }
 
-    fn compare_type_parameters(&mut self, a: TypeParam<'a>, b: TypeParam<'a>) -> bool {
+    fn compare_type_parameters<'a>(&self, a: TypeParam<'a>, b: TypeParam<'a>) -> bool {
         a.name().name() == b.name().name()
             && self.compare_optional_types(a.constraint(), b.constraint())
             && self.compare_optional_types(a.default(), b.default())
     }
 
     /// An `Identifier` is its name. Only a `RestElement` is compared with its type.
-    fn compare_parameters(&mut self, a: Param<'a>, b: Param<'a>) -> bool {
+    fn compare_parameters<'a>(&self, a: Param<'a>, b: Param<'a>) -> bool {
         let (PatKind::Ident(name_a), PatKind::Ident(name_b)) = (a.pat().kind(), b.pat().kind()) else {
             return false;
         };
@@ -648,14 +683,14 @@ impl<'a> Comparer<'a> {
     }
 
     /// `typeParameters`, `params` and `returnType`.
-    fn compare_function_types(&mut self, a: Func<'a>, b: Func<'a>) -> bool {
+    fn compare_function_types<'a>(&self, a: Func<'a>, b: Func<'a>) -> bool {
         all_equal(a.type_params().iter(), b.type_params().iter(), |a, b| self.compare_type_parameters(a, b))
             && all_equal(a.params_with_this(), b.params_with_this(), |a, b| self.compare_parameters(a, b))
             && self.compare_optional_types(a.return_type(), b.return_type())
     }
 
     /// `computed` is not compared.
-    fn compare_keys(&mut self, file: &File<'a>, a: Key<'a>, b: Key<'a>) -> bool {
+    fn compare_keys<'a>(&self, file: &File<'a>, a: Key<'a>, b: Key<'a>) -> bool {
         match (a.kind(), b.kind()) {
             (KeyKind::Ident(a), KeyKind::Ident(b)) => a == b,
             (KeyKind::Computed(a), KeyKind::Computed(b)) => self.is_equal(a, b),
@@ -668,7 +703,7 @@ impl<'a> Comparer<'a> {
     }
 
     /// For two members of a `TSTypeLiteral`.
-    fn compare_members(&mut self, a: Member<'a>, b: Member<'a>) -> bool {
+    fn compare_members<'a>(&self, a: Member<'a>, b: Member<'a>) -> bool {
         // The three are a `TSMethodSignature`.
         let es_type = |member: Member| match member.kind() {
             MemberKind::Getter | MemberKind::Setter => MemberKind::Method,
@@ -1000,18 +1035,13 @@ fn is_valid_last_chain_operand(operator: BinOp, comparison_value: Expr, comparis
 
 /// `analyzeAndChainOperand`, `analyzeOrChainOperand`, for `chain[index]`: how many operands,
 /// starting with it, are one unit of the chain. `None` if it cannot be part of a chain.
-fn analyze_operand<'a>(
-    comparer: &mut Comparer<'a>,
-    operator: BinOp,
-    index: usize,
-    chain: &[ValidOperand<'a>],
-) -> Option<usize> {
+fn analyze_operand(comparer: &Comparer, operator: BinOp, index: usize, chain: &[ValidOperand]) -> Option<usize> {
     use NullishComparisonType as T;
     let operand = chain.get(index)?;
     let next_operand = chain.get(index + 1);
     let name = operand.compared_name.expr();
     // `x !== null && x !== undefined`
-    let mut is_followed_by = |comparison_type: T| {
+    let is_followed_by = |comparison_type: T| {
         next_operand.is_some_and(|next| {
             next.comparison_type == comparison_type
                 && comparer.compare_nodes(operand.compared_name, next.compared_name) == Equal
@@ -1050,12 +1080,12 @@ fn analyze_operand<'a>(
 /// `resolveOperandSubset`: the `comparedName`, the `comparisonValue` and `isYoda`. `None` if
 /// `previous_operand` is not a subset of exactly one side of the comparison.
 fn resolve_operand_subset<'a>(
-    comparer: &mut Comparer<'a>,
+    comparer: &Comparer,
     previous_operand: ValidOperand<'a>,
     last_chain_operand: LastChainOperand<'a>,
 ) -> Option<(Expr<'a>, Expr<'a>, bool)> {
     let (name, value) = (last_chain_operand.compared_name, last_chain_operand.comparison_value);
-    let mut is_subset_of =
+    let is_subset_of =
         |e: Expr<'a>| comparer.compare_nodes(previous_operand.compared_name, Compared::of(e)) == Subset;
     let is_name_subset = is_subset_of(name);
     if last_chain_operand.yoda != Yoda::Unknown {
@@ -1109,56 +1139,64 @@ struct FlattenedChain {
 }
 
 /// `flattenChainExpression`. `None` if a call has no parentheses.
-fn flatten_chain_expression(node: Expr, parts: &mut Vec<FlattenedChain>) -> Option<()> {
+fn flatten_chain_expression(mut node: Expr, parts: &mut Vec<FlattenedChain>) -> Option<()> {
     let is_non_null = |object: Expr| object.tag() == ExprTag::NonNull && !object.is_chain_root();
-    match node.kind() {
-        ExprKind::Call(call) => {
-            let type_arguments = call.type_args().angle_brackets_span();
-            let closing_paren = Span::new(node.span().end.checked_sub(1)?, node.span().end);
-            let after = type_arguments.unwrap_or_else(|| call.callee().span());
-            let opening_paren =
-                node.file().tokens_between(after, closing_paren).find(|token| token.is_punctuator("("))?;
-            flatten_chain_expression(call.callee(), parts)?;
-            parts.push(FlattenedChain {
-                non_null: false,
-                optional: call.is_optional(),
-                precedence: OperatorPrecedence::Invalid,
-                requires_dot: false,
-                text: PartText::Call {
-                    type_arguments,
-                    arguments: opening_paren.span().to(closing_paren),
-                },
-            });
-        }
-        ExprKind::Dot { obj, name, chain } => {
-            flatten_chain_expression(obj, parts)?;
-            parts.push(FlattenedChain {
-                non_null: is_non_null(obj),
-                optional: chain == Chain::Start,
-                precedence: OperatorPrecedence::Primary,
-                requires_dot: true,
-                text: PartText::Node(name.span()),
-            });
-        }
-        ExprKind::Index { obj, index, chain } => {
-            flatten_chain_expression(obj, parts)?;
-            parts.push(FlattenedChain {
-                non_null: is_non_null(obj),
-                optional: chain == Chain::Start,
-                precedence: OperatorPrecedence::Invalid,
-                requires_dot: false,
-                text: PartText::Computed(index.span()),
-            });
-        }
-        ExprKind::NonNull(expression) => flatten_chain_expression(expression, parts)?,
-        _ => parts.push(FlattenedChain {
-            non_null: false,
-            optional: false,
-            precedence: get_operator_precedence_for_node(node),
-            requires_dot: false,
-            text: PartText::Node(node.span()),
-        }),
+    let first = parts.len();
+    // From the last part to the first.
+    loop {
+        node = match node.kind() {
+            ExprKind::Call(call) => {
+                let type_arguments = call.type_args().angle_brackets_span();
+                let closing_paren = Span::new(node.span().end.checked_sub(1)?, node.span().end);
+                let after = type_arguments.unwrap_or_else(|| call.callee().span());
+                let opening_paren =
+                    node.file().tokens_between(after, closing_paren).find(|token| token.is_punctuator("("))?;
+                parts.push(FlattenedChain {
+                    non_null: false,
+                    optional: call.is_optional(),
+                    precedence: OperatorPrecedence::Invalid,
+                    requires_dot: false,
+                    text: PartText::Call {
+                        type_arguments,
+                        arguments: opening_paren.span().to(closing_paren),
+                    },
+                });
+                call.callee()
+            }
+            ExprKind::Dot { obj, name, chain } => {
+                parts.push(FlattenedChain {
+                    non_null: is_non_null(obj),
+                    optional: chain == Chain::Start,
+                    precedence: OperatorPrecedence::Primary,
+                    requires_dot: true,
+                    text: PartText::Node(name.span()),
+                });
+                obj
+            }
+            ExprKind::Index { obj, index, chain } => {
+                parts.push(FlattenedChain {
+                    non_null: is_non_null(obj),
+                    optional: chain == Chain::Start,
+                    precedence: OperatorPrecedence::Invalid,
+                    requires_dot: false,
+                    text: PartText::Computed(index.span()),
+                });
+                obj
+            }
+            ExprKind::NonNull(expression) => expression,
+            _ => {
+                parts.push(FlattenedChain {
+                    non_null: false,
+                    optional: false,
+                    precedence: get_operator_precedence_for_node(node),
+                    requires_dot: false,
+                    text: PartText::Node(node.span()),
+                });
+                break;
+            }
+        };
     }
+    parts.get_mut(first..)?.reverse();
     Some(())
 }
 
@@ -1400,7 +1438,7 @@ impl PreferOptionalChain {
         let mut i = 0;
         while let Some(&operand) = chain.get(i) {
             let last_operand = sub_chain.operands.last().copied();
-            let Some(count) = analyze_operand(&mut cx.state, operator, i, chain) else {
+            let Some(count) = analyze_operand(&cx.state, operator, i, chain) else {
                 // `foo == null || foo.bar === undefined`: not an operand of a chain, but its end.
                 if let Some(last_operand) = last_operand
                     && matches!(operand.comparison_type, T::StrictEqualUndefined | T::NotStrictEqualUndefined)
@@ -1432,7 +1470,7 @@ impl PreferOptionalChain {
         if let Some(&last_operand) = sub_chain.operands.last()
             && let Some(last_chain_operand) = last_chain_operand
             && let Some((compared_name, comparison_value, is_yoda)) =
-                resolve_operand_subset(&mut cx.state, last_operand, last_chain_operand)
+                resolve_operand_subset(&cx.state, last_operand, last_chain_operand)
             && is_valid_last_chain_operand(operator, comparison_value, last_chain_operand.comparison_type)
         {
             sub_chain.last_chain = Some(ValidOperand {
@@ -1522,7 +1560,7 @@ impl Rule for PreferOptionalChain {
         .has_suggestions()
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = Comparer<'a>;
+    type State<'a> = Comparer;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -1549,7 +1587,7 @@ impl Rule for PreferOptionalChain {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Comparer<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Comparer {
         on.exprs([ExprTag::Binary], |rule, node, cx| {
             let ExprKind::Binary { op, left, right } = node.kind() else {
                 return;
@@ -1561,6 +1599,8 @@ impl Rule for PreferOptionalChain {
                 rule.check_empty_object_fallback(node, left, right, cx);
             }
         });
-        Comparer::default()
+        Comparer {
+            stack: bun_core::StackCheck::init(),
+        }
     }
 }

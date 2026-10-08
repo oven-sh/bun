@@ -2375,9 +2375,26 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
             bool useBigInt64 = castedThis->useBigInt64;
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0);
             RETURN_IF_EXCEPTION(scope, {});
-            // With an indexed accessor on Array.prototype, push() runs script, and that script can run this statement again.
-            const bool pushRunsScript = lexicalGlobalObject->isHavingABadTime();
-            if (useBigInt64) {
+            if (lexicalGlobalObject->isHavingABadTime()) [[unlikely]] {
+                // An indexed accessor on a prototype makes push() run script, and that script can run this statement again.
+                do {
+                    JSC::JSValue result = useBigInt64 ? castedThis->constructResultObject<true>(lexicalGlobalObject, shape)
+                                                      : castedThis->constructResultObject<false>(lexicalGlobalObject, shape);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    resultArray->push(lexicalGlobalObject, result);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, finalizedMessage(castedThis)));
+                        return {};
+                    }
+                    status = sqlite3_step(stmt);
+                    if (status == SQLITE_ROW) {
+                        shape = castedThis->ensureRowShape(lexicalGlobalObject, scope);
+                        if (!shape) [[unlikely]]
+                            return {};
+                    }
+                } while (status == SQLITE_ROW);
+            } else if (useBigInt64) {
                 do {
                     JSC::JSValue result = castedThis->constructResultObject<true>(lexicalGlobalObject, shape);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -2388,11 +2405,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                         return {};
                     }
                     status = sqlite3_step(stmt);
-                    if (pushRunsScript && status == SQLITE_ROW) [[unlikely]] {
-                        shape = castedThis->ensureRowShape(lexicalGlobalObject, scope);
-                        if (!shape) [[unlikely]]
-                            return {};
-                    }
                 } while (status == SQLITE_ROW);
             } else {
                 do {
@@ -2405,11 +2417,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                         return {};
                     }
                     status = sqlite3_step(stmt);
-                    if (pushRunsScript && status == SQLITE_ROW) [[unlikely]] {
-                        shape = castedThis->ensureRowShape(lexicalGlobalObject, scope);
-                        if (!shape) [[unlikely]]
-                            return {};
-                    }
                 } while (status == SQLITE_ROW);
             }
             result = resultArray;

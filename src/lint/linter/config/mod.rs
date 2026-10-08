@@ -357,6 +357,7 @@ impl Config {
         let mut config = ResolvedConfig {
             skips_unknown_rules: self.accepts_all_plugins,
             prefers_typescript_rules: self.prefers_typescript_rules,
+            understands_oxlint_comments: self.prefers_typescript_rules,
             ..ResolvedConfig::default()
         };
         let mut plugins: Vec<&Box<[u8]>> = Vec::new();
@@ -435,6 +436,9 @@ impl Config {
                 instance,
             ));
         }
+        // From here on: a rule that is turned off can be configured without its plugin.
+        config.lacks_typescript_plugin =
+            !self.accepts_all_plugins && !plugins.iter().any(|it| ***it == *b"@typescript-eslint");
         config
     }
 }

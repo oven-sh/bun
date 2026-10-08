@@ -65,7 +65,7 @@ pub struct LintMessage {
     pub severity: Severity,
     pub message: Vec<u8>,
     pub message_id: Option<&'static str>,
-    /// From 1.
+    /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`.
     pub line: u32,
     /// From 1, in UTF-16 code units.
     pub column: u32,
@@ -279,7 +279,9 @@ impl LintMessage {
         }
         let _ = write!(out, ",\"severity\":{},\"message\":", self.severity as u8);
         write_json_string(out, &self.message);
-        let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
+        if !self.is_fatal || self.line != 0 {
+            let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
+        }
         if let Some(id) = self.message_id {
             out.extend_from_slice(b",\"messageId\":");
             write_json_string(out, id.as_bytes());
@@ -299,6 +301,15 @@ impl LintMessage {
                 }
                 out.extend_from_slice(b"{\"messageId\":");
                 write_json_string(out, suggestion.message_id.as_bytes());
+                for (i, (name, value)) in suggestion.data.iter().enumerate() {
+                    out.extend_from_slice(if i == 0 { b",\"data\":{" } else { b"," });
+                    write_json_string(out, name.as_bytes());
+                    out.push(b':');
+                    write_json_string(out, value);
+                }
+                if !suggestion.data.is_empty() {
+                    out.push(b'}');
+                }
                 out.extend_from_slice(b",\"fix\":");
                 write_fix(out, &suggestion.fix, offsets);
                 out.extend_from_slice(b",\"desc\":");

@@ -17,10 +17,11 @@
 //! - `validate <cases.json>`: for each `{ rule, options }`, the message of ESLint if the options are invalid.
 //! - `parse-fixtures <fixtures>`: the test cases that the parser rejects, all of which ESLint parses.
 //! - `rules`: the names of the rules that exist.
+//! - `diagnostics <cases.json>`: for each `{ code, filename }`, what the parser has left in the HIR.
 
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::language::{Global, LanguageOptions, SourceType};
+use bun_lint::language::{Global, LanguageOptions, Parser, SourceType};
 use bun_lint::linter::{
     Config, FileConfig, LintMessage, LintOptions, Linter, RcFlavor, Registry, ResolvedConfig,
     RuleId, Utf16Offsets, severity_of, testing,
@@ -181,6 +182,14 @@ fn verify(args: &[String]) {
             }
         };
         let given = case.get(b"options").unwrap_or(&null);
+        // Not an option of ESLint: as with a configuration of oxlint.
+        let config = match given.get(b"oxlintComments").and_then(Json::as_bool) {
+            Some(true) => std::sync::Arc::new(ResolvedConfig {
+                understands_oxlint_comments: true,
+                ..(*config).clone()
+            }),
+            _ => config,
+        };
         let only_errors = |_: &RuleId, severity: Severity| severity == Severity::Error;
         let options = LintOptions {
             allow_inline_config: given.get(b"allowInlineConfig").and_then(Json::as_bool)
@@ -681,27 +690,31 @@ fn resolve(args: &[String]) {
 }
 
 fn bench(args: &[String]) {
-    fn walk(directory: &std::path::Path, texts: &mut Vec<Vec<u8>>) {
+    fn walk(directory: &std::path::Path, texts: &mut Vec<Vec<u8>>, paths: &mut Vec<String>) {
         for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
             let path = entry.path();
             let name = entry.file_name();
             if path.is_dir() {
                 if name != "node_modules" && name != ".git" {
-                    walk(&path, texts);
+                    walk(&path, texts, paths);
                 }
             } else if path.extension().is_some_and(|it| {
                 ["js", "ts", "tsx", "jsx", "mjs", "cjs", "mts", "cts"]
                     .iter()
                     .any(|ext| it == *ext)
             }) {
-                texts.extend(std::fs::read(&path));
+                if let Ok(text) = std::fs::read(&path) {
+                    texts.push(text);
+                    paths.push(path.to_string_lossy().into_owned());
+                }
             }
         }
     }
-    let mut texts = Vec::new();
+    let (mut texts, mut paths) = (Vec::new(), Vec::new());
     walk(
         std::path::Path::new(args.first().expect("a directory")),
         &mut texts,
+        &mut paths,
     );
     let bytes: usize = texts.iter().map(Vec::len).sum();
     for _ in 0..3 {
@@ -718,6 +731,38 @@ fn bench(args: &[String]) {
             elapsed.as_secs_f64() * 1e3,
             bytes as f64 / 1e9 / elapsed.as_secs_f64(),
             elapsed.as_secs_f64() * 1e6 / texts.len() as f64,
+        );
+    }
+    // What it costs to find out that a file is not refused, beside what it costs to parse and bind it.
+    for parser in [Parser::TypeScript, Parser::Espree] {
+        let language = LanguageOptions {
+            parser,
+            ..LanguageOptions::default()
+        };
+        let zero = std::time::Duration::ZERO;
+        let (mut whole, mut check, mut again, mut refused) = (zero, zero, zero, 0);
+        for (text, path) in texts.iter().zip(&paths) {
+            let start = std::time::Instant::now();
+            let (first, second) = with_file(path, text, &language, |file| {
+                let start = std::time::Instant::now();
+                refused += usize::from(bun_lint::linter::parse_error(file).is_some());
+                let first = start.elapsed();
+                // Once more, with what is computed once for a file and shared with the rules.
+                let start = std::time::Instant::now();
+                let _ = bun_lint::linter::parse_error(file);
+                (first, start.elapsed())
+            });
+            whole += start.elapsed() - first - second;
+            check += first;
+            again += second;
+        }
+        println!(
+            "{parser:?}: {refused} refused; parsing and binding {:.0} ms, parse_error {:.1} ms ({:.2} %), of its own {:.1} ms ({:.2} %)",
+            whole.as_secs_f64() * 1e3,
+            check.as_secs_f64() * 1e3,
+            check.as_secs_f64() * 100.0 / whole.as_secs_f64(),
+            again.as_secs_f64() * 1e3,
+            again.as_secs_f64() * 100.0 / whole.as_secs_f64(),
         );
     }
 }
@@ -809,6 +854,28 @@ fn parse_fixtures(args: &[String]) {
     println!("{parsed} parsed, {rejected} rejected");
 }
 
+fn diagnostics(args: &[String]) {
+    let mut all = Vec::new();
+    for case in &read_cases(args) {
+        let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+        let filename = case
+            .get(b"filename")
+            .and_then(Json::as_str)
+            .unwrap_or(b"file.js");
+        let filename = String::from_utf8_lossy(filename).into_owned();
+        all.push(with_file(
+            &filename,
+            code,
+            &LanguageOptions::default(),
+            |file| Json::Array(testing::diagnostics(file)),
+        ));
+    }
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Array(all));
+    out.push(b'\n');
+    print(&out);
+}
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -827,6 +894,7 @@ pub(crate) fn run(args: &[String]) {
         Some("parse-fixtures") => parse_fixtures(&args[1..]),
         Some("config") => config(&args[1..]),
         Some("project") => project(&args[1..]),
+        Some("diagnostics") => diagnostics(&args[1..]),
         Some("rules") => {
             let ids = linter()
                 .registry()

@@ -29,7 +29,8 @@ pub(crate) enum Label {
 }
 
 impl Label {
-    /// `oxlint-disable` and the like mean what `eslint-disable` means.
+    /// `oxlint-disable` and the like mean what `eslint-disable` means, if the configuration is one of oxlint:
+    /// [`ResolvedConfig::understands_oxlint_comments`](super::ResolvedConfig::understands_oxlint_comments).
     fn of(label: &[u8]) -> Option<Label> {
         Some(match label {
             b"eslint" => Label::Rules,

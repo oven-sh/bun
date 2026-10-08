@@ -6,6 +6,7 @@
 //! - [`ResolvedConfig`]: what is configured for one file.
 //! - [`Linter::lint`]: ESLint's `Linter.verify` for a file that is parsed already.
 //! - [`LintMessage`]: what it reports.
+//! - [`parse_error`]: whether ESLint's parser refuses the file. [`File::has_parse_errors`] is not the answer to that.
 //! - [`verify_and_fix`]: ESLint's `Linter.verifyAndFix`.
 //! - [`globals`]: the global variables that a file does not declare.
 //!
@@ -38,6 +39,7 @@ mod registry;
 mod resolved;
 mod schema;
 mod space;
+mod syntax;
 
 pub use config::{Config, ConfigError, FileConfig, Glob, RcFlavor};
 pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fix};
@@ -48,13 +50,12 @@ pub(crate) use per_file::PerFile;
 pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 pub(crate) use space::trim as trim_js_space;
+pub use syntax::{not_in_a_project, parse_error};
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
-use crate::language::{Parser, SourceType};
 use crate::options::{Json, Options};
 use crate::runner::{AnyRule, Enabled, RuleEntry};
-use bun_sema::hir::DiagnosticKind;
 use directives::{ConfigComment, Label};
 use message::Locator;
 
@@ -68,6 +69,7 @@ pub mod testing {
     pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
     pub use super::schema::validate_by_id;
+    pub use super::syntax::diagnostics;
 }
 
 /// ESLint's `VerifyOptions`: what the command line says about how to lint.
@@ -164,7 +166,7 @@ impl Linter {
         options: &LintOptions,
     ) -> LintResult {
         let locator = Locator::new(file);
-        if let Some(fatal) = parse_error(file, &locator) {
+        if let Some(fatal) = parse_error(file) {
             return LintResult {
                 messages: vec![fatal],
                 ..LintResult::default()
@@ -190,9 +192,13 @@ impl Linter {
             true => file.config_comments(),
             false => &[],
         };
+        // ESLint takes `oxlint-disable` and the like for ordinary comments.
+        let is_understood = |it: &&ConfigComment| {
+            config.understands_oxlint_comments || !file.slice(it.label_span).starts_with(b"oxlint")
+        };
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
-            for comment in comments {
+            for comment in comments.iter().filter(is_understood) {
                 let message = quoted(&[
                     b"'",
                     file.slice(comment.span),
@@ -210,10 +216,10 @@ impl Linter {
                 skipped: &mut result.skipped_rules,
                 configured: Vec::new(),
             };
-            for comment in comments {
+            for comment in comments.iter().filter(is_understood) {
                 inline.apply(comment, &mut running);
             }
-            for comment in comments {
+            for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
         }
@@ -309,61 +315,6 @@ fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locat
         suggestions: diagnostic.suggestions,
         suppressions: Vec::new(),
     }
-}
-
-/// The message for a file that cannot be parsed: the first error of the parser, as
-/// typescript-estree reports it.
-fn parse_error(file: &File, locator: &Locator) -> Option<LintMessage> {
-    if !file.has_parse_errors() {
-        return None;
-    }
-    let language = file.language();
-    // What is an error in strict mode only. TypeScript's parser always reports it.
-    let is_sloppy = language.parser == Parser::Espree
-        && language.source_type != SourceType::Module
-        && !language.implied_strict;
-    let is_tolerated = |code: u32| match code {
-        // Octal literals and escapes, `\8`, `08`.
-        1121 | 1487 | 1488 | 1489 => is_sloppy,
-        // `import a from "a" assert { .. }`, which typescript-estree accepts.
-        2880 => true,
-        _ => false,
-    };
-    let parse_errors = || {
-        file.hir
-            .diagnostics
-            .iter()
-            .filter(|it| it.kind == DiagnosticKind::Parse)
-    };
-    if parse_errors().next().is_some() && parse_errors().all(|it| is_tolerated(it.code)) {
-        return None;
-    }
-    let first = parse_errors()
-        .find(|it| !is_tolerated(it.code))
-        .or_else(|| file.hir.diagnostics.first());
-    let mut message = b"Parsing error: ".to_vec();
-    match first.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
-        Some((diagnostic, text)) => {
-            bun_sema::messages::format(&mut message, text, &diagnostic.args)
-        }
-        None => message.extend_from_slice(b"Unexpected token"),
-    }
-    let (line, column) = locator.position(first.map_or(0, |it| it.start));
-    // typescript-estree counts the column of an error from 0, espree from 1.
-    let from_zero = language.parser == Parser::TypeScript;
-    Some(LintMessage {
-        rule_id: None,
-        severity: Severity::Error,
-        message,
-        message_id: None,
-        line,
-        column: column - u32::from(from_zero),
-        end: None,
-        is_fatal: true,
-        fix: None,
-        suggestions: Vec::new(),
-        suppressions: Vec::new(),
-    })
 }
 
 /// Applies the comments of a file to its configuration.

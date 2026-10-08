@@ -114,6 +114,8 @@ function generated() {
     // ESLint has to see the same text in every pass, so not where `oxlint-` is rewritten for it.
     const fix = rng.int(5) === 0 && !code.includes("oxlint-") ? { fix: true } : {};
     const { quiet, ...given } = rng.pick(options);
+    // As with a configuration of oxlint, or as with one of ESLint, which ignores these comments.
+    if (code.includes("oxlint-") && rng.int(3) !== 0) given.oxlintComments = true;
     cases.push({ code, filename: "file.js", config: rng.pick(rng.int(20) === 0 ? invalidConfigs : configs), options: fix.fix ? { ...given, ...fix } : { ...given, ...(quiet ? { quiet } : {}) } });
   }
   return cases;
@@ -195,7 +197,7 @@ function aliases() {
       `/* eslint-enable ${name()} */`, `/* eslint ${name()}: ${rng.pick([0, 1, 2])} */`, `a!; // oxlint-disable-line ${name()}`,
     ]));
     const rules = Object.fromEntries(Object.keys(names).filter(() => rng.int(3) !== 0).map(id => [id, rng.pick([1, 2])]));
-    cases.push({ code: lines.join("\n"), filename: "file.ts", config: { rules, languageOptions: { parser: "typescript" } }, options: {}, names });
+    cases.push({ code: lines.join("\n"), filename: "file.ts", config: { rules, languageOptions: { parser: "typescript" } }, options: { oxlintComments: true }, names });
   }
   return cases;
 }
@@ -204,19 +206,20 @@ function aliases() {
 
 function eslintAnswer({ code, filename, config, options }) {
   const linter = new Linter({ configType: "flat", cwd: "/" });
-  const { quiet, fix, ...rest } = options;
+  const { quiet, fix, oxlintComments, ...rest } = options;
   const own = structuredClone(config);
   if (own.languageOptions?.parser === "typescript") own.languageOptions.parser = typescriptParser;
   // As the command line does it, which shows in the messages about an invalid configuration.
   const configs = new FlatConfigArray([], { baseConfig, basePath: "/" });
   configs.push({}, own); // The harness has an object of its own before it.
   configs.normalizeSync();
-  // `oxlint-disable` means `eslint-disable` here, and nothing to ESLint.
+  // With a configuration of oxlint, `oxlint-disable` means `eslint-disable` here. It means nothing to ESLint.
+  if (oxlintComments) code = code.replaceAll("oxlint-", "eslint-");
   if (fix) {
     const { fixed, output, messages } = linter.verifyAndFix(code, configs, { filename, ...rest });
     return { fixed, output, messages, suppressedMessages: linter.getSuppressedMessages() };
   }
-  const messages = linter.verify(code.replaceAll("oxlint-", "eslint-"), configs, { filename, ...rest, ...(quiet ? { ruleFilter: ({ severity }) => severity === 2 } : {}) });
+  const messages = linter.verify(code, configs, { filename, ...rest, ...(quiet ? { ruleFilter: ({ severity }) => severity === 2 } : {}) });
   return { messages, suppressedMessages: linter.getSuppressedMessages() };
 }
 
@@ -225,9 +228,7 @@ function normalize(answer) {
   const message = ({ suggestions, ...m }) => ({
     ...m,
     message: m.message.replaceAll("oxlint-", "eslint-"),
-    // The text of a syntax error is that of another parser.
-    ...(m.fatal && m.message.startsWith("Parsing error:") ? { message: "Parsing error", line: 0, column: 0 } : {}),
-    ...(suggestions ? { suggestions: suggestions.map(({ messageId, desc, fix }) => ({ messageId, desc, fix })) } : {}),
+    ...(suggestions ? { suggestions } : {}),
   });
   return { ...answer, messages: answer.messages.map(message), suppressedMessages: answer.suppressedMessages.map(message) };
 }
@@ -264,7 +265,7 @@ for (const [name, make] of Object.entries({ generated, upstream, aliases })) {
     actual = runBunLint("verify", cases).map(normalize);
   }
   // What espree rejects and the parser here accepts is counted by itself.
-  const isFatal = answer => answer.messages?.[0]?.message === "Parsing error";
+  const isFatal = answer => answer.messages?.[0]?.message?.startsWith("Parsing error");
   const lenient = cases.filter((_, i) => isFatal(expected[i]) && !isFatal(actual[i]));
   if (lenient.length > 0) {
     console.log(`${name}: ${lenient.length} cases left out, only ESLint reports a syntax error`);

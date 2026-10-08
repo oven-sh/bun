@@ -91,6 +91,12 @@ pub struct ResolvedConfig {
     pub skips_unknown_rules: bool,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     pub prefers_typescript_rules: bool,
+    /// `oxlint-disable` and the like mean what `eslint-disable` means. ESLint ignores them, and so does a configuration of
+    /// ESLint.
+    pub understands_oxlint_comments: bool,
+    /// No configuration object that applies to the file has the plugin of typescript-eslint: for ESLint its rules do not exist
+    /// there, and a comment cannot name them.
+    pub lacks_typescript_plugin: bool,
     /// `language`, if it is configured: `js/js`, `json/json`, .. Only JavaScript can be linted.
     pub language_name: Option<Box<[u8]>>,
     /// The name of the `processor`, if one is configured. None is implemented.
@@ -132,12 +138,22 @@ impl ResolvedConfig {
     /// The rule that the configuration, or a comment of a file that it is for, calls `id`.
     pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
         let found = registry.find_preferring(id, self.prefers_typescript_rules);
+        if self.lacks_typescript_plugin {
+            return found.filter(|it| it.meta.plugin != Plugin::TypeScript);
+        }
         if found.is_some() || !self.prefers_typescript_rules {
             return found;
         }
-        // oxlint goes by the name without the plugin: `no-explicit-any` is
+        // Between these two plugins oxlint goes by the name: `no-explicit-any` is
         // `typescript/no-explicit-any`, and `@typescript-eslint/no-undef` is `no-undef`.
-        let name = parse_rule_id(id).1;
+        let (plugin, name) = parse_rule_id(id);
+        let is_known = matches!(
+            plugin,
+            b"" | b"eslint" | b"typescript" | b"typescript-eslint" | b"@typescript-eslint"
+        );
+        if !is_known {
+            return None;
+        }
         registry
             .get(Plugin::TypeScript, name)
             .or_else(|| registry.get(Plugin::Eslint, name))

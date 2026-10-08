@@ -11,6 +11,27 @@ function objectId(object) {
   return typeof version === "string" && version ? `${name}@${version}` : name;
 }
 
+// How a worker for JavaScript plugins gets hold of a plugin: `{ module, export }`, the file of a module that is loaded and
+// the path to the plugin in what it exports. `null` if there is no such module: then it is where the configuration has it.
+const located = new Map();
+function locate(plugin) {
+  if (located.size === 0) {
+    for (const [module, { exports }] of Object.entries(require.cache)) {
+      const note = (value, path) => {
+        if (value !== null && typeof value === "object" && !located.has(value)) located.set(value, { module, export: path });
+      };
+      try {
+        note(exports, []);
+        for (const [name, value] of Object.entries(exports ?? {})) {
+          note(value, [name]);
+          if (name === "default") for (const [inner, it] of Object.entries(value ?? {})) note(it, [name, inner]);
+        }
+      } catch {}
+    }
+  }
+  return located.get(plugin) ?? null;
+}
+
 function serialize(value, ancestors = []) {
   switch (typeof value) {
     case "string":
@@ -50,13 +71,16 @@ function serializeLanguageOptions({ parser, parserOptions, ...rest }) {
   return out;
 }
 
-function serializeConfigObject(config) {
+function serializeConfigObject(config, index) {
   if (config === null || typeof config !== "object") return serialize(config) ?? null;
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
   const out = serialize(rest);
   if (plugins && typeof plugins === "object") {
     const ids = Object.entries(plugins).map(([prefix, plugin]) => [prefix, (plugin && objectId(plugin)) ?? null]);
     out.plugins = Array.isArray(plugins) ? serialize(plugins) : Object.fromEntries(ids);
+    const withRules = Object.entries(plugins).filter(([, plugin]) => plugin?.rules && Object.keys(plugin.rules).length > 0);
+    // `index`: that of the object in what the file exports.
+    out.$jsPlugins = Object.fromEntries(withRules.map(([prefix, plugin]) => [prefix, locate(plugin) ?? { config: path, index }]));
   }
   if (languageOptions && typeof languageOptions === "object") {
     out.languageOptions = serializeLanguageOptions(languageOptions);
@@ -66,7 +90,7 @@ function serializeConfigObject(config) {
   }
   // Only a file that does not call `defineConfig()` still has it.
   if (extended !== undefined) {
-    out.extends = [extended].flat(Infinity).map(item => (typeof item === "string" ? item : serializeConfigObject(item)));
+    out.extends = [extended].flat(Infinity).map(item => (typeof item === "string" ? item : serializeConfigObject(item, index)));
   }
   return out;
 }
@@ -76,6 +100,6 @@ if (typeof exported === "function") exported = exported();
 exported = await exported;
 let config = null;
 if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
-else if (exported !== undefined) config = serializeConfigObject(exported);
+else if (exported !== undefined) config = serializeConfigObject(exported, 0);
 
 finish(config);

@@ -184,7 +184,9 @@ pub(crate) fn lint(
                 (None, None) => continue,
             };
             let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
-                done[index] = Some(context.result(crate::paths::to_native(file.path.to_vec()), result, text.unwrap_or_default(), is_fixed, file.config));
+                let mut result = context.result(crate::paths::to_native(file.path.to_vec()), result, text.unwrap_or_default(), is_fixed, file.config);
+                result.had_types = true;
+                done[index] = Some(result);
             };
             let has_fixes = context.fixes() && !state.is_over && result.messages.iter().any(|it| it.fix.is_some());
             let (true, Some(text)) = (has_fixes, &text) else {

@@ -10,6 +10,7 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::js_plugin::Host;
 use bun_lint::linter::{Config, Linter, RcFlavor, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -84,6 +85,8 @@ pub(crate) struct Loader<'l> {
     pub(crate) linter: &'l Linter,
     options: &'l Options,
     environment: &'l Environment<'l>,
+    /// Loads the plugins that are written in JavaScript.
+    js_plugins: &'l Host<'l>,
     /// By directory: the configuration of the files in it.
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
     /// By the path of the file, which is empty for none. Each is read once, by the first to ask.
@@ -193,11 +196,12 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
 }
 
 impl<'l> Loader<'l> {
-    pub(crate) fn new(linter: &'l Linter, options: &'l Options, environment: &'l Environment<'l>) -> Loader<'l> {
+    pub(crate) fn new(linter: &'l Linter, options: &'l Options, environment: &'l Environment<'l>, js_plugins: &'l Host<'l>) -> Loader<'l> {
         Loader {
             linter,
             options,
             environment,
+            js_plugins,
             by_directory: Guarded::new(FxHashMap::default()),
             by_file: Guarded::new(FxHashMap::default()),
             warnings: Guarded::new(Vec::new()),
@@ -368,7 +372,11 @@ impl<'l> Loader<'l> {
             }
             bun_lint::json::parse(&fs::read(&file).ok()?)
         };
-        Config::from_rc_json(self.linter.registry(), base_path, &json, flavor, &mut load)
+        let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
+            let directory = if directory == base_path { paths::dirname(path) } else { directory };
+            self.js_plugins.load(directory, specifier, alias)
+        };
+        Config::from_rc_json_with_plugins(self.linter.registry(), base_path, &json, flavor, &mut load, &mut load_plugin)
             .map_err(|error| Fatal([b"Cannot use the configuration file ", path, b":\n", &error.message[..]].concat()))
     }
 

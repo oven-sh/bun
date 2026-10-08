@@ -85,13 +85,12 @@ impl Pattern {
     }
 
     /// `relative`: from the directory of the file that has the pattern, with a `/` at the end if
-    /// it is a directory.
-    fn matches(&self, relative: &[u8], is_directory: bool) -> bool {
-        let name = || paths::basename(relative.strip_suffix(b"/").unwrap_or(relative));
+    /// it is a directory. `name`: the last part of it.
+    fn matches(&self, relative: &[u8], name: &[u8], is_directory: bool) -> bool {
         match &self.matcher {
             _ if self.is_for_directories && !is_directory => false,
-            Matcher::Name(wanted) => name() == &wanted[..],
-            Matcher::Suffix(suffix) => name().ends_with(suffix),
+            Matcher::Name(wanted) => name == &wanted[..],
+            Matcher::Suffix(suffix) => name.ends_with(suffix),
             Matcher::Path(path) => relative.strip_suffix(b"/").unwrap_or(relative) == &path[..],
             Matcher::Pattern { prefix, glob } => relative.starts_with(prefix) && glob.matches(relative),
         }
@@ -159,6 +158,7 @@ pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
 pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool {
     let mut next = chain.as_ref();
     let mut relative = Vec::new();
+    let name = paths::basename(path);
     while let Some(ignores) = next {
         if let Some(inside) = paths::inside(&ignores.directory, path) {
             relative.clear();
@@ -166,7 +166,7 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
             if is_directory {
                 relative.push(b'/');
             }
-            if let Some(pattern) = ignores.patterns.iter().rev().find(|it| it.matches(&relative, is_directory)) {
+            if let Some(pattern) = ignores.patterns.iter().rev().find(|it| it.matches(&relative, name, is_directory)) {
                 return !pattern.is_negated;
             }
         }

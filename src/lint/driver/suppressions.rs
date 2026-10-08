@@ -113,7 +113,6 @@ impl Suppressions {
                         message.suppressions = vec![Suppression::file()];
                     }
                     result.messages = shown;
-                    result.suppressed_by_file += hidden.len();
                     result.suppressed.append(&mut hidden);
                     was_suppressed = true;
                 }

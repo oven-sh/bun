@@ -179,6 +179,14 @@ fn write_trailing_comments_in<'a>(span: Span, parent: impl FnOnce() -> AstNodes<
     }
 }
 
+/// Whether no comment trails a node that is followed by another one in the same list, because there
+/// is none, or the next one starts its line: then it leads what follows. This takes no look at what
+/// the node is in.
+#[inline]
+pub(crate) fn no_comment_trails_what_is_before_another(f: &Formatter<'_>) -> bool {
+    f.comments().unprinted_comments().first().is_none_or(|it| it.preceded_by_newline())
+}
+
 /// The comments after `node`.
 pub(crate) fn write_trailing_comments_of<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) {
     if f.comments().next_start() != u32::MAX {
@@ -196,6 +204,18 @@ pub(crate) fn format_node<'a>(
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
+    format_node_in_list(span, false, parent, f, write);
+}
+
+/// [`format_node`]. `is_before_another`: another node follows it in the same list.
+#[inline]
+fn format_node_in_list<'a>(
+    span: Span,
+    is_before_another: bool,
+    parent: impl FnOnce() -> AstNodes<'a>,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
     if f.is_quiet() {
         return write(f);
     }
@@ -207,7 +227,9 @@ pub(crate) fn format_node<'a>(
     } else {
         f.in_scope(span, write);
     }
-    write_trailing_comments_in(span, parent, f);
+    if !(is_before_another && no_comment_trails_what_is_before_another(f)) {
+        write_trailing_comments_in(span, parent, f);
+    }
 }
 
 /// Writes a node whose comments are written by the code that writes the node itself, or its
@@ -668,21 +690,20 @@ fn format_statement<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Fo
     if f.has_no_comments_in(Span::new(0, span.end)) {
         // `// prettier-ignore` on a line of its own after the last statement.
         if !is_before_another && f.comments().has_trailing_suppression_comment(span.end) {
-            return format_statement_with_comments(statement, f);
+            return format_statement_with_comments(statement, is_before_another, f);
         }
         f.in_scope_without_comments(span, |f| write_statement(statement, f));
-        // A comment that starts its line leads the next statement.
-        if is_before_another && f.comments().unprinted_comments().first().is_none_or(|it| it.preceded_by_newline()) {
+        if is_before_another && no_comment_trails_what_is_before_another(f) {
             return;
         }
         // The comments between the last statement and the end of a block trail that statement.
         return write_trailing_comments_in(span, || statement.ast_parent(), f);
     }
-    format_statement_with_comments(statement, f);
+    format_statement_with_comments(statement, is_before_another, f);
 }
 
 #[cold]
-fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
+fn format_statement_with_comments<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Formatter<'a>) {
     let node = statement.as_ast_nodes();
     let span = span_for_comments(node, f);
     if f.comments().has_trailing_suppression_comment(node.span().end) {
@@ -700,12 +721,13 @@ fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>
             }
             format_node_without_comments(span, || node.parent(), f, |f| write_statement(statement, f));
         }
-        _ => format_declaration_with_comments(statement, f),
+        _ => format_declaration_with_comments(statement, is_before_another, f),
     }
 }
 
-/// `statement` without its `export`, with the comments around it.
-fn format_declaration_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
+/// `statement` without its `export`, with the comments around it. `is_before_another`: it has no
+/// `export`, and another statement follows it in the same list.
+fn format_declaration_with_comments<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Formatter<'a>) {
     let is_exported = statement.is_exported();
     let span = match is_exported {
         true => f.comments().without_semicolon(statement.span_without_export()),
@@ -720,7 +742,7 @@ fn format_declaration_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'
         write_ignored_statement(statement, span, f);
         return write_trailing_comments_in(span, parent, f);
     }
-    format_node(span, parent, f, |f| write_declaration(statement, f));
+    format_node_in_list(span, is_before_another, parent, f, |f| write_declaration(statement, f));
 }
 
 /// Prettier's `printIgnored` for a statement. `span`: of the statement, without its `;`, which is
@@ -758,7 +780,7 @@ impl<'a> Format<'a> for FormatDeclaration<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         match f.is_quiet() {
             true => write_declaration(self.0, f),
-            false => format_declaration_with_comments(self.0, f),
+            false => format_declaration_with_comments(self.0, false, f),
         }
     }
 }
@@ -985,6 +1007,21 @@ format_with_comments! {
     Prop => print::expressions::write_property,
     VarDecl => print::variable_declaration::write_variable_declarator,
     Param => print::parameters::write_formal_parameter,
+}
+
+/// A member that is followed by another one.
+#[derive(Copy, Clone)]
+pub(crate) struct FormatMemberBeforeAnother<'a>(pub(crate) Member<'a>);
+
+impl<'a> Format<'a> for FormatMemberBeforeAnother<'a> {
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let it = self.0;
+        match f.is_quiet() {
+            true => print::class::write_member(it, f),
+            false => format_node_in_list(it.span(), true, || it.as_ast_nodes().parent(), f, |f| print::class::write_member(it, f)),
+        }
+    }
 }
 
 macro_rules! format_with_comments_in {

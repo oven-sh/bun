@@ -7,7 +7,9 @@ use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::type_parameters::type_arguments;
 use crate::cursor::extend_node;
-use crate::js::format::{FormatTypeOfPredicate, identifier, write_trailing_comments_of};
+use crate::js::format::{
+    FormatTypeOfPredicate, identifier, no_comment_trails_what_is_before_another, write_trailing_comments_of,
+};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::number::format_number_token;
@@ -245,7 +247,9 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
         write!(f, FormatNodeWithoutTrailingComments(&FormatMemberIn(signature, span)));
         self.write_separator(f);
         extend_node(signature.span(), f);
-        write_trailing_comments_of(signature.as_ast_nodes(), f);
+        if !f.is_quiet() && !(self.next_signature.is_some() && no_comment_trails_what_is_before_another(f)) {
+            write_trailing_comments_of(signature.as_ast_nodes(), f);
+        }
     }
 }
 

@@ -5,7 +5,8 @@ use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::format::{
-    FormatTypeAnnotation, format_node, format_node_without_comments, identifier, write_trailing_comments_of,
+    FormatMemberBeforeAnother, FormatTypeAnnotation, format_node, format_node_without_comments, identifier,
+    no_comment_trails_what_is_before_another, write_trailing_comments_of,
 };
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::utils::assignment_like::AssignmentLike;
@@ -572,8 +573,7 @@ impl FormatClassElementWithSemicolon<'_> {
 
 impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let node = self.element.as_ast_nodes();
-        let needs_semi = matches!(node, AstNodes::PropertyDefinition(_) | AstNodes::AccessorProperty(_))
+        let needs_semi = self.element.kind() == MemberKind::Property
             && match f.options().semicolons {
                 Semicolons::Always => true,
                 Semicolons::AsNeeded => self.needs_semicolon(),
@@ -581,11 +581,18 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
             && !f.comments().is_suppressed(self.element.span().start)
             && !f.comments().has_trailing_suppression_comment(self.element.span().end);
 
+        if f.is_quiet() {
+            return write!(f, [self.element, needs_semi.then_some(";")]);
+        }
         if needs_semi {
             // The comments before the `;` are written behind it.
             let element = FormatPropertyWithoutSemicolon(self.element, f.comments().without_semicolon(self.element.span()));
             write!(f, [FormatNodeWithoutTrailingComments(&element), ";"]);
-            write_trailing_comments_of(node, f);
+            if !(self.next_element.is_some() && no_comment_trails_what_is_before_another(f)) {
+                write_trailing_comments_of(self.element.as_ast_nodes(), f);
+            }
+        } else if self.next_element.is_some() {
+            write!(f, FormatMemberBeforeAnother(self.element));
         } else {
             write!(f, self.element);
         }

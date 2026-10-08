@@ -77,6 +77,11 @@ export function parseHandle(target, serialized, fd) {
       // A raw connected descriptor for `server.adopt(fd)` (a hostname router
       // hands over the connection after peeking the ClientHello). Nothing
       // reads it here, so the ClientHello stays in the kernel buffer.
+      // Whoever handles "message" owns the descriptor; with no handler, close it.
+      if (target === null && process.listenerCount("message") === 0) {
+        require("node:fs").closeSync(fd);
+        return;
+      }
       emit(target, serialized.msg, fd);
       return;
     }

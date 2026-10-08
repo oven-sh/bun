@@ -1531,11 +1531,23 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        if arguments.is_empty() || !arguments[0].is_number() {
-            return Err(global.throw_not_enough_arguments("adopt", 1, arguments.len()));
+        if arguments.is_empty() {
+            return Err(global.throw_not_enough_arguments("adopt", 1, 0));
         }
-        let fd = arguments[0].to_int32();
+        let fd = crate::node::util::validators::validate_int32(
+            global,
+            arguments[0],
+            "fd",
+            Some(0),
+            None,
+        )?;
         let Some(listener) = self.listener else {
+            // The server owns `fd` once adopt() is called, so close it rather than leak it.
+            #[cfg(not(windows))]
+            let _ = bun_sys::FdExt::close_allowing_bad_file_descriptor(
+                bun_sys::Fd::from_native(fd),
+                None,
+            );
             return Ok(JSValue::FALSE);
         };
         let ok = bun_opaque::opaque_deref_mut(listener).adopt_fd(fd as _);

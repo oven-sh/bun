@@ -28,6 +28,7 @@ import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
+import { dlopen, ptr } from "bun:ffi";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
@@ -5570,12 +5571,12 @@ describe.skipIf(!isPosix)("server.adopt(fd)", () => {
   // Accept a TCP connection outside Bun's event loop with raw libc calls, the
   // way a hostname router would before passing the descriptor on.
   function rawAccept() {
-    const { dlopen, ptr } = require("bun:ffi");
     const { symbols: libc } = dlopen(libcPathForDlopen(), {
       socket: { args: ["i32", "i32", "i32"], returns: "i32" },
       bind: { args: ["i32", "ptr", "u32"], returns: "i32" },
       listen: { args: ["i32", "i32"], returns: "i32" },
       accept: { args: ["i32", "ptr", "ptr"], returns: "i32" },
+      poll: { args: ["ptr", "u32", "i32"], returns: "i32" },
       getsockname: { args: ["i32", "ptr", "ptr"], returns: "i32" },
       close: { args: ["i32"], returns: "i32" },
     });
@@ -5590,8 +5591,14 @@ describe.skipIf(!isPosix)("server.adopt(fd)", () => {
     const len = new Uint32Array([16]);
     expect(libc.getsockname(lfd, ptr(addr), ptr(len))).toBe(0);
     const port = new DataView(addr.buffer).getUint16(2, false);
+    // struct pollfd { int fd; short events; short revents; }, POLLIN = 1.
+    const pfd = new Int32Array([lfd, 1]);
     return {
       port,
+      // Resolves once a connection is waiting, so accept() never blocks.
+      pending: async () => {
+        while (libc.poll(ptr(pfd), 1, 0) === 0) await Bun.sleep(0);
+      },
       accept: () => libc.accept(lfd, null, null),
       [Symbol.dispose]: () => libc.close(lfd),
     };
@@ -5607,7 +5614,7 @@ describe.skipIf(!isPosix)("server.adopt(fd)", () => {
     } as Serve.Options<undefined>);
     // The client connects to the raw listener, never to the server's port.
     const response = fetch(url(raw.port), { tls: { rejectUnauthorized: false } });
-    await Bun.sleep(10);
+    await raw.pending();
     const fd = raw.accept();
     expect(fd).toBeGreaterThan(0);
     expect(server.adopt(fd)).toBe(true);
@@ -5630,5 +5637,16 @@ describe.skipIf(!isPosix)("server.adopt(fd)", () => {
     const server = serve({ port: 0, fetch: () => new Response("") });
     server.stop(true);
     expect(server.adopt(1_000_000)).toBe(false);
+  });
+
+  it.each([
+    [NaN, "ERR_OUT_OF_RANGE"],
+    [1.5, "ERR_OUT_OF_RANGE"],
+    [-1, "ERR_OUT_OF_RANGE"],
+    [2 ** 31, "ERR_OUT_OF_RANGE"],
+    ["3", "ERR_INVALID_ARG_TYPE"],
+  ])("rejects fd %p with %s", (fd, code) => {
+    using server = serve({ port: 0, fetch: () => new Response("") });
+    expect(() => server.adopt(fd as any)).toThrow(expect.objectContaining({ code }));
   });
 });

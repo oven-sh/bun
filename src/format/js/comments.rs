@@ -12,6 +12,7 @@
 //! somewhere else, the comment is moved before anything is printed: see [`Comment::start`].
 
 use super::source_text::SourceText;
+use crate::options::Flavor;
 use bun_lint::ast::{Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind};
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::TokenKind;
@@ -42,6 +43,8 @@ const PRECEDED_BY_NEWLINE: u8 = 1 << 0;
 const FOLLOWED_BY_NEWLINE: u8 = 1 << 1;
 const INDENTABLE: u8 = 1 << 2;
 const TYPE_CAST: u8 = 1 << 3;
+/// Prettier's `isTypeCastComment`, which is asked of the comment alone.
+const LOOKS_LIKE_TYPE_CAST: u8 = 1 << 4;
 
 impl Comment {
     /// Without the delimiters.
@@ -114,10 +117,11 @@ impl Spanned for Comment {
 }
 
 /// Appends the comments of `file` to `comments`.
-pub(crate) fn collect<'a>(file: &'a File<'a>, comments: &mut Vec<Comment>) {
+pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec<Comment>) {
     let text = file.text();
     let source = SourceText::new(text);
     let first = comments.len();
+    let has_type_casts = file.is_javascript() || type_casts_are_kept_in_typescript(flavor);
     for token in file.comments() {
         let span = token.span();
         let content = token.comment_value();
@@ -140,7 +144,7 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, comments: &mut Vec<Comment>) {
             flags |= INDENTABLE;
         }
         if kind != CommentKind::Line && content.starts_with(b"*") && is_type_cast_text(content) {
-            flags |= TYPE_CAST;
+            flags |= if has_type_casts { LOOKS_LIKE_TYPE_CAST | TYPE_CAST } else { LOOKS_LIKE_TYPE_CAST };
         }
         comments.push(Comment {
             span,
@@ -149,12 +153,19 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, comments: &mut Vec<Comment>) {
             flags,
         });
     }
-    move_comments(file, comments.get_mut(first..).unwrap_or_default());
+    move_comments(file, flavor, comments.get_mut(first..).unwrap_or_default());
+}
+
+/// Only Babel, which Prettier parses JavaScript with, tells it about the parentheses after
+/// `/** @type {T} */`. In TypeScript they are parentheses like any other. oxfmt keeps them there too.
+fn type_casts_are_kept_in_typescript(flavor: Flavor) -> bool {
+    flavor.is_oxfmt()
 }
 
 /// Finds nodes by position.
 struct NodeFinder<'a> {
     file: &'a File<'a>,
+    flavor: Flavor,
     /// The statement of the file that the last position was in. The next one is likely to be in it
     /// too, and a file can have many statements.
     statement: Option<Node<'a>>,
@@ -192,6 +203,9 @@ impl<'a> NodeFinder<'a> {
 /// In a chain of calls Prettier prints the comments of a member expression before its `.b`, which is
 /// where they are.
 fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comment) -> Option<u32> {
+    if comments_stay_in_member_expressions(nodes.flavor) {
+        return None;
+    }
     let Node::Expr(member) = nodes.innermost_node_at(comment.span.start) else {
         return None;
     };
@@ -214,6 +228,11 @@ fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comme
         }
     }
     Some(member.span().start)
+}
+
+/// oxfmt has no `handleMemberExpressionComments`: `a ⏎ // comment ⏎ .b` stays as it is.
+fn comments_stay_in_member_expressions(flavor: Flavor) -> bool {
+    flavor.is_oxfmt()
 }
 
 /// Prettier's `handlePropertyComments`: a comment at the end of a line that is in a property of an
@@ -268,11 +287,12 @@ fn moved_over_parenthesis<'a>(nodes: &mut NodeFinder<'a>, comment: Comment, open
 ///
 /// What is around a comment tells that this is not one, for nearly all of them. The tree is only
 /// looked at for the rest. Apart from that it is linear in the number of comments.
-fn move_comments<'a>(file: &'a File<'a>, comments: &mut [Comment]) {
+fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment]) {
     let text = file.text();
     let is_typescript = !file.is_javascript();
     let mut nodes = NodeFinder {
         file,
+        flavor,
         statement: None,
     };
     let is_blank = |start: u32, end: u32| text.get(start as usize..end as usize).is_some_and(|it| it.trim_ascii().is_empty());
@@ -640,8 +660,9 @@ impl<'a> Comments<'a> {
             }
             if following_span_start > enclosing_span.end && comment.end() <= enclosing_span.end {
                 // The next sibling is outside of the parent and the comment is inside.
-            } else if self.is_type_cast_comment(comment) {
-                // `a || /** @type {T} */ (b)`: it leads the next sibling.
+            } else if comment.flags & LOOKS_LIKE_TYPE_CAST != 0 {
+                // Prettier's `handleClosureTypeCastComments`. `a || /** @type {T} */ (b)`: it leads the
+                // next sibling.
                 type_cast_comment = Some(comment);
                 break;
             } else if comment.preceded_by_newline() || comment.is_moved() {
@@ -684,7 +705,7 @@ impl<'a> Comments<'a> {
         matches!(self.source_text.text_for(&comment.content_span()).trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore")
     }
 
-    /// A JSDoc comment with `@type` or `@satisfies`.
+    /// A JSDoc comment with `@type` or `@satisfies`, in a file where the parentheses after it stay.
     #[inline]
     pub(crate) fn is_type_cast_comment(&self, comment: &Comment) -> bool {
         comment.flags & TYPE_CAST != 0

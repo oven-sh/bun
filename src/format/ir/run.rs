@@ -86,7 +86,7 @@ fn write_document<'a>(
     // The file keeps them, so that they live as long as the handles.
     let comments = file.extension(|| {
         let mut comments = Vec::new();
-        crate::js::comments::collect(file, &mut comments);
+        crate::js::comments::collect(file, options.flavor, &mut comments);
         comments
     });
     let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| comments);

@@ -1,7 +1,5 @@
 FAIL oxfmt js/comments/arrow.js { printWidth: 80 }
 FAIL oxfmt js/comments/arrow.js { printWidth: 100 }
-FAIL oxfmt js/comments/return-type-cast.js { printWidth: 80 }
-FAIL oxfmt js/comments/return-type-cast.js { printWidth: 100 }
 FAIL oxfmt js/crlf/block-comment.js { endOfLine: "crlf", printWidth: 80 }
 FAIL oxfmt js/crlf/block-comment.js { endOfLine: "crlf", printWidth: 100 }
 FAIL oxfmt js/if/issue-16137.js { printWidth: 80 }
@@ -18,14 +16,12 @@ FAIL prettier js/semicolons/empty-line.js { printWidth: 100, semi: false }
 FAIL oxfmt js/semicolons/empty-line.js { printWidth: 80, semi: false }
 FAIL oxfmt js/semicolons/empty-line.js { printWidth: 100, semi: false }
 FAIL oxfmt ts/class/issue-16259.ts { printWidth: 80 }
-FAIL prettier ts/comments/assignments.ts { printWidth: 80 }
-FAIL prettier ts/comments/assignments.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/yield.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/yield.ts { printWidth: 100 }
 FAIL oxfmt ts/import-phases/issue-22691.ts { printWidth: 80 }
 FAIL oxfmt ts/import-phases/issue-22691.ts { printWidth: 100 }
 FAIL oxfmt ts/variable-declarations/issue-16193.ts { printWidth: 80 }
 FAIL oxfmt ts/variable-declarations/issue-16193.ts { printWidth: 100 }
-as Prettier prints them: 370/380
-as oxfmt prints them, in its flavor: 362/380
+as Prettier prints them: 372/380
+as oxfmt prints them, in its flavor: 364/380
 not run: 260: an option that Prettier does not have

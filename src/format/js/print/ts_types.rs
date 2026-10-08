@@ -69,7 +69,11 @@ pub(crate) fn write_ts_type_reference<'a>(
         {
             let brackets = Span::new(last.span().end, ty.span().end);
             let has_line_comment = f.comments().comments_in_range(brackets.start, brackets.end).iter().any(|it| it.is_line());
-            write!(f, [entity_name(name, node), "<"]);
+            match name.len() {
+                1 => write!(f, FormatNodeWithoutTrailingComments(&identifier(last, node))),
+                _ => write!(f, entity_name(name, node)),
+            }
+            write!(f, "<");
             match has_line_comment {
                 true => write!(f, format_dangling_comments(brackets).with_block_indent()),
                 false => write!(f, format_dangling_comments(brackets)),

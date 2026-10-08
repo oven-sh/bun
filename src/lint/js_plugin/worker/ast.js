@@ -31,6 +31,10 @@ class Node {
   }
 }
 
+// The fields that a node does not have at all, where the others are `undefined`: rules ask whether a `Literal` has a `regex`.
+// espree also leaves out the `directive` of a statement that is none.
+const leftOut = new Set(["Literal.regex", "Literal.bigint", "TSModuleDeclaration.body"]);
+
 // `types`: for each type `[name, [[field, flags], ..]]`. See `write_start` in `schema.rs`.
 function defineTypes(types, strings) {
   knownStrings = strings;
@@ -41,7 +45,11 @@ function defineTypes(types, strings) {
       const own = fields.filter(([, flags]) => !(flags & (dialect === 0 ? 4 : 2)) && !(flags & 8));
       visitorKeys[dialect][name] = own.filter(([, flags]) => flags & 1).map(([field]) => field);
       fieldCounts[dialect][id] = own.length;
-      const assignments = own.map(([field], i) => `this.${field} = value(fields[at + ${i}], start, end);`);
+      const assignments = own.map(([field], i) => {
+        const read = `value(fields[at + ${i}], start, end)`;
+        const isLeftOut = leftOut.has(`${name}.${field}`) || (dialect === 1 && field === "directive");
+        return isLeftOut ? `if (fields[at + ${i}] !== 0) this.${field} = ${read};` : `this.${field} = ${read};`;
+      });
       // A class for each type: all nodes of a type have the same shape.
       constructors[dialect][id] = new Function(
         "Node",

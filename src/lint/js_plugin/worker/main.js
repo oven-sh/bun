@@ -378,7 +378,7 @@ function lastDescendants() {
 let isTraversing = false;
 
 // Tells the listeners for the event `name` of the code path analysis.
-function emitCodePathEvent(name, ...args) {
+function emitCodePathEvent(name, args) {
   const calls = codePathCalls.get(name);
   if (calls === undefined) return;
   for (const call of calls) {
@@ -451,22 +451,42 @@ function traverse() {
     for (let id = 0; id < count; id++) enter(id);
     return;
   }
-  const analyzer = codePathCalls === null ? null : new CodePathAnalyzer(enter, leave);
-  const enterNode = analyzer === null ? enter : id => analyzer.enterNode(nodes[id], id);
-  const leaveNode = analyzer === null ? leave : id => analyzer.leaveNode(nodes[id], id);
   const last = lastDescendants();
-  // The nodes that are entered and have to be left.
-  const open = [];
-  for (let id = 0; id < count; id++) {
-    while (open.length > 0 && last[open.at(-1)] < id) leaveNode(open.pop());
-    enterNode(id);
-    if (visitedTwice?.has(id)) {
-      leaveNode(id);
+  // Calls `enterNode` and `leaveNode` with the number of each node that `isLeft` says has to be left, and `enterNode` with
+  // that of every other.
+  const walk = (enterNode, leaveNode, isLeft) => {
+    const open = [];
+    for (let id = 0; id < count; id++) {
+      while (open.length > 0 && last[open.at(-1)] < id) leaveNode(open.pop());
       enterNode(id);
+      if (visitedTwice?.has(id)) {
+        leaveNode(id);
+        enterNode(id);
+      }
+      if (isLeft(id)) open.push(id);
     }
-    if (analyzer !== null || exitCalls(id) !== undefined) open.push(id);
+    while (open.length > 0) leaveNode(open.pop());
+  };
+  if (codePathCalls === null) return walk(enter, leave, id => exitCalls(id) !== undefined);
+  // As in ESLint the whole file is analyzed before the first listener is called: a rule sees the finished graph. A step is
+  // the number of a node to enter, the complement of that of one to leave, or an event and its arguments.
+  const steps = [];
+  let current = 0;
+  const analyzer = new CodePathAnalyzer({
+    enterNode: () => steps.push(current),
+    leaveNode: () => steps.push(~current),
+    emit: (name, args) => steps.push([name, args]),
+  });
+  walk(
+    id => analyzer.enterNode(nodes[(current = id)]),
+    id => analyzer.leaveNode(nodes[(current = id)]),
+    () => true,
+  );
+  for (const step of steps) {
+    if (typeof step !== "number") emitCodePathEvent(step[0], step[1]);
+    else if (step >= 0) enter(step);
+    else leave(~step);
   }
-  while (open.length > 0) leaveNode(open.pop());
 }
 
 // ───────────── a file ─────────────

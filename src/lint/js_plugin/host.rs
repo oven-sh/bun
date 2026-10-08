@@ -113,7 +113,11 @@ fn fix_of(json: Option<&Json>, offsets: &Offsets) -> Option<Fix> {
     let [start, end, text] = json?.as_array()? else {
         return None;
     };
-    let at = |it: &Json| Some(offsets.to_bytes(number(Some(it))?));
+    // The byte order mark is at -1.
+    let at = |it: &Json| match it {
+        Json::Number(n) if *n < 0.0 => Some(0),
+        it => Some(offsets.to_bytes(number(Some(it))?)),
+    };
     Some(Fix {
         span: Span::new(at(start)?, at(end)?),
         text: text.as_str()?.to_vec(),

@@ -406,6 +406,7 @@ impl Cursor<'_> {
 
 /// Every scope of the file, and the parts of the nodes that create them that are outside them, in
 /// no particular order.
+#[inline(never)]
 fn collect(file: &File, namespace_exports: &mut Vec<hir::StmtId>, unvisited: &mut Vec<(u32, u32)>) -> Vec<Proto> {
     let (hir, bound) = (&file.hir, &file.bound);
     let is_javascript = is_javascript_mode(file);

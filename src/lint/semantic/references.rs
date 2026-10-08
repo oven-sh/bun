@@ -263,7 +263,17 @@ struct Merge<'t> {
     next_found: u32,
     /// Where the last identifier is.
     last: u32,
+    /// Up to here from `last` there is no JSDoc comment of a JavaScript file.
+    next_jsdoc: u32,
+    /// Up to this expression from the last identifier none is the operand of a `typeof` in a type.
+    next_operand: u32,
     values: SmallVec<[ExprId; 4]>,
+}
+
+/// The bit for `name` in a set of names that is one word, and can have more than was put in.
+#[inline(always)]
+fn bit_of_name(name: Atom) -> u64 {
+    1 << (name.0 & 63)
 }
 
 impl<'f> Collector<'f, '_> {
@@ -446,6 +456,25 @@ impl<'f> Collector<'f, '_> {
         skipped
     }
 
+    /// The names in the operands of `typeof` in types. The parser stores them after the rest.
+    fn type_query_operands(&mut self) {
+        let file = self.file;
+        for &id in file.bound.type_query_operands {
+            if let Some(e) = file.hir.exprs.get(id.idx())
+                && let ExprKind::Ident(name) = e.kind
+                && !matches!(file.bound.expr_parent.get(id.idx()), None | Some(Parent::None))
+                && name != known::empty
+                && !(file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
+            {
+                let mut read = self.make(ReferenceSite::Expr(id), (e.pos, e.pos), name, READ, ExprId::NONE);
+                // From the type parameters of a function the binder does not see its parameters,
+                // as in TypeScript. ESLint does.
+                read.variable = BY_NAME;
+                self.found.push(read);
+            }
+        }
+    }
+
     /// Passes on those of `found` that are before `pos`.
     #[inline(never)]
     fn pass_on_before(&self, pos: u32, merge: &mut Merge) {
@@ -464,28 +493,38 @@ impl<'f> Collector<'f, '_> {
     fn is_only_read(&self, id: ExprId) -> bool {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
         match bound.expr_parent.get(id.idx()) {
-            Some(&Parent::Expr(parent)) => !matches!(
-                hir.exprs.get(parent.idx()).map(|it| it.kind),
-                None | Some(
-                    ExprKind::Assign { .. }
-                        | ExprKind::Unary {
-                            op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                            ..
-                        }
-                        | ExprKind::Array(_)
-                        | ExprKind::Spread(_)
-                        | ExprKind::As { .. }
-                        | ExprKind::AsConst(_)
-                        | ExprKind::NonNull(_)
-                        | ExprKind::Satisfies { .. }
-                        | ExprKind::Jsx(_)
-                )
-            ),
+            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+                None | Some(ExprKind::Jsx(_)) => false,
+                Some(ExprKind::Assign { target, .. }) => target != id,
+                Some(ExprKind::Unary { op, .. }) => !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec),
+                Some(kind) if can_be_part_of_target(kind) => match bound.expr_parent.get(parent.idx()) {
+                    Some(&Parent::Expr(around)) => {
+                        hir.exprs.get(around.idx()).is_some_and(|it| !can_be_part_of_target(it.kind))
+                    }
+                    None | Some(Parent::None | Parent::Prop(_) | Parent::Stmt(_)) => false,
+                    Some(_) => true,
+                },
+                Some(_) => true,
+            },
             Some(&Parent::Stmt(s)) => !matches!(
                 hir.stmts.get(s.idx()).map(|it| it.kind),
                 None | Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) | StmtKind::Expr(_))
             ),
-            None | Some(Parent::None | Parent::Prop(_)) => false,
+            // The value of a property of an object literal that is an argument, is returned, or
+            // is what a variable is initialized with. The value of an attribute.
+            Some(&Parent::Prop(p)) => {
+                let owner = bound.prop_owner.get(p.idx()).copied().unwrap_or(ExprId::NONE);
+                match bound.expr_parent.get(owner.idx()) {
+                    Some(&Parent::Expr(around)) => matches!(
+                        hir.exprs.get(around.idx()).map(|it| it.kind),
+                        Some(ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Jsx(_))
+                    ),
+                    Some(&Parent::Stmt(s)) => matches!(hir.stmts.get(s.idx()).map(|it| it.kind), Some(StmtKind::Return(_))),
+                    Some(Parent::VarInit(_) | Parent::FnBody(_) | Parent::MemberInit(_)) => true,
+                    _ => false,
+                }
+            }
+            None | Some(Parent::None) => false,
             Some(_) => true,
         }
     }
@@ -534,8 +573,13 @@ impl<'f> Collector<'f, '_> {
             },
             _ => Access::Read,
         };
+        let operands = bound.type_query_operands;
+        if id.0 >= merge.next_operand {
+            merge.next_operand = operands.get(operands.partition_point(|it| it.0 <= id.0)).map_or(u32::MAX, |it| it.0);
+        }
         if name == known::empty
             || (!skipped.is_empty() && skipped.binary_search(&id).is_ok())
+            || (!operands.is_empty() && operands.binary_search(&id).is_ok())
             || (file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
         {
             return true;
@@ -543,23 +587,16 @@ impl<'f> Collector<'f, '_> {
         if e.pos < merge.last {
             return false;
         }
+        if e.pos >= merge.next_jsdoc {
+            let comments = hir.jsdoc_comments;
+            merge.next_jsdoc = comments.get(comments.partition_point(|it| it.0 <= e.pos)).map_or(u32::MAX, |it| it.0);
+        }
         merge.last = e.pos;
         self.pass_on_before(e.pos, merge);
         let (site, here) = (ReferenceSite::Expr(id), (e.pos, e.pos));
         match access {
-            Access::Read => {
-                // From the type parameters of a function the binder does not see its parameters,
-                // as in TypeScript. ESLint does.
-                let operands = bound.type_query_operands;
-                let is_operand = !operands.is_empty() && operands.binary_search(&id).is_ok();
-                if flags == READ && !is_operand {
-                    merge.into.add_read(id, e.pos, name);
-                } else {
-                    let mut read = self.make(site, here, name, flags, ExprId::NONE);
-                    read.variable = if is_operand { BY_NAME } else { NONE };
-                    merge.into.add(read);
-                }
-            }
+            Access::Read if flags == READ => merge.into.add_read(id, e.pos, name),
+            Access::Read => merge.into.add(self.make(site, here, name, flags, ExprId::NONE)),
             Access::ReadWrite(value) => merge.into.add(self.make(site, here, name, READ | WRITE, value)),
             Access::Write(start) => {
                 for &value in &merge.values {
@@ -583,22 +620,27 @@ impl<'f> Collector<'f, '_> {
             passed: 0,
             next_found: self.found.first().map_or(u32::MAX, |it| it.pos),
             last: 0,
+            next_jsdoc: self.file.hir.jsdoc_comments.first().map_or(u32::MAX, |it| it.0),
+            next_operand: self.file.bound.type_query_operands.first().map_or(u32::MAX, |it| it.0),
             values: SmallVec::new(),
         };
         let mut merge = start();
-        // Whether an identifier is a reference, and what it resolves to, is as the binder says.
-        let is_simple = merge.into.is_plain
-            && variables.hazards.is_empty()
-            && skipped.is_empty()
-            && !self.file.has_synthetic_nodes()
-            && self.file.bound.type_query_operands.is_empty();
+        let is_simple = merge.into.is_plain && skipped.is_empty();
+        let hazards = variables.hazards.iter().fold(0, |set, &name| set | bit_of_name(name));
         // The parser stores nearly every file in source order.
         let is_in_order = exprs.iter().enumerate().all(|(i, e)| {
             let ExprKind::Ident(name) = e.kind else {
                 return true;
             };
             let id = ExprId(i as u32);
-            if is_simple && merge.last <= e.pos && name != known::empty && self.is_only_read(id) {
+            // Whether it is a reference, and what it resolves to, is as the binder says.
+            if is_simple
+                && (merge.last..merge.next_jsdoc).contains(&e.pos)
+                && id.0 < merge.next_operand
+                && name != known::empty
+                && hazards & bit_of_name(name) == 0
+                && self.is_only_read(id)
+            {
                 if merge.next_found < e.pos {
                     self.pass_on_before(e.pos, &mut merge);
                 }
@@ -857,6 +899,25 @@ impl<'f> Collector<'f, '_> {
     }
 }
 
+/// Whether what is directly in an expression of this kind can be what an assignment writes to.
+#[inline(always)]
+fn can_be_part_of_target(kind: ExprKind) -> bool {
+    matches!(
+        kind,
+        ExprKind::Assign { .. }
+            | ExprKind::Unary {
+                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                ..
+            }
+            | ExprKind::Array(_)
+            | ExprKind::Spread(_)
+            | ExprKind::As { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_)
+            | ExprKind::Satisfies { .. }
+    )
+}
+
 /// `name[0].toUpperCase() === name[0]`
 fn is_component_name(name: &[u8]) -> bool {
     match name.first() {
@@ -904,6 +965,7 @@ impl References {
             found: Vec::with_capacity(hir.pats.len() / 2 + hir.types.len() / 2),
         };
         collector.patterns(tree);
+        collector.type_query_operands();
         collector.export_specifiers();
         if !hir.jsx.is_empty() {
             collector.jsx_names();

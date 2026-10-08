@@ -206,6 +206,114 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
     (name.is_some() && name != known::empty).then_some((name, pos))
 }
 
+/// Every declaration of a variable, and the position and the index of each, sorted.
+#[inline(never)]
+fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
+    let mut declared: Vec<(SymbolId, SymFlags, Decl)> = Vec::new();
+    file.binding.declarations_in_scopes(&mut declared);
+    let mut entries: Vec<Entry> = Vec::with_capacity(declared.len());
+    // The position and the index of each entry.
+    let mut in_order: Vec<u64> = Vec::with_capacity(declared.len());
+    for &(symbol, binder_flags, decl) in &declared {
+        if let Some((name, pos)) = name_of_declaration(file, decl)
+            && !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
+        {
+            in_order.push(u64::from(pos) << 32 | entries.len() as u64);
+            entries.push(Entry {
+                scope: NONE,
+                name,
+                pos,
+                symbol,
+                binder_flags,
+                decl,
+                flags: 0,
+            });
+        }
+    }
+    // The binder declares nearly in source order.
+    in_order.sort();
+    (entries, in_order)
+}
+
+/// Finds the scope that each is declared in, from the scope that its name is written in. Those
+/// that declare no variable are left without. Returns how many are declared in each scope, at the
+/// index after that of the scope.
+#[inline(never)]
+fn assign_scopes(
+    file: &File,
+    tree: &ScopeTree,
+    entries: &mut [Entry],
+    in_order: &[u64],
+    hazards: &mut Vec<Atom>,
+) -> Vec<u32> {
+    let (hir, bound) = (&file.hir, &file.bound);
+    let is_javascript = scopes::is_javascript_mode(file);
+    let has_block_scopes = !is_javascript || file.language().ecma_version >= 2015;
+    let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
+    let mut cursor = tree.cursor();
+    for &key in in_order {
+        let it = &mut entries[key as u32 as usize];
+        let (here, name) = (cursor.seek(it.pos), it.name);
+        (it.scope, it.flags) = match it.decl {
+            Decl::Var(p) | Decl::Require(p) => {
+                let PatParent::Var(d) = root_of_pattern(file, p) else {
+                    continue;
+                };
+                let is_hoisted = hir.var_decls.get(d.idx()).is_some_and(|it| it.kind == VarKind::Var)
+                    && !is_catch_parameter(file, d);
+                let scope = match is_hoisted {
+                    true => tree.scopes[here as usize].variable_scope,
+                    false => here,
+                };
+                // The binder declares it in the function.
+                if matches!(it.decl, Decl::Require(_)) && tree.scopes[scope as usize].variable_scope != scope {
+                    hazards.push(name);
+                }
+                (scope, VALUE)
+            }
+            Decl::Param(p) => match root_of_pattern(file, p) {
+                PatParent::Param(param) => {
+                    let scope = bound.param_fn.get(param.idx()).and_then(|f| tree.of_fn.get(f.idx()));
+                    (scope.copied().unwrap_or(NONE), VALUE)
+                }
+                // The binder does not visit the name of a `this` parameter.
+                _ if name == known::this => (here, VALUE),
+                _ => continue,
+            },
+            Decl::Fn(f) => {
+                let is_in_block = || {
+                    matches!(bound.fns.get(f.idx()).map(|it| it.owner), Some(bun_sema::bind::FnOwner::Stmt(s))
+                        if matches!(bound.stmt_parent.get(s.idx()), Some(Parent::Stmt(_))))
+                };
+                if !has_block_scopes && is_in_block() {
+                    hazards.push(name);
+                }
+                (here, VALUE)
+            }
+            Decl::Class(c) => match bound.class_owner.get(c.idx()) {
+                Some(ClassOwner::Expr(_)) => (tree.of_class.get(c.idx()).copied().unwrap_or(NONE), VALUE | TYPE),
+                _ => (here, VALUE | TYPE),
+            },
+            Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => (here, VALUE | TYPE),
+            _ if is_javascript => continue,
+            Decl::Interface(_) | Decl::Alias(_) => (here, TYPE),
+            Decl::TypeParam(_) => (scope_of_type_parameter(file, tree, here, it.pos), TYPE),
+            Decl::Module(_) => {
+                // To the binder, a namespace without values is not a value.
+                if !it.binder_flags.intersects(SymFlags::VALUE) {
+                    hazards.push(name);
+                }
+                (here, VALUE | TYPE)
+            }
+            _ => (here, VALUE | TYPE),
+        };
+        if let Some(count) = entry_starts.get_mut(it.scope as usize + 1) {
+            *count += 1;
+        }
+    }
+    entry_starts
+}
+
 /// The variables while they are made.
 struct Made {
     list: Vec<Variable>,
@@ -271,100 +379,13 @@ impl Made {
 
 impl Variables {
     pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree) -> Variables {
-        let (hir, bound) = (&file.hir, &file.bound);
-        let is_javascript = scopes::is_javascript_mode(file);
-        let has_block_scopes = !is_javascript || file.language().ecma_version >= 2015;
+        let hir = &file.hir;
         let symbol_count = file.binding.symbol_count();
         let mut hazards: Vec<Atom> = Vec::new();
 
-        let mut declared: Vec<(SymbolId, SymFlags, Decl)> = Vec::new();
-        file.binding.declarations_in_scopes(&mut declared);
-        let mut entries: Vec<Entry> = Vec::with_capacity(declared.len());
-        // The position and the index of each entry.
-        let mut in_order: Vec<u64> = Vec::with_capacity(declared.len());
-        for &(symbol, binder_flags, decl) in &declared {
-            if let Some((name, pos)) = name_of_declaration(file, decl)
-                && !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
-            {
-                in_order.push(u64::from(pos) << 32 | entries.len() as u64);
-                entries.push(Entry {
-                    scope: NONE,
-                    name,
-                    pos,
-                    symbol,
-                    binder_flags,
-                    decl,
-                    flags: 0,
-                });
-            }
-        }
-        // The binder declares nearly in source order.
-        in_order.sort();
-
-        // The scope that each is declared in, from the scope that its name is written in.
+        let (mut entries, in_order) = entries_in_order(file);
         let scope_count = tree.scopes.len();
-        let mut entry_starts = vec![0u32; scope_count + 1];
-        let mut cursor = tree.cursor();
-        for &key in &in_order {
-            let it = &mut entries[key as u32 as usize];
-            let (here, name) = (cursor.seek(it.pos), it.name);
-            (it.scope, it.flags) = match it.decl {
-                Decl::Var(p) | Decl::Require(p) => {
-                    let PatParent::Var(d) = root_of_pattern(file, p) else {
-                        continue;
-                    };
-                    let is_hoisted = hir.var_decls.get(d.idx()).is_some_and(|it| it.kind == VarKind::Var)
-                        && !is_catch_parameter(file, d);
-                    let scope = match is_hoisted {
-                        true => tree.scopes[here as usize].variable_scope,
-                        false => here,
-                    };
-                    // The binder declares it in the function.
-                    if matches!(it.decl, Decl::Require(_)) && tree.scopes[scope as usize].variable_scope != scope {
-                        hazards.push(name);
-                    }
-                    (scope, VALUE)
-                }
-                Decl::Param(p) => match root_of_pattern(file, p) {
-                    PatParent::Param(param) => {
-                        let scope = bound.param_fn.get(param.idx()).and_then(|f| tree.of_fn.get(f.idx()));
-                        (scope.copied().unwrap_or(NONE), VALUE)
-                    }
-                    // The binder does not visit the name of a `this` parameter.
-                    _ if name == known::this => (here, VALUE),
-                    _ => continue,
-                },
-                Decl::Fn(f) => {
-                    let is_in_block = || {
-                        matches!(bound.fns.get(f.idx()).map(|it| it.owner), Some(bun_sema::bind::FnOwner::Stmt(s))
-                            if matches!(bound.stmt_parent.get(s.idx()), Some(Parent::Stmt(_))))
-                    };
-                    if !has_block_scopes && is_in_block() {
-                        hazards.push(name);
-                    }
-                    (here, VALUE)
-                }
-                Decl::Class(c) => match bound.class_owner.get(c.idx()) {
-                    Some(ClassOwner::Expr(_)) => (tree.of_class.get(c.idx()).copied().unwrap_or(NONE), VALUE | TYPE),
-                    _ => (here, VALUE | TYPE),
-                },
-                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => (here, VALUE | TYPE),
-                _ if is_javascript => continue,
-                Decl::Interface(_) | Decl::Alias(_) => (here, TYPE),
-                Decl::TypeParam(_) => (scope_of_type_parameter(file, tree, here, it.pos), TYPE),
-                Decl::Module(_) => {
-                    // To the binder, a namespace without values is not a value.
-                    if !it.binder_flags.intersects(SymFlags::VALUE) {
-                        hazards.push(name);
-                    }
-                    (here, VALUE | TYPE)
-                }
-                _ => (here, VALUE | TYPE),
-            };
-            if let Some(count) = entry_starts.get_mut(it.scope as usize + 1) {
-                *count += 1;
-            }
-        }
+        let mut entry_starts = assign_scopes(file, tree, &mut entries, &in_order, &mut hazards);
 
         // The entries scope by scope, and in each in source order, as indices.
         for i in 0..scope_count {

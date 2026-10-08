@@ -3,7 +3,8 @@ use bun_lint_eslint::rules::init_declarations::{Config, declared_namespace_aroun
 
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
-    config: Config,
+    /// `None` without options: upstream hands its context to ESLint's rule, which then reads no mode and reports nothing.
+    config: Option<Config>,
 }
 
 impl Rule for InitDeclarations {
@@ -13,18 +14,24 @@ impl Rule for InitDeclarations {
 
     fn new(options: &Options) -> Self {
         InitDeclarations {
-            config: Config::new(options),
+            config: options.str(0).map(|_| Config::new(options)),
         }
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        if self.config.is_none() {
+            return;
+        }
         on.var_decls(|rule, decl, cx| {
-            let Some(found) = rule.config.check(decl) else {
+            let Some(config) = &rule.config else {
+                return;
+            };
+            let Some(found) = config.check(decl) else {
                 return;
             };
             if decl.flags().contains(Flags::AMBIENT)
                 && (has_declare(found.declaration)
-                    || !rule.config.is_never && declared_namespace_around(found.declaration).is_some())
+                    || !config.is_never && declared_namespace_around(found.declaration).is_some())
             {
                 return;
             }

@@ -77,13 +77,13 @@ impl NoMultipleEmptyLines {
                 (CONSECUTIVE_BLANK, self.max)
             };
             if line - last_line - 1 > max_allowed {
-                // TODO(api): where the last line is blank and has no line break, ESLint's end is
-                // the line after it, which does not exist: `Report::end_at(Position)`.
                 let at = Span::new(
                     start_of_line(file, last_line + max_allowed + 1),
                     start_of_line(file, line),
                 );
+                // Where the last line is blank and has no line break, that is a line after the last.
                 cx.report(at, message)
+                    .end_at(Position { line, column: 0 })
                     .data("max", max_allowed)
                     .data("pluralizedLines", if max_allowed == 1 { "line" } else { "lines" })
                     .fix(|fixer| {

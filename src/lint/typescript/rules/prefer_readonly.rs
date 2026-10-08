@@ -443,18 +443,7 @@ impl Rule for PreferReadonly {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> ClassScopes<'a> {
         let mut class_scopes = FxHashMap::default();
-        if !file.has_classes() {
-            return ClassScopes(class_scopes);
-        }
-        let declarations = file.stmts_of_kind(StmtTag::Class).filter_map(|statement| match statement.kind() {
-            StmtKind::Class(class) => Some(class),
-            _ => None,
-        });
-        let expressions = file.exprs_of_kind(ExprTag::Class).filter_map(|e| match e.kind() {
-            ExprKind::Class(class) => Some(class),
-            _ => None,
-        });
-        for class in declarations.chain(expressions) {
+        for class in file.classes() {
             let class_scope = self.new_class_scope(class);
             if !class_scope.private_modifiables.is_empty() {
                 class_scopes.insert(class, class_scope);

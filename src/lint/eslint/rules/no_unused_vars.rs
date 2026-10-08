@@ -865,7 +865,7 @@ impl NoUnusedVars {
         is_defined_beside_rest || variable.references().any(|it| has_rest_sibling(it.node()))
     }
 
-    fn check<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+    fn check<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
         let Some(def) = symbol.declarations().find(|it| !matches!(it, Declaration::Other)) else {
             return;
         };
@@ -974,7 +974,7 @@ impl NoUnusedVars {
     }
 
     /// Reports the names in `/* global a, b */` comments that nothing refers to.
-    fn check_global_comments<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn check_global_comments<'a>(&self, cx: &Cx<'a, Self>) {
         let file = cx.file();
         for global in file.globals_in_comments() {
             let name: &'a [u8] = &global.name;
@@ -1034,9 +1034,14 @@ impl Rule for NoUnusedVars {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.symbols(Self::check);
-        if self.vars == Vars::All {
-            on.finish(Self::check_global_comments);
-        }
+        // At the end, as upstream: other rules mark variables as used while they run.
+        on.finish(|rule, cx| {
+            for symbol in cx.file().symbols() {
+                rule.check(symbol, cx);
+            }
+            if rule.vars == Vars::All {
+                rule.check_global_comments(cx);
+            }
+        });
     }
 }

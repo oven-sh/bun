@@ -12,6 +12,12 @@ const UNNECESSARY_QUALIFIER: Message = Message::new(
 
 type Namespaces<'a> = SmallVec<[TsNode<'a>; 4]>;
 
+/// Whether `at` is in one of `declarations`, which are apart from each other and in the order of the text.
+fn is_in_declaration(declarations: &[Span], at: u32) -> bool {
+    let after = declarations.partition_point(|it| it.start <= at);
+    after.checked_sub(1).and_then(|last| declarations.get(last)).is_some_and(|it| at < it.end)
+}
+
 /// The declarations of the namespaces and the enums that `node` is in.
 ///
 /// Of `namespace A.B.C {}`, which is three declarations for TypeScript and one for ESLint, that is
@@ -110,7 +116,7 @@ impl NoUnnecessaryQualifier {
         let ExprKind::Dot { obj, .. } = node.kind() else {
             return;
         };
-        if !is_entity_name_expression(obj) {
+        if !is_in_declaration(&cx.state, node.span().start) || !is_entity_name_expression(obj) {
             return;
         }
         if let Node::Expr(parent) = node.parent()
@@ -142,6 +148,9 @@ impl NoUnnecessaryQualifier {
         let Some(first) = name.first().filter(|_| name.len() > 1) else {
             return;
         };
+        if !is_in_declaration(&cx.state, first.start()) {
+            return;
+        }
         let namespaces = namespaces_in_scope(owner);
         if namespaces.is_empty() {
             return;
@@ -164,16 +173,26 @@ impl Rule for NoUnnecessaryQualifier {
     const META: Meta = Meta::typescript("no-unnecessary-qualifier", Kind::Suggestion)
         .fixable(Fixable::Code)
         .requires_types();
-    type State<'a> = ();
+    /// Where the namespaces and the enums are that are in no other, in the order of the text.
+    type State<'a> = Vec<Span>;
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryQualifier
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.has_stmts([StmtTag::Module, StmtTag::Enum]) {
-            return;
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<Span> {
+        let declarations = file.stmts_of_kind(StmtTag::Module).chain(file.stmts_of_kind(StmtTag::Enum));
+        let mut declarations: Vec<Span> = declarations.map(|it| it.span()).collect();
+        if declarations.is_empty() {
+            return declarations;
         }
+        declarations.sort_unstable_by_key(|it| (it.start, std::cmp::Reverse(it.end)));
+        let mut end = 0;
+        declarations.retain(|it| {
+            let is_in_no_other = it.start >= end;
+            end = end.max(it.end);
+            is_in_no_other
+        });
         on.exprs([ExprTag::Dot], Self::check_member);
         on.types([TypeTag::Ref, TypeTag::Import], |_, node, cx| {
             if let TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } = node.kind() {
@@ -187,5 +206,6 @@ impl Rule for NoUnnecessaryQualifier {
                 Self::check_entity_name(cx, Node::Stmt(node), name);
             }
         });
+        declarations
     }
 }

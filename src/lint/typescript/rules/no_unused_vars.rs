@@ -83,8 +83,6 @@ enum VariableType {
 
 pub struct State {
     is_definition_file: bool,
-    /// `variable.eslintUsed`, for what an ambient context exports without saying so.
-    eslint_used: UsedMarks,
 }
 
 // ───────────────────────────── ambient declarations ─────────────────────────────
@@ -97,18 +95,19 @@ fn has_overriding_export_statement<'a>(body: List<'a, Stmt<'a>>) -> bool {
     })
 }
 
-fn mark_declaration_child_as_used(node: Stmt, eslint_used: &mut UsedMarks) {
+/// Sets `variable.eslintUsed`, which other rules see as well: ESLint's own `no-unused-vars`.
+fn mark_declaration_child_as_used(node: Stmt) {
     match node.kind() {
         // A `FunctionDeclaration` is not ambient, a `TSDeclareFunction` is.
         StmtKind::Fn(function) if function.has_body() => {}
-        StmtKind::Fn(function) => function.symbol().into_iter().for_each(|it| eslint_used.mark(it)),
-        StmtKind::Class(class) => class.symbol().into_iter().for_each(|it| eslint_used.mark(it)),
+        StmtKind::Fn(function) => function.symbol().into_iter().for_each(Symbol::mark_used),
+        StmtKind::Class(class) => class.symbol().into_iter().for_each(Symbol::mark_used),
         StmtKind::Interface(_)
         | StmtKind::TypeAlias(_)
         | StmtKind::Enum(_)
         | StmtKind::Module(_)
         | StmtKind::Var(_) => {
-            Node::Stmt(node).declared_symbols().into_iter().for_each(|it| eslint_used.mark(it));
+            Node::Stmt(node).declared_symbols().into_iter().for_each(Symbol::mark_used);
         }
         _ => {}
     }
@@ -116,12 +115,12 @@ fn mark_declaration_child_as_used(node: Stmt, eslint_used: &mut UsedMarks) {
 
 /// Marks what the statements of a declaration file or of an ambient namespace declare, unless
 /// something there says what is exported.
-fn mark_ambient_declarations<'a>(body: List<'a, Stmt<'a>>, eslint_used: &mut UsedMarks) {
+fn mark_ambient_declarations<'a>(body: List<'a, Stmt<'a>>) {
     if has_overriding_export_statement(body) {
         return;
     }
     for statement in body.iter().filter(|it| !it.is_exported()) {
-        mark_declaration_child_as_used(statement, eslint_used);
+        mark_declaration_child_as_used(statement);
     }
 }
 
@@ -500,7 +499,7 @@ impl NoUnusedVars {
             || is_declared_module(Node::Stmt(node))
             || Node::Stmt(node).ancestors().any(is_declared_module)
         {
-            mark_ambient_declarations(module.innermost().body(), &mut cx.state.eslint_used);
+            mark_ambient_declarations(module.innermost().body());
         }
     }
 
@@ -532,11 +531,13 @@ impl NoUnusedVars {
 
     fn check_program<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        let mut eslint_used = std::mem::take(&mut cx.state.eslint_used);
-        if cx.state.is_definition_file {
-            mark_ambient_declarations(file.body(), &mut eslint_used);
+        let analysis = collect_variables(file, UsedMarks::default());
+        // Upstream's `collectVariables` sets `variable.eslintUsed`, for the rules that end after this one.
+        for variable in analysis.used_variables() {
+            if variable.class_scope().is_none() && analysis.is_eslint_used(*variable) {
+                variable.symbol().mark_used();
+            }
         }
-        let analysis = collect_variables(file, eslint_used);
 
         let mut reported = SymbolSet::default();
         let used_variables: &[Variable<'a>] = match self.report_used_ignore_pattern {
@@ -609,9 +610,10 @@ impl Rule for NoUnusedVars {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
         on.stmts([StmtTag::Module], Self::check_module);
         on.finish(Self::check_program);
-        State {
-            is_definition_file: is_definition_file(file.path()),
-            eslint_used: UsedMarks::default(),
+        let is_definition_file = is_definition_file(file.path());
+        if is_definition_file {
+            mark_ambient_declarations(file.body());
         }
+        State { is_definition_file }
     }
 }

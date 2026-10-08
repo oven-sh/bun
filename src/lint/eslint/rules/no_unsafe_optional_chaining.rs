@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// Disallow use of optional chaining in contexts where the `undefined` value is not allowed.
 pub struct NoUnsafeOptionalChaining {
@@ -79,32 +80,64 @@ fn usage_of(e: Expr<'_>) -> Usage<'_> {
     }
 }
 
+/// What becomes of the value of an expression in the end.
+#[derive(Copy, Clone)]
+pub enum Outcome {
+    Unsafe,
+    Arithmetic,
+    Safe,
+}
+
+/// How far up the way is before it is remembered. Otherwise every operand of a long `a?.b && c?.d && ..` goes all of it.
+const MANY_STEPS: u32 = 32;
+
+fn outcome_of<'a>(chain: Expr<'a>, remembered: &mut FxHashMap<Expr<'a>, Outcome>) -> Outcome {
+    let (mut at, mut steps, mut far) = (chain, 0, None);
+    let outcome = loop {
+        if steps >= MANY_STEPS {
+            if let Some(&known) = remembered.get(&at) {
+                break known;
+            }
+            far.get_or_insert(at);
+        }
+        match usage_of(at) {
+            Usage::ValueOf(parent) => at = parent,
+            Usage::Unsafe => break Outcome::Unsafe,
+            Usage::Arithmetic => break Outcome::Arithmetic,
+            Usage::Safe => break Outcome::Safe,
+        }
+        steps += 1;
+    };
+    while let Some(e) = far {
+        remembered.insert(e, outcome);
+        far = match usage_of(e) {
+            Usage::ValueOf(parent) if e != at => Some(parent),
+            _ => None,
+        };
+    }
+    outcome
+}
+
 impl NoUnsafeOptionalChaining {
     fn check<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !chain.is_chain_root() {
             return;
         }
-        let mut at = chain;
-        loop {
-            match usage_of(at) {
-                Usage::ValueOf(parent) => at = parent,
-                Usage::Unsafe => {
-                    cx.report(chain, UNSAFE_OPTIONAL_CHAIN);
-                    return;
-                }
-                Usage::Arithmetic if self.disallow_arithmetic_operators => {
-                    cx.report(chain, UNSAFE_ARITHMETIC);
-                    return;
-                }
-                Usage::Arithmetic | Usage::Safe => return,
+        match outcome_of(chain, &mut cx.state) {
+            Outcome::Unsafe => {
+                cx.report(chain, UNSAFE_OPTIONAL_CHAIN);
             }
+            Outcome::Arithmetic if self.disallow_arithmetic_operators => {
+                cx.report(chain, UNSAFE_ARITHMETIC);
+            }
+            Outcome::Arithmetic | Outcome::Safe => {}
         }
     }
 }
 
 impl Rule for NoUnsafeOptionalChaining {
     const META: Meta = Meta::eslint("no-unsafe-optional-chaining", Kind::Problem).recommended();
-    type State<'a> = ();
+    type State<'a> = FxHashMap<Expr<'a>, Outcome>;
 
     fn new(options: &Options) -> Self {
         NoUnsafeOptionalChaining {
@@ -112,10 +145,11 @@ impl Rule for NoUnsafeOptionalChaining {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.exprs(
             [ExprTag::Dot, ExprTag::Index, ExprTag::Call, ExprTag::NonNull],
             Self::check,
         );
+        FxHashMap::default()
     }
 }

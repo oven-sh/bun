@@ -32,7 +32,7 @@ pub(crate) fn is_in_runs(runs: &[u32], c: u32) -> bool {
     runs.partition_point(|&start| start <= c) % 2 == 1
 }
 
-/// `\p{M}`. Made by `test/cli/lint/oracle/utils/generate-unicode-tables.ts`.
+/// `\p{M}`. Made by `test/cli/lint/oracle/utils-small/generate-unicode-tables.ts`.
 #[rustfmt::skip]
 static COMBINING: [u32; 654] = [
     0x300, 0x370, 0x483, 0x48A, 0x591, 0x5BE, 0x5BF, 0x5C0, 0x5C1, 0x5C3, 0x5C4, 0x5C6, 0x5C7,

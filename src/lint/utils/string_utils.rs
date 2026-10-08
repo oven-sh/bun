@@ -202,7 +202,7 @@ pub fn match_shebang_pattern(text: &[u8]) -> Option<&[u8]> {
     (!line.is_empty()).then_some(line)
 }
 
-/// `\p{L}`. See [`is_in_runs`]. Made by `test/cli/lint/oracle/utils/generate-unicode-tables.ts`.
+/// `\p{L}`. See [`is_in_runs`]. Made by `test/cli/lint/oracle/utils-small/generate-unicode-tables.ts`.
 #[rustfmt::skip]
 static LETTERS: [u32; 1368] = [
     0x41, 0x5B, 0x61, 0x7B, 0xAA, 0xAB, 0xB5, 0xB6, 0xBA, 0xBB, 0xC0, 0xD7, 0xD8, 0xF7, 0xF8, 0x2C2,
@@ -331,7 +331,7 @@ static LETTERS: [u32; 1368] = [
 
 /// The runs of code points of the same [`Class`], in ascending order: where the run starts, times
 /// 32, plus the index of the class in [`Class::ALL`]. Hangul syllables are left out. Made by
-/// `test/cli/lint/oracle/utils/generate-unicode-tables.ts`.
+/// `test/cli/lint/oracle/utils-small/generate-unicode-tables.ts`.
 #[rustfmt::skip]
 static GRAPHEME_CLASSES: [u32; 1371] = [
     0x3, 0x142, 0x163, 0x1A1, 0x1C3, 0x400, 0xFE3, 0x1400, 0x1530, 0x1540, 0x15A3, 0x15D0, 0x15E0,

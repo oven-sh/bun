@@ -1,6 +1,6 @@
 # `bun format`
 
-A formatter for JavaScript, JSX and TypeScript whose output is byte for byte that of Prettier 3.
+A formatter for JavaScript, JSX and TypeScript whose output is byte for byte that of Prettier. The target is the released **3.9.9**: its source, its snapshots, and the npm package as an oracle.
 
 - **The specification is Prettier**: `src/language-js/**`, `src/document/**`, `src/main/comments/**`, and its snapshot tests, `tests/format/{js,jsx,typescript}/**/__snapshots__/format.test.js.snap`.
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
@@ -13,16 +13,16 @@ Not there, on purpose: formatting of embedded languages (CSS, GraphQL, HTML, Mar
 ```
 File (HIR + binder tables)                     bun_lint::ast
   └─ js::comments::collect   → [Comment]       all comments, in order, with what is around them
-  └─ js::format_file         → [FormatElement] the document (IR): core/element.rs
-  └─ core::document::propagate_expand          a group with a forced line break in it is broken
-  └─ core::printer::print    → bytes           decides which groups fit on the line
+  └─ js::format_file         → [FormatElement] the document (IR): ir/element.rs
+  └─ ir::document::propagate_expand          a group with a forced line break in it is broken
+  └─ ir::printer::print    → bytes           decides which groups fit on the line
 ```
 
 `lib.rs` has the entry points: `format(file, &options, &mut scratch, &mut out)`. `Scratch` holds every buffer, so that formatting the next file allocates nothing.
 
 | directory | what | oxc |
 | --- | --- | --- |
-| `core/` | the IR, `Formatter`, builders (`group`, `indent`, `soft_line_break`, ..), macros, the printer. Knows nothing about JavaScript except `Formatter::context` | `oxc_formatter_core` |
+| `ir/` | the IR, `Formatter`, builders (`group`, `indent`, `soft_line_break`, ..), macros, the printer. Knows nothing about JavaScript except `Formatter::context` | `oxc_formatter_core` |
 | `options.rs` | `FormatOptions`, with oxc's field and type names, and `set("semi", "false")` with Prettier's | `oxc_formatter/src/options.rs` |
 | `js/format.rs` | `impl Format for Expr, Stmt, TypeNode, ..`: comments, `prettier-ignore`, parentheses, then dispatch to `js/print/` | the generated `ast_nodes/generated/format.rs` |
 | `js/ast_nodes.rs`, `fields.rs`, `siblings.rs` | the tree as oxc sees it: `AstNodes`, `parent()`, `span()`, field accessors, the next sibling | `ast_nodes/` |
@@ -46,7 +46,7 @@ Same name unless listed. `print/mod.rs` of oxc (1900 lines) is split:
 | keyword types, references, literals, signatures, predicates, `typeof`, `import()` types | `print/ts_types.rs`, and the one-liners in `format.rs::write_type` |
 | `template/mod.rs` | `print/template.rs` (`template/embed/` is not ported) |
 | `oxc_syntax` operators and precedence | `utils/operators.rs` |
-| `oxc_formatter_core` `buffer.rs`, `arguments.rs`, `state.rs`, `format_extensions.rs` | `core/formatter.rs` |
+| `oxc_formatter_core` `buffer.rs`, `arguments.rs`, `state.rs`, `format_extensions.rs` | `ir/formatter.rs` |
 
 ## How the code differs from oxc's
 
@@ -168,7 +168,7 @@ A node that is not ported yet is written as it is in the source: `write!(f, Form
 
 ## Testing
 
-`B` is the `bun-lint` binary (the crate `bun_lint_standalone`, `src/lint/standalone/format_cmd.rs`), `P` a checkout of Prettier.
+`B` is the `bun-lint` binary (the crate `bun_lint_standalone`, `src/lint/standalone/format_cmd.rs`), `P` a checkout of Prettier at the tag 3.9.9.
 
 ```sh
 $B format file a.ts --semi=false --printWidth=100     # format one file
@@ -186,7 +186,7 @@ To see Prettier's document for a snippet: `prettier --parser babel --debug-print
 
 ## Pitfalls
 
-- The fixtures are those of Prettier's `main` (3.10-dev). oxc tracks a release. Where they differ, the snapshot is right.
+- oxc tracks an older release of Prettier (3.8). Where they differ, the snapshot of 3.9.9 is right.
 - `Expr::span()` is without parentheses, like in ESTree. `e.outer_span()` has them.
 - A backtick string without substitutions is `ExprKind::Template`. JSX text is `ExprKind::String` with `e.is_jsx_text()`.
 - `a, b, c` is `Binary { op: Comma }`, left-nested. `e.sequence()` are the operands. `BinaryLikeExpression::new(e)` is `None` for it, and for `#a in b`.

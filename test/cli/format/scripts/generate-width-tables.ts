@@ -1,14 +1,16 @@
-// Generates src/format/core/width_tables.rs from the packages that Prettier's `getStringWidth` uses.
+// Generates src/format/ir/width_tables.rs from the packages that Prettier's `getStringWidth` uses.
 //
-//   cd <a directory with emoji-regex, get-east-asian-width and narrow-emojis installed>
-//   bun <this file> > src/format/core/width_tables.rs
+//   cd <a directory with emoji-regex, get-east-asian-width and narrow-emojis installed, in the versions of Prettier's package.json>
+//   bun <this file> > src/format/ir/width_tables.rs
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 const require = createRequire(pathToFileURL(process.cwd() + "/"));
 const load = (name: string) => import(pathToFileURL(require.resolve(name)).href);
 const emojiRegex = (await load("emoji-regex")).default;
-const { _isFullwidth: isFullwidth, _isWide: isWide } = await load("get-east-asian-width");
+const eastAsianWidth = await load("get-east-asian-width");
+const isFullwidth = eastAsianWidth._isFullWidth ?? eastAsianWidth._isFullwidth;
+const isWide = eastAsianWidth._isWide;
 const { isNarrowEmojiCharacter } = await load("narrow-emojis");
 
 function ranges(test: (codePoint: number) => boolean): [number, number][] {
@@ -30,7 +32,6 @@ const matchesWhole = (regex: RegExp, text: string) => {
 
 const tables: [string, string, [number, number][]][] = [
   ["WIDE", "East Asian Width is `W` or `F`.", ranges(c => isFullwidth(c) || isWide(c))],
-  ["ZERO_WIDTH", "`Nonspacing_Mark` or `Enclosing_Mark`.", ranges(c => /[\p{Mn}\p{Me}]/u.test(String.fromCodePoint(c)))],
   ["EMOJI", "`emoji-regex` matches the character by itself.", ranges(c => matchesWhole(emojiRegex(), String.fromCodePoint(c)))],
   ["NARROW_EMOJI", "An emoji that takes one column by itself.", ranges(c => isNarrowEmojiCharacter(String.fromCodePoint(c)))],
   [

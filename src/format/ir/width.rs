@@ -1,6 +1,6 @@
 //! Prettier's `getStringWidth`: the number of columns that a text takes.
 
-use super::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, WIDE, ZERO_WIDTH};
+use super::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, WIDE};
 
 fn is_in(table: &[(u32, u32)], c: u32) -> bool {
     let after = table.partition_point(|range| range.0 <= c);
@@ -79,7 +79,7 @@ fn width_of_non_ascii(text: &[u8]) -> u32 {
         width += match c {
             0..=0x1F | 0x7F..=0x9F => 0,
             0x20..=0x7E => 1,
-            _ if is_in(ZERO_WIDTH, c) => 0,
+            0x300..=0x36F | 0xFE00..=0xFE0F => 0,
             _ if is_in(WIDE, c) => 2,
             _ => 1,
         };

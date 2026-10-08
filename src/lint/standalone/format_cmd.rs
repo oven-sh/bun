@@ -76,26 +76,29 @@ impl Args {
 const IGNORED: &[&str] = &[
     // Syntax that neither ECMAScript nor TypeScript has
     "js/_errors_",
+    "js/arrows-bind",
+    "js/async-do-expressions",
     "js/babel-plugins",
-    "js/bind-expression",
+    "js/bind-expressions",
+    "js/comments-pipeline-own-line",
     "js/destructuring-private-fields",
     "js/discard-binding",
-    "js/do-expression",
-    "jsx/do-expression",
+    "js/do/",
+    "jsx/do/",
     "js/export-default/export-default-from",
     "js/export-default/escaped",
-    "js/function-sent",
-    "js/module-block",
+    "js/invalid-code",
+    "js/module-blocks",
+    "js/no-semi-babylon-extensions",
     "js/optional-chaining-assignment",
     "js/partial-application",
     "js/pipeline-operator",
     "js/source-phase-imports",
-    "js/throw-expression",
-    "js/v8-intrinsic",
+    "js/throw_expressions",
+    "js/v8_intrinsic",
     "tuple-and-record",
     "jsx/fbt",
     "typescript/error-recovery",
-    "js/error-recovery",
     // Embedded languages
     "js/embeded",
     "js/multiparser",
@@ -289,6 +292,11 @@ fn conformance(args: &Args) {
                 let (path, input) = match std::fs::read(&on_disk) {
                     Ok(input) => (on_disk.to_string_lossy().into_owned(), input),
                     Err(_) => {
+                        // `snippet: test.cjs`: the name that the test gives the text. It is parsed
+                        // as the parser of the test says.
+                        if let Some(name) = case.name.strip_prefix("snippet: ").filter(|it| it.contains('.')) {
+                            let _ = options.set(b"filepath", name.as_bytes());
+                        }
                         let extension = match language {
                             "typescript" => "ts",
                             "jsx" => "jsx",
@@ -313,7 +321,7 @@ fn conformance(args: &Args) {
                         format!("<{error}>")
                     }
                 };
-                let is_visualized = case.output.contains("<LF>\n") || case.output.contains("<CRLF>\n");
+                let is_visualized = ["<LF>\n", "<CRLF>\n", "<CR>\n"].iter().any(|it| case.output.contains(it));
                 let actual = if is_visualized { visualize_end_of_line(&actual) } else { actual };
                 let expected = case.output;
 

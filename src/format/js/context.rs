@@ -2,7 +2,7 @@
 
 use super::comments::{Comment, Comments};
 use super::source_text::SourceText;
-use crate::core::element::FormatElement;
+use crate::ir::element::FormatElement;
 use crate::options::FormatOptions;
 use bun_lint::ast::File;
 use bun_lint::span::{Span, Spanned};

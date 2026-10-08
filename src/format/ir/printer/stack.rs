@@ -5,7 +5,7 @@
 //! stack that pops from a borrowed copy and pushes to a vector of its own.
 
 use super::{Indention, PrintError, PrintResult};
-use crate::core::element::{FormatElement, Interned, PrintMode, Tag, TagKind};
+use crate::ir::element::{FormatElement, Interned, PrintMode, Tag, TagKind};
 use crate::options::IndentStyle;
 
 pub(super) trait Stack<T> {

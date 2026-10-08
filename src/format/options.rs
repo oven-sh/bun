@@ -20,7 +20,7 @@
 //! | `experimentalTernaries` | `experimental_ternaries` |
 //! | `embeddedLanguageFormatting` | `embedded_language_formatting` |
 
-use crate::core::prelude::*;
+use crate::ir::prelude::*;
 
 #[derive(Debug, Default, Clone)]
 pub struct FormatOptions {
@@ -41,6 +41,8 @@ pub struct FormatOptions {
     pub experimental_operator_position: OperatorPosition,
     pub experimental_ternaries: bool,
     pub embedded_language_formatting: EmbeddedLanguageFormatting,
+    /// The name of the file, if it is not the one that it was parsed under: text from stdin.
+    pub filepath: Option<Box<[u8]>>,
 }
 
 /// An option has a value that Prettier does not accept, or there is no such option.
@@ -140,6 +142,7 @@ impl FormatOptions {
                     _ => return Err(InvalidOption),
                 };
             }
+            b"filepath" => self.filepath = Some(value.into()),
             _ => return Err(InvalidOption),
         }
         Ok(())

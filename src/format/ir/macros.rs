@@ -7,12 +7,12 @@
 /// ```
 macro_rules! format_args {
     ($($value:expr),+ $(,)?) => {
-        $crate::core::formatter::Arguments(($(&$value,)+))
+        $crate::ir::formatter::Arguments(($(&$value,)+))
     };
 }
 pub(crate) use format_args;
 
-/// Writes the arguments to a [`Formatter`](crate::core::formatter::Formatter). All of them are
+/// Writes the arguments to a [`Formatter`](crate::ir::formatter::Formatter). All of them are
 /// evaluated before the first is written.
 ///
 /// ```ignore
@@ -21,10 +21,10 @@ pub(crate) use format_args;
 /// ```
 macro_rules! write {
     ($dst:expr, [$($arg:expr),+ $(,)?]) => {
-        $crate::core::formatter::Format::fmt(&$crate::core::macros::format_args!($($arg),+), $dst)
+        $crate::ir::formatter::Format::fmt(&$crate::ir::macros::format_args!($($arg),+), $dst)
     };
     ($dst:expr, $arg:expr) => {
-        $crate::core::formatter::Format::fmt(&$arg, $dst)
+        $crate::ir::formatter::Format::fmt(&$arg, $dst)
     };
 }
 pub(crate) use write;
@@ -36,7 +36,7 @@ pub(crate) use write;
 /// only be written once: see `src/format/CLAUDE.md`.
 macro_rules! best_fitting {
     ($least_expanded:expr, $($tail:expr),+ $(,)?) => {
-        $crate::core::builders::BestFitting::new(&[&$least_expanded, $(&$tail),+])
+        $crate::ir::builders::BestFitting::new(&[&$least_expanded, $(&$tail),+])
     };
 }
 pub(crate) use best_fitting;

@@ -311,6 +311,14 @@ impl<'a> Formatter<'a> {
         self.context.file()
     }
 
+    /// Prettier's `filepath` option.
+    pub(crate) fn filepath(&self) -> &[u8] {
+        match &self.options().filepath {
+            Some(filepath) => filepath,
+            None => self.file().path(),
+        }
+    }
+
     #[inline]
     pub(crate) fn comments(&self) -> &Comments<'a> {
         self.context.comments()

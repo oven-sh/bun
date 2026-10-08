@@ -11,7 +11,7 @@ fn member_count(ty: TypeNode<'_>) -> usize {
 
 /// `| A` is a union of one type here. Prettier's parsers have it as `A`, so the parent of `A` is
 /// what the union is in.
-fn effective_parent(parent: AstNodes<'_>) -> AstNodes<'_> {
+pub(crate) fn effective_parent(parent: AstNodes<'_>) -> AstNodes<'_> {
     match parent {
         AstNodes::TSUnionType(ty) | AstNodes::TSIntersectionType(ty) if member_count(ty) <= 1 => {
             effective_parent(parent.parent())
@@ -33,8 +33,8 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, _f: &Formatter<'a>) -> boo
             }
             function_like_type_needs_parentheses(ty, parent, func.return_type())
         }
-        TypeKind::Infer(_) => match effective_parent(ty.ast_parent()) {
-            AstNodes::TSIntersectionType(_) | AstNodes::TSUnionType(_) => true,
+        TypeKind::Infer(param) => match effective_parent(ty.ast_parent()) {
+            AstNodes::TSIntersectionType(_) | AstNodes::TSUnionType(_) => param.constraint().is_some(),
             AstNodes::TSRestType(_) => false,
             parent => operator_type_or_higher_needs_parens(ty, parent),
         },
@@ -51,6 +51,8 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, _f: &Formatter<'a>) -> boo
             AstNodes::TSConditionalType(parent) => {
                 matches!(parent.kind(), TypeKind::Cond { check, extends, .. } if check == ty || extends == ty)
             }
+            // `<A extends (B extends C ? D : E)>() => {}`
+            AstNodes::TSTypeParameter(param) => param.constraint() == Some(ty),
             AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => member_count(parent) > 1,
             parent => operator_type_or_higher_needs_parens(ty, parent),
         },
@@ -87,11 +89,11 @@ fn function_like_type_needs_parentheses<'a>(
             if extends != ty {
                 return false;
             }
-            match return_type.map(TypeNode::kind) {
-                Some(TypeKind::Infer(param)) => param.constraint().is_some(),
-                Some(TypeKind::Predicate { ty, .. }) => ty.is_some(),
-                _ => false,
-            }
+            let return_type = match return_type.map(TypeNode::kind) {
+                Some(TypeKind::Predicate { ty: Some(asserted), .. }) => Some(asserted),
+                _ => return_type,
+            };
+            matches!(return_type.map(TypeNode::kind), Some(TypeKind::Infer(param)) if param.constraint().is_some())
         }
         AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => member_count(parent) > 1,
         _ => operator_type_or_higher_needs_parens(ty, parent),

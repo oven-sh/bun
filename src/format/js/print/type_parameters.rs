@@ -23,8 +23,8 @@ pub(crate) fn write_ts_type_parameter<'a>(param: TypeParam<'a>, f: &mut Formatte
             [
                 space(),
                 "extends",
-                group(&indent(&format_args!(line_suffix_boundary(), soft_line_break_or_space())))
-                    .with_group_id(Some(group_id)),
+                group(&indent(&soft_line_break_or_space())).with_group_id(Some(group_id)),
+                line_suffix_boundary(),
                 indent_if_group_breaks(&constraint, group_id)
             ]
         );
@@ -133,6 +133,12 @@ impl<'a> FormatTSTypeParameters<'a> {
     }
 }
 
+impl Spanned for FormatTSTypeParameters<'_> {
+    fn span(&self) -> Span {
+        AstNodes::TSTypeParameterDeclaration(self.owner).span()
+    }
+}
+
 impl<'a> Format<'a> for FormatTSTypeParameters<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if self.params.is_empty() {
@@ -163,9 +169,9 @@ impl<'a> FormatTypeArguments<'a> {
     /// Without the comments around the `<..>`.
     pub(crate) fn write_without_comments(self, f: &mut Formatter<'a>) {
         let params = self.params;
-        let is_arrow_function_vars = is_arrow_function_variable_type_argument(self);
-        let first_arg_can_be_hugged = params.len() == 1
-            && params.first().is_some_and(|first| first.is_keyword(Keyword::Null) || should_hug_single_type(first, f));
+        let should_inline = params.len() == 1
+            && params.first().is_some_and(|first| should_hug_single_type(first, f) && !self.has_comment_on_own_line(first, f))
+            && !is_arrow_function_variable_type_argument(self);
 
         let format_params = format_with(|f| {
             f.join_with(soft_line_break_or_space()).entries_with_trailing_separator(
@@ -175,11 +181,24 @@ impl<'a> FormatTypeArguments<'a> {
             );
         });
 
-        if !is_arrow_function_vars && first_arg_can_be_hugged {
+        if should_inline {
             write!(f, ["<", format_params, ">"]);
         } else {
             write!(f, group(&format_args!("<", soft_block_indent(&format_params), ">")));
         }
+    }
+
+    /// Whether a comment around `only`, the only type argument, is a line comment, or the last one
+    /// ends its line.
+    fn has_comment_on_own_line(self, only: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+        if f.is_quiet() {
+            return false;
+        }
+        let (outer, inner) = (AstNodes::TSTypeParameterInstantiation(self.owner).span(), only.span());
+        let before = f.comments().comments_in_range(outer.start, inner.start);
+        let after = f.comments().comments_in_range(inner.end, outer.end);
+        before.iter().chain(after).any(|comment| comment.is_line())
+            || after.last().or(before.last()).is_some_and(|comment| comment.followed_by_newline())
     }
 }
 

@@ -1,4 +1,5 @@
 use super::semicolon::OptionalSemicolon;
+use crate::js::format::identifier;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -15,18 +16,17 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
         && f.source_text().has_line_terminator_after_skipping_comments(ty.span().start + 1);
 
     let format_inner = format_with(|f| {
-        if should_expand && !f.is_quiet() {
-            let comments = match f.comments().has_leading_own_line_comment(key.start()) {
-                true => f.comments().comments_before(key.start()),
-                false => f.comments().comments_before_character(ty.span().start, b'['),
-            };
-            write!(f, FormatLeadingComments::Comments(comments));
+        if !f.is_quiet() {
+            write_comments_before_bracket(f.comments().comments_before_character(ty.span().start, b'['), f);
+        }
+        match mapped.readonly() {
+            MappedModifier::None => {}
+            MappedModifier::Add => write!(f, [mapped.is_readonly_with_plus().then_some("+"), "readonly", space()]),
+            MappedModifier::Remove => write!(f, ["-", "readonly", space()]),
         }
 
         let format_key = format_with(|f| {
-            // The comments after the key are written before the `]`.
-            format_leading_comments(key.span()).fmt(f);
-            write!(f, [source_text(key.span()), space(), "in", space(), param.constraint()]);
+            write!(f, [identifier(key, AstNodes::TSMappedType(ty)), space(), "in", space(), param.constraint()]);
             if let Some(name_type) = mapped.name_type() {
                 write!(f, [space(), "as", space(), name_type]);
             }
@@ -35,23 +35,16 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
                 write!(f, FormatTrailingComments::Comments(comments));
             }
         });
-        let format_member = format_with(|f| {
-            match mapped.readonly() {
-                MappedModifier::None => {}
-                MappedModifier::Add => write!(f, [mapped.is_readonly_with_plus().then_some("+"), "readonly", space()]),
-                MappedModifier::Remove => write!(f, ["-", "readonly", space()]),
-            }
-            write!(f, group(&format_args!("[", soft_block_indent(&format_key), "]")));
-            match mapped.optional() {
-                MappedModifier::None => {}
-                MappedModifier::Add => write!(f, [mapped.is_optional_with_plus().then_some("+"), "?"]),
-                MappedModifier::Remove => write!(f, "-?"),
-            }
-            if let Some(type_annotation) = mapped.ty() {
-                write!(f, [":", space(), type_annotation]);
-            }
-        });
-        write!(f, group(&format_member));
+        write!(f, group(&format_args!("[", soft_block_indent(&format_key), "]")));
+
+        match mapped.optional() {
+            MappedModifier::None => {}
+            MappedModifier::Add => write!(f, [mapped.is_optional_with_plus().then_some("+"), "?"]),
+            MappedModifier::Remove => write!(f, "-?"),
+        }
+        if let Some(type_annotation) = mapped.ty() {
+            write!(f, [":", space(), type_annotation]);
+        }
         write!(f, if_group_breaks(&OptionalSemicolon));
     });
 
@@ -64,4 +57,21 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
             "}",
         ]
     );
+}
+
+/// The comments between the `{` and the `[`, each on its own line. The last one stays on the line
+/// of the `[` if it is there in the source and fits.
+fn write_comments_before_bracket<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
+    let Some((last, others)) = comments.split_last() else {
+        return;
+    };
+    for comment in others {
+        f.comments_mut().increment_printed_count();
+        write!(f, [comment, hard_line_break()]);
+    }
+    f.comments_mut().increment_printed_count();
+    match last.followed_by_newline() {
+        true => write!(f, [last, hard_line_break()]),
+        false => write!(f, group(&format_args!(last, soft_line_break_or_space()))),
+    }
 }

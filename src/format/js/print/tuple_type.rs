@@ -6,7 +6,7 @@ use crate::write;
 pub(crate) fn write_ts_tuple_type<'a>(ty: TypeNode<'a>, elements: List<'a, TupleElem<'a>>, f: &mut Formatter<'a>) {
     write!(f, "[");
     if elements.is_empty() {
-        write!(f, format_dangling_comments(ty.span()).with_block_indent());
+        write!(f, format_dangling_comments(ty.span()).with_soft_block_indent());
     } else {
         let element_types = format_with(|f| {
             let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());

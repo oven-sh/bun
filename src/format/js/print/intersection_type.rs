@@ -1,11 +1,13 @@
-use crate::js::parentheses::ts_type::needs_parentheses;
-use crate::js::utils::typescript::is_object_like_type;
+use crate::js::utils::typescript::{is_object_like_type, union_leading_comments};
 use crate::prelude::*;
 use crate::write;
 
 /// `A & B`
 pub(crate) fn write_ts_intersection_type<'a>(_ty: TypeNode<'a>, types: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
-    write!(f, group(&format_with(|f| format_intersection_types(types, f))));
+    match types.len() {
+        1 => write!(f, types.first()),
+        _ => write!(f, group(&format_with(|f| format_intersection_types(types, f)))),
+    }
 }
 
 /// Prettier's `printIntersectionType`: object types stay on the line of the `&`, other types go
@@ -17,27 +19,29 @@ fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatte
 
     for (index, item) in types.iter().enumerate() {
         let is_object_like = is_object_like_type(item);
+        let content = format_with(|f| {
+            // The comments before a union are outside of its parentheses.
+            if matches!(item.kind(), TypeKind::Union(members) if members.len() > 1) {
+                write!(f, FormatLeadingComments::Comments(union_leading_comments(item, f).0));
+            }
+            write!(f, item);
+        });
 
         if index == 0 {
-            write!(f, item);
+            write!(f, content);
+        } else if is_prev_object_like && is_object_like {
+            match is_chain_indented {
+                true => write!(f, [space(), indent(&content)]),
+                false => write!(f, [space(), content]),
+            }
         } else if !(is_prev_object_like || is_object_like) || f.comments().has_leading_own_line_comment(item.span().start)
         {
-            let content = format_with(|f| {
-                if needs_parentheses(item, f) {
-                    write!(f, format_leading_comments(item.span()));
-                }
-                write!(f, item);
-            });
             write!(f, soft_line_indent_or_space(&content));
+        } else if index > 1 {
+            is_chain_indented = true;
+            write!(f, [space(), indent(&content)]);
         } else {
-            write!(f, space());
-            if !is_prev_object_like || !is_object_like {
-                is_chain_indented = index > 1;
-            }
-            match is_chain_indented {
-                true => write!(f, indent(&item)),
-                false => write!(f, item),
-            }
+            write!(f, [space(), content]);
         }
 
         if index < last_index {

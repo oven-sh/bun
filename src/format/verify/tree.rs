@@ -336,7 +336,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     /// `Program::ids` are the same.
     #[inline]
     fn is_same_list<T>(a: IdList<T>, b: IdList<T>) -> Same {
-        if (a.start, a.len) == (b.start, b.len) { Ok(()) } else { Err(()) }
+        if a.len == b.len && (a.start == b.start || a.len == 0) { Ok(()) } else { Err(()) }
     }
 
     /// For a difference whose place is not known. The caller that knows one fills it in.

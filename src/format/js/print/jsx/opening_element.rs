@@ -92,7 +92,17 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
         match self.compute_layout(f) {
             OpeningElementLayout::Inline => write!(f, [format_open, space(), format_close]),
             OpeningElementLayout::SingleStringAttribute => {
-                write!(f, [format_open, space(), format_attributes, is_self_closing.then_some(space()), format_close]);
+                // Nothing in the group breaks. After a line break in a fill, it is the group that is measured.
+                write!(
+                    f,
+                    group(&format_args!(
+                        format_open,
+                        space(),
+                        format_attributes,
+                        is_self_closing.then_some(space()),
+                        format_close
+                    ))
+                );
             }
             OpeningElementLayout::IndentAttributes {
                 name_has_comment,

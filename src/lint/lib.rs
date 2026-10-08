@@ -44,4 +44,5 @@ pub mod prelude {
     };
     pub use crate::span::{Position, Span, Spanned};
     pub use crate::tokens::{Token, TokenKind, Tokens, skip_trivia, skip_trivia_back};
+    pub use crate::utils::{self, ast_utils, eslint_utils, text, ts_utils};
 }

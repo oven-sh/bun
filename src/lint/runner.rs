@@ -540,7 +540,9 @@ pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> 
     file.sink.wants_fixes.set(wants_fixes);
     run_rules(file, rules);
     let mut diagnostics = file.sink.diagnostics.take();
-    diagnostics.sort_by_key(|it| (it.span.start, it.span.end, it.rule));
+    // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
+    // listener that is called on entering a node, the outer node first.
+    diagnostics.sort_by_key(|it| (it.span.start, std::cmp::Reverse(it.span.end), it.rule));
     diagnostics
 }
 

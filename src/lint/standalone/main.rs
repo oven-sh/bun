@@ -175,7 +175,18 @@ fn run_fixture(fixture: &Json, entry: &RuleEntry) -> (Tally, String) {
         let path = str_of(case, "filename").unwrap_or("file.js");
         let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
         let outcome = std::panic::catch_unwind(|| lint(entry, path, code, options));
-        let expected = expected_messages(case);
+        // The order of what starts at the same place depends on the order in which ESLint visits the nodes.
+        let in_order = |mut messages: Vec<Reported>| {
+            messages.sort_by(|a, b| {
+                (a.line, a.column, a.end, &a.message_id, &a.message).cmp(&(b.line, b.column, b.end, &b.message_id, &b.message))
+            });
+            messages
+        };
+        let outcome = outcome.map(|mut outcome| {
+            outcome.messages = in_order(std::mem::take(&mut outcome.messages));
+            outcome
+        });
+        let expected = in_order(expected_messages(case));
         let expected_output = case.get(b"output").and_then(Json::as_str);
         let problem = match &outcome {
             Err(_) => Some("panicked".to_owned()),

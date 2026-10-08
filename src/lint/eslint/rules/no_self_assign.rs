@@ -1,4 +1,6 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 
 /// Disallow assignments where both sides are exactly the same.
 pub struct NoSelfAssign {
@@ -9,6 +11,9 @@ const SELF_ASSIGNMENT: Message = Message::new("selfAssignment", "'{{name}}' is a
 
 /// ESLint's `eachSelfAssignment`: goes through the target `left` and the value `right` in parallel.
 fn each_self_assignment<'a>(left: Expr<'a>, right: Expr<'a>, props: bool, report: &mut dyn FnMut(Expr<'a>)) {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return;
+    }
     match (left.kind(), right.kind()) {
         (ExprKind::Ident(l), ExprKind::Ident(r)) => {
             if l == r {
@@ -38,8 +43,23 @@ fn each_self_assignment<'a>(left: Expr<'a>, right: Expr<'a>, props: bool, report
                     start = i + 1;
                 }
             }
+            if targets.len().min(values.len() - start) <= 8 {
+                for target in targets {
+                    for value in values.iter().skip(start) {
+                        each_self_assigned_property(target, value, props, report);
+                    }
+                }
+                return;
+            }
+            let mut by_name: FxHashMap<Cow<'a, [u8]>, Vec<Prop<'a>>> = FxHashMap::default();
+            for value in values.iter().skip(start) {
+                if let Some(name) = ast_utils::get_static_property_name(value) {
+                    by_name.entry(name).or_default().push(value);
+                }
+            }
             for target in targets {
-                for value in values.iter().skip(start) {
+                let name = ast_utils::get_static_property_name(target);
+                for &value in name.and_then(|name| by_name.get(&name)).into_iter().flatten() {
                     each_self_assigned_property(target, value, props, report);
                 }
             }

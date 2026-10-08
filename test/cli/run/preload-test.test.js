@@ -280,5 +280,17 @@ plugin({
       hot.write("main.js", `console.log("main ran again");`);
       expect(await hot.stdout("main ran again\n")).toContain("main ran again\n");
     });
+
+    test("a preload that is gone on a reload ends the run with the error", async () => {
+      const first = `console.log("first ran");`;
+      // A preload that failed keeps the list of preloads, and a reload runs them again.
+      await using hot = spawnHot({ "first.js": first, "second.js": `throw new Error("from second.js");` });
+      expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
+      hot.remove("second.js");
+      hot.write("first.js", first);
+      const [stderr, exitCode] = await Promise.all([hot.stderr('preload not found "./second.js"'), hot.proc.exited]);
+      expect(stderr).toContain('preload not found "./second.js"');
+      expect({ exitCode, signalCode: hot.proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+    });
   });
 });

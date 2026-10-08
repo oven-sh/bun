@@ -10,7 +10,7 @@ use crate::js::format::{FormatTypeAnnotation, identifier, write_trailing_comment
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::number::format_number_token;
-use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
+use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::without_lone_operator;
@@ -31,16 +31,26 @@ pub(crate) fn write_ts_type_reference<'a>(
     args: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
+    let node = ty.as_ast_nodes();
+    if name.len() > 2 && matches!(node, AstNodes::TSInterfaceHeritage(_) | AstNodes::TSClassImplements(_)) {
+        return write!(f, [heritage_name(name, node), type_arguments(args, Node::Type(ty))]);
+    }
     let wrap = is_leftmost_intrinsic_in_type_alias(ty, name, args);
-    write!(
-        f,
-        [
-            wrap.then_some("("),
-            entity_name(name, ty.as_ast_nodes()),
-            type_arguments(args, Node::Type(ty)),
-            wrap.then_some(")")
-        ]
-    );
+    write!(f, [wrap.then_some("("), entity_name(name, node), type_arguments(args, Node::Type(ty)), wrap.then_some(")")]);
+}
+
+/// `A.B.C` after `extends` or `implements`. There it is a member expression in ESTree, which can
+/// break before its dots (Prettier's `printMemberExpression`).
+fn heritage_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
+    format_with(move |f: &mut Formatter<'a>| {
+        for (index, part) in name.parts().enumerate() {
+            let part = identifier(part, parent);
+            match index {
+                0 => write!(f, part),
+                _ => write!(f, [line_suffix_boundary(), group(&indent(&format_args!(soft_line_break(), ".", part)))]),
+            }
+        }
+    })
 }
 
 /// `type A = (intrinsic)` is a reference to a type of that name. Without the parentheses it is the
@@ -108,7 +118,7 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
         let quote_needed = members.iter().any(|signature| {
             let node = signature.as_ast_nodes();
             matches!(node, AstNodes::TSPropertySignature(_) | AstNodes::TSMethodSignature(_))
-                && signature.key().is_some_and(|key| should_preserve_quote(key, f) || is_quoted_new(key, node))
+                && signature.key().is_some_and(|key| key_requires_quotes(key, node, f))
         });
         f.context_mut().push_quote_needed(quote_needed);
     }
@@ -129,11 +139,6 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
     if is_consistent {
         f.context_mut().pop_quote_needed();
     }
-}
-
-/// `"new"(): T` is a method. `new (): T` is not.
-pub(crate) fn is_quoted_new<'a>(key: Key<'a>, parent: AstNodes<'a>) -> bool {
-    matches!(parent, AstNodes::TSMethodSignature(_)) && matches!(key.kind(), KeyKind::String(_)) && key.is("new")
 }
 
 /// A member and the `;` after it.

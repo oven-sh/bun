@@ -2,11 +2,10 @@
 
 use super::function::should_group_function_parameters;
 use super::parameters::FormatFormalParameters;
-use super::ts_types::is_quoted_new;
 use super::type_parameters::type_parameters;
 use crate::js::format::FormatTypeAnnotation;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::object::{FormatKey, format_computed_or_property_key};
+use crate::js::utils::object::format_computed_or_property_key;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -41,11 +40,8 @@ pub(crate) fn write_ts_method_signature<'a>(member: Member<'a>, func: Func<'a>, 
             MemberKind::Setter => write!(f, ["set", space()]),
             _ => {}
         }
-        let node = AstNodes::TSMethodSignature(member);
-        match member.key() {
-            Some(key) if is_quoted_new(key, node) => write!(f, FormatKey::new(key, node)),
-            Some(key) => format_computed_or_property_key(key, node, f),
-            None => {}
+        if let Some(key) = member.key() {
+            format_computed_or_property_key(key, AstNodes::TSMethodSignature(member), f);
         }
         // There is nothing after the name that the comments before the `(` could lead.
         if !f.is_quiet()

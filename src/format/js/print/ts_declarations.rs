@@ -11,7 +11,7 @@ use super::union_type::write_ts_union_type_in;
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::object::{FormatKey, format_property_key, should_preserve_quote};
+use crate::js::utils::object::{FormatKey, key_requires_quotes};
 use crate::js::utils::typescript::{should_hug_type, without_lone_operator};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -109,6 +109,13 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
     let node = AstNodes::TSTypeAliasDeclaration(statement);
     let ty = without_lone_operator(alias.ty());
 
+    // The comments before the `;` of an export are behind it: see `Comments::without_semicolon`.
+    let is_exported = !f.is_quiet() && matches!(statement.as_ast_nodes(), AstNodes::ExportNamedDeclaration(_));
+    let view_limit = is_exported.then(|| {
+        let end = f.comments().without_semicolon(statement.span()).end;
+        f.comments_mut().limit_comments_up_to(end)
+    });
+
     // Whether the left side is a group depends on the layout, which depends on the comments that
     // are left after the left side is written.
     let outer_group = f.reserve_tag();
@@ -163,6 +170,9 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
     }
     f.group_from(outer_group, false);
     write!(f, OptionalSemicolon);
+    if let Some(view_limit) = view_limit {
+        f.comments_mut().restore_view_limit(view_limit);
+    }
 }
 
 /// Of the comments between the left side of a type alias, which ends at `start`, and the `=`, those
@@ -231,7 +241,9 @@ pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: En
     } else {
         let is_consistent = f.options().quote_properties.is_consistent();
         if is_consistent {
-            let quote_needed = members.iter().any(|member| member.key().is_some_and(|key| should_preserve_quote(key, f)));
+            let quote_needed = members
+                .iter()
+                .any(|member| member.key().is_some_and(|key| key_requires_quotes(key, AstNodes::TSEnumMember(member), f)));
             f.context_mut().push_quote_needed(quote_needed);
         }
         write!(
@@ -250,19 +262,11 @@ pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: En
 
 /// `A`, `A = 1`, `"a" = 1`
 pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter<'a>) {
-    let node = AstNodes::TSEnumMember(member);
-    match member.key() {
+    if let Some(key) = member.key() {
         // `["a"]` is `"a"`. Only a template keeps its brackets.
-        Some(key) if key.is_computed() => {
-            let is_template = f.source_text().text_for(&key.inner_span(f.file())).starts_with(b"`");
-            write!(f, [is_template.then_some("["), FormatKey::new(key, node), is_template.then_some("]")]);
-        }
-        Some(key) if matches!(key.kind(), KeyKind::Ident(_)) && f.context().is_quote_needed() => {
-            let quote = f.options().quote_style.as_str();
-            format_node(key.span(f.file()), || node, f, |f| write!(f, [quote, source_text(key.span(f.file())), quote]));
-        }
-        Some(key) => format_property_key(key, node, f),
-        None => {}
+        let is_computed = key.is_computed() && f.source_text().text_for(&key.inner_span(f.file())).starts_with(b"`");
+        let key = FormatKey::new(key, AstNodes::TSEnumMember(member));
+        write!(f, [is_computed.then_some("["), key, is_computed.then_some("]")]);
     }
     if let Some(init) = member.init() {
         write!(f, [space(), "=", space(), init]);

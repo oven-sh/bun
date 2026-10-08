@@ -110,6 +110,17 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(2);
   });
 
+  test("a file is left as it is if what would be written is another program", async () => {
+    // Like Prettier 3.9.9, the formatter writes no `;` before the `(` here, which makes `c(..)` of the two statements.
+    const text = "a ? b : c;\n(d ? e : f) ? g : h;\n";
+    const result = await format({ "a.js": text, "b.js": ugly }, ["--no-semi", "--experimental-ternaries"], {
+      reads: ["a.js"],
+    });
+    expect(result.files).toEqual({ "a.js": text });
+    expect(result.stderr).toContain("[error] a.js: formatting would change what the code means.");
+    expect(result.exitCode).toBe(2);
+  });
+
   test("other languages are left alone, with a warning", async () => {
     const result = await format({ "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": ugly }, [], {
       reads: ["a.html", "b.vue", "c.js"],

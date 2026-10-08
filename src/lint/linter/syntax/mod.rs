@@ -128,20 +128,17 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
 /// ([`Dialect::babel`](bun_sema::resolve::Dialect::babel)): its parser throws. That is `typescript`, which is typescript-estree, for
 /// a TypeScript file, and `babel` for a JavaScript file. What `languageOptions` of the file say about a parser does not count.
 pub fn refused_by_prettier<'a>(file: &'a File<'a>) -> bool {
-    let is_javascript = file.is_javascript();
-    // `import a from "a" assert { .. }`, which typescript-estree accepts and Babel does not without a plugin.
-    let is_assert = |it: &Diagnostic| it.code == 2880;
+    // `import a from "a" assert { .. }` passes. `typescript` accepts it. `babel` does not, but Prettier's own tests have such
+    // JavaScript files formatted, by other parsers, and nobody is served by a refusal.
     let is_reported = |it: &Diagnostic| {
-        it.kind == DiagnosticKind::Parse && !is_assert(it) && !file.is_in_jsdoc(it.start)
+        it.kind == DiagnosticKind::Parse && it.code != 2880 && !file.is_in_jsdoc(it.start)
     };
-    let mut of_parser = file.hir.diagnostics.iter();
+    let of_parser = file.hir.diagnostics.iter();
     let says_why = of_parser.clone().any(|it| it.kind == DiagnosticKind::Parse);
-    if file.has_parse_errors() && (of_parser.clone().any(is_reported) || !says_why)
-        || is_javascript && of_parser.any(is_assert)
-    {
+    if file.has_parse_errors() && (of_parser.clone().any(is_reported) || !says_why) {
         return true;
     }
-    match is_javascript {
+    match file.is_javascript() {
         true => espree::is_refused_by_babel(file),
         false => typescript_estree::first_error(file, true).is_some(),
     }

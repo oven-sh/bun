@@ -43,15 +43,15 @@
 //!
 //! | typescript-eslint | here |
 //! | --- | --- |
-//! | `services.getTypeAtLocation(node)` | `node.ty()` on [`Expr`], [`Pat`], [`TypeNode`] and [`Node`]. `node.type_at_location()` on every handle: on a [`Param`], a [`VarDecl`] or a [`Member`], `ty()` is the annotation that is written. [`Types::get_type_at_location`] |
+//! | `services.getTypeAtLocation(node)` | `node.ty()` on [`Expr`](crate::ast::Expr), [`Pat`](crate::ast::Pat), [`TypeNode`](crate::ast::TypeNode) and [`Node`](crate::ast::Node). `node.type_at_location()` on every handle: on a [`Param`](crate::ast::Param), a [`VarDecl`](crate::ast::VarDecl) or a [`Member`](crate::ast::Member), `ty()` is the annotation that is written. [`Types::get_type_at_location`] |
 //! | `services.getSymbolAtLocation(node)` | `node.ts_symbol()` on every handle, [`Types::get_symbol_at_location`] |
 //! | `services.esTreeNodeToTSNodeMap.get(node)` | `node.ts_node()`, [`Types::ts_node`] |
 //! | `services.tsNodeToESTreeNodeMap.get(tsNode)` | [`TsNode::to_ast`] |
 //! | the same for `node.id`, `node.key`, `node.property`, which are not nodes here | [`NameOf`]`(owner)`: `NameOf(member).ty()`, or the [`Ident`](crate::ast::Ident) itself: `types.get_type_at_location(ident)` |
-//! | `checker.getContextualType(tsNode)` | [`Expr::contextual_type`] |
-//! | `checker.getResolvedSignature(tsNode)` | [`Expr::resolved_signature`] |
-//! | `checker.getTypeFromTypeNode(tsNode)` | [`TypeNode::ty`] |
-//! | `checker.getSignatureFromDeclaration(tsNode)` | [`Func::signature`] |
+//! | `checker.getContextualType(tsNode)` | [`Expr::contextual_type`](crate::ast::Expr::contextual_type) |
+//! | `checker.getResolvedSignature(tsNode)` | [`Expr::resolved_signature`](crate::ast::Expr::resolved_signature) |
+//! | `checker.getTypeFromTypeNode(tsNode)` | [`TypeNode::ty`](crate::ast::TypeNode::ty) |
+//! | `checker.getSignatureFromDeclaration(tsNode)` | [`Func::signature`](crate::ast::Func::signature) |
 //! | `getConstrainedTypeAtLocation(services, node)` | [`utils::get_constrained_type_at_location`] |
 //!
 //! # Where the rest is
@@ -77,6 +77,31 @@
 //! `is_type_any_type`, `discriminate_any_type` and `is_unsafe_assignment` do not count it as `any`.
 //! The error type they do, as upstream. A rule that reports what is *not* of some type
 //! (`only-throw-error`) has to ask [`Type::is_unresolved`] itself.
+//!
+//! # Where the answers are not those of TypeScript 6
+//!
+//! The checker follows TypeScript 7 (typescript-go). typescript-eslint runs on TypeScript 6 today.
+//! What the oracles in `test/cli/lint/oracle/types` find to differ, all of it known:
+//!
+//! - [`Type::to_text`]: the order of the constituents of a union, which is sorted and does not
+//!   depend on what was checked before. Where a long type is cut off. `typeof f` for a function
+//!   with expando members.
+//! - [`Type::get_properties`] is in the order of the declarations, own before inherited.
+//!   TypeScript 7 sorts, TypeScript 6 has the order of insertion. Nothing should depend on it.
+//! - [`Signature::to_text`] has the `new` of a construct signature without being told.
+//! - [`Expr::resolved_signature`](crate::ast::Expr::resolved_signature) is `None` for a call of what is `any`, where
+//!   TypeScript has a signature without parameters that returns `any`. That of an optional call
+//!   returns what the function returns, without the `undefined` of the chain.
+//! - A union has one `undefined` where TypeScript 6 can have the missing type beside it.
+//! - [`TsNode`]: tokens, `ParenthesizedType` and `EndOfFileToken` are not nodes.
+//!   [`TsNode::span`] and [`TsNode::get_source_text`] are empty in the default library, whose text
+//!   is not kept.
+//! - [`SourceFile::package_name`] also answers for a file of a package that only a
+//!   `/// <reference path>` leads to, for which TypeScript knows no package.
+//! - JavaScript: a function with `this.x = ..` and `F.prototype.y = ..` is no class.
+//! - Code with type errors: `F.prototype = {}` in a TypeScript file is an expando member. The
+//!   parameters of a function in an argument of a call that no overload matches have their types
+//!   from the last candidate. `const c = new C(() => c.x)` is no circularity.
 
 mod flags;
 mod locate;

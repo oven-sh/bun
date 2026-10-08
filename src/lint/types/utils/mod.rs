@@ -7,7 +7,7 @@
 //!
 //! What takes a `checker`, a `program` or `services` upstream does not here: a handle knows its
 //! checker. A `ts.Node` or a `TSESTree.Node` that is only handed on to the checker is any
-//! [`Locate`](super::Locate) where there is a [`Type`](super::Type) beside it, and a [`Located`]
+//! [`Locate`] where there is a [`Type`](super::Type) beside it, and a [`Located`]
 //! where there is none.
 //!
 //! # `@typescript-eslint/type-utils`

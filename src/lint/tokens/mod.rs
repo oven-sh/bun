@@ -483,9 +483,10 @@ impl<'a> File<'a> {
 
     fn raw_comments(&self) -> &[RawToken] {
         let store = self.lazy.tokens.get_or_init(TokenStore::default);
-        if store.comments.get().is_none()
-            && let Some(comments) = scan::comments(self)
-        {
+        if let Some(comments) = store.comments.get() {
+            return comments;
+        }
+        if let Some(comments) = scan::comments(self) {
             return store.comments.get_or_init(|| comments);
         }
         self.raw_tokens();

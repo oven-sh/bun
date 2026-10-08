@@ -765,9 +765,9 @@ impl<'a> VariableAnalysis<'a> {
 /// What has `variable.eslintUsed` set before is what is in `eslint_used`, and what
 /// [`Symbol::is_marked_used`] holds for. `/* exported */` comments are applied here.
 ///
-/// Not among the variables, as upstream: the names of function expressions. And what is no
-/// [`Symbol`]: `arguments`, and the globals that the file does not declare, for which there is
-/// [`is_used_global_variable`].
+/// Not among the variables, as upstream: the names of function expressions, and what a script
+/// declares at its top level under a name that a library of TypeScript defines. And the globals
+/// that the file does not declare, which are no [`Symbol`]s: see [`is_used_global_variable`].
 pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> VariableAnalysis<'a> {
     let mut analysis = VariableAnalysis {
         eslint_used,
@@ -776,6 +776,7 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
     analysis.eslint_used.mark_exported_variables(file);
     mark_global_augmentations(file, &mut analysis.eslint_used);
     mark_identifiers_in_parameters(file, &mut analysis.eslint_used);
+    let declares_globals = file.scope().symbols().len() != 0;
     for symbol in file.symbols() {
         if symbol.flags().contains(SymFlags::CLASS) {
             let classes = symbol.declarations().filter_map(|it| match it {
@@ -786,6 +787,13 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
         }
         let variable = Variable::new(symbol);
         if variable.defs().next().is_none() {
+            continue;
+        }
+        // In a script, `var Array` is one more definition of an `ImplicitLibVariable`.
+        if declares_globals
+            && symbol.scope().kind() == ScopeKind::Global
+            && file.global(symbol.name().bytes()).is_some_and(|it| it.is_in_lib)
+        {
             continue;
         }
         if !analysis.eslint_used.contains(symbol)

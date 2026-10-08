@@ -1,5 +1,7 @@
 //! The parts of typescript-eslint's `util/` that analyze scopes and classes.
 //!
+//! `test/cli/lint/oracle/utils-tsscope` compares them with upstream (`bun-lint utils-tsscope batch`).
+//!
 //! | typescript-eslint | here |
 //! | --- | --- |
 //! | `checkFunctionReturnType` | [`check_function_return_type`] |

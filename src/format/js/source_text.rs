@@ -113,18 +113,23 @@ impl<'a> SourceText<'a> {
         rest.first() == Some(&expected)
     }
 
+    pub(crate) fn contains_byte(self, span: Span, byte: u8) -> bool {
+        bun_core::strings::contains_char(self.text_for(&span), byte)
+    }
+
+    /// The same as [`SourceText::contains_byte`].
     pub(crate) fn bytes_contain(self, start: u32, end: u32, byte: u8) -> bool {
-        bun_core::strings::contains_char(self.slice_range(start, end), byte)
+        self.contains_byte(Span::new(start, end), byte)
+    }
+
+    /// The same as [`SourceText::all_bytes`].
+    pub(crate) fn all_bytes_match(self, start: u32, end: u32, predicate: impl Fn(u8) -> bool) -> bool {
+        self.all_bytes(Span::new(start, end), predicate)
     }
 
     /// White space that is not ASCII counts as a space, U+2028 and U+2029 as `\n`.
-    pub(crate) fn all_bytes_match(
-        self,
-        start: u32,
-        end: u32,
-        predicate: impl Fn(u8) -> bool,
-    ) -> bool {
-        let mut rest = self.slice_range(start, end);
+    pub(crate) fn all_bytes(self, span: Span, predicate: impl Fn(u8) -> bool) -> bool {
+        let mut rest = self.text_for(&span);
         while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
             rest = &rest[at..];
             let (len, stands_for) = match (white_space_len(rest), line_terminator_len(rest)) {

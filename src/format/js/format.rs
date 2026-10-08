@@ -17,7 +17,7 @@
 use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement, is_chain_root};
 use super::parentheses;
 use super::print;
-use super::siblings::{following_span_start, following_span_start_in};
+use super::siblings::following_span_start_in;
 use super::utils::suppressed::FormatSuppressedNode;
 use super::utils::typecast::format_type_cast_comment_node;
 use crate::prelude::*;
@@ -735,7 +735,3 @@ impl<'a> Format<'a> for TupleElem<'a> {
     }
 }
 
-/// Where the next sibling of `expr` starts, or 0.
-pub(crate) fn following_span_start_of_expr(expr: Expr<'_>) -> u32 {
-    following_span_start(expr.as_ast_nodes())
-}

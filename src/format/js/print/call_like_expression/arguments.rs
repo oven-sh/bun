@@ -445,7 +445,6 @@ fn write_grouped_arguments<'a>(
             {
                 Some(ExprOptions::Function(FormatFunctionOptions {
                     cache_mode: FunctionCacheMode::Cache,
-                    ..FormatFunctionOptions::default()
                 }))
             }
             Some(function) if is_grouped_argument && function.is_arrow() => {
@@ -634,7 +633,6 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
                 self.argument,
                 ExprOptions::Function(FormatFunctionOptions {
                     cache_mode: FunctionCacheMode::Cache,
-                    call_argument_layout: layout,
                 }),
             )
             .fmt(f),

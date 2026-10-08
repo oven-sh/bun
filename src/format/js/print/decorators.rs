@@ -27,10 +27,6 @@ impl<'a> FormatDecorators<'a> {
         Self::new(member.decorators(), member.as_ast_nodes())
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.decorators.is_empty()
-    }
-
     /// Whether one of them is followed by a line break in the source.
     fn should_expand(&self, f: &Formatter<'a>) -> bool {
         self.decorators.iter().any(|it| f.source_text().has_line_terminator_after(FormatDecorator(*it).span().end))

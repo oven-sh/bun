@@ -20,12 +20,6 @@ fn is_new_callee(e: Expr<'_>) -> bool {
         && !is_chain_root(e)
 }
 
-/// Whether `e` is the callee of a call or of a `new` expression.
-#[inline]
-fn is_call_like_callee(e: Expr<'_>) -> bool {
-    e.ast_parent().is_call_like_callee(e)
-}
-
 /// Whether `e` itself needs parentheses, not the `ChainExpression` around it.
 pub(crate) fn needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match e.kind() {
@@ -678,7 +672,3 @@ fn jsx_element_or_fragment_needs_paren<'a>(e: Expr<'a>, parent: AstNodes<'a>) ->
     }
 }
 
-/// See [`is_call_like_callee`].
-pub(crate) fn is_callee(e: Expr<'_>) -> bool {
-    is_call_like_callee(e)
-}

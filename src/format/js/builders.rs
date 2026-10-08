@@ -74,22 +74,9 @@ impl<'fmt, 'a, Separator: Format<'a>> JoinNodesBuilder<'fmt, 'a, Separator> {
         }
     }
 
-    pub(crate) fn fmt(&self) -> &Formatter<'a> {
-        self.fmt
-    }
-
-    pub(crate) fn fmt_mut(&mut self) -> &mut Formatter<'a> {
-        self.fmt
-    }
-
     /// `span`: of the node that `content` writes.
     pub(crate) fn entry(&mut self, span: Span, content: &(impl Format<'a> + ?Sized)) {
         self.separator_no_entry(span);
-        self.has_elements = true;
-        content.fmt(self.fmt);
-    }
-
-    pub(crate) fn entry_no_separator(&mut self, content: &(impl Format<'a> + ?Sized)) {
         self.has_elements = true;
         content.fmt(self.fmt);
     }
@@ -132,8 +119,6 @@ impl<'fmt, 'a, Separator: Format<'a>> JoinNodesBuilder<'fmt, 'a, Separator> {
     pub(crate) fn has_lines_before(&self, span: Span) -> bool {
         self.fmt.lines_before(span) > 1
     }
-
-    pub(crate) fn finish(&mut self) {}
 }
 
 /// An element of a list and the separator after it.

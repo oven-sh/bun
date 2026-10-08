@@ -580,8 +580,6 @@ impl<'a, Separator: Format<'a>> JoinBuilder<'_, 'a, Separator> {
         }
         self
     }
-
-    pub(crate) fn finish(&mut self) {}
 }
 
 /// Writes items with separators between them, as many on each line as fit.
@@ -592,17 +590,6 @@ pub(crate) struct FillBuilder<'fmt, 'a> {
 }
 
 impl<'a> FillBuilder<'_, 'a> {
-    pub(crate) fn entries<F: Format<'a>>(
-        &mut self,
-        separator: &(impl Format<'a> + ?Sized),
-        entries: impl IntoIterator<Item = F>,
-    ) -> &mut Self {
-        for entry in entries {
-            self.entry(separator, &entry);
-        }
-        self
-    }
-
     /// `separator` is written before `entry`, unless it is the first.
     pub(crate) fn entry(
         &mut self,

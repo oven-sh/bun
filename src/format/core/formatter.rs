@@ -216,28 +216,12 @@ impl<'f> Elements<'f> {
     pub(crate) fn has_label(self, label: LabelId) -> bool {
         self.storage.has_label(self.elements, label)
     }
-
-    pub(crate) fn as_slice(self) -> &'f [FormatElement] {
-        self.elements
-    }
-
-    pub(crate) fn is_empty(self) -> bool {
-        self.elements.is_empty()
-    }
 }
 
 impl FormatElement {
     /// See [`Storage::will_break`].
     pub(crate) fn will_break(&self, f: &Formatter<'_>) -> bool {
         f.storage.will_break(std::slice::from_ref(self))
-    }
-
-    pub(crate) fn may_directly_break(&self, f: &Formatter<'_>) -> bool {
-        f.storage.may_directly_break(std::slice::from_ref(self))
-    }
-
-    pub(crate) fn has_label(&self, label: LabelId, f: &Formatter<'_>) -> bool {
-        f.storage.has_label(std::slice::from_ref(self), label)
     }
 }
 
@@ -448,24 +432,6 @@ impl<'a> Formatter<'a> {
 
     pub(crate) fn interned(&self, interned: Interned) -> Elements<'_> {
         self.view(self.storage.interned(interned))
-    }
-
-    /// The bytes of a text element.
-    pub(crate) fn text_of<'f>(&'f self, element: &'f FormatElement) -> &'f [u8] {
-        match element {
-            FormatElement::Token(token) => token.as_bytes(),
-            FormatElement::SourceText(text) => self.source.get(text.range()).unwrap_or_default(),
-            FormatElement::OwnedText(text) => {
-                self.storage.text.get(text.range()).unwrap_or_default()
-            }
-            _ => &[],
-        }
-    }
-
-    /// Replaces what has been written since `f.elements().len()` was `start`.
-    pub(crate) fn replace_end(&mut self, start: usize, replacement: &[FormatElement]) {
-        self.elements.truncate(start);
-        self.elements.extend_from_slice(replacement);
     }
 
     // ───────────────────────────── interning ─────────────────────────────

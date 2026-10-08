@@ -26,8 +26,6 @@ pub(crate) trait ExprFields<'a>: Copy {
     fn unary_operator(self) -> Option<UnOp>;
     /// `ConditionalExpression.test`
     fn test(self) -> Option<Expr<'a>>;
-    /// `ConditionalExpression.consequent`
-    fn consequent(self) -> Option<Expr<'a>>;
     /// `ConditionalExpression.alternate`
     fn alternate(self) -> Option<Expr<'a>>;
     /// `.argument` of a `UnaryExpression`, an `UpdateExpression`, an `AwaitExpression`, a
@@ -42,8 +40,6 @@ pub(crate) trait ExprFields<'a>: Copy {
     fn type_annotation(self) -> Option<TypeNode<'a>>;
     /// `SequenceExpression.expressions`. Anything else is its own only element.
     fn expressions(self) -> SmallVec<[Expr<'a>; 4]>;
-    /// The function of a `FunctionExpression` or an `ArrowFunctionExpression`.
-    fn function(self) -> Option<Func<'a>>;
     /// The function of an `ArrowFunctionExpression`.
     fn arrow_function(self) -> Option<Func<'a>>;
     /// `optional: true`
@@ -116,13 +112,6 @@ impl<'a> ExprFields<'a> for Expr<'a> {
         }
     }
 
-    fn consequent(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Cond { yes, .. } => Some(yes),
-            _ => None,
-        }
-    }
-
     fn alternate(self) -> Option<Expr<'a>> {
         match self.kind() {
             ExprKind::Cond { no, .. } => Some(no),
@@ -163,10 +152,6 @@ impl<'a> ExprFields<'a> for Expr<'a> {
         self.sequence()
     }
 
-    fn function(self) -> Option<Func<'a>> {
-        self.as_fn()
-    }
-
     fn arrow_function(self) -> Option<Func<'a>> {
         self.as_fn().filter(|func| func.is_arrow())
     }
@@ -182,15 +167,10 @@ pub(crate) trait StmtFields<'a>: Copy {
     fn for_left(self) -> Option<Stmt<'a>>;
     /// `ForStatement.init`
     fn for_init(self) -> Option<Stmt<'a>>;
-    /// `.body` of a loop, a `with` or a labeled statement.
-    fn body(self) -> Option<Stmt<'a>>;
     /// `IfStatement.consequent`
     fn consequent(self) -> Option<Stmt<'a>>;
     /// `IfStatement.alternate`
     fn alternate(self) -> Option<Stmt<'a>>;
-    /// `.expression` of an `ExpressionStatement`, `.argument` of a `ReturnStatement` or a
-    /// `ThrowStatement`, `.declaration` of an `ExportDefaultDeclaration` that is an expression.
-    fn expression(self) -> Option<Expr<'a>>;
     /// `TryStatement.finalizer`
     fn finalizer(self) -> Option<Stmt<'a>>;
     /// `for await`
@@ -212,19 +192,6 @@ impl<'a> StmtFields<'a> for Stmt<'a> {
         }
     }
 
-    fn body(self) -> Option<Stmt<'a>> {
-        match self.kind() {
-            StmtKind::For { body, .. }
-            | StmtKind::ForIn { body, .. }
-            | StmtKind::ForOf { body, .. }
-            | StmtKind::While { body, .. }
-            | StmtKind::DoWhile { body, .. }
-            | StmtKind::With { body, .. }
-            | StmtKind::Labeled { body, .. } => Some(body),
-            _ => None,
-        }
-    }
-
     fn consequent(self) -> Option<Stmt<'a>> {
         match self.kind() {
             StmtKind::If { yes, .. } => Some(yes),
@@ -235,16 +202,6 @@ impl<'a> StmtFields<'a> for Stmt<'a> {
     fn alternate(self) -> Option<Stmt<'a>> {
         match self.kind() {
             StmtKind::If { no, .. } => no,
-            _ => None,
-        }
-    }
-
-    fn expression(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            StmtKind::Expr(e) | StmtKind::Throw(e) | StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
-                Some(e)
-            }
-            StmtKind::Return(e) => e,
             _ => None,
         }
     }

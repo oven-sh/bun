@@ -328,11 +328,6 @@ impl<'a> Comments<'a> {
         self.printed_count += 1;
     }
 
-    #[inline]
-    pub(crate) fn increase_printed_count_by(&mut self, count: usize) {
-        self.printed_count += count;
-    }
-
     /// The comments to print after the node at `preceding_span`.
     ///
     /// `enclosing_span`: its parent. `following_span_start`: where the next sibling starts, or 0.

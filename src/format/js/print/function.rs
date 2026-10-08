@@ -1,4 +1,4 @@
-use super::arrow_function_expression::{FormatMaybeCachedFunctionBody, FunctionCacheMode, GroupedCallArgumentLayout};
+use super::arrow_function_expression::{FormatMaybeCachedFunctionBody, FunctionCacheMode};
 use super::block_statement::is_empty_block;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
@@ -10,7 +10,6 @@ use crate::write;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct FormatFunctionOptions {
-    pub(crate) call_argument_layout: Option<GroupedCallArgumentLayout>,
     /// Whether what is formatted is kept, to be written again.
     pub(crate) cache_mode: FunctionCacheMode,
 }

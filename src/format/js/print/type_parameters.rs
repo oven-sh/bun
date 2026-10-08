@@ -90,6 +90,9 @@ impl<'a> FormatTSTypeParameters<'a> {
     /// Without the comments around the `<..>`.
     pub(crate) fn write_without_comments(self, f: &mut Formatter<'a>) {
         let Self { params, owner, .. } = self;
+        if params.is_empty() && self.options.is_type_or_interface_decl {
+            return write!(f, "<>");
+        }
         let node = AstNodes::TSTypeParameterDeclaration(owner);
         write!(
             f,

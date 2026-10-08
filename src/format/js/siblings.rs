@@ -129,13 +129,8 @@ fn member_fields(finder: &mut Finder, member: Member<'_>) {
     }
 }
 
-/// Where the next sibling of `node` starts, or 0 if there is none.
-pub(crate) fn following_span_start(node: AstNodes<'_>) -> u32 {
-    following_span_start_in(node.span(), node.parent())
-}
-
-/// The same for the child of `parent` at `span`, which can be a name or something else that there
-/// is no [`AstNodes`] for.
+/// Where the next sibling of the child of `parent` at `span` starts, or 0 if there is none. The child
+/// can be a name or something else that there is no [`AstNodes`] for.
 pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
     use AstNodes as N;
     let mut finder = Finder {
@@ -584,7 +579,7 @@ pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
 
     match finder.following {
         Some(following) => following,
-        None if inherits => following_span_start(parent),
+        None if inherits => following_span_start_in(parent.span(), parent.parent()),
         None => 0,
     }
 }

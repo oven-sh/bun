@@ -56,11 +56,6 @@ impl<'a> JsFormatContext<'a> {
     }
 
     #[inline]
-    pub(crate) fn source_text(&self) -> SourceText<'a> {
-        SourceText::new(self.file.text())
-    }
-
-    #[inline]
     pub(crate) fn has_cached_elements(&self) -> bool {
         !self.cached_elements.is_empty()
     }

@@ -204,9 +204,6 @@ impl PrintMode {
         matches!(self, PrintMode::Flat)
     }
 
-    pub(crate) const fn is_expanded(self) -> bool {
-        matches!(self, PrintMode::Expanded)
-    }
 }
 
 /// Marks the start or the end of content that is treated in a special way.
@@ -435,10 +432,6 @@ pub(crate) enum JsLabels {
 }
 
 impl FormatElement {
-    pub(crate) const fn is_tag(&self) -> bool {
-        matches!(self, FormatElement::Tag(_))
-    }
-
     pub(crate) const fn is_start_tag(&self) -> bool {
         match self {
             FormatElement::Tag(tag) => tag.is_start(),
@@ -453,18 +446,4 @@ impl FormatElement {
         }
     }
 
-    pub(crate) const fn is_text(&self) -> bool {
-        matches!(
-            self,
-            FormatElement::SourceText(_) | FormatElement::OwnedText(_) | FormatElement::Token(_)
-        )
-    }
-
-    pub(crate) const fn is_space(&self) -> bool {
-        matches!(self, FormatElement::Space)
-    }
-
-    pub(crate) const fn is_line(&self) -> bool {
-        matches!(self, FormatElement::Line(_))
-    }
 }

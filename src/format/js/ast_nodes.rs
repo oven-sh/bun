@@ -24,7 +24,7 @@ use bun_lint::ast::{
     Prop, PropKind, Stmt, StmtKind, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
 };
 use bun_lint::span::{Span, Spanned};
-use bun_lint::tokens::{skip_trivia, skip_trivia_back};
+use bun_lint::tokens::skip_trivia_back;
 
 /// An expression statement, or the body of an arrow function that is an expression, which oxc has
 /// as an `ExpressionStatement` in a `FunctionBody`.
@@ -109,8 +109,6 @@ ast_nodes! {
         JSXOpeningElement
         // The `@e` around `e`.
         Decorator
-        // Never made: parentheses are not nodes.
-        ParenthesizedExpression
         // What an array literal, an object literal, `a = 1` and `...a` are in the target of an
         // assignment.
         ArrayAssignmentTarget ObjectAssignmentTarget AssignmentTargetWithDefault
@@ -834,7 +832,6 @@ impl<'a> AstNodes<'a> {
             | N::PrivateIdentifier(e)
             | N::SequenceExpression(e)
             | N::JSXSpreadChild(e)
-            | N::ParenthesizedExpression(e)
             | N::ArrayAssignmentTarget(e)
             | N::ObjectAssignmentTarget(e)
             | N::AssignmentTargetWithDefault(e) => parent_of_expr(e, Level::Itself),
@@ -1074,7 +1071,6 @@ impl<'a> AstNodes<'a> {
             | N::PrivateIdentifier(e)
             | N::SequenceExpression(e)
             | N::ChainExpression(e)
-            | N::ParenthesizedExpression(e)
             | N::ArrayAssignmentTarget(e)
             | N::ObjectAssignmentTarget(e)
             | N::AssignmentTargetWithDefault(e) => e.span(),
@@ -1235,8 +1231,3 @@ pub(crate) fn type_parameters_of<'a>(owner: Node<'a>) -> Option<bun_lint::ast::L
     }
 }
 
-/// Where the token after `end` starts.
-#[inline]
-pub(crate) fn next_token_start(file: &File<'_>, end: u32) -> u32 {
-    skip_trivia(file.text(), end)
-}

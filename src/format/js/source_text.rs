@@ -69,11 +69,6 @@ impl<'a> SourceText<'a> {
     }
 
     #[inline]
-    pub(crate) fn len(self) -> usize {
-        self.text.len()
-    }
-
-    #[inline]
     fn from(self, position: u32) -> &'a [u8] {
         self.text.get(position as usize..).unwrap_or_default()
     }
@@ -103,11 +98,6 @@ impl<'a> SourceText<'a> {
     #[inline]
     pub(crate) fn byte_at(self, position: u32) -> Option<u8> {
         self.text.get(position as usize).copied()
-    }
-
-    /// The bytes before `position`, the nearest first.
-    pub(crate) fn bytes_to(self, position: u32) -> impl Iterator<Item = u8> + 'a {
-        self.to(position).iter().copied().rev()
     }
 
     pub(crate) fn next_non_whitespace_byte_is(self, position: u32, expected: u8) -> bool {

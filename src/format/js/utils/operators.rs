@@ -44,12 +44,6 @@ pub(crate) trait BinOpExt: Copy {
     fn is_relational(self) -> bool;
     fn is_in(self) -> bool;
     fn is_remainder(self) -> bool;
-    /// `==`, `!=`, `===`, `!==`
-    fn is_equality(self) -> bool;
-    /// `*`, `/`, `%`
-    fn is_multiplicative(self) -> bool;
-    /// `<<`, `>>`, `>>>`
-    fn is_bitshift(self) -> bool;
 }
 
 impl BinOpExt for BinOp {
@@ -101,20 +95,6 @@ impl BinOpExt for BinOp {
         self == BinOp::Rem
     }
 
-    #[inline]
-    fn is_equality(self) -> bool {
-        matches!(self, BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq)
-    }
-
-    #[inline]
-    fn is_multiplicative(self) -> bool {
-        matches!(self, BinOp::Mul | BinOp::Div | BinOp::Rem)
-    }
-
-    #[inline]
-    fn is_bitshift(self) -> bool {
-        matches!(self, BinOp::Shl | BinOp::Shr | BinOp::UShr)
-    }
 }
 
 pub(crate) trait UnOpExt: Copy {

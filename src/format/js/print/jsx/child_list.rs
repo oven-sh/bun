@@ -55,10 +55,10 @@ impl Part {
     }
 
     /// Prettier's `isEmptyStringOrAnyLine`.
-    fn is_empty_content_or_any_line(self) -> bool {
+    fn is_empty_content_or_any_line(self, is_mdx_block: bool) -> bool {
         match self {
             Part::Content { start, end } => start == end,
-            Part::Separator(separator) => separator != Separator::JsxWhitespace,
+            Part::Separator(separator) => is_mdx_block || separator != Separator::JsxWhitespace,
         }
     }
 }
@@ -125,6 +125,9 @@ struct Children<'a> {
     parts: SmallVec<[Part; 32]>,
     /// `<fbt>`: Facebook's translation tag, in which white space is kept as it is.
     is_facebook_translation_tag: bool,
+    /// See `FormatOptions::is_mdx_jsx`. For Prettier, the white space is `line` then, the same as what is between
+    /// two words. Here both are [`Separator::JsxWhitespace`], which is written as a line.
+    is_mdx_block: bool,
     meta: ChildrenMeta,
 }
 
@@ -138,6 +141,10 @@ impl<'a> Children<'a> {
 
     fn push_line(&mut self, separator: Separator) {
         let at = self.items.len() as u32;
+        let separator = match separator {
+            Separator::Line if self.is_mdx_block => Separator::JsxWhitespace,
+            _ => separator,
+        };
         self.parts.push(Part::Separator(separator));
         self.parts.push(Part::Content { start: at, end: at });
     }
@@ -210,8 +217,9 @@ impl<'a> Children<'a> {
         }
     }
 
-    fn new(jsx: Jsx<'a>, f: &Formatter<'a>) -> Self {
+    fn new(jsx: Jsx<'a>, is_mdx_block: bool, f: &Formatter<'a>) -> Self {
         let mut children = Children {
+            is_mdx_block,
             items: SmallVec::new(),
             parts: SmallVec::new(),
             is_facebook_translation_tag: jsx.tag().is_some_and(|tag| tag.text() == b"fbt"),
@@ -293,13 +301,13 @@ impl<'a> Children<'a> {
 
         let mut parts = &kept[..];
         while let [rest @ .., last] = parts
-            && last.is_empty_content_or_any_line()
+            && last.is_empty_content_or_any_line(self.is_mdx_block)
         {
             parts = rest;
         }
         while let [first, second, rest @ ..] = parts
-            && first.is_empty_content_or_any_line()
-            && second.is_empty_content_or_any_line()
+            && first.is_empty_content_or_any_line(self.is_mdx_block)
+            && second.is_empty_content_or_any_line(self.is_mdx_block)
         {
             parts = rest;
         }
@@ -315,13 +323,19 @@ impl<'a> Children<'a> {
 }
 
 /// Formats the children of `jsx`. `forced_break`: it is known that they are on lines of their own.
-pub(super) fn format_children<'a>(jsx: Jsx<'a>, forced_break: bool, f: &mut Formatter<'a>) -> FormatChildrenResult<'a> {
-    let children = Children::new(jsx, f);
+pub(super) fn format_children<'a>(
+    jsx: Jsx<'a>,
+    forced_break: bool,
+    is_mdx_block: bool,
+    f: &mut Formatter<'a>,
+) -> FormatChildrenResult<'a> {
+    let children = Children::new(jsx, is_mdx_block, f);
     let meta = children.meta;
     let mut forced_break = forced_break || meta.contains_tag || meta.contains_multiple_expressions;
 
     if let [part] = children.parts[..]
         && let [item] = *children.items_of(part)
+        && !is_mdx_block
     {
         return FormatChildrenResult::SingleChild(FormatSingleChild {
             item,
@@ -403,6 +417,7 @@ pub(super) fn format_children<'a>(jsx: Jsx<'a>, forced_break: bool, f: &mut Form
         match separator == Separator::HardLine && is_after_line_break {
             // The printer makes one line break of two in a row.
             true => multiline.write_separator(&empty_line(), f),
+            false if is_mdx_block && separator == Separator::JsxWhitespace => multiline.write_separator(&Separator::Line, f),
             false => multiline.write_separator(&separator, f),
         }
     }
@@ -482,23 +497,28 @@ pub(super) struct FormatMultilineChildren {
     element: u32,
 }
 
+impl FormatMultilineChildren {
+    /// Prettier's `content`.
+    pub(super) fn fmt_content(&self, f: &mut Formatter<'_>) {
+        let (start, end) = match self.is_fill {
+            true => (Tag::StartFill, Tag::EndFill),
+            false => (Tag::StartGroup(GroupTag::new().with_mode(GroupMode::Expand)), Tag::EndGroup),
+        };
+        f.write_element(FormatElement::Tag(start));
+        if let Some(elements) = self.elements {
+            f.write_element(elements);
+        }
+        f.write_element(FormatElement::Tag(end));
+    }
+}
+
 impl<'a> Format<'a> for FormatMultilineChildren {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if self.elements.is_none() {
             // The line break after the opening tag and the one before the closing tag.
             return write!(f, [hard_line_break(), empty_line()]);
         }
-        let format_inner = format_with(|f| {
-            let (start, end) = match self.is_fill {
-                true => (Tag::StartFill, Tag::EndFill),
-                false => (Tag::StartGroup(GroupTag::new().with_mode(GroupMode::Expand)), Tag::EndGroup),
-            };
-            f.write_element(FormatElement::Tag(start));
-            if let Some(elements) = self.elements {
-                f.write_element(elements);
-            }
-            f.write_element(FormatElement::Tag(end));
-        });
+        let format_inner = format_with(|f| self.fmt_content(f));
         let format_inner = format_with(|f| around_jsx_children(self.element, false, f, |f| format_inner.fmt(f)));
         write!(f, block_indent(&format_inner));
     }

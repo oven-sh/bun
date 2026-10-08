@@ -55,6 +55,9 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--experimental-operator-position <where>"),
     clap::param!("--embedded-language-formatting <which>"),
     clap::param!("--jsx-bracket-same-line"),
+    clap::param!("--prose-wrap <how>"),
+    clap::param!("--html-whitespace-sensitivity <how>"),
+    clap::param!("--vue-indent-script-and-style"),
     clap::param!("--cursor-offset <offset>"),
     clap::param!("--parser <name>"),
     clap::param!("--plugin <name>..."),
@@ -280,7 +283,6 @@ impl Options {
         Ok(())
     }
 
-    /// `args`: what follows `format` on the command line.
     /// The same command line as oxfmt reads it, if that is another way.
     pub(crate) fn as_oxfmt_reads_it(&self) -> Option<Options> {
         let (path, checks) = self.after_short_c.as_ref()?;
@@ -291,6 +293,7 @@ impl Options {
         Some(options)
     }
 
+    /// `args`: what follows `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = Options::default();
         // The one flag that takes a value and has an opposite.

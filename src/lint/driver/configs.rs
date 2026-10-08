@@ -165,6 +165,21 @@ const CATEGORIES: [&[u8]; 6] = [b"correctness", b"suspicious", b"pedantic", b"pe
 
 /// oxlint's `-A`, `-W` and `-D`, which come after the `rules` of the file and before its
 /// `overrides`. A category only counts for the rules that `rules` does not name.
+/// The one name of the built-in plugin of oxlint that `name` is a name of: `LintPlugins::try_from`.
+fn plugin_of_oxlint(name: &[u8]) -> &[u8] {
+    let name = [&b"/eslint-plugin"[..], b"/oxlint-plugin"].iter().find_map(|it| name.strip_suffix(*it)).unwrap_or(name);
+    let name = [&b"eslint-plugin-"[..], b"oxlint-plugin-"].iter().find_map(|it| name.strip_prefix(*it)).unwrap_or(name);
+    match name {
+        b"react-hooks" | b"react_hooks" => b"react",
+        b"typescript-eslint" | b"typescript_eslint" | b"@typescript-eslint" => b"typescript",
+        b"deepscan" => b"oxc",
+        b"import-x" => b"import",
+        b"jsx_a11y" | b"jsx-a11y-x" | b"jsx_a11y-x" => b"jsx-a11y",
+        b"react_perf" => b"react-perf",
+        name => name,
+    }
+}
+
 fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u8>)]) {
     fn put(entries: &mut Vec<(Vec<u8>, Json)>, section: &[u8], key: &[u8], severity: Severity) {
         if !entries.iter().any(|it| it.0 == section && matches!(it.1, Json::Object(_))) {
@@ -327,7 +342,7 @@ impl<'l> Loader<'l> {
                     _ => [&b"unicorn"[..], b"typescript", b"oxc"].iter().map(|it| Json::String(it.to_vec())).collect(),
                 };
                 for (name, is_on) in &options.plugins {
-                    plugins.retain(|it| it.as_str() != Some(name));
+                    plugins.retain(|it| it.as_str().map(plugin_of_oxlint) != Some(plugin_of_oxlint(name)));
                     if *is_on {
                         plugins.push(Json::String(name.to_vec()));
                     }

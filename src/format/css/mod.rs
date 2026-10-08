@@ -5,7 +5,7 @@
 //! `postcss-media-query-parser` for media queries. What it prints depends on how they take the text
 //! apart, mistakes included. So this has the same four parsers.
 
-mod doc;
+pub(crate) mod doc;
 pub(crate) mod embed;
 mod media_query;
 mod misc;
@@ -13,7 +13,7 @@ mod parse;
 mod postcss;
 mod printer;
 mod selector_parser;
-mod text;
+pub(crate) mod text;
 mod value_groups;
 mod value_parser;
 
@@ -149,7 +149,7 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
 }
 
 /// `normalizeEndOfLine`
-fn normalize_end_of_line(text: &[u8]) -> Cow<'_, [u8]> {
+pub(crate) fn normalize_end_of_line(text: &[u8]) -> Cow<'_, [u8]> {
     if !bun_core::strings::contains_char(text, b'\r') {
         return Cow::Borrowed(text);
     }

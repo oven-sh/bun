@@ -2,8 +2,9 @@
 //!
 //! The printer for CSS takes the documents of values apart, puts them together in other ways, and
 //! counts on what Prettier's printer does with them: two line breaks in a row are an empty line,
-//! `dedent` undoes the last `indent`, a `fill` measures its items the way it does. So this is a tree
-//! like Prettier's and a printer that follows Prettier's line by line.
+//! `dedent` undoes the last `indent`, a `fill` measures its items the way it does. The one for YAML
+//! counts on `markAsRoot`, `dedentToRoot` and literal lines. So this is a tree like Prettier's and a
+//! printer that follows Prettier's line by line.
 
 use crate::options::{FormatOptions, IndentStyle, LineEnding};
 use std::borrow::Cow;
@@ -25,17 +26,29 @@ pub(crate) enum Doc<'a> {
     Text(Cow<'a, [u8]>),
     Array(Vec<Doc<'a>>),
     Indent(Box<Doc<'a>>),
+    /// `align(" ".repeat(n), ..)`
+    Align(u32, Box<Doc<'a>>),
     /// `align(-1, ..)`
     Dedent(Box<Doc<'a>>),
+    /// `align(Number.NEGATIVE_INFINITY, ..)`
+    DedentToRoot(Box<Doc<'a>>),
+    /// `align({ type: "root" }, ..)`
+    MarkAsRoot(Box<Doc<'a>>),
     Group {
         contents: Box<Doc<'a>>,
         should_break: bool,
+        /// Not 0: what an `ifBreak` can ask about it by.
+        id: u32,
+        /// `conditionalGroup([contents])`: a line break in it does not break it, nor what is around it.
+        is_conditional: bool,
     },
     /// Alternating content and separators.
     Fill(Vec<Doc<'a>>),
     IfBreak {
         break_contents: Box<Doc<'a>>,
         flat_contents: Box<Doc<'a>>,
+        /// Not 0: the group that it is about. Otherwise the one that it is in.
+        group_id: u32,
     },
     LineSuffix(Box<Doc<'a>>),
     LineSuffixBoundary,
@@ -111,7 +124,14 @@ pub(crate) fn group_with<'a>(contents: impl Into<Doc<'a>>, should_break: bool) -
     Doc::Group {
         contents: Box::new(contents.into()),
         should_break,
+        id: 0,
+        is_conditional: false,
     }
+}
+
+/// `align(" ".repeat(width), contents)`
+pub(crate) fn align_with_spaces<'a>(width: u32, contents: impl Into<Doc<'a>>) -> Doc<'a> {
+    Doc::Align(width, Box::new(contents.into()))
 }
 
 pub(crate) fn fill(parts: Vec<Doc<'_>>) -> Doc<'_> {
@@ -122,6 +142,7 @@ pub(crate) fn if_break<'a>(break_contents: impl Into<Doc<'a>>) -> Doc<'a> {
     Doc::IfBreak {
         break_contents: Box::new(break_contents.into()),
         flat_contents: Box::new(Doc::EMPTY),
+        group_id: 0,
     }
 }
 
@@ -150,14 +171,21 @@ pub(crate) fn remove_lines<'a>(doc: Doc<'a>) -> Doc<'a> {
         Doc::Array(parts) => Doc::Array(parts.into_iter().map(remove_lines).collect()),
         Doc::Fill(parts) => Doc::Fill(parts.into_iter().map(remove_lines).collect()),
         Doc::Indent(contents) => Doc::Indent(boxed(contents)),
+        Doc::Align(width, contents) => Doc::Align(width, boxed(contents)),
         Doc::Dedent(contents) => Doc::Dedent(boxed(contents)),
+        Doc::DedentToRoot(contents) => Doc::DedentToRoot(boxed(contents)),
+        Doc::MarkAsRoot(contents) => Doc::MarkAsRoot(boxed(contents)),
         Doc::LineSuffix(contents) => Doc::LineSuffix(boxed(contents)),
         Doc::Group {
             contents,
             should_break,
+            id,
+            is_conditional,
         } => Doc::Group {
             contents: boxed(contents),
             should_break,
+            id,
+            is_conditional,
         },
         doc @ (Doc::Text(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => doc,
     }
@@ -182,25 +210,42 @@ pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
         Doc::Group {
             contents,
             should_break,
+            id,
+            is_conditional,
         } => match clean(*contents) {
-            contents if contents.is_empty_text() && !should_break => Doc::EMPTY,
-            contents @ Doc::Group { should_break: inner, .. } if inner == should_break => contents,
+            contents if contents.is_empty_text() && !should_break && id == 0 && !is_conditional => Doc::EMPTY,
+            contents @ Doc::Group {
+                should_break: inner,
+                id: 0,
+                is_conditional: false,
+                ..
+            } if inner == should_break && id == 0 && !is_conditional => contents,
             contents => Doc::Group {
                 contents: Box::new(contents),
                 should_break,
+                id,
+                is_conditional,
             },
         },
         Doc::Indent(contents) => wrap(contents, Doc::Indent),
+        Doc::Align(width, contents) => match clean(*contents) {
+            contents if contents.is_empty_text() => Doc::EMPTY,
+            contents => Doc::Align(width, Box::new(contents)),
+        },
         Doc::Dedent(contents) => wrap(contents, Doc::Dedent),
+        Doc::DedentToRoot(contents) => wrap(contents, Doc::DedentToRoot),
+        Doc::MarkAsRoot(contents) => wrap(contents, Doc::MarkAsRoot),
         Doc::LineSuffix(contents) => wrap(contents, Doc::LineSuffix),
         Doc::IfBreak {
             break_contents,
             flat_contents,
+            group_id,
         } => match (clean(*break_contents), clean(*flat_contents)) {
             (break_contents, flat_contents) if break_contents.is_empty_text() && flat_contents.is_empty_text() => Doc::EMPTY,
             (break_contents, flat_contents) => Doc::IfBreak {
                 break_contents: Box::new(break_contents),
                 flat_contents: Box::new(flat_contents),
+                group_id,
             },
         },
         Doc::Array(parts) => {
@@ -242,16 +287,22 @@ pub(crate) fn strip_trailing_hardline(doc: Doc<'_>) -> Doc<'_> {
         Doc::Group {
             contents,
             should_break,
+            id,
+            is_conditional,
         } => Doc::Group {
             contents: Box::new(strip_trailing_hardline(*contents)),
             should_break,
+            id,
+            is_conditional,
         },
         Doc::IfBreak {
             break_contents,
             flat_contents,
+            group_id,
         } => Doc::IfBreak {
             break_contents: Box::new(strip_trailing_hardline(*break_contents)),
             flat_contents: Box::new(strip_trailing_hardline(*flat_contents)),
+            group_id,
         },
         Doc::Fill(mut parts) => {
             strip_parts(&mut parts);
@@ -269,7 +320,13 @@ pub(crate) fn strip_trailing_hardline(doc: Doc<'_>) -> Doc<'_> {
             }
             Doc::Text(text)
         }
-        doc @ (Doc::Dedent(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => doc,
+        doc @ (Doc::Align(..)
+        | Doc::Dedent(_)
+        | Doc::DedentToRoot(_)
+        | Doc::MarkAsRoot(_)
+        | Doc::Line(_)
+        | Doc::LineSuffixBoundary
+        | Doc::BreakParent) => doc,
     }
 }
 
@@ -289,8 +346,13 @@ fn propagate_breaks(doc: &mut Doc<'_>) -> bool {
         Doc::Group {
             contents,
             should_break,
+            is_conditional,
+            ..
         } => {
-            *should_break = propagate_breaks(contents) || *should_break;
+            let breaks = propagate_breaks(contents);
+            if !*is_conditional {
+                *should_break |= breaks;
+            }
             *should_break
         }
         Doc::Array(parts) | Doc::Fill(parts) => {
@@ -303,11 +365,17 @@ fn propagate_breaks(doc: &mut Doc<'_>) -> bool {
         Doc::IfBreak {
             break_contents,
             flat_contents,
+            ..
         } => {
             let breaks = propagate_breaks(break_contents);
             propagate_breaks(flat_contents) || breaks
         }
-        Doc::Indent(contents) | Doc::Dedent(contents) | Doc::LineSuffix(contents) => propagate_breaks(contents),
+        Doc::Indent(contents)
+        | Doc::Align(_, contents)
+        | Doc::Dedent(contents)
+        | Doc::DedentToRoot(contents)
+        | Doc::MarkAsRoot(contents)
+        | Doc::LineSuffix(contents) => propagate_breaks(contents),
         Doc::Text(_) | Doc::Line(_) | Doc::LineSuffixBoundary => false,
     }
 }
@@ -330,10 +398,31 @@ enum Content<'d, 'a> {
 
 #[derive(Copy, Clone)]
 struct Command<'d, 'a> {
-    /// The number of `indent`s that have not been undone by a `dedent`.
+    /// An index into `Printer::indents`.
     indent: u32,
     mode: Mode,
     content: Content<'d, 'a>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum IndentCommand {
+    Indent,
+    Spaces(u32),
+    Dedent,
+    MarkAsRoot,
+}
+
+/// Prettier's `Indent`.
+struct Indent {
+    /// Only `Indent` and `Spaces`.
+    queue: Vec<IndentCommand>,
+    tabs: u32,
+    /// What follows the tabs. Tabs and spaces do not take turns: CSS only indents, YAML only aligns.
+    spaces: u32,
+    length: usize,
+    root: u32,
+    /// What has been made of it.
+    derived: Vec<(IndentCommand, u32)>,
 }
 
 struct Printer<'o> {
@@ -344,6 +433,10 @@ struct Printer<'o> {
     out: &'o mut Vec<u8>,
     /// Where `out` started.
     start: usize,
+    /// The first is `ROOT_INDENT`.
+    indents: Vec<Indent>,
+    /// The modes of the groups that have an id and have been printed.
+    group_modes: Vec<(u32, Mode)>,
 }
 
 static HARDLINE_WITHOUT_BREAK_PARENT: Doc<'static> = Doc::Line(Line::Hard);
@@ -352,12 +445,17 @@ fn string_width(text: &[u8]) -> usize {
     crate::ir::width::string_width(text) as usize
 }
 
+fn group_mode(group_modes: &[(u32, Mode)], id: u32) -> Option<Mode> {
+    group_modes.iter().rev().find(|(group, _)| *group == id).map(|(_, mode)| *mode)
+}
+
 /// Prettier's `fits`.
 fn fits<'d, 'a>(
     next: Command<'d, 'a>,
     rest_commands: &[Command<'d, 'a>],
     mut remaining_width: isize,
     mut has_line_suffix: bool,
+    group_modes: &[(u32, Mode)],
     must_be_flat: bool,
     commands: &mut Vec<Command<'d, 'a>>,
 ) -> bool {
@@ -405,10 +503,15 @@ fn fits<'d, 'a>(
                     push(commands, mode, part);
                 }
             }
-            Doc::Indent(contents) | Doc::Dedent(contents) => push(commands, mode, contents),
+            Doc::Indent(contents)
+            | Doc::Align(_, contents)
+            | Doc::Dedent(contents)
+            | Doc::DedentToRoot(contents)
+            | Doc::MarkAsRoot(contents) => push(commands, mode, contents),
             Doc::Group {
                 contents,
                 should_break,
+                ..
             } => {
                 if must_be_flat && *should_break {
                     return false;
@@ -418,7 +521,14 @@ fn fits<'d, 'a>(
             Doc::IfBreak {
                 break_contents,
                 flat_contents,
-            } => push(commands, mode, if mode == Mode::Break { break_contents } else { flat_contents }),
+                group_id,
+            } => {
+                let group_mode = match group_id {
+                    0 => mode,
+                    id => group_mode(group_modes, *id).unwrap_or(Mode::Flat),
+                };
+                push(commands, mode, if group_mode == Mode::Break { break_contents } else { flat_contents });
+            }
             Doc::Line(line) => {
                 if mode == Mode::Break || matches!(line, Line::Hard | Line::Literal) {
                     return true;
@@ -446,14 +556,49 @@ impl Printer<'_> {
         }
     }
 
+    /// Prettier's `makeIndent` and `makeAlign`.
+    fn make_indent(&mut self, indent: u32, command: IndentCommand) -> u32 {
+        let parent = &self.indents[indent as usize];
+        if let Some((_, derived)) = parent.derived.iter().find(|(it, _)| *it == command) {
+            return *derived;
+        }
+        let mut queue = parent.queue.clone();
+        let mut root = parent.root;
+        match command {
+            IndentCommand::Dedent => {
+                queue.pop();
+            }
+            IndentCommand::MarkAsRoot => root = indent,
+            command => queue.push(command),
+        }
+        let (mut tabs, mut spaces) = (0, 0);
+        for command in &queue {
+            match command {
+                IndentCommand::Indent if self.use_tabs => tabs += 1,
+                IndentCommand::Indent => spaces += self.tab_width as u32,
+                IndentCommand::Spaces(width) => spaces += width,
+                IndentCommand::Dedent | IndentCommand::MarkAsRoot => {}
+            }
+        }
+        let id = self.indents.len() as u32;
+        self.indents.push(Indent {
+            queue,
+            tabs,
+            spaces,
+            length: tabs as usize * self.tab_width + spaces as usize,
+            root,
+            derived: Vec::new(),
+        });
+        self.indents[indent as usize].derived.push((command, id));
+        id
+    }
+
     /// Writes the indentation. Returns its width.
     fn write_indent(&mut self, indent: u32) -> usize {
-        let indent = indent as usize;
-        match self.use_tabs {
-            true => self.out.resize(self.out.len() + indent, b'\t'),
-            false => self.out.resize(self.out.len() + indent * self.tab_width, b' '),
-        }
-        indent * self.tab_width
+        let indent = &self.indents[indent as usize];
+        self.out.resize(self.out.len() + indent.tabs as usize, b'\t');
+        self.out.resize(self.out.len() + indent.spaces as usize, b' ');
+        indent.length
     }
 
     fn write_text(&mut self, text: &[u8]) {
@@ -503,27 +648,53 @@ impl Printer<'_> {
                     }
                     Doc::Array(parts) => commands.extend(parts.iter().rev().map(|part| with(mode, part))),
                     Doc::Indent(contents) => commands.push(Command {
-                        indent: indent + 1,
+                        indent: self.make_indent(indent, IndentCommand::Indent),
+                        ..with(mode, contents)
+                    }),
+                    Doc::Align(0, contents) => commands.push(with(mode, contents)),
+                    Doc::Align(width, contents) => commands.push(Command {
+                        indent: self.make_indent(indent, IndentCommand::Spaces(*width)),
                         ..with(mode, contents)
                     }),
                     Doc::Dedent(contents) => commands.push(Command {
-                        indent: indent.saturating_sub(1),
+                        indent: self.make_indent(indent, IndentCommand::Dedent),
+                        ..with(mode, contents)
+                    }),
+                    Doc::DedentToRoot(contents) => commands.push(Command {
+                        indent: self.indents[indent as usize].root,
+                        ..with(mode, contents)
+                    }),
+                    Doc::MarkAsRoot(contents) => commands.push(Command {
+                        indent: self.make_indent(indent, IndentCommand::MarkAsRoot),
                         ..with(mode, contents)
                     }),
                     Doc::Group {
                         contents,
                         should_break,
+                        id,
+                        ..
                     } => {
-                        if mode == Mode::Flat && !should_remeasure {
-                            commands.push(with(if *should_break { Mode::Break } else { Mode::Flat }, contents));
-                            continue;
+                        let group_mode = if mode == Mode::Flat && !should_remeasure {
+                            if *should_break { Mode::Break } else { Mode::Flat }
+                        } else {
+                            should_remeasure = false;
+                            let remaining_width = self.width as isize - position as isize;
+                            let is_flat = !should_break
+                                && fits(
+                                    with(Mode::Flat, contents),
+                                    &commands,
+                                    remaining_width,
+                                    !line_suffix.is_empty(),
+                                    &self.group_modes,
+                                    false,
+                                    &mut fits_commands,
+                                );
+                            if is_flat { Mode::Flat } else { Mode::Break }
+                        };
+                        commands.push(with(group_mode, contents));
+                        if *id != 0 {
+                            self.group_modes.push((*id, group_mode));
                         }
-                        should_remeasure = false;
-                        let flat = with(Mode::Flat, contents);
-                        let remaining_width = self.width as isize - position as isize;
-                        let is_flat = !should_break
-                            && fits(flat, &commands, remaining_width, !line_suffix.is_empty(), false, &mut fits_commands);
-                        commands.push(if is_flat { flat } else { with(Mode::Break, contents) });
                     }
                     Doc::Fill(parts) => {
                         self.print_fill(parts, command, position, !line_suffix.is_empty(), &mut commands, &mut fits_commands);
@@ -531,7 +702,12 @@ impl Printer<'_> {
                     Doc::IfBreak {
                         break_contents,
                         flat_contents,
-                    } => commands.push(with(mode, if mode == Mode::Break { break_contents } else { flat_contents })),
+                        group_id,
+                    } => match if *group_id == 0 { Some(mode) } else { group_mode(&self.group_modes, *group_id) } {
+                        Some(Mode::Break) => commands.push(with(mode, break_contents)),
+                        Some(Mode::Flat) => commands.push(with(mode, flat_contents)),
+                        None => {}
+                    },
                     Doc::LineSuffix(contents) => line_suffix.push(with(mode, contents)),
                     Doc::LineSuffixBoundary => {
                         if !line_suffix.is_empty() {
@@ -555,7 +731,7 @@ impl Printer<'_> {
                                 commands.extend(line_suffix.drain(..).rev());
                             } else if *line == Line::Literal {
                                 self.out.extend_from_slice(self.new_line);
-                                position = 0;
+                                position = self.write_indent(self.indents[indent as usize].root);
                             } else {
                                 self.trim();
                                 self.out.extend_from_slice(self.new_line);
@@ -584,12 +760,13 @@ impl Printer<'_> {
         let Command { indent, mode, .. } = command;
         let with = |mode: Mode, content: Content<'d, 'a>| Command { indent, mode, content };
         let remaining_width = self.width as isize - position as isize;
+        let mut fits = |command| fits(command, &[], remaining_width, has_line_suffix, &self.group_modes, true, fits_commands);
         let [content, rest @ ..] = parts else {
             return;
         };
         let content_flat = with(Mode::Flat, Content::Doc(content));
         let content_break = with(Mode::Break, Content::Doc(content));
-        let content_fits = fits(content_flat, &[], remaining_width, has_line_suffix, true, fits_commands);
+        let content_fits = fits(content_flat);
         let [whitespace, rest @ ..] = rest else {
             commands.push(if content_fits { content_flat } else { content_break });
             return;
@@ -603,8 +780,7 @@ impl Printer<'_> {
             }
             return;
         }
-        let first_and_second = with(Mode::Flat, Content::Array(parts.get(..3).unwrap_or_default()));
-        let first_and_second_fit = fits(first_and_second, &[], remaining_width, has_line_suffix, true, fits_commands);
+        let first_and_second_fit = fits(with(Mode::Flat, Content::Array(parts.get(..3).unwrap_or_default())));
         commands.push(with(mode, Content::Fill(rest)));
         if first_and_second_fit {
             commands.extend([whitespace_flat, content_flat]);
@@ -631,6 +807,15 @@ pub(crate) fn print(mut doc: Doc<'_>, options: &FormatOptions, text: &[u8], out:
         },
         out,
         start,
+        indents: vec![Indent {
+            queue: Vec::new(),
+            tabs: 0,
+            spaces: 0,
+            length: 0,
+            root: 0,
+            derived: Vec::new(),
+        }],
+        group_modes: Vec::new(),
     }
     .print(&doc);
 }

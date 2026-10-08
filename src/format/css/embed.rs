@@ -43,12 +43,17 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
             Some(found)
         }
         Doc::Array(parts) | Doc::Fill(parts) => parts.iter().try_fold(0, |all, part| Some(all + count_placeholders(part, count)?)),
-        Doc::Indent(contents) | Doc::Dedent(contents) | Doc::LineSuffix(contents) | Doc::Group { contents, .. } => {
-            count_placeholders(contents, count)
-        }
+        Doc::Indent(contents)
+        | Doc::Align(_, contents)
+        | Doc::Dedent(contents)
+        | Doc::DedentToRoot(contents)
+        | Doc::MarkAsRoot(contents)
+        | Doc::LineSuffix(contents)
+        | Doc::Group { contents, .. } => count_placeholders(contents, count),
         Doc::IfBreak {
             break_contents,
             flat_contents,
+            ..
         } => Some(count_placeholders(break_contents, count)? + count_placeholders(flat_contents, count)?),
         Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => Some(0),
     }
@@ -67,10 +72,15 @@ fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
     match doc {
         Doc::BreakParent => true,
         Doc::Array(parts) | Doc::Fill(parts) => parts.iter().any(has_break_parent_outside_of_groups),
-        Doc::Indent(contents) | Doc::Dedent(contents) => has_break_parent_outside_of_groups(contents),
+        Doc::Indent(contents)
+        | Doc::Align(_, contents)
+        | Doc::Dedent(contents)
+        | Doc::DedentToRoot(contents)
+        | Doc::MarkAsRoot(contents) => has_break_parent_outside_of_groups(contents),
         Doc::IfBreak {
             break_contents,
             flat_contents,
+            ..
         } => has_break_parent_outside_of_groups(break_contents) || has_break_parent_outside_of_groups(flat_contents),
         Doc::Text(_) | Doc::Group { .. } | Doc::LineSuffix(_) | Doc::LineSuffixBoundary | Doc::Line(_) => false,
     }
@@ -154,9 +164,12 @@ impl<'a> Writer<'a> {
                 use crate::ir::element::DedentMode::Level;
                 self.write_between(Tag::StartDedent(Level), contents, Tag::EndDedent(Level), f);
             }
+            // Style sheets have none of these.
+            Doc::Align(_, contents) | Doc::DedentToRoot(contents) | Doc::MarkAsRoot(contents) => self.write(contents, f),
             Doc::Group {
                 contents,
                 should_break,
+                ..
             } => {
                 let mode = if *should_break { GroupMode::Expand } else { GroupMode::Flat };
                 let is_directly_in_fill = std::mem::replace(&mut self.is_directly_in_fill, false);
@@ -180,6 +193,7 @@ impl<'a> Writer<'a> {
             Doc::IfBreak {
                 break_contents,
                 flat_contents,
+                ..
             } => {
                 for (mode, contents) in [(PrintMode::Expanded, break_contents), (PrintMode::Flat, flat_contents)] {
                     if !contents.is_empty_text() {

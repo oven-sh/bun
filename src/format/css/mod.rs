@@ -18,7 +18,7 @@ mod value_groups;
 mod value_parser;
 
 use self::doc::Doc;
-use crate::options::{QuoteStyle, TrailingCommas};
+use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
@@ -214,20 +214,29 @@ fn parse_and_print<R>(
     }
     if let Some(front_matter) = front_matter {
         let has_nodes = root.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty());
-        // Prettier's `printEmbedFrontMatter`, for front matter that is empty.
+        // Prettier's `printEmbedFrontMatter`.
         let first_line_end = text::index_of_char_from(front_matter, b'\n', 0).unwrap_or(front_matter.len());
         let last_line_start = bun_core::strings::last_index_of_char(front_matter, b'\n').map_or(0, |at| at + 1);
         let language = text::trim(&front_matter[3..first_line_end]);
-        let is_embedded = matches!(language, b"" | b"yaml" | b"toml");
-        let is_empty = text::trim(front_matter.get(first_line_end..last_line_start).unwrap_or_default()).is_empty();
-        let front_matter = match is_embedded && is_empty {
-            true => Doc::Array(vec![
+        let is_toml = language == b"toml" || (language.is_empty() && front_matter.starts_with(b"+++"));
+        let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
+        let value = text::trim(front_matter.get(first_line_end..last_line_start).unwrap_or_default());
+        // There is no formatter for TOML, and what is not YAML after all stays as it is.
+        let formatted = match value {
+            _ if matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Off) => None,
+            b"" if is_yaml || is_toml => Some(Doc::EMPTY),
+            _ if is_yaml => crate::yaml::document(value, options).ok().map(|it| doc::strip_trailing_hardline(doc::clean(it))),
+            _ => None,
+        };
+        let front_matter = match formatted {
+            Some(formatted) => Doc::MarkAsRoot(Box::new(Doc::Array(vec![
                 Doc::from(&front_matter[..3]),
                 Doc::from(language),
                 doc::hardline(),
+                if formatted.is_empty_text() { Doc::EMPTY } else { Doc::Array(vec![formatted, doc::hardline()]) },
                 Doc::from(&front_matter[last_line_start..]),
-            ]),
-            false => Doc::from(front_matter),
+            ]))),
+            None => Doc::from(front_matter),
         };
         document = Doc::Array(vec![
             front_matter,

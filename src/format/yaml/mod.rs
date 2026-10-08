@@ -47,12 +47,8 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
     NAMES.contains(&name) || EXTENSIONS.iter().any(|extension| name.ends_with(extension))
 }
 
-/// Parses `text`, whose line breaks are `\n`, and calls `with_document` with the document for it.
-pub(crate) fn parse_and_print<R>(
-    text: &[u8],
-    options: &FormatOptions,
-    with_document: impl FnOnce(Doc<'_>) -> R,
-) -> Result<R, FormatError> {
+/// The document for `text`, whose line breaks are `\n`.
+pub(crate) fn document<'a>(text: &'a [u8], options: &FormatOptions) -> Result<Doc<'a>, FormatError> {
     let lexemes = lexer::lex(text);
     let tokens = cst::parse(text, &lexemes).map_err(|error| match error {
         cst::ParseError::Syntax => FormatError::SyntaxError,
@@ -71,10 +67,33 @@ pub(crate) fn parse_and_print<R>(
         printed_empty_lines: Vec::new(),
         last_group_id: 0,
     };
-    Ok(with_document(printer.print(tree.root, true)))
+    Ok(printer.print(tree.root, true))
 }
 
-/// Appends the formatted `text` to `out`.
+/// `/^\s*#[^\S\n]*@(?:a|b)\s*?(?:\n|$)/`
+fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
+    fn without_blanks(mut text: &[u8]) -> &[u8] {
+        while let Some(len) = text::white_space_len_at_start(text).filter(|_| text[0] != b'\n') {
+            text = &text[len..];
+        }
+        text
+    }
+    let Some(rest) = text::trim_start(text).strip_prefix(b"#") else {
+        return false;
+    };
+    let Some(rest) = without_blanks(rest).strip_prefix(b"@") else {
+        return false;
+    };
+    pragmas.iter().any(|pragma| rest.strip_prefix(*pragma).is_some_and(|rest| matches!(without_blanks(rest).first(), None | Some(b'\n'))))
+}
+
+/// `/(?:[/\\]|^)\.(?:prettier|stylelint|lintstaged)rc$/`: a file that Prettier first tries to format as JSON.
+fn can_be_json(path: &[u8]) -> bool {
+    let name = &path[bun_core::strings::last_index_of_any(path, b"/\\").map_or(0, |at| at + 1)..];
+    matches!(name, b".prettierrc" | b".stylelintrc" | b".lintstagedrc")
+}
+
+/// Appends the formatted `text` to `out`. `options.filepath` says whether it can be JSON.
 pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
     const BOM: &[u8] = "\u{FEFF}".as_bytes();
     let original = text;
@@ -82,17 +101,32 @@ pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out:
         Some(rest) => (true, rest),
         None => (false, text),
     };
-    let text: Cow<'_, [u8]> = crate::css::normalize_end_of_line(text);
+    let mut text: Cow<'_, [u8]> = crate::css::normalize_end_of_line(text);
+    if (options.require_pragma && !has_pragma(&text, [b"format", b"prettier"]))
+        || (options.check_ignore_pragma && has_pragma(&text, [b"noformat", b"noprettier"]))
+    {
+        out.extend_from_slice(original);
+        return Ok(());
+    }
+    if options.insert_pragma && !options.require_pragma && !has_pragma(&text, [b"format", b"prettier"]) {
+        text = Cow::Owned([b"# @format\n\n", &text[..]].concat());
+    }
+    let start = out.len();
     if has_bom {
         out.extend_from_slice(BOM);
     }
     if text::trim(&text).is_empty() {
         return Ok(());
     }
-    let start = out.len();
-    let result = parse_and_print(&text, options, |document| doc::print(document, options, original, out));
-    if result.is_err() {
-        out.truncate(start - if has_bom { BOM.len() } else { 0 });
+    // It has to be YAML in any case.
+    let document = document(&text, options).inspect_err(|_| out.truncate(start))?;
+    if options.filepath.as_deref().is_some_and(can_be_json) {
+        let end = out.len();
+        if crate::json::format(&text, crate::json::Parser::Json, options, &mut Default::default(), out).is_ok() {
+            return Ok(());
+        }
+        out.truncate(end);
     }
-    result
+    doc::print(document, options, original, out);
+    Ok(())
 }

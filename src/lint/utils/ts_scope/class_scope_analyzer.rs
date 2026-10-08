@@ -12,7 +12,7 @@ use crate::ast::{
 };
 use crate::semantic::Declaration;
 use crate::span::Span;
-use crate::tokens::{skip_trivia, skip_trivia_back, token_len};
+use crate::tokens::{skip_trivia, token_len};
 use crate::utils::estree_compat::{estree_span, is_assignment_target};
 use crate::utils::text::number_to_string;
 use bun_sema::hir;
@@ -64,20 +64,20 @@ fn extract_name_for_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Extracte
     let (name, name_span) = match key.kind() {
         KeyKind::Computed(e) => return extract_computed_name(e),
         KeyKind::ComputedString(name) | KeyKind::ComputedNumber(name) => {
-            let text = file.text();
-            let start = skip_trivia(text, whole.start + 1);
-            (
-                name,
-                Span::new(start, skip_trivia_back(text, whole.end.saturating_sub(1))),
-            )
+            let span = key.inner_span(file);
+            // Upstream takes the raw text of a template.
+            match file.slice(span).starts_with(b"`") {
+                true => (file.slice(span.shrink(1, 1)), span),
+                false => (name.bytes(), span),
+            }
         }
         KeyKind::Ident(name)
         | KeyKind::String(name)
         | KeyKind::Number(name)
-        | KeyKind::Private(name) => (name, whole),
+        | KeyKind::Private(name) => (name.bytes(), whole),
     };
     Some(ExtractedName {
-        code_name: Cow::Borrowed(name.bytes()),
+        code_name: Cow::Borrowed(name),
         is_private: key.is_private(),
         name_span,
     })

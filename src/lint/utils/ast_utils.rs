@@ -1517,6 +1517,8 @@ enum FunctionParent<'a> {
     PatProp(PatProp<'a>),
     /// The function is itself a `TSMethodSignature`.
     Signature(Member<'a>),
+    /// `TSMethodSignature` or `TSPropertySignature`, in whose computed key the function is.
+    SignatureKey(Member<'a>),
     Other,
 }
 
@@ -1529,6 +1531,13 @@ impl<'a> FunctionParent<'a> {
         match estree_parent(Node::Func(func)) {
             Node::Member(member) if member.flags().contains(Flags::ABSTRACT) => {
                 FunctionParent::Other
+            }
+            // The parent of what is in a decorator is the `Decorator`.
+            Node::Member(member) if member.decorators().any(|it| it.as_fn() == Some(func)) => {
+                FunctionParent::Other
+            }
+            Node::Member(member) if member.is_signature() && member.func() != Some(func) => {
+                FunctionParent::SignatureKey(member)
             }
             Node::Member(member) => {
                 let in_class = matches!(member.parent(), Node::Class(_));
@@ -1563,7 +1572,8 @@ impl<'a> FunctionParent<'a> {
         match self {
             FunctionParent::Method(member)
             | FunctionParent::Field(member)
-            | FunctionParent::Signature(member) => Some(Node::Member(member)),
+            | FunctionParent::Signature(member)
+            | FunctionParent::SignatureKey(member) => Some(Node::Member(member)),
             FunctionParent::Prop(prop) => Some(Node::Prop(prop)),
             FunctionParent::PatProp(prop) => Some(Node::PatProp(prop)),
             FunctionParent::Other => None,
@@ -1619,7 +1629,7 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
             _ => b"method",
         }),
         FunctionParent::PatProp(_) | FunctionParent::Field(_) => tokens.push(b"method"),
-        FunctionParent::Other => {
+        FunctionParent::SignatureKey(_) | FunctionParent::Other => {
             if func.is_arrow() {
                 tokens.push(b"arrow");
             }

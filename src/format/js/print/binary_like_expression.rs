@@ -16,19 +16,15 @@ pub(crate) struct BinaryLikeExpression<'a> {
 }
 
 impl<'a> BinaryLikeExpression<'a> {
+    #[inline]
     pub(crate) fn new(e: Expr<'a>) -> Option<Self> {
-        match e.kind() {
-            ExprKind::Binary {
-                op: BinOp::Comma, ..
-            } => None,
-            ExprKind::Binary { op, left, right } => Some(BinaryLikeExpression {
-                expr: e,
-                operator: op,
-                left,
-                right,
-            }),
-            _ => None,
-        }
+        let operator = e.binary_op().filter(|operator| *operator != BinOp::Comma)?;
+        Some(BinaryLikeExpression {
+            expr: e,
+            operator,
+            left: e.left()?,
+            right: e.right()?,
+        })
     }
 
     fn is_logical(&self) -> bool {
@@ -250,6 +246,9 @@ fn format_flattened_logical_expression<'a>(
 impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (mut binary_like_expression, inside_parenthesis, operands) = match *self {
+            Self::Left { parent } if f.is_quiet() && is_one_text(parent.left) && f.is_at_start_of_group() => {
+                return write!(f, parent.left);
+            }
             Self::Left { parent } => return write!(f, group(&parent.left)),
             Self::Right {
                 parent,
@@ -283,8 +282,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         }
 
         let (left, right) = (binary_like_expression.left, binary_like_expression.right);
-        let parent = binary_like_expression.parent();
-        let is_jsx = matches!(right.kind(), ExprKind::Jsx(_));
+        let is_jsx = right.tag() == ExprTag::Jsx;
 
         let operator_and_right_expression = format_with(|f| {
             let is_inlined = binary_like_expression.should_inline_logical_expression();
@@ -305,14 +303,14 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             }
         });
 
-        let is_same_kind = |other: AstNodes<'a>| match binary_like_expression.is_logical() {
-            true => matches!(other, AstNodes::LogicalExpression(_)),
-            false => matches!(other, AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_)),
+        // Both are logical expressions, or both are binary expressions.
+        let is_same_kind = |other: Expr<'a>| match other.binary_op() {
+            None | Some(BinOp::Comma) => false,
+            Some(operator) => operator.is_logical() == binary_like_expression.is_logical(),
         };
-        let left_ast_nodes = left.as_ast_nodes();
-        let should_group = !(is_same_kind(parent)
-            || is_same_kind(left_ast_nodes)
-            || is_same_kind(right.as_ast_nodes())
+        let should_group = !(matches!(binary_like_expression.expr.parent(), Node::Expr(parent) if is_same_kind(parent))
+            || is_same_kind(left)
+            || is_same_kind(right)
             || (inside_parenthesis && logical_operator.is_some()));
 
         write_trailing_comments_of_nested(left, f);
@@ -367,12 +365,23 @@ fn write_operator<'a>(operator: BinOp, left: Expr<'a>, right: Expr<'a>, is_inlin
 
 /// Whether `right`, the right side of a logical expression, stays on the line of the operator.
 fn is_inlined_operand(right: Expr<'_>) -> bool {
-    match right.kind() {
-        ExprKind::Object(props) => !props.is_empty(),
-        ExprKind::Array(elements) => !elements.is_empty(),
-        ExprKind::Jsx(_) => true,
+    match right.tag() {
+        ExprTag::Object | ExprTag::Array => match right.kind() {
+            ExprKind::Object(props) => !props.is_empty(),
+            ExprKind::Array(elements) => !elements.is_empty(),
+            _ => false,
+        },
+        ExprTag::Jsx => true,
         _ => false,
     }
+}
+
+/// Whether all that is written for `e` is text on one line.
+fn is_one_text(e: Expr<'_>) -> bool {
+    matches!(
+        e.tag(),
+        ExprTag::Ident | ExprTag::This | ExprTag::Number | ExprTag::True | ExprTag::False | ExprTag::Null
+    )
 }
 
 /// The comments after `left`, if it is written as a part of the chain and not as a node of its own.

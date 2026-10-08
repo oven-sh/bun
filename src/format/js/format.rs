@@ -443,6 +443,9 @@ impl<'a> Format<'a> for FormatNonNullMarks<'a> {
 }
 
 /// Step 5 for an expression.
+///
+/// This only finds out where to go on. Each of the functions it goes on in has a frame of its own
+/// size, and none is set up for what is written right here.
 pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
     match e.tag() {
         ExprTag::Missing => {}
@@ -452,9 +455,32 @@ pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
         ExprTag::Null => write!(f, "null"),
         ExprTag::True => write!(f, "true"),
         ExprTag::False => write!(f, "false"),
+        ExprTag::Number => write_numeric_literal(e, f),
+        ExprTag::String => write_string_literal(e, f),
         ExprTag::Dot | ExprTag::Index => write_member_expression(e, f),
+        ExprTag::Call => write_call_expression(e, f),
+        ExprTag::New => write_new_expression(e, f),
+        ExprTag::Fn => write_function_expression(e, options, f),
+        ExprTag::Object => write_object(e, f),
+        ExprTag::Array => write_array(e, f),
+        ExprTag::Unary => write_unary_expression(e, f),
+        ExprTag::Binary => write_binary_expression(e, f),
         ExprTag::Assign => write_assignment_expression(e, f),
-        _ => write_expression_with_parts(e, options, f),
+        ExprTag::Cond => write_conditional_expression(e, f),
+        _ => write_less_common_expression(e, f),
+    }
+}
+
+#[inline(never)]
+fn write_numeric_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    print::literals::write_numeric_literal(e, f);
+}
+
+#[inline(never)]
+fn write_string_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    match e.is_jsx_text() {
+        true => print::jsx::write_jsx_text(e, f),
+        false => print::literals::write_string_literal(e, f),
     }
 }
 
@@ -464,67 +490,95 @@ fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
 }
 
 #[inline(never)]
+fn write_call_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    if let Some(call) = e.as_call() {
+        print::call_like_expression::write_call_expression(e, call, f);
+    }
+}
+
+#[inline(never)]
+fn write_new_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    if let Some(call) = e.as_call_like() {
+        print::call_like_expression::write_new_expression(e, call, f);
+    }
+}
+
+#[inline(never)]
+fn write_function_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
+    let Some(func) = e.as_fn() else {
+        return;
+    };
+    match (func.is_arrow(), options) {
+        (true, ExprOptions::Arrow(options)) => {
+            print::arrow_function_expression::write_arrow_function_expression(e, func, options, f);
+        }
+        (true, _) => print::arrow_function_expression::write_arrow_function_expression(e, func, Default::default(), f),
+        (false, ExprOptions::Function(options)) => print::function::write_function(func, options, f),
+        (false, _) => print::function::write_function(func, Default::default(), f),
+    }
+}
+
+#[inline(never)]
+fn write_object<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    let ExprKind::Object(props) = e.kind() else {
+        return;
+    };
+    match super::ast_nodes::is_assignment_target(e) {
+        true => print::expressions::write_object_assignment_target(e, props, f),
+        false => print::expressions::write_object_expression(e, props, f),
+    }
+}
+
+#[inline(never)]
+fn write_array<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    let ExprKind::Array(elements) = e.kind() else {
+        return;
+    };
+    match super::ast_nodes::is_assignment_target(e) {
+        true => print::expressions::write_array_assignment_target(e, elements, f),
+        false => print::array_expression::write_array_expression(e, elements, f),
+    }
+}
+
+#[inline(never)]
+fn write_unary_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    let (Some(op), Some(operand)) = (e.unary_op(), e.operand()) else {
+        return;
+    };
+    match op.is_update() {
+        true => print::expressions::write_update_expression(op, operand, f),
+        false => print::expressions::write_unary_expression(e, op, operand, f),
+    }
+}
+
+#[inline(never)]
+fn write_binary_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    match e.binary_op() {
+        Some(BinOp::Comma) => print::sequence_expression::write_sequence_expression(e, f),
+        _ => print::binary_like_expression::write_binary_like_expression(e, f),
+    }
+}
+
+#[inline(never)]
 fn write_assignment_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     print::expressions::write_assignment_expression(e, f);
 }
 
-/// The frame of this function is large. What has no parts does not get here, nor does what takes
-/// itself apart.
 #[inline(never)]
-fn write_expression_with_parts<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
+fn write_conditional_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    print::expressions::write_conditional_expression(e, f);
+}
+
+/// The kinds that [`write_expression`] does not deal with.
+#[inline(never)]
+fn write_less_common_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     use print::{expressions, literals};
     match e.kind() {
-        ExprKind::Missing => {}
-        ExprKind::Ident(_) | ExprKind::PrivateIdentifier(_) => write!(f, source_text(e.span())),
-        ExprKind::This => write!(f, "this"),
-        ExprKind::Super => write!(f, "super"),
-        ExprKind::Null => write!(f, "null"),
-        ExprKind::True => write!(f, "true"),
-        ExprKind::False => write!(f, "false"),
-        ExprKind::Number(_) => literals::write_numeric_literal(e, f),
-        ExprKind::String(_) if e.is_jsx_text() => print::jsx::write_jsx_text(e, f),
-        ExprKind::String(_) => literals::write_string_literal(e, f),
         ExprKind::BigInt(_) => literals::write_big_int_literal(e, f),
         ExprKind::Regex(regex) => literals::write_reg_exp_literal(e, regex, f),
         ExprKind::Template(template) => print::template::write_template_literal(e, template, f),
         ExprKind::TaggedTemplate(call) => print::template::write_tagged_template_expression(e, call, f),
-        ExprKind::Array(elements) => match super::ast_nodes::is_assignment_target(e) {
-            true => expressions::write_array_assignment_target(e, elements, f),
-            false => print::array_expression::write_array_expression(e, elements, f),
-        },
-        ExprKind::Object(props) => match super::ast_nodes::is_assignment_target(e) {
-            true => expressions::write_object_assignment_target(e, props, f),
-            false => expressions::write_object_expression(e, props, f),
-        },
-        ExprKind::Fn(func) if func.is_arrow() => {
-            let options = match options {
-                ExprOptions::Arrow(options) => options,
-                _ => Default::default(),
-            };
-            print::arrow_function_expression::write_arrow_function_expression(e, func, options, f);
-        }
-        ExprKind::Fn(func) => {
-            let options = match options {
-                ExprOptions::Function(options) => options,
-                _ => Default::default(),
-            };
-            print::function::write_function(func, options, f);
-        }
         ExprKind::Class(class) => print::class::write_class(class, f),
-        ExprKind::Dot { .. } | ExprKind::Index { .. } => write_member_expression(e, f),
-        ExprKind::Call(call) => print::call_like_expression::write_call_expression(e, call, f),
-        ExprKind::New(call) => print::call_like_expression::write_new_expression(e, call, f),
-        ExprKind::Unary {
-            op: op @ (UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec),
-            operand,
-        } => expressions::write_update_expression(op, operand, f),
-        ExprKind::Unary { op, operand } => expressions::write_unary_expression(e, op, operand, f),
-        ExprKind::Binary {
-            op: BinOp::Comma, ..
-        } => print::sequence_expression::write_sequence_expression(e, f),
-        ExprKind::Binary { .. } => print::binary_like_expression::write_binary_like_expression(e, f),
-        ExprKind::Assign { .. } => write_assignment_expression(e, f),
-        ExprKind::Cond { .. } => expressions::write_conditional_expression(e, f),
         ExprKind::Spread(_) if e.jsx_container_span().is_some() => print::jsx::write_jsx_spread_child(e, f),
         ExprKind::Spread(argument) => write!(f, ["...", argument]),
         ExprKind::Await(argument) => expressions::write_await_expression(e, argument, f),
@@ -542,6 +596,7 @@ fn write_expression_with_parts<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
         ExprKind::Jsx(jsx) => print::jsx::write_jsx_element(e, jsx, f),
         ExprKind::ImportCall { args } => print::call_like_expression::write_import_expression(e, args, f),
         ExprKind::ImportMeta | ExprKind::NewTarget => expressions::write_meta_property(e, f),
+        _ => {}
     }
 }
 

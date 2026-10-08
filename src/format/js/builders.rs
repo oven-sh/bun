@@ -1,6 +1,7 @@
 //! Builders that know about source positions: lists of nodes that keep the empty lines between
 //! them, and lists with separators.
 
+use crate::ir::element::LineMode;
 use crate::options::TrailingSeparator;
 use crate::prelude::*;
 use crate::write;
@@ -11,6 +12,20 @@ impl<'a> Formatter<'a> {
     #[inline]
     pub(crate) fn lines_before(&self, span: Span) -> usize {
         self.source_text().get_lines_before(span, self.comments().first_unprinted_span())
+    }
+
+    /// Whether nothing has been written since the start of a group but what the group starts a
+    /// line with if it breaks.
+    ///
+    /// All that a group with nothing but text in it does is that the printer measures again from
+    /// there on, as it does from the start of any group. So here such a group makes no difference.
+    pub(crate) fn is_at_start_of_group(&self) -> bool {
+        let is_indentation =
+            |it: &&FormatElement| matches!(it, FormatElement::Tag(Tag::StartIndent) | FormatElement::Line(LineMode::Soft));
+        matches!(
+            self.elements().iter().rev().take(3).find(|it| !is_indentation(it)),
+            Some(FormatElement::Tag(Tag::StartGroup(_)))
+        )
     }
 
     pub(crate) fn join_nodes_with_soft_line<'fmt>(&'fmt mut self) -> JoinNodesBuilder<'fmt, 'a, Line> {

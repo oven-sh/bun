@@ -171,6 +171,14 @@ impl<'a> SourceText<'a> {
         let mut following = self.from(span.end);
         let mut before = self.to(start);
         loop {
+            // What there is between most nodes.
+            while let [rest @ .., last @ (b' ' | b'\t' | b'\n')] = before {
+                before = rest;
+                if *last == b'\n' {
+                    count += 1;
+                    before = before.strip_suffix(b"\r").unwrap_or(before);
+                }
+            }
             let space = white_space_len_back(before);
             if space != 0 {
                 before = &before[..before.len() - space];

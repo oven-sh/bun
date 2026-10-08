@@ -10,7 +10,7 @@
 // no parameters, and for the BEGIN/COMMIT/ROLLBACK of sql.begin(), so every
 // one of those emitted the spurious ReadyForQuery.
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
@@ -75,6 +75,34 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       a: [{ v: "AAAA" }],
       b: [{ v: "BBBB" }],
       c: [{ x: "CCCC" }],
+    });
+  });
+
+  // The length of a frame counts a terminator. A text that ends in NUL got none, so the
+  // next byte of the stream completed the frame and the rest of it broke the connection.
+  describe("a text that ends in NUL is rejected and the connection stays usable", () => {
+    const cases: [string, { prepare?: boolean }, (sql: SQL) => Promise<unknown>][] = [
+      ["sql.unsafe(text)", {}, sql => sql.unsafe("select 1 as x\0")],
+      ["sql.unsafe(text, [parameter])", {}, sql => sql.unsafe("select $1::int as x\0", [1])],
+      ["a tagged template", {}, sql => sql`select ${1}::int as x\0`],
+      ["a tagged template, prepare: false", { prepare: false }, sql => sql`select ${1}::int as x\0`],
+    ];
+    test.each(cases)("%s", async (_, options, statement) => {
+      await container.ready;
+      await using sql = new SQL({ url: url(), max: 1, ...options });
+      const session = async () => (await sql`select pg_backend_pid() as pid`)[0].pid;
+
+      const before = await session();
+      const errno = await statement(sql).then(
+        () => "resolved",
+        err => err.errno,
+      );
+      const next = await session().then(
+        pid => (pid === before ? "ran in the same session" : "ran in another session"),
+        err => err.code,
+      );
+
+      expect({ errno, next }).toEqual({ errno: "08P01", next: "ran in the same session" });
     });
   });
 });

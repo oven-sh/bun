@@ -56,9 +56,10 @@ fn is_safe_from_name_collisions<'a>(else_node: Stmt<'a>, scope: Scope<'a>) -> bo
         StmtKind::Block(_) => {}
         _ => return true,
     }
-    let Some(else_scope) = scope.children().find(|it| it.node() == Node::Stmt(else_node)) else {
+    let else_scope = Node::Stmt(else_node).scope();
+    if else_scope.node() != Node::Stmt(else_node) || else_scope.parent() != Some(scope) {
         return true;
-    };
+    }
     let names: Vec<Name<'a>> = else_scope.symbols().map(Symbol::name).collect();
     is_safe_to_declare(&names, scope)
 }

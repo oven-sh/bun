@@ -3,11 +3,13 @@
 //   bun cases.ts --fixtures <test/cli/lint/conformance/fixtures> > cases.jsonl     the `code` of every conformance case
 //   bun cases.ts --files <directory or file>.. [--parser=typescript] > cases.jsonl source files
 //   bun cases.ts --scope-manager <typescript-eslint/packages/scope-manager/tests/fixtures> > cases.jsonl
+//   bun cases.ts --edge-cases > cases.jsonl                                        the snippets of edge-cases.ts
 //
 // The same code with the same options is listed once.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { javascript, tsx, typescript } from "./edge-cases.ts";
 
 const seen = new Set<string>();
 let count = 0;
@@ -85,6 +87,22 @@ if (mode === "--fixtures") {
       });
     }
   }
+} else if (mode === "--edge-cases") {
+  for (const sourceType of ["script", "module", "commonjs"]) {
+    for (const code of javascript) {
+      for (const ecmaVersion of [5, 2015, "latest"]) emit({ filename: "file.jsx", code, sourceType, ecmaVersion, jsx: true });
+      emit({ filename: "file.jsx", code, sourceType, parser: "typescript", jsx: true });
+      emit({ filename: "file.tsx", code, sourceType });
+    }
+    for (const code of typescript) {
+      for (const filename of ["file.ts", "file.d.ts"]) emit({ filename, code, sourceType });
+    }
+    for (const code of tsx) {
+      emit({ filename: "file.tsx", code, sourceType });
+      emit({ filename: "file.tsx", code, sourceType, jsxPragma: "h", jsxFragmentName: "Fragment" });
+      emit({ filename: "file.tsx", code, sourceType, jsxPragma: null });
+    }
+  }
 } else {
-  throw new Error("usage: bun cases.ts --fixtures <dir> | --scope-manager <dir> | --files <path>..");
+  throw new Error("usage: bun cases.ts --fixtures <dir> | --scope-manager <dir> | --files <path>.. | --edge-cases");
 }

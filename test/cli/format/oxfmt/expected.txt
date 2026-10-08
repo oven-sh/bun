@@ -221,8 +221,6 @@ FAIL oxfmt js/sequence-expression/leading-comment-in-first-element-parens.js { p
 FAIL oxfmt js/sequence-expression/leading-comment-in-first-element-parens.js { printWidth: 100 }
 FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 80 }
 FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 100 }
-FAIL prettier js/typecast/cast-target-opaque-layout.js { printWidth: 100 }
-FAIL oxfmt js/typecast/cast-target-opaque-layout.js { printWidth: 100 }
 FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 80 }
 FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 100 }
 FAIL oxfmt json/json/comments/oxfmt_ignore_array.json { printWidth: 80 }
@@ -444,5 +442,5 @@ FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
-as Prettier prints them: 1525/1570
-as oxfmt prints them, in its flavor: 1097/1498
+as Prettier prints them: 1526/1570
+as oxfmt prints them, in its flavor: 1098/1498

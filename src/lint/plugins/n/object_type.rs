@@ -1,6 +1,7 @@
 //! `object-type-checker.js` of eslint-plugin-es-x: what kind of object an expression is, as far as the syntax tells.
 
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// `WELLKNOWN_GLOBALS`: what a call of the global function `name` returns.
 fn return_type_of_global(name: &[u8]) -> Option<&'static str> {
@@ -52,21 +53,54 @@ fn is_global_object(e: Expr) -> bool {
     e.reference().is_some_and(|it| it.symbol().is_none() && it.global().is_some())
 }
 
-/// `buildExpressionTypeProvider`
+/// `buildExpressionTypeProvider`, for a file.
 #[derive(Default)]
 pub(crate) struct ExpressionTypes<'a> {
     /// The expressions that are being looked at.
     tracked: Vec<Expr<'a>>,
+    /// The least position in `tracked` of an expression that was come to again since the one on top was come to.
+    came_again_to: Option<usize>,
+    /// How many expressions have been looked at for the first of `tracked`.
+    steps: u32,
+    /// What was found about an expression at a position in `tracked`, if it does not depend on what else was in there.
+    known: FxHashMap<(Expr<'a>, usize), Option<&'static str>>,
+    /// Whether a variable only has the value that it is declared with.
+    is_never_written: FxHashMap<Symbol<'a>, bool>,
 }
 
 impl<'a> ExpressionTypes<'a> {
+    /// Variables whose values refer to each other, several times each, lead to the same expressions in ever different ways. Nothing
+    /// is said about what takes more steps.
+    const MOST_STEPS: u32 = 4096;
+
     pub(crate) fn get_type(&mut self, node: Expr<'a>) -> Option<&'static str> {
-        if self.tracked.contains(&node) || self.tracked.len() > 64 {
+        let depth = self.tracked.len();
+        if depth == 0 {
+            self.steps = 0;
+        }
+        if depth > 64 || self.steps >= Self::MOST_STEPS {
             return None;
         }
+        if let Some(at) = self.tracked.iter().position(|it| *it == node) {
+            self.came_again_to = Some(self.came_again_to.map_or(at, |it| it.min(at)));
+            return None;
+        }
+        if let Some(&known) = self.known.get(&(node, depth)) {
+            return known;
+        }
+        self.steps += 1;
+        let before = self.came_again_to.take();
         self.tracked.push(node);
         let result = self.compute(node);
         self.tracked.pop();
+        if self.came_again_to.is_none_or(|it| it >= depth) {
+            self.came_again_to = before;
+            if self.steps < Self::MOST_STEPS {
+                self.known.insert((node, depth), result);
+            }
+        } else {
+            self.came_again_to = self.came_again_to.min(before.or(self.came_again_to));
+        }
         result
     }
 
@@ -142,7 +176,9 @@ impl<'a> ExpressionTypes<'a> {
                 };
                 let init = declarator.init()?;
                 let is_never_written = declarator.var_kind() == VarKind::Const
-                    || variable.references().all(|it| it.is_read_only() || Some(it.span()) == declaration.name_span());
+                    || *self.is_never_written.entry(variable).or_insert_with(|| {
+                        variable.references().all(|it| it.is_read_only() || Some(it.span()) == declaration.name_span())
+                    });
                 if is_never_written { self.get_type(init) } else { None }
             }
             DeclarationKind::FunctionName => Some("Function"),

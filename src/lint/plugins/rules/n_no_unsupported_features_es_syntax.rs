@@ -8,6 +8,8 @@ use bun_lint::prelude::*;
 use bun_lint::regex::{self, Handler, Mode as RegexMode};
 use bun_lint::rule::Plugin;
 use bun_lint::utils::eslint_utils::{ReferenceKind, ReferenceTracker, TraceMap, get_property_name, get_string_if_constant};
+use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::sync::OnceLock;
 
 /// Disallow unsupported ECMAScript syntax on the specified version.
@@ -35,6 +37,9 @@ pub struct State<'a> {
     own: Option<Box<Active>>,
     /// Those of [`Active::methods`] that the file may name.
     methods: smallvec::SmallVec<[Name<'a>; 8]>,
+    types: RefCell<ExpressionTypes<'a>>,
+    /// The `var` declarators of the variables that have the name of a parameter of a `catch` clause, in the order of the source.
+    var_declarators: FxHashMap<Symbol<'a>, Vec<VarDecl<'a>>>,
 }
 
 type Context<'a> = Cx<'a, EsSyntax>;
@@ -315,7 +320,12 @@ impl Rule for EsSyntax {
         if has_something_at_the_end {
             on.finish(Self::finish);
         }
-        State { own, methods }
+        State {
+            own,
+            methods,
+            types: RefCell::default(),
+            var_declarators: FxHashMap::default(),
+        }
     }
 }
 
@@ -562,7 +572,18 @@ impl EsSyntax {
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             _ => return,
         };
-        if e.is_jsx_tag_name() || e.is_in_type_query() {
+        // Most are nothing that is looked for.
+        let is_candidate = chain == Chain::Start
+            || active.has(LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS)
+            || match e.kind() {
+                ExprKind::Dot { name, .. } => {
+                    name.bytes().starts_with(b"#")
+                        || cx.state.methods.contains(&name.name())
+                        || active.has(KEYWORD_PROPERTIES) && is_keyword(name.name())
+                }
+                _ => true,
+            };
+        if !is_candidate || e.is_jsx_tag_name() || e.is_in_type_query() {
             return;
         }
         if chain == Chain::Start {
@@ -605,7 +626,7 @@ impl EsSyntax {
             if feature == reported {
                 continue;
             }
-            let found = *object_type.get_or_insert_with(|| ExpressionTypes::default().get_type(obj));
+            let found = *object_type.get_or_insert_with(|| cx.state.types.borrow_mut().get_type(obj));
             if found.map_or(is_aggressive, |it| it == class) {
                 reported = feature;
                 self.report(cx, feature, e.span());
@@ -686,14 +707,21 @@ impl EsSyntax {
         let Some(shadowing) = Node::Pat(param.pat()).scope().variable_scope().get_name(name) else {
             return;
         };
-        for declaration in shadowing.declarations() {
-            if declaration.kind() == Some(DeclarationKind::Variable)
-                && let Some(Node::VarDecl(declarator)) = declaration.node()
-                && declarator.var_kind() == VarKind::Var
-                && handler.span().contains(declarator.binding_span())
-            {
-                self.report(cx, SHADOW_CATCH_PARAM, declarator.span());
-            }
+        let declarators = cx.state.var_declarators.entry(shadowing).or_insert_with(|| {
+            let declarators = shadowing.declarations().filter_map(|declaration| match declaration.node() {
+                Some(Node::VarDecl(declarator)) if declaration.kind() == Some(DeclarationKind::Variable) => Some(declarator),
+                _ => None,
+            });
+            let mut declarators: Vec<VarDecl<'a>> = declarators.filter(|it| it.var_kind() == VarKind::Var).collect();
+            declarators.sort_by_key(|it| it.binding_span().start);
+            declarators
+        });
+        let handler = handler.span();
+        let first = declarators.partition_point(|it| it.binding_span().start < handler.start);
+        let in_handler = declarators.iter().skip(first).take_while(|it| it.binding_span().start < handler.end);
+        let shadowed: smallvec::SmallVec<[Span; 2]> = in_handler.filter(|it| handler.contains(it.binding_span())).map(|it| it.span()).collect();
+        for declarator in shadowed {
+            self.report(cx, SHADOW_CATCH_PARAM, declarator);
         }
     }
 
@@ -957,14 +985,24 @@ impl EsSyntax {
             }
         }
         subclasses.sort_by_key(|it| it.1.span().start);
+        // The first for what a class extends, and for whether that is `AggregateError`.
+        let mut first_of_subclass: FxHashMap<(Expr<'a>, bool), Expr<'a>> = FxHashMap::default();
+        for (class, super_call, found) in subclasses {
+            for is_aggregate_error in [false, true] {
+                if found[usize::from(is_aggregate_error)]
+                    && let Some(extended) = class.extends()
+                {
+                    first_of_subclass.entry((extended, is_aggregate_error)).or_insert(super_call);
+                }
+            }
+        }
         for reference in tracker.iterate_global_references(&ERRORS) {
             let Some(node) = reference.expr() else {
                 continue;
             };
             let is_aggregate_error = reference.path[..] == ["AggregateError"];
-            let of_subclass = subclasses.iter().find(|it| it.2[usize::from(is_aggregate_error)] && it.0.extends() == Some(node));
-            let reported = match of_subclass {
-                Some(subclass) => Some(subclass.1),
+            let reported = match first_of_subclass.get(&(node, is_aggregate_error)) {
+                Some(super_call) => Some(*super_call),
                 None => (reference.kind == ReferenceKind::Construct || node.tag() == ExprTag::New)
                     .then(|| reference.call().filter(|call| has_cause_option(*call, is_aggregate_error)).map(|_| node))
                     .flatten(),

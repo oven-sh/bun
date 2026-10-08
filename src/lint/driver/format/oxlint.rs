@@ -71,14 +71,21 @@ struct Offsets<'t> {
     marks: Vec<(usize, usize)>,
 }
 
-/// How many bytes and how many UTF-16 code units the character has that starts with `first`.
-fn sizes(first: u8) -> (usize, usize) {
-    match first {
+/// How long a character is.
+struct Sizes {
+    bytes: usize,
+    in_utf16: usize,
+}
+
+/// Of the character that starts with `first`.
+fn sizes(first: u8) -> Sizes {
+    let (bytes, in_utf16) = match first {
         0xF0.. => (4, 2),
         0xE0.. => (3, 1),
         0xC0.. => (2, 1),
         _ => (1, 1),
-    }
+    };
+    Sizes { bytes, in_utf16 }
 }
 
 impl<'t> Offsets<'t> {
@@ -107,7 +114,7 @@ impl<'t> Offsets<'t> {
                 if at >= marks.len() * Self::STEP {
                     marks.push((at, units));
                 }
-                let (bytes, in_utf16) = sizes(text[at]);
+                let Sizes { bytes, in_utf16 } = sizes(text[at]);
                 at += bytes;
                 units += in_utf16;
             }
@@ -125,7 +132,7 @@ impl<'t> Offsets<'t> {
     /// From `at`, which has `units` code units before it, to the first start of a character that has `wanted` or more.
     fn forward(&self, (mut at, mut units): (usize, usize), wanted: usize) -> usize {
         while units < wanted && at < self.text.len() {
-            let (bytes, in_utf16) = sizes(self.text[at]);
+            let Sizes { bytes, in_utf16 } = sizes(self.text[at]);
             at += bytes;
             units += in_utf16;
         }
@@ -151,7 +158,7 @@ impl<'t> Offsets<'t> {
         {
             let (mut counted, mut units_before_line) = before;
             while counted < start {
-                let (bytes, in_utf16) = sizes(self.text[counted]);
+                let Sizes { bytes, in_utf16 } = sizes(self.text[counted]);
                 counted += bytes;
                 units_before_line += in_utf16;
             }

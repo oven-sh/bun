@@ -71,8 +71,9 @@ const BUILT_IN: &[u8] = br#"[
 pub(crate) struct Loaded {
     pub(crate) config: Config,
     pub(crate) flavor: Flavor,
-    /// `options.typeAware` of an `.oxlintrc.json`.
-    pub(crate) is_type_aware: bool,
+    /// Whether the rules that need types run, where that is the same for all files:
+    /// `options.typeAware` of an `.oxlintrc.json`. `None`: the configuration of each file says.
+    pub(crate) wants_types: Option<bool>,
     /// `options.denyWarnings`
     pub(crate) denies_warnings: bool,
     /// `options.maxWarnings`
@@ -529,7 +530,7 @@ impl<'l> Loader<'l> {
         Ok(Arc::new(Loaded {
             config: self.flat(root, bun_lint::json::parse(&text).unwrap_or(Json::Null))?,
             flavor: Flavor::BuiltIn,
-            is_type_aware: false,
+            wants_types: Some(false),
             denies_warnings: false,
             max_warnings: None,
         }))
@@ -588,10 +589,12 @@ impl<'l> Loader<'l> {
                 .cloned()
         };
         let is_on = |name: &[u8]| option(name).and_then(|it| it.as_bool()) == Some(true);
-        let (is_type_aware, denies_warnings) = (
-            is_on(b"typeAware") || is_on(b"typeCheck"),
-            is_on(b"denyWarnings"),
-        );
+        let wants_types = match flavor {
+            Flavor::Eslint | Flavor::EslintRc => None,
+            Flavor::Oxlint => Some(is_on(b"typeAware") || is_on(b"typeCheck")),
+            Flavor::BuiltIn => Some(false),
+        };
+        let denies_warnings = is_on(b"denyWarnings");
         let max_warnings = match option(b"maxWarnings") {
             Some(Json::Number(count)) => Some(count as i64),
             _ => None,
@@ -630,7 +633,7 @@ impl<'l> Loader<'l> {
         Ok(Arc::new(Loaded {
             config,
             flavor,
-            is_type_aware,
+            wants_types,
             denies_warnings,
             max_warnings,
         }))
@@ -680,7 +683,7 @@ impl<'l> Loader<'l> {
             b"" if !self.options.config_lookup => Ok(Arc::new(Loaded {
                 config: self.flat(base_path, Json::Array(Vec::new()))?,
                 flavor: Flavor::Eslint,
-                is_type_aware: false,
+                wants_types: None,
                 denies_warnings: false,
                 max_warnings: None,
             })),
@@ -761,11 +764,10 @@ impl<'l> Loader<'l> {
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.
     pub(crate) fn wants_types(&self, loaded: &Loaded, config: &ResolvedConfig) -> bool {
-        self.options.type_aware.unwrap_or(match loaded.flavor {
-            Flavor::Eslint | Flavor::EslintRc => config.language.wants_types,
-            Flavor::Oxlint => loaded.is_type_aware,
-            Flavor::BuiltIn => false,
-        })
+        self.options
+            .type_aware
+            .or(loaded.wants_types)
+            .unwrap_or(config.language.wants_types)
     }
 
     /// Whether `.gitignore` counts for what has the configuration `loaded`.

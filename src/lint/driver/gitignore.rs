@@ -319,14 +319,14 @@ pub(crate) fn with_text(
     Some(Arc::new(Ignores::new(directory, patterns, chain)))
 }
 
-/// `chain` and the file at `path`, whose patterns are relative to `directory`.
+/// `chain` and `file`, whose patterns are relative to `directory`.
 pub(crate) fn with_file(
     chain: Chain,
     directory: &[u8],
-    path: &[u8],
+    file: &[u8],
     expands_braces: bool,
 ) -> Chain {
-    match fs::read(path) {
+    match fs::read(file) {
         Ok(text) => with_text(chain, directory, &text, expands_braces),
         Err(_) => chain,
     }

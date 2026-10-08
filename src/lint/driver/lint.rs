@@ -4,7 +4,7 @@
 use crate::cli::{FixType, Options};
 use crate::configs::Flavor;
 use crate::discover::{Status, Target};
-use crate::results::{Counts, FileResult};
+use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -141,7 +141,7 @@ impl Context<'_, '_> {
 
     /// Lints a file again that `modules` names when all files are linted.
     pub(crate) fn lint_again(&self, result: &mut FileResult) -> Result<(), Fatal> {
-        let Some(config) = result.config.clone() else {
+        let Some(config) = result.linted.as_ref().map(|it| Arc::clone(&it.config)) else {
             return Ok(());
         };
         let path = paths::from_native(&result.path);
@@ -264,15 +264,16 @@ impl Context<'_, '_> {
         FileResult {
             path,
             counts,
-            has_source: !is_fixed && counts.errors + counts.warnings > 0,
             text: (is_fixed || (self.keeps_text && is_reported)).then_some(text),
             messages: result.messages,
             suppressed: result.suppressed,
             thrown: result.thrown,
             had_types: false,
             is_fixed,
-            is_ignored: false,
-            config: Some(Arc::clone(config)),
+            linted: Some(Linted {
+                config: Arc::clone(config),
+                has_source: !is_fixed && counts.errors + counts.warnings > 0,
+            }),
         }
     }
 

@@ -373,6 +373,15 @@ fn read_tsconfig(path: &[u8], settings: &mut Settings, depth: u32) {
 
 pub(crate) type Found = Result<Arc<Scope>, Fatal>;
 
+/// What is in a directory, of what matters for its [`Scope`].
+#[derive(Default)]
+struct Listed {
+    /// The configuration files, as indices into [`NAMES`].
+    candidates: Vec<usize>,
+    has_editorconfig: bool,
+    is_project_root: bool,
+}
+
 pub(crate) struct Configs<'c> {
     options: &'c Options,
     environment: &'c Environment<'c>,
@@ -553,13 +562,12 @@ impl<'c> Configs<'c> {
         } else {
             NAMES.len()
         };
-        let (mut candidates, mut has_editorconfig, mut is_project_root) =
-            (Vec::new(), false, false);
+        let mut listed = Listed::default();
         for name in names.filter(|name| matches!(name.first(), Some(b'.' | b'p' | b'o'))) {
             match name {
-                b".editorconfig" => has_editorconfig = true,
-                b".git" | b".hg" => is_project_root = true,
-                name => candidates.extend(
+                b".editorconfig" => listed.has_editorconfig = true,
+                b".git" | b".hg" => listed.is_project_root = true,
+                name => listed.candidates.extend(
                     NAMES
                         .iter()
                         .position(|it| *it == name)
@@ -567,6 +575,16 @@ impl<'c> Configs<'c> {
                 ),
             }
         }
+        self.scope_of(directory, listed, above)
+    }
+
+    /// What counts in `directory`, which has `listed`, and whose parent has `above`.
+    fn scope_of(&self, directory: &[u8], listed: Listed, above: Option<&Scope>) -> Found {
+        let Listed {
+            mut candidates,
+            has_editorconfig,
+            is_project_root,
+        } = listed;
         let mut config = above.and_then(|it| it.config.clone());
         if self.named.is_none() && self.options.config_lookup {
             // One after the other: a `package.json` need not have a configuration.

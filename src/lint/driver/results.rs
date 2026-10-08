@@ -40,6 +40,13 @@ impl Counts {
     }
 }
 
+/// Of a file that has been linted.
+pub(crate) struct Linted {
+    pub(crate) config: Arc<ResolvedConfig>,
+    /// [`FileResult::text`] is ESLint's `source`.
+    pub(crate) has_source: bool,
+}
+
 pub(crate) struct FileResult {
     /// As it is printed: absolute, or `<text>`.
     pub(crate) path: Vec<u8>,
@@ -55,12 +62,9 @@ pub(crate) struct FileResult {
     pub(crate) text: Option<Vec<u8>>,
     /// The text has been changed by fixes: `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
-    /// `text` is ESLint's `source`.
-    pub(crate) has_source: bool,
-    /// ESLint's `createIgnoreResult`: the file is not linted, and the only message says why.
-    pub(crate) is_ignored: bool,
-    /// `None` for a file that is not linted.
-    pub(crate) config: Option<Arc<ResolvedConfig>>,
+    /// `None` is ESLint's `createIgnoreResult`: the file is not linted, and the only message says
+    /// why.
+    pub(crate) linted: Option<Linted>,
 }
 
 impl FileResult {
@@ -89,9 +93,7 @@ impl FileResult {
             had_types: false,
             text: None,
             is_fixed: false,
-            has_source: false,
-            is_ignored: true,
-            config: None,
+            linted: None,
         }
     }
 

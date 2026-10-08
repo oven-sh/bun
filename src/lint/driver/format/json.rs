@@ -22,47 +22,52 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
     out.extend_from_slice(b"{\"filePath\":");
     write_string(out, &result.path);
     let counts = result.counts;
-    if result.is_ignored {
-        out.extend_from_slice(b",\"messages\":[");
-        for message in &result.messages {
-            out.extend_from_slice(b"{\"ruleId\":null,\"fatal\":false,\"severity\":1,\"message\":");
-            write_string(out, &message.message);
-            out.push(b'}');
+    match &result.linted {
+        None => {
+            out.extend_from_slice(b",\"messages\":[");
+            for message in &result.messages {
+                out.extend_from_slice(
+                    b"{\"ruleId\":null,\"fatal\":false,\"severity\":1,\"message\":",
+                );
+                write_string(out, &message.message);
+                out.push(b'}');
+            }
+            let _ = write!(
+                out,
+                "],\"suppressedMessages\":[],\"errorCount\":{},\"warningCount\":{},\"fatalErrorCount\":{},\"fixableErrorCount\":{},\"fixableWarningCount\":{}",
+                counts.errors,
+                counts.warnings,
+                counts.fatal_errors,
+                counts.fixable_errors,
+                counts.fixable_warnings
+            );
         }
-        let _ = write!(
-            out,
-            "],\"suppressedMessages\":[],\"errorCount\":{},\"warningCount\":{},\"fatalErrorCount\":{},\"fixableErrorCount\":{},\"fixableWarningCount\":{}",
-            counts.errors,
-            counts.warnings,
-            counts.fatal_errors,
-            counts.fixable_errors,
-            counts.fixable_warnings
-        );
-    } else {
-        let text = result.text.as_deref().unwrap_or_default();
-        out.extend_from_slice(b",\"messages\":");
-        write_messages(out, &result.messages, text);
-        out.extend_from_slice(b",\"suppressedMessages\":");
-        write_messages(out, &result.suppressed, text);
-        let _ = write!(
-            out,
-            ",\"errorCount\":{},\"fatalErrorCount\":{},\"warningCount\":{},\"fixableErrorCount\":{},\"fixableWarningCount\":{}",
-            counts.errors,
-            counts.fatal_errors,
-            counts.warnings,
-            counts.fixable_errors,
-            counts.fixable_warnings
-        );
-        if result.is_fixed {
-            out.extend_from_slice(b",\"output\":");
-            write_string(out, text);
-        } else if result.has_source {
-            out.extend_from_slice(b",\"source\":");
-            write_string(out, text);
+        Some(linted) => {
+            let text = result.text.as_deref().unwrap_or_default();
+            out.extend_from_slice(b",\"messages\":");
+            write_messages(out, &result.messages, text);
+            out.extend_from_slice(b",\"suppressedMessages\":");
+            write_messages(out, &result.suppressed, text);
+            let _ = write!(
+                out,
+                ",\"errorCount\":{},\"fatalErrorCount\":{},\"warningCount\":{},\"fixableErrorCount\":{},\"fixableWarningCount\":{}",
+                counts.errors,
+                counts.fatal_errors,
+                counts.warnings,
+                counts.fixable_errors,
+                counts.fixable_warnings
+            );
+            if result.is_fixed {
+                out.extend_from_slice(b",\"output\":");
+                write_string(out, text);
+            } else if linted.has_source {
+                out.extend_from_slice(b",\"source\":");
+                write_string(out, text);
+            }
         }
     }
     out.extend_from_slice(b",\"usedDeprecatedRules\":");
-    crate::deprecated::write_used(out, result.config.as_deref());
+    crate::deprecated::write_used(out, result.linted.as_ref().map(|it| &*it.config));
     out.push(b'}');
 }
 

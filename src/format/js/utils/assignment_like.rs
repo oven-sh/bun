@@ -196,18 +196,18 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
         write!(f, FormatDecorators::of_member(member));
         let written = modifiers.iter().fold(Flags::empty(), |all, it| all | it.flag());
         for (flag, keyword) in [
-            (Flags::AMBIENT, "declare"),
-            (Flags::PUBLIC, "public"),
-            (Flags::PROTECTED, "protected"),
-            (Flags::PRIVATE, "private"),
-            (Flags::STATIC, "static"),
-            (Flags::ABSTRACT, "abstract"),
-            (Flags::OVERRIDE, "override"),
-            (Flags::READONLY, "readonly"),
-            (Flags::ACCESSOR, "accessor"),
+            (Flags::AMBIENT, "declare "),
+            (Flags::PUBLIC, "public "),
+            (Flags::PROTECTED, "protected "),
+            (Flags::PRIVATE, "private "),
+            (Flags::STATIC, "static "),
+            (Flags::ABSTRACT, "abstract "),
+            (Flags::OVERRIDE, "override "),
+            (Flags::READONLY, "readonly "),
+            (Flags::ACCESSOR, "accessor "),
         ] {
             if written.contains(flag) {
-                write!(f, [keyword, space()]);
+                write!(f, keyword);
             }
         }
     }

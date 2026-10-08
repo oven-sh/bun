@@ -70,15 +70,15 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if !member.modifiers().is_empty() {
         write!(f, FormatDecorators::of_member(member));
         for (flag, keyword) in [
-            (Flags::PUBLIC, "public"),
-            (Flags::PROTECTED, "protected"),
-            (Flags::PRIVATE, "private"),
-            (Flags::STATIC, "static"),
-            (Flags::ABSTRACT, "abstract"),
-            (Flags::OVERRIDE, "override"),
+            (Flags::PUBLIC, "public "),
+            (Flags::PROTECTED, "protected "),
+            (Flags::PRIVATE, "private "),
+            (Flags::STATIC, "static "),
+            (Flags::ABSTRACT, "abstract "),
+            (Flags::OVERRIDE, "override "),
         ] {
             if has_modifier(member, flag) {
-                write!(f, [keyword, space()]);
+                write!(f, keyword);
             }
         }
     }

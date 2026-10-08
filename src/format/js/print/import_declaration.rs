@@ -75,15 +75,15 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(statement: Stmt<'a
 }
 
 pub(crate) fn write_import_declaration<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut Formatter<'a>) {
-    write!(f, ["import", space()]);
+    write!(f, "import ");
     if let Some(phase) = import.phase() {
         write!(f, [phase, space()]);
     } else if import.is_type_only() {
-        write!(f, ["type", space()]);
+        write!(f, "type ");
     }
     if !import.is_side_effect() {
         write_import_specifiers(statement, import, f);
-        write!(f, [space(), "from", space()]);
+        write!(f, " from ");
     }
     format_import_and_export_source_with_clause(statement, f);
     write!(f, OptionalSemicolon);

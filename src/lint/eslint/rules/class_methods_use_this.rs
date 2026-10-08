@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
 
 /// Enforce that class methods utilize `this`.
@@ -35,6 +36,9 @@ pub struct State<'a> {
     methods: Vec<Func<'a>>,
     /// The functions of class members with a `this` or a `super` of their own.
     uses_this: FxHashSet<Func<'a>>,
+    /// The function of a class member that a `this` in a node belongs to. `None`: it belongs to
+    /// something else.
+    owners_of_this: AncestorMemo<'a, Option<Func<'a>>>,
 }
 
 impl<'a> State<'a> {
@@ -85,48 +89,39 @@ impl Checker {
         if e.is_jsx_tag_name() {
             return;
         }
-        let mut child = Node::Expr(e);
-        for ancestor in child.ancestors() {
-            match ancestor {
-                Node::Func(func) => match func.kind() {
-                    FnKind::StaticBlock => return,
-                    FnKind::Arrow if self.enforce_for_class_fields && is_value_of_field(func) => {
-                        state.uses_this.insert(func);
-                        return;
-                    }
-                    FnKind::Decl
-                    | FnKind::Expr
-                    | FnKind::Method
-                    | FnKind::Getter
-                    | FnKind::Setter
-                    | FnKind::Constructor
-                        if func.has_body() =>
-                    {
-                        if is_child_of_member(func) {
-                            state.uses_this.insert(func);
-                        }
-                        return;
-                    }
-                    _ => {}
-                },
-                // What follows the key of a field is an implicit function.
-                Node::Member(member)
-                    if member.kind() == MemberKind::Property
-                        && !member.flags().contains(Flags::ABSTRACT)
-                        && !member.is_signature() =>
+        let owner = state.owners_of_this.find(Node::Expr(e), |child, ancestor| match ancestor {
+            Node::Func(func) => match func.kind() {
+                FnKind::StaticBlock => Some(None),
+                FnKind::Arrow if self.enforce_for_class_fields && is_value_of_field(func) => Some(Some(func)),
+                FnKind::Decl
+                | FnKind::Expr
+                | FnKind::Method
+                | FnKind::Getter
+                | FnKind::Setter
+                | FnKind::Constructor
+                    if func.has_body() =>
                 {
-                    let is_after_key = match child {
-                        Node::Expr(e) => member.init() == Some(e),
-                        Node::Type(_) => true,
-                        _ => false,
-                    };
-                    if is_after_key {
-                        return;
-                    }
+                    Some(is_child_of_member(func).then_some(func))
                 }
-                _ => {}
+                _ => None,
+            },
+            // What follows the key of a field is an implicit function.
+            Node::Member(member)
+                if member.kind() == MemberKind::Property
+                    && !member.flags().contains(Flags::ABSTRACT)
+                    && !member.is_signature() =>
+            {
+                let is_after_key = match child {
+                    Node::Expr(e) => member.init() == Some(e),
+                    Node::Type(_) => true,
+                    _ => false,
+                };
+                is_after_key.then_some(None)
             }
-            child = ancestor;
+            _ => None,
+        });
+        if let Some(Some(func)) = owner {
+            state.uses_this.insert(func);
         }
     }
 

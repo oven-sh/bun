@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Require `return` statements after callbacks.
 pub struct CallbackReturn {
@@ -33,6 +34,22 @@ fn is_callback_expression<'a>(call: Expr<'a>, statement: Option<Stmt<'a>>) -> bo
         || matches!(expression.kind(), ExprKind::Binary { op, right, .. } if op != BinOp::Comma && right == call)
 }
 
+/// What decides about the calls in it.
+#[derive(Copy, Clone)]
+enum Around<'a> {
+    /// A `return`, or an arrow function.
+    Returned,
+    /// The closest block, with whether it is the body of a function.
+    Block(List<'a, Stmt<'a>>, bool),
+}
+
+#[derive(Default)]
+pub struct State<'a> {
+    around: AncestorMemo<'a, Around<'a>>,
+    /// ESLint's `getUpperFunction`.
+    functions: AncestorMemo<'a, Func<'a>>,
+}
+
 impl CallbackReturn {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
@@ -43,33 +60,23 @@ impl CallbackReturn {
             return;
         }
 
-        // The closest block, with whether it is the body of a function.
-        let mut closest_block = None;
-        let mut child = Node::Expr(e);
-        for ancestor in child.ancestors() {
-            match ancestor {
-                Node::Stmt(statement) => match statement.kind() {
-                    StmtKind::Return(_) => return,
-                    StmtKind::Block(body) => {
-                        closest_block = Some((body, false));
-                        break;
-                    }
-                    _ => {}
-                },
-                Node::Func(func) => match (child, func.body_statements()) {
-                    (Node::Stmt(_), Some(body)) if func.kind() != FnKind::StaticBlock => {
-                        closest_block = Some((body, true));
-                        break;
-                    }
-                    _ if func.is_arrow() => return,
-                    _ => {}
-                },
-                _ => {}
-            }
-            child = ancestor;
+        let around = cx.state.around.find(Node::Expr(e), |child, ancestor| match ancestor {
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::Return(_) => Some(Around::Returned),
+                StmtKind::Block(body) => Some(Around::Block(body, false)),
+                _ => None,
+            },
+            Node::Func(func) => match (child, func.body_statements()) {
+                (Node::Stmt(_), Some(body)) if func.kind() != FnKind::StaticBlock => Some(Around::Block(body, true)),
+                _ if func.is_arrow() => Some(Around::Returned),
+                _ => None,
+            },
+            _ => None,
+        });
+        if matches!(around, Some(Around::Returned)) {
+            return;
         }
-
-        if let Some((body, is_function_body)) = closest_block {
+        if let Some(Around::Block(body, is_function_body)) = around {
             let mut from_last = body.iter().rev();
             let (last, before_last) = (from_last.next(), from_last.next());
             if is_function_body && is_callback_expression(e, last) {
@@ -80,7 +87,7 @@ impl CallbackReturn {
             }
         }
 
-        if ast_utils::get_upper_function(e).is_some() {
+        if cx.state.functions.find(Node::Expr(e), |_, it| ast_utils::as_function(it)).is_some() {
             cx.report(e, MISSING_RETURN);
         }
     }
@@ -88,7 +95,7 @@ impl CallbackReturn {
 
 impl Rule for CallbackReturn {
     const META: Meta = Meta::eslint("callback-return", Kind::Suggestion).deprecated();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         CallbackReturn {
@@ -99,7 +106,8 @@ impl Rule for CallbackReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.exprs([ExprTag::Call], Self::check);
+        State::default()
     }
 }

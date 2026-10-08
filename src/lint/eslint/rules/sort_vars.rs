@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 /// Require variables within the same declaration block to be sorted.
@@ -32,7 +33,19 @@ impl SortVars {
 
     fn sorted_text<'a>(&self, declarations: &[VarDecl<'a>], file: &'a File<'a>) -> Vec<u8> {
         let mut sorted = declarations.to_vec();
-        utils::array_sort_by(&mut sorted, |a, b| self.compare(a, b) != Ordering::Greater);
+        if sorted.len() < 64 {
+            utils::array_sort_by(&mut sorted, |a, b| self.compare(a, b) != Ordering::Greater);
+        } else {
+            // The same without moving each past all that come after it: of two with the same name,
+            // the later one ends up first.
+            let key = |name| match self.ignore_case {
+                true => text::to_lower_case(name),
+                false => Cow::Borrowed(name),
+            };
+            let mut named: Vec<_> = declarations.iter().rev().map(|it| (key(name_of(*it)), *it)).collect();
+            named.sort_by(|a, b| text::compare(&a.0, &b.0));
+            sorted = named.into_iter().map(|it| it.1).collect();
+        }
         let mut out = Vec::new();
         for (i, declaration) in sorted.iter().enumerate() {
             out.extend_from_slice(declaration.text());

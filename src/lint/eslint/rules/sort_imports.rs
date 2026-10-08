@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 /// Enforce sorted `import` declarations within modules.
@@ -69,42 +70,31 @@ fn get_first_local_member_name(import: Import<'_>) -> Option<&[u8]> {
     first.map(Ident::bytes)
 }
 
-/// `items.sort(compare)` as V8 does it for fewer than 64 items, where `is_before(a, b)` is
-/// `compare(a, b) < 0`. A `compare` that never answers 0 is inconsistent for equal items, and where
-/// those end up depends on the algorithm.
-// TODO(api): replace by utils::text::array_sort_by
-fn array_sort_by<T: Copy>(items: &mut [T], is_before: impl Fn(T, T) -> bool) {
-    if items.len() < 2 {
-        return;
-    }
-    let is_descending = is_before(items[1], items[0]);
-    let mut run = 2;
-    while run < items.len() && is_before(items[run], items[run - 1]) == is_descending {
-        run += 1;
-    }
-    if is_descending {
-        items[..run].reverse();
-    }
-    for start in run..items.len() {
-        let pivot = items[start];
-        let (mut left, mut right) = (0, start);
-        while left < right {
-            let middle = left + (right - left) / 2;
-            match is_before(pivot, items[middle]) {
-                true => right = middle,
-                false => left = middle + 1,
-            }
-        }
-        items.copy_within(left..start, left + 1);
-        items[left] = pivot;
-    }
-}
-
 impl SortImports {
     fn compare(&self, a: &[u8], b: &[u8]) -> Ordering {
         match self.ignore_case {
             true => text::compare(&text::to_lower_case(a), &text::to_lower_case(b)),
             false => text::compare(a, b),
+        }
+    }
+
+    /// `specifiers.sort((a, b) => name(a) > name(b) ? 1 : -1)`
+    fn sort(&self, specifiers: &mut [ImportSpec<'_>]) {
+        if specifiers.len() < 64 {
+            return utils::array_sort_by(specifiers, |a, b| {
+                self.compare(a.local().bytes(), b.local().bytes()) != Ordering::Greater
+            });
+        }
+        // The same without moving each past all that come after it: of two with the same name, the
+        // later one ends up first.
+        let key = |name| match self.ignore_case {
+            true => text::to_lower_case(name),
+            false => Cow::Borrowed(name),
+        };
+        let mut sorted: Vec<_> = specifiers.iter().rev().map(|it| (key(it.local().bytes()), *it)).collect();
+        sorted.sort_by(|a, b| text::compare(&a.0, &b.0));
+        for (specifier, (_, next)) in specifiers.iter_mut().zip(sorted) {
+            *specifier = next;
         }
     }
 
@@ -158,9 +148,7 @@ impl SortImports {
                 }
                 let written: Vec<ImportSpec<'a>> = specifiers.iter().collect();
                 let mut sorted = written.clone();
-                array_sort_by(&mut sorted, |a, b| {
-                    self.compare(a.local().bytes(), b.local().bytes()) != Ordering::Greater
-                });
+                self.sort(&mut sorted);
                 // What is between the specifiers stays where it is.
                 let mut text = Vec::new();
                 for (i, specifier) in sorted.iter().enumerate() {

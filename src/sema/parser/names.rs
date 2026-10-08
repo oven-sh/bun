@@ -663,6 +663,11 @@ impl Intern for FileAtoms<'_> {
     }
 
     #[inline]
+    fn find(&self, text: &[u8]) -> Option<Atom> {
+        self.names.find(text, self.source)
+    }
+
+    #[inline]
     fn bytes(&self, atom: Atom) -> &[u8] {
         self.names.bytes(atom, self.source)
     }
@@ -684,6 +689,9 @@ pub(crate) struct NoInterner;
 impl Intern for NoInterner {
     fn intern(&self, _: &[u8]) -> Atom {
         Atom::NONE
+    }
+    fn find(&self, _: &[u8]) -> Option<Atom> {
+        None
     }
     fn bytes(&self, _: Atom) -> &[u8] {
         b""

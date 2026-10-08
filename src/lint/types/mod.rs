@@ -768,6 +768,9 @@ impl bun_sema::atom::Intern for WrittenNames<'_> {
     fn intern(&self, text: &[u8]) -> bun_sema::atom::Atom {
         self.0.intern(text)
     }
+    fn find(&self, text: &[u8]) -> Option<bun_sema::atom::Atom> {
+        self.0.find(text)
+    }
     fn bytes(&self, atom: bun_sema::atom::Atom) -> &[u8] {
         bun_sema::atom::written_name(self.0.bytes(atom))
     }

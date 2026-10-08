@@ -236,6 +236,33 @@ known_atoms! {
     async_ = "async",
     AsyncDisposable = "AsyncDisposable",
     tslib = "tslib",
+    // Names that the rules of a linter look for.
+    callee = "callee",
+    caller = "caller",
+    __proto__ = "__proto__",
+    __iterator__ = "__iterator__",
+    hasOwnProperty = "hasOwnProperty",
+    isPrototypeOf = "isPrototypeOf",
+    propertyIsEnumerable = "propertyIsEnumerable",
+    NaN = "NaN",
+    console = "console",
+    Infinity = "Infinity",
+    window = "window",
+    self_ = "self",
+    Math = "Math",
+    JSON = "JSON",
+    Atomics = "Atomics",
+    Intl = "Intl",
+    Temporal = "Temporal",
+    process = "process",
+    Buffer = "Buffer",
+    parseInt = "parseInt",
+    alert = "alert",
+    confirm = "confirm",
+    prompt = "prompt",
+    setTimeout = "setTimeout",
+    setInterval = "setInterval",
+    execScript = "execScript",
 }
 
 /// Prefix of the name of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. No text
@@ -380,6 +407,9 @@ impl crate::table::Id for Atom {
 /// An `Interner` for those who cannot name the lifetime of its session, in which it is invariant.
 pub trait Intern: Sync {
     fn intern(&self, text: &[u8]) -> Atom;
+    /// The atom of `text` if it has one. Nothing is entered. For the interner of one file: if it is
+    /// in the file.
+    fn find(&self, text: &[u8]) -> Option<Atom>;
     fn bytes(&self, atom: Atom) -> &[u8];
     /// See `Interner::number`.
     fn number(&self) -> u64;
@@ -391,6 +421,10 @@ impl Intern for Interner<'_> {
     #[inline]
     fn intern(&self, text: &[u8]) -> Atom {
         Interner::intern(self, text)
+    }
+    #[inline]
+    fn find(&self, text: &[u8]) -> Option<Atom> {
+        self.lookup(text)
     }
     #[inline]
     fn bytes(&self, atom: Atom) -> &[u8] {
@@ -458,6 +492,10 @@ impl Intern for InternerPerThread<'_> {
     #[inline]
     fn intern(&self, text: &[u8]) -> Atom {
         self.own().intern(text)
+    }
+    #[inline]
+    fn find(&self, text: &[u8]) -> Option<Atom> {
+        self.own().lookup(text)
     }
     #[inline]
     fn bytes(&self, atom: Atom) -> &[u8] {

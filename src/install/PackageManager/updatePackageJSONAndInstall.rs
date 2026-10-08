@@ -426,9 +426,11 @@ fn update_package_json_and_install_with_manager_with_updates(
         _ => {
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
-                if let Some(stuff) =
-                    patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
-                {
+                let stuff = patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?;
+                // `do_patch_commit` loads the lockfile. A yarn or pnpm migration there
+                // re-parses the cached entry, which frees the tree copied above.
+                current_package_json_root = current_package_json.root;
+                if let Some(stuff) = stuff {
                     // we're inside a workspace package, we need to edit the
                     // root json, not the `current_package_json`
                     if stuff.not_in_workspace_root {

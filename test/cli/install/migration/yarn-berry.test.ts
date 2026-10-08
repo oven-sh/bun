@@ -280,6 +280,15 @@ describe("yarn berry migration", () => {
     expect(await Bun.file(join(dryDir, "package.json")).text()).toBe(before);
     expect(existsSync(join(dryDir, "bun.lock"))).toBeFalse();
 
+    // --lockfile-only saves bun.lock, so it writes package.json too
+    const lockOnlyDir = await fixture("patch");
+    const lockOnly = await run(lockOnlyDir, "install", "--lockfile-only");
+    expect(lockOnly.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(lockOnly.stderr).not.toContain("error:");
+    expect((await Bun.file(join(lockOnlyDir, "package.json")).json()).dependencies["no-deps"]).toBe("1.0.0");
+    expect(lockOnly.exitCode).toBe(0);
+    await expectFrozenInstall(lockOnlyDir);
+
     // `bun remove` as the first command writes its own edit and the migration's
     const dir = await fixture("patch");
     const { stderr, exitCode } = await run(dir, "remove", "optional-native");

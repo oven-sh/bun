@@ -6,7 +6,7 @@ use super::{
     handle,
 };
 use crate::span::Span;
-use crate::tokens::{skip_trivia, skip_trivia_back};
+use crate::tokens::skip_trivia;
 use bun_sema::hir;
 
 handle! {
@@ -222,7 +222,7 @@ impl<'a> TypeNode<'a> {
         let text = self.file.text();
         let mut span = self.span();
         loop {
-            let before = skip_trivia_back(text, span.start) as usize;
+            let before = self.file.end_of_token_before(span.start) as usize;
             if before == 0 || text.get(before - 1) != Some(&b'(') {
                 return span;
             }
@@ -244,7 +244,7 @@ impl<'a> TypeNode<'a> {
     /// to the end of the type and its parentheses.
     pub fn annotation_span(self) -> Span {
         let (text, outer) = (self.file.text(), self.outer_span());
-        let before = skip_trivia_back(text, outer.start);
+        let before = self.file.end_of_token_before(outer.start);
         let is_arrow = text.get(..before as usize).is_some_and(|it| it.ends_with(b"=>"));
         Span::new(before.saturating_sub(if is_arrow { 2 } else { 1 }), outer.end)
     }
@@ -396,13 +396,13 @@ impl<'a> List<'a, TypeParam<'a>> {
 }
 
 /// From the `<` before `start` to the `>` after `end`, which a `,` may precede.
-fn angle_brackets(file: &File, start: u32, end: u32) -> Span {
+fn angle_brackets<'a>(file: &'a File<'a>, start: u32, end: u32) -> Span {
     let text = file.text();
     let mut close = skip_trivia(text, end);
     if text.get(close as usize) == Some(&b',') {
         close = skip_trivia(text, close + 1);
     }
-    Span::new(skip_trivia_back(text, start).saturating_sub(1), close + 1)
+    Span::new(file.end_of_token_before(start).saturating_sub(1), close + 1)
 }
 
 /// `with { type: "json" }` after the module specifier of an import or an export, and the
@@ -443,7 +443,7 @@ impl<'a> ImportAttributes<'a> {
         if text.get(close as usize) == Some(&b',') {
             close = skip_trivia(text, close + 1);
         }
-        Span::new(skip_trivia_back(text, self.keyword).saturating_sub(1), close + 1)
+        Span::new(self.object.file().end_of_token_before(self.keyword).saturating_sub(1), close + 1)
     }
 
     /// `key: "value"`. The key is a name or a string.

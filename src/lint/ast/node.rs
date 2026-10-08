@@ -235,6 +235,7 @@ impl<'a> Node<'a> {
             }
             _ => Node::File(file),
         };
+        let unpack = |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
         match self {
             Node::File(_) => self,
             Node::Expr(e) => {
@@ -286,7 +287,7 @@ impl<'a> Node<'a> {
                 },
             },
             Node::PatProp(p) => owner_of_pattern(p.value().id()),
-            Node::PatElem(e) => owner_of_pattern(hir.pat_elems[e.id().idx()].pat),
+            Node::PatElem(e) => owner_of_pattern(hir.pat_elems.get(e.id().idx()).map_or(hir::PatId::NONE, |it| it.pat)),
             Node::Func(f) => f.owner(),
             Node::Class(c) => c.owner(),
             Node::Param(p) => match p.func() {
@@ -312,9 +313,9 @@ impl<'a> Node<'a> {
             }
             Node::ImportSpec(s) => Node::Stmt(s.import().stmt()),
             Node::ExportSpec(s) => Node::Stmt(s.export().stmt()),
-            Node::Type(t) => file.parents().types[t.id().idx()].unpack(file),
-            Node::TypeParam(p) => file.parents().type_params[p.id().idx()].unpack(file),
-            Node::TupleElem(e) => file.parents().tuple_elems[e.id().idx()].unpack(file),
+            Node::Type(t) => unpack(file.parents().types.get(t.id().idx())),
+            Node::TypeParam(p) => unpack(file.parents().type_params.get(p.id().idx())),
+            Node::TupleElem(e) => unpack(file.parents().tuple_elems.get(e.id().idx())),
         }
     }
 

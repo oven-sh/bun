@@ -190,8 +190,7 @@ impl<'a> Func<'a> {
     /// The position of the `<` of the type parameters, or of the `(`.
     pub(super) fn start_of_params(self) -> u32 {
         match self.type_params().first() {
-            Some(first) => crate::tokens::skip_trivia_back(self.file.text(), first.span().start)
-                .saturating_sub(1),
+            Some(first) => self.file.end_of_token_before(first.span().start).saturating_sub(1),
             None => self.raw().anchor,
         }
     }
@@ -236,7 +235,7 @@ impl<'a> Func<'a> {
                     Some(ty) => ty.annotation_span().start,
                     None => self.raw().anchor,
                 };
-                return Some(crate::tokens::skip_trivia_back(text, before).saturating_sub(1));
+                return Some(self.file.end_of_token_before(before).saturating_sub(1));
             }
             (None, None) => return None,
         };
@@ -257,7 +256,7 @@ impl<'a> Func<'a> {
             Some(open) => open,
             None => {
                 let first = self.params_with_this().next().map_or(close, |first| first.span().start);
-                crate::tokens::skip_trivia_back(self.file.text(), first).saturating_sub(1)
+                self.file.end_of_token_before(first).saturating_sub(1)
             }
         };
         Some(Span::new(open, close + 1))
@@ -630,6 +629,21 @@ fn decimal_digits(raw: &[u8]) -> Vec<u8> {
         decimal.pop();
     }
     decimal.iter().rev().map(|digit| b'0' + digit).collect()
+}
+
+impl File<'_> {
+    /// The `a` and the `b` of the JSX name `a:b` that starts at `start`: ESLint's `namespace` and
+    /// `name` of a `JSXNamespacedName`. `None` if the name has no colon.
+    pub fn jsx_namespace_and_name(&self, start: u32) -> Option<(Span, Span)> {
+        let text = self.text();
+        let namespace = Span::new(start, jsx_identifier_end(text, start));
+        let colon = skip_trivia(text, namespace.end);
+        if text.get(colon as usize) != Some(&b':') {
+            return None;
+        }
+        let name = skip_trivia(text, colon + 1);
+        Some((namespace, Span::new(name, jsx_identifier_end(text, name))))
+    }
 }
 
 /// Where the identifier of JSX that starts at `at` ends. It can contain `-`.
@@ -1460,8 +1474,8 @@ impl<'a> ImportEquals<'a> {
     pub fn require_span(self) -> Option<Span> {
         let spec = self.stmt().module_specifier_span()?;
         let text = self.file.text();
-        let open = crate::tokens::skip_trivia_back(text, spec.start).saturating_sub(1);
-        let keyword_end = crate::tokens::skip_trivia_back(text, open);
+        let open = self.file.end_of_token_before(spec.start).saturating_sub(1);
+        let keyword_end = self.file.end_of_token_before(open);
         Some(Span::new(
             keyword_end.saturating_sub("require".len() as u32),
             skip_trivia(text, spec.end) + 1,

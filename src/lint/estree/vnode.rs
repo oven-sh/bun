@@ -7,7 +7,7 @@ use crate::ast::{
     PatKind, Prop, PropKind, Stmt, StmtKind, TupleElem, TypeKind, TypeNode, UnOp,
 };
 use crate::span::Span;
-use crate::tokens::{skip_trivia, skip_trivia_back};
+use crate::tokens::skip_trivia;
 use bun_sema::hir::{ModifierId, PropId};
 
 /// A node of the ESTree that ESLint's parser would make of the file.
@@ -473,7 +473,7 @@ impl<'a> VNode<'a> {
                     },
                     ExprKind::String(_) if e.is_jsx_text() => return None,
                     ExprKind::String(_) if e.is_jsx_tag_name() => {
-                        if bun_core::strings::contains_char(e.text(), b':') {
+                        if file.jsx_namespace_and_name(e.span().start).is_some() {
                             return None;
                         }
                         Leaf::JsxIdentifier
@@ -494,7 +494,7 @@ impl<'a> VNode<'a> {
                     }
                     // `a:b`
                     ExprKind::String(_) => {
-                        let (namespace, name) = jsx_namespaced(file, e.span())?;
+                        let (namespace, name) = file.jsx_namespace_and_name(e.span().start)?;
                         Some((Leaf::JsxIdentifier, if is_property { name } else { namespace }))
                     }
                     _ => None,
@@ -502,13 +502,13 @@ impl<'a> VNode<'a> {
             }
             (Node::Expr(e), Part::ConstName) => word(e.const_keyword_span()?),
             (Node::Prop(prop), Part::KeyNamespace | Part::KeyName) => {
-                let (namespace, name) = jsx_namespaced(file, prop.key()?.span(file))?;
+                let (namespace, name) = file.jsx_namespace_and_name(prop.key()?.span(file).start)?;
                 Some((Leaf::JsxIdentifier, if self.part == Part::KeyName { name } else { namespace }))
             }
             (Node::Prop(prop), Part::Key) => {
                 let found = Leaf::key(file, prop.key()?)?;
-                let is_namespaced = matches!(found.0, Leaf::JsxIdentifier)
-                    && bun_core::strings::contains_char(file.slice(found.1), b':');
+                let is_namespaced =
+                    matches!(found.0, Leaf::JsxIdentifier) && file.jsx_namespace_and_name(found.1.start).is_some();
                 (!is_namespaced).then_some(found)
             }
             (_, Part::AttributeKey(_)) => Leaf::key(file, self.attribute()?.key()?),
@@ -594,16 +594,6 @@ impl<'a> VNode<'a> {
             _ => None,
         }
     }
-}
-
-/// The spans of the `a` and the `b` of the JSX name `a:b` at `span`.
-fn jsx_namespaced(file: &File, span: Span) -> Option<(Span, Span)> {
-    let colon = span.start + bun_core::strings::index_of_char_usize(file.slice(span), b':')? as u32;
-    let text = file.text();
-    Some((
-        Span::new(span.start, skip_trivia_back(text, colon)),
-        Span::new(skip_trivia(text, colon + 1), span.end),
-    ))
 }
 
 // ───────────────────────────── what it is ─────────────────────────────
@@ -737,9 +727,9 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
         ExprKind::This => ThisExpression,
         ExprKind::Super => Super,
         ExprKind::String(_) if e.is_jsx_text() => JSXText,
-        ExprKind::String(_) if e.is_jsx_tag_name() => match bun_core::strings::contains_char(e.text(), b':') {
-            true => JSXNamespacedName,
-            false => JSXIdentifier,
+        ExprKind::String(_) if e.is_jsx_tag_name() => match e.file().jsx_namespace_and_name(e.span().start) {
+            Some(_) => JSXNamespacedName,
+            None => JSXIdentifier,
         },
         ExprKind::String(_) => Literal,
         ExprKind::Ident(_) => Identifier,

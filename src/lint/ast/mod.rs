@@ -11,6 +11,25 @@
 //!   [`Expr::outer_span`] includes them.
 //! - Every handle has a [`Span`], from its first token to the end of its last.
 //! - [`Node`] is any handle, for what applies to all of them: `parent()`, `ancestors()`, reports.
+//!
+//! The HIR is made for the type checker. Where it has something that is not in the source, the
+//! handles do not show it, or say so:
+//! - What is synthesized from JSDoc comments in JavaScript is left out of every list and every
+//!   accessor. The cast of `/** @type {T} */ (e)` is `e`, in parentheses.
+//! - A template without substitutions is a [`ExprKind::Template`], though the HIR has a string.
+//! - The statement around the expression in the head of a `for` and around the object of a `with`
+//!   is a [wrapper](Stmt::is_wrapper), the `B` of `namespace A.B` is [nested](Module::nested), the
+//!   object of `with { type: "json" }` is [`ImportAttributes`]: these are not nodes. No listener is
+//!   called with them, a walk passes over them, and nothing has them as its parent.
+//! - Placeholders are [`ExprKind::Missing`] and [`PatKind::Missing`]: a hole in an array, the empty
+//!   `{}` of JSX. They are not nodes either.
+//! - The default of the shorthand `{ a = 1 }` is an [`ExprKind::Assign`] that is the value of the
+//!   property. A [`TupleElem`] is there for every element of a tuple type, also for a plain `T`.
+//!
+//! `bun-lint ast check` verifies that the ways up, down and through the vectors agree, and that
+//! the positions of tokens are what the text has there. `bun-lint ast estree` writes a file as
+//! ESTree, from these accessors only, which test/cli/lint/oracle/ast compares with what
+//! typescript-estree and espree make of the same code.
 
 mod decl;
 mod entities;
@@ -306,6 +325,36 @@ impl<'a> File<'a> {
     #[inline]
     pub fn has_bom(&self) -> bool {
         self.hir.text.starts_with(b"\xEF\xBB\xBF")
+    }
+
+    /// The end of the token before the one that starts at `at`, over whitespace and comments. 0 if
+    /// there is none.
+    ///
+    /// Unlike [`skip_trivia_back`](crate::tokens::skip_trivia_back) it is never fooled by what a
+    /// comment or a string contains. Where there is only whitespace in between, it looks at nothing
+    /// else. Where there may be a comment, it asks the tokens of the file.
+    pub fn end_of_token_before(&'a self, at: u32) -> u32 {
+        let text = self.hir.text;
+        let mut end = (at as usize).min(text.len());
+        loop {
+            match text[..end].last() {
+                None => return 0,
+                Some(b' ' | b'\t') => end -= 1,
+                Some(b'\n' | b'\r') => {
+                    end -= 1;
+                    // The line before can end in a comment only if it has a `//`.
+                    let line = bun_core::strings::last_index_of_any(&text[..end], b"\n\r").map_or(0, |it| it + 1);
+                    if bun_core::strings::contains(&text[line..end], b"//") {
+                        break;
+                    }
+                }
+                Some(b'/') if text[..end].ends_with(b"*/") => break,
+                // Whitespace that is not ASCII, or a part of a name.
+                Some(0x80..) => break,
+                Some(_) => return end as u32,
+            }
+        }
+        self.tokens_before(Span::empty(at)).next().map_or(0, crate::tokens::Token::end)
     }
 
     /// Whether the expression `id` is in parentheses, its own or those after a JSDoc cast.

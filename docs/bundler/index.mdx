@@ -580,6 +580,15 @@ import "./a.ts";
 
 The chunk then holds each module behind a lazy wrapper (`var init_a = __esm(() => { ... })`) and runs nothing when it loads. Each importer calls the wrappers of what it imports, where it imports it, so `index.js` runs `a` then `b` and `worker.js` runs `b` then `a`, and both still share one copy of the two modules. A shared module that one of these entrypoints evaluates after a wrapped one is wrapped as well, so that it does not run ahead of it. Modules that only declare functions do not count: nothing can observe their order.
 
+The same holds for two `import()` targets: the one that loads first decides the order of the modules they share, as it does when the source runs unbundled. So the bundle evaluates modules in an order that the source could have evaluated them in, and it is deterministic wherever the source is. When two such `import()` calls are in flight at once, the host decides which target evaluates first, from source and from the bundle alike:
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+// x.ts imports a.ts then b.ts, and y.ts imports b.ts then a.ts
+await Promise.all([import("./x.ts"), import("./y.ts")]); // a, b or b, a
+```
+
+If the order matters, `await` the first `import()` before you start the second. esbuild and Rollup differ here: they fix the order of a shared chunk when they build it, whichever target loads first.
+
 #### Tree-shaking `import()` and `require()` results
 
 When the result of a string-literal `import()` or `require()` of an ES module is only ever used to read specific exports, the exports nobody reads are dropped from that module — and whatever only they depended on tree-shakes with them. This applies with and without `splitting`; the module is still loaded lazily, exactly where the call is written.

@@ -16633,6 +16633,15 @@ describe.concurrent("--check", () => {
       ],
       ["nested object literals", size, n => `export const r = ${repeat("{ a: ", n)}1${repeat(" }", n)};`],
       [
+        // The binder asks of each whether there is a value in it.
+        "namespaces in namespaces",
+        isDebug || isASAN ? 100 : 1000,
+        n =>
+          `${range(150)
+            .map(i => `namespace N${i}${repeat(".A", n)} { export const x = 1; }`)
+            .join("\n")}\nexport {};`,
+      ],
+      [
         "nested array types",
         size,
         n => `export type T = ${repeat("Array<", n)}number${repeat(">", n)};\nexport declare const t: T;`,

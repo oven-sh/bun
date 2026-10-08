@@ -252,7 +252,29 @@ pub(super) struct Binder<'f, 's, const LINT: bool> {
     /// its name, and the function whose parameter it is or is part of. No name: there is no such
     /// declaration, or `withinDeferredContext`.
     associated_declaration: (PatId, FnId),
+    /// By `ModuleId`: see `Binder::module_instance_state`.
+    instance_states: Vec<InstanceState>,
     stack_check: bun_core::StackCheck,
+}
+
+/// What is known of the `ModuleInstanceState` of a module.
+#[derive(Copy, Clone)]
+enum InstanceState {
+    Unknown,
+    /// The question is being answered.
+    InProgress,
+    Known(ModuleInstanceState),
+}
+
+/// One question to `Binder::module_instance_state`.
+struct InstanceStates {
+    /// By `ModuleId`.
+    of: Vec<InstanceState>,
+    /// The modules that became known with this question.
+    answered: Vec<ModuleId>,
+    /// A module that was in progress was asked about.
+    met_one_in_progress: bool,
+    ran_out_of_stack: bool,
 }
 
 /// See `Binder::assignment_target_in`.
@@ -394,6 +416,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             type_literal_depth: 0,
             scope_change_of: FnId::NONE,
             associated_declaration: (PatId::NONE, FnId::NONE),
+            instance_states: Vec::new(),
             stack_check: bun_core::StackCheck::init(),
         };
         this.file();
@@ -2985,9 +3008,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     fn module(&mut self, m: ModuleId) {
         let decl = &self.f[m];
         let ambient = decl.flags.contains(Flags::AMBIENT) || self.f.kind == FileKind::Declaration;
-        // `GetModuleInstanceState`
-        let mut outer = self.statement_lists.clone();
-        let state = self.instance_state_of_module(m, &mut outer, &mut Vec::new());
+        let state = self.module_instance_state(m);
         self.b.module_instance_state[m.idx()] = state;
         let instantiated = state != ModuleInstanceState::NonInstantiated;
         let is_at_top = matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::File);
@@ -3111,25 +3132,60 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         }
     }
 
+    /// `GetModuleInstanceState`, of a module in the innermost of `statement_lists`.
+    ///
+    /// TypeScript forgets what it has found about the modules inside once the question is answered,
+    /// and asks again when it binds them: quadratic time for namespaces in namespaces. Here it is
+    /// kept, unless a module in progress was asked about: what was found then depends on where the
+    /// question started.
+    fn module_instance_state(&mut self, m: ModuleId) -> ModuleInstanceState {
+        let mut states = InstanceStates {
+            of: std::mem::take(&mut self.instance_states),
+            answered: Vec::new(),
+            met_one_in_progress: false,
+            ran_out_of_stack: false,
+        };
+        states.of.resize(self.f.modules.len(), InstanceState::Unknown);
+        let mut outer = std::mem::take(&mut self.statement_lists);
+        let state = self.instance_state_of_module(m, &mut outer, &mut states);
+        self.statement_lists = outer;
+        if states.met_one_in_progress {
+            for &answered in &states.answered {
+                states.of[answered.idx()] = InstanceState::Unknown;
+            }
+        }
+        self.b.ran_out_of_stack |= states.ran_out_of_stack;
+        self.instance_states = states.of;
+        state
+    }
+
     /// `getModuleInstanceState`, and `getModuleInstanceStateCached` for the body. `outer`: the
-    /// statement lists that enclose `m`, innermost last. `visited`: the bodies already queried. A
-    /// body queried while it is in progress contributes nothing.
+    /// statement lists that enclose `m`, innermost last. A body queried while it is in progress
+    /// contributes nothing.
     /// (A cycle through a statement always passes through a body.)
     fn instance_state_of_module(
         &self,
         m: ModuleId,
         outer: &mut Vec<IdList<StmtId>>,
-        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+        visited: &mut InstanceStates,
     ) -> ModuleInstanceState {
         let module = &self.f[m];
         if !module.has_body {
             return ModuleInstanceState::Instantiated;
         }
-        if let Some(&(_, state)) = visited.iter().find(|v| v.0 == m) {
-            return state.unwrap_or(ModuleInstanceState::NonInstantiated);
+        match visited.of[m.idx()] {
+            InstanceState::Known(state) => return state,
+            InstanceState::InProgress => {
+                visited.met_one_in_progress = true;
+                return ModuleInstanceState::NonInstantiated;
+            }
+            InstanceState::Unknown => {}
         }
-        let slot = visited.len();
-        visited.push((m, None));
+        if !self.stack_check.is_safe_to_recurse() {
+            visited.ran_out_of_stack = true;
+            return ModuleInstanceState::Instantiated;
+        }
+        visited.of[m.idx()] = InstanceState::InProgress;
         outer.push(module.body);
         let mut state = ModuleInstanceState::NonInstantiated;
         for s in self.f.ids(module.body) {
@@ -3143,7 +3199,8 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             }
         }
         outer.pop();
-        visited[slot].1 = Some(state);
+        visited.of[m.idx()] = InstanceState::Known(state);
+        visited.answered.push(m);
         state
     }
 
@@ -3152,7 +3209,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         &self,
         s: StmtId,
         outer: &mut Vec<IdList<StmtId>>,
-        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+        visited: &mut InstanceStates,
     ) -> ModuleInstanceState {
         match self.f[s].kind {
             StmtKind::Interface(_) | StmtKind::TypeAlias(_) => ModuleInstanceState::NonInstantiated,
@@ -3190,7 +3247,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         &self,
         spec: ExportSpecId,
         outer: &[IdList<StmtId>],
-        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+        visited: &mut InstanceStates,
     ) -> ModuleInstanceState {
         let ExportSpec {
             local: name,

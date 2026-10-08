@@ -35,6 +35,32 @@ pub enum CyclicAliases {
     Reject,
 }
 
+/// The nodes of a parse that carried a custom tag (see
+/// [`YAML::parse_with_custom_tags`]). Such a node is replaced in the tree by
+/// an `E::Array` holding the node as its only item; `get` recognizes the
+/// array and returns the tag's index in the registered list. Aliases to an
+/// anchored tagged node share the array, so a consumer that tracks arrays by
+/// identity converts the tagged node once.
+#[derive(Default)]
+pub struct CustomTaggedNodes {
+    nodes: bun_collections::HashMap<usize, u32>,
+}
+
+impl CustomTaggedNodes {
+    pub fn get(&self, node: &Expr) -> Option<u32> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        self.nodes.get(&collection_id(node)?).copied()
+    }
+}
+
+/// The result of [`YAML::parse_with_custom_tags`].
+pub struct Parsed {
+    pub root: Expr,
+    pub custom_tagged: CustomTaggedNodes,
+}
+
 impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
@@ -42,10 +68,27 @@ impl YAML {
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
+        Ok(Self::parse_with_custom_tags(source, log, bump, cyclic_aliases, &[])?.root)
+    }
+
+    /// [`YAML::parse`] that also reports the nodes tagged with one of
+    /// `custom_tags`, which are left unresolved: a scalar keeps its text, a
+    /// collection its items. A name is matched against the tag as the
+    /// document's `%TAG` directives resolve it: `!env` for a primary-handle
+    /// tag, `tag:yaml.org,2002:timestamp` for `!!timestamp`, the URI itself
+    /// for a verbatim `!<...>` tag.
+    pub fn parse_with_custom_tags(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
+        custom_tags: &[&[u8]],
+    ) -> Result<Parsed, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
+        let mut parser: Parser<Utf8> =
+            Parser::init(bump, source.contents(), cyclic_aliases, custom_tags);
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -56,9 +99,9 @@ impl YAML {
             }
         };
 
-        match stream.docs.len() {
-            0 => Ok(Expr::init(E::Null {}, Loc::EMPTY)),
-            1 => Ok(stream.docs[0].root),
+        let root = match stream.docs.len() {
+            0 => Expr::init(E::Null {}, Loc::EMPTY),
+            1 => stream.docs[0].root,
             _ => {
                 // multi-document yaml streams are converted into arrays
                 let mut items: ast::ExprNodeList =
@@ -66,15 +109,20 @@ impl YAML {
                 for doc in &stream.docs {
                     items.push(doc.root);
                 }
-                Ok(Expr::init(
+                Expr::init(
                     E::Array {
                         items,
                         ..Default::default()
                     },
                     Loc::EMPTY,
-                ))
+                )
             }
-        }
+        };
+
+        Ok(Parsed {
+            root,
+            custom_tagged: core::mem::take(&mut parser.custom_tagged),
+        })
     }
 }
 
@@ -1088,7 +1136,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             NodeTag::Str => {
                 // always becomes string
             }
-            NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
+            NodeTag::Verbatim(_) | NodeTag::Unknown(_) | NodeTag::Custom(_) => {
                 // also always becomes a string
             }
         }
@@ -1541,6 +1589,18 @@ pub enum NodeTag {
     Verbatim(StringRange),
     /// '!!unknown'
     Unknown(StringRange),
+    /// A tag the caller registered (`YAML::parse_with_custom_tags`), by its
+    /// index in the registered list. The node keeps its raw form (scalars
+    /// stay strings) and is reported through [`CustomTaggedNodes`].
+    Custom(u32),
+}
+
+/// What a tag handle expands to: the spec's default for `!` / `!!`, or the
+/// prefix a `%TAG` directive in the input declared for it.
+#[derive(Clone, Copy)]
+enum TagPrefix {
+    Default(&'static [u8]),
+    Declared(StringRange),
 }
 
 impl NodeTag {
@@ -1554,8 +1614,11 @@ impl NodeTag {
             | NodeTag::Verbatim(_)
             | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
 
-            // non-specific tags become seq, map, or str
-            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
+            // non-specific tags become seq, map, or str; a custom tag's empty
+            // node is the empty scalar.
+            NodeTag::NonSpecific | NodeTag::Str | NodeTag::Custom(_) => {
+                Expr::init(E::String::default(), loc)
+            }
         }
     }
 }
@@ -2131,7 +2194,16 @@ pub struct Parser<'i, Enc: Encoding> {
     /// An alias in this document resolved to an enclosing collection, so the
     /// graph has a cycle and `charge_alias_expansion` must watch for it.
     pub(crate) has_cyclic_alias: bool,
-    pub(crate) tag_handles: StringHashMap<()>,
+    /// `%TAG` directives of the current document: the prefix declared for
+    /// each named handle, and for the `!` and `!!` handles when their
+    /// defaults (`!` and `tag:yaml.org,2002:`) are overridden.
+    pub(crate) tag_handles: StringHashMap<StringRange>,
+    pub(crate) primary_tag_prefix: Option<StringRange>,
+    pub(crate) secondary_tag_prefix: Option<StringRange>,
+
+    /// Full tag names the caller wants reported; see `NodeTag::Custom`.
+    pub(crate) custom_tags: &'i [&'i [u8]],
+    pub(crate) custom_tagged: CustomTaggedNodes,
 
     /// Backing storage lent to `StringBuilder`; empty while a builder is live.
     pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
@@ -2155,6 +2227,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         bump: &'i bun_alloc::Arena,
         input: &'i [Enc::Unit],
         cyclic_aliases: CyclicAliases,
+        custom_tags: &'i [&'i [u8]],
     ) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
@@ -2179,6 +2252,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             cyclic_aliases,
             has_cyclic_alias: false,
             tag_handles: StringHashMap::default(),
+            primary_tag_prefix: None,
+            secondary_tag_prefix: None,
+            custom_tags,
+            custom_tagged: CustomTaggedNodes::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
@@ -2295,7 +2372,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // primary tag handle
             if self.is_s_white() {
                 self.skip_s_white();
-                self.parse_directive_tag_prefix()?;
+                self.primary_tag_prefix = Some(self.parse_directive_tag_prefix()?);
                 self.try_skip_to_new_line()?;
                 return Ok(Directive::Other);
             }
@@ -2304,7 +2381,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             if self.is_char(Enc::ch(b'!')) {
                 self.inc(1);
                 self.try_skip_s_white()?;
-                self.parse_directive_tag_prefix()?;
+                self.secondary_tag_prefix = Some(self.parse_directive_tag_prefix()?);
                 self.try_skip_to_new_line()?;
                 return Ok(Directive::Other);
             }
@@ -2316,10 +2393,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_char(Enc::ch(b'!'))?;
             self.try_skip_s_white()?;
 
+            let prefix = self.parse_directive_tag_prefix()?;
             self.tag_handles
-                .put(Enc::key_bytes(handle.slice(self.input)), ())?;
+                .put(Enc::key_bytes(handle.slice(self.input)), prefix)?;
 
-            self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
             return Ok(Directive::Other);
         }
@@ -2339,19 +2416,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(Directive::Other)
     }
 
-    pub(crate) fn parse_directive_tag_prefix(&mut self) -> Result<(), ParseError> {
+    pub(crate) fn parse_directive_tag_prefix(&mut self) -> Result<StringRange, ParseError> {
+        let range = self.string_range();
+
         // local tag prefix
         if self.is_char(Enc::ch(b'!')) {
             self.inc(1);
             self.skip_ns_uri_chars();
-            return Ok(());
+            return Ok(range.end(self.pos));
         }
 
         // global tag prefix
         if let Some(char_len) = self.is_ns_tag_char() {
             self.inc(char_len as usize);
             self.skip_ns_uri_chars();
-            return Ok(());
+            return Ok(range.end(self.pos));
         }
 
         Err(ParseError::InvalidDirective)
@@ -2361,6 +2440,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.anchors.clear();
         self.has_cyclic_alias = false;
         self.tag_handles.clear();
+        self.primary_tag_prefix = None;
+        self.secondary_tag_prefix = None;
 
         let mut has_directives = false;
         let mut has_yaml_directive = false;
@@ -2519,10 +2600,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         k
     }
 
-    fn parse_flow_sequence(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
+    fn parse_flow_sequence(
+        &mut self,
+        anchor: Option<PendingAnchor>,
+        tag: NodeTag,
+    ) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
         self.parse_collection(
             anchor,
+            tag,
             sequence_start.loc(),
             Self::parse_flow_sequence_entries,
         )
@@ -2606,10 +2692,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         })
     }
 
-    fn parse_flow_mapping(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
+    fn parse_flow_mapping(
+        &mut self,
+        anchor: Option<PendingAnchor>,
+        tag: NodeTag,
+    ) -> Result<Expr, ParseError> {
         let mapping_start = self.token.start;
         self.parse_collection(
             anchor,
+            tag,
             mapping_start.loc(),
             Self::parse_flow_mapping_entries,
         )
@@ -2730,10 +2821,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         })
     }
 
-    fn parse_block_sequence(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
+    fn parse_block_sequence(
+        &mut self,
+        anchor: Option<PendingAnchor>,
+        tag: NodeTag,
+    ) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
         self.parse_collection(
             anchor,
+            tag,
             sequence_start.loc(),
             Self::parse_block_sequence_entries,
         )
@@ -2830,18 +2926,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         key
     }
 
-    /// `anchor` is the [200] block collection's own anchor; an anchor on
-    /// `first_key` has already been bound by the caller.
+    /// `anchor` and `tag` are the [200] block collection's own properties;
+    /// those on `first_key` have already been applied by the caller.
     fn parse_block_mapping(
         &mut self,
         anchor: Option<PendingAnchor>,
+        tag: NodeTag,
         first_key: Expr,
         mapping_start: Pos,
         mapping_indent: Indent,
         mapping_line: Line,
         flow_pair_allowed: bool,
     ) -> Result<Expr, ParseError> {
-        self.parse_collection::<E::Object>(anchor, mapping_start.loc(), |p| {
+        self.parse_collection::<E::Object>(anchor, tag, mapping_start.loc(), |p| {
             p.parse_block_mapping_entries(
                 first_key,
                 mapping_indent,
@@ -3190,7 +3287,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             _ => false,
         };
 
-        if is_merge_key {
+        // A custom-tagged value is whatever the caller makes of it, not a
+        // mapping to merge.
+        if is_merge_key && !self.is_custom_tagged(&value) {
             self.reject_open_merge_source(&value)?;
             match &value.data {
                 ast::ExprData::EObject(value_obj) => {
@@ -3327,6 +3426,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn parse_collection<T: CollectionData>(
         &mut self,
         anchor: Option<PendingAnchor>,
+        tag: NodeTag,
         loc: Loc,
         body: impl FnOnce(&mut Self) -> Result<T, ParseError>,
     ) -> Result<Expr, ParseError> {
@@ -3334,7 +3434,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let Some(anchor) = anchor else {
             *slot = body(self)?;
-            return Ok(node);
+            return self.apply_custom_tag(tag, node);
         };
 
         self.open_collections.push(OpenCollection {
@@ -3346,8 +3446,34 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         debug_assert!(closed.is_some_and(|c| collection_id(&c.node) == collection_id(&node)));
 
         *slot = result?;
+        let node = self.apply_custom_tag(tag, node)?;
         self.bind_anchor(anchor, node)?;
         Ok(node)
+    }
+
+    /// The finished `node` as its parent sees it: itself, or for a custom
+    /// tag the wrapper described on [`CustomTaggedNodes`]. Anchors bind to
+    /// the result, so aliases share the wrapper.
+    fn apply_custom_tag(&mut self, tag: NodeTag, node: Expr) -> Result<Expr, ParseError> {
+        let NodeTag::Custom(index) = tag else {
+            return Ok(node);
+        };
+        let mut items: ast::ExprNodeList = ast::ExprNodeList::init_capacity(1);
+        items.push(node);
+        let wrapper = Expr::init(
+            E::Array {
+                items,
+                ..Default::default()
+            },
+            node.loc,
+        );
+        let id = collection_id(&wrapper).expect("the wrapper is an array");
+        self.custom_tagged.nodes.put(id, index)?;
+        Ok(wrapper)
+    }
+
+    fn is_custom_tagged(&self, node: &Expr) -> bool {
+        self.custom_tagged.get(node).is_some()
     }
 
     /// Anchors bind when their node completes, so a name found in `anchors`
@@ -3502,24 +3628,28 @@ impl<Enc: Encoding> NodeProperties<Enc> {
     }
 
     pub(crate) fn set_tag(&mut self, tag_token: Token<Enc>) -> Result<(), ParseError> {
-        if let Some(previous_tag) = &self.has_tag {
-            if previous_tag.line == tag_token.line {
+        if let Some(previous_tag) = self.has_tag.take() {
+            if previous_tag.line == tag_token.line || self.has_mapping_tag.is_some() {
                 return Err(ParseError::MultipleTags);
             }
-            self.has_mapping_tag = Some(previous_tag.clone());
+            self.has_mapping_tag = Some(previous_tag);
         }
         self.has_tag = Some(tag_token);
         Ok(())
     }
 
     pub(crate) fn tag(&self) -> NodeTag {
-        self.has_tag
-            .as_ref()
-            .and_then(|t| match &t.data {
-                TokenData::Tag(tg) => Some(*tg),
-                _ => None,
-            })
-            .unwrap_or(NodeTag::None)
+        Self::token_tag(self.has_tag.as_ref())
+    }
+
+    fn token_tag(token: Option<&Token<Enc>>) -> NodeTag {
+        match token {
+            Some(Token {
+                data: TokenData::Tag(tag),
+                ..
+            }) => *tag,
+            _ => NodeTag::None,
+        }
     }
 
     pub(crate) fn tag_line(&self) -> Option<Line> {
@@ -3527,10 +3657,62 @@ impl<Enc: Encoding> NodeProperties<Enc> {
     }
 
     pub(crate) fn take_tag(&mut self) -> NodeTag {
-        let t = self.tag();
-        self.has_tag = None;
-        t
+        Self::token_tag(self.has_tag.take().as_ref())
     }
+
+    /// `take_flow_node_anchor` for the tag.
+    fn take_flow_node_tag(&mut self, line: Line) -> NodeTag {
+        Self::token_tag(self.has_tag.take_if(|tag| tag.line == line).as_ref())
+    }
+
+    /// `take_block_mapping_anchor` for the tag.
+    fn take_block_mapping_tag(&mut self, implicit_key_line: Line) -> Result<NodeTag, ParseError> {
+        let tags = self.take_implicit_key_tags(implicit_key_line)?;
+        debug_assert!(matches!(tags.key_tag, NodeTag::None));
+        Ok(tags.mapping_tag)
+    }
+
+    /// `take_implicit_key_anchors` for the tags: the same [200]/[193] line
+    /// split decides whether a tag is the implicit key's or the block
+    /// mapping's.
+    fn take_implicit_key_tags(
+        &mut self,
+        implicit_key_line: Line,
+    ) -> Result<ImplicitKeyTags, ParseError> {
+        if let Some(mapping_tag) = self.has_mapping_tag.take() {
+            let inner = self.has_tag.take();
+            if inner.as_ref().is_some_and(|t| t.line != implicit_key_line) {
+                return Err(ParseError::MultipleTags);
+            }
+            return Ok(ImplicitKeyTags {
+                key_tag: Self::token_tag(inner.as_ref()),
+                mapping_tag: Self::token_tag(Some(&mapping_tag)),
+            });
+        }
+
+        let Some(mystery_tag) = self.has_tag.take() else {
+            return Ok(ImplicitKeyTags {
+                key_tag: NodeTag::None,
+                mapping_tag: NodeTag::None,
+            });
+        };
+        let tag = Self::token_tag(Some(&mystery_tag));
+        if mystery_tag.line == implicit_key_line {
+            return Ok(ImplicitKeyTags {
+                key_tag: tag,
+                mapping_tag: NodeTag::None,
+            });
+        }
+        Ok(ImplicitKeyTags {
+            key_tag: NodeTag::None,
+            mapping_tag: tag,
+        })
+    }
+}
+
+pub(crate) struct ImplicitKeyTags {
+    key_tag: NodeTag,
+    mapping_tag: NodeTag,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3771,6 +3953,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             _ => NodeTag::None,
         };
         let e_node = resolved_tag.resolve_null(loc);
+        let e_node = self.apply_custom_tag(resolved_tag, e_node)?;
         if let Some(anchor) = anchor {
             self.bind_anchor(anchor, e_node)?;
         }
@@ -3949,6 +4132,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(alias_line)?,
+                            node_props.take_block_mapping_tag(alias_line)?,
                             copy,
                             alias_start,
                             alias_indent,
@@ -3967,8 +4151,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_line = self.token.line;
                     let sequence_tab_after_indent = self.tab_after_indent;
                     let anchor = node_props.take_flow_node_anchor(sequence_line);
+                    let tag = node_props.take_flow_node_tag(sequence_line);
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
-                    let seq = self.parse_flow_sequence(anchor);
+                    let seq = self.parse_flow_sequence(anchor, tag);
                     self.unset_json_key(json_key);
                     let seq = seq?;
 
@@ -4007,6 +4192,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(sequence_line)?,
+                            node_props.take_block_mapping_tag(sequence_line)?,
                             seq,
                             sequence_start,
                             sequence_indent,
@@ -4038,7 +4224,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             return Err(Self::unexpected_token());
                         }
                     }
-                    break 'node self.parse_block_sequence(node_props.has_anchor.take())?;
+                    let anchor = node_props.has_anchor.take();
+                    let tag = node_props.take_tag();
+                    break 'node self.parse_block_sequence(anchor, tag)?;
                 }
 
                 TokenData::MappingStart => {
@@ -4047,9 +4235,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_line = self.token.line;
                     let mapping_tab_after_indent = self.tab_after_indent;
                     let anchor = node_props.take_flow_node_anchor(mapping_line);
+                    let tag = node_props.take_flow_node_tag(mapping_line);
 
                     let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
-                    let map = self.parse_flow_mapping(anchor);
+                    let map = self.parse_flow_mapping(anchor, tag);
                     self.unset_json_key(json_key);
                     let map = map?;
 
@@ -4088,6 +4277,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let parent_map = self.parse_block_mapping(
                             node_props.take_block_mapping_anchor(mapping_line)?,
+                            node_props.take_block_mapping_tag(mapping_line)?,
                             map,
                             mapping_start,
                             mapping_indent,
@@ -4131,8 +4321,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // The first key of a new mapping. The mapping's node exists
                     // before its key is parsed so the key may alias it.
                     let flow_pair_allowed = opts.flow_pair_allowed;
+                    let anchor = node_props.has_anchor.take();
+                    let tag = node_props.take_tag();
                     break 'node self.parse_collection::<E::Object>(
-                        node_props.has_anchor.take(),
+                        anchor,
+                        tag,
                         mapping_start.loc(),
                         |p| {
                             let key = p.parse_block_explicit_key(
@@ -4165,15 +4358,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     // [200]/[193] split: a property on the `:` line is the
                     // e-node key's (`!!str : x` → key ""); on a prior line
-                    // it is the [200] block-collection's. Only the key's tag
-                    // affects resolution.
+                    // it is the [200] block-collection's.
                     let colon_line = self.token.line;
-                    let key_tag = if node_props.tag_line() == Some(colon_line) {
-                        node_props.take_tag()
-                    } else {
-                        NodeTag::None
-                    };
-                    let first_key = key_tag.resolve_null(self.token.start.loc());
+                    let tags = node_props.take_implicit_key_tags(colon_line)?;
+                    let first_key = tags.key_tag.resolve_null(self.token.start.loc());
+                    let first_key = self.apply_custom_tag(tags.key_tag, first_key)?;
 
                     let anchors = node_props.take_implicit_key_anchors(colon_line)?;
                     if let Some(key_anchor) = anchors.key_anchor {
@@ -4182,6 +4371,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let mapping = self.parse_block_mapping(
                         anchors.mapping_anchor,
+                        tags.mapping_tag,
                         first_key,
                         self.token.start,
                         self.token.indent,
@@ -4282,6 +4472,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
 
                         let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
+                        let tags = node_props.take_implicit_key_tags(scalar_line)?;
+                        let implicit_key = self.apply_custom_tag(tags.key_tag, implicit_key)?;
 
                         let anchors = node_props.take_implicit_key_anchors(scalar_line)?;
                         if let Some(key_anchor) = anchors.key_anchor {
@@ -4290,6 +4482,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let mapping = self.parse_block_mapping(
                             anchors.mapping_anchor,
+                            tags.mapping_tag,
                             implicit_key,
                             scalar_start,
                             scalar_indent,
@@ -4332,6 +4525,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             ast::ExprData::ENull(_) => tag.resolve_null(node.loc),
             _ => node,
         };
+        let resolved = self.apply_custom_tag(tag, resolved)?;
 
         if let Some(anchor) = has_anchor {
             self.bind_anchor(anchor, resolved)?;
@@ -5557,29 +5751,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // c-verbatim-tag
                 self.inc(1);
 
-                let prefix = 'prefix: {
-                    if Enc::wide(self.next()) == 0x21 /* '!' */ {
-                        self.inc(1);
-                        let range = self.string_range();
-                        self.skip_ns_uri_chars();
-                        break 'prefix range.end(self.pos);
-                    }
-                    if let Some(len) = self.is_ns_tag_char() {
-                        let range = self.string_range();
-                        self.inc(len as usize);
-                        self.skip_ns_uri_chars();
-                        break 'prefix range.end(self.pos);
-                    }
+                let range = self.string_range();
+                if Enc::wide(self.next()) == 0x21 /* '!' */ {
+                    self.inc(1);
+                } else if let Some(len) = self.is_ns_tag_char() {
+                    self.inc(len as usize);
+                } else {
                     return Err(ParseError::UnexpectedCharacter);
-                };
+                }
+                self.skip_ns_uri_chars();
+                let uri = range.end(self.pos);
 
                 self.try_skip_char(Enc::ch(b'>'))?;
+
+                let tag = self
+                    .custom_tag(TagPrefix::Default(b""), uri)
+                    .unwrap_or(NodeTag::Verbatim(uri));
 
                 return Ok(Token::tag(TagInit {
                     start,
                     indent: self.line_indent,
                     line: self.line,
-                    tag: NodeTag::Verbatim(prefix),
+                    tag,
                 }));
             }
             0x21 /* '!' */ => {
@@ -5601,7 +5794,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 let shorthand = range.end(self.pos);
-                let tag = self.shorthand_to_tag(shorthand);
+                let prefix = self
+                    .secondary_tag_prefix
+                    .map_or(TagPrefix::Default(b"tag:yaml.org,2002:"), TagPrefix::Declared);
+                let tag = self
+                    .custom_tag(prefix, shorthand)
+                    .unwrap_or_else(|| self.shorthand_to_tag(shorthand));
 
                 return Ok(Token::tag(TagInit {
                     start,
@@ -5619,23 +5817,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 if Enc::wide(self.next()) == 0x21 /* '!' */ {
                     self.inc(1);
-                    if !self
+                    let Some(prefix) = self
                         .tag_handles
-                        .contains_key(Enc::key_bytes(handle_or_shorthand.slice(self.input)))
-                    {
+                        .get(Enc::key_bytes(handle_or_shorthand.slice(self.input)))
+                        .copied()
+                    else {
                         self.pos = off;
                         return Err(ParseError::UnresolvedTagHandle);
-                    }
+                    };
 
                     range = self.string_range();
                     self.try_skip_ns_tag_chars()?;
                     let shorthand = range.end(self.pos);
 
+                    let tag = self
+                        .custom_tag(TagPrefix::Declared(prefix), shorthand)
+                        .unwrap_or(NodeTag::Unknown(shorthand));
+
                     return Ok(Token::tag(TagInit {
                         start,
                         indent: self.line_indent,
                         line: self.line,
-                        tag: NodeTag::Unknown(shorthand),
+                        tag,
                     }));
                 }
 
@@ -5643,7 +5846,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 self.skip_ns_tag_chars();
                 handle_or_shorthand = StringRange { off, end: self.pos };
 
-                let tag = self.shorthand_to_tag(handle_or_shorthand);
+                let prefix = self
+                    .primary_tag_prefix
+                    .map_or(TagPrefix::Default(b"!"), TagPrefix::Declared);
+                let tag = self
+                    .custom_tag(prefix, handle_or_shorthand)
+                    .unwrap_or_else(|| self.shorthand_to_tag(handle_or_shorthand));
 
                 Ok(Token::tag(TagInit {
                     start,
@@ -5653,6 +5861,31 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }))
             }
         }
+    }
+
+    /// The registered tag (`NodeTag::Custom`) whose full name is `prefix`
+    /// followed by the shorthand's `suffix`, if any.
+    fn custom_tag(&self, prefix: TagPrefix, suffix: StringRange) -> Option<NodeTag> {
+        if self.custom_tags.is_empty() {
+            return None;
+        }
+        let suffix = suffix.slice(self.input);
+        let prefix_len = match prefix {
+            TagPrefix::Default(bytes) => bytes.len(),
+            TagPrefix::Declared(range) => range.len(),
+        };
+        let index = self.custom_tags.iter().position(|name| {
+            if name.len() != prefix_len + suffix.len() {
+                return false;
+            }
+            let (name_prefix, name_suffix) = name.split_at(prefix_len);
+            let prefix_matches = match prefix {
+                TagPrefix::Default(bytes) => name_prefix == bytes,
+                TagPrefix::Declared(range) => eq_ascii::<Enc>(range.slice(self.input), name_prefix),
+            };
+            prefix_matches && eq_ascii::<Enc>(suffix, name_suffix)
+        })?;
+        Some(NodeTag::Custom(index as u32))
     }
 
     fn shorthand_to_tag(&self, shorthand: StringRange) -> NodeTag {

@@ -4,17 +4,17 @@
 //! files: `tests/format` of a checkout of Prettier.
 
 use super::Args;
+use crate::host;
 use bun_format::FormatError;
 use bun_format_conformance::{Bundle, Failure, Flags, Format};
 use std::path::Path;
 
 /// The files below `directory`, by their path from `root`.
 fn collect(root: &Path, directory: &Path, files: &mut Vec<(Vec<u8>, Vec<u8>)>) {
-    for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
-        let path = entry.path();
+    for path in host::list(directory) {
         if path.is_dir() {
             collect(root, &path, files);
-        } else if let Ok(contents) = std::fs::read(&path) {
+        } else if let Ok(contents) = host::read(&path) {
             files.push((
                 path.strip_prefix(root)
                     .unwrap_or(&path)
@@ -33,7 +33,7 @@ pub(super) fn run(args: &Args, raw: &[String], run: fn(&Bundle<'_>, &Flags<'_>, 
     let bytes = if path.is_dir() {
         Vec::new()
     } else {
-        std::fs::read(path).expect("the fixtures")
+        host::read(path).expect("the fixtures")
     };
     let bundle = match path.is_dir() {
         true => {

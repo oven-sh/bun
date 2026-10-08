@@ -125,6 +125,18 @@ FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 100 }
+FAIL prettier edge-cases/gql-in-js/sole-argument-layout.js { printWidth: 80 }
+FAIL prettier edge-cases/md-in-js/nested-md-codeblock.js { printWidth: 80 }
+FAIL prettier edge-cases/md-in-js/nested-md-codeblock.js { printWidth: 100 }
+FAIL prettier edge-cases/md-in-js/sole-argument-layout.js { printWidth: 100 }
+FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 80 }
+FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 100 }
+FAIL prettier edge-cases/xxx-in-md/handlebars-mdx-code-blocks.md { printWidth: 80 }
+FAIL prettier edge-cases/xxx-in-md/handlebars-mdx-code-blocks.md { printWidth: 100 }
+FAIL prettier edge-cases/xxx-in-md/lwc-code-block.md { printWidth: 80 }
+FAIL prettier edge-cases/xxx-in-md/lwc-code-block.md { printWidth: 100 }
+FAIL prettier edge-cases/xxx-in-md/whitespace-only-code-block.md { printWidth: 80 }
+FAIL prettier edge-cases/xxx-in-md/whitespace-only-code-block.md { printWidth: 100 }
 FAIL oxfmt graphql/graphql/comment-after-opening-delimiter.graphql { printWidth: 80 }
 FAIL oxfmt graphql/graphql/comment-after-opening-delimiter.graphql { printWidth: 100 }
 FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 80 }
@@ -468,5 +480,5 @@ FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
-as Prettier prints them: 1458/1518
+as Prettier prints them: 1498/1570
 as oxfmt prints them, in its flavor: 1088/1498

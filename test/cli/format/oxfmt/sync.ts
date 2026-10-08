@@ -24,6 +24,10 @@ if (source === "--extract" && rest.length === 2) {
     // `embedded`: style sheets with the placeholders that stand for the `${}` of a template.
     for (const [name, bytes] of found) if (!name.startsWith("fixtures/embedded/")) files.set(name.replace("fixtures", language), bytes);
   }
+  // One language in another. Of these there is no snapshot of oxfmt's.
+  for (const kind of ["css-in-js", "gql-in-js", "md-in-js", "xxx-in-js-comment", "xxx-in-md"]) {
+    collect(join(source, "apps/oxfmt/conformance/fixtures"), `edge-cases/${kind}`, files, () => false);
+  }
   // `tests/jsdoc/fixtures` has pairs, `a.ts` and `a.output.ts`, with options in snake case. They are written in the form of the others.
   const pairs = new Map<string, Uint8Array>();
   collect(join(source, "crates/oxc_formatter/tests"), "jsdoc/fixtures", pairs, () => false);
@@ -46,7 +50,7 @@ if (source === "--extract" && rest.length === 2) {
     rowsOfPairs.set(name, [options]);
   }
   for (const [name, bytes] of [...files]) {
-    if (!files.has(`${name}.snap`)) continue;
+    if (!files.has(`${name}.snap`) && !name.startsWith("edge-cases/")) continue;
     const outputs: [Options, string][] = [];
     for (const options of rowsOfPairs.get(name) ?? rowsOf(name, files)) {
       // Not options of Prettier.

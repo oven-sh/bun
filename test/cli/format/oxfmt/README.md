@@ -6,6 +6,8 @@ which Prettier. oxc is under the MIT license: `LICENSE`.
 
 `jsdoc/fixtures` is `crates/oxc_formatter/tests/jsdoc/fixtures`: pairs of an input and an output, which `sync.ts` writes in the form of the others.
 
+`edge-cases` is `apps/oxfmt/conformance/fixtures/edge-cases`, one language in another: inputs only, so only Prettier judges them.
+
 Every input is formatted with each set of options of the nearest `options.json`, at `printWidth` 80 and 100, as oxc's test harness does.
 
 - `<input>.prettier.snap` is what `bun format` has to print.

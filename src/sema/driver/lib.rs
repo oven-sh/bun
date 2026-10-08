@@ -133,8 +133,11 @@ pub fn for_each_parallel_in_runs(
         run,
         work,
     };
-    // A thread of the pool does not get to what is queued for itself while it waits here.
-    if SAME_THREADS.lock().is_some() && bun_threading::thread_pool::Thread::current().is_null() {
+    // A thread of the pool that waited here for the others could wait for ever: they may all be waiting like it.
+    if !bun_threading::thread_pool::Thread::current().is_null() {
+        return region.work_off();
+    }
+    if SAME_THREADS.lock().is_some() {
         return region.start_on_the_same_threads();
     }
     let mut runners = vec![(); region.threads];

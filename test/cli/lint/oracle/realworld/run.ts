@@ -16,7 +16,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { EXTENSIONS, RESULT_MARKER, buildPlans, configModule, type Plan } from "./plans.ts";
+import { EXTENSIONS, PSEUDO_RULES, RESULT_MARKER, buildPlans, configModule, type Plan } from "./plans.ts";
 import type { Batch, BatchResult, Counts, Example } from "./worker.ts";
 
 interface Corpus {
@@ -250,6 +250,9 @@ async function pass(plan: Plan, corpus: Corpus): Promise<void> {
       for (const key of Object.keys(sum) as (keyof Counts)[]) sum[key] += counts[key];
     }
     if (corpus.confidential && result.examples.length > 0) throw new Error("an example of a confidential corpus");
+    if (corpus.confidential && Object.keys(result.rules).some(id => !(id in plan.rules) && !PSEUDO_RULES.includes(id))) {
+      throw new Error("the id of a rule that is not in the plan, of a confidential corpus");
+    }
     for (const example of result.examples) {
       const n = examplesOf.get(example.rule) ?? 0;
       examplesOf.set(example.rule, n + 1);

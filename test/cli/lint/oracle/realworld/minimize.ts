@@ -66,6 +66,7 @@ function parse(path: string, asTypescript: boolean): { code: string; ast: Node |
           ecmaVersion: "latest",
           sourceType: path.endsWith(".cjs") ? "commonjs" : "module",
           range: true,
+          comment: true,
           ecmaFeatures: { jsx: path.endsWith(".jsx") },
         });
   } catch {}
@@ -111,18 +112,28 @@ const STATEMENTS = /(?:Statement|Declaration)$/;
 function candidates(code: string, ast: Node, offset: number): string[] {
   const found: string[] = [];
   const chain = chainAt(ast, offset);
+  const comments = (ast.comments ?? []) as Node[];
   for (let i = chain.length - 1; i > 0; i--) {
     const node = chain[i];
     const isMember = MEMBERS.test(node.type) && chain[i - 1].type === "ClassBody";
     if (!isMember && !STATEMENTS.test(node.type)) continue;
-    // From the start of the line, so that what depends on the indentation stays as it is, if only white space is in between.
+    const piece = (from: number) => {
+      // From the start of the line, so that what depends on the indentation stays as it is, if only white space is in between.
+      const lineStart = Math.max(code.lastIndexOf("\n", from - 1) + 1, 0);
+      const text = code.slice(/^[ \t]*$/.test(code.slice(lineStart, from)) ? lineStart : from, node.range[1]);
+      if (text.length > MAX_CHARACTERS || text.split("\n").length > MAX_LINES) return false;
+      found.push(isMember ? `class A {\n${text}\n}` : text);
+      return true;
+    };
+    if (!piece(node.range[0])) break;
+    // Once more with the comments in front of it: JSDoc, directives.
     let start = node.range[0];
-    const lineStart = Math.max(code.lastIndexOf("\n", start - 1) + 1, 0);
-    if (/^[ \t]*$/.test(code.slice(lineStart, start))) start = lineStart;
-    const text = code.slice(start, node.range[1]);
-    if (text.length > MAX_CHARACTERS || text.split("\n").length > MAX_LINES) break;
-    found.push(isMember ? `class A {\n${text}\n}` : text);
+    for (let j = comments.length - 1; j >= 0; j--) {
+      if (comments[j].range[1] <= start && /^\s*$/.test(code.slice(comments[j].range[1], start))) start = comments[j].range[0];
+    }
+    if (start < node.range[0]) piece(start);
   }
+  if (code.length <= MAX_CHARACTERS && code.split("\n").length <= MAX_LINES) found.push(code);
   return found;
 }
 
@@ -219,6 +230,25 @@ function judge(id: string, cases: unknown[]): Promise<number[]> {
   });
 }
 
+const KEYWORDS = new Set(
+  (
+    "abstract any as asserts async await boolean break case catch class const constructor continue declare default delete do else " +
+    "enum export extends false finally for from function get if implements import in infer instanceof interface is keyof let " +
+    "namespace module never new null number object of private protected public readonly return satisfies set static string super " +
+    "switch symbol this throw true try type typeof undefined unique unknown var void while with yield"
+  ).split(" "),
+);
+
+/** The code without what is particular to it: names, numbers, the text of strings, white space. */
+function shapeOf(code: string): string {
+  return code
+    .replace(/(["'`])(?:\\.|(?!\1).)*\1/gs, "$1$1")
+    .replace(/[\p{ID_Start}$_][\p{ID_Continue}$]*/gu, word => (KEYWORDS.has(word) ? word : "x"))
+    .replace(/\d[\w.]*/g, "0")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const queue = [...byRule];
 let kept = 0;
 const lines: string[] = [];
@@ -232,11 +262,13 @@ await Promise.all(
       candidates.forEach((it, index) => {
         if (differing.has(index) && !smallest.has(it.example)) smallest.set(it.example, it.case);
       });
-      const seen = new Set<string>();
+      // Two of a shape are enough: `let fs;` and `let net;` say the same.
+      const seen = new Map<string, number>();
       const cases = [...smallest.values()]
         .filter(it => {
-          const key = JSON.stringify([String(it.code).replace(/\s+/g, " ").trim(), it.options]);
-          return !seen.has(key) && seen.add(key);
+          const key = JSON.stringify([shapeOf(String(it.code)), it.options, it.filename]);
+          seen.set(key, (seen.get(key) ?? 0) + 1);
+          return seen.get(key)! <= 2;
         })
         .sort((a, b) => String(a.code).length - String(b.code).length)
         .slice(0, CASES_PER_RULE);

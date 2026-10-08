@@ -22,7 +22,11 @@ export const RESULT_MARKER = "\x1eresult ";
 
 /** The ids under which what is not from a rule is counted. */
 export const PARSE_ERROR = "(parse error)";
+export const NOT_IN_A_PROJECT = "(not in a project)";
 export const LINTER = "(linter)";
+/** In a confidential corpus: every rule that is not in the plan. */
+export const UNKNOWN_RULE = "(a rule that is not in the plan)";
+export const PSEUDO_RULES = [PARSE_ERROR, NOT_IN_A_PROJECT, LINTER, UNKNOWN_RULE];
 
 export const EXTENSIONS = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
 export const ALL_FILES = `**/*.{${EXTENSIONS.join(",")}}`;

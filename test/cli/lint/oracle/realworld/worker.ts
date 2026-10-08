@@ -2,8 +2,8 @@
 // message. Reads one `Batch` per line from standard input, writes one `BatchResult` per line to standard output.
 //
 // What is reported about a confidential corpus is reduced to numbers per rule in here, before anything leaves the process:
-// no path, no message, no code, no error text. Nothing of it is written to a file either: `bun lint` reads the files where
-// they are, and its report comes through a pipe.
+// no path, no message, no code, no error text, no id of a rule that the code names and the plan does not have. Nothing of it
+// is written to a file either: `bun lint` reads the files where they are, and its report comes through a pipe.
 
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -11,7 +11,16 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Script } from "node:vm";
-import { LINTER, PARSE_ERROR, RESULT_MARKER, configObjects, type Plan } from "./plans.ts";
+import {
+  LINTER,
+  NOT_IN_A_PROJECT,
+  PARSE_ERROR,
+  PSEUDO_RULES,
+  RESULT_MARKER,
+  UNKNOWN_RULE,
+  configObjects,
+  type Plan,
+} from "./plans.ts";
 
 export interface Batch {
   id: number;
@@ -128,7 +137,7 @@ function runOurs(batch: Batch, files: string[]): Promise<FileReport[] | null> {
     const args = ["cli", "--cwd", batch.root, "-c", batch.config, "-f", "json", "--threads", String(batch.threads)];
     const child = spawn(bunLint, [...args, "--no-warn-ignored", ...files], { stdio: ["ignore", "pipe", "ignore"] });
     const chunks: Buffer[] = [];
-    const timer = setTimeout(() => child.kill("SIGKILL"), 60_000 + 20_000 * files.length);
+    const timer = setTimeout(() => child.kill("SIGKILL"), Math.min(60_000 + 20_000 * files.length, 600_000));
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.on("error", () => done(null));
     child.on("close", () => {
@@ -188,14 +197,17 @@ function compare(
   const fatalExpected = expected.find(m => m.fatal);
   const fatalActual = actual.find(m => m.fatal);
   if (fatalExpected || fatalActual) {
-    const it = counts(PARSE_ERROR);
+    // typescript-eslint refuses a file that no tsconfig.json includes. That is not about its syntax.
+    const isOutside = fatalExpected?.message.includes("was not found by the project service") ?? false;
+    const id = isOutside ? NOT_IN_A_PROJECT : PARSE_ERROR;
+    const it = counts(id);
     if (fatalExpected) it.eslint++;
     if (fatalActual) it.ours++;
     if (fatalExpected && fatalActual) return true;
     if (fatalExpected) it.onlyEslint++;
     else it.onlyOurs++;
     example({
-      rule: PARSE_ERROR,
+      rule: id,
       kind: fatalExpected ? "onlyEslint" : "onlyOurs",
       file,
       eslint: fatalExpected,
@@ -267,7 +279,9 @@ async function run(batch: Batch): Promise<BatchResult> {
     } catch {
       continue;
     }
-    expected.set(file, eslint(batch, file, code));
+    // `bun lint` obeys them, ESLint does not know them.
+    if (/\boxlint-(?:disable|enable)/.test(code)) trouble("skipped: has oxlint-disable comments", file);
+    else expected.set(file, eslint(batch, file, code));
   }
   result.seconds.eslint = (performance.now() - started) / 1000;
   await oursDone;
@@ -286,6 +300,21 @@ async function run(batch: Batch): Promise<BatchResult> {
 
   if (batch.confidential) {
     result.examples = [];
+    // The id of a rule that is not ours is from a comment in the code.
+    const known: Record<string, Counts> = {};
+    for (const [rule, counts] of Object.entries(result.rules)) {
+      const id = rule in batch.plan.rules || PSEUDO_RULES.includes(rule) ? rule : UNKNOWN_RULE;
+      const sum = (known[id] ??= { eslint: 0, ours: 0, onlyEslint: 0, onlyOurs: 0, fixDiffers: 0 });
+      for (const key of Object.keys(sum) as (keyof Counts)[]) sum[key] += counts[key];
+    }
+    result.rules = known;
+    const kinds: Record<string, string[]> = {};
+    for (const [kind, files] of Object.entries(result.trouble)) {
+      const rule = /^eslint: (.*) threw$/.exec(kind)?.[1];
+      const safe = rule === undefined || rule in batch.plan.rules ? kind : `eslint: ${UNKNOWN_RULE} threw`;
+      (kinds[safe] ??= []).push(...(files as string[]));
+    }
+    result.trouble = kinds;
     for (const kind of Object.keys(result.trouble)) result.trouble[kind] = (result.trouble[kind] as string[]).length;
   }
   return result;

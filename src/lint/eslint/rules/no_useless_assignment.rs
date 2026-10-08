@@ -72,13 +72,19 @@ fn is_identifier_evaluated_after_assignment(assignment: &Assignment<'_>, identif
 }
 
 /// `let { x, y = x } = obj`
-fn is_identifier_used_between_assigned_and_equal_sign(assignment: &Assignment<'_>, identifier: Span) -> bool {
+fn is_identifier_used_between_assigned_and_equal_sign(
+    assignment: &Assignment<'_>,
+    identifier: Span,
+) -> bool {
     assignment.expression.is_some_and(|expression| {
         assignment.identifier.end <= identifier.start && identifier.end <= expression.start
     })
 }
 
-fn get_code_path_start_scope<'a>(starts: &FxHashSet<Scope<'a>>, scope: Scope<'a>) -> Option<Scope<'a>> {
+fn get_code_path_start_scope<'a>(
+    starts: &FxHashSet<Scope<'a>>,
+    scope: Scope<'a>,
+) -> Option<Scope<'a>> {
     scope.chain().find(|it| starts.contains(it))
 }
 
@@ -152,7 +158,8 @@ impl Minima {
     }
 
     fn least_of(&self, part: Range<usize>) -> u32 {
-        let (mut from, mut to, mut least) = (part.start + self.size, part.end + self.size, u32::MAX);
+        let (mut from, mut to, mut least) =
+            (part.start + self.size, part.end + self.size, u32::MAX);
         while from < to {
             if from % 2 == 1 {
                 least = least.min(self.tree[from]);
@@ -217,7 +224,9 @@ impl Forest {
         while let Some(it) = self.path.pop() {
             let it = it as usize;
             self.ancestors[it] = self.ancestors[top];
-            if self.semidominators[self.labels[top] as usize] < self.semidominators[self.labels[it] as usize] {
+            if self.semidominators[self.labels[top] as usize]
+                < self.semidominators[self.labels[it] as usize]
+            {
                 self.labels[it] = self.labels[top];
             }
             top = it;
@@ -253,7 +262,8 @@ fn immediate_dominators(parents: &[u32], prev: &Lists) -> Vec<u32> {
         let mut it = std::mem::replace(&mut first_with[parent as usize], NONE);
         while it != NONE {
             let least = forest.least(it, node);
-            let is_above = forest.semidominators[least as usize] < forest.semidominators[it as usize];
+            let is_above =
+                forest.semidominators[least as usize] < forest.semidominators[it as usize];
             // The dominator of `least` is its own, and is known later.
             dominators[it as usize] = if is_above { least } else { parent };
             it = next_with[it as usize];
@@ -322,7 +332,8 @@ impl Graph {
         for node in (1..count).rev() {
             sizes[dominators[node] as usize] += sizes[node];
         }
-        let (mut numbers, mut levels, mut last) = (vec![0u32; count], vec![0u32; count], vec![0u32; count]);
+        let (mut numbers, mut levels, mut last) =
+            (vec![0u32; count], vec![0u32; count], vec![0u32; count]);
         // The number for the next of the segments that it dominates immediately.
         let mut free = vec![1u32; count];
         for node in 1..count {
@@ -352,7 +363,9 @@ impl Graph {
         for (target, source, level) in &mut frontier {
             *level = match previous {
                 // Below what dominates both: the rest of the way up is that of the previous one.
-                Some((it, before)) if it == *target => least_levels.least_of(before as usize + 1..*source as usize + 1),
+                Some((it, before)) if it == *target => {
+                    least_levels.least_of(before as usize + 1..*source as usize + 1)
+                }
                 _ => levels[*target as usize],
             };
             previous = Some((*target, *source));
@@ -364,7 +377,12 @@ impl Graph {
             *node = numbers[*node as usize];
         }
         let mut ranges: Vec<(Span, u32)> = (started.iter())
-            .filter_map(|it| Some((*identifier_ranges.get(it.id() as usize)?, *found.get(&it.id())?)))
+            .filter_map(|it| {
+                Some((
+                    *identifier_ranges.get(it.id() as usize)?,
+                    *found.get(&it.id())?,
+                ))
+            })
             .filter(|it| it.0 != NO_IDENTIFIERS)
             .collect();
         if !ranges.is_sorted_by_key(|it| it.0.start) {
@@ -393,15 +411,23 @@ impl Graph {
     /// dominate, or that are itself, with an edge from a segment that it dominates.
     fn for_each_in_frontier(&self, segment: u32, mut visit: impl FnMut(u32)) {
         let from = self.frontier_sources.partition_point(|&it| it < segment);
-        let to = self.frontier_sources.partition_point(|&it| it <= self.last[segment as usize]);
-        self.frontier_levels.for_each_up_to(&(from..to), self.levels[segment as usize], &mut |at| {
-            visit(self.frontier_targets[at]);
-        });
+        let to = self
+            .frontier_sources
+            .partition_point(|&it| it <= self.last[segment as usize]);
+        self.frontier_levels.for_each_up_to(
+            &(from..to),
+            self.levels[segment as usize],
+            &mut |at| {
+                visit(self.frontier_targets[at]);
+            },
+        );
     }
 
     /// Calls `visit` with each segment whose range has `identifier` in it.
     fn for_each_around(&self, identifier: Span, mut visit: impl FnMut(u32)) {
-        let mut at = self.ranges.partition_point(|it| it.0.start <= identifier.start);
+        let mut at = self
+            .ranges
+            .partition_point(|it| it.0.start <= identifier.start);
         while at > 0 && self.ends[at - 1] >= identifier.end {
             at -= 1;
             if self.ranges[at].0.end >= identifier.end {
@@ -455,7 +481,11 @@ struct Segments<'a> {
 impl<'a, 'v> Variable<'a, 'v> {
     fn new(assignments: &'v [Assignment<'a>], reads: &'v [Span], ranges: &'v [Span]) -> Self {
         let mut in_segments: SmallVec<[(u32, u32); 8]> = (assignments.iter().enumerate())
-            .flat_map(|(index, it)| it.segments.iter().map(move |segment| (segment.id(), index as u32)))
+            .flat_map(|(index, it)| {
+                it.segments
+                    .iter()
+                    .map(move |segment| (segment.id(), index as u32))
+            })
             .collect();
         in_segments.sort_unstable();
         Variable {
@@ -479,7 +509,9 @@ impl<'a, 'v> Variable<'a, 'v> {
 
     /// ESLint's `isIdentifierUsedInSegment`, for all of `reads`.
     fn reads_in_segment(&self, id: u32) -> Range<usize> {
-        self.ranges.get(id as usize).map_or(0..0, |&range| self.reads_in(range))
+        self.ranges
+            .get(id as usize)
+            .map_or(0..0, |&range| self.reads_in(range))
     }
 
     /// Whether the variable is read in a segment, and if `first` is assigned there, not after that.
@@ -489,7 +521,9 @@ impl<'a, 'v> Variable<'a, 'v> {
             return !all.is_empty();
         };
         all.start < all.end.min(self.reads_before(first.identifier.end))
-            || first.expression.is_some_and(|it| !intersection(all, self.reads_in(it)).is_empty())
+            || first
+                .expression
+                .is_some_and(|it| !intersection(all, self.reads_in(it)).is_empty())
     }
 
     /// For each assignment, the index of the first of the others that was made in one of its
@@ -509,11 +543,18 @@ impl<'a, 'v> Variable<'a, 'v> {
                     continue;
                 };
                 let identifier = target.identifier;
-                while around.last().is_some_and(|&it| expression(it).end < identifier.end) {
+                while around
+                    .last()
+                    .is_some_and(|&it| expression(it).end < identifier.end)
+                {
                     around.pop();
                 }
                 let started = ahead.partition_point(|&it| expression(it).start > identifier.start);
-                around.extend(ahead.drain(started..).filter(|&it| expression(it).end >= identifier.end));
+                around.extend(
+                    ahead
+                        .drain(started..)
+                        .filter(|&it| expression(it).end >= identifier.end),
+                );
                 // `x = (x = 1)`
                 if let Some(&outermost) = around.first() {
                     *found = outermost.min(*found);
@@ -524,9 +565,15 @@ impl<'a, 'v> Variable<'a, 'v> {
                 // What is in its expression is evaluated before it.
                 let rest = &in_segment[at + 1..];
                 let is_before = |it: &(u32, u32)| {
-                    get(it.1).is_some_and(|it| !is_identifier_evaluated_after_assignment(target, it.identifier))
+                    get(it.1).is_some_and(|it| {
+                        !is_identifier_evaluated_after_assignment(target, it.identifier)
+                    })
                 };
-                let skipped = if rest.first().is_some_and(is_before) { rest.partition_point(is_before) } else { 0 };
+                let skipped = if rest.first().is_some_and(is_before) {
+                    rest.partition_point(is_before)
+                } else {
+                    0
+                };
                 if let Some(&(_, following)) = rest.get(skipped) {
                     *found = following.min(*found);
                 }
@@ -542,8 +589,13 @@ impl<'a, 'v> Variable<'a, 'v> {
         // `x = id`: it is evaluated before the assignment.
         let before = target.expression.map_or(0..0, |it| self.reads_in(it));
         // `let { x, y = x } = obj`
-        let between = target.expression.map_or(0, |it| self.reads.partition_point(|read| read.end <= it.start));
-        let in_segments = target.segments.iter().map(|it| self.reads_in_segment(it.id()));
+        let between = target.expression.map_or(0, |it| {
+            self.reads.partition_point(|read| read.end <= it.start)
+        });
+        let in_segments = target
+            .segments
+            .iter()
+            .map(|it| self.reads_in_segment(it.id()));
         std::iter::once(0..between).chain(in_segments).any(|place| {
             let place = intersection(place, after.clone());
             let Some(next) = next else {
@@ -551,8 +603,9 @@ impl<'a, 'v> Variable<'a, 'v> {
             };
             let until_next = place.start..place.end.min(self.reads_before(next.identifier.end));
             is_any_outside(&until_next, &before)
-                || (next.expression)
-                    .is_some_and(|it| is_any_outside(&intersection(place, self.reads_in(it)), &before))
+                || (next.expression).is_some_and(|it| {
+                    is_any_outside(&intersection(place, self.reads_in(it)), &before)
+                })
         })
     }
 
@@ -563,7 +616,11 @@ impl<'a, 'v> Variable<'a, 'v> {
         const FEW: usize = 32;
         let mut few: SmallVec<[u32; FEW]> = SmallVec::new();
         let mut many: FxHashSet<u32> = FxHashSet::default();
-        let mut stack: SmallVec<[Segment<'a>; 16]> = target.segments.iter().flat_map(|it| it.next_segments()).collect();
+        let mut stack: SmallVec<[Segment<'a>; 16]> = target
+            .segments
+            .iter()
+            .flat_map(|it| it.next_segments())
+            .collect();
         while let Some(segment) = stack.pop() {
             let id = segment.id();
             if few.contains(&id) || few.len() == FEW && !many.insert(id) {
@@ -579,7 +636,9 @@ impl<'a, 'v> Variable<'a, 'v> {
             let first = (self.in_segments.iter().skip(from))
                 .take_while(|it| it.0 == id)
                 .filter_map(|it| self.assignments.get(it.1 as usize))
-                .find(|it| !is_identifier_used_between_assigned_and_equal_sign(it, target.identifier));
+                .find(|it| {
+                    !is_identifier_used_between_assigned_and_equal_sign(it, target.identifier)
+                });
             if self.is_read_in(id, first) {
                 return Some(true);
             }
@@ -605,7 +664,14 @@ impl<'a, 'v> Variable<'a, 'v> {
             {
                 let is_read = self.is_read_in(id, self.assignments.get(first as usize));
                 known.insert(segment);
-                places.push((segment, if is_read { Place::Read } else { Place::Assigned }));
+                places.push((
+                    segment,
+                    if is_read {
+                        Place::Read
+                    } else {
+                        Place::Assigned
+                    },
+                ));
             }
         }
         for &read in self.reads {
@@ -670,7 +736,10 @@ impl<'a, 'v> Variable<'a, 'v> {
             } else {
                 for (at, &(from, place)) in nearest.iter().enumerate() {
                     let to = nearest.get(at + 1).map_or(u32::MAX, |it| it.0);
-                    if prev.get(prev.partition_point(|&it| it < from)).is_some_and(|&it| it < to) {
+                    if prev
+                        .get(prev.partition_point(|&it| it < from))
+                        .is_some_and(|&it| it < to)
+                    {
                         reach(place);
                     }
                 }
@@ -699,14 +768,23 @@ impl<'a, 'v> Variable<'a, 'v> {
                 }
             }
         }
-        let mut found: Vec<u32> = places.iter().map(|it| it.0).filter(|&it| all[it as usize].1).collect();
+        let mut found: Vec<u32> = places
+            .iter()
+            .map(|it| it.0)
+            .filter(|&it| all[it as usize].1)
+            .collect();
         found.sort_unstable();
         found
     }
 
     /// Whether the variable is read in a segment after those of `assignments[index]`, before
     /// something else is assigned to it.
-    fn is_read_later(&mut self, index: usize, target: &Assignment<'a>, segments: &mut Segments<'a>) -> bool {
+    fn is_read_later(
+        &mut self,
+        index: usize,
+        target: &Assignment<'a>,
+        segments: &mut Segments<'a>,
+    ) -> bool {
         if let Some(is_read) = self.search(target, 32) {
             return is_read;
         }
@@ -724,8 +802,11 @@ impl<'a, 'v> Variable<'a, 'v> {
                     .collect(),
             });
         }
-        let numbers: Option<SmallVec<[u32; 2]>> =
-            target.segments.iter().map(|it| graph.numbers.get(&it.id()).copied()).collect();
+        let numbers: Option<SmallVec<[u32; 2]>> = target
+            .segments
+            .iter()
+            .map(|it| graph.numbers.get(&it.id()).copied())
+            .collect();
         match (&self.later, numbers) {
             // `[x, y = (x = 1)] = z`: for the inner assignment the outer one does not count.
             (Some(later), Some(numbers))
@@ -734,7 +815,9 @@ impl<'a, 'v> Variable<'a, 'v> {
                     .and_then(|it| later.expression_starts.get(it))
                     .is_some_and(|&start| start >= target.identifier.end) =>
             {
-                numbers.iter().any(|it| later.read_after.binary_search(it).is_ok())
+                numbers
+                    .iter()
+                    .any(|it| later.read_after.binary_search(it).is_ok())
             }
             _ => self.search(target, usize::MAX).unwrap_or(true),
         }
@@ -742,13 +825,19 @@ impl<'a, 'v> Variable<'a, 'v> {
 
     /// Whether nothing reads the value that `assignments[index]` assigns. `next`: what
     /// `next_assignments` tells for it.
-    fn is_assignment_unused(&mut self, index: usize, next: u32, segments: &mut Segments<'a>) -> bool {
+    fn is_assignment_unused(
+        &mut self,
+        index: usize,
+        next: u32,
+        segments: &mut Segments<'a>,
+    ) -> bool {
         let assignments = self.assignments;
         let Some(target) = assignments.get(index) else {
             return false;
         };
         let next = assignments.get(next as usize);
-        !self.is_read_at_once(target, next) && (next.is_some() || !self.is_read_later(index, target, segments))
+        !self.is_read_at_once(target, next)
+            && (next.is_some() || !self.is_read_later(index, target, segments))
     }
 }
 
@@ -826,7 +915,8 @@ fn written_by<'a>(reference: Reference<'a>) -> Option<Written<'a>> {
                         });
                     }
                 }
-                ExprKind::Unary { .. } if matches!(current, Node::Expr(it) if it.tag() == ExprTag::Ident) => {
+                ExprKind::Unary { .. } if matches!(current, Node::Expr(it) if it.tag() == ExprTag::Ident) =>
+                {
                     return Some(Written {
                         identifier,
                         expression: None,
@@ -846,7 +936,9 @@ fn written_by<'a>(reference: Reference<'a>) -> Option<Written<'a>> {
 fn code_path_scope(scope: Scope<'_>) -> Option<Scope<'_>> {
     scope.chain().find(|it| match it.kind() {
         ScopeKind::Global | ScopeKind::ClassStaticBlock => true,
-        ScopeKind::Function | ScopeKind::ClassFieldInitializer => !matches!(it.node(), Node::File(_)) && starts_code_path(it.node()),
+        ScopeKind::Function | ScopeKind::ClassFieldInitializer => {
+            !matches!(it.node(), Node::File(_)) && starts_code_path(it.node())
+        }
         _ => false,
     })
 }
@@ -913,7 +1005,10 @@ impl<'a> Uses<'a> {
         // Most variables are used a few times.
         if all.len() <= 8 {
             let first = all.iter().take_while(|it| it.start < span.start).count();
-            let count = all[first..].iter().take_while(|it| it.start < span.end).count();
+            let count = all[first..]
+                .iter()
+                .take_while(|it| it.start < span.end)
+                .count();
             return &all[first..first + count];
         }
         let first = all.partition_point(|it| it.start < span.start);
@@ -925,7 +1020,10 @@ impl<'a> Uses<'a> {
     fn is_alone_in(&self, written: &Written<'a>, span: Span) -> bool {
         self.within(span).iter().all(|it| {
             it.start == written.identifier.start
-                || !it.is_write && written.expression.is_some_and(|expression| expression.contains_offset(it.start))
+                || !it.is_write
+                    && written
+                        .expression
+                        .is_some_and(|expression| expression.contains_offset(it.start))
         })
     }
 
@@ -939,12 +1037,15 @@ impl<'a> Uses<'a> {
                     return Flow::Unknown;
                 }
                 // `x = f(x)`
-                read_or_unknown(!first.is_write || matches!(
-                    e.kind(),
-                    ExprKind::Assign { target, value, .. }
-                        if target.span().start == first.start
-                            && rest.iter().all(|it| value.span().contains_offset(it.start))
-                ))
+                read_or_unknown(
+                    !first.is_write
+                        || matches!(
+                            e.kind(),
+                            ExprKind::Assign { target, value, .. }
+                                if target.span().start == first.start
+                                    && rest.iter().all(|it| value.span().contains_offset(it.start))
+                        ),
+                )
             }
         }
     }
@@ -961,7 +1062,10 @@ impl<'a> Uses<'a> {
             return Flow::Through;
         };
         // Those before it have nothing to do with the variable.
-        match declarators.around(next.start).map(|it| self.optional_expression(it.init())) {
+        match declarators
+            .around(next.start)
+            .map(|it| self.optional_expression(it.init()))
+        {
             Some(Flow::Read) => Flow::Read,
             _ => Flow::Unknown,
         }
@@ -979,7 +1083,10 @@ impl<'a> Uses<'a> {
     /// From `offset` on, which is between two statements of `list`, before the first or after the
     /// last.
     fn statements(&mut self, list: List<'a, Stmt<'a>>, mut offset: u32) -> Flow<'a> {
-        let (Some(first), Some(last)) = (list.first(), list.last().filter(|it| it.span().end > offset)) else {
+        let (Some(first), Some(last)) = (
+            list.first(),
+            list.last().filter(|it| it.span().end > offset),
+        ) else {
             return Flow::Through;
         };
         offset = offset.max(first.span().start);
@@ -990,7 +1097,11 @@ impl<'a> Uses<'a> {
                 let previous = list.before(statement.span().start);
                 previous.is_none_or(|it| it.span().start < offset || it.is_known_to_complete())
             };
-            let Some(next) = self.within(Span::new(offset, last.span().end)).first().copied() else {
+            let Some(next) = self
+                .within(Span::new(offset, last.span().end))
+                .first()
+                .copied()
+            else {
                 return match last.tag() {
                     _ if last.is_known_to_complete() => Flow::Through,
                     StmtTag::Break | StmtTag::Continue if is_reached(last) => Flow::Leaves(last),
@@ -1011,7 +1122,11 @@ impl<'a> Uses<'a> {
     /// From the start of `statement` on.
     fn statement(&mut self, statement: Stmt<'a>) -> Flow<'a> {
         if self.within(statement.span()).is_empty() {
-            return if statement.is_known_to_complete() { Flow::Through } else { Flow::Unknown };
+            return if statement.is_known_to_complete() {
+                Flow::Through
+            } else {
+                Flow::Unknown
+            };
         }
         let Some(budget) = self.budget.checked_sub(1) else {
             return Flow::Unknown;
@@ -1042,13 +1157,21 @@ impl<'a> Uses<'a> {
             }
             StmtKind::While { test, body } => {
                 through!(self.expression(test));
-                let out = if is_literal(test) { Flow::Unknown } else { Flow::Through };
+                let out = if is_literal(test) {
+                    Flow::Unknown
+                } else {
+                    Flow::Through
+                };
                 self.body(body).or(out)
             }
             StmtKind::DoWhile { body, test } => {
                 through!(self.statement(body).or(Flow::Unknown));
                 through!(self.expression(test));
-                if is_literal(test) { Flow::Unknown } else { Flow::Through }
+                if is_literal(test) {
+                    Flow::Unknown
+                } else {
+                    Flow::Through
+                }
             }
             StmtKind::For {
                 init,
@@ -1058,14 +1181,21 @@ impl<'a> Uses<'a> {
             } => {
                 through!(init.map_or(Flow::Through, |init| self.head(init)));
                 through!(self.optional_expression(test));
-                let out = if test.is_some_and(|test| !is_literal(test)) { Flow::Through } else { Flow::Unknown };
+                let out = if test.is_some_and(|test| !is_literal(test)) {
+                    Flow::Through
+                } else {
+                    Flow::Unknown
+                };
                 match self.statement(body) {
                     Flow::Read => Flow::Read,
                     Flow::Through if self.optional_expression(update) == Flow::Read => Flow::Read,
                     _ => out,
                 }
             }
-            StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
+            StmtKind::ForIn { left, expr, body }
+            | StmtKind::ForOf {
+                left, expr, body, ..
+            } => {
                 through!(self.expression(expr));
                 if !self.within(left.span()).is_empty() {
                     return Flow::Through;
@@ -1084,13 +1214,19 @@ impl<'a> Uses<'a> {
                     }
                 }
                 let has_default = cases.iter().any(Case::is_default);
-                let mut all = if has_default { Flow::Unknown } else { Flow::Through };
+                let mut all = if has_default {
+                    Flow::Unknown
+                } else {
+                    Flow::Through
+                };
                 // From the start of the following case on.
                 let mut next = Flow::Through;
                 for case in cases.iter().rev() {
                     next = match self.statements(case.body(), 0) {
                         Flow::Through => next,
-                        Flow::Leaves(jump) if matches!(jump.kind(), StmtKind::Break(None)) => Flow::Through,
+                        Flow::Leaves(jump) if matches!(jump.kind(), StmtKind::Break(None)) => {
+                            Flow::Through
+                        }
                         flow => flow.or(Flow::Unknown),
                     };
                     all = all.or(next);
@@ -1104,18 +1240,26 @@ impl<'a> Uses<'a> {
                 ..
             } => {
                 let mut flow = self.statement(block).or(Flow::Unknown);
-                if let Some(handler) = handler.filter(|_| flow != Flow::Read && self.throws_before_write(block)) {
+                if let Some(handler) =
+                    handler.filter(|_| flow != Flow::Read && self.throws_before_write(block))
+                {
                     flow = flow.or(self.statement(handler));
                 }
                 through!(flow);
-                finalizer.map_or(Flow::Through, |finalizer| self.statement(finalizer).or(Flow::Unknown))
+                finalizer.map_or(Flow::Through, |finalizer| {
+                    self.statement(finalizer).or(Flow::Unknown)
+                })
             }
             StmtKind::ExportDefault(e) => self.expression(e),
             // What a function reads can be read at any time.
-            StmtKind::Fn(_) if self.within(statement.span()).iter().any(|it| it.is_read) => Flow::Read,
+            StmtKind::Fn(_) if self.within(statement.span()).iter().any(|it| it.is_read) => {
+                Flow::Read
+            }
             StmtKind::ExportNamed(_) | StmtKind::ImportEquals(_) => Flow::Read,
             // The same, or it is read where the class is defined.
-            StmtKind::Class(_) if self.within(statement.span()).iter().all(|it| !it.is_write) => Flow::Read,
+            StmtKind::Class(_) if self.within(statement.span()).iter().all(|it| !it.is_write) => {
+                Flow::Read
+            }
             _ => Flow::Unknown,
         }
     }
@@ -1141,7 +1285,8 @@ impl<'a> Uses<'a> {
                 }
                 StmtKind::Expr(e) => {
                     return match e.kind() {
-                        ExprKind::Assign { target: it, .. } | ExprKind::Unary { operand: it, .. } => {
+                        ExprKind::Assign { target: it, .. }
+                        | ExprKind::Unary { operand: it, .. } => {
                             it.tag() == ExprTag::Ident && it.span().start == first.start
                         }
                         _ => false,
@@ -1162,7 +1307,12 @@ impl<'a> Uses<'a> {
     }
 
     /// Whether the variable can be read after the test of `a_loop`, which is `None` if it has none.
-    fn is_read_after_test(&mut self, a_loop: Stmt<'a>, test: Option<Expr<'a>>, body: Stmt<'a>) -> bool {
+    fn is_read_after_test(
+        &mut self,
+        a_loop: Stmt<'a>,
+        test: Option<Expr<'a>>,
+        body: Stmt<'a>,
+    ) -> bool {
         if !self.loops.contains(&a_loop) {
             self.loops.push(a_loop);
             if self.statement(body) == Flow::Read {
@@ -1172,7 +1322,12 @@ impl<'a> Uses<'a> {
         test.is_some_and(|test| !is_literal(test)) && self.is_read_after(a_loop)
     }
 
-    fn is_read_from_test(&mut self, a_loop: Stmt<'a>, test: Option<Expr<'a>>, body: Stmt<'a>) -> bool {
+    fn is_read_from_test(
+        &mut self,
+        a_loop: Stmt<'a>,
+        test: Option<Expr<'a>>,
+        body: Stmt<'a>,
+    ) -> bool {
         match self.optional_expression(test) {
             Flow::Read => true,
             Flow::Through => self.is_read_after_test(a_loop, test, body),
@@ -1223,7 +1378,8 @@ impl<'a> Uses<'a> {
                 return false;
             };
             // ESLint does not connect all of what leaves a `finally` block.
-            if matches!(target.kind(), StmtKind::Try { finalizer, .. } if finalizer == Some(inner)) {
+            if matches!(target.kind(), StmtKind::Try { finalizer, .. } if finalizer == Some(inner))
+            {
                 return false;
             }
             inner = target;
@@ -1232,7 +1388,13 @@ impl<'a> Uses<'a> {
                 StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf
             );
             match (target.kind(), label) {
-                (StmtKind::Labeled { label: it, mut body }, Some(label)) if it == label => {
+                (
+                    StmtKind::Labeled {
+                        label: it,
+                        mut body,
+                    },
+                    Some(label),
+                ) if it == label => {
                     if is_break {
                         return self.is_read_after(target);
                     }
@@ -1301,11 +1463,13 @@ impl<'a> Uses<'a> {
                         return false;
                     }
                 }
-                StmtKind::Try { finalizer, .. } => match finalizer.map_or(Flow::Through, |it| self.statement(it)) {
-                    Flow::Read => return true,
-                    Flow::Through => {}
-                    _ => return false,
-                },
+                StmtKind::Try { finalizer, .. } => {
+                    match finalizer.map_or(Flow::Through, |it| self.statement(it)) {
+                        Flow::Read => return true,
+                        Flow::Through => {}
+                        _ => return false,
+                    }
+                }
                 StmtKind::For {
                     init: Some(init),
                     test,
@@ -1352,8 +1516,16 @@ impl<'a> Uses<'a> {
             StmtKind::For {
                 init, test, update, ..
             } => {
-                let parts = [init.map(Stmt::span), test.map(Expr::span), update.map(Expr::span)];
-                match parts.into_iter().flatten().find(|it| it.contains(written.identifier)) {
+                let parts = [
+                    init.map(Stmt::span),
+                    test.map(Expr::span),
+                    update.map(Expr::span),
+                ];
+                match parts
+                    .into_iter()
+                    .flatten()
+                    .find(|it| it.contains(written.identifier))
+                {
                     Some(part) => part,
                     None => return false,
                 }
@@ -1374,7 +1546,9 @@ impl<'a> Uses<'a> {
             }
             StmtKind::While { test, body } => self.is_read_after_test(statement, Some(test), body),
             StmtKind::For { test, body, .. } => match test {
-                Some(test) if test.span() == part => self.is_read_after_test(statement, Some(test), body),
+                Some(test) if test.span() == part => {
+                    self.is_read_after_test(statement, Some(test), body)
+                }
                 _ => self.is_read_from_test(statement, test, body),
             },
             _ => self.is_read_after(statement),
@@ -1390,10 +1564,13 @@ impl NoUselessAssignment {
         }
         let mut uses = Uses::of(variable);
         // What a function assigns to a variable from outside it is not looked at.
-        let is_unknown = variable.references().filter(|it| it.is_write()).any(|reference| {
-            written_by(reference).is_some_and(|written| !uses.is_known_to_be_read(&written))
-                && code_path_scope(reference.scope()) == code_path_scope(variable.scope())
-        });
+        let is_unknown = variable
+            .references()
+            .filter(|it| it.is_write())
+            .any(|reference| {
+                written_by(reference).is_some_and(|written| !uses.is_known_to_be_read(&written))
+                    && code_path_scope(reference.scope()) == code_path_scope(variable.scope())
+            });
         if !is_unknown {
             return;
         }
@@ -1401,7 +1578,10 @@ impl NoUselessAssignment {
             return;
         };
         // What a function reads can be read at any time.
-        if variable.references().any(|it| it.is_read() && code_path_scope(it.scope()) != Some(scope)) {
+        if variable
+            .references()
+            .any(|it| it.is_read() && code_path_scope(it.scope()) != Some(scope))
+        {
             return;
         }
         let root = match (scope.kind(), scope.node()) {
@@ -1417,13 +1597,23 @@ impl NoUselessAssignment {
         let exit = NodeTags::VAR_DECL | ExprTag::Assign.into() | ExprTag::Unary.into();
         for step in steps_of_code_path(root, enter, exit) {
             match step {
-                Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node, cx),
-                Step::Event(Event::CodePathEnd(path, node)) => self.on_code_path_end(path, node, cx),
-                Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
-                Step::Event(Event::SegmentEnd(segment, node)) => self.on_segment_end(segment, node, cx),
+                Step::Event(Event::CodePathStart(path, node)) => {
+                    self.on_code_path_start(path, node, cx)
+                }
+                Step::Event(Event::CodePathEnd(path, node)) => {
+                    self.on_code_path_end(path, node, cx)
+                }
+                Step::Event(Event::SegmentStart(segment, node)) => {
+                    self.on_segment_start(segment, node, cx)
+                }
+                Step::Event(Event::SegmentEnd(segment, node)) => {
+                    self.on_segment_end(segment, node, cx)
+                }
                 Step::Event(_) => {}
                 Step::Enter(Node::Stmt(statement)) => self.on_statement(statement, cx),
-                Step::Enter(Node::ExportSpec(specifier)) => self.on_identifier(specifier.local().span(), cx),
+                Step::Enter(Node::ExportSpec(specifier)) => {
+                    self.on_identifier(specifier.local().span(), cx)
+                }
                 Step::Enter(node) => self.on_identifier(node.span(), cx),
                 Step::Exit(node) => self.on_assignment_exit(node, cx),
             }
@@ -1441,7 +1631,10 @@ impl NoUselessAssignment {
         let is_in_try_statement_block = |identifier: Span| {
             let blocks = &target.try_statement_blocks;
             let before = blocks.partition_point(|block| block.start <= identifier.start);
-            before.checked_sub(1).and_then(|it| blocks.get(it)).is_some_and(|block| identifier.end <= block.end)
+            before
+                .checked_sub(1)
+                .and_then(|it| blocks.get(it))
+                .is_some_and(|block| identifier.end <= block.end)
         };
         'variables: for (variable, assignments) in target.assignments {
             let Some(mut assignments) = assignments else {
@@ -1450,7 +1643,8 @@ impl NoUselessAssignment {
             let mut read_references: SmallVec<[Span; 8]> = SmallVec::new();
             for reference in variable.references().filter(|it| it.is_read()) {
                 // It can be called at any time.
-                let start = get_code_path_start_scope(&cx.state.code_path_start_scopes, reference.scope());
+                let start =
+                    get_code_path_start_scope(&cx.state.code_path_start_scopes, reference.scope());
                 if start != Some(target.scope) {
                     continue 'variables;
                 }
@@ -1464,14 +1658,16 @@ impl NoUselessAssignment {
                 read_references.sort_unstable_by_key(|it| it.start);
             }
             assignments.sort_by_key(|it| it.identifier.start);
-            let mut uses = Variable::new(&assignments, &read_references, &cx.state.identifier_ranges);
+            let mut uses =
+                Variable::new(&assignments, &read_references, &cx.state.identifier_ranges);
             let next = uses.next_assignments();
             for (index, (assignment, &next)) in assignments.iter().zip(&next).enumerate() {
                 let identifier = assignment.identifier;
                 if !is_in_try_statement_block(identifier)
                     && uses.is_assignment_unused(index, next, &mut target.segments)
                 {
-                    cx.report(identifier, UNNECESSARY_ASSIGNMENT).data("name", variable.name());
+                    cx.report(identifier, UNNECESSARY_ASSIGNMENT)
+                        .data("name", variable.name());
                 }
             }
         }
@@ -1491,7 +1687,8 @@ impl NoUselessAssignment {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
-                let is_ignored = get_code_path_start_scope(&state.code_path_start_scopes, scope) != Some(top.scope)
+                let is_ignored = get_code_path_start_scope(&state.code_path_start_scopes, scope)
+                    != Some(top.scope)
                     || variable.is_marked_used()
                     || scope.kind() == ScopeKind::Module && is_exported(variable);
                 entry.insert((!is_ignored).then(SmallVec::new))
@@ -1588,7 +1785,11 @@ impl NoUselessAssignment {
                 let id = declarator.pat();
                 id.for_each_binding(&mut |pat| {
                     // With typescript-eslint's parser the annotation is part of the identifier.
-                    let identifier = if pat == id { declarator.binding_span() } else { pat.span() };
+                    let identifier = if pat == id {
+                        declarator.binding_span()
+                    } else {
+                        pat.span()
+                    };
                     Self::add_assignment(pat.symbol(), identifier, Some(init.span()), cx);
                 });
                 return;

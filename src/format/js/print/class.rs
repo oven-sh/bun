@@ -32,16 +32,20 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     }
 
     let members = format_with(|f| {
-        let mut join = f.join_nodes_with_hardline();
         let mut iter = class.members().iter().peekable();
+        let mut is_first = true;
         while let Some(element) = iter.next() {
-            join.entry(
-                element.span(),
-                &FormatClassElementWithSemicolon {
-                    element,
-                    next_element: iter.peek().copied(),
-                },
-            );
+            let span = element.span();
+            // `a = 1 ⏎ ⏎ ;[b] = 2`: the `;` is the end of the member before, which this one follows on
+            // the same line.
+            let follows_semicolon = span.start != 0 && f.source_text().byte_at(span.start - 1) == Some(b';');
+            match is_first {
+                true => is_first = false,
+                false if !follows_semicolon && f.lines_before(span) > 1 => write!(f, empty_line()),
+                false => write!(f, hard_line_break()),
+            }
+            let next_element = iter.peek().copied();
+            write!(f, FormatClassElementWithSemicolon { element, next_element });
         }
     });
     write!(f, ["{", block_indent(&members), "}"]);

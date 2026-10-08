@@ -5468,20 +5468,23 @@ describe.concurrent("Object.prototype pollution", () => {
         bunExe(),
         "-e",
         `
-        const net = require("node:net");
         const got = Promise.withResolvers();
         // A plain TCP server reports the first bytes it receives. 0x16 is a TLS record.
-        const server = net.createServer(connection => {
-          connection.once("data", bytes => {
-            got.resolve(bytes[0] === 0x16 ? "TLS ClientHello" : String(bytes));
-            connection.destroy();
-          });
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(connection, bytes) {
+              got.resolve(bytes[0] === 0x16 ? "TLS ClientHello" : String(bytes));
+              connection.terminate();
+            },
+            close() {}, error() {},
+          },
         });
-        await new Promise(done => server.listen(0, "127.0.0.1", done));
         Object.prototype.tls = true;
         Bun.connect({
           hostname: "127.0.0.1",
-          port: server.address().port,
+          port: server.port,
           socket: {
             open: s => s.write("PLAINTEXT"),
             data() {}, close() {}, error() {}, connectError() {}, handshake() {},
@@ -5489,7 +5492,7 @@ describe.concurrent("Object.prototype pollution", () => {
         }).catch(() => {});
         delete Object.prototype.tls;
         console.log(await got.promise);
-        server.close();
+        server.stop(true);
         `,
       ],
       env: bunEnv,

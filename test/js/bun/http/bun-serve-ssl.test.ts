@@ -297,7 +297,6 @@ describe("Bun.serve Object.prototype pollution", () => {
         bunExe(),
         "-e",
         `
-        const https = require("node:https");
         // The server requests a client certificate. It does not pass
         // rejectUnauthorized, so the default (reject) applies.
         const serve = () => Bun.serve({
@@ -312,18 +311,15 @@ describe("Bun.serve Object.prototype pollution", () => {
           fetch: () => new Response("admin"),
         });
         // The client presents no certificate.
-        const probe = port => new Promise(resolve => {
-          https
-            .get({ host: "127.0.0.1", port, rejectUnauthorized: false }, response => {
-              response.resume();
-              response.on("end", () => resolve("HTTP " + response.statusCode));
-            })
-            .on("error", () => resolve("rejected"));
-        });
+        const probe = url =>
+          fetch(url, { tls: { rejectUnauthorized: false } }).then(
+            response => "HTTP " + response.status,
+            () => "rejected",
+          );
         Object.prototype.rejectUnauthorized = false;
         const server = serve();
         delete Object.prototype.rejectUnauthorized;
-        console.log(await probe(server.port));
+        console.log(await probe(server.url));
         server.stop(true);
         `,
       ],

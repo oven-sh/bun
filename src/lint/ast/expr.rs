@@ -293,16 +293,13 @@ impl<'a> Expr<'a> {
         if self.file.hir.jsx.is_empty() {
             return false;
         }
-        let mut at = self;
-        loop {
-            let Node::Expr(parent) = at.parent() else {
-                return false;
-            };
-            match parent.kind() {
-                ExprKind::Dot { .. } => at = parent,
-                ExprKind::Jsx(jsx) => return jsx.tag() == Some(at) || jsx.close_tag() == Some(at),
-                _ => return false,
-            }
+        let Node::Expr(parent) = self.parent() else {
+            return false;
+        };
+        match parent.kind() {
+            ExprKind::Dot { .. } => self.try_raw().is_some_and(|raw| self.file.is_in_jsx_tag_with_dots(raw.pos)),
+            ExprKind::Jsx(jsx) => jsx.tag() == Some(self) || jsx.close_tag() == Some(self),
+            _ => false,
         }
     }
 

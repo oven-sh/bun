@@ -193,6 +193,8 @@ pub(crate) struct Lazy {
     unicode_escape_range: UnicodeEscapeRange,
     /// A bit for each expression: it is in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
+    /// Where the `a.b` of each `<a.b>` and `</a.b>` starts and ends, in order.
+    jsx_tags_with_dots: OnceCell<Box<[(u32, u32)]>>,
     pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
     pub(crate) by_kind: OnceCell<crate::runner::ByKind>,
     pub(crate) code_paths: crate::code_path::Store,
@@ -600,6 +602,24 @@ impl<'a> File<'a> {
         let from_tags = Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE | Flags::READONLY | Flags::OVERRIDE;
         let keywords = written.iter().fold(Flags::empty(), |all, it| all | it.flag());
         (flags - from_tags) | (keywords & from_tags)
+    }
+
+    /// Whether `pos` is in the name of a tag of a JSX element that is written with dots: `<a.b.c>`.
+    pub(crate) fn is_in_jsx_tag_with_dots(&self, pos: u32) -> bool {
+        let tags = self.lazy.jsx_tags_with_dots.get_or_init(|| {
+            let is_jsx = |e: hir::ExprId| matches!(self.hir.exprs.get(e.idx()), Some(hir::Expr { kind: hir::ExprKind::Jsx(_), .. }));
+            let names = self.hir.jsx.iter().flat_map(|it| [it.tag, it.close_tag]);
+            let mut tags: Vec<(u32, u32)> = names
+                .filter(|it| matches!(self.bound.expr_parent.get(it.idx()), Some(&bind::Parent::Expr(parent)) if is_jsx(parent)))
+                .filter_map(|it| self.hir.exprs.get(it.idx()))
+                .filter(|it| matches!(it.kind, hir::ExprKind::Dot { .. }))
+                .map(|it| (it.pos, it.end))
+                .collect();
+            tags.sort_unstable();
+            tags.into_boxed_slice()
+        });
+        let after = tags.partition_point(|it| it.0 <= pos);
+        after.checked_sub(1).and_then(|it| tags.get(it)).is_some_and(|it| pos < it.1)
     }
 
     /// Whether the file has nodes that are synthesized from JSDoc comments.

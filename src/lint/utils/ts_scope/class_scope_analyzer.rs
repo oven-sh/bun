@@ -19,6 +19,7 @@ use crate::utils::text::number_to_string;
 use bun_sema::atom::Atom;
 use bun_sema::bind::Parent;
 use bun_sema::hir;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
 // ───────────────────────────── names ─────────────────────────────
@@ -209,10 +210,15 @@ pub struct ClassMemberUsage<'a> {
     members: Vec<ClassMember<'a>>,
     /// For each of `members`.
     keys: Vec<MemberKey>,
+    /// Where the members of the classes that have more than `FEW_MEMBERS` are in `members`, by the class and the key.
+    places: FxHashMap<(u32, MemberKey), u32>,
 }
 
+/// So many are searched one after the other.
+const FEW_MEMBERS: usize = 16;
+
 /// Upstream's `Key`, and which of the two maps of the class it is a key of.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 struct MemberKey {
     name: Atom,
     is_private: bool,
@@ -272,9 +278,12 @@ impl<'a> ClassMemberUsage<'a> {
 
     /// `members.static.get(key)` or `members.instance.get(key)`, as an index.
     fn find(&self, class: u32, key: MemberKey) -> Option<usize> {
-        let class = self.classes.get(class as usize)?;
-        let first = class.first_member as usize;
-        let keys = self.keys.get(first..first + class.member_count as usize)?;
+        let members = self.classes.get(class as usize)?;
+        if members.member_count as usize > FEW_MEMBERS {
+            return self.places.get(&(class, key)).map(|&it| it as usize);
+        }
+        let first = members.first_member as usize;
+        let keys = self.keys.get(first..first + members.member_count as usize)?;
         Some(first + keys.iter().position(|it| *it == key)?)
     }
 
@@ -287,6 +296,8 @@ impl<'a> ClassMemberUsage<'a> {
     ) {
         let file = class.file();
         candidates.clear();
+        // Where each is among the candidates, once there are more than a few.
+        let mut places: FxHashMap<MemberKey, usize> = FxHashMap::default();
         let mut add = |node: MemberNode<'a>, flags: Flags| {
             let (name, is_private, extracted) = match plain_name(node) {
                 Some((name, is_private)) => (name.atom(), is_private, None),
@@ -305,9 +316,21 @@ impl<'a> ClassMemberUsage<'a> {
                 name: extracted,
             };
             // As in a `Map`, the last with a key takes the place of the first.
-            match candidates.iter_mut().find(|it| it.key == candidate.key) {
+            if candidates.len() == FEW_MEMBERS && places.is_empty() {
+                places.extend(candidates.iter().enumerate().map(|(i, it)| (it.key, i)));
+            }
+            let place = match candidates.len() < FEW_MEMBERS {
+                true => candidates.iter().position(|it| it.key == candidate.key),
+                false => places.get(&candidate.key).copied(),
+            };
+            match place.and_then(|it| candidates.get_mut(it)) {
                 Some(same) => *same = candidate,
-                None => candidates.push(candidate),
+                None => {
+                    if candidates.len() >= FEW_MEMBERS {
+                        places.insert(candidate.key, candidates.len());
+                    }
+                    candidates.push(candidate);
+                }
             }
         };
         for member in class.members() {
@@ -350,6 +373,10 @@ impl<'a> ClassMemberUsage<'a> {
             }
             self.members.push(member);
             self.keys.push(candidate.key);
+        }
+        if self.members.len() - first > FEW_MEMBERS {
+            let (class, keys) = (self.classes.len() as u32, self.keys.iter().enumerate().skip(first));
+            self.places.extend(keys.map(|(i, &key)| ((class, key), i as u32)));
         }
         self.classes.push(ClassScopeResult {
             class,

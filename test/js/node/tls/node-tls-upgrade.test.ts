@@ -133,9 +133,17 @@ test("new tls.TLSSocket(socket, { isServer: true }) on a socket that already fin
 // The refused wrap destroys the TLSSocket, so it reports 'close' once. An owner that gives the
 // TLSSocket up in the same tick gets only what that owner did, with no error from the wrap behind it.
 test.each([
-  ["and nothing else", (_tlsSocket: tls.TLSSocket) => {}, ["error: Cannot upgrade to TLS: the socket is closed or has been shut down", "close"]],
+  [
+    "and nothing else",
+    (_tlsSocket: tls.TLSSocket) => {},
+    ["error: Cannot upgrade to TLS: the socket is closed or has been shut down", "close"],
+  ],
   ["and destroy() in the same tick", (tlsSocket: tls.TLSSocket) => void tlsSocket.destroy(), ["close"]],
-  ["and destroy(error) in the same tick", (tlsSocket: tls.TLSSocket) => void tlsSocket.destroy(new Error("mine")), ["error: mine", "close"]],
+  [
+    "and destroy(error) in the same tick",
+    (tlsSocket: tls.TLSSocket) => void tlsSocket.destroy(new Error("mine")),
+    ["error: mine", "close"],
+  ],
 ] as const)("tls.connect({ socket }) on a finished socket %s emits 'close' once", async (_name, giveUp, expected) => {
   const server = net.createServer({ allowHalfOpen: true }, peer => {
     peer.on("error", () => {});

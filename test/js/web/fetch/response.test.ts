@@ -1,4 +1,5 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import type { Server } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { normalizeBunSnapshot, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
@@ -50,7 +51,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (13.25 KB) {
+    "Response (15.66 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -299,6 +300,59 @@ describe("body-derived Content-Type does not depend on access order", () => {
       expect(await out.text()).toBe(input.replaceAll("<p>hi</p>", "<p>yo</p>"));
       // .blob() is typed from the same header, whether or not .headers was read.
       check((await rewriter.transform(new Response(body())).blob()).type);
+    });
+  });
+
+  // The middleware idiom `new Response(p.body, p)` and its other spellings: the
+  // copy keeps the type `p` took from its body, in its headers and on the wire.
+  describe("a copy of the response keeps the type", () => {
+    const copies: Record<string, (p: Response) => Response> = {
+      "new Response(p.body, p)": p => new Response(p.body, p),
+      "p.headers read, then new Response(p.body, p)": p => {
+        p.headers.get("x");
+        return new Response(p.body, p);
+      },
+      "new Response(p.body, p), then headers.set()": p => {
+        const q = new Response(p.body, p);
+        q.headers.set("x", "1");
+        return q;
+      },
+      "new Response(p.body, { headers: p.headers })": p => new Response(p.body, { headers: p.headers }),
+      "new Response(p.body, { headers: new Headers(p.headers) })": p =>
+        new Response(p.body, { headers: new Headers(p.headers) }),
+      "h = p.headers, then new Response(p.body, { headers: h })": p => {
+        const h = p.headers;
+        return new Response(p.body, { headers: h });
+      },
+    };
+    const sources = Object.fromEntries(cases.map(([name, body]) => [name, body]));
+    // A form body parses only when the served boundary is the one in the bytes.
+    const payload = async (res: Response) =>
+      /form/.test(res.headers.get("content-type") ?? "") ? [...(await res.formData()).values()][0] : await res.text();
+
+    let server: Server;
+    beforeAll(() => {
+      server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const [source, copy] = new URL(req.url).pathname.slice(1).split("/").map(decodeURIComponent);
+          return copies[copy](new Response(sources[source]()));
+        },
+      });
+    });
+    afterAll(() => server.stop(true));
+
+    describe.each(cases)("%s", (source, body, expected) => {
+      const type = typeof expected === "string" ? expected : expect.stringMatching(expected);
+
+      test.each(Object.keys(copies))("%s", async copy => {
+        const served = await fetch(`${server.url}${encodeURIComponent(source)}/${encodeURIComponent(copy)}`);
+        expect({
+          headers: copies[copy](new Response(body())).headers.get("content-type"),
+          wire: served.headers.get("content-type"),
+          payload: await payload(served),
+        }).toEqual({ headers: type, wire: type, payload: "<p>hi</p>" });
+      });
     });
   });
 

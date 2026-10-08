@@ -230,6 +230,7 @@ pub enum FailReason {
     InterpreterNotFound,
     InterpreterNotFoundBun,
     ElevationRequired,
+    ArgumentHasCmdSpecialCharacter,
 }
 
 impl FailReason {
@@ -247,6 +248,9 @@ impl FailReason {
             // like node or bun is not in %path%, vs the actual executable was not installed in node_modules.
             FailReason::InterpreterNotFound => "interpreter executable \"{s}\" not found in %PATH%",
             FailReason::InterpreterNotFoundBun => "bun is not installed in %PATH%",
+            FailReason::ArgumentHasCmdSpecialCharacter => {
+                "argument \"{s}\" contains a cmd.exe special character and cannot be passed to a batch file"
+            }
             FailReason::BinNotFound => "bin executable does not exist on disk",
             FailReason::ElevationRequired => "process requires elevation",
             FailReason::CreateProcessFailed => "could not create process",
@@ -286,36 +290,25 @@ impl core::fmt::Display for FailReason {
 
         let template = self.get_format_template();
 
-        // Explicit match on the one variant whose template contains `{s}`.
-        if matches!(self, FailReason::InterpreterNotFound) {
-            // `FAILURE_REASON_LEN` is set before InterpreterNotFound is raised;
-            // safe atomic load (`usize` is `Copy`, no cell-deref needed).
-            let len = FAILURE_REASON_LEN.load(core::sync::atomic::Ordering::Relaxed);
-            debug_assert_ne!(len, usize::MAX);
-            // SAFETY: `FAILURE_REASON_DATA` is a static `[u8; 512]`; `len ≤ 512`
-            // was bounded by the producer loop, and this path is single-threaded
-            // (standalone exe / just-before-exit), so the bytes are stable.
-            let arg_slice = unsafe {
-                bun_core::ffi::slice(FAILURE_REASON_DATA.get().cast::<u8>().cast_const(), len)
-            };
-            // `arg_slice` is filled by truncating
-            // UTF-16 code units to 7 bits (`& 0x7F`) — every byte is < 0x80, hence
-            // valid single-byte UTF-8. Avoids `bstr` so the standalone PE stays
-            // `#![no_std]` (`bstr` pulls `alloc`).
-            // SAFETY: every byte of FAILURE_REASON_DATA[..len] was written via
-            // `as u7` / `& 0x7F` (see the InterpreterNotFound producer), so the
-            // slice is ASCII ⊂ UTF-8.
-            let arg_str = unsafe { core::str::from_utf8_unchecked(arg_slice) };
-            writer.write_str("interpreter executable \"")?;
-            writer.write_str(arg_str)?;
-            writer.write_str("\" not found in %PATH%\n\n")?;
-            if DBG {
-                // Safe atomic store; debug-only reset to the `None` sentinel.
-                FAILURE_REASON_LEN.store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
+        // The two variants whose template contains `{s}` take the text from
+        // `capture_failure_text`.
+        match self {
+            FailReason::InterpreterNotFound => {
+                writer.write_str("interpreter executable \"")?;
+                writer.write_str(captured_failure_text())?;
+                writer.write_str("\" not found in %PATH%\n\n")?;
             }
-        } else {
-            writer.write_str(template)?;
-            writer.write_str("\n\n")?;
+            FailReason::ArgumentHasCmdSpecialCharacter => {
+                writer.write_str("argument \"")?;
+                writer.write_str(captured_failure_text())?;
+                writer.write_str(
+                    "\" contains a cmd.exe special character and cannot be passed to a batch file\n\n",
+                )?;
+            }
+            _ => {
+                writer.write_str(template)?;
+                writer.write_str("\n\n")?;
+            }
         }
 
         let rest = match self {
@@ -323,6 +316,14 @@ impl core::fmt::Display for FailReason {
                 "Please run the following command, or double check %PATH% is right.\n",
                 "\n",
                 "    powershell -c \"irm bun.sh/install.ps1|iex\"\n",
+                "\n",
+            ),
+            FailReason::ArgumentHasCmdSpecialCharacter => concat!(
+                "Windows runs a .cmd or .bat file through cmd.exe, which reads the\n",
+                "arguments a second time. The character can start another command, or\n",
+                "put the value of an environment variable in the argument.\n",
+                "\n",
+                "Remove the character from the argument.\n",
                 "\n",
             ),
             _ => concat!(
@@ -391,6 +392,51 @@ static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::
 // requiring unsafe `read()`/`write()`. `usize::MAX` encodes `None`.
 static FAILURE_REASON_LEN: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(usize::MAX);
+
+/// Stores the text that the message of a [`FailReason`] with `{s}` prints.
+///
+/// Keeps the printable ASCII of `text` and writes `?` for every other unit, so
+/// the failure message stays readable and valid UTF-8 without a UTF-16 decoder.
+#[cold]
+#[inline(never)]
+fn capture_failure_text(text: &[u16]) {
+    // SAFETY: `FAILURE_REASON_DATA` is only written here and only just before
+    // the process exits with the failure message, on one thread.
+    let len = unsafe {
+        let data = &mut *FAILURE_REASON_DATA.get();
+        let mut i: usize = 0;
+        while i < data.len() && i < text.len() {
+            data[i] = match text[i] {
+                unit @ 0x20..=0x7E => unit as u8,
+                _ => b'?',
+            };
+            i += 1;
+        }
+        i
+    };
+    FAILURE_REASON_LEN.store(len, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Reads back what [`capture_failure_text`] stored.
+fn captured_failure_text() -> &'static str {
+    // `FAILURE_REASON_LEN` is set before a reason with `{s}` is raised;
+    // safe atomic load (`usize` is `Copy`, no cell-deref needed).
+    let len = FAILURE_REASON_LEN.load(core::sync::atomic::Ordering::Relaxed);
+    debug_assert_ne!(len, usize::MAX);
+    let data = FAILURE_REASON_DATA.get().cast::<u8>().cast_const();
+    // SAFETY: `FAILURE_REASON_DATA` is a static `[u8; 512]`; `len ≤ 512` was
+    // bounded by the producer, and this path is single-threaded (standalone exe
+    // / just-before-exit), so the bytes are stable.
+    let text = unsafe { bun_core::ffi::slice(data, len) };
+    if DBG {
+        // Safe atomic store; debug-only reset to the `None` sentinel.
+        FAILURE_REASON_LEN.store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
+    }
+    // SAFETY: every byte of `FAILURE_REASON_DATA[..len]` is printable ASCII
+    // (see `capture_failure_text`), which is valid UTF-8. Avoids `bstr` so the
+    // standalone PE stays `#![no_std]` (`bstr` pulls `alloc`).
+    unsafe { core::str::from_utf8_unchecked(text) }
+}
 
 #[cold]
 #[inline(never)]
@@ -738,7 +784,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             break 'find_args (&cmd_line_u16[0..0], &cmd_line_u8[0..0]);
         }
     };
-    let _ = user_arguments_u16; // only read under DBG
 
     if DBG {
         // Raw dump of the UTF-16-LE arg tail. Display via `fmt16` on the
@@ -1251,6 +1296,22 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
     };
 
+    // Windows runs a .cmd or .bat file through cmd.exe, and so does the
+    // `cmd /c` the bin metadata records for one. cmd.exe reads the rest of the
+    // command line a second time, where `%NAME%` becomes the value of an
+    // environment variable and `&` starts another command. The quoting the
+    // arguments arrive with does not stop that, so refuse the launch.
+    {
+        // SAFETY: spawn_command_line is NUL-terminated (written above).
+        let assembled = unsafe { bun_core::ffi::wstr_units(spawn_command_line) };
+        if program_runs_through_cmd(program_of_command_line(assembled)) {
+            if let Some(argument) = find_cmd_special_argument(user_arguments_u16) {
+                capture_failure_text(unquote_argument(argument));
+                return LauncherMode::fail(MODE, FailReason::ArgumentHasCmdSpecialCharacter);
+            }
+        }
+    }
+
     if MODE == LauncherMode::ReadWithoutLaunch {
         // Early-return the assembled command line to the caller instead of spawning.
         // The spawn path must be dead for `ReadWithoutLaunch`
@@ -1487,24 +1548,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                 );
                             }
 
-                            // This UTF16 -> UTF-8 conversion is intentionally very lossy, and assuming that ascii text is provided.
-                            // This trade off is made to reduce the binary size of the shim.
-                            // SAFETY: FAILURE_REASON_DATA is a static buffer; this code path is only
-                            // reached single-threaded (standalone exe or just before process exit).
-                            // `spawn_command_line` is the live UTF-16 command line buffer.
-                            let len = unsafe {
-                                let data = &mut *FAILURE_REASON_DATA.get();
-                                let mut i: u32 = 0;
-                                while i < 512 && *spawn_command_line.add(i as usize) != ' ' as u16 {
-                                    data[i as usize] =
-                                        (*spawn_command_line.add(i as usize) & 0x7F) as u8;
-                                    i += 1;
-                                }
-                                i as usize
-                            };
-                            // Safe atomic store of the length; the pointer half is implicit
-                            // (always `FAILURE_REASON_DATA.as_ptr()` — see the static's doc).
-                            FAILURE_REASON_LEN.store(len, core::sync::atomic::Ordering::Relaxed);
+                            // SAFETY: spawn_command_line is NUL-terminated.
+                            let line = unsafe { bun_core::ffi::wstr_units(spawn_command_line) };
+                            capture_failure_text(program_of_command_line(line));
                             return LauncherMode::fail(MODE, FailReason::InterpreterNotFound);
                         } else {
                             return LauncherMode::fail(MODE, FailReason::BinNotFound);
@@ -1745,6 +1791,140 @@ pub(crate) fn main() -> ! {
 }
 
 // ───── helpers ─────
+
+const QUOTE: u16 = '"' as u16;
+const SPACE: u16 = ' ' as u16;
+const TAB: u16 = '\t' as u16;
+const BACKSLASH: u16 = '\\' as u16;
+
+/// True when cmd.exe reads `unit` as syntax in the arguments of a batch file:
+/// `%` (0x25), `&` (0x26), `|` (0x7C), `<` (0x3C), `>` (0x3E), `^` (0x5E), and
+/// a line break (0x0D, 0x0A).
+///
+/// `src/which/lib.rs` holds the same set for the paths that check one argument.
+/// This one leaves out `"`, because here the text is a command line, where a
+/// `"` is the quoting around an argument that holds a space. A `"` on its own
+/// starts no command and reads no environment variable.
+fn is_cmd_special_character(unit: u16) -> bool {
+    matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)
+}
+
+/// Returns the argument of `tail` that holds the first character cmd.exe reads
+/// as syntax, or `None` when the arguments hold none.
+///
+/// `tail` is the part of a command line after the file to run. An argument ends
+/// at a space or a tab that is not inside quotes. Only the search for that end
+/// reads the quotes: a character is special wherever it is, because cmd.exe
+/// reads `%NAME%` inside quotes too, and the quotes of the argument do not
+/// survive the way cmd.exe reads the line again.
+fn find_cmd_special_argument(tail: &[u16]) -> Option<&[u16]> {
+    let mut start: usize = 0;
+    let mut found = false;
+    let mut in_quote = false;
+    let mut backslashes: usize = 0;
+    let mut i: usize = 0;
+    while i < tail.len() {
+        let unit = tail[i];
+        if unit == BACKSLASH {
+            backslashes += 1;
+            i += 1;
+            continue;
+        }
+        if unit == QUOTE {
+            // A quote after an even number of backslashes is the quoting of the
+            // argument. After an odd number it is a character of it.
+            if backslashes.is_multiple_of(2) {
+                in_quote = !in_quote;
+            }
+        } else if !in_quote && (unit == SPACE || unit == TAB) {
+            if found {
+                return Some(&tail[start..i]);
+            }
+            start = i + 1;
+        } else if is_cmd_special_character(unit) {
+            found = true;
+        }
+        backslashes = 0;
+        i += 1;
+    }
+    if found { Some(&tail[start..]) } else { None }
+}
+
+/// Drops the quotes around an argument of a command line, so the failure
+/// message shows the argument the way it was passed.
+fn unquote_argument(argument: &[u16]) -> &[u16] {
+    if argument.len() >= 2 && argument[0] == QUOTE && argument[argument.len() - 1] == QUOTE {
+        return &argument[1..argument.len() - 1];
+    }
+    argument
+}
+
+/// Returns the first part of `command_line`: the file `CreateProcessW` runs.
+fn program_of_command_line(command_line: &[u16]) -> &[u16] {
+    let quoted = command_line.first() == Some(&QUOTE);
+    let rest = if quoted {
+        &command_line[1..]
+    } else {
+        command_line
+    };
+    let end_at = if quoted { QUOTE } else { SPACE };
+    let mut i: usize = 0;
+    while i < rest.len() && rest[i] != end_at {
+        i += 1;
+    }
+    &rest[..i]
+}
+
+/// True when Windows reads the command line of `program` a second time with
+/// cmd.exe: `program` is a `.cmd` or a `.bat` file, or it is cmd.exe itself.
+fn program_runs_through_cmd(program: &[u16]) -> bool {
+    // Windows drops the trailing spaces and periods of a file name, so
+    // `tool.cmd.` and `tool.cmd ` both run `tool.cmd`.
+    let mut end = program.len();
+    while end > 0 && (program[end - 1] == SPACE || program[end - 1] == '.' as u16) {
+        end -= 1;
+    }
+    let mut start: usize = 0;
+    let mut i: usize = 0;
+    while i < end {
+        // A path ends at a separator or at the colon of a drive letter.
+        if matches!(program[i], 0x5C | 0x2F | 0x3A) {
+            start = i + 1;
+        }
+        i += 1;
+    }
+    let name = &program[start..end];
+    eq_ascii_ignore_case(name, bun_core::w!("cmd"))
+        || eq_ascii_ignore_case(name, bun_core::w!("cmd.exe"))
+        || ends_with_ascii_ignore_case(name, bun_core::w!(".cmd"))
+        || ends_with_ascii_ignore_case(name, bun_core::w!(".bat"))
+}
+
+fn eq_ascii_ignore_case(a: &[u16], b: &[u16]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len() {
+        if ascii_lowercase(a[i]) != ascii_lowercase(b[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+fn ends_with_ascii_ignore_case(text: &[u16], suffix: &[u16]) -> bool {
+    text.len() >= suffix.len() && eq_ascii_ignore_case(&text[text.len() - suffix.len()..], suffix)
+}
+
+fn ascii_lowercase(unit: u16) -> u16 {
+    if unit >= 'A' as u16 && unit <= 'Z' as u16 {
+        unit + 32
+    } else {
+        unit
+    }
+}
 
 /// Lossy (replacement-char) UTF-16-LE formatter — only
 /// used for debug logging under `if DBG`, so lossiness is fine.

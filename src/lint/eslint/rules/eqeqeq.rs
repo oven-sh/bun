@@ -26,10 +26,11 @@ fn is_typeof(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Unary { op: UnOp::Typeof, .. })
 }
 
-/// ESLint's `Literal`, and what `typeof node.value` is for it.
+/// What `typeof node.value` is for ESLint's `Literal`, and for a template without substitutions.
 fn literal_type(e: Expr) -> Option<&'static str> {
     Some(match e.kind() {
         ExprKind::String(_) => "string",
+        ExprKind::Template(template) if template.exprs().is_empty() => "string",
         ExprKind::Number(_) => "number",
         ExprKind::True | ExprKind::False => "boolean",
         ExprKind::BigInt(_) => "bigint",
@@ -43,6 +44,9 @@ impl Eqeqeq {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
+        if !matches!(op, BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq) {
+            return;
+        }
         let is_null = matches!(left.kind(), ExprKind::Null) || matches!(right.kind(), ExprKind::Null);
         let is_typeof = is_typeof(left) || is_typeof(right);
         let are_literals_of_same_type =
@@ -96,7 +100,7 @@ impl Rule for Eqeqeq {
         Eqeqeq {
             is_smart: mode == "smart",
             null: match options.object(1).str("null") {
-                _ if mode == "allow-null" => Null::Ignore,
+                _ if mode != "always" => Null::Ignore,
                 Some("never") => Null::Never,
                 Some("ignore") => Null::Ignore,
                 _ => Null::Always,

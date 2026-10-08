@@ -1,0 +1,69 @@
+use bun_lint::prelude::*;
+use bun_lint::utils::ast_utils::get_static_key_name;
+use bun_lint::utils::is_assignment_target;
+use rustc_hash::FxHashMap;
+use std::borrow::Cow;
+
+/// Disallow duplicate keys in object literals.
+pub struct NoDupeKeys;
+
+const UNEXPECTED: Message = Message::new("unexpected", "Duplicate key '{{name}}'.");
+
+const GET: u8 = 1 << 0;
+const SET: u8 = 1 << 1;
+
+impl NoDupeKeys {
+    fn check<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Object(props) = object.kind() else {
+            return;
+        };
+        if props.len() < 2 {
+            return;
+        }
+        cx.state.clear();
+        for prop in props {
+            let defines = match prop.kind() {
+                PropKind::Spread => continue,
+                PropKind::Getter => GET,
+                PropKind::Setter => SET,
+                PropKind::Init | PropKind::Shorthand | PropKind::Method => GET | SET,
+            };
+            let Some(key) = prop.key() else {
+                continue;
+            };
+            let Some(name) = get_static_key_name(key) else {
+                continue;
+            };
+            // `__proto__: value` sets the prototype, and defines no property.
+            if prop.kind() == PropKind::Init && !key.is_computed() && &*name == b"__proto__" {
+                continue;
+            }
+            let defined = cx.state.entry(name).or_insert(0);
+            let is_duplicate = *defined & defines != 0;
+            *defined |= defines;
+            if !is_duplicate {
+                continue;
+            }
+            if is_assignment_target(object) {
+                return;
+            }
+            cx.report(key.inner_span(cx.file()), UNEXPECTED)
+                .data("name", get_static_key_name(key).unwrap_or_default());
+        }
+    }
+}
+
+impl Rule for NoDupeKeys {
+    const META: Meta = Meta::eslint("no-dupe-keys", Kind::Problem).recommended();
+    /// What the properties so far of the object that is being checked define.
+    type State<'a> = FxHashMap<Cow<'a, [u8]>, u8>;
+
+    fn new(_: &Options) -> Self {
+        NoDupeKeys
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+        on.exprs([ExprTag::Object], Self::check);
+        FxHashMap::default()
+    }
+}

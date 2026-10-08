@@ -9,9 +9,9 @@
 //! Most nodes are nothing to the analysis. What is known about a node when it is entered is kept
 //! in a few flags, so that neither its children nor leaving it have to look at it again.
 
+use super::matters::Matters;
 use super::state::{ChoiceKind, Cx, LoopKind, State};
 use super::{CodePath, Event, Origin, Segment, SegmentIds};
-use crate::ast::walk::{Visitor, walk};
 use crate::ast::{
     BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, KeyKind, Member,
     MemberKind, Node, Pat, PatTag, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
@@ -391,10 +391,9 @@ impl<'a> Builder<'a> {
     }
 
     #[inline]
-    fn is_before_first_throwable(&self, cx: &Cx<'_, 'a>) -> bool {
-        self.states
-            .last()
-            .is_some_and(|state| state.is_before_first_throwable(cx.store()))
+    fn is_before_first_throwable(&self) -> bool {
+        let store = &self.file.lazy.code_paths;
+        matches!(self.states.last(), Some(state) if state.is_before_first_throwable(store))
     }
 
     /// Leaving a node that may throw. If it is an `Identifier` of ESTree for which
@@ -788,7 +787,7 @@ impl<'a> Builder<'a> {
         };
         self.ancestors.push(Frame { node, is });
         self.forward_current_to_head(cx);
-        if self.is_before_first_throwable(cx) && starts_with_identifier_reference(node) {
+        if self.is_before_first_throwable() && starts_with_identifier_reference(node) {
             self.leave_throwable(cx);
         }
     }
@@ -931,7 +930,7 @@ impl<'a> Builder<'a> {
                     None => false,
                 },
                 Node::Pat(pat) => {
-                    if self.is_before_first_throwable(cx) && is_binding_a_reference(pat) {
+                    if self.is_before_first_throwable() && is_binding_a_reference(pat) {
                         self.leave_throwable(cx);
                     }
                     true
@@ -994,7 +993,7 @@ impl<'a> Builder<'a> {
 
 /// A step of the walk of a file for the rules.
 #[derive(Copy, Clone)]
-pub(crate) enum Step<'a> {
+pub enum Step<'a> {
     /// Call the listeners for entering the node.
     Enter(Node<'a>),
     /// Call the listeners for leaving the node.
@@ -1010,7 +1009,8 @@ struct Recorder<'a> {
     exit: NodeTags,
 }
 
-impl<'a> Visitor<'a> for Recorder<'a> {
+impl<'a> Recorder<'a> {
+    #[inline]
     fn enter(&mut self, node: Node<'a>) {
         let steps = &mut self.steps;
         self.builder
@@ -1020,6 +1020,7 @@ impl<'a> Visitor<'a> for Recorder<'a> {
         }
     }
 
+    #[inline]
     fn exit(&mut self, node: Node<'a>) {
         let steps = &mut self.steps;
         self.builder
@@ -1030,6 +1031,34 @@ impl<'a> Visitor<'a> for Recorder<'a> {
         self.builder
             .after_exit(node, &mut |event| steps.push(Step::Event(event)));
     }
+
+    /// `ast::walk::walk`, without what does not matter.
+    fn walk(&mut self, matters: &Matters) {
+        enum Todo<'a> {
+            Enter(Node<'a>),
+            Exit(Node<'a>),
+        }
+        let mut todo = vec![Todo::Enter(Node::File(self.builder.file))];
+        while let Some(next) = todo.pop() {
+            let node = match next {
+                Todo::Enter(node) => node,
+                Todo::Exit(node) => {
+                    self.exit(node);
+                    continue;
+                }
+            };
+            self.enter(node);
+            // Where nothing has thrown yet in a `try` block, every name matters.
+            if matters.is_nothing_in(node) && !self.builder.is_before_first_throwable() {
+                self.exit(node);
+                continue;
+            }
+            todo.push(Todo::Exit(node));
+            let first = todo.len();
+            node.for_each_child(|child| todo.push(Todo::Enter(child)));
+            todo[first..].reverse();
+        }
+    }
 }
 
 /// Walks and analyzes `file`. Returns what to tell the rules, in order: the events, and the nodes
@@ -1038,8 +1067,9 @@ impl<'a> Visitor<'a> for Recorder<'a> {
 /// Like ESLint, it analyzes the whole file before the first listener is called: a rule sees the
 /// finished graph from the first event on, with the segments that follow the current one and
 /// those that lead back to it from the end of a loop.
-pub(crate) fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'a> {
-    file.lazy.code_paths.clear();
+pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'a> {
+    let statements = file.hir.stmts.len();
+    file.lazy.code_paths.clear(statements);
     let mut recorder = Recorder {
         builder: Builder {
             file,
@@ -1048,11 +1078,11 @@ pub(crate) fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> 
             ancestors: Vec::new(),
             is_settled: false,
         },
-        steps: Vec::new(),
+        steps: Vec::with_capacity(2 * statements),
         enter,
         exit,
     };
-    walk(file, &mut recorder);
+    recorder.walk(&Matters::new(file, enter | exit));
     file.lazy.code_paths.finish();
     Steps {
         file,
@@ -1061,7 +1091,7 @@ pub(crate) fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> 
 }
 
 /// See [`steps`].
-pub(crate) struct Steps<'a> {
+pub struct Steps<'a> {
     file: &'a File<'a>,
     steps: std::vec::IntoIter<Step<'a>>,
 }

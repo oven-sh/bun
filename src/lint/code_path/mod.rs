@@ -54,23 +54,16 @@
 //!   the `finally` block of the other: further ones are analyzed as if only their end was left.
 
 mod analyzer;
+mod matters;
 mod state;
 
-pub(crate) use analyzer::{Analyzer, steps};
-// For the runner, instead of `Analyzer`.
-#[allow(unused_imports)]
-pub(crate) use analyzer::{Step, Steps};
+pub(crate) use analyzer::Analyzer;
+#[doc(hidden)]
+pub use analyzer::{Step, Steps, steps};
 
 use crate::ast::{File, Node};
-use crate::rule::NodeTags;
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
-
-/// Analyzes `file` and tells nobody. Returns the number of events. For measuring.
-#[doc(hidden)]
-pub fn analyze<'a>(file: &'a File<'a>) -> usize {
-    steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count()
-}
 
 /// ESLint's `codePath.origin`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

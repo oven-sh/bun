@@ -4,13 +4,14 @@
 //!   `debug-helpers.js` prints it, in the order in which the code paths end.
 //! - `fixtures <directory>`: compares that with the `/*expected */` comments of each file of
 //!   ESLint's `tests/fixtures/code-path-analysis`.
-//! - `trace <file>`: every event of the analysis in order, among the nodes that are entered and
-//!   left, and the graph of each code path when it ends.
-//! - `batch <file>`: the same for each `{ "path", "code" }` of a file of JSON lines, as JSON lines.
+//! - `trace <file> [all|statements|nothing]`: every event of the analysis in order, among the nodes
+//!   that are entered and left, and the graph of each code path when it ends.
+//! - `batch <file> [all|statements|nothing]`: the same for each `{ "path", "code" }` of a file of JSON lines, as JSON lines.
 //!   `test/cli/lint/oracle/code_path/trace.ts` compares it with what ESLint does.
 //! - `upstream`: the cases of ESLint's `tests/lib/linter/code-path-analysis/code-path.js`.
 //! - `bench <file>`: how long the analysis takes.
 
+use bun_lint::code_path::{Event, Step, steps};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
 use bun_lint::runner::Enabled;
@@ -459,7 +460,8 @@ fn write_node(line: &mut String, (name, span): (&str, Span)) {
 
 impl<'a> Log<'a> {
     fn event(&mut self, mut line: String, node: Node) {
-        match estree_of_event(node).filter(|_| self.type_depth == 0 && !is_type_syntax(node)) {
+        let is_in_type_syntax = is_type_syntax(node) || node.ancestors().any(is_type_syntax);
+        match estree_of_event(node).filter(|_| !is_in_type_syntax) {
             Some(node) => write_node(&mut line, node),
             None => self.incomplete.push(self.lines.len()),
         }
@@ -483,6 +485,26 @@ impl<'a> Log<'a> {
         let mut line = prefix.to_owned();
         write_node(&mut line, node);
         self.lines.push(line);
+    }
+
+    fn tell(&mut self, event: Event<'a>) {
+        match event {
+            Event::CodePathStart(path, node) => self.event(format!("path+ {path}"), node),
+            Event::CodePathEnd(path, node) => {
+                self.graph(path);
+                self.event(format!("path- {path}"), node);
+            }
+            Event::SegmentStart(segment, node) => self.segment("seg+", segment, node),
+            Event::SegmentEnd(segment, node) => self.segment("seg-", segment, node),
+            Event::UnreachableSegmentStart(segment, node) => self.segment("useg+", segment, node),
+            Event::UnreachableSegmentEnd(segment, node) => self.segment("useg-", segment, node),
+            Event::SegmentLoop(from, to, node) => {
+                self.event(format!("loop {from} {to}"), node);
+                let order = traverse(from.code_path(), Some(to), Some(from), None, None);
+                let names: Vec<String> = order.iter().map(Segment::to_string).collect();
+                self.lines.push(format!("  traverse {}", names.join(",")));
+            }
+        }
     }
 
     fn segment(&mut self, prefix: &str, segment: Segment<'a>, node: Node) {
@@ -597,31 +619,49 @@ impl Rule for Trace {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Log<'a> {
         on.enter(NodeTags::ALL, |_, node, cx| cx.state.node(">", node));
         on.exit(NodeTags::ALL, |_, node, cx| cx.state.node("<", node));
-        on.code_path_start(|_, path, node, cx| cx.state.event(format!("path+ {path}"), node));
-        on.code_path_end(|_, path, node, cx| {
-            cx.state.graph(path);
-            cx.state.event(format!("path- {path}"), node);
-        });
-        on.segment_start(|_, segment, node, cx| cx.state.segment("seg+", segment, node));
-        on.segment_end(|_, segment, node, cx| cx.state.segment("seg-", segment, node));
+        use Event::*;
+        on.code_path_start(|_, path, node, cx| cx.state.tell(CodePathStart(path, node)));
+        on.code_path_end(|_, path, node, cx| cx.state.tell(CodePathEnd(path, node)));
+        on.segment_start(|_, segment, node, cx| cx.state.tell(SegmentStart(segment, node)));
+        on.segment_end(|_, segment, node, cx| cx.state.tell(SegmentEnd(segment, node)));
         on.unreachable_segment_start(|_, segment, node, cx| {
-            cx.state.segment("useg+", segment, node)
+            cx.state.tell(UnreachableSegmentStart(segment, node))
         });
-        on.unreachable_segment_end(|_, segment, node, cx| cx.state.segment("useg-", segment, node));
-        on.segment_loop(|_, from, to, node, cx| {
-            cx.state.event(format!("loop {from} {to}"), node);
-            let order = traverse(from.code_path(), Some(to), Some(from), None, None);
-            let names: Vec<String> = order.iter().map(Segment::to_string).collect();
-            cx.state
-                .lines
-                .push(format!("  traverse {}", names.join(",")));
+        on.unreachable_segment_end(|_, segment, node, cx| {
+            cx.state.tell(UnreachableSegmentEnd(segment, node))
         });
+        on.segment_loop(|_, from, to, node, cx| cx.state.tell(SegmentLoop(from, to, node)));
         on.finish(|_, cx| OUTPUT.set(std::mem::take(&mut cx.state.lines)));
         Log::default()
     }
 }
 
-fn batch(path: &str) {
+/// The trace of a file. `listen`: which nodes are in it.
+/// - `all`: all that both trees have. It is the trace of a rule.
+/// - `statements`, `nothing`: only those, or only the file. The analysis leaves out what nobody
+///   listens for and does not matter to it, which must not change anything else.
+fn trace(path: &str, code: &[u8], listen: &str) -> Vec<String> {
+    let listened = match listen {
+        "all" => return run_rule::<Trace>(path, code),
+        "statements" => StmtTag::ALL
+            .iter()
+            .fold(NodeTags::FILE, |all, &tag| all | tag.into()),
+        _ => NodeTags::FILE,
+    };
+    crate::with_file(path, code, &LanguageOptions::default(), |file| {
+        let mut log = Log::default();
+        for step in steps(file, listened, listened) {
+            match step {
+                Step::Enter(node) => log.node(">", node),
+                Step::Exit(node) => log.node("<", node),
+                Step::Event(event) => log.tell(event),
+            }
+        }
+        log.lines
+    })
+}
+
+fn batch(path: &str, listen: &str) {
     let input = std::fs::read(path).expect("the file");
     let mut output = String::new();
     for line in input
@@ -637,7 +677,7 @@ fn batch(path: &str) {
         });
         let trace = match has_errors {
             true => Vec::new(),
-            false => run_rule::<Trace>(&path, code),
+            false => trace(&path, code, listen),
         };
         let _ = writeln!(
             output,
@@ -826,16 +866,25 @@ fn bench(path: &str) {
             fn exit(&mut self, _: Node<'a>) {}
         }
         let walk = time(|| bun_lint::ast::walk::walk(file, &mut Nothing));
+        let statements = StmtTag::ALL
+            .iter()
+            .fold(NodeTags::FILE, |all, &tag| all | tag.into());
         let analysis = time(|| {
-            bun_lint::code_path::analyze(file);
+            steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count();
+        });
+        let with_statements = time(|| {
+            steps(file, statements, statements).count();
+        });
+        let with_everything = time(|| {
+            steps(file, NodeTags::ALL, NodeTags::ALL).count();
         });
         let rule = time(|| {
             bun_lint::runner::run(file, &rules, false);
         });
         println!(
-            "{} bytes, {} events: parse and bind {parsing:?}, a walk {walk:?}, analysis {analysis:?}, a rule that listens {rule:?}",
+            "{} bytes, {} events: parse and bind {parsing:?}, a walk {walk:?}, analysis {analysis:?}, and all statements {with_statements:?}, and all nodes {with_everything:?}, a rule that listens {rule:?}",
             code.len(),
-            bun_lint::code_path::analyze(file),
+            steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count(),
         );
     });
 }
@@ -847,11 +896,14 @@ pub(crate) fn run(args: &[String]) {
             println!("{}", run_rule::<Dot>(path, &code).join("\n\n"));
         }
         [command, directory] if command == "fixtures" => fixtures(directory),
-        [command, path] if command == "trace" => {
+        [command, path, listen @ ..] if command == "trace" => {
             let code = std::fs::read(path).expect("the file");
-            println!("{}", run_rule::<Trace>(path, &code).join("\n"));
+            let listen = listen.first().map_or("all", |it| it);
+            println!("{}", trace(path, &code, listen).join("\n"));
         }
-        [command, path] if command == "batch" => batch(path),
+        [command, path, listen @ ..] if command == "batch" => {
+            batch(path, listen.first().map_or("all", |it| it));
+        }
         [command, path] if command == "bench" => bench(path),
         [command] if command == "upstream" => upstream(),
         // For a profiler.
@@ -859,7 +911,7 @@ pub(crate) fn run(args: &[String]) {
             let code = std::fs::read(path).expect("the file");
             crate::with_file(path, &code, &LanguageOptions::default(), |file| {
                 for _ in 0..500 {
-                    bun_lint::code_path::analyze(file);
+                    steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count();
                 }
             });
         }

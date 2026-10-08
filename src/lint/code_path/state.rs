@@ -54,9 +54,12 @@ impl<'e, 'a> Cx<'e, 'a> {
 // ───────────────────────────── segments ─────────────────────────────
 
 impl Store {
-    pub(super) fn clear(&self) {
+    /// `statements`: how many the file has, which is about how many segments it is going to have.
+    pub(super) fn clear(&self, statements: usize) {
         self.paths.borrow_mut().clear();
-        self.segments.borrow_mut().clear();
+        let mut segments = self.segments.borrow_mut();
+        segments.clear();
+        segments.reserve(statements);
     }
 
     /// To be called when the graphs are finished.
@@ -178,6 +181,15 @@ impl Store {
     /// `list` with each segment that has never been current replaced by those before it, and
     /// without duplicates.
     fn flatten_unused_in(&self, segments: &mut [SegmentData], list: &[u32]) -> Edges {
+        if let [id] = *list {
+            let segment = &segments[id as usize];
+            if segment.is_used {
+                return Edges::from_slice(list);
+            }
+            if segment.all_prev.len() <= 1 {
+                return segment.all_prev.clone();
+            }
+        }
         let epoch = self.epoch.get().wrapping_add(1);
         self.epoch.set(epoch);
         let mut done = Edges::new();
@@ -352,17 +364,22 @@ impl ForkContext {
         let len = (self.list.len() / count) as isize;
         let normalize = |index: isize| if index >= 0 { index } else { len + index };
         let (start, end) = (normalize(start).max(0), normalize(end).min(len - 1));
+        let new = |all_prev: &[u32]| match make {
+            Make::Next => store.new_next(self.path, all_prev),
+            Make::Unreachable => store.new_unreachable(self.path, all_prev),
+            Make::Disconnected => store.new_disconnected(self.path, all_prev),
+        };
+        if count == 1 {
+            let all_prev = self.list.get(start as usize..(end + 1).max(start) as usize);
+            return SegmentIds::from_slice(&[new(all_prev.unwrap_or_default())]);
+        }
         let mut all_prev = Edges::new();
         (0..count)
             .map(|route| {
                 all_prev.clear();
                 all_prev
                     .extend((start..=end).map(|entry| self.list[entry as usize * count + route]));
-                match make {
-                    Make::Next => store.new_next(self.path, &all_prev),
-                    Make::Unreachable => store.new_unreachable(self.path, &all_prev),
-                    Make::Disconnected => store.new_disconnected(self.path, &all_prev),
-                }
+                new(&all_prev)
             })
             .collect()
     }
@@ -392,6 +409,9 @@ impl ForkContext {
     }
 
     fn add(&mut self, store: &Store, segments: &[u32]) {
+        if segments.len() == self.count as usize {
+            return self.list.extend_from_slice(segments);
+        }
         let merged = self.merge_extra_segments(store, segments);
         if merged.len() == self.count as usize {
             self.list.extend_from_slice(&merged);
@@ -399,6 +419,10 @@ impl ForkContext {
     }
 
     fn replace_head(&mut self, store: &Store, segments: &[u32]) {
+        if let ([segment], [.., head], 1) = (segments, &mut self.list[..], self.count) {
+            *head = *segment;
+            return;
+        }
         let merged = self.merge_extra_segments(store, segments);
         if merged.len() == self.count as usize {
             self.list

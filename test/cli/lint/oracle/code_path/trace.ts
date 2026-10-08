@@ -3,7 +3,7 @@
 //
 //   bun trace.ts --bin <bun-lint> --eslint <checkout> --typescript-eslint <checkout> --scratch <dir>
 //                [--fixtures <conformance/fixtures>].. [--files <dir>].. [--generated <count> [--seed <first>]]
-//                [--only <regex of case ids>]
+//                [--only <regex of case ids>] [--listen all|statements|nothing]
 //                [--jobs N] [--examples N] [--ignore-nodes]
 //   bun trace.ts --eslint <checkout> --typescript-eslint <checkout> --print <file>
 //
@@ -32,6 +32,10 @@ const scratch = option(args, "--scratch") ?? ".";
 const shard = option(args, "--shard");
 const jobs = Number(option(args, "--jobs") ?? 16);
 const ignoresNodes = args.includes("--ignore-nodes");
+/** Which nodes are entered and left in the traces: `all`, `statements`, `nothing` (only the `Program`). */
+const listen = option(args, "--listen") ?? "all";
+const isListened = (type: string) =>
+  listen === "all" || type === "Program" || (listen === "statements" && /(Statement|Declaration)$/.test(type));
 const eslintDirectory = option(args, "--eslint") ?? process.env.ESLINT_DIR!;
 const typescriptEslintDirectory = option(args, "--typescript-eslint") ?? process.env.TYPESCRIPT_ESLINT_DIR!;
 
@@ -264,7 +268,7 @@ function makeTracer() {
           return void (typeDepth += prefix === ">" ? 1 : -1);
         }
         const it = typeDepth === 0 && !left.has(node) && common(node, sourceCode);
-        if (!it) return;
+        if (!it || !isListened(it[0])) return;
         for (const at of incomplete) lines[at] += written(it);
         incomplete = [];
         lines.push(prefix + written(it));
@@ -400,7 +404,7 @@ function run(cases: Case[], name: string): Result {
   }
   const input = join(scratch, `cases-${name}.jsonl`);
   writeFileSync(input, accepted.map(({ it }) => JSON.stringify({ path: it.path, code: it.code }) + "\n").join(""));
-  const ran = spawnSync(option(args, "--bin")!, ["code-path", "batch", input], {
+  const ran = spawnSync(option(args, "--bin")!, ["code-path", "batch", input, listen], {
     maxBuffer: 1 << 30,
     encoding: "utf8",
   });

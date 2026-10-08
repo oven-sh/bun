@@ -49,6 +49,8 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
     let after = f.file().text().get(comment.span.end as usize..).unwrap_or_default();
     match format_jsdoc_comment(content, after, &options, f.options(), available_width) {
         None => return false,
+        // An escape or a blank that is gone would end the comment early.
+        Some(FormattedJsdoc::SingleLine(text) | FormattedJsdoc::MultiLine(text)) if strings::contains(&text, b"*/") => return false,
         Some(FormattedJsdoc::Empty) => {}
         Some(FormattedJsdoc::SingleLine(line)) => {
             write!(f, "/** ");

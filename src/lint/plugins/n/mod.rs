@@ -143,10 +143,10 @@ struct Entry {
     reported: Vec<&'static str>,
 }
 
-/// Those that the text of the file names, with something in them that is reported. References, which cost far more than a look at
-/// the text, are only looked at for these.
+/// Those that the file mentions, with something in them that is reported. References, which cost far more, are only looked at for
+/// these.
 fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Vec<(&'static str, Map)> {
-    let is_named = |it: &&Entry| file.mentions(it.name.strip_prefix("node:").unwrap_or(it.name)) && (it.is_reported || file.mentions_any(&it.reported));
+    let is_named = |it: &&Entry| file.mentions(it.name) && (it.is_reported || file.mentions_any(&it.reported));
     entries.iter().filter(is_named).map(|it| (it.name, it.map)).collect()
 }
 

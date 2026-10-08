@@ -157,43 +157,44 @@ impl Context<'_, '_> {
     fn verify_or_again(&self, path: &[u8], text: &[u8], config: &ResolvedConfig, again: Option<Again>) -> LintResult {
         let started = self.timing.now();
         let session = Session::new();
-        let atoms = self.atoms.of_this_thread();
         let arena = session.arena();
         let how = config.language.parse_options(path);
-        let (mut hir, _) = bun_js_parser::sema::summarize_in(
+        bun_js_parser::sema::with_summary(
             how.dialect,
             (arena, &session),
             path,
             how.script_kind,
             text,
-            atoms,
+            self.atoms.of_this_thread(),
             how.experimental_decorators,
             how.every_file_is_a_module,
-        );
-        hir.text = Cow::Borrowed(text);
-        let bind_options = BindOptions {
-            emit_standard_class_fields: true,
-            before_es2020: false,
-            before_es2017: false,
-        };
-        let bound = bind_for_lint(&hir, bind_options, atoms, arena);
-        let parsed = self.timing.add(&self.timing.parse, started);
-        if hir.ran_out_of_stack || bound.ran_out_of_stack {
-            return LintResult {
-                messages: vec![too_deep()],
-                ..LintResult::default()
-            };
-        }
-        let file = File::new(path, &hir, &bound, atoms, &config.language, None);
-        file.set_modules(self.modules);
-        let options = LintOptions {
-            again,
-            ..self.lint_options()
-        };
-        let mut result = self.linter.lint(&file, config, &options);
-        self.promote_suggestions(&mut result);
-        self.timing.add(&self.timing.rules, parsed);
-        result
+            |mut hir, atoms| {
+                hir.text = Cow::Borrowed(text);
+                let bind_options = BindOptions {
+                    emit_standard_class_fields: true,
+                    before_es2020: false,
+                    before_es2017: false,
+                };
+                let bound = bind_for_lint(&hir, bind_options, atoms, arena);
+                let parsed = self.timing.add(&self.timing.parse, started);
+                if hir.ran_out_of_stack || bound.ran_out_of_stack {
+                    return LintResult {
+                        messages: vec![too_deep()],
+                        ..LintResult::default()
+                    };
+                }
+                let file = File::new(path, &hir, &bound, atoms, &config.language, None);
+                file.set_modules(self.modules);
+                let options = LintOptions {
+                    again,
+                    ..self.lint_options()
+                };
+                let mut result = self.linter.lint(&file, config, &options);
+                self.promote_suggestions(&mut result);
+                self.timing.add(&self.timing.rules, parsed);
+                result
+            },
+        )
     }
 
     /// ESLint's `verifyText`. `path`: what is printed. `path_to_verify`: what the file is linted as.

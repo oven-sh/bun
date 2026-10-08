@@ -502,14 +502,16 @@ pub static DIRECT_PARSER_COUNTS: DirectParserCounts = DirectParserCounts {
     refused: [const { core::sync::atomic::AtomicU64::new(0) }; bun_sema_parser::Refusal::COUNT],
 };
 
-/// `summarize_as` by `bun_sema_parser`. `None`: that parser refuses the text.
+/// `summarize_as` by `bun_sema_parser`. `None`: that parser refuses the text. Without `atoms`, the
+/// file has its own, which `scratch` knows.
 fn summarize_directly<'s>(
+    scratch: &mut bun_sema_parser::Scratch,
     dialect: bun_sema::resolve::Dialect,
     (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
     path: &[u8],
     script_kind: Option<bun_sema::resolve::ScriptKind>,
     text: &[u8],
-    atoms: &dyn bun_sema::atom::Intern,
+    atoms: Option<&dyn bun_sema::atom::Intern>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> Option<bun_sema::hir::File<'s>> {
@@ -533,12 +535,15 @@ fn summarize_directly<'s>(
         await_is_a_name: is_ecmascript && dialect.script,
         dialect,
     };
-    let parsed = DIRECT.with_borrow_mut(|scratch| {
-        let scratch = scratch.get_or_insert_default();
+    let parse = |options, scratch: &mut bun_sema_parser::Scratch| match atoms {
+        Some(atoms) => bun_sema_parser::parse(text, options, atoms, scratch),
+        None => bun_sema_parser::parse_with_own_atoms(text, options, scratch),
+    };
+    let parsed = (|| {
         if is_json {
             return Err(bun_sema_parser::Refusal::Json);
         }
-        let first = bun_sema_parser::parse(text, options, atoms, scratch).map_err(|it| it.why)?;
+        let first = parse(options, scratch).map_err(|it| it.why)?;
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
         // context at its top level.
         let parse_again = first.has_top_level_await
@@ -555,9 +560,9 @@ fn summarize_directly<'s>(
         }
         scratch.recycle(first.file);
         options.await_is_a_name = true;
-        let second = bun_sema_parser::parse(text, options, atoms, scratch);
+        let second = parse(options, scratch);
         second.map(|it| it.file).map_err(|it| it.why)
-    });
+    })();
     let mut file = match parsed {
         Ok(file) => file,
         Err(why) => {
@@ -570,7 +575,7 @@ fn summarize_directly<'s>(
     let (mut file, emptied) = file.into_arena(arena, session);
     // A very large file would leave its capacity to every later file.
     if text.len() < 4 << 20 {
-        DIRECT.with_borrow_mut(|scratch| scratch.get_or_insert_default().recycle(emptied));
+        scratch.recycle(emptied);
     }
     file.finish_nodes();
     Some(file)
@@ -612,16 +617,19 @@ pub fn summarize_in<'s>(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
-    let directly = summarize_directly(
-        dialect,
-        (arena, session),
-        path,
-        script_kind,
-        text,
-        atoms,
-        experimental_decorators,
-        every_file_is_a_module,
-    );
+    let directly = DIRECT.with_borrow_mut(|scratch| {
+        summarize_directly(
+            scratch.get_or_insert_default(),
+            dialect,
+            (arena, session),
+            path,
+            script_kind,
+            text,
+            Some(atoms),
+            experimental_decorators,
+            every_file_is_a_module,
+        )
+    });
     if let Some(file) = directly {
         return (file, core::time::Duration::ZERO);
     }
@@ -636,6 +644,53 @@ pub fn summarize_in<'s>(
         experimental_decorators,
         every_file_is_a_module,
     )
+}
+
+/// [`summarize_in`] for one who is done with a file before the next: calls `then` with the file and
+/// with the interner of its atoms, which are the file's own and mean nothing in another file. They
+/// are those of `atoms` only if the text has errors.
+pub fn with_summary<'s, R>(
+    dialect: bun_sema::resolve::Dialect,
+    (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
+    text: &[u8],
+    atoms: &dyn bun_sema::atom::Intern,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+    then: impl FnOnce(bun_sema::hir::File<'s>, &dyn bun_sema::atom::Intern) -> R,
+) -> R {
+    // `then` may parse another text.
+    let mut scratch = DIRECT.take().unwrap_or_default();
+    let directly = summarize_directly(
+        &mut scratch,
+        dialect,
+        (arena, session),
+        path,
+        script_kind,
+        text,
+        None,
+        experimental_decorators,
+        every_file_is_a_module,
+    );
+    let Some(file) = directly else {
+        DIRECT.set(Some(scratch));
+        let (file, _) = summarize_with_recovery(
+            dialect,
+            false,
+            (arena, session),
+            path,
+            script_kind,
+            text,
+            atoms,
+            experimental_decorators,
+            every_file_is_a_module,
+        );
+        return then(file, atoms);
+    };
+    let result = then(file, &scratch.atoms(text));
+    DIRECT.set(Some(scratch));
+    result
 }
 
 /// [`summarize_as`] by Bun's parser, which recovers from errors as TypeScript does. `reads_jsdoc`:

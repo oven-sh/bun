@@ -21,30 +21,20 @@ FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-abstract-class
 FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-interface.ts
 FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-module.ts
 FAIL rejected typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts
-FAIL format misc/check-ignore-pragma/markdown/front-matter-with-noformat-pragma.md checkIgnorePragma=true
-FAIL format misc/check-ignore-pragma/markdown/front-matter-with-noprettier-pragma.md checkIgnorePragma=true
-FAIL format misc/check-ignore-pragma/markdown/with-noformat-pragma.md checkIgnorePragma=true
-FAIL format misc/check-ignore-pragma/markdown/with-noprettier-pragma.md checkIgnorePragma=true
 FAIL format misc/front-matter/with-plugins/snippet: #0
 FAIL format misc/front-matter/with-plugins/snippet: #1
-FAIL format misc/insert-pragma/markdown/front-matter.md insertPragma=true
-FAIL format misc/insert-pragma/markdown/simple.md insertPragma=true
-FAIL format misc/insert-pragma/markdown/start-with-comment.md insertPragma=true
-FAIL format misc/require-pragma/markdown/empty-front-matter-without-pragma.md requirePragma=true
-FAIL format misc/require-pragma/markdown/front-matter-without-pragma.md requirePragma=true
-FAIL format misc/require-pragma/markdown/without-pragma.md requirePragma=true
 css: format 162/162 (0 syntax errors), rejected 2/2, second format 136/136, CRLF 162/162, CR 162/162, BOM 161/161
 graphql: format 104/104 (0 syntax errors), rejected 2/2, second format 87/87, CRLF 104/104, CR 104/104, BOM 104/104
 js: format 1336/1336 (0 syntax errors), rejected 39/58, second format 1045/1045, CRLF 1326/1326, CR 1326/1326, BOM 1332/1332
 json: format 785/785 (0 syntax errors), rejected 0/0, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
 jsx: format 186/186 (0 syntax errors), rejected 0/0, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
-misc: format 303/315 (0 syntax errors), rejected 0/0, second format 267/267, CRLF 40/40, CR 40/40, BOM 302/302
+misc: format 313/315 (0 syntax errors), rejected 0/0, second format 270/270, CRLF 43/43, CR 43/43, BOM 312/312
 scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
 typescript: format 746/746 (0 syntax errors), rejected 24/28, second format 599/599, CRLF 745/745, CR 745/745, BOM 733/733
 yaml: format 1623/1623 (0 syntax errors), rejected 3/3, second format 1118/1118, CRLF 1616/1616, CR 1616/1616, BOM 1622/1622
-format: 5619/5631 (99.79%)
-all checks: 26381/26416 (99.87%)
+format: 5629/5631 (99.96%)
+all checks: 26410/26435 (99.91%)
 not run: 17: Flow's type syntax
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
 not run: 42: embedded HTML or Markdown, which needs a formatter for that language

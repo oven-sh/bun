@@ -19,7 +19,7 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
     };
     let type_start = match type_annotation {
         Some(ty) => ty.span().start,
-        None => e.const_keyword_span().map_or(e.span().end, |it| it.start),
+        None => e.const_keyword_span().map_or_else(|| e.span().end, |it| it.start),
     };
 
     let format_inner = format_with(|f| {

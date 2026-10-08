@@ -9,6 +9,7 @@ use bun_lint::types::utils::{
 use bun_lint::types::{NameOf, Type};
 use bun_lint::utils::ts_utils::get_this_expression;
 use bun_lint::utils::{Target, TargetElement, TargetKind};
+use rustc_hash::FxHashMap;
 
 /// Disallow assigning a value with type `any` to variables and properties.
 pub struct NoUnsafeAssignment;
@@ -146,6 +147,15 @@ fn check_object_destructure<'a>(
     sender_type: Type<'a>,
     sender_node: Expr<'a>,
 ) {
+    let properties = sender_type.get_properties();
+    // The first of each name, if they are many.
+    let properties_by_name = (properties.len() > 16).then(|| {
+        let mut by_name = FxHashMap::default();
+        for property in properties {
+            by_name.entry(property.name()).or_insert(property);
+        }
+        by_name
+    });
     for receiver_property in &receiver_node.elements() {
         let (Some(key), Some(target), false) =
             (receiver_property.key, receiver_property.target, receiver_property.is_rest)
@@ -159,7 +169,11 @@ fn check_object_destructure<'a>(
         let Some(key) = key else {
             continue;
         };
-        let Some(property) = sender_type.get_properties().iter().find(|it| it.name() == key) else {
+        let property = match &properties_by_name {
+            Some(by_name) => by_name.get(key).copied(),
+            None => properties.iter().find(|it| it.name() == key),
+        };
+        let Some(property) = property else {
             continue;
         };
         let sender_type = property.get_type_at_location(sender_node);

@@ -2,6 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{is_type_flag_set, is_union_type, union_constituents};
 use bun_lint::types::{SyntaxKind, Type, TypeFlags};
 use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence, ts_syntax_kind};
+use rustc_hash::FxHashSet;
 
 /// Enforce non-null assertions over explicit type assertions.
 pub struct NonNullableTypeAssertionStyle;
@@ -36,9 +37,17 @@ fn same_type_without_nullish<'a>(asserted: Type<'a>, original: Type<'a>) -> bool
     if non_nullish_original_types().count() == original_types.len() {
         return false;
     }
-    asserted_types.iter().all(|asserted_type| {
-        !could_be_nullish(asserted_type, 0) && non_nullish_original_types().any(|ty| ty == asserted_type)
-    }) && non_nullish_original_types().all(|original_type| asserted_types.contains(original_type))
+    if asserted_types.len() <= 16 || original_types.len() <= 16 {
+        return asserted_types.iter().all(|asserted_type| {
+            !could_be_nullish(asserted_type, 0) && non_nullish_original_types().any(|ty| ty == asserted_type)
+        }) && non_nullish_original_types().all(|original_type| asserted_types.contains(original_type));
+    }
+    let non_nullish_originals: FxHashSet<Type<'a>> = non_nullish_original_types().collect();
+    let asserted_set: FxHashSet<Type<'a>> = asserted_types.iter().collect();
+    asserted_types
+        .iter()
+        .all(|asserted_type| !could_be_nullish(asserted_type, 0) && non_nullish_originals.contains(&asserted_type))
+        && non_nullish_originals.iter().all(|original_type| asserted_set.contains(original_type))
 }
 
 impl Rule for NonNullableTypeAssertionStyle {

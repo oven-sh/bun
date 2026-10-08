@@ -9,6 +9,7 @@ use crate::ast::File;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent};
 use bun_sema::hir::{self, FnKind, NameKind, PatKind, StmtKind, VarKind};
+use rustc_hash::FxHashMap;
 
 /// ESLint's `variable.isValueVariable`.
 pub(crate) const VALUE: u8 = 1 << 0;
@@ -50,6 +51,7 @@ pub(crate) struct Variables {
     by_name: Vec<u32>,
     /// The declarations of the variables that have several, in the order they are written.
     declarations: Vec<Decl>,
+    pub(crate) deep_patterns: DeepPatterns,
 }
 
 struct Entry {
@@ -127,17 +129,100 @@ impl NameTable {
     }
 }
 
-/// The declaration or the parameter that the pattern `pat` is part of.
-pub(crate) fn root_of_pattern(file: &File, mut pat: hir::PatId) -> PatParent {
-    loop {
-        match file.bound.pat_parent.get(pat.idx()) {
-            Some(&(PatParent::Prop(outer, _) | PatParent::Elem(outer, _))) if outer != pat => {
-                pat = outer
+/// What is around a pattern that is far above a name.
+#[derive(Copy, Clone)]
+pub(crate) struct Above {
+    /// The outermost pattern around it, or itself.
+    pub(crate) top: hir::PatId,
+    /// The nearest pattern around it, or itself, that is a property or an element with a default
+    /// value. `NONE` if there is none.
+    pub(crate) with_default: hir::PatId,
+}
+
+/// The patterns that are far above a name, as in `let [a, [b, [c, ..`: to go up from each name
+/// takes quadratic time. Empty in a file without such patterns.
+#[derive(Default)]
+pub(crate) struct DeepPatterns {
+    above: FxHashMap<u32, Above>,
+}
+
+/// The pattern that `pat` is a property or an element of, and its default value there.
+fn outer_pattern(file: &File, pat: hir::PatId) -> Option<(hir::PatId, hir::ExprId)> {
+    let hir = &file.hir;
+    let (outer, default) = match *file.bound.pat_parent.get(pat.idx())? {
+        PatParent::Prop(outer, p) => (outer, hir.pat_props.get(p.idx()).map(|it| it.default)),
+        PatParent::Elem(outer, e) => (outer, hir.pat_elems.get(e.idx()).map(|it| it.default)),
+        _ => return None,
+    };
+    (outer != pat).then_some((outer, default.unwrap_or(hir::ExprId::NONE)))
+}
+
+impl DeepPatterns {
+    /// How far up from a pattern nothing is kept, and nothing is looked up.
+    pub(crate) const PLAIN_STEPS: u32 = 8;
+
+    #[inline]
+    pub(crate) fn get(&self, pat: hir::PatId) -> Option<Above> {
+        self.above.get(&pat.0).copied()
+    }
+
+    /// The outermost pattern around the name `pat`. Keeps what is far above it. `passed`: for
+    /// what it goes through.
+    fn add(&mut self, file: &File, pat: hir::PatId, passed: &mut Vec<hir::PatId>) -> hir::PatId {
+        let (mut at, mut steps) = (pat, 0);
+        let mut above = loop {
+            if steps >= Self::PLAIN_STEPS {
+                if let Some(known) = self.get(at) {
+                    break known;
+                }
+                passed.push(at);
             }
-            Some(&root) => return root,
-            None => return PatParent::None,
+            match outer_pattern(file, at) {
+                Some((outer, _)) => (at, steps) = (outer, steps + 1),
+                None => {
+                    break Above {
+                        top: at,
+                        with_default: hir::PatId::NONE,
+                    };
+                }
+            }
+        };
+        // From the outermost one inwards.
+        while let Some(it) = passed.pop() {
+            if outer_pattern(file, it).is_some_and(|(_, default)| default.is_some()) {
+                above.with_default = it;
+            }
+            self.above.insert(it.0, above);
+        }
+        above.top
+    }
+
+    /// The outermost pattern around `pat`.
+    fn top_of(known: Option<&DeepPatterns>, file: &File, pat: hir::PatId) -> hir::PatId {
+        let (mut at, mut steps) = (pat, 0);
+        loop {
+            if steps >= Self::PLAIN_STEPS
+                && let Some(above) = known.and_then(|it| it.get(at))
+            {
+                return above.top;
+            }
+            match outer_pattern(file, at) {
+                Some((outer, _)) => (at, steps) = (outer, steps + 1),
+                None => return at,
+            }
         }
     }
+}
+
+/// What the outermost pattern `top` is the pattern of.
+fn owner_of_pattern(file: &File, top: hir::PatId) -> PatParent {
+    (file.bound.pat_parent.get(top.idx())).map_or(PatParent::None, |&it| it)
+}
+
+/// The declaration or the parameter that the pattern `pat` is part of.
+pub(crate) fn root_of_pattern(file: &File, pat: hir::PatId) -> PatParent {
+    let known = file.semantic().variables.get().map(|it| &it.deep_patterns);
+    owner_of_pattern(file, DeepPatterns::top_of(known, file, pat))
 }
 
 /// Whether `d` is the `e` of `catch (e)`.
@@ -217,7 +302,7 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
 
 /// Every declaration of a variable, and the position and the index of each, sorted.
 #[inline(never)]
-fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
+fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry>, Vec<u64>) {
     let (hir, bound) = (&file.hir, &file.bound);
     let room = hir.pats.len()
         + hir.fns.len() / 4
@@ -245,12 +330,13 @@ fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
     // What the parser has left behind where it backtracked is part of nothing.
     let is_in_tree =
         |s: hir::StmtId| !matches!(bound.stmt_parent.get(s.idx()), None | Some(Parent::None));
+    let mut passed = Vec::new();
     for (i, pat) in hir.pats.iter().enumerate() {
         let PatKind::Ident(name) = pat.kind else {
             continue;
         };
         let id = hir::PatId(i as u32);
-        match root_of_pattern(file, id) {
+        match owner_of_pattern(file, deep_patterns.add(file, id, &mut passed)) {
             PatParent::Var(_) => add(Decl::Var(id)),
             PatParent::Param(_) => add(Decl::Param(id)),
             // The name of a `this` parameter is part of nothing.
@@ -330,8 +416,11 @@ fn assign_scopes(
     tree: &ScopeTree,
     entries: &mut [Entry],
     in_order: &[u64],
+    deep_patterns: &DeepPatterns,
 ) -> Vec<u32> {
     let (hir, bound) = (&file.hir, &file.bound);
+    let root_of_pattern =
+        |pat| owner_of_pattern(file, DeepPatterns::top_of(Some(deep_patterns), file, pat));
     let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
     let mut cursor = tree.cursor();
     for &key in in_order {
@@ -340,7 +429,7 @@ fn assign_scopes(
         let mut is_catch = false;
         (it.scope, it.flags) = match it.decl {
             Decl::Var(p) => {
-                let PatParent::Var(d) = root_of_pattern(file, p) else {
+                let PatParent::Var(d) = root_of_pattern(p) else {
                     continue;
                 };
                 is_catch = is_catch_parameter(file, d);
@@ -355,7 +444,7 @@ fn assign_scopes(
                 };
                 (scope, VALUE)
             }
-            Decl::Param(p) => match root_of_pattern(file, p) {
+            Decl::Param(p) => match root_of_pattern(p) {
                 PatParent::Param(param) => {
                     let scope = bound
                         .param_fn
@@ -437,9 +526,10 @@ impl Made {
 impl Variables {
     pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree) -> Variables {
         let hir = &file.hir;
-        let (mut entries, in_order) = entries_in_order(file);
+        let mut deep_patterns = DeepPatterns::default();
+        let (mut entries, in_order) = entries_in_order(file, &mut deep_patterns);
         let scope_count = tree.scopes.len();
-        let mut entry_starts = assign_scopes(file, tree, &mut entries, &in_order);
+        let mut entry_starts = assign_scopes(file, tree, &mut entries, &in_order, &deep_patterns);
 
         // The entries scope by scope, and in each in source order, as indices.
         for i in 0..scope_count {
@@ -543,6 +633,7 @@ impl Variables {
             names,
             by_name,
             declarations,
+            deep_patterns,
         }
     }
 

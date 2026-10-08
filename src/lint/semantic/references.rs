@@ -4,7 +4,7 @@
 //! and all of it grouped by variable and by scope.
 
 use super::scopes::{self, Cursor, NONE, ScopeTree, Step};
-use super::variables::{TYPE, VALUE, Variables};
+use super::variables::{DeepPatterns, TYPE, VALUE, Variables};
 use super::{ReferenceFlags, ScopeKind};
 use crate::ast::File;
 use bun_sema::atom::{Atom, known};
@@ -891,7 +891,7 @@ impl<'f> Collector<'f, '_> {
 
     /// `Referencer.VariableDeclaration`, `visitFunction`, `CatchClause`: a declaration writes the
     /// values that it gives to its names.
-    fn patterns(&mut self, tree: &ScopeTree) {
+    fn patterns(&mut self, tree: &ScopeTree, deep_patterns: &DeepPatterns) {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
@@ -910,8 +910,14 @@ impl<'f> Collector<'f, '_> {
             }
             values.clear();
             // Innermost first.
-            let mut at = hir::PatId(i as u32);
+            let (mut at, mut steps) = (hir::PatId(i as u32), 0);
             let root = loop {
+                // Up to there nothing has a default value.
+                if steps >= DeepPatterns::PLAIN_STEPS
+                    && let Some(above) = deep_patterns.get(at)
+                {
+                    at = above.with_default.some().unwrap_or(above.top);
+                }
                 let (outer, default) = match bound.pat_parent.get(at.idx()) {
                     Some(&PatParent::Prop(outer, p)) => {
                         (outer, hir.pat_props.get(p.idx()).map(|it| it.default))
@@ -923,7 +929,7 @@ impl<'f> Collector<'f, '_> {
                     None => break PatParent::None,
                 };
                 values.extend(default.filter(|it| it.is_some()));
-                at = outer;
+                (at, steps) = (outer, steps + 1);
             };
             let mut last = ExprId::NONE;
             match root {
@@ -1275,7 +1281,7 @@ impl References {
             is_javascript,
             found: Vec::with_capacity(hir.pats.len() / 2 + hir.types.len() / 2),
         };
-        collector.patterns(tree);
+        collector.patterns(tree, &variables.deep_patterns);
         collector.type_query_operands();
         collector.export_specifiers();
         if !hir.jsx.is_empty() {

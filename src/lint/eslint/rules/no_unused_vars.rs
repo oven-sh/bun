@@ -120,10 +120,10 @@ impl<'a> Variable<'a> {
 
 /// The `VarDecl` that the pattern `pat` is part of.
 fn declarator(pat: Pat<'_>) -> Option<VarDecl<'_>> {
-    Node::Pat(pat).ancestors().find_map(|it| match it {
+    match Declaration::Var(pat).node()? {
         Node::VarDecl(declaration) => Some(declaration),
         _ => None,
-    })
+    }
 }
 
 /// The range of ESLint's `def.name`.

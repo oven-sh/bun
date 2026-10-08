@@ -154,7 +154,8 @@ impl<'t> Resolver<'t> {
     fn add_read(&mut self, id: ExprId, pos: u32, name: Atom) {
         let hazards = &self.variables.hazards;
         if self.is_plain && (hazards.is_empty() || hazards.binary_search_by_key(&name.0, |it| it.0).is_err()) {
-            return self.add_simple_read(id, pos, name);
+            let symbol = self.expr_symbol.get(id.idx()).copied().unwrap_or(SymbolId::NONE);
+            return self.add_simple_read(id, pos, name, symbol);
         }
         self.add(RawReference {
             site: ReferenceSite::Expr(id),
@@ -168,16 +169,23 @@ impl<'t> Resolver<'t> {
     }
 
     /// The same where there is nothing `unvisited`, and the name is none of `Variables::hazards`.
+    /// `symbol`: what the binder resolves it to.
     #[inline(always)]
-    fn add_simple_read(&mut self, id: ExprId, pos: u32, name: Atom) {
-        self.is_visiting_order &= pos >= self.last_moved_to;
+    fn add_simple_read(&mut self, id: ExprId, pos: u32, name: Atom, symbol: SymbolId) {
+        if pos < self.last_moved_to {
+            self.is_visiting_order = false;
+        }
         let from = self.cursor.seek(pos);
-        let symbol = self.expr_symbol.get(id.idx()).copied().unwrap_or(SymbolId::NONE);
-        let variable = match self.variables.of_symbol(symbol) {
-            Some(index) if self.variables.extents.get(index as usize).is_some_and(|it| it.has(from, pos)) => index,
-            _ => self.variables.resolve(self.tree, from, name, pos, VALUE).unwrap_or(NONE),
-        };
-        let it = RawReference {
+        let mut variable = self.variables.index_of_symbol(symbol);
+        match (self.variables.extents.get(variable as usize), self.counts.get_mut(variable as usize + 1)) {
+            (Some(extent), Some(count)) if extent.has(from, pos) => *count = (*count + 1) | HAS_READ,
+            _ => {
+                variable = self.variables.resolve(self.tree, from, name, pos, VALUE).unwrap_or(NONE);
+                let count = &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
+                *count = (*count + 1) | HAS_READ;
+            }
+        }
+        self.all.push(RawReference {
             site: ReferenceSite::Expr(id),
             pos,
             name,
@@ -185,9 +193,7 @@ impl<'t> Resolver<'t> {
             from,
             write: ExprId::NONE,
             flags: READ,
-        };
-        self.count(&it);
-        self.all.push(it);
+        });
     }
 
     #[inline(always)]
@@ -487,9 +493,9 @@ impl<'f> Collector<'f, '_> {
         merge.next_found = self.found.get(merge.passed).map_or(u32::MAX, |it| it.pos);
     }
 
-    /// Whether the parent of an identifier is enough to tell that it is a reference that reads a
+    /// Whether what is around an identifier is enough to tell that it is a reference that reads a
     /// value.
-    #[inline(always)]
+    #[inline(never)]
     fn is_only_read(&self, id: ExprId) -> bool {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
         match bound.expr_parent.get(id.idx()) {
@@ -628,24 +634,34 @@ impl<'f> Collector<'f, '_> {
         let is_simple = merge.into.is_plain && skipped.is_empty();
         let hazards = variables.hazards.iter().fold(0, |set, &name| set | bit_of_name(name));
         // The parser stores nearly every file in source order.
-        let is_in_order = exprs.iter().enumerate().all(|(i, e)| {
+        let bound = &self.file.bound;
+        let with_parent_and_symbol = exprs.iter().zip(bound.expr_parent).zip(bound.expr_symbol);
+        let is_in_order = with_parent_and_symbol.enumerate().all(|(i, ((e, parent), &symbol))| {
             let ExprKind::Ident(name) = e.kind else {
                 return true;
             };
             let id = ExprId(i as u32);
+            // In most places nothing but a value that is read can be.
+            let is_only_read = match *parent {
+                Parent::Expr(parent) => exprs.get(parent.idx()).is_some_and(|it| {
+                    !can_be_part_of_target(it.kind) && !matches!(it.kind, ExprKind::Unary { .. } | ExprKind::Jsx(_))
+                }),
+                Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
+                _ => true,
+            };
             // Whether it is a reference, and what it resolves to, is as the binder says.
             if is_simple
                 && (merge.last..merge.next_jsdoc).contains(&e.pos)
                 && id.0 < merge.next_operand
                 && name != known::empty
                 && hazards & bit_of_name(name) == 0
-                && self.is_only_read(id)
+                && (is_only_read || self.is_only_read(id))
             {
                 if merge.next_found < e.pos {
                     self.pass_on_before(e.pos, &mut merge);
                 }
                 merge.last = e.pos;
-                merge.into.add_simple_read(id, e.pos, name);
+                merge.into.add_simple_read(id, e.pos, name, symbol);
                 return true;
             }
             self.identifier(id, e, name, &skipped, &mut merge)

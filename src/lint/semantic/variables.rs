@@ -524,6 +524,12 @@ impl Variables {
         self.of_symbol.get(symbol.idx()).copied().filter(|it| *it != NONE)
     }
 
+    /// The same, or `NONE`.
+    #[inline(always)]
+    pub(crate) fn index_of_symbol(&self, symbol: SymbolId) -> u32 {
+        self.of_symbol.get(symbol.idx()).copied().unwrap_or(NONE)
+    }
+
     /// More than what identifies any variable.
     #[inline]
     pub(crate) fn key_limit(&self) -> usize {

@@ -51,6 +51,7 @@ impl Host for Tester<'_> {
             cwd: directory,
             keeps_text: true,
             reads_fixes: true,
+            reads_suppressions: true,
             js_plugins: &self.js_plugins,
             modules: &Graph::new(&store),
             timing: &timing,

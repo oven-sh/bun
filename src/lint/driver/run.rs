@@ -478,6 +478,7 @@ impl Run<'_> {
             cwd: &environment.cwd,
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
+            reads_suppressions: format.reads_suppressions() && !options.silent,
             js_plugins: &js_plugins,
             modules: &modules,
             timing: &timing,

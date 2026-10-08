@@ -29,6 +29,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) keeps_text: bool,
     /// Whether the fixes and the suggestions of messages are read, if only to be counted.
     pub(crate) reads_fixes: bool,
+    /// Whether it is read which comments suppress a message.
+    pub(crate) reads_suppressions: bool,
     /// Runs the rules that are written in JavaScript.
     pub(crate) js_plugins: &'c Host<'c>,
     /// Which file imports which, for the rules that are about several files.
@@ -53,6 +55,7 @@ impl Context<'_, '_> {
             // It is part of the configuration: see `Loader::override_config`.
             report_unused_disable_directives: None,
             wants_fixes: self.fixes() || self.reads_fixes,
+            wants_suppressions: self.reads_suppressions,
             // Warnings have to be counted for `--max-warnings`.
             rule_filter: match self.options.quiet && self.options.max_warnings == -1 {
                 true => Some(&only_errors),

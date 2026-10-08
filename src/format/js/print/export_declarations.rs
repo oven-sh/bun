@@ -10,7 +10,7 @@ use crate::prelude::*;
 use crate::write;
 
 /// `export` or `export default`, and the decorators of the class after it. They can be before the
-/// `export` or after it, and stay where they are.
+/// `export` or after it, and stay where they are. `keyword` is empty if it is not written.
 fn format_export_keyword_with_class_decorators<'a>(
     node: AstNodes<'a>,
     keyword: &'static str,
@@ -18,6 +18,11 @@ fn format_export_keyword_with_class_decorators<'a>(
     f: &mut Formatter<'a>,
 ) {
     let span = node.span();
+    let keyword_and_space = format_with(|f| {
+        if !keyword.is_empty() {
+            write!(f, [keyword, space()]);
+        }
+    });
     let format_leading_comments = format_with(|f| {
         let comments = f.comments().comments_before(span.start);
         FormatLeadingComments::Comments(comments).fmt(f);
@@ -29,12 +34,12 @@ fn format_export_keyword_with_class_decorators<'a>(
         let decorators = FormatDecorators::new(class.decorators(), node);
         if first_decorator.span().end < span.start {
             enter_node(span, f);
-            write!(f, [decorators, hard_line_break(), format_leading_comments, keyword, space()]);
+            write!(f, [decorators, hard_line_break(), format_leading_comments, keyword_and_space]);
         } else if f.comments().is_suppressed(first_decorator.span().start) {
             // The class is written as it is, with its decorators.
             write!(f, format_leading_comments);
             enter_node(span, f);
-            write!(f, [keyword, space()]);
+            write!(f, keyword_and_space);
         } else {
             write!(f, format_leading_comments);
             enter_node(span, f);
@@ -43,7 +48,7 @@ fn format_export_keyword_with_class_decorators<'a>(
     } else {
         write!(f, format_leading_comments);
         enter_node(span, f);
-        write!(f, [keyword, space()]);
+        write!(f, keyword_and_space);
     }
 }
 
@@ -54,7 +59,15 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
         StmtKind::Class(class) => Some(class),
         _ => None,
     };
-    let keyword = if statement.is_default_export() { "export default" } else { "export" };
+    let first_modifier = statement.modifiers().iter().find(|it| it.decorator().is_none());
+    let keyword = match statement.tag() {
+        // Errors, where the `export` is not in typescript-estree's tree: `export import a from "b"`,
+        // `export export = a`, `declare export const a`.
+        StmtTag::Import | StmtTag::ExportAssign => "",
+        _ if first_modifier.is_some_and(|it| it.flag() != Flags::EXPORT) => "",
+        _ if statement.is_default_export() => "export default",
+        _ => "export",
+    };
     format_export_keyword_with_class_decorators(node, keyword, class, f);
     write!(f, FormatDeclaration(statement));
     if matches!(statement.kind(), StmtKind::Var(_)) {

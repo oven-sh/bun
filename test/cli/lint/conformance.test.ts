@@ -66,8 +66,9 @@ test.skipIf(!hasRunner).each(suites)(
     const known = new Set(expected.split("\n"));
     expect(stdout.split("\n").filter(line => line.startsWith("FAIL ") && !known.has(line))).toEqual([]);
     expect(stdout).toMatch(/\n[1-9]\d* cases passed, /);
-    // No more is skipped than is known to be. What is skipped is counted whether or not it is in the sample.
-    if (!isWindows) expect(/, \d+ skipped\n/.exec(stdout)?.[0]).toBe(/, \d+ skipped\n/.exec(expected)![0]);
+    // No more is skipped than is known to be. A case that needs a rule of upstream's test file is only counted when it is run.
+    const skipped = (text: string) => Number(/, (\d+) skipped\n/.exec(text)?.[1]);
+    if (!isWindows) expect(skipped(stdout)).toBeLessThanOrEqual(skipped(expected));
     expect(exitCode).toBe(0);
   },
   10 * 60_000,

@@ -1,2 +1,0 @@
-const kochabCooieGameOnOboleUnweave = // ???
-      rhubarbRhubarb(annularCooeedSplicesWalksWayWay);

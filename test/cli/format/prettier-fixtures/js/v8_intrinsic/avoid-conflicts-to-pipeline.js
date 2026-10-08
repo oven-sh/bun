@@ -1,2 +1,0 @@
-// |>
-const status = %GetOptimizationStatus(fn);

@@ -179,7 +179,7 @@ A node that is not ported yet is written as it is in the source: `write!(f, Form
 ```sh
 $B format file a.ts --semi=false --printWidth=100     # format one file
 $B format ir a.ts                                      # the document
-$B format conformance $P/tests/format                  # table per directory, totals, what is not run and why
+$B format conformance <(zstd -dc test/cli/format/prettier/bundle.zst)   # or $P/tests/format: table per directory, totals, what is not run and why
 $B format conformance $P/tests/format --languages=css --verbose
 $B format conformance $P/tests/format --filter=js/arrow --report=report
 diff -u report/<case>.expected report/<case>.actual
@@ -187,7 +187,7 @@ $B format check-idempotent <files or directories>
 $B format verify <files or directories>                # same tokens before and after
 $B format bench <files or directories>
 bun test/cli/format/oracle/compare.ts --bin=$B --prettier=<dir with node_modules/prettier> --options='{"semi":false}' <dirs>
-bun test/cli/format/oracle/oxfmt-fixtures.ts run --bin=$B --list      # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
+bun test/cli/format/oxfmt/run.ts --bin=$B --list                     # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
 ```
 
 `conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `format_cmd/conformance.rs` is all that it leaves out, with the reason.

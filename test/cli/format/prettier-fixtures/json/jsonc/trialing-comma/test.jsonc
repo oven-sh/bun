@@ -1,6 +1,0 @@
-[
-  ["omit-if-short"],
-  ["long","long","long","long","long","long","enough","to","break","into","multiple","lines"],
-  {"short":"object"},
-  {"long":"","enough":"","to":"","break":"","into":"","multiple":"","lines":""}
-]

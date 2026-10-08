@@ -1,3 +1,0 @@
-call(
-await something()
-)

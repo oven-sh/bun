@@ -1,9 +1,0 @@
-.class {
-  background:linear-gradient(to bottom right,white,hsla(0,0%,100%,.8));
-  border: 1px      solid rgba(0,0,0,.3);
-  font-family: Arial  ,  sans-serif;
-  color: rgba(0, 0, 0, 1);
-  margin: 0   20px  0 -24px;
-  background-position:20% -26px;
-  transform-style: preserve-3d;
-}

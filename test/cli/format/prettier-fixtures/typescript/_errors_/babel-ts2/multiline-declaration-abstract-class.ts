@@ -1,2 +1,0 @@
-declare abstract
-class A {}

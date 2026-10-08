@@ -1,4 +1,0 @@
-try
-/* missing comment */
-{;}
-finally {}

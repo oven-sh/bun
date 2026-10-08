@@ -1,5 +1,0 @@
-div {
-  background: var(fig-light-02) url(/images/inset-shadow-east-ltr.png) 100% 0 repeat-y;
-  box-shadow: 0 0 1px 2px rgba(88, 144, 255, 0.75), 0 1px 1px rgba(0, 0, 0, 0.15);
-  padding-bottom: calc(var(ads-help-tray-footer-with-support-link-height) + var(ads-help-tray-header-height-new));
-}

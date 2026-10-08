@@ -1,3 +1,0 @@
-class User {
-    "username": string;
-}

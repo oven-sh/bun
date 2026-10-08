@@ -1,1 +1,0 @@
-object[key = "a" + "b"];

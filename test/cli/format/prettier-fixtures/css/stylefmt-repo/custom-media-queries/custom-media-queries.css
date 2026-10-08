@@ -1,8 +1,0 @@
-@custom-media     --small-viewport ( max-width:30em   )
-
-
-;
-
-@media (      --small-viewport    ){
-.rule{color:blue;}
-}

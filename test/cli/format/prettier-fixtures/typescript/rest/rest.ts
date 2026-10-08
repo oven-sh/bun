@@ -1,1 +1,0 @@
-function test([first, ...rest]) {}

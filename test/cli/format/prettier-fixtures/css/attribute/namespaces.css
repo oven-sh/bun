@@ -1,5 +1,0 @@
-@namespace foo "http://www.example.com";
-[foo|att=val] {}
-[*|att] {}
-[|att] {}
-[att] {}

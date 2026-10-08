@@ -1,8 +1,0 @@
-.foo {
-    color: rgb(255, 0, 153);
-    color: rgb(100%, 0%, 60%);
-    color: rgba(51, 170, 51, 0.1);
-    color: hsl(.75turn, 60%, 70%);
-    color: hsl(270 60% 50% / .15);
-    color: hsla(240, 100%, 50%, .05)
-}

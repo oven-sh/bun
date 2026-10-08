@@ -1,4 +1,0 @@
-(
-  // prettier-ignore
-[]
-).forEach()

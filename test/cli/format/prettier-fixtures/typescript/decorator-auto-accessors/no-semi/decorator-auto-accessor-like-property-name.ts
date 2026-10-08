@@ -1,4 +1,0 @@
-class C {
-  accessor;
-  bar;
-}

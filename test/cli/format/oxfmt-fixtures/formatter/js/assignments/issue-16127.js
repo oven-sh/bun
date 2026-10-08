@@ -1,1 +1,0 @@
-const { assignmentPattern: { nestedAssignmentPattern = {} } = {} } = call();

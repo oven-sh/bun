@@ -1,4 +1,5 @@
-//! `bun-lint format conformance <prettier>/tests/format`: Prettier's own tests.
+//! `bun-lint format conformance <fixtures>`: Prettier's own tests. `<fixtures>` is `tests/format` of
+//! a checkout of Prettier, or what is in `test/cli/format/prettier/bundle.zst`, decompressed.
 //!
 //! For every fixture and every set of options, Prettier's test runner
 //! (`tests/config/format-test/run-test.js`) checks
@@ -270,16 +271,66 @@ fn replace_placeholders(original: &str, options: &mut FormatOptions) -> String {
     text
 }
 
-fn find_snapshot_files(dir: &Path, found: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
+/// Where the inputs and the snapshots are.
+enum Fixtures {
+    Directory(PathBuf),
+    /// By the path from `tests/format`. In the file they are one after the other:
+    /// `=== /<path> <length in bytes>\n`, the bytes, `\n`.
+    Bundle(BTreeMap<String, Vec<u8>>),
+}
+
+impl Fixtures {
+    fn open(path: &Path) -> Fixtures {
         if path.is_dir() {
-            find_snapshot_files(&path, found);
-        } else if path.file_name().is_some_and(|it| it == "format.test.js.snap") {
-            found.push(path);
+            return Fixtures::Directory(path.to_owned());
+        }
+        let bytes = std::fs::read(path).expect("the fixtures");
+        let mut files = BTreeMap::new();
+        let mut rest = &bytes[..];
+        while let Some(end) = rest.iter().position(|&byte| byte == b'\n') {
+            let header = crate::text(&rest[..end]);
+            let parts = header.strip_prefix("=== /").and_then(|it| it.rsplit_once(' '));
+            let Some((name, Ok(length))) = parts.map(|it| (it.0, it.1.parse::<usize>())) else {
+                break;
+            };
+            let Some(content) = rest.get(end + 1..end + 1 + length) else {
+                break;
+            };
+            files.insert(name.to_owned(), content.to_vec());
+            rest = rest.get(end + 1 + length + 1..).unwrap_or_default();
+        }
+        Fixtures::Bundle(files)
+    }
+
+    /// The paths of the snapshot files below `language`, in order.
+    fn snapshot_files(&self, language: &str) -> Vec<String> {
+        fn visit(root: &Path, directory: &Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(root, &path, found);
+                } else if path.file_name().is_some_and(|it| it == "format.test.js.snap") {
+                    found.push(path.strip_prefix(root).unwrap_or(&path).to_string_lossy().into_owned());
+                }
+            }
+        }
+        let mut found = Vec::new();
+        match self {
+            Fixtures::Directory(root) => visit(root, &root.join(language), &mut found),
+            Fixtures::Bundle(files) => {
+                let is_wanted = |it: &&String| it.starts_with(&format!("{language}/")) && it.ends_with("/format.test.js.snap");
+                found.extend(files.keys().filter(is_wanted).cloned());
+            }
+        }
+        found.sort();
+        found
+    }
+
+    /// `None` if there is no such file, or if it is not UTF-8.
+    fn read(&self, path: &str) -> Option<String> {
+        match self {
+            Fixtures::Directory(root) => std::fs::read_to_string(root.join(path)).ok(),
+            Fixtures::Bundle(files) => String::from_utf8(files.get(path)?.clone()).ok(),
         }
     }
 }
@@ -358,7 +409,7 @@ fn parser_of(name: &str, language: &str) -> &'static str {
 }
 
 pub(super) fn run(args: &Args) {
-    let root = PathBuf::from(args.positional.first().expect("the path of prettier/tests/format"));
+    let fixtures = Fixtures::open(Path::new(args.positional.first().expect("the path of the fixtures")));
     let filter = args.flag("filter");
     let report = args.flag("report").map(PathBuf::from);
     let is_verbose = args.flag("verbose").is_some();
@@ -377,16 +428,11 @@ pub(super) fn run(args: &Args) {
     };
 
     for language in languages.split(',') {
-        let mut snapshot_files = Vec::new();
-        find_snapshot_files(&root.join(language), &mut snapshot_files);
-        snapshot_files.sort();
-
-        for snapshot_file in snapshot_files {
-            let Some(directory) = snapshot_file.parent().and_then(Path::parent) else {
+        for snapshot_file in fixtures.snapshot_files(language) {
+            let Some(relative) = snapshot_file.strip_suffix("/__snapshots__/format.test.js.snap") else {
                 continue;
             };
-            let relative = directory.strip_prefix(&root).unwrap_or(directory).to_string_lossy().into_owned();
-            let text = std::fs::read_to_string(&snapshot_file).unwrap_or_default();
+            let text = fixtures.read(&snapshot_file).unwrap_or_default();
             // `js/arrows`, whatever is below it.
             let group = relative.split('/').take(2).collect::<Vec<_>>().join("/");
 
@@ -422,10 +468,11 @@ pub(super) fn run(args: &Args) {
                 }
 
                 // The file has what the snapshot cannot show: line endings, a byte order mark.
-                let on_disk = directory.join(&case.name);
-                let (path, original) = match std::fs::read_to_string(&on_disk) {
-                    Ok(input) => (on_disk.to_string_lossy().into_owned(), input),
-                    Err(_) => {
+                let on_disk = fixtures.read(&id);
+                let is_on_disk = on_disk.is_some();
+                let (path, original) = match on_disk {
+                    Some(input) => (id.clone(), input),
+                    None => {
                         // `snippet: test.cjs`: the name that the test gives the text. It is parsed
                         // as the parser of the test says.
                         let name = case.name.strip_prefix("snippet: ").filter(|it| it.contains('.'));
@@ -453,7 +500,7 @@ pub(super) fn run(args: &Args) {
                     Expected::Output(expected) => expected,
                     Expected::Error(parsers) => {
                         // A snippet that is rejected is not in the snapshot.
-                        if (parsers.is_empty() || parsers.iter().any(|it| it == ours)) && on_disk.is_file() {
+                        if (parsers.is_empty() || parsers.iter().any(|it| it == ours)) && is_on_disk {
                             let is_rejected = format(&original).is_err_and(|it| it == "SyntaxError");
                             tally.errors.add(is_rejected);
                             if !is_rejected {
@@ -530,13 +577,7 @@ pub(super) fn run(args: &Args) {
     }
 
     let mut summary = String::new();
-    // A copy of the fixtures, or a checkout of Prettier.
-    let version = std::fs::read_to_string(root.join("VERSION")).unwrap_or_else(|_| {
-        let package = std::fs::read_to_string(root.join("../../package.json")).unwrap_or_default();
-        package.split_once("\"version\": \"").and_then(|it| it.1.split_once('"')).map_or("?", |it| it.0).to_owned()
-    });
-    let version = version.trim();
-    let _ = writeln!(summary, "# Conformance with Prettier {version}\n");
+    let _ = writeln!(summary, "# Prettier's tests\n");
     let _ = writeln!(summary, "| directory | format | of the rest: syntax errors | panics | rejected | second format | CRLF | CR | BOM |");
     let _ = writeln!(summary, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     let row = |name: &str, it: &Tally| {

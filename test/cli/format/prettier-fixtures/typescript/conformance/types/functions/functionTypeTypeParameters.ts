@@ -1,1 +1,0 @@
-type FuncWithTypeParameter = <T, P>() => {};

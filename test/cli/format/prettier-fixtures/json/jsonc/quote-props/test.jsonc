@@ -1,6 +1,0 @@
-[
-  "Object keys should always quoted!",
-  {"key":""},
-  {"key":"","key-can-not-unquote":""},
-  {key:""},
-]

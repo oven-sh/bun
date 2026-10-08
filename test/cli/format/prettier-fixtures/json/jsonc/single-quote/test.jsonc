@@ -1,6 +1,0 @@
-[
-  "Should always use double quote",
-  'Even it is single quoted originally',
-  'Or contains double quotes """""""""""',
-  {"object-key-should-also-double-quoted":""},
-]

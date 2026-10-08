@@ -1,1 +1,0 @@
-const bar = tag<number>`but where will prettier wrap such a long tagged template literal? ${foo.bar.baz} long long long long long long long long long long long long long long`;

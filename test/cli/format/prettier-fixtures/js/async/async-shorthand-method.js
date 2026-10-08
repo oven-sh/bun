@@ -1,4 +1,0 @@
-({
-  async get() {},
-  async set() {}
-});

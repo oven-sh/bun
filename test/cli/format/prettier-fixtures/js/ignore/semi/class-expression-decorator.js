@@ -1,5 +1,0 @@
-(
-  // prettier-ignore
-  @decorator
-  class {}
-);

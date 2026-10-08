@@ -1,3 +1,0 @@
-module {
-  using foo = bar();
-}

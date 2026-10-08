@@ -1,2 +1,0 @@
-declare type
-T = number

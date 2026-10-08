@@ -1,9 +1,0 @@
-div {
-  margin: -double(-double(1em));
-  margin: -double(- double(1em));
-  margin: - double(-double(1em));
-}
-
-@function -double($value) {
-  @return $value * 2;
-}

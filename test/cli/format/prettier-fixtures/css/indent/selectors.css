@@ -1,6 +1,0 @@
-a {
-  ~ .Pagination-itemWrapper:not(.is-separator):not([data-priority^='#{$priority}'])
-    ~ .Pagination-itemWrapper.is-separator[data-priority^='#{$priority}'] {
-    display: flex;
-  }
-}

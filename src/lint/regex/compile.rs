@@ -72,6 +72,20 @@ pub(super) fn compile(ast: &Ast<'_>, flags: Flags) -> Compiled<Program> {
     compiler.alternatives(ast.pattern().alternatives(), context)?;
     compiler.emit(Inst::Match);
     let mut program = compiler.program;
+    for (pc, inst) in program.insts.iter().enumerate() {
+        if let Inst::Repeat(index) = inst
+            && let Some(repeat) = program.repeats.get_mut(*index as usize)
+            && !repeat.back
+        {
+            repeat.then = match program.insts.get(pc + 1) {
+                Some(Inst::Char { c, back: false }) => first_byte(*c, program.unicode),
+                Some(Inst::Literal { start, back: false, .. }) => {
+                    program.literals.get(*start as usize).copied()
+                }
+                _ => None,
+            };
+        }
+    }
     program.prefilter = prefilter(&program);
     Ok(program)
 }
@@ -104,8 +118,10 @@ impl Compiler {
     }
 
     fn set(&mut self, set: CharSet) -> u32 {
-        if let Some(index) = self.charsets.iter().position(|known| *known == set) {
-            return index as u32;
+        // Only the last few are looked at, so that this takes constant time.
+        let recent = self.charsets.len().saturating_sub(32);
+        if let Some(index) = self.charsets.iter().skip(recent).position(|known| *known == set) {
+            return (recent + index) as u32;
         }
         self.program.sets.push(Set::new(&set));
         self.charsets.push(set);
@@ -133,7 +149,7 @@ impl Compiler {
     }
 
     fn char(&mut self, c: u32, context: Context) -> Single {
-        if !context.ignore_case {
+        if !context.ignore_case || (c < 0x80 && !(c as u8).is_ascii_alphabetic()) {
             return Single::Char(c);
         }
         let mut set = CharSet::from_ranges(vec![(c, c)]);
@@ -354,7 +370,8 @@ impl Compiler {
             if value.strings.is_empty() {
                 let what = self.single(value.chars);
                 let index = self.program.repeats.len() as u32;
-                self.program.repeats.push(Repeat { what, min, max, greedy, back: context.back });
+                let back = context.back;
+                self.program.repeats.push(Repeat { what, min, max, greedy, back, then: None });
                 self.emit(Inst::Repeat(index));
                 return Ok(());
             }
@@ -531,8 +548,9 @@ impl Compiler {
                 }
                 value.chars = complement_if(negate, word);
             }
-            Kind::CharacterSet(CharacterSet::Property { strings: true, .. }) => {
-                return Err(SyntaxError::unsupported("Properties of strings are not supported"));
+            Kind::CharacterSet(CharacterSet::Property { key, strings: true, .. }) => {
+                (value.chars, value.strings) = unicode::property_of_strings(key);
+                value.strings.sort_unstable();
             }
             Kind::CharacterSet(CharacterSet::Property { key, value: name, negate, .. }) => {
                 let mut set = unicode::property(key, name)
@@ -641,6 +659,17 @@ pub(super) fn group_names(ast: &Ast<'_>) -> Vec<(Box<[u8]>, Vec<u32>)> {
 
 // == where a match can start ==
 
+/// The first byte of `c` in text. `None` for a surrogate without the `u` and `v` flags, which can be a
+/// half of a character.
+fn first_byte(c: u32, unicode: bool) -> Option<u8> {
+    if !unicode && (0xD800..=0xDFFF).contains(&c) {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(4);
+    wtf8::push_code_point(&mut bytes, c);
+    bytes.first().copied()
+}
+
 #[derive(Default)]
 struct FirstBytes {
     bytes: [u64; 4],
@@ -665,11 +694,7 @@ impl FirstBytes {
         if !unicode && hi >= 0xD800 && lo <= 0xDBFF {
             self.add(0xF0, 0xF4);
         }
-        let first = |c: u32| {
-            let mut bytes = Vec::with_capacity(4);
-            wtf8::push_code_point(&mut bytes, c);
-            bytes.first().copied().unwrap_or(0)
-        };
+        let first = |c: u32| first_byte(c, true).unwrap_or(0);
         self.add(first(lo), first(hi));
     }
 

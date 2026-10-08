@@ -8,10 +8,10 @@
 //!
 //! # Matching
 //!
-//! All of ECMAScript 2025 but `\p{RGI_Emoji}` and the other properties of strings: the flags
-//! `dgimsuvy`, lookbehind, named groups and duplicates of them, backreferences, modifiers, classes
-//! with the `v` flag, Annex B. The order in which alternatives are tried, what groups
-//! capture and what ignoring case means are as the specification says.
+//! All of ECMAScript 2025: the flags `dgimsuvy`, lookbehind, named groups and duplicates of them,
+//! backreferences, modifiers, `\p{..}`, classes with the `v` flag, Annex B. The order in which
+//! alternatives are tried, what groups capture and what ignoring case means are as the
+//! specification says.
 //!
 //! | JavaScript | Here |
 //! | --- | --- |
@@ -29,6 +29,7 @@
 //! | `s.replace(re, (m, p1) => ..)` | [`re.replace_with(s, \|m, out\| ..)`](Regex::replace_with) |
 //! | `s.split(re)` | [`re.split(s)`](Regex::split) |
 //! | `re.source`, `re.flags`, `re.global`, .. | [`Regex::source`], [`Regex::flags`] |
+//! | `escapeRegExp(s)` of `escape-string-regexp` | [`escape`] |
 //!
 //! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`],
 //! [`Regex::exec`] and [`Regex::find`] start at 0 whatever the flags.
@@ -78,6 +79,25 @@ use std::borrow::Cow;
 
 /// The version of Unicode of `\p{..}` and of the `i` flag.
 pub const UNICODE_VERSION: &str = unicode_tables::UNICODE_VERSION;
+
+/// `escapeRegExp(text)` of the package `escape-string-regexp`: a pattern that matches `text`.
+pub fn escape(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for &byte in text {
+        match byte {
+            b'|' | b'\\' | b'{' | b'}' | b'(' | b')' | b'[' | b']' | b'^' | b'$' | b'+' | b'*' | b'?'
+            | b'.' => out.extend_from_slice(&[b'\\', byte]),
+            b'-' => out.extend_from_slice(b"\\x2d"),
+            _ => out.push(byte),
+        }
+    }
+    out
+}
+
+const _: fn() = || {
+    fn shared_by_threads<T: Send + Sync>() {}
+    shared_by_threads::<Regex>();
+};
 
 /// `new RegExp(pattern, flags)`
 #[derive(Debug)]

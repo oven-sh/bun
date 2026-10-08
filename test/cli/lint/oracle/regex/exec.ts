@@ -1,6 +1,6 @@
-// Compares `bun-lint regex exec` with the `RegExp` of the Bun that runs this script.
+// Compares `bun-lint regex exec` with the `RegExp` of the Bun, or the Node.js, that runs this script.
 //
-//   bun test/cli/lint/oracle/regex/exec.ts <bun-lint> <source>.. [--seed=n] [--verbose]
+//   bun|node test/cli/lint/oracle/regex/exec.ts <bun-lint> <source>.. [--seed=n] [--verbose]
 //
 // A source of (pattern, flags, text, lastIndex) is one of
 //   literals:<typescript module>:<dir>,<dir>..   the regular expressions in the JavaScript and TypeScript files of the directories,
@@ -8,14 +8,22 @@
 //   fixtures:<test/cli/lint/conformance/fixtures>  the patterns in the options of the test cases, on pieces of their code
 //   test262:<test262 checkout>                   what the tests of RegExp and of the methods of String execute
 //   fuzz:<count>                                 random patterns on random text
+//   file:<path>                                  what `--failures=<path>` wrote
+//
+// JavaScriptCore and V8 each have bugs of their own. What differs from one is to be checked with the other:
+//   bun exec.ts <bun-lint> fuzz:100000 --failures=failures; node exec.ts <bun-lint> file:failures
 
-import { type Case, casesOf, setSeed } from "./cases";
-import { ask, hex } from "./common";
+import { appendFileSync, writeFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
+import { type Case, casesOf, setSeed } from "./cases.ts";
+import { ask, hex } from "./common.ts";
 
 const [binary, ...rest] = process.argv.slice(2);
 const sources = rest.filter(a => !a.startsWith("--"));
 const verbose = rest.includes("--verbose");
 setSeed(Number(rest.find(a => a.startsWith("--seed="))?.slice(7) ?? 1));
+const failures = rest.find(a => a.startsWith("--failures="))?.slice(11);
+if (failures) writeFileSync(failures, "");
 
 // == the comparison ==
 
@@ -53,7 +61,8 @@ function check(batch: Case[]) {
     if (actual?.error) actual = "error";
     const wanted = expected(it);
     total++;
-    if (Bun.deepEquals(actual, wanted, true)) return;
+    if (isDeepStrictEqual(actual, wanted)) return;
+    if (failures) appendFileSync(failures, `${JSON.stringify(it)}\n`);
     if (++failed > 40 && !verbose) return;
     console.log(`/${it[0]}/${it[1]} on ${JSON.stringify(it[2])} from ${it[3]}`);
     console.log(`  actual   ${JSON.stringify(answers[i])}`);

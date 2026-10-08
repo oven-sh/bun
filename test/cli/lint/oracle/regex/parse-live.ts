@@ -5,7 +5,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { ask, hex } from "./common";
+import { ask, hex } from "./common.ts";
 
 const [binary, regexpp] = process.argv.slice(2);
 const flag = (name: string, fallback: number) =>

@@ -9,9 +9,11 @@
 //! - `exec <file>`: `pattern  flags  text  lastIndex`. `{"error"}`, `null`, `"limit"`, or `{"indices": [[start, end] | null, ..],
 //!   "groups": {name: [start, end] | null}}` as with the `d` flag.
 //! - `ops <file>`: `op  pattern  flags  text  [replacement]`, where `op` is `test`, `search`, `match`, `matchAll`, `replace` or
-//!   `split`. The result of the JavaScript method, with `matchAll` as the list of the lists of indices.
+//!   `split`. The result of the JavaScript method, with `matchAll` as the list of the lists of indices, or `"limit"`.
 //! - `charset <file>`: `pattern  flags`. The characters `c` for which `^(?:pattern)$` matches the string of only `c`, as
 //!   `"first-last first-last .."` in hexadecimal.
+//! - `raw <file>`: `pattern  flags  text`, each as hexadecimal bytes, which need not be UTF-8. Parses, compiles and runs all
+//!   operations, and prints `true`: nothing may panic or go on forever.
 //! - `bench <file> <repeat>`: requests as for `exec`. Compiles each once, and prints the time of `repeat` searches.
 
 use bun_lint::regex::ast::{Assertion, CharacterSet, INFINITY, Kind, Node, NodeId, Nodes, Reference, Visitor};
@@ -380,8 +382,12 @@ fn exec(line: &str) -> String {
     let [pattern, flags, text, last_index] = &fields[..] else { return "null".to_owned() };
     let mut out = String::new();
     let Some(regex) = compile(&mut out, pattern, flags) else { return out };
-    let text = bytes(&units(text));
-    let start = regex::byte_offset(&text, last_index.parse().unwrap_or(0));
+    let units = units(text);
+    let text = bytes(&units);
+    let start = match last_index.parse() {
+        Ok(index) if index <= units.len() => regex::byte_offset(&text, index),
+        _ => text.len() + 1,
+    };
     match regex.try_exec_at(&text, start) {
         Err(_) => out.push_str("\"limit\""),
         Ok(None) => out.push_str("null"),
@@ -420,6 +426,9 @@ fn ops(line: &str) -> String {
     let mut out = String::new();
     let Some(regex) = compile(&mut out, pattern, flags) else { return out };
     let text = bytes(&units(text));
+    if regex.try_exec_at(&text, 0).is_err() {
+        return "\"limit\"".to_owned();
+    }
     match *op {
         "test" => write!(out, "{}", regex.test(&text)).unwrap(),
         "search" => match regex.search(&text) {
@@ -487,6 +496,40 @@ fn charset(line: &str) -> String {
     out
 }
 
+fn raw(line: &str) -> String {
+    let decode = |hex: &str| -> Vec<u8> {
+        hex.as_bytes()
+            .chunks(2)
+            .filter_map(|digits| u8::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok())
+            .collect()
+    };
+    let fields: Vec<Vec<u8>> = line.split('\t').map(decode).collect();
+    let [pattern, flags, text] = &fields[..] else { return "null".to_owned() };
+    for version in [5, 2015, 2018, 2024, 2025] {
+        for strict in [false, true] {
+            let options = Options { strict, ecma_version: version };
+            if let Ok(ast) = regex::parse_pattern(pattern, Mode::of_flags(flags), options) {
+                for node in ast.root().descendants().take(500) {
+                    std::hint::black_box((node.raw(), node.utf16_start(), node.utf16_end(), node.kind()));
+                }
+            }
+            std::hint::black_box(regex::parse_literal(pattern, options).is_ok());
+        }
+    }
+    if let Ok(regex) = Regex::from_bytes(pattern, flags) {
+        for start in (0..=text.len() + 1).take(20) {
+            std::hint::black_box(regex.exec_at(text, start).map(|m| (m.start(), m.end(), m.as_bytes().len())));
+        }
+        std::hint::black_box(regex.find_iter(text).count());
+        std::hint::black_box(regex.split(text).len());
+        std::hint::black_box(regex.replace(text, b"[$1$&$<a>]").len());
+    }
+    for offset in 0..=text.len() + 1 {
+        std::hint::black_box(regex::byte_offset(text, regex::utf16_index(text, offset)));
+    }
+    "true".to_owned()
+}
+
 fn bench(requests: &str, repeat: usize) {
     let mut total = std::time::Duration::ZERO;
     for line in requests.lines() {
@@ -533,6 +576,7 @@ pub(crate) fn run(args: &[String]) {
             "exec" => exec(line),
             "ops" => ops(line),
             "charset" => charset(line),
+            "raw" => raw(line),
             _ => "null".to_owned(),
         };
         writeln!(stdout, "{answer}").unwrap();

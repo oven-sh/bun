@@ -46,21 +46,12 @@ impl CharSet {
         &self.ranges
     }
 
-    pub(super) fn is_empty(&self) -> bool {
-        self.ranges.is_empty()
-    }
-
     /// The only member.
     pub(super) fn single(&self) -> Option<u32> {
         match self.ranges[..] {
             [(lo, hi)] if lo == hi => Some(lo),
             _ => None,
         }
-    }
-
-    pub(super) fn contains(&self, cp: u32) -> bool {
-        let after = self.ranges.partition_point(|(lo, _)| *lo <= cp);
-        after.checked_sub(1).and_then(|i| self.ranges.get(i)).is_some_and(|(_, hi)| cp <= *hi)
     }
 
     fn normalize(&mut self) {
@@ -88,10 +79,6 @@ impl CharSet {
     pub(super) fn add_all(&mut self, ranges: &[(u32, u32)]) {
         self.ranges.extend_from_slice(ranges);
         self.normalize();
-    }
-
-    pub(super) fn union(&mut self, other: &CharSet) {
-        self.add_all(&other.ranges);
     }
 
     pub(super) fn complement(&self) -> CharSet {

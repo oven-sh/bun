@@ -173,6 +173,17 @@ impl<'p, 't> Machine<'p, 't> {
         let limit = if repeat.greedy { repeat.max } else { repeat.min };
         let mut count = 0;
         let mut bound = pos;
+        if !repeat.back
+            && let Single::Set(set) = repeat.what
+            && let Some(set) = self.program.sets.get(set as usize)
+        {
+            let ascii = set.ascii();
+            let tail = self.text.get(pos as usize..).unwrap_or_default();
+            let run = tail.iter().take(limit as usize);
+            count = run.take_while(|byte| **byte < 0x80 && (ascii >> **byte) & 1 != 0).count() as u32;
+            pos += count;
+            bound += count.min(repeat.min);
+        }
         while count < limit {
             match self.step(pos, repeat.back) {
                 Some((c, next)) if self.matches(repeat.what, c) => pos = next,
@@ -187,12 +198,41 @@ impl<'p, 't> Machine<'p, 't> {
         (count >= repeat.min).then_some((pos, bound, count))
     }
 
+    /// The last position in `from..to` where `byte` is.
+    fn last_before(&self, byte: u8, from: u32, to: u32) -> Option<u32> {
+        let text = self.text.get(from as usize..(to as usize).min(self.text.len()))?;
+        strings::last_index_of_char(text, byte).map(|found| from + found as u32)
+    }
+
+    /// For a lazy `repeat` that has matched `count` characters, up to `pos`: the next position where
+    /// what follows could match, after `pos` if `more`, and the number of characters up to there.
+    fn longer(
+        &mut self,
+        repeat: &Repeat,
+        mut pos: u32,
+        mut count: u32,
+        mut more: bool,
+    ) -> Option<(u32, u32)> {
+        loop {
+            if !more && repeat.then.is_none_or(|byte| self.text.get(pos as usize) == Some(&byte)) {
+                return Some((pos, count));
+            }
+            more = false;
+            if count >= repeat.max {
+                return None;
+            }
+            match self.step(pos, repeat.back) {
+                Some((c, next)) if self.matches(repeat.what, c) => pos = next,
+                _ => return None,
+            }
+            count += 1;
+            self.steps += 1;
+        }
+    }
+
     /// Whether the pattern matches from `start`. If so, the end of the match.
     fn run(&mut self, start: u32) -> Result<Option<u32>, LimitExceeded> {
         let program = self.program;
-        self.slots.clear();
-        self.slots.resize(program.slot_count as usize, NONE);
-        self.stack.clear();
         let mut pc = 0u32;
         let mut pos = start;
 
@@ -298,13 +338,26 @@ impl<'p, 't> Machine<'p, 't> {
                 }
                 Inst::Repeat(index) => {
                     let Some(it) = program.repeats.get(index as usize) else { return Ok(None) };
-                    match self.repeat(it, pos) {
-                        Some((end, bound, count)) => {
-                            if it.greedy {
-                                if end != bound {
-                                    self.stack.push(Frame::Greedy { pc, bound, pos: end });
-                                }
-                            } else if count < it.max {
+                    let stop = self.repeat(it, pos).and_then(|(end, bound, count)| {
+                        if !it.greedy {
+                            return self.longer(it, end, count, false);
+                        }
+                        let end = match it.then {
+                            Some(byte) => self.last_before(byte, bound, end + 1)?,
+                            None => end,
+                        };
+                        Some((end, bound))
+                    });
+                    match stop {
+                        Some((end, bound)) if it.greedy => {
+                            if end != bound {
+                                self.stack.push(Frame::Greedy { pc, bound, pos: end });
+                            }
+                            pos = end;
+                            true
+                        }
+                        Some((end, count)) => {
+                            if count < it.max {
                                 self.stack.push(Frame::Lazy { pc, pos: end, count });
                             }
                             pos = end;
@@ -398,7 +451,11 @@ impl<'p, 't> Machine<'p, 't> {
                         let Some(it) = program.repeats.get(repeat_index(program, at)) else {
                             return Ok(None);
                         };
-                        let Some((_, shorter)) = self.step(end, !it.back) else { continue };
+                        let shorter = match it.then {
+                            Some(byte) => self.last_before(byte, bound, end),
+                            None => self.step(end, !it.back).map(|(_, shorter)| shorter),
+                        };
+                        let Some(shorter) = shorter else { continue };
                         if shorter != bound {
                             self.stack.push(Frame::Greedy { pc: at, bound, pos: shorter });
                         }
@@ -409,15 +466,12 @@ impl<'p, 't> Machine<'p, 't> {
                         let Some(it) = program.repeats.get(repeat_index(program, at)) else {
                             return Ok(None);
                         };
-                        match self.step(end, it.back) {
-                            Some((c, longer)) if self.matches(it.what, c) => {
-                                if count + 1 < it.max {
-                                    self.stack.push(Frame::Lazy { pc: at, pos: longer, count: count + 1 });
-                                }
-                                (pc, pos) = (at + 1, longer);
-                                continue 'run;
+                        if let Some((longer, count)) = self.longer(it, end, count, true) {
+                            if count < it.max {
+                                self.stack.push(Frame::Lazy { pc: at, pos: longer, count });
                             }
-                            _ => {}
+                            (pc, pos) = (at + 1, longer);
+                            continue 'run;
                         }
                     }
                     Frame::Look { negate: false, .. } => {}
@@ -448,6 +502,9 @@ impl<'p, 't> Machine<'p, 't> {
             Prefilter::None => 0,
             Prefilter::Anchored => return (pos == 0).then_some(0),
             Prefilter::Prefix(prefix) => strings::index_of(tail, prefix)?,
+            Prefilter::Bytes(bytes) if tail.len() < 256 => {
+                tail.iter().position(|byte| bytes.contains(byte))?
+            }
             Prefilter::Bytes(bytes) => strings::index_of_any(tail, bytes)?,
             Prefilter::ByteSet(set) => tail
                 .iter()
@@ -462,6 +519,10 @@ impl<'p, 't> Machine<'p, 't> {
         if self.text.len() >= NONE as usize {
             return Err(LimitExceeded);
         }
+        // A failed attempt leaves the slots as they were.
+        self.slots.clear();
+        self.slots.resize(self.program.slot_count as usize, NONE);
+        self.stack.clear();
         let mut pos = start;
         loop {
             match self.candidate(pos) {

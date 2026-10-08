@@ -73,6 +73,9 @@ pub(super) struct Repeat {
     pub(super) max: u32,
     pub(super) greedy: bool,
     pub(super) back: bool,
+    /// The byte that what follows starts with, if that is known: there is no point in stopping
+    /// anywhere else.
+    pub(super) then: Option<u8>,
 }
 
 #[derive(Copy, Clone, Debug)]

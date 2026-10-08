@@ -1,16 +1,20 @@
-// Compares `bun-lint regex ops` with the methods of `RegExp` and `String` of the Bun that runs this script: `test`, `search`,
+// Compares `bun-lint regex ops` with the methods of `RegExp` and `String` of the Bun, or the Node.js, that runs this script: `test`, `search`,
 // `match`, `matchAll`, `replace` and `split`.
 //
-//   bun test/cli/lint/oracle/regex/ops.ts <bun-lint> <source>.. [--seed=n]
+//   bun|node test/cli/lint/oracle/regex/ops.ts <bun-lint> <source>.. [--seed=n]
 //
-// The sources are those of exec.ts.
+// The sources and `--failures` are those of exec.ts.
 
-import { type Case, casesOf, pick, setSeed } from "./cases";
-import { ask, hex } from "./common";
+import { appendFileSync, writeFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
+import { type Case, casesOf, pick, setSeed } from "./cases.ts";
+import { ask, hex } from "./common.ts";
 
 const [binary, ...rest] = process.argv.slice(2);
 const sources = rest.filter(a => !a.startsWith("--"));
 setSeed(Number(rest.find(a => a.startsWith("--seed="))?.slice(7) ?? 1));
+const failures = rest.find(a => a.startsWith("--failures="))?.slice(11);
+if (failures) writeFileSync(failures, "");
 
 const REPLACEMENTS = ["", "x", "$&", "[$1]", "$2$1", "$$", "$`|$'", "$<n0>", "$<", "$10", "$01", "$0", "$", "a$", "$<nope>!", "$9"];
 type Request = [op: string, pattern: string, flags: string, text: string, replacement: string];
@@ -44,12 +48,13 @@ function check(batch: Request[]) {
     batch.map(([op, ...strings]) => [op, ...strings.map(hex)]),
   );
   batch.forEach((it, i) => {
-    if (answers[i]?.error) return;
+    if (answers[i]?.error || answers[i] === "limit") return;
     const wanted = expected(it);
     // Half of a surrogate pair on its own cannot be told from the bytes.
     if (JSON.stringify(wanted) !== JSON.stringify(wanted, (_, v) => (typeof v === "string" ? v.toWellFormed() : v))) return;
     total++;
-    if (Bun.deepEquals(answers[i], wanted, true)) return;
+    if (isDeepStrictEqual(answers[i], wanted)) return;
+    if (failures) appendFileSync(failures, `${JSON.stringify([it[1], it[2], it[3], 0])}\n`);
     if (++failed > 40) return;
     console.log(`${it[0]} /${it[1]}/${it[2]} on ${JSON.stringify(it[3])} with ${JSON.stringify(it[4])}`);
     console.log(`  actual   ${JSON.stringify(answers[i])}`);

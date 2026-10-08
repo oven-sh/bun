@@ -126,6 +126,67 @@ pub(super) fn property(key: &[u8], value: Option<&[u8]>) -> Option<CharSet> {
     Some(if matches!(key, b"Script" | b"sc") { script(index) } else { script_extensions(index) })
 }
 
+/// What `\p{name}` matches with the `v` flag, for a property of strings: the strings of one code point
+/// as a set, and the others.
+pub(super) fn property_of_strings(name: &[u8]) -> (CharSet, Vec<Vec<u32>>) {
+    const VARIATION_SELECTOR: u32 = 0xFE0F;
+    const TONES: std::ops::RangeInclusive<u32> = 0x1F3FB..=0x1F3FF;
+    const ANY_TONE: u8 = 255;
+    let members = |toggles: &[u32]| {
+        let set = CharSet::from_toggles(toggles);
+        set.ranges().iter().flat_map(|(lo, hi)| *lo..=*hi).collect::<Vec<u32>>()
+    };
+    let wants = |part: &[u8]| name == part || name == b"RGI_Emoji";
+    let mut chars = CharSet::new();
+    let mut strings = Vec::new();
+    if wants(b"Basic_Emoji") {
+        chars = CharSet::from_toggles(tables::EMOJI_BASIC);
+        let bases = members(tables::EMOJI_BASIC_WITH_VARIATION_SELECTOR);
+        strings.extend(bases.into_iter().map(|c| vec![c, VARIATION_SELECTOR]));
+    }
+    if wants(b"Emoji_Keycap_Sequence") {
+        strings.extend(b"#*0123456789".iter().map(|c| vec![u32::from(*c), VARIATION_SELECTOR, 0x20E3]));
+    }
+    if wants(b"RGI_Emoji_Flag_Sequence") {
+        for (first, mask) in (0x1F1E6..).zip(tables::EMOJI_FLAGS) {
+            let seconds = (0..26u32).filter(|second| *mask & (1 << *second) != 0);
+            strings.extend(seconds.map(|second| vec![first, 0x1F1E6 + second]));
+        }
+    }
+    if wants(b"RGI_Emoji_Modifier_Sequence") {
+        for base in members(tables::EMOJI_MODIFIER_BASES) {
+            strings.extend(TONES.map(|tone| vec![base, tone]));
+        }
+    }
+    if wants(b"RGI_Emoji_Tag_Sequence") {
+        let mut tags = strings::split(tables::EMOJI_TAGS, b" ");
+        while let Some(tag) = tags.next() {
+            let tag = tag.iter().map(|c| 0xE0000 + u32::from(*c));
+            strings.push([0x1F3F4].into_iter().chain(tag).chain([0xE007F]).collect());
+        }
+    }
+    if wants(b"RGI_Emoji_ZWJ_Sequence") {
+        let mut rest = tables::EMOJI_ZWJ_SEQUENCES;
+        while let Some((len, tail)) = rest.split_first()
+            && let Some((sequence, tail)) = tail.split_at_checked(usize::from(*len))
+        {
+            rest = tail;
+            let mut expanded: Vec<Vec<u32>> = vec![Vec::new()];
+            for letter in sequence {
+                if *letter == ANY_TONE {
+                    expanded = (expanded.iter())
+                        .flat_map(|head| TONES.map(move |tone| [&head[..], &[tone][..]].concat()))
+                        .collect();
+                } else if let Some(c) = tables::EMOJI_ZWJ_ALPHABET.get(usize::from(*letter)) {
+                    expanded.iter_mut().for_each(|string| string.push(*c));
+                }
+            }
+            strings.append(&mut expanded);
+        }
+    }
+    (chars, strings)
+}
+
 /// A run of code points, `stride` apart, that are each `delta` away from the least of the code
 /// points that they are equal to when case is ignored.
 #[derive(Copy, Clone)]

@@ -1,11 +1,11 @@
-// For patterns that match one character, compares the set of all characters that match with that of the `RegExp` of the Bun that
+// For patterns that match one character, compares the set of all characters that match with that of the `RegExp` of the Bun, or the Node.js, that
 // runs this script: every property of `\p{..}`, the escapes, and classes, with and without the `i`, `u` and `v` flags.
 //
-//   bun test/cli/lint/oracle/regex/charset.ts <bun-lint> <regexpp checkout> [--classes=n] [--seed=n]
+//   bun|node test/cli/lint/oracle/regex/charset.ts <bun-lint> <regexpp checkout> [--classes=n] [--seed=n]
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ask, hex } from "./common";
+import { ask, hex } from "./common.ts";
 
 const [binary, regexpp] = process.argv.slice(2);
 const flag = (name: string, fallback: number) =>

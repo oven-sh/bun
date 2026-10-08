@@ -2,6 +2,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { createContext, runInContext } from "node:vm";
 
 export type Case = [pattern: string, flags: string, text: string, lastIndex: number];
 
@@ -161,13 +162,31 @@ function* fixtures(dir: string): Iterable<Case> {
   }
 }
 
+/** Reports what `RegExp.prototype.exec` is called with. Some tests go through all code points: the first calls will do. */
+const SPY = `(function () {
+  const { exec } = RegExp.prototype, { apply, get } = Reflect, { getPrototypeOf } = Object, { isInteger } = Number;
+  const prototype = RegExp.prototype, log = __log;
+  let calls = 0;
+  prototype.exec = function (text) {
+    if (++calls >= 1000) prototype.exec = exec;
+    try {
+      if (typeof text === "string" && text.length < 2000 && getPrototypeOf(this) === prototype) {
+        const flags = get(prototype, "flags", this), lastIndex = this.lastIndex;
+        if (typeof lastIndex === "number" && isInteger(lastIndex) && lastIndex >= 0) {
+          log(get(prototype, "source", this), flags, text, flags.includes("g") || flags.includes("y") ? lastIndex : 0);
+        }
+      }
+    } catch {}
+    return apply(exec, this, [text]);
+  };
+})();`;
+
 function* test262(root: string): Iterable<Case> {
   const harness = ["assert.js", "sta.js", "compareArray.js", "propertyHelper.js", "regExpUtils.js", "nativeFunctionMatcher.js", "isConstructor.js", "deepEqual.js", "wellKnownIntrinsicObjects.js"]
     .map(name => readFileSync(join(root, "harness", name), "utf8"))
     .join("\n");
   const seen = new Set<string>();
   const log: Case[] = [];
-  const exec = RegExp.prototype.exec;
   const dirs = [
     "test/built-ins/RegExp",
     "test/annexB/built-ins/RegExp",
@@ -181,24 +200,15 @@ function* test262(root: string): Iterable<Case> {
       if (file.includes("property-escapes/generated") || file.includes("_FIXTURE")) continue;
       const source = readFileSync(file, "utf8");
       if (/flags:.*\b(module|async)\b/.test(source) || /negative:/.test(source)) continue;
-      RegExp.prototype.exec = function (text: string) {
-        try {
-          if (typeof text === "string" && text.length < 2000 && Object.getPrototypeOf(this) === RegExp.prototype) {
-            const flags = Reflect.get(RegExp.prototype, "flags", this);
-            const lastIndex = this.lastIndex;
-            if (typeof lastIndex === "number" && Number.isInteger(lastIndex) && lastIndex >= 0) {
-              log.push([this.source, flags, text, /[gy]/.test(flags) ? lastIndex : 0]);
-            }
-          }
-        } catch {}
-        return exec.call(this, text);
-      };
+      // A realm of its own: tests change the built-ins.
+      const context = createContext({
+        __log: (source: string, flags: string, text: string, lastIndex: number) => log.push([source, flags, text, lastIndex]),
+      });
       try {
-        new Function(`${harness}\nvar $262 = { createRealm() { throw new Test262Error("no realms"); } };\n${source}`)();
-      } catch {
-      } finally {
-        RegExp.prototype.exec = exec;
-      }
+        runInContext(`${harness}\n${SPY}\nvar $262 = { createRealm() { throw new Test262Error("no realms"); } };\n${source}`, context, {
+          timeout: 5000,
+        });
+      } catch {}
       for (const it of log.splice(0)) {
         const key = it.join("\0");
         if (seen.has(key)) continue;
@@ -349,6 +359,8 @@ export function casesOf(source: string): Iterable<Case> | AsyncIterable<Case> {
       return fixtures(spec.join(":"));
     case "test262":
       return test262(spec.join(":"));
+    case "file":
+      return readFileSync(spec.join(":"), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
     default:
       return fuzz(Number(spec[0]));
   }

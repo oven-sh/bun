@@ -1,10 +1,11 @@
 // Generates unicode_tables.rs.
 //
-//   bun src/lint/regex/generate_unicode_tables.ts <regexpp>/src/unicode/properties.ts
+//   bun src/lint/regex/generate_unicode_tables.ts <regexpp>/src/unicode/properties.ts <ucd>/emoji-zwj-sequences.txt
 //
 // The names of the properties, and the ECMAScript version that added each, come from regexpp. The
 // data comes from the `RegExp` of the Bun that runs this script, so the tables have the version of
-// Unicode that it has.
+// Unicode that it has. It cannot list the sequences of emoji joined by U+200D: those of the file are
+// kept if `RegExp` knows them. WebKit has the file in Source/JavaScriptCore/ucd.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -440,10 +441,101 @@ emit(
 
 // == properties of strings ==
 
-emitNames(
-  "The binary properties of strings, sorted.",
-  "STRING_PROPERTY_NAMES",
-  named("binPropertyOfStringsSets").map(n => n.name),
-);
+{
+  const names = named("binPropertyOfStringsSets").map(n => n.name);
+  emitNames("The binary properties of strings, sorted.", "STRING_PROPERTY_NAMES", names);
+  const has = (name: string) => {
+    const re = new RegExp(`^\\p{${name}}$`, "v");
+    return (...cps: number[]) => re.test(String.fromCodePoint(...cps));
+  };
+  const parts = names.filter(name => name !== "RGI_Emoji").map(has);
+  const rgi = has("RGI_Emoji");
+  /** RGI_Emoji is the union of the others. */
+  const checked = (test: (...cps: number[]) => boolean, ...cps: number[]) => {
+    if (rgi(...cps) !== parts.some(part => part(...cps))) throw new Error(`RGI_Emoji: ${cps}`);
+    return test(...cps);
+  };
+  const emoji: number[] = [];
+  for (const [lo, hi] of property("Emoji")!) for (let cp = lo; cp <= hi; cp++) emoji.push(cp);
+  const where = (test: (cp: number) => boolean) => toggles(normalize(emoji.filter(test).map(cp => [cp, cp])));
+  const TONES = [0x1f3fb, 0x1f3fc, 0x1f3fd, 0x1f3fe, 0x1f3ff];
 
-writeFileSync(join(import.meta.dir, "unicode_tables.rs"), out.join("\n"));
+  const basic = has("Basic_Emoji");
+  emit("The code points that are a Basic_Emoji: a list as in `BINARY_TOGGLES`.", "EMOJI_BASIC", "u32", where(cp => checked(basic, cp)));
+  emit(
+    "The code points that are a Basic_Emoji when U+FE0F follows.",
+    "EMOJI_BASIC_WITH_VARIATION_SELECTOR",
+    "u32",
+    where(cp => checked(basic, cp, 0xfe0f)),
+  );
+
+  const keycap = has("Emoji_Keycap_Sequence");
+  const keys = emoji.filter(cp => checked(keycap, cp, 0xfe0f, 0x20e3));
+  if (String.fromCodePoint(...keys) !== "#*0123456789") throw new Error("Emoji_Keycap_Sequence");
+
+  const modified = has("RGI_Emoji_Modifier_Sequence");
+  emit(
+    "The code points that are an RGI_Emoji_Modifier_Sequence when one of U+1F3FB to U+1F3FF follows.",
+    "EMOJI_MODIFIER_BASES",
+    "u32",
+    where(cp => {
+      const count = TONES.filter(tone => checked(modified, cp, tone)).length;
+      if (count % 5) throw new Error(`RGI_Emoji_Modifier_Sequence: ${cp}`);
+      return count > 0;
+    }),
+  );
+
+  const flagged = has("RGI_Emoji_Flag_Sequence");
+  const letters = Array.from({ length: 26 }, (_, i) => 0x1f1e6 + i);
+  emit(
+    "Bit `j` of entry `i` is set if the regional indicators `i` and `j` are an RGI_Emoji_Flag_Sequence.",
+    "EMOJI_FLAGS",
+    "u32",
+    letters.map(a => `0x${letters.reduce((mask, b, j) => (checked(flagged, a, b) ? mask | (1 << j) : mask), 0).toString(16)}`),
+  );
+
+  const tagged = has("RGI_Emoji_Tag_Sequence");
+  const tags = ["gbeng", "gbsct", "gbwls"];
+  for (const tag of tags) {
+    if (!checked(tagged, 0x1f3f4, ...[...tag].map(c => 0xe0000 + c.charCodeAt(0)), 0xe007f)) throw new Error(tag);
+  }
+  emitNames(
+    "An RGI_Emoji_Tag_Sequence is U+1F3F4, the tag characters for one of these, and U+E007F.",
+    "EMOJI_TAGS",
+    tags,
+  );
+
+  const joined = has("RGI_Emoji_ZWJ_Sequence");
+  const ANY_TONE = 255;
+  const groups = new Map<string, number[][]>();
+  for (const line of readFileSync(process.argv[3], "utf8").split("\n")) {
+    const field = line.split(/[;#]/)[0].trim();
+    if (!field) continue;
+    const cps = field.split(/\s+/).map(hex => parseInt(hex, 16));
+    if (!checked(joined, ...cps)) continue;
+    const shape = cps.map(cp => (TONES.includes(cp) ? "*" : cp)).join(" ");
+    if (!groups.has(shape)) groups.set(shape, []);
+    groups.get(shape)!.push(cps);
+  }
+  const alphabet: number[] = [];
+  const letter = (cp: number) => {
+    if (!alphabet.includes(cp)) alphabet.push(cp);
+    return alphabet.indexOf(cp);
+  };
+  const data: number[] = [];
+  for (const [shape, all] of groups) {
+    const tones = shape.split(" ").filter(part => part === "*").length;
+    const sequences = all.length === 5 ** tones ? [shape.split(" ").map(part => (part === "*" ? -1 : Number(part)))] : all;
+    for (const cps of sequences) data.push(cps.length, ...cps.map(cp => (cp < 0 ? ANY_TONE : letter(cp))));
+  }
+  if (alphabet.length >= ANY_TONE) throw new Error("too many code points in RGI_Emoji_ZWJ_Sequence");
+  emit("The code points of `EMOJI_ZWJ_SEQUENCES`.", "EMOJI_ZWJ_ALPHABET", "u32", alphabet);
+  emit(
+    "RGI_Emoji_ZWJ_Sequence. Each is its length, and then for each code point its index in `EMOJI_ZWJ_ALPHABET`, or\n255 for any of U+1F3FB to U+1F3FF.",
+    "EMOJI_ZWJ_SEQUENCES",
+    "u8",
+    data,
+  );
+}
+
+writeFileSync(process.argv[4] ?? join(import.meta.dir, "unicode_tables.rs"), out.join("\n"));

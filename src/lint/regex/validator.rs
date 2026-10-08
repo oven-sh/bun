@@ -151,7 +151,7 @@ pub fn validate_literal(
     handler: &mut dyn Handler,
 ) -> Result<(), SyntaxError> {
     let mut validator = Validator::new(source, SourceKind::Literal, options, handler);
-    let result = validator.validate_literal();
+    let result = validator.check_size().and_then(|()| validator.validate_literal());
     validator.finish(result)
 }
 
@@ -163,7 +163,7 @@ pub fn validate_pattern(
     handler: &mut dyn Handler,
 ) -> Result<(), SyntaxError> {
     let mut validator = Validator::new(source, SourceKind::Pattern, options, handler);
-    let result = validator.validate_pattern(0, source.len(), mode);
+    let result = validator.check_size().and_then(|()| validator.validate_pattern(0, source.len(), mode));
     validator.finish(result)
 }
 
@@ -174,7 +174,7 @@ pub fn validate_flags(
     handler: &mut dyn Handler,
 ) -> Result<(), SyntaxError> {
     let mut validator = Validator::new(source, SourceKind::Flags, options, handler);
-    let result = validator.validate_flags(0, source.len());
+    let result = validator.check_size().and_then(|()| validator.validate_flags(0, source.len()));
     validator.finish(result)
 }
 
@@ -405,6 +405,15 @@ impl<'s, 'h> Validator<'s, 'h> {
             group_names: Vec::new(),
             backreference_names: Vec::new(),
         }
+    }
+
+    /// Offsets are `u32`.
+    fn check_size(&mut self) -> Consumed<()> {
+        if self.source.len() >= u32::MAX as usize / 2 {
+            self.source = &[];
+            return self.raise("Regular expression too large");
+        }
+        Ok(())
     }
 
     fn finish(self, result: Consumed<()>) -> Result<(), SyntaxError> {

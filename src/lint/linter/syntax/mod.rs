@@ -130,9 +130,8 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
 }
 
 /// Prettier's `isFlowFile`: it has `babel-flow` parse the file in place of `babel`. There is `@flow` or `@noflow` in a comment
-/// before the code.
-fn goes_to_flow(file: &File) -> bool {
-    let text = file.text();
+/// before the code, or the name of the file ends with `.js.flow`.
+pub fn goes_to_flow(text: &[u8], path: &[u8]) -> bool {
     let after_shebang = match text.starts_with(b"#!") {
         true => bun_core::strings::index_of_any(text, b"\n\r").unwrap_or(text.len()),
         false => 0,
@@ -154,7 +153,7 @@ fn goes_to_flow(file: &File) -> bool {
             return true;
         }
     }
-    file.path().ends_with(b".js.flow")
+    path.ends_with(b".js.flow")
 }
 
 /// Whether Prettier refuses to format the file, which was parsed in the dialect of Babel
@@ -228,7 +227,7 @@ pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> 
         return typescript_estree::first_error(file, true).map(of_check);
     }
     let of_babel = || espree::refusal_of_babel(file).map(of_check);
-    if goes_to_flow(file) {
+    if goes_to_flow(file.text(), file.path()) {
         return of_babel();
     }
     // Refused even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides of

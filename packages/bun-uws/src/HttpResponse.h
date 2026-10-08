@@ -229,12 +229,14 @@ public:
      * after: the connection close gate does not apply (Connection: close,
      * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
      * WebSocket that takes over the socket), and the cork stays so the
-     * handshake batches with the first frames written from open(). */
+     * handshake batches with the first frames written from open(). A
+     * setTimeout() override is dropped for that reason too: its hand-back
+     * in markDone() sends the cork, and the WebSocket arms its own timeout. */
     void endUpgradeHandshake() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         writeMark();
         Super::write("\r\n", 2);
-        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        httpResponseData->state = (httpResponseData->state | HttpResponseData<SSL>::HTTP_END_CALLED) & ~HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
         httpResponseData->markDone(this);
     }
 

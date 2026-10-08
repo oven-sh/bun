@@ -165,6 +165,62 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     expect(proc.exitCode).toBe(0);
   });
 
+  test("server.timeout(req, N) before server.upgrade(req) leaves the 101 and the first frame in one send", async () => {
+    const { proc, port } = await spawnServer(/* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
+        websocket: {
+          open(ws) {
+            ws.send("first-frame");
+            // Two loop turns later every send of this turn was tried. Then the connection goes.
+            setImmediate(() => setImmediate(() => ws.terminate()));
+          },
+          message() {},
+        },
+        fetch(req, server) {
+          server.timeout(req, 60);
+          // Only the first send from here on moves bytes: a first frame that is not in it never leaves.
+          fault.set({ syscall: "send", action: "zero", after: 1, repeat: -1 });
+          if (server.upgrade(req)) return;
+          return new Response("no upgrade", { status: 400 });
+        } });
+      console.log(s.port);
+      process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+    `);
+    try {
+      // An unmasked text frame of 11 bytes.
+      const frame = "\x81\x0bfirst-frame";
+      // The wire up to the frame, or up to the close if the frame did not come.
+      const wire = Promise.withResolvers<string>();
+      const socket = net.connect(port, "127.0.0.1");
+      let received = "";
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        received += chunk.toString("latin1");
+        if (received.endsWith(frame)) wire.resolve(received);
+      });
+      socket.on("close", () => wire.resolve(received));
+      socket.write(
+        "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+      try {
+        const got = await wire.promise;
+        expect({ switched: got.startsWith("HTTP/1.1 101 "), firstFrame: got.endsWith(frame) }).toEqual({
+          switched: true,
+          firstFrame: true,
+        });
+      } finally {
+        socket.destroy();
+      }
+    } finally {
+      proc.kill("SIGTERM");
+      await proc.exited;
+    }
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
+  });
+
   test("client abort under server-side 1-byte sends: every response reaches a terminal state", async () => {
     const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");

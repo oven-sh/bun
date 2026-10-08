@@ -1,6 +1,7 @@
 use crate::js::format::identifier;
 use crate::js::utils::call_expression::strip_chain_element_wrappers;
 use crate::js::utils::member_chain::chain_member::FormatComputedMemberExpressionWithoutObject;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -101,7 +102,7 @@ fn should_inline<'a>(e: Expr<'a>, object: Expr<'a>, object_start: usize, f: &For
         outer = outer.parent();
     }
     let is_in_member = is_member_or_wrapper(outer);
-    if !is_in_member && !is_private && object.tag() == ExprTag::Ident {
+    if !is_in_member && !is_private && object.tag() == ExprTag::Ident && !is_cast_target(object, f) {
         return true;
     }
     let mut steps = 0;
@@ -174,6 +175,8 @@ fn should_inline_in<'a>(
     if is_member(first_non_wrapper_parent) {
         // `a.b` of `a.b.c`
     } else if matches!(first_non_wrapper_parent, AstNodes::AssignmentExpression(_) | AstNodes::VariableDeclarator(_))
+        // The parentheses of a type cast are a node for Prettier, which is neither.
+        && !is_cast_target(object, f)
         && (matches!(strip_chain_element_wrappers(object).kind(), ExprKind::Call(call) if !call.args().is_empty())
             || (is_member_chain_or_member_of_one(object)
                 && f.elements_from(object_start).has_label(LabelId::of(JsLabels::MemberChain))))

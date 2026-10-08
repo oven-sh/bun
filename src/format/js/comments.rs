@@ -704,6 +704,9 @@ impl<'a> Comments<'a> {
     /// their line. None if one before them does not.
     pub(crate) fn comments_leading_property(&self, key_end: u32, value_start: u32) -> &'a [Comment] {
         let comments = self.comments_in_range(key_end, value_start);
+        // One that starts its line leads the value.
+        let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
+        let comments = &comments[..count];
         let count = comments.iter().rposition(|comment| comment.followed_by_newline()).map_or(0, |last| last + 1);
         let comments = &comments[..count];
         let ends_line = |(index, comment): (usize, &Comment)| {

@@ -284,7 +284,7 @@ function languageOptionsIn(comment: string | undefined): Record<string, unknown>
   return undefined;
 }
 
-function casesOfFile(
+export function casesOfFile(
   source: string,
   label: string,
   environments: Record<string, Record<string, unknown>>,

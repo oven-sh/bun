@@ -379,7 +379,7 @@ fn write_ternary_with_last_group<'a>(
     // What lines the alternate up with the consequent, which is indented.
     let fill_tab = format_with(|f| match use_tabs {
         true => write!(f, text(b"\t")),
-        false => write!(f, text(SPACES.get(..usize::from(indent_width) - 1).unwrap_or_default())),
+        false => write!(f, text(SPACES.get(..usize::from(indent_width).saturating_sub(1)).unwrap_or_default())),
     });
 
     let format_parts = format_with(|f| {

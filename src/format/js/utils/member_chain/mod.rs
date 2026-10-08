@@ -324,9 +324,11 @@ fn is_factory(name: &[u8]) -> bool {
     }
 }
 
-/// Whether the call `expression` is a chain with more than one group after the head.
+/// Whether the call `expression` is written as a member chain that can break before each group: it
+/// has more than one group after the head, or a comment between its links.
 pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
-    MemberChain::from_call_expression(expression, f).tail.is_member_call_chain()
+    let chain = MemberChain::from_call_expression(expression, f);
+    chain.tail.is_member_call_chain() || chain.has_comment(f)
 }
 
 /// The links of the chain that ends with the call `root`, from the last to the first. The chain

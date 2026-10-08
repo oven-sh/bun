@@ -346,10 +346,8 @@ fn dialect_of(options: &FormatOptions, code: &[u8], name: &[u8], is_script: bool
         Some(_) => false,
     };
     match is_flow {
-        true => Dialect {
-            babel: bun_format::flow::goes_to_babel(options, name),
-            ..Dialect::flow(is_script)
-        },
+        true if bun_format::flow::goes_to_babel(options, name) => Dialect::flow(is_script),
+        true => Dialect::flow_parser(is_script),
         false => Dialect::babel(is_script),
     }
 }

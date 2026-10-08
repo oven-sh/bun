@@ -73,41 +73,49 @@ struct How<'h> {
     memory: &'h Session,
 }
 
+impl How<'_> {
+    /// What the file is parsed as.
+    fn language_and_dialect(&self) -> (LanguageOptions, Dialect) {
+        let path = self.path;
+        let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
+            .iter()
+            .any(|it| path.ends_with(it));
+        let language = LanguageOptions {
+            parser: if is_typescript {
+                Parser::TypeScript
+            } else {
+                Parser::Espree
+            },
+            source_type: if self.is_script {
+                SourceType::Script
+            } else {
+                SourceType::Module
+            },
+            ..LanguageOptions::default()
+        };
+        let dialect = match self.is_flow {
+            true if bun_format::flow::goes_to_babel(&self.resolved.options, path) => {
+                Dialect::flow(self.is_script)
+            }
+            true => Dialect::flow_parser(self.is_script),
+            false => Dialect::babel(self.is_script),
+        };
+        (language, dialect)
+    }
+}
+
 /// Parses `text` and calls `then` with the tree, and with what the names in it are of.
 fn with_tree<'h, R>(
     how: &How<'h>,
     text: &[u8],
     then: impl FnOnce(Summary<'_, 'h>, &dyn Intern, &LanguageOptions) -> R,
 ) -> R {
-    let path = how.path;
-    let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
-        .iter()
-        .any(|it| path.ends_with(it));
-    let language = LanguageOptions {
-        parser: if is_typescript {
-            Parser::TypeScript
-        } else {
-            Parser::Espree
-        },
-        source_type: if how.is_script {
-            SourceType::Script
-        } else {
-            SourceType::Module
-        },
-        ..LanguageOptions::default()
-    };
-    let session = how.memory;
-    let arena = session.arena();
+    let (language, dialect) = how.language_and_dialect();
+    let (path, session) = (how.path, how.memory);
     let options = language.parse_options(path);
     bun_js_parser::sema::with_summary_in_place(
-        match how.is_flow {
-            true => Dialect {
-                babel: bun_format::flow::goes_to_babel(&how.resolved.options, path),
-                ..Dialect::flow(how.is_script)
-            },
-            false => Dialect::babel(how.is_script),
-        },
-        (arena, session),
+        dialect,
+        (session.arena(), session),
         path,
         options.script_kind,
         text,

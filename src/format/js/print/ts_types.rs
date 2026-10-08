@@ -329,6 +329,11 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
             {
                 span = f.comments().without_semicolon(span);
             }
+            // The separator of Flow's is behind the comments that trail the member.
+            if f.file().is_flow() {
+                write!(f, signature);
+                return self.write_separator(f);
+            }
         }
 
         // The separator is not part of the member. The comments after the member are behind it.

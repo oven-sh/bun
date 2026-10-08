@@ -353,7 +353,8 @@ pub(crate) fn predicate_prefix(ty: TypeNode<'_>) -> &'static str {
     }
 }
 
-/// `: T %checks(e)` as a return type. Returns whether the type query `ty` is that.
+/// `: T %checks(e)` as a return type. Returns whether the type query `ty` is that. Of a function
+/// that is only declared, the `T` is written: the rest is not part of the signature.
 pub(crate) fn write_declared_predicate<'a>(
     ty: TypeNode<'a>,
     expr: Expr<'a>,
@@ -363,16 +364,14 @@ pub(crate) fn write_declared_predicate<'a>(
     if ty.first_token() == b"typeof" {
         return false;
     }
-    write!(
-        f,
-        [
-            args.first(),
-            args.first().map(|_| space()),
-            "%checks(",
-            expr,
-            ")"
-        ]
+    write!(f, args.first());
+    let is_of_declared_function = matches!(
+        ty.parent(),
+        Node::Func(func) if !func.has_body() && matches!(func.owner(), Node::Stmt(_))
     );
+    if !is_of_declared_function {
+        write!(f, [args.first().map(|_| space()), "%checks(", expr, ")"]);
+    }
     true
 }
 
@@ -480,8 +479,15 @@ pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>)
     }
     if is_unnamed {
         write!(f, [param.is_rest().then_some("..."), param.ty()]);
+        return true;
     }
-    is_unnamed
+    // `...a?: T`
+    if param.is_rest() && param.is_optional() {
+        let ty = param.ty().map(FormatTypeAnnotation);
+        write!(f, ["...", param.pat(), "?", ty]);
+        return true;
+    }
+    false
 }
 
 /// Prettier's `isFlowShorthandWithOneArg`: `A => B`, where it is written without a place to break
@@ -715,7 +721,12 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
             }
             match (member.flow_internal_slot(), member.key()) {
                 (Some(slot), _) => write!(f, ["[[", identifier(slot, node), "]]"]),
-                (None, Some(key)) => format_computed_or_property_key(key, node, f),
+                (None, Some(key)) => match key.kind() {
+                    KeyKind::Ident(name) if name.bytes().starts_with(b"@@") => {
+                        write!(f, text(name.bytes()));
+                    }
+                    _ => format_computed_or_property_key(key, node, f),
+                },
                 (None, None) => {}
             }
             write!(f, [optional, ": ", member.ty()]);
@@ -1010,6 +1021,19 @@ pub(crate) fn write_component_or_keyword<'a>(
             ]
         );
         write_ts_call_signature_declaration(func, f);
+        if let Some(ty) = func.return_type()
+            && let TypeKind::Typeof { expr, .. } = ty.kind()
+            && ty.first_token() != b"typeof"
+        {
+            write!(f, [" %checks(", expr, ")"]);
+        }
+        // Those before the `;` trail the return type.
+        if !f.is_quiet()
+            && let Some(semicolon) = statement.semicolon()
+        {
+            let comments = f.comments().comments_before(semicolon.start);
+            write!(f, FormatTrailingComments::Comments(comments));
+        }
         write!(f, OptionalSemicolon);
         return None;
     }

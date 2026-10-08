@@ -1288,7 +1288,6 @@ impl Parser<'_> {
                 | b"true"
                 | b"typeof"
                 | b"void"
-                | b"_"
         ) {
             self.fail();
         }

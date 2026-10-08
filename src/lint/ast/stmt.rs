@@ -460,7 +460,9 @@ impl<'a> Stmt<'a> {
                         past(after, b",").unwrap_or(after)
                     }
                     None => {
-                        let after = past(self.span().start, b"export")?;
+                        // Flow's `declare export {}`
+                        let start = self.span().start;
+                        let after = past(past(start, b"declare").unwrap_or(start), b"export")?;
                         past(past(after, b"type").unwrap_or(after), b"{")?
                     }
                 };

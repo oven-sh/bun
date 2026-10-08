@@ -585,6 +585,13 @@ pub(crate) fn write_ts_module_declaration<'a>(
         |f| {
             write!(f, "{");
             match is_empty_block(innermost.body()) {
+                // Prettier's `printBlock` does not know Flow's `declare namespace`.
+                true if f.file().is_flow()
+                    && !module.uses_module_keyword()
+                    && !f.comments().has_comment_in_span(span) =>
+                {
+                    write!(f, hard_line_break());
+                }
                 true => write!(f, format_dangling_comments(span).with_block_indent()),
                 false => write!(f, block_indent(&FormatStatements(innermost.body()))),
             }

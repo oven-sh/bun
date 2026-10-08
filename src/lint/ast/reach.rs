@@ -95,7 +95,7 @@ impl File<'_> {
             && (!MAY_BE_SYNTHETIC || self.jsdoc_cast_operand(id).is_none())
             && (attributes.is_empty()
                 || !matches!(raw.kind, hir::ExprKind::Object(_))
-                || !attributes.iter().any(|it| it.1 == id));
+                || !self.is_import_attributes(id));
         is_node.then(|| self.expr_tag(id, raw))
     }
 
@@ -154,10 +154,16 @@ impl File<'_> {
     /// Whether `prop` is a `key: "value"` of `with { .. }`, which is not a property of an object.
     #[inline]
     pub(crate) fn is_import_attribute(&self, prop: hir::PropId) -> bool {
-        let attributes = self.hir.import_attributes;
-        !attributes.is_empty()
-            && (self.bound.prop_owner.get(prop.idx()))
-                .is_some_and(|owner| attributes.iter().any(|it| it.1 == *owner))
+        !self.hir.import_attributes.is_empty()
+            && (self.bound.prop_owner.get(prop.idx())).is_some_and(|&owner| self.is_import_attributes(owner))
+    }
+
+    /// Whether `object` is the `{ .. }` of import attributes, which is not a node. They are in the order of the source, by
+    /// their keyword, which the `{ .. }` follows.
+    pub(crate) fn is_import_attributes(&self, object: hir::ExprId) -> bool {
+        let (all, start) = (self.hir.import_attributes, self.hir.exprs.get(object.idx()).map_or(0, |it| it.pos));
+        let after = all.partition_point(|it| it.0 < start);
+        after.checked_sub(1).and_then(|it| all.get(it)).is_some_and(|it| it.1 == object)
     }
 }
 

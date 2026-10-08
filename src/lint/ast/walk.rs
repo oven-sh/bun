@@ -12,17 +12,23 @@ impl<'a> Node<'a> {
     /// empty `{}` of JSX, and the statements that are [wrappers](super::Stmt::is_wrapper): what they
     /// wrap takes their place. Of `with { key: "value" }` only the values are nodes.
     pub fn for_each_child(self, mut visit: impl FnMut(Node<'a>)) {
-        self.children_into(&mut visit);
+        self.children_into(None, &mut visit);
+    }
+
+    /// Calls `visit` with the children that `offset` can be in, in source order: of a long list, only with the last element
+    /// that starts at or before `offset`. So it takes the logarithm of the number of children.
+    pub fn for_each_child_near(self, offset: u32, mut visit: impl FnMut(Node<'a>)) {
+        self.children_into(Some(offset), &mut visit);
     }
 
     /// The children, in source order.
     pub fn children(self) -> Vec<Node<'a>> {
         let mut children = Vec::new();
-        self.children_into(&mut |child| children.push(child));
+        self.children_into(None, &mut |child| children.push(child));
         children
     }
 
-    fn children_into(self, visit: &mut dyn FnMut(Node<'a>)) {
+    fn children_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
         macro_rules! one {
             ($it:expr) => {
                 visit($it.into())
@@ -38,6 +44,13 @@ impl<'a> Node<'a> {
         macro_rules! all {
             ($list:expr) => {
                 for it in $list {
+                    visit(it.into());
+                }
+            };
+        }
+        macro_rules! list {
+            ($list:expr) => {
+                for it in $list.near(near) {
                     visit(it.into());
                 }
             };
@@ -62,7 +75,7 @@ impl<'a> Node<'a> {
             }
         }
         match self {
-            Node::File(file) => all!(file.body()),
+            Node::File(file) => list!(file.body()),
             Node::Expr(e) => match e.kind() {
                 ExprKind::Missing
                 | ExprKind::Ident(_)
@@ -78,14 +91,14 @@ impl<'a> Node<'a> {
                 | ExprKind::Regex(_)
                 | ExprKind::ImportMeta
                 | ExprKind::NewTarget => {}
-                ExprKind::Template(template) => all!(template.exprs()),
+                ExprKind::Template(template) => list!(template.exprs()),
                 ExprKind::TaggedTemplate(call) => {
                     one!(call.callee());
-                    all!(call.type_args());
+                    list!(call.type_args());
                     opt!(call.template());
                 }
-                ExprKind::Array(elements) => all!(elements.iter().filter(|e| !e.is_missing())),
-                ExprKind::Object(props) => all!(props),
+                ExprKind::Array(elements) => all!(elements.near(near).filter(|e| !e.is_missing())),
+                ExprKind::Object(props) => list!(props),
                 ExprKind::Fn(func) => one!(func),
                 ExprKind::Class(class) => one!(class),
                 ExprKind::Dot { obj, .. } => one!(obj),
@@ -95,8 +108,8 @@ impl<'a> Node<'a> {
                 }
                 ExprKind::Call(call) | ExprKind::New(call) => {
                     one!(call.callee());
-                    all!(call.type_args());
-                    all!(call.args());
+                    list!(call.type_args());
+                    list!(call.args());
                 }
                 ExprKind::Unary { operand, .. }
                 | ExprKind::Spread(operand)
@@ -127,16 +140,16 @@ impl<'a> Node<'a> {
                 }
                 ExprKind::Instantiation { expr, type_args } => {
                     one!(expr);
-                    all!(type_args);
+                    list!(type_args);
                 }
                 ExprKind::Jsx(jsx) => {
                     opt!(jsx.tag());
-                    all!(jsx.type_args());
-                    all!(jsx.attrs());
-                    all!(jsx.children().iter().filter(|e| !e.is_missing()));
+                    list!(jsx.type_args());
+                    list!(jsx.attrs());
+                    all!(jsx.children().near(near).filter(|e| !e.is_missing()));
                     opt!(jsx.close_tag());
                 }
-                ExprKind::ImportCall { args } => all!(args.iter().filter(|e| !e.is_missing())),
+                ExprKind::ImportCall { args } => all!(args.near(near).filter(|e| !e.is_missing())),
             },
             Node::Stmt(s) => match s.kind() {
                 StmtKind::Empty
@@ -151,20 +164,20 @@ impl<'a> Node<'a> {
                 | StmtKind::ExportDefault(e)
                 | StmtKind::ExportAssign(e) => one!(e),
                 StmtKind::Return(e) => opt!(e),
-                StmtKind::Var(declarations) => all!(declarations),
+                StmtKind::Var(declarations) => list!(declarations),
                 StmtKind::Fn(func) => one!(func),
                 StmtKind::Class(class) => one!(class),
                 StmtKind::Interface(interface) => {
-                    all!(interface.type_params());
-                    all!(interface.extends());
-                    all!(interface.members());
+                    list!(interface.type_params());
+                    list!(interface.extends());
+                    list!(interface.members());
                 }
                 StmtKind::TypeAlias(alias) => {
-                    all!(alias.type_params());
+                    list!(alias.type_params());
                     one!(alias.ty());
                 }
-                StmtKind::Enum(it) => all!(it.members()),
-                StmtKind::Module(module) => all!(module.innermost().body()),
+                StmtKind::Enum(it) => list!(it.members()),
+                StmtKind::Module(module) => list!(module.innermost().body()),
                 StmtKind::If { test, yes, no } => {
                     one!(test);
                     one!(yes);
@@ -194,14 +207,14 @@ impl<'a> Node<'a> {
                     one!(body);
                     one!(test);
                 }
-                StmtKind::Block(statements) => all!(statements),
+                StmtKind::Block(statements) => list!(statements),
                 StmtKind::With { object, body } => {
                     one!(object);
                     one!(body);
                 }
                 StmtKind::Switch { expr, cases } => {
                     one!(expr);
-                    all!(cases);
+                    list!(cases);
                 }
                 StmtKind::Try {
                     block,
@@ -216,22 +229,22 @@ impl<'a> Node<'a> {
                 }
                 StmtKind::Labeled { body, .. } => one!(body),
                 StmtKind::Import(import) => {
-                    all!(import.named());
+                    list!(import.named());
                     all!(attribute_values(import.attributes()));
                 }
                 StmtKind::ExportNamed(export) => {
-                    all!(export.items());
+                    list!(export.items());
                     all!(attribute_values(export.attributes()));
                 }
             },
             Node::Func(func) => {
-                all!(func.type_params());
+                list!(func.type_params());
                 opt!(func.this_param());
-                all!(func.params());
+                list!(func.params());
                 opt!(func.return_type());
                 match func.body() {
                     FnBody::None => {}
-                    FnBody::Block(statements) => all!(statements),
+                    FnBody::Block(statements) => list!(statements),
                     FnBody::Expr(e) => one!(e),
                 }
             }
@@ -247,8 +260,8 @@ impl<'a> Node<'a> {
             }
             Node::Pat(pat) => match pat.kind() {
                 PatKind::Missing | PatKind::Ident(_) => {}
-                PatKind::Object(props) => all!(props),
-                PatKind::Array(elements) => all!(elements.iter().filter(|it| it.pat().is_some())),
+                PatKind::Object(props) => list!(props),
+                PatKind::Array(elements) => all!(elements.near(near).filter(|it| it.pat().is_some())),
             },
             Node::PatProp(prop) => {
                 opt!(computed(prop.key()));
@@ -261,11 +274,11 @@ impl<'a> Node<'a> {
             }
             Node::Class(class) => {
                 all!(class.decorators());
-                all!(class.type_params());
+                list!(class.type_params());
                 opt!(class.extends());
-                all!(class.extends_args());
-                all!(class.implements());
-                all!(class.members());
+                list!(class.extends_args());
+                list!(class.implements());
+                list!(class.members());
             }
             Node::Member(member) => {
                 all!(member.decorators());
@@ -285,7 +298,7 @@ impl<'a> Node<'a> {
             }
             Node::Case(case) => {
                 opt!(case.test());
-                all!(case.body());
+                list!(case.body());
             }
             Node::EnumMember(member) => {
                 opt!(computed(member.key()));
@@ -303,22 +316,22 @@ impl<'a> Node<'a> {
                 | TypeKind::UniqueSymbol => {}
                 TypeKind::Heritage { expr, args } | TypeKind::Typeof { expr, args } => {
                     one!(expr);
-                    all!(args);
+                    list!(args);
                 }
-                TypeKind::Ref { args, .. } => all!(args),
+                TypeKind::Ref { args, .. } => list!(args),
                 TypeKind::Import { args, .. } => {
                     all!(attribute_values(ty.import_attributes()));
-                    all!(args);
+                    list!(args);
                 }
                 TypeKind::Template(types) | TypeKind::Union(types) | TypeKind::Intersection(types) => {
-                    all!(types)
+                    list!(types)
                 }
                 TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) => {
                     one!(operand)
                 }
-                TypeKind::Tuple(elements) => all!(elements),
+                TypeKind::Tuple(elements) => list!(elements),
                 TypeKind::Fn(func) => one!(func),
-                TypeKind::Object(members) => all!(members),
+                TypeKind::Object(members) => list!(members),
                 TypeKind::Cond {
                     check,
                     extends,
@@ -370,7 +383,7 @@ fn recurse<'a, V: Visitor<'a>>(node: Node<'a>, visitor: &mut V, stack: bun_core:
         return walk_without_recursion(node, visitor);
     }
     visitor.enter(node);
-    node.children_into(&mut |child| recurse(child, visitor, stack));
+    node.children_into(None, &mut |child| recurse(child, visitor, stack));
     visitor.exit(node);
 }
 
@@ -388,7 +401,7 @@ fn walk_without_recursion<'a>(node: Node<'a>, visitor: &mut impl Visitor<'a>) {
                 visitor.enter(node);
                 steps.push(Step::Exit(node));
                 let first = steps.len();
-                node.children_into(&mut |child| steps.push(Step::Enter(child)));
+                node.children_into(None, &mut |child| steps.push(Step::Enter(child)));
                 steps[first..].reverse();
             }
         }

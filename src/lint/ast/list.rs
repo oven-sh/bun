@@ -1,6 +1,7 @@
 //! Lists of nodes.
 
 use super::{File, Handle};
+use crate::span::Spanned;
 use bun_sema::hir;
 use std::marker::PhantomData;
 
@@ -107,6 +108,55 @@ impl<'a, T: Handle<'a>> List<'a, T> {
     #[inline]
     pub fn last(self) -> Option<T> {
         self.iter().next_back()
+    }
+}
+
+/// For a list whose elements are in the order of the source and do not overlap. Each takes the logarithm of its length.
+impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
+    /// How many elements start at or before `offset`, those that lists leave out too.
+    fn count_until(self, offset: u32) -> u32 {
+        let (mut from, mut to) = (0, self.len);
+        while from < to {
+            let middle = from + (to - from) / 2;
+            match self.at(middle).span().start <= offset {
+                true => from = middle + 1,
+                false => to = middle,
+            }
+        }
+        from
+    }
+
+    /// The whole list, or if it is long and `offset` is given, only the last element that starts at or before `offset`.
+    pub(super) fn near(self, offset: Option<u32>) -> Iter<'a, T> {
+        let mut all = self.iter();
+        if let Some(offset) = offset
+            && self.len > 8
+            && !all.hides
+        {
+            all.back = self.count_until(offset);
+            all.front = all.back.saturating_sub(1);
+        }
+        all
+    }
+
+    /// The element that `offset` is in.
+    pub fn around(self, offset: u32) -> Option<T> {
+        let it = self.at(self.count_until(offset).checked_sub(1)?);
+        (offset < it.span().end && !it.is_synthetic()).then_some(it)
+    }
+
+    /// The element before the one that starts at `start`.
+    pub fn before(self, start: u32) -> Option<T> {
+        let mut rest = self.iter();
+        rest.back = self.count_until(start).checked_sub(1)?;
+        rest.next_back()
+    }
+
+    /// The element after the one that starts at `start`.
+    pub fn after(self, start: u32) -> Option<T> {
+        let mut rest = self.iter();
+        rest.front = self.count_until(start);
+        rest.next()
     }
 }
 

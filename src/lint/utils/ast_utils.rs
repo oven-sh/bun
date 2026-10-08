@@ -20,7 +20,7 @@ use super::estree_compat::{
 };
 use super::text;
 use crate::ast::{
-    BinOp, Case, Chain, Expr, ExprKind, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind,
+    BinOp, Case, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind,
     Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp,
     VarKind,
 };
@@ -28,6 +28,8 @@ use crate::semantic::{Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
 use crate::tokens::{Token, TokenKind, skip_trivia, skip_trivia_back, token_len};
 use bun_core::strings;
+use bun_sema::hir;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -1402,12 +1404,7 @@ pub fn is_import_attribute_key(prop: Prop<'_>) -> bool {
             }
             Node::Prop(outer) if outer.value() == Some(object) => prop = outer,
             _ => {
-                return object
-                    .file()
-                    .hir
-                    .import_attributes
-                    .iter()
-                    .any(|it| it.1 == object.id());
+                return object.file().is_import_attributes(object.id());
             }
         }
     }
@@ -1417,34 +1414,128 @@ pub fn is_import_attribute_key(prop: Prop<'_>) -> bool {
 
 /// ESLint's `isLogicalIdentity`: `e` decides the result of `e operator anything`. `operator` is
 /// `BinOp::Or` or `BinOp::And`.
-pub fn is_logical_identity(e: Expr<'_>, operator: BinOp) -> bool {
-    match e.kind() {
-        ExprKind::Unary { op: UnOp::Void, .. } => operator == BinOp::And,
-        ExprKind::Binary {
-            op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
-            left,
-            right,
-        } => {
-            op == operator
-                && (is_logical_identity(left, operator) || is_logical_identity(right, operator))
+pub fn is_logical_identity(mut e: Expr<'_>, operator: BinOp) -> bool {
+    loop {
+        e = match e.kind() {
+            ExprKind::Unary { op: UnOp::Void, .. } => return operator == BinOp::And,
+            ExprKind::Binary {
+                op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
+                left,
+                right,
+            } => {
+                if op != operator || is_logical_identity(right, operator) {
+                    return op == operator;
+                }
+                left
+            }
+            ExprKind::Assign {
+                op: Some(op @ (BinOp::Or | BinOp::And)),
+                value,
+                ..
+            } if op == operator => value,
+            ExprKind::Assign {
+                op: Some(BinOp::Or | BinOp::And),
+                ..
+            } => return false,
+            _ if is_literal(e) => {
+                return match operator {
+                    BinOp::Or => get_boolean_value(e) == Some(true),
+                    BinOp::And => get_boolean_value(e) == Some(false),
+                    _ => false,
+                };
+            }
+            _ => return false,
         }
-        ExprKind::Assign {
-            op: Some(op @ (BinOp::Or | BinOp::And)),
-            value,
-            ..
-        } => op == operator && is_logical_identity(value, operator),
-        _ if is_literal(e) => match operator {
-            BinOp::Or => get_boolean_value(e) == Some(true),
-            BinOp::And => get_boolean_value(e) == Some(false),
-            _ => false,
-        },
-        _ => false,
     }
+}
+
+/// What [`is_constant_in`] has found out about the links of long chains of binary operators, for a rule that asks about each
+/// link of a chain: `a && b`, `a && b && c`, ..
+#[derive(Default)]
+pub struct Constants {
+    /// By the expression and `in_boolean_position`.
+    known: FxHashMap<(hir::ExprId, bool), Constant>,
+}
+
+#[derive(Copy, Clone)]
+struct Constant {
+    is_constant: bool,
+    /// [`is_logical_identity`] for `&&` and for `||`.
+    is_identity_of_and: bool,
+    is_identity_of_or: bool,
 }
 
 /// ESLint's `isConstant`: the value of `e`, or with `in_boolean_position` its truthiness, is the
 /// same each time it is evaluated.
 pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
+    match e.tag() {
+        ExprTag::Binary => is_constant_in(e, in_boolean_position, &mut Constants::default()),
+        _ => is_constant_unless_binary(e, in_boolean_position),
+    }
+}
+
+/// [`is_constant`]. The left operand of a binary operator is not looked at twice, however often it is asked about.
+pub fn is_constant_in(e: Expr<'_>, in_boolean_position: bool, constants: &mut Constants) -> bool {
+    /// The links of a shorter chain are not worth remembering.
+    const LONG: usize = 16;
+    // `a + b + c` is `(a + b) + c`, as deep as it is long: down the left operands, and up again.
+    let mut chain: SmallVec<[(Expr<'_>, bool); 8]> = SmallVec::new();
+    let (mut at, mut in_boolean) = (e, in_boolean_position);
+    let mut found = loop {
+        match at.kind() {
+            ExprKind::Binary { op, left, .. } if op != BinOp::Comma => {
+                if let Some(&known) = constants.known.get(&(at.id(), in_boolean)) {
+                    break known;
+                }
+                chain.push((at, in_boolean));
+                in_boolean &= matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish);
+                at = left;
+            }
+            _ => {
+                break Constant {
+                    is_constant: is_constant_unless_binary(at, in_boolean),
+                    is_identity_of_and: is_logical_identity(at, BinOp::And),
+                    is_identity_of_or: is_logical_identity(at, BinOp::Or),
+                };
+            }
+        }
+    };
+    let is_long = chain.len() >= LONG;
+    for (link, in_boolean) in chain.into_iter().rev() {
+        let ExprKind::Binary { op, right, .. } = link.kind() else {
+            continue;
+        };
+        let left = found;
+        found = match op {
+            BinOp::And | BinOp::Or | BinOp::Nullish => {
+                let is_left_identity = match op {
+                    BinOp::And => left.is_identity_of_and,
+                    BinOp::Or => left.is_identity_of_or,
+                    _ => false,
+                };
+                let is_right_constant = is_constant(right, in_boolean);
+                let is_identity_of = |operator: BinOp, is_left: bool| op == operator && (is_left || is_logical_identity(right, operator));
+                Constant {
+                    is_constant: left.is_constant && (is_right_constant || is_left_identity)
+                        || in_boolean && is_right_constant && is_logical_identity(right, op),
+                    is_identity_of_and: is_identity_of(BinOp::And, left.is_identity_of_and),
+                    is_identity_of_or: is_identity_of(BinOp::Or, left.is_identity_of_or),
+                }
+            }
+            _ => Constant {
+                is_constant: left.is_constant && op != BinOp::In && is_constant(right, false),
+                is_identity_of_and: false,
+                is_identity_of_or: false,
+            },
+        };
+        if is_long {
+            constants.known.insert((link.id(), in_boolean), found);
+        }
+    }
+    found.is_constant
+}
+
+fn is_constant_unless_binary(e: Expr<'_>, in_boolean_position: bool) -> bool {
     match e.kind() {
         // A hole in an array.
         ExprKind::Missing => true,
@@ -1475,17 +1566,8 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
             UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => false,
             _ => is_constant(operand, false),
         },
-        ExprKind::Binary { op, left, right } => match op {
-            BinOp::Comma => is_constant(right, in_boolean_position),
-            BinOp::And | BinOp::Or | BinOp::Nullish => {
-                let is_left_constant = is_constant(left, in_boolean_position);
-                let is_right_constant = is_constant(right, in_boolean_position);
-                (is_left_constant && is_right_constant)
-                    || (is_left_constant && is_logical_identity(left, op))
-                    || (in_boolean_position && is_right_constant && is_logical_identity(right, op))
-            }
-            _ => is_constant(left, false) && is_constant(right, false) && op != BinOp::In,
-        },
+        ExprKind::Binary { op: BinOp::Comma, right, .. } => is_constant(right, in_boolean_position),
+        ExprKind::Binary { .. } => is_constant(e, in_boolean_position),
         ExprKind::New(_) => in_boolean_position,
         ExprKind::Assign { op, value, .. } => match op {
             None => is_constant(value, in_boolean_position),
@@ -1507,30 +1589,35 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
 }
 
 /// ESLint's `couldBeError`: the value of `e` can be an `Error` object, as far as the syntax tells.
-pub fn could_be_error(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Assign { op: None, .. } if is_assignment_target(e) => false,
-        ExprKind::NonNull(_) => is_chain_root(e),
-        ExprKind::Ident(_)
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::Await(_) => true,
-        ExprKind::Assign { op, target, value } => match op {
-            None | Some(BinOp::And) => could_be_error(value),
-            Some(BinOp::Or | BinOp::Nullish) => could_be_error(target) || could_be_error(value),
-            Some(_) => false,
-        },
-        ExprKind::Binary { op, left, right } => match op {
-            BinOp::Comma | BinOp::And => could_be_error(right),
-            BinOp::Or | BinOp::Nullish => could_be_error(left) || could_be_error(right),
-            _ => false,
-        },
-        ExprKind::Cond { yes, no, .. } => could_be_error(yes) || could_be_error(no),
-        _ => false,
+pub fn could_be_error(mut e: Expr<'_>) -> bool {
+    loop {
+        e = match e.kind() {
+            ExprKind::Assign { op: None, .. } if is_assignment_target(e) => return false,
+            ExprKind::NonNull(_) => return is_chain_root(e),
+            ExprKind::Ident(_)
+            | ExprKind::Call(_)
+            | ExprKind::New(_)
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::Await(_) => return true,
+            ExprKind::Assign { op, target, value } => match op {
+                None | Some(BinOp::And) => value,
+                Some(BinOp::Or | BinOp::Nullish) if could_be_error(target) => return true,
+                Some(BinOp::Or | BinOp::Nullish) => value,
+                Some(_) => return false,
+            },
+            ExprKind::Binary { op, left, right } => match op {
+                BinOp::Comma | BinOp::And => right,
+                BinOp::Or | BinOp::Nullish if could_be_error(right) => return true,
+                BinOp::Or | BinOp::Nullish => left,
+                _ => return false,
+            },
+            ExprKind::Cond { yes, .. } if could_be_error(yes) => return true,
+            ExprKind::Cond { no, .. } => no,
+            _ => return false,
+        }
     }
 }
 

@@ -1,5 +1,7 @@
 use bun_lint::prelude::*;
-use bun_lint::utils::ast_utils::{is_constant, is_ecmascript_global, is_literal, is_reference_to_global_variable};
+use bun_lint::utils::ast_utils::{
+    Constants, is_constant, is_constant_in, is_ecmascript_global, is_literal, is_reference_to_global_variable,
+};
 
 /// Disallow expressions where the operation doesn't affect the value.
 pub struct NoConstantBinaryExpression {
@@ -215,7 +217,7 @@ impl NoConstantBinaryExpression {
         let operator = bin_op_text(op);
         match op {
             BinOp::And | BinOp::Or => {
-                if is_constant(left, true) {
+                if is_constant_in(left, true, &mut cx.state) {
                     cx.report(left, CONSTANT_SHORT_CIRCUIT).data("property", "truthiness").data("operator", operator);
                 }
             }
@@ -253,7 +255,7 @@ impl NoConstantBinaryExpression {
 
 impl Rule for NoConstantBinaryExpression {
     const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended();
-    type State<'a> = ();
+    type State<'a> = Constants;
 
     fn new(options: &Options) -> Self {
         NoConstantBinaryExpression {
@@ -261,7 +263,8 @@ impl Rule for NoConstantBinaryExpression {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Constants {
         on.exprs([ExprTag::Binary], Self::check);
+        Constants::default()
     }
 }

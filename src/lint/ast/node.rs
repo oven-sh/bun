@@ -413,9 +413,7 @@ impl<'a> Stmt<'a> {
             // The binder records the `switch` for what is in a clause.
             Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.kind() {
                 StmtKind::Switch { cases, .. } => {
-                    let start = self.span().start;
-                    (cases.iter().find(|case| case.span().contains_offset(start)))
-                        .map_or(Node::Stmt(parent), Node::Case)
+                    cases.around(self.span().start).map_or(Node::Stmt(parent), Node::Case)
                 }
                 _ => Node::Stmt(parent),
             },
@@ -458,6 +456,8 @@ pub(crate) struct Parents {
     type_query_operands: Box<[(hir::ExprId, hir::TypeNodeId)]>,
     /// The `this` of each `this` parameter, with the parameter. Sorted.
     this_names: Box<[(hir::PatId, hir::ParamId)]>,
+    /// For each of `Hir::import_attributes`: the import, the export or the import type.
+    import_attributes: Box<[Packed]>,
 }
 
 impl Parents {
@@ -491,21 +491,38 @@ impl Parents {
     /// The import, the export or the import type that the attribute `prop` belongs to.
     fn of_import_attribute<'a>(&self, file: &'a File<'a>, prop: hir::PropId) -> Node<'a> {
         let at = file.hir.props.get(prop.idx()).map_or(0, |it| it.pos);
-        let is_around = |start: u32, end: u32| start <= at && at < end;
-        let ty = (file.hir.types.iter()).position(|it| {
-            matches!(it.kind, hir::TypeNodeKind::Import { .. }) && is_around(it.pos, it.end)
-        });
-        if let Some(ty) = ty {
-            return Node::Type(TypeNode::new(file, hir::TypeNodeId(ty as u32)));
+        let after = file.hir.import_attributes.partition_point(|it| it.0 <= at);
+        let owner = after.checked_sub(1).and_then(|it| self.import_attributes.get(it));
+        owner.map_or(Node::File(file), |it| it.unpack(file))
+    }
+
+    /// What each of `Hir::import_attributes`, which are in the order of the source, belongs to: the first import type around
+    /// it, or else the first import or export.
+    fn owners_of_import_attributes(hir: &super::Hir) -> Box<[Packed]> {
+        let all = hir.import_attributes;
+        let mut owners = vec![Packed::FILE; all.len()].into_boxed_slice();
+        if all.is_empty() {
+            return owners;
         }
-        let statement = file.hir.stmts.iter().position(|it| {
+        let mut own = |start: u32, end: u32, owner: Packed| {
+            let first = all.partition_point(|it| it.0 < start);
+            let within = all[first..].partition_point(|it| it.0 < end);
+            for it in owners[first..first + within].iter_mut().filter(|it| matches!(it.tag, Tag::File)) {
+                *it = owner;
+            }
+        };
+        for (i, it) in hir.types.iter().enumerate() {
+            if matches!(it.kind, hir::TypeNodeKind::Import { .. }) {
+                own(it.pos, it.end, Packed { tag: Tag::Type, id: i as u32 });
+            }
+        }
+        for (i, it) in hir.stmts.iter().enumerate() {
             use hir::StmtKind::{ExportNamed, ExportStar, Import};
-            matches!(it.kind, Import(_) | ExportNamed(_) | ExportStar { .. }) && is_around(it.start, it.loc.end)
-        });
-        match statement {
-            Some(statement) => Node::Stmt(Stmt::new(file, hir::StmtId(statement as u32))),
-            None => Node::File(file),
+            if matches!(it.kind, Import(_) | ExportNamed(_) | ExportStar { .. }) {
+                own(it.start, it.loc.end, Packed { tag: Tag::Stmt, id: i as u32 });
+            }
         }
+        owners
     }
 
     fn new(file: &File) -> Parents {
@@ -679,6 +696,7 @@ impl Parents {
             tuple_elems,
             type_query_operands: type_query_operands.into_boxed_slice(),
             this_names: this_names.into_boxed_slice(),
+            import_attributes: Self::owners_of_import_attributes(hir),
         }
     }
 }

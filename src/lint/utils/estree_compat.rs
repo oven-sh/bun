@@ -793,7 +793,7 @@ pub fn get_node_by_range_index<'a>(file: &'a File<'a>, offset: u32) -> Node<'a> 
     let mut at = Node::File(file);
     loop {
         let mut inner = None;
-        at.for_each_child(|child| {
+        at.for_each_child_near(offset, |child| {
             // ESTree has these decorators outside of the range of what they are in, so that the
             // search does not get to them.
             let span = match child {

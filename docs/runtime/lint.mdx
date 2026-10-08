@@ -323,6 +323,7 @@ These differences are intentional:
 - **`--cache` and `--stats` have no effect.** Every run lints every file.
 - **`--print-config` leaves out the default options of rules.**
 - **A rule reports at most 65,536 problems in one file**, and at most 256 MB of messages and fixes. One more problem then says that the rest are not shown.
+- **`--fix` leaves a file as it is if the fixes would make it larger than 64 MB and than 64 times its size.** A warning says so.
 - **A summary line on stderr** says how many files were linted and how long it took.
 
 ## CLI usage

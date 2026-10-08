@@ -15,7 +15,9 @@
 use crate::lint::Context;
 use crate::results::FileResult;
 use crate::run::Environment;
-use bun_lint::linter::{LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, apply_fixes};
+use bun_lint::linter::{
+    LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, apply_fixes, grows_too_much, max_fixed_len,
+};
 use bun_sema::program::FileId;
 use bun_sema::util::FxHashMap;
 use bun_sema_driver::Libs;
@@ -178,6 +180,10 @@ struct Fixing {
     is_fixed: bool,
     /// Nothing more is fixed: only the messages about `current` are missing.
     is_over: bool,
+    /// How long the text was before the first pass.
+    original_len: usize,
+    /// The fixes are given up, and `current` is what it was at first: see [`max_fixed_len`].
+    has_grown_too_much: bool,
 }
 
 /// Lints `files` with types. `None` for a file that has to be linted without.
@@ -214,6 +220,11 @@ pub(crate) fn lint(
                 ),
                 (None, None) => continue,
             };
+            if state.has_grown_too_much {
+                result
+                    .messages
+                    .insert(0, grows_too_much(state.original_len));
+            }
             let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
                 let mut result = context.result(
                     crate::paths::to_native(file.path.to_vec()),
@@ -234,6 +245,9 @@ pub(crate) fn lint(
                 continue;
             };
             state.passes += 1;
+            if state.passes == 1 {
+                state.original_len = text.len();
+            }
             let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| {
                 context.should_fix(message)
             });
@@ -241,6 +255,17 @@ pub(crate) fn lint(
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));
                 finish(result, text, state.is_fixed);
+                continue;
+            }
+            if fixed.output.len() > max_fixed_len(state.original_len) {
+                *state = Fixing {
+                    current: file.text.clone(),
+                    is_over: true,
+                    original_len: state.original_len,
+                    has_grown_too_much: true,
+                    ..Fixing::default()
+                };
+                next.push(index);
                 continue;
             }
             state.is_fixed = true;

@@ -2045,7 +2045,7 @@ pub(crate) fn install_isolated_packages(
             missing: (0..store.entries.len())
                 .map(|_| std::sync::atomic::AtomicBool::new(false))
                 .collect(),
-            required_entries: None,
+            required_packages: None,
             install_node: if show_progress {
                 Some(&mut install_node)
             } else {

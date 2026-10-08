@@ -23,6 +23,7 @@ use crate::resolution;
 use crate::{
     self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
     Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
+    invalid_package_id,
 };
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -77,8 +78,8 @@ pub struct Installer<'a> {
     pub(crate) installed: Bitset,
     /// Entries left out because their download failed and only optional dependencies need them.
     pub(crate) missing: Box<[AtomicBool]>,
-    /// Main thread only. Entries that a dependency without `Behavior::OPTIONAL` resolves to.
-    pub(crate) required_entries: Option<Bitset>,
+    /// Main thread only. Packages that a dependency without `Behavior::OPTIONAL` resolves to.
+    pub(crate) required_packages: Option<Bitset>,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
 
@@ -481,24 +482,37 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread only. Whether a dependency without `Behavior::OPTIONAL` resolves to `entry_id`.
+    /// Main thread only. Whether a dependency without `Behavior::OPTIONAL` of a package in the
+    /// store resolves to the package of `entry_id`. The store's own edges do not tell: a deduped
+    /// node keeps the dependency that reached it first, which can be the optional one.
     fn entry_is_required(&mut self, entry_id: StoreEntryId) -> bool {
-        if self.required_entries.is_none() {
-            let dependencies = self.lockfile().buffers.dependencies.as_slice();
-            let mut required = bun_core::handle_oom(Bitset::init_empty(self.store.entries.len()));
-            for deps in self.store.entries.items_dependencies() {
-                for dep in deps.slice() {
-                    let behavior = dependencies[dep.dep_id as usize].behavior;
-                    if !behavior.is_optional() && !behavior.is_optional_peer() {
-                        required.set(dep.entry_id.get() as usize);
+        let lockfile = self.lockfile();
+        let node_pkg_ids = self.store.nodes.items_pkg_id();
+        let entry_node_ids = self.store.entries.items_node_id();
+        if self.required_packages.is_none() {
+            let dependencies = lockfile.buffers.dependencies.as_slice();
+            let resolutions = lockfile.buffers.resolutions.as_slice();
+            let pkg_deps = lockfile.packages.items_dependencies();
+            let mut required = bun_core::handle_oom(Bitset::init_empty(lockfile.packages.len()));
+            for &node_id in entry_node_ids {
+                let list = pkg_deps[node_pkg_ids[node_id.get() as usize] as usize];
+                for dep_id in list.off..list.off + list.len {
+                    let behavior = dependencies[dep_id as usize].behavior;
+                    let res = resolutions[dep_id as usize];
+                    if res != invalid_package_id
+                        && !behavior.is_optional()
+                        && !behavior.is_optional_peer()
+                    {
+                        required.set(res as usize);
                     }
                 }
             }
-            self.required_entries = Some(required);
+            self.required_packages = Some(required);
         }
-        self.required_entries
+        let pkg_id = node_pkg_ids[entry_node_ids[entry_id.get() as usize].get() as usize];
+        self.required_packages
             .as_ref()
-            .is_some_and(|required| required.is_set(entry_id.get() as usize))
+            .is_some_and(|required| required.is_set(pkg_id as usize))
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {

@@ -588,4 +588,80 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
       version: "1.0.0",
     });
   });
+
+  // One package is optional for one dependent and required by another. Its failed download
+  // must fail the install whichever dependent reaches it first. The hoisted linker has the
+  // same hole on main; #43197 closes it for both linkers.
+  describe.skipIf(linker === "hoisted")("a failed download that an optional and a required dependency share", () => {
+    async function project(root: object, packages: Record<string, object>) {
+      const tarballs = new Map<string, Uint8Array>();
+      for (const [name, pkg] of Object.entries(packages)) {
+        tarballs.set(
+          name,
+          await new Bun.Archive(
+            { "package/package.json": JSON.stringify({ name, version: "1.0.0", ...pkg }) },
+            { compress: "gzip" },
+          ).bytes(),
+        );
+      }
+      setHandler(async request => {
+        const { pathname } = new URL(request.url);
+        const manifest = (name: string, version: string, extra: object) =>
+          Response.json({
+            name,
+            "dist-tags": { latest: version },
+            versions: {
+              [version]: { name, version, ...extra, dist: { tarball: `${root_url}/${name}-${version}.tgz` } },
+            },
+          });
+        if (pathname === "/BaR") return manifest("BaR", "0.0.2", {});
+        const name = pathname.slice(1);
+        if (name in packages) return manifest(name, "1.0.0", packages[name]);
+        const tarball = tarballs.get(name.replace(/-1\.0\.0\.tgz$/, ""));
+        if (tarball && name.endsWith("-1.0.0.tgz")) return new Response(tarball);
+        return new Response("no", { status: 404 });
+      });
+      await writeFile(
+        join(package_dir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: `${root_url}/`, linker } }),
+      );
+      await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", ...root }));
+    }
+    async function install() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--no-progress", "--ignore-scripts"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      return {
+        failed: out.includes("Failed to install") || err.split("\n").some(l => l.startsWith("error:")),
+        exitCode,
+      };
+    }
+
+    it("optional for the root, required by a dependency", async () => {
+      await project(
+        { dependencies: { needs: "1.0.0" }, optionalDependencies: { BaR: "0.0.2" } },
+        { needs: { dependencies: { BaR: "0.0.2" } } },
+      );
+      expect(await install()).toEqual({ failed: true, exitCode: 1 });
+      await access(join(package_dir, "bun.lock"));
+      expect(await install()).toEqual({ failed: true, exitCode: 1 });
+    });
+
+    // `pkg` reaches BaR first in one order, the required dependent in the other.
+    it.each(["aneeds", "zneeds"])("optional for a dependency, required by %s", async required => {
+      await project(
+        { dependencies: { pkg: "1.0.0", [required]: "1.0.0" } },
+        { pkg: { optionalDependencies: { BaR: "0.0.2" } }, [required]: { dependencies: { BaR: "0.0.2" } } },
+      );
+      expect(await install()).toEqual({ failed: true, exitCode: 1 });
+      await access(join(package_dir, "bun.lock"));
+      expect(await install()).toEqual({ failed: true, exitCode: 1 });
+    });
+  });
 });

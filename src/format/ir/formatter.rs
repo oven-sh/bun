@@ -521,10 +521,17 @@ impl<'a> Formatter<'a> {
         super::width::string_width_as(text, self.options().flavor)
     }
 
+    /// Whether the source text of `span`, which has no line break and no tab, is as wide as it is
+    /// long and has no backslash. It can be so without this saying so.
+    #[inline]
+    pub(crate) fn is_plain_source(&self, span: Span) -> bool {
+        self.odd_blocks.is_plain(span.start, span.end)
+    }
+
     /// Writes the source text of `span`, which has no line break and no tab.
     #[inline]
     pub(crate) fn write_source_token(&mut self, span: Span) {
-        if !self.odd_blocks.is_plain(span.start, span.end) {
+        if !self.is_plain_source(span) {
             return self.write_odd_source_token(span);
         }
         self.write_element(FormatElement::SourceText(Text {

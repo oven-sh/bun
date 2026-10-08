@@ -37,14 +37,7 @@ impl NoUnassignedVars {
         let Some(symbol) = decl.pat().symbol() else {
             return;
         };
-        let mut has_read = false;
-        for reference in symbol.references() {
-            if reference.is_write() {
-                return;
-            }
-            has_read |= reference.is_read();
-        }
-        if has_read {
+        if !symbol.has_writes() && symbol.has_reads() {
             cx.report(decl, UNASSIGNED).data("name", name);
         }
     }

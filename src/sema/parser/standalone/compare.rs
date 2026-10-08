@@ -26,6 +26,7 @@ pub(crate) struct Comparison<'a, A: Storage, B: Storage> {
     calls: Vec<u32>,
     /// The first list whose nodes the two parsers number in different orders.
     pub(crate) other_order: Option<&'static str>,
+    stack_check: bun_core::StackCheck,
 }
 
 macro_rules! seen {
@@ -80,6 +81,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             props: vec![u32::MAX; a.props.len()],
             calls: vec![u32::MAX; a.calls.len()],
             other_order: None,
+            stack_check: bun_core::StackCheck::init(),
         }
     }
 
@@ -104,6 +106,9 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
     fn both(&mut self, what: &'static str, a: u32, b: u32) -> bool {
         if (a == u32::MAX) != (b == u32::MAX) {
             self.differ(what, &(a != u32::MAX), &(b != u32::MAX));
+        }
+        if !self.stack_check.is_safe_to_recurse() {
+            self.differ(what, &"too deep to compare", &"");
         }
         a != u32::MAX && b != u32::MAX && !self.is_done()
     }

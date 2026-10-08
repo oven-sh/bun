@@ -430,7 +430,8 @@ impl Parser<'_> {
         // No other modifier is before a declaration.
         if self.is_ecmascript
             && (flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC))
-                || flags.contains(Flags::ASYNC) && self.token() != T::Function)
+                || flags.contains(Flags::ASYNC) && self.token() != T::Function
+                || self.has_modifier_twice(base, flags))
         {
             self.report();
         }
@@ -448,6 +449,13 @@ impl Parser<'_> {
             self.check_js_statement(statement);
         }
         statement
+    }
+
+    /// Whether a keyword is more than once among the modifiers from `base` on, which have `flags`.
+    fn has_modifier_twice(&self, base: usize, flags: Flags) -> bool {
+        let written = self.s.modifiers.get(base..).unwrap_or_default();
+        let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
+        written.iter().filter(is_keyword).count() != flags.bits().count_ones() as usize
     }
 
     /// `parseDeclarationWorker`

@@ -8,6 +8,8 @@ use super::es_syntax_data::{
     REGEXP_Y_FLAG,
 };
 use super::semver::Range;
+use bun_lint::ast::File;
+use bun_lint::source::mention_bit;
 use bun_lint::utils::eslint_utils::TraceMap;
 
 /// A rule of eslint-plugin-es-x.
@@ -45,6 +47,9 @@ pub(crate) struct Active {
     bits: [u64; FEATURES.len().div_ceil(64)],
     /// A method, the feature that it is, and the class that has it. Those of a feature follow each other.
     pub(crate) methods: Vec<(&'static str, usize, &'static str)>,
+    /// The features that are global variables or properties of them. For each variable [`mention_bit`] of its name and of the
+    /// names of its properties.
+    globals: Vec<(usize, Vec<(u32, Vec<u32>)>)>,
 }
 
 impl Active {
@@ -53,6 +58,7 @@ impl Active {
             version,
             bits: [0; FEATURES.len().div_ceil(64)],
             methods: Vec::new(),
+            globals: Vec::new(),
         };
         for (index, feature) in FEATURES.iter().enumerate() {
             let is_ignored = feature.ignore_names.iter().any(|name| ignores.iter().any(|it| **it == *name.as_bytes()));
@@ -61,6 +67,11 @@ impl Active {
                 continue;
             }
             active.bits[index / 64] |= 1 << (index % 64);
+            if !feature.globals.members.is_empty() {
+                let bit = |name: &str| mention_bit(name.as_bytes());
+                let variables = feature.globals.members.iter().map(|it| (bit(it.0), it.1.members.iter().map(|it| bit(it.0)).collect()));
+                active.globals.push((index, variables.collect()));
+            }
             for (class, methods) in feature.prototype {
                 active.methods.extend(methods.iter().map(|method| (*method, index, *class)));
             }
@@ -73,8 +84,10 @@ impl Active {
         self.bits.get(feature / 64).is_some_and(|word| word & (1 << (feature % 64)) != 0)
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..FEATURES.len()).filter(|&it| self.has(it))
+    /// The features that are global variables or properties of them which the file mentions.
+    pub(crate) fn globals_in<'s>(&'s self, file: &'s File) -> impl Iterator<Item = usize> + 's {
+        let is_mentioned = |it: &(u32, Vec<u32>)| file.mentions_bit(it.0) && (it.1.is_empty() || it.1.iter().any(|it| file.mentions_bit(*it)));
+        self.globals.iter().filter(move |it| it.1.iter().any(is_mentioned)).map(|it| it.0)
     }
 
     /// One that is about the pattern of a regular expression.

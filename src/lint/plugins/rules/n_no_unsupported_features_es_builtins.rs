@@ -13,7 +13,9 @@ impl Rule for EsBuiltins {
         EsBuiltins(Builtins::new(options, data::ES_GLOBALS, &[], &[]))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| rule.0.check(cx));
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if self.0.has_candidates(file) {
+            on.finish(|rule, cx| rule.0.check(cx));
+        }
     }
 }

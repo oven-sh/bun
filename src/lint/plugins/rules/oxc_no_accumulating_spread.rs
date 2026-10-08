@@ -15,7 +15,11 @@ impl Rule for NoAccumulatingSpread {
         NoAccumulatingSpread
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        let loops = [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::While, StmtTag::DoWhile];
+        if !file.mentions_any(&["reduce", "reduceRight"]) && !file.has_stmts(loops) {
+            return;
+        }
         on.exprs([ExprTag::Spread], |_, spread, cx| {
             if let ExprKind::Spread(argument) = spread.kind()
                 && spread.jsx_container_span().is_none()
@@ -23,12 +27,17 @@ impl Rule for NoAccumulatingSpread {
                 check(Node::Expr(spread), argument, cx);
             }
         });
-        on.props(|_, prop, cx| {
-            if prop.kind() == PropKind::Spread
-                && !prop.is_jsx_attribute()
-                && let Some(argument) = prop.value()
-            {
-                check(Node::Prop(prop), argument, cx);
+        // Objects are far fewer than properties.
+        on.exprs([ExprTag::Object], |_, object, cx| {
+            let ExprKind::Object(properties) = object.kind() else {
+                return;
+            };
+            for prop in properties {
+                if prop.kind() == PropKind::Spread
+                    && let Some(argument) = prop.value()
+                {
+                    check(Node::Prop(prop), argument, cx);
+                }
             }
         });
     }

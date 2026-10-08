@@ -177,6 +177,15 @@ fn analyze_property_chain(node: Expr, mut optional_chains: Option<&mut OptionalC
 }
 
 /// The name of the hook that `callee` is, and whether it is written `React.name`.
+/// It is a name, or a member of a name: what nearly every other call is told from by two loads.
+fn may_be_hook(callee: Expr) -> bool {
+    match callee.tag() {
+        ExprTag::Ident => true,
+        ExprTag::Dot => matches!(callee.kind(), ExprKind::Dot { obj, .. } if obj.tag() == ExprTag::Ident),
+        _ => false,
+    }
+}
+
 fn hook_name(callee: Expr) -> Option<(Name, bool)> {
     match callee.kind() {
         ExprKind::Ident(name) => Some((name, false)),
@@ -373,11 +382,16 @@ impl Rule for ExhaustiveDeps {
             return State::default();
         }
         if follows_oxlint {
-            on.exprs([ExprTag::Call], |rule, e, cx| oxlint::exhaustive_deps::run(cx, e, rule.additional_hooks.as_ref()));
+            on.exprs([ExprTag::Call], |rule, e, cx| {
+                if e.as_call().is_some_and(|it| may_be_hook(it.callee())) {
+                    oxlint::exhaustive_deps::run(cx, e, rule.additional_hooks.as_ref());
+                }
+            });
             return State::default();
         }
         on.exprs([ExprTag::Call], |rule, e, cx| {
-            if let ExprKind::Call(call) = e.kind()
+            if let Some(call) = e.as_call()
+                && may_be_hook(call.callee())
                 && rule.get_reactive_hook_callback_index(call.callee(), &cx.state).is_some()
             {
                 cx.state.calls.push(e);

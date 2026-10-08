@@ -299,7 +299,22 @@ impl Rule for EsSyntax {
         if active.has(JSON_SUPERSET) && strings::contains(file.text(), b"\xE2\x80") {
             on.string_literals(Self::string);
         }
-        on.finish(Self::finish);
+        let has_something_at_the_end = active.globals_in(file).next().is_some()
+            || active.has_regexp() && file.mentions("RegExp")
+            || active.has(ERROR_CAUSE) && file.mentions("cause")
+            || active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) && file.mentions_any(&["ArrayBuffer", "SharedArrayBuffer"])
+            || any(&[
+                HASHBANG,
+                MODULES,
+                EXPORT_NS_FROM,
+                ARBITRARY_MODULE_NAMESPACE_NAMES,
+                UNICODE_CODEPOINT_ESCAPES,
+                LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS,
+                SUBCLASSING_BUILTINS,
+            ]);
+        if has_something_at_the_end {
+            on.finish(Self::finish);
+        }
         State { own, methods }
     }
 }
@@ -763,15 +778,9 @@ impl EsSyntax {
             return;
         };
         let tracker = ReferenceTracker::new(file);
-        for feature in active.iter() {
-            let map = &FEATURES[feature].globals;
-            let is_named = |(name, properties): &(&str, TraceMap<'static, ()>)| {
-                file.mentions(name) && (properties.members.is_empty() || properties.members.iter().any(|it| file.mentions(it.0)))
-            };
-            if map.members.iter().any(is_named) {
-                for reference in tracker.iterate_global_references(map) {
-                    self.report(cx, feature, reference.span);
-                }
+        for feature in active.globals_in(file) {
+            for reference in tracker.iterate_global_references(&FEATURES[feature].globals) {
+                self.report(cx, feature, reference.span);
             }
         }
         if active.has_regexp() && file.mentions("RegExp") {

@@ -7,6 +7,7 @@ pub(crate) mod object_type;
 pub(crate) mod semver;
 
 use bun_lint::prelude::*;
+use bun_lint::source::mention_bit;
 use bun_lint::utils::eslint_utils::{Mode, ReferenceKind, ReferenceTracker, TraceMap, TrackedReference, get_string_if_constant};
 use semver::Range;
 use std::sync::OnceLock;
@@ -125,8 +126,9 @@ impl Unsupported {
             Entry {
                 name,
                 map,
+                bit: mention_bit(name.as_bytes()),
                 is_reported: self.is_reported(&map),
-                reported,
+                reported: reported.iter().map(|it| mention_bit(it.as_bytes())).collect(),
             }
         });
         entries.filter(|it| it.is_reported || !it.reported.is_empty()).collect()
@@ -137,17 +139,22 @@ impl Unsupported {
 struct Entry {
     name: &'static str,
     map: Map,
+    /// [`mention_bit`] of the name.
+    bit: u32,
     /// To refer to it is reported.
     is_reported: bool,
-    /// The names of what is reported in it.
-    reported: Vec<&'static str>,
+    /// [`mention_bit`] of the names of what is reported in it.
+    reported: Vec<u32>,
 }
 
 /// Those that the file mentions, with something in them that is reported. References, which cost far more, are only looked at for
 /// these.
 fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Vec<(&'static str, Map)> {
-    let is_named = |it: &&Entry| file.mentions(it.name) && (it.is_reported || file.mentions_any(&it.reported));
-    entries.iter().filter(is_named).map(|it| (it.name, it.map)).collect()
+    entries.iter().filter(|it| is_named_in(file, it)).map(|it| (it.name, it.map)).collect()
+}
+
+fn is_named_in(file: &File, entry: &Entry) -> bool {
+    file.mentions_bit(entry.bit) && (entry.is_reported || entry.reported.iter().any(|it| file.mentions_bit(*it)))
 }
 
 /// The options of a rule, and what follows from them.
@@ -204,6 +211,16 @@ impl Builtins {
             true => then(first),
             false => then(&self.tables(version)),
         }
+    }
+
+    /// Whether the file mentions something that can be reported. If not, there is nothing to do for the rule.
+    pub(crate) fn has_candidates<'a>(&self, file: &'a File<'a>) -> bool {
+        let mut has_candidates = false;
+        self.with_tables(file, |tables| {
+            let all = tables.globals.iter().chain(&tables.modules).chain(&tables.import_meta);
+            has_candidates = all.into_iter().any(|it| is_named_in(file, it));
+        });
+        has_candidates
     }
 
     /// `checkUnsupportedBuiltinReferences`. `prefix`: what comes before the path.

@@ -2,7 +2,7 @@
 
 use super::get_property_name::{get_property_name, property_name_of_key};
 use super::get_string_if_constant::get_string_if_constant;
-use super::globals::is_defined_global;
+use crate::utils::ast_utils::is_configured_global;
 use crate::ast::{BinOp, Call, Expr, ExprKind, File, Name, Node, StmtKind};
 use crate::semantic::{Reference, Symbol};
 use crate::span::Span;
@@ -441,7 +441,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
                 variable = Some(Variable::Global(reference.name()));
             }
         }
-        variable.filter(|_| is_defined_global(self.file, name))
+        variable.filter(|_| is_configured_global(self.file, name))
     }
 
     /// Upstream's `_iterateVariableReferences`.
@@ -516,7 +516,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
                 };
                 let variable = match symbol {
                     Some(symbol) => Variable::Symbol(symbol),
-                    None if is_defined_global(self.file, name.bytes()) => Variable::Global(name),
+                    None if is_configured_global(self.file, name.bytes()) => Variable::Global(name),
                     None => return,
                 };
                 self.variable_references(variable, path, map, false);

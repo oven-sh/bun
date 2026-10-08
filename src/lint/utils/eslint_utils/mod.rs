@@ -44,7 +44,6 @@ mod get_function_name_with_kind;
 mod get_property_name;
 mod get_static_value;
 mod get_string_if_constant;
-mod globals;
 mod has_side_effect;
 mod is_parenthesized;
 mod js_number;

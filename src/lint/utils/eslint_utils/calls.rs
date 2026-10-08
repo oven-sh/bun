@@ -150,6 +150,7 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
     if let Some((owner, name)) = strings::split_once(path.as_bytes(), b".prototype.") {
         return match (owner, this) {
             (b"String", StaticValue::String(text)) => string_method(name, text, args),
+            (b"String", this) if !this.is_nullish() && name != b"toString" => string_method(name, &this.to_string()?, args),
             (b"Number", StaticValue::Number(n)) => number_method(name, *n, args),
             (b"Array", StaticValue::Array(items)) => array_method(name, items, args),
             (b"Map", StaticValue::Map(entries)) => map_method(name, entries, args),
@@ -208,6 +209,7 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
             let raw = get_member(first, &PropertyKey::String(Cow::Borrowed(b"raw")))?;
             let pieces: Eval<Vec<_>> = match &raw {
                 StaticValue::Array(items) => items.iter().map(StaticValue::to_string).collect(),
+                StaticValue::String(text) => to_utf16(text).iter().map(|&unit| Ok(Cow::Owned(from_utf16(&[unit])))).collect(),
                 _ => return Err(Stop::Abort),
             };
             string_raw(&pieces?, args.get(1..).unwrap_or_default())
@@ -548,7 +550,7 @@ fn number_method<'a>(name: &[u8], n: f64, args: Args<'_, 'a>) -> Eval<StaticValu
         b"toPrecision" if !is_given || !n.is_finite() => text::number_to_string(n),
         b"toPrecision" if (1.0..=100.0).contains(&digits) => to_precision(n, digits as usize),
         b"toString" if !is_given => text::number_to_string(n),
-        b"toString" if (2.0..=36.0).contains(&digits) => to_radix_string(n, digits as u32).ok_or(Stop::Abort)?,
+        b"toString" if (2.0..=36.0).contains(&digits) => to_radix_string(n, digits as u32),
         _ => return Err(Stop::Abort),
     };
     Ok(StaticValue::string(text))
@@ -724,6 +726,17 @@ pub(super) fn pow(base: f64, exponent: f64) -> f64 {
     base.powf(exponent)
 }
 
+/// The nearest number that has 11 significant bits and an exponent of 5 bits.
+fn round_to_half_precision(x: f64) -> f64 {
+    if !x.is_finite() || x == 0.0 {
+        return x;
+    }
+    let exponent = ((x.to_bits() >> 52 & 0x7FF) as i32 - 1023).max(-14);
+    let unit = 2f64.powi(exponent - 10);
+    let rounded = (x / unit).round_ties_even() * unit;
+    if rounded.abs() > 65504.0 { f64::INFINITY.copysign(x) } else { rounded }
+}
+
 /// `Math[name](...args)`. The last digit of what is not rounded correctly by every implementation,
 /// such as `Math.sin`, can differ from that of a JavaScript engine.
 fn math<'a>(name: &str, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
@@ -748,6 +761,7 @@ fn math<'a>(name: &str, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
         "exp" => x.exp(),
         "expm1" => x.exp_m1(),
         "floor" => x.floor(),
+        "f16round" => round_to_half_precision(x),
         "fround" => f64::from(x as f32),
         "hypot" => {
             let largest = numbers.iter().fold(0.0, |largest: f64, n| largest.max(n.abs()));

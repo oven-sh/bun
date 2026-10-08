@@ -97,7 +97,7 @@ static ENTRIES: &[Entry] = entries! {
     }
     "Math" {
         Call: abs acos acosh asin asinh atan atan2 atanh cbrt ceil clz32 cos cosh exp expm1 f16round floor fround hypot imul
-            log log10 log1p log2 max min pow round sign sin sinh sqrt sumPrecise tan tanh trunc;
+            log log10 log1p log2 max min pow round sign sin sinh sqrt tan tanh trunc;
         Function: random;
         Constant: E LN10 LN2 LOG10E LOG2E PI SQRT1_2 SQRT2;
     }
@@ -346,6 +346,9 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
             }
             if path == "RegExp" && name.starts_with(b"$") {
                 return Err(Stop::NotStatic);
+            }
+            if name == b"name" && builtin.is_callable() {
+                return Ok(StaticValue::string(builtin.entry().map_or("", |entry| entry.name).as_bytes()));
             }
             // Whether all the properties of this one are listed.
             let is_known = builtin.member() != Member::Function || matches!(path, "Array" | "Symbol");

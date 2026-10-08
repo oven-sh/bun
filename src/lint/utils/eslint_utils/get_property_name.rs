@@ -1,7 +1,7 @@
 //! `get-property-name.mjs`
 
 use super::get_string_if_constant::get_string_if_constant;
-use crate::ast::{ExprKind, Key, KeyKind, Node};
+use crate::ast::{ExprKind, Key, KeyKind, MemberKind, Node};
 use crate::semantic::Scope;
 use std::borrow::Cow;
 
@@ -37,6 +37,7 @@ pub fn get_property_name<'a>(
         },
         Node::Prop(prop) => property_name_of_key(prop.key()?, scope),
         Node::PatProp(prop) => property_name_of_key(prop.key()?, scope),
+        Node::Member(member) if member.kind() == MemberKind::Constructor => Some(Cow::Borrowed(b"constructor")),
         Node::Member(member) => property_name_of_key(member.key()?, scope),
         _ => None,
     }

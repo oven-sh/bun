@@ -1,0 +1,429 @@
+//# One expression a line, for `cases.ts --lines`: what `getStaticValue` computes with the standard library.
+[1, "1", 1n, true, null, undefined, NaN, -0, 0, "", "a", [], [1], [1,2], {}, Symbol.iterator].map
+1 + 1n
+1n + 2n, 5n - 7n, 3n * 4n, 7n / 2n, -7n / 2n, 7n % 3n, -7n % 3n, 2n ** 10n, 2n ** -1n, 1n / 0n
+[1n + 2n, 5n - 7n, 3n * 4n, 7n / 2n, -7n / 2n, 7n % 3n, -7n % 3n, 2n ** 10n, 1n << 3n, -9n >> 1n, 1n << -1n, 5n & 3n, 5n | 3n, 5n ^ 3n, ~5n, -5n]
+[0x10n, 0o17n, 0b11n, 1_000n, 170141183460469231731687303715884105727n]
+170141183460469231731687303715884105728n
+1n >>> 0n
++1n
+[1n < 2, 2 < 1n, 1n == 1, 1n === 1, 1n == "1", "2" > 1n, 1n < NaN, 1n < Infinity, 1n > -Infinity, 1n < 1.5, 2n > 1.5, 1n == 1.5, 1n <= "x", 10n > "9"]
+[typeof 1n, typeof Symbol.iterator, typeof Math, typeof Math.max, typeof null, typeof undefined, typeof "", typeof [], typeof /a/, typeof String]
+[1 == "1", 0 == "", 0 == "0", "" == "0", null == undefined, null == 0, undefined == 0, NaN == NaN, [] == "", [] == 0, [1] == 1, [1,2] == "1,2", ({}) == "[object Object]", true == 1, true == "1", false == "", null == false, "a" == ["a"]]
+[[] == [], ({}) == ({}), [] === [], Math === Math, Math.max === Math.max, Number.parseFloat === parseFloat, Number.parseInt === parseInt, "".trimLeft === "".trimStart, "".trimRight === "".trimEnd, Symbol.iterator === Symbol.iterator, Symbol.for("a") === Symbol.for("a"), Symbol.for("a") === Symbol.for("b")]
+/a/ === /a/
+[1 < 2, "a" < "b", "a" < "B", "10" < "9", "10" < 9, null < 1, undefined < 1, [2] > 1, "a" < 1, "￿" < "\u{10000}", "\u{10000}" < "￿", "abc" < "abd", "ab" < "abc", "" < "a"]
+[1 + "1", "1" + 1, 1 + null, 1 + undefined, 1 + true, "a" + null, "a" + undefined, [] + [], [] + {}, [1,2] + [3], 1 + [2], "" + -0, "" + 1e21, "" + 1e-7, "" + 123456789012345680000, "" + 0.000001, "" + 1.5e300, "" + NaN, "" + -Infinity]
+[5 % 3, -5 % 3, 5 % -3, 5.5 % 2, 5 % 0, 0 % 5, -0 % 5, Infinity % 2, 2 % Infinity, 2 ** 0.5, 2 ** -1, (-8) ** (1/3), 1 ** Infinity, (-1) ** Infinity, NaN ** 0, 0 ** 0, 1 ** NaN, 10 ** 21, 10 ** -7, 2 ** 53, 2 ** 1024, (-2) ** 3]
+[1 << 31, 1 << 32, 1 << 33, -1 >> 1, -1 >>> 0, -1 >>> 31, 2 ** 32 >> 0, 2 ** 32 + 5 | 0, 2 ** 31 | 0, -(2 ** 31) - 1 | 0, 1.9 | 0, -1.9 | 0, NaN | 0, Infinity | 0, "3" & "5", ~~"7.9", ~NaN, 5 ^ 1, 1e20 | 0, -1e20 | 0, 4294967295.5 >>> 0]
+[-"1", -"", -"a", +"", +" 12 ", +"1e3", +"0x10", +"0b11", +"0o17", +"-0x10", +"1_000", +".5", +"5.", +".", +"Infinity", +"-Infinity", +"infinity", +"+5", +"1e", +"1e+", +"\n1\t", +" 1﻿", +[], +[5], +[1,2], +{}, +null, +undefined, +true, +"1n", +"00012", +"1e1000", +"-1e-1000", +"0x", +"0xg"]
++Symbol.iterator
+`${Symbol.iterator}`
+Symbol.iterator + ""
+[`${1}${"a"}${null}${undefined}${[1,2]}${{}}${1n}${true}`, `a${1 + 1}b`, `\n\tA\x41`, `${/a/g}`, `${Math}`, `${-0}`]
+[String(), String(1), String(null), String(undefined), String(Symbol.iterator), String(Symbol.for("x")), String(1n), String([1,[2,3]]), String({}), String(/a\/b/gi), String(-0), String(Math), String(JSON), String(new Map), String(new Set), String([].keys()), String(new Map().keys()), String(new Set().values()), String([null, undefined, 1]), String([,]), String([,,])]
+[Number(), Number("12"), Number(""), Number(null), Number(undefined), Number(true), Number([]), Number("1 2"), Number(12n), Number({}), Number("0x1F"), Number(" \n")]
+Number(Symbol.iterator)
+[Boolean(), Boolean(0), Boolean(""), Boolean("0"), Boolean([]), Boolean({}), Boolean(null), Boolean(NaN), Boolean(0n), Boolean(1n), Boolean(Symbol.iterator), Boolean(-0)]
+[BigInt(1), BigInt("12"), BigInt(" 12 "), BigInt(""), BigInt("0x10"), BigInt(true), BigInt(5n), BigInt("-5"), BigInt("+5"), BigInt(1e20), BigInt(-0)]
+BigInt(1.5)
+BigInt("1.5")
+BigInt("-0x10")
+BigInt(null)
+BigInt(undefined)
+BigInt(NaN)
+BigInt("abc")
+[parseInt("12"), parseInt("12px"), parseInt("  -12"), parseInt("0x1f"), parseInt("1f", 16), parseInt("0x1f", 16), parseInt("0x1f", 10), parseInt("101", 2), parseInt("z", 36), parseInt("12", 1), parseInt("12", 37), parseInt("12", 0), parseInt(""), parseInt("a"), parseInt("-0"), parseInt("9", 8), parseInt("1e3"), parseInt(1e21), parseInt(0.0000005), parseInt(null), parseInt("Infinity"), parseInt("123456789012345678901234567890"), parseInt("12", "10"), parseInt("12", 4294967306), parseInt("+7"), parseInt("٣")]
+[parseFloat("1.5"), parseFloat("1.5px"), parseFloat(".5"), parseFloat("5."), parseFloat("-.5e2x"), parseFloat("e5"), parseFloat("1e"), parseFloat("1e+"), parseFloat("Infinityx"), parseFloat("-Infinity"), parseFloat("  2"), parseFloat(""), parseFloat("0x10"), parseFloat("1_0"), parseFloat("-0"), parseFloat("1.2.3"), parseFloat("+1")]
+[isNaN("a"), isNaN("1"), isNaN(undefined), isNaN(null), isFinite("1"), isFinite(Infinity), isFinite(null), Number.isNaN("a"), Number.isNaN(NaN), Number.isFinite("1"), Number.isFinite(1), Number.isFinite(Infinity)]
+[Number.isInteger(1), Number.isSafeInteger(1)]
+[Number.EPSILON, Number.MAX_SAFE_INTEGER, Number.MAX_VALUE, Number.MIN_SAFE_INTEGER, Number.MIN_VALUE, Number.NaN, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, Math.E, Math.LN10, Math.LN2, Math.LOG10E, Math.LOG2E, Math.PI, Math.SQRT1_2, Math.SQRT2]
+[(1.005).toFixed(2), (0.5).toFixed(0), (1.5).toFixed(0), (2.5).toFixed(0), (-2.5).toFixed(0), (-0.0001).toFixed(2), (-0).toFixed(2), (0).toFixed(2), (1e21).toFixed(2), (123.456).toFixed(10), (0.000001).toFixed(7), (1.45).toFixed(1), (8.345).toFixed(2), (10.235).toFixed(2), NaN.toFixed(2), Infinity.toFixed(1), (999.995).toFixed(2), (0.1).toFixed(20), (1e20).toFixed(2), (99.99).toFixed(1), (0.05).toFixed(1), (5e-324).toFixed(3), (1.23e-10).toFixed(2), (12).toFixed("1"), (9.5).toFixed()]
+(1).toFixed(101)
+(1).toFixed(-1)
+[(123.456).toExponential(), (123.456).toExponential(0), (123.456).toExponential(2), (0).toExponential(), (0).toExponential(2), (-1.5).toExponential(0), (1e21).toExponential(), (1e-7).toExponential(3), (9.99).toExponential(1), NaN.toExponential(), Infinity.toExponential(200), (255).toExponential(1), (1.25).toExponential(1), (1.35).toExponential(1), (5e-324).toExponential(), (1.7976931348623157e308).toExponential(5), (-0).toExponential()]
+(1).toExponential(101)
+[(123.456).toPrecision(), (123.456).toPrecision(1), (123.456).toPrecision(2), (123.456).toPrecision(3), (123.456).toPrecision(4), (123.456).toPrecision(10), (0).toPrecision(1), (0).toPrecision(3), (0.000001).toPrecision(2), (0.0000001).toPrecision(2), (1e21).toPrecision(3), (1e21).toPrecision(22), (99.99).toPrecision(3), (-1.5).toPrecision(1), (2.5).toPrecision(1), NaN.toPrecision(1), Infinity.toPrecision(500), (0.00001234).toPrecision(2), (123456).toPrecision(6), (123456).toPrecision(5), (1.255).toPrecision(3)]
+(1).toPrecision(0)
+(1).toPrecision(101)
+[(255).toString(16), (255).toString(2), (-255).toString(36), (0).toString(2), (255).toString(), (255).toString(10), (255).toString(undefined), NaN.toString(2), Infinity.toString(16), (1e21).toString(), (2 ** 53).toString(2), (-0).toString(2), (35).toString(36)]
+(0.5).toString(2)
+(1).toString(1)
+(1).toString(37)
+["abc".at(0), "abc".at(-1), "abc".at(3), "abc".at(-4), "abc".at(), "abc".at(1.9), "abc".at(NaN), "abc".at("1"), "a😀b".at(1), "a😀b".at(2), "a😀b".at(3)]
+["abc".charAt(0), "abc".charAt(3), "abc".charAt(-1), "abc".charAt(), "abc".charAt(1.5), "😀".charAt(0), "😀".charAt(1), "abc".charCodeAt(1), "abc".charCodeAt(3), "abc".charCodeAt(-1), "😀".charCodeAt(0), "😀".charCodeAt(1), "abc".charCodeAt(Infinity), "abc".codePointAt(1), "😀".codePointAt(0), "😀".codePointAt(1), "abc".codePointAt(3), "abc".codePointAt(-1), "é".charCodeAt(0)]
+["a".concat(), "a".concat("b", 1, null, undefined, [1,2]), "\ud83d".concat("\ude00"), "\ud83d" + "\ude00", "\ud83d" + "\ude00" === "😀", ("\ud83d" + "\ude00").length, "\ude00" + "\ud83d", `${"\ud83d"}${"\ude00"}`.length, ["\ud83d", "\ude00"].join("").length]
+["abc".endsWith("c"), "abc".endsWith("b", 2), "abc".endsWith(""), "abc".endsWith("abcd"), "abc".endsWith("c", 100), "abc".endsWith("a", -1), "abc".endsWith("", 0), "abc".endsWith("c", undefined), "abc".endsWith("b", NaN), "abc".startsWith("a"), "abc".startsWith("b", 1), "abc".startsWith("", 3), "abc".startsWith("a", -5), "abc".startsWith("c", 100), "abc".startsWith(), "undefined".startsWith(), "abc".includes("b"), "abc".includes("b", 2), "abc".includes(""), "abc".includes("", 10), "null".includes(null), "😀".includes("\ud83d"), "😀".startsWith("\ud83d"), "😀".endsWith("\ude00")]
+"abc".includes(/b/)
+"abc".startsWith(/a/)
+"abc".endsWith(/c/)
+["abcabc".indexOf("b"), "abcabc".indexOf("b", 2), "abcabc".indexOf("z"), "abc".indexOf(""), "abc".indexOf("", 2), "abc".indexOf("", 10), "abc".indexOf("c", -5), "abc".indexOf(), "a😀b".indexOf("b"), "😀".indexOf("\ude00"), "abcabc".lastIndexOf("b"), "abcabc".lastIndexOf("b", 3), "abcabc".lastIndexOf("b", 0), "abcabc".lastIndexOf("a", 0), "abcabc".lastIndexOf("a", -5), "abc".lastIndexOf(""), "abc".lastIndexOf("", 1), "abc".lastIndexOf("z"), "abcabc".lastIndexOf("c", NaN), "abcabc".lastIndexOf("c", undefined), "abcabc".lastIndexOf("abcabcd"), "abc".indexOf(/b/)]
+["abc".normalize(), "abc".normalize("NFD"), "abc".normalize("NFKC"), "abc".normalize(undefined)]
+"abc".normalize("x")
+["a".padEnd(3), "a".padEnd(3, "xy"), "a".padEnd(6, "xy"), "a".padEnd(0), "a".padEnd(3, ""), "a".padStart(3), "a".padStart(4, "xy"), "a".padStart(-1), "abc".padStart(2), "a".padStart(3, 1), "a".padEnd(3, undefined), "a".padEnd("3"), "a".padEnd(NaN), "😀".padEnd(4, "😀"), "a".padStart(2, "😀"), "a".padEnd(2.9, "b")]
+"a".padEnd(1e10)
+["abcdef".slice(), "abcdef".slice(2), "abcdef".slice(-2), "abcdef".slice(1, 3), "abcdef".slice(1, -1), "abcdef".slice(3, 1), "abcdef".slice(-100, 100), "abcdef".slice(NaN), "abcdef".slice(1, undefined), "abcdef".slice(1, null), "a😀b".slice(1, 2), "a😀b".slice(2), "abcdef".slice("1", "3"), "abcdef".slice(Infinity), "abcdef".slice(-Infinity, 2)]
+["abcdef".substr(), "abcdef".substr(2), "abcdef".substr(-2), "abcdef".substr(1, 3), "abcdef".substr(1, -1), "abcdef".substr(1, 0), "abcdef".substr(-3, 2), "abcdef".substr(100), "abcdef".substr(-100, 2), "abcdef".substr(1, undefined), "abcdef".substr(1, Infinity), "abcdef".substr(NaN, 2), "abcdef".substring(), "abcdef".substring(2), "abcdef".substring(-2), "abcdef".substring(3, 1), "abcdef".substring(1, 100), "abcdef".substring(NaN, 2), "abcdef".substring(2, undefined), "abcdef".substring(2, NaN), "abcdef".substring(4, -1)]
+["AbC".toLowerCase(), "AbC".toUpperCase(), "ß".toUpperCase(), "İ".toLowerCase(), "ΑΣ".toLowerCase(), "ǆ".toUpperCase(), "ﬁ".toUpperCase(), "éÀ".toUpperCase(), "ÉÀ".toLowerCase(), "abc".toString(), "😀a".toUpperCase(), "\ud83da".toUpperCase()]
+["  a  ".trim(), "  a  ".trimStart(), "  a  ".trimEnd(), "  a  ".trimLeft(), "  a  ".trimRight(), " ﻿ a 　\t\n\v\f\r".trim(), "​a​".trim(), "᠎a".trim(), "".trim(), "   ".trim()]
+["a".repeat(2), "a".replace("a", "b"), "a,b".split(","), "a".match(/a/), "a".localeCompare("b"), "a".toLocaleUpperCase(), "a".replaceAll("a", "b"), "a".search("a"), "a".valueOf(), "a".isWellFormed()]
+"a".repeat(2)
+"a".replace("a", "b")
+"a,b".split(",")
+"a".valueOf()
+["abc".length, "😀".length, "é".length, "\ud83d".length, "abc"[0], "abc"[3], "abc"[-1], "abc"["1"], "abc"["01"], "abc"[1.0], "😀"[0], "😀"[1], "abc".foo, "abc".constructor, "abc".constructor === String, "abc"["length"], "abc"[[1]], "abc".toString, "abc".repeat, "abc".hasOwnProperty, "abc".__proto__]
+"abc".__proto__
+"abc"[Symbol.iterator]
+"abc"[Symbol.for("x")]
+[String.fromCharCode(), String.fromCharCode(97, 98), String.fromCharCode(0x10061), String.fromCharCode("97"), String.fromCharCode(-1), String.fromCharCode(0xd83d, 0xde00), String.fromCharCode(0xd83d), String.fromCharCode(NaN), String.fromCodePoint(), String.fromCodePoint(97, 0x1f600), String.fromCodePoint(0xd83d, 0xde00), String.fromCodePoint(0xd83d, 0xde00).length, String.fromCodePoint("97")]
+String.fromCodePoint(-1)
+String.fromCodePoint(1.5)
+String.fromCodePoint(0x110000)
+String.fromCodePoint(NaN)
+[String.raw`a\n${1}b${2}`, String.raw`\u`, String.raw``, String.raw`${1}`, String.raw({ raw: ["a", "b", "c"] }, 1, 2, 3), String.raw({ raw: ["a", "b", "c"] }, 1), String.raw({ raw: [] }, 1), String.raw({ raw: [1, null] }, "x")]
+String.raw({ raw: "abc" }, 1, 2)
+String.raw()
+String.raw({})
+String.raw`${Symbol.iterator}`
+[Array.isArray([]), Array.isArray({}), Array.isArray("a"), Array.isArray(), Array.of(), Array.of(1, 2), Array.of(undefined), Array.of(3).length]
+[Array(3), new Array(3), Array.from([1]), [1].map(String), [1].forEach(String), [3,1].sort(), [1].reverse(), [1].push(2), [1,2].reduce(Math.max)]
+Array(3)
+Array.from([1])
+[[1,2,3].at(0), [1,2,3].at(-1), [1,2,3].at(3), [1,2,3].at(), [,1].at(0), [1,2,3].at("1"), [1,2,3].at(-3), [1,2,3].at(-4)]
+[[1].concat(), [1].concat(2), [1].concat([2, 3], [[4]]), [1].concat("ab"), [1].concat({ a: 1 }), [,1].concat([,2]), [].concat(null, undefined), [1].concat(new Set([2]))]
+[1].concat({ [Symbol.isConcatSpreadable]: true, length: 1, 0: "a" })
+[[...[1, , 3].entries()], [...[1, , 3].keys()], [...[1, , 3].values()], [...[].entries()], [..."a😀"], [...new Set([1, 1, 2])], [...new Map([[1, 2]])], [...new Map([[1, 2]]).keys()], [...new Map([[1, 2]]).values()], [...new Map([[1, 2]]).entries()], [...new Set([1]).entries()], [...new Set([1]).keys()], [...new Set([1]).values()]]
+[...1]
+[...null]
+[...{}]
+[...Math]
+[[1, 2].entries(), [1].keys(), [1].values(), new Map([[1, 2]]).entries(), new Set([1]).values()]
+[[1, 0].every(Boolean), [1, 2].every(Boolean), [].every(Boolean), [, 0].every(Boolean), [,].every(Boolean), [0, 1].some(Boolean), [].some(Boolean), [,].some(isNaN), [0, 1, "", "a", null].filter(Boolean), [, 1, , 2].filter(Boolean), ["1", "a"].filter(isNaN), [1, NaN].filter(Number.isNaN), [0, 1].find(Boolean), [0].find(Boolean), [, 1].find(isNaN), [0, 1].findIndex(Boolean), [0].findIndex(Boolean), [, 1].findIndex(isNaN), ["a", "b"].filter(String), [[1], 2].filter(Array.isArray), [1, 2].every(Number.isFinite), ["1", "2", "3"].filter(parseInt), [1, 2].filter(Object.freeze), [0, 1].filter(Math.sign), [1.5].some(Math.floor), [0.5].some(Math.floor)]
+[].every(1)
+[].filter()
+[1].every(Math.random)
+[1].some(Symbol)
+[1].find("a")
+[[1, [2, [3, [4]]]].flat(), [1, [2, [3, [4]]]].flat(2), [1, [2, [3, [4]]]].flat(Infinity), [1, [2]].flat(0), [1, [2]].flat(-1), [1, , [2, , 3]].flat(), [1, [2]].flat("1"), [1, [2]].flat(NaN), [1, [2]].flat(undefined), [[]].flat(), ["ab"].flat()]
+[[1, 2, NaN].includes(NaN), [1, 2].includes(2), [1, 2].includes(2, 2), [1, 2].includes(1, -1), [1, 2].includes("1"), [,].includes(undefined), [].includes(undefined), [0].includes(-0), [[1]].includes([1]), [null].includes(undefined), [1, 2].includes(1, -100), [Math].includes(Math), [1,2].includes()]
+[[1, 2, 1].indexOf(1), [1, 2, 1].indexOf(1, 1), [1, 2, 1].indexOf(1, -1), [NaN].indexOf(NaN), [,].indexOf(undefined), [undefined].indexOf(undefined), [1].indexOf("1"), [0].indexOf(-0), [1, 2].indexOf(2, 5), [1, 2].indexOf(1, -5), [1, 2, 1].lastIndexOf(1), [1, 2, 1].lastIndexOf(1, 1), [1, 2, 1].lastIndexOf(1, -2), [1, 2, 1].lastIndexOf(1, -4), [1, 2, 1].lastIndexOf(1, undefined), [].lastIndexOf(1), [,].lastIndexOf(undefined), [1, 2].lastIndexOf(2, 100), [[1]].indexOf([1]), [1, 2, 1].lastIndexOf(1, NaN)]
+[/a/].indexOf(/a/)
+[[1, 2].join(), [1, 2].join("-"), [1, 2].join(""), [1, 2].join(undefined), [1, 2].join(null), [1, 2].join(0), [null, undefined, , 1].join(), [[1, 2], [3]].join(";"), [].join(), [1].join("x"), [{}].join(), [1n, true, "a"].join(), [,].join(), [, ,].join(), [[]].join(), [[], []].join(), [-0].join()]
+[Symbol.iterator].join()
+[[1, 2, 3].slice(), [1, 2, 3].slice(1), [1, 2, 3].slice(-1), [1, 2, 3].slice(1, 2), [1, 2, 3].slice(2, 1), [1, 2, 3].slice(0, -1), [1, , 3].slice(1), [1, 2, 3].slice(undefined, undefined), [1, 2, 3].slice(NaN, "2"), [1, 2, 3].slice(-100, 100), [1, 2, 3].toString(), [].toString(), [[1, [2]]].toString()]
+[[1, 2].length, [, ,].length, [1, 2][0], [1, 2][2], [1, 2]["1"], [1, 2]["01"], [, 1][0], [1, 2][-1], [1, 2].foo, [1].constructor === Array, [1, 2][1.0], [1, 2][[1]], [[1, 2]][0][1], [].push, [].at, [].hasOwnProperty, [].toLocaleString]
+[Object.keys({ a: 1, b: 2 }), Object.keys([1, , 3]), Object.keys("ab"), Object.keys(1), Object.keys(true), Object.keys({ 2: 1, 1: 1, b: 1, a: 1, [Symbol.iterator]: 1 }), Object.keys(new Map([[1, 2]])), Object.keys(/a/), Object.keys(Math), Object.keys(String), Object.values({ a: 1, b: [2] }), Object.values("ab"), Object.values([1, , 2]), Object.entries({ a: 1 }), Object.entries("a"), Object.entries([5]), Object.entries({}), Object.keys({ "-1": 1, "01": 1, 1.5: 1, 4294967294: 1, 4294967295: 1, 0: 1 })]
+Object.keys(null)
+Object.keys()
+Object.values(undefined)
+[Object.is(1, 1), Object.is(0, -0), Object.is(NaN, NaN), Object.is("a", "a"), Object.is([], []), Object.is(), Object.is(undefined), Object.is(null, undefined), Object.is(Math, Math), Object.is(-0, -0), Object.is(1n, 1n), Object.is(1, 1n)]
+[Object.isFrozen(1), Object.isFrozen({}), Object.isFrozen({ a: 1 }), Object.isFrozen(Object.freeze({ a: 1 })), Object.isFrozen("a"), Object.isFrozen([]), Object.isSealed(1), Object.isSealed({}), Object.isExtensible(1), Object.isExtensible({}), Object.isExtensible(Object.preventExtensions({})), Object.isFrozen(), Object.isExtensible(Math), Object.isFrozen(Math.max), Object.isFrozen(null)]
+[Object.freeze({ a: 1 }), Object.freeze([1]), Object.freeze(1), Object.freeze(), Object.seal({ a: 1 }), Object.preventExtensions({ a: 1 }), Object.freeze({ a: 1 }).a, Object.freeze([1, 2]).length, Object.freeze(Object.freeze([1]))]
+[Object(), Object(null), Object(undefined), Object({ a: 1 }), Object([1]), new Object(), new Object({ a: 1 }), new Object(null), Object(/a/), Object(Math) === Math]
+Object(1)
+new Object("a")
+[Object.assign({}, { a: 1 }), Object.create(null), Object.fromEntries([["a", 1]]), Object.getOwnPropertyNames({}), Object.hasOwn({}, "a"), Object.getPrototypeOf({})]
+Object.assign({}, { a: 1 })
+[({ a: 1 }).a, ({ a: 1 }).b, ({ a: 1 })["a"], ({ 1: 2 })[1], ({ "a b": 1 })["a b"], ({ a: { b: 2 } }).a.b, ({ [1 + 1]: 3 })[2], ({ a: 1, a: 2 }).a, ({ ...{ a: 1 }, a: 2 }), ({ a: 2, ...{ a: 1 } }), ({ ..."ab" }), ({ ...[1, 2] }), ({ ...null }), ({ ...undefined }), ({ ...1 }), ({ ...true }), ({ ...[, 1] }), ({ ...new Map([[1, 2]]) }), ({ ...Math }), ({ ...{ [Symbol.iterator]: 1 } }), ({ [Symbol.iterator]: 1 })[Symbol.iterator], ({})[Symbol.iterator], ({ b: 1, 2: 1, a: 1, 1: 1 }), ({ null: 1 })[null], ({ undefined: 1 })[undefined], ({ true: 1 })[true], ({ "1,2": 1 })[[1, 2]], ({ 1e3: 1 }), ({ 0x10: 1 }), ({ 1n: 1 }), ({ .5: 1 }), ({ "": 1 })[""]]
+[({}).constructor === Object, ({}).toString, ({}).hasOwnProperty, ({}).valueOf, ({}).isPrototypeOf, ({}).isPrototypeOf === isPrototypeOf, ({}).isPrototypeOf(1), ({}).isPrototypeOf({}), [].isPrototypeOf([]), isPrototypeOf(1), isPrototypeOf("a"), isPrototypeOf()]
+isPrototypeOf({})
+({}).__proto__
+({ __proto__: null })
+({ __proto__: { a: 1 } }).a
+({ "__proto__": 1 })
+({ ["__proto__"]: 1 })
+({ toString: 1 }) + ""
+({ valueOf: 1 }) + 1
+({ toString: String }) + ""
+({ [Symbol.toPrimitive]: 1 }) + ""
+({ [Symbol.toStringTag]: "x" }) + ""
+({ a() {} })
+({ get a() { return 1 } })
+({ async a() {} })
+({ a: function () {} })
+({ a: () => 1 })
+({ a: class {} })
+[/a/.source, /a/g.flags, /a/gimsuyd.flags, /a/yg.flags, /a/v.flags, /a/.global, /a/g.global, /a/i.ignoreCase, /a/m.multiline, /a/s.dotAll, /a/u.unicode, /a/y.sticky, /a/d.hasIndices, /a/.lastIndex, /a\/b/.source, /[/]/.source, /\n/.source, /a/.foo, /a/.constructor === RegExp, /a/.test, /a/.exec, /a/.toString, String(/a/ig), /a/ig + "", `${/a/yg}`]
+/a/v.unicodeSets
+/a/.test("a")
+/a/.exec("a")
+/a/.toString()
+/a/[Symbol.match]
+[RegExp("a"), RegExp("a", "g"), new RegExp("a", "gi"), new RegExp("a", "ig"), RegExp(/a/g), new RegExp(/a/g), RegExp(/a/g, "i"), new RegExp(/a/g, ""), RegExp(), new RegExp(), RegExp(""), RegExp(undefined), RegExp(null), RegExp(1), RegExp("/"), RegExp("\\/"), RegExp("[/]"), RegExp("a/b/c"), RegExp("\n"), RegExp("\\\n"), RegExp("\r  "), RegExp("a", undefined), RegExp("[", "").source, RegExp("\\\\/"), RegExp("[\\]/]"), RegExp("é/😀"), RegExp(["a", "b"]), RegExp("a", ["g"])]
+RegExp("[")
+RegExp("(")
+RegExp("a", "x")
+RegExp("a", "gg")
+RegExp("a", "uv")
+RegExp("\\p{L}", "u")
+RegExp("\\p{Foo}", "u")
+RegExp("(?<a>.)\\k<a>")
+RegExp("a{2,1}")
+RegExp("\\u{110000}", "u")
+RegExp("[a&&b]", "v")
+RegExp(Symbol.iterator)
+RegExp("a", null)
+[RegExp.$1, RegExp.input, RegExp.lastMatch, RegExp["$&"], RegExp.escape, RegExp.prototype, RegExp.name, RegExp.length, RegExp.foo]
+RegExp.$1
+RegExp.input
+RegExp.foo
+RegExp.name
+RegExp.length
+RegExp.prototype
+[new Map(), new Map(null), new Map(undefined), new Map([]), new Map([[1, 2], [1, 3]]), new Map([[NaN, 1], [NaN, 2]]), new Map([[0, 1], [-0, 2]]), new Map([[-0, 1]]), new Map([[1]]), new Map([[]]), new Map([[1, 2, 3]]), new Map(new Map([[1, 2]])), new Map([["a", 1]]).get("a"), new Map([["a", 1]]).get("b"), new Map([[NaN, 1]]).get(NaN), new Map([[0, 1]]).get(-0), new Map([[[1], 1]]).get([1]), new Map([["a", 1]]).has("a"), new Map([["a", 1]]).has(), new Map([[undefined, 1]]).has(), new Map([["a", 1]]).size, new Map().size, new Map([[1, 2]]).foo, new Map().constructor === Map, new Map([{ 0: "a", 1: "b" }]), new Map([[1, 2]].entries()), new Map(Object.entries({ a: 1 }))]
+new Map([1])
+new Map(1)
+new Map("ab")
+new Map(["ab"])
+new Map({})
+Map()
+Map([[1, 2]])
+new Map().set(1, 2)
+new Map().set
+[new Set(), new Set(null), new Set([1, 1, 2]), new Set("aab"), new Set([NaN, NaN]), new Set([0, -0]), new Set([-0]), new Set(new Set([1])), new Set([[1], [1]]), new Set([1]).has(1), new Set([1]).has("1"), new Set([NaN]).has(NaN), new Set([0]).has(-0), new Set([1, 2]).size, new Set().size, new Set([1]).keys === new Set([1]).values, new Set(new Map([[1, 2]])), new Set([1, 2].keys()), new Set([,]), new Set([undefined]).has()]
+new Set(1)
+Set()
+new Set().add(1)
+[Symbol.asyncIterator, Symbol.hasInstance, Symbol.isConcatSpreadable, Symbol.iterator, Symbol.match, Symbol.matchAll, Symbol.replace, Symbol.search, Symbol.species, Symbol.split, Symbol.toPrimitive, Symbol.toStringTag, Symbol.unscopables, Symbol.for("a"), Symbol.for(), Symbol.for(1), Symbol.keyFor(Symbol.for("a")), Symbol.keyFor(Symbol.iterator), Symbol.iterator.description, Symbol.for("a").description, Symbol.iterator.toString, Symbol.iterator.constructor === Symbol, Symbol.foo, Symbol["iterator"]]
+[Symbol.dispose, Symbol.asyncDispose]
+Symbol.keyFor("a")
+Symbol.keyFor()
+Symbol()
+Symbol("a")
+Symbol.iterator.toString()
+Symbol.for(Symbol.iterator)
+Symbol.prototype
+[Math.abs(-1), Math.abs("-1"), Math.abs(null), Math.abs(), Math.abs(-0), Math.abs([-2]), Math.ceil(1.1), Math.ceil(-1.1), Math.ceil(-0.5), Math.floor(1.9), Math.floor(-1.1), Math.floor(-0), Math.round(0.5), Math.round(1.5), Math.round(2.5), Math.round(-0.5), Math.round(-1.5), Math.round(-2.5), Math.round(0.49999999999999994), Math.round(-0.2), Math.round(4503599627370495.5), Math.round(9007199254740991), Math.round(NaN), Math.round(Infinity), Math.round(-Infinity), Math.round(-0), Math.round(1e300), Math.trunc(1.9), Math.trunc(-1.9), Math.trunc(-0.5), Math.trunc("7.8"), Math.sign(5), Math.sign(-5), Math.sign(0), Math.sign(-0), Math.sign(NaN), Math.sign("-3"), Math.sqrt(4), Math.sqrt(2), Math.sqrt(-1), Math.sqrt(-0), Math.cbrt(27), Math.cbrt(-8)]
+[Math.max(), Math.min(), Math.max(1, 2), Math.min(1, 2), Math.max(1, NaN), Math.min(NaN, 1), Math.max(0, -0), Math.max(-0, 0), Math.min(0, -0), Math.min(-0, 0), Math.max(-0, -0), Math.max("3", 2), Math.max(1, "a"), Math.max([1], [2]), Math.max(null, -1), Math.max(undefined, 1), Math.max(...[1, 5, 3]), Math.min(...[]), Math.max(-Infinity), Math.min(Infinity, 1)]
+Math.max(1n)
+Math.max(Symbol.iterator)
+Math.max(1, Symbol.iterator)
+[Math.pow(2, 10), Math.pow(2, 0.5), Math.pow(1, Infinity), Math.pow(-1, -Infinity), Math.pow(NaN, 0), Math.pow(2), Math.pow(), Math.pow(0, -1), Math.pow(-0, -1), Math.pow(-0, -2), Math.pow(-8, 1 / 3), Math.pow(4, -0.5), Math.pow(10, 308), Math.pow(10, 309), Math.pow(-2, 3), Math.pow(0, 0), Math.pow(Infinity, 0), Math.pow(0.5, Infinity), Math.pow(2, -1074), Math.pow(2, -1075)]
+[Math.hypot(), Math.hypot(3), Math.hypot(-3), Math.hypot(3, 4), Math.hypot(3, 4, 12), Math.hypot(NaN, Infinity), Math.hypot(NaN, 1), Math.hypot(0, -0), Math.hypot(1e200, 1e200), Math.hypot("3", "4"), Math.hypot(1, 1), Math.hypot(1, 2, 3), Math.hypot(-Infinity)]
+[Math.clz32(1), Math.clz32(0), Math.clz32(-1), Math.clz32(0.5), Math.clz32(2 ** 32), Math.clz32(), Math.imul(2, 3), Math.imul(0xffffffff, 5), Math.imul(2 ** 31, 2), Math.imul(1), Math.imul(-5, 12), Math.imul(0x7fffffff, 0x7fffffff), Math.fround(1.5), Math.fround(1.1), Math.fround(1e40), Math.fround(-0), Math.fround(NaN), Math.fround(5e-324), Math.fround(16777217)]
+[Math.sin(0), Math.cos(0), Math.tan(0), Math.asin(0), Math.acos(1), Math.atan(0), Math.atan2(0, 0), Math.atan2(0, -0), Math.atan2(-0, 0), Math.atan2(1, 0), Math.sinh(0), Math.cosh(0), Math.tanh(0), Math.asinh(0), Math.acosh(1), Math.atanh(0), Math.exp(0), Math.expm1(0), Math.log(1), Math.log(0), Math.log(-1), Math.log10(1000), Math.log10(1), Math.log2(8), Math.log2(1), Math.log1p(0), Math.sin(-0), Math.asinh(-0), Math.atanh(1), Math.tanh(Infinity), Math.exp(-Infinity), Math.exp(1), Math.log(Math.E), Math.sin(Infinity), Math.acos(2), Math.acosh(0), Math.log2(3), Math.log10(2)]
+[Math.sin(1), Math.cos(1), Math.tan(1), Math.asin(0.5), Math.acos(0.5), Math.atan(1), Math.atan2(1, 2), Math.sinh(1), Math.cosh(1), Math.tanh(1), Math.asinh(1), Math.acosh(2), Math.atanh(0.5), Math.exp(2), Math.expm1(1), Math.log(10), Math.log1p(1), Math.cbrt(2), Math.pow(1.1, 2.2), 1.1 ** 2.2, Math.sin(Math.PI), Math.cos(Math.PI / 2), Math.exp(10.5), Math.log(0.1), Math.sin(1e22), Math.tan(Math.PI / 4)]
+Math.random()
+Math.f16round(1.337)
+Math.sumPrecise([1, 2])
+[Math.foo, Math.random, Math.constructor === Object, Math.toString, Math[Symbol.toStringTag]]
+Math[Symbol.toStringTag]
+[Math.foo, Math.random, Math.max.foo, Math.constructor === Object, JSON.foo, JSON.parse, Reflect.ownKeys, Reflect.foo, Object.foo, Array.foo, String.foo, Number.foo, Boolean.foo, Map.foo, Set.foo, Symbol.foo, BigInt.foo, Date.foo, parseInt.foo]
+[Math.max.name, Math.max.length]
+Math.max.call(null, 1, 2)
+Math.max.apply(null, [1, 2])
+Math.max.bind(null)
+Function.prototype.call
+Promise.resolve
+ArrayBuffer.isView
+Array.prototype.slice
+Array.prototype.slice.call([1, 2], 1)
+Object.prototype.hasOwnProperty.call({}, "a")
+Function("return 1")()
+new Function("return 1")
+[JSON.stringify({}), JSON.parse("1")]
+JSON.stringify({})
+Date()
+new Date(0)
+Date.now()
+Date.parse("2020-01-01")
+Date.UTC(2020)
+new Date(0).getTime()
+new Boolean(false)
+new Number(1)
+new String("a")
+new BigInt(1)
+new Symbol()
+new parseInt("1")
+new Math.max(1)
+new Math()
+new (Object.freeze)({})
+[encodeURIComponent("a b&c/d?é😀"), encodeURI("a b&c/d?é😀#[]"), encodeURIComponent("-_.!~*'()"), encodeURI(";/?:@&=+$,#"), encodeURIComponent(";/?:@&=+$,#"), encodeURIComponent(), encodeURIComponent(null), encodeURIComponent(1), encodeURI("%"), encodeURIComponent("\u0000\u007f")]
+encodeURIComponent("\ud83d")
+encodeURI("\ude00")
+[decodeURIComponent("a%20b%26c"), decodeURI("a%20b%26c%23%2f%2F"), decodeURIComponent("%C3%A9%F0%9F%98%80"), decodeURI("%C3%A9"), decodeURIComponent("%e2%82%ac"), decodeURIComponent(""), decodeURIComponent("abc"), decodeURIComponent(), decodeURI("%25"), decodeURI("%3B%2F%3F%3A%40%26%3D%2B%24%2C%23"), decodeURIComponent("%3B%2F%3F%3A%40%26%3D%2B%24%2C%23"), decodeURIComponent("é%20")]
+decodeURIComponent("%")
+decodeURIComponent("%2")
+decodeURIComponent("%zz")
+decodeURIComponent("%C3")
+decodeURIComponent("%C3%28")
+decodeURIComponent("%80")
+decodeURIComponent("%ED%A0%80")
+decodeURIComponent("%C0%80")
+decodeURIComponent("%F8%80%80%80%80")
+decodeURIComponent("%F4%90%80%80")
+[escape("a b+c/d@é😀*_-."), escape("ÿĀ"), escape(), escape(null), escape("%"), unescape("a%20b%u00e9%E9"), unescape("%u0041%41"), unescape("%"), unescape("%u"), unescape("%u00"), unescape("%zz"), unescape("%uD83D%uDE00"), unescape("%ud83d"), unescape("%4"), unescape("%%41"), unescape()]
+[void 0, void a.b, typeof void 0, !void 0, void 0 ?? 1, null ?? undefined ?? 2, 0 ?? 1, "" || "a", "a" && "b", 0 && a, 1 || a, null?.a, undefined?.[a], null?.a.b.c, null?.(), null?.a(), (null)?.a, (1, 2, 3), (a, 1), true ? 1 : a, false ? a : 2, "" ? 1 : 2, [] ? 1 : 2, NaN ? 1 : 2, 0n ? 1 : 2]
+(null?.a).b
+null.a
+undefined.a
+null[a]
+null()
+(void 0)()
+1()
+"a"()
+"abc"?.length
+"abc"?.["length"]
+"abc"?.trim()
+"abc".trim?.()
+"abc".foo?.()
+"abc".foo()
+("abc"?.trim)()
+("abc".trim)()
+(0, "abc".trim)()
+"abc"?.trim().length
+null?.trim().length
+const a = null; a?.b()
+const a = null; a?.b.c()
+const a = null; a?.[b]()
+const a = { b: null }; a.b?.()
+const a = { b: null }; a.b?.c()
+const a = { b: null }; a.b()
+const a = { b: String }; a.b(1)
+const a = { b: "".trim }; a.b()
+const a = { f: Math.max }; a.f(1, 2)
+const a = [Math.max]; a[0](1, 2)
+const a = 1; const b = a + 1; const c = b * 2; c
+const a = a; a
+const a = b, b = a; a
+const a = [a]; a
+const a = () => a; a
+const a = [1]; a[a.length - 1].push(1); a
+const a = [1]; a[a[0]](); a
+const a = [1]; const b = a; b.push(2); a
+const a = [1]; const b = a; b.push(2); b
+const a = [1]; foo(a); a
+const a = [1]; a.length = 0; a
+const a = [1]; a[0]++; a
+const a = [1]; delete a[0]; a
+const a = [1]; [a[0]] = [2]; a
+const a = [1]; ({ x: a[0] } = { x: 2 }); a
+const a = [1]; [a[0] = 1] = []; a
+const a = [1]; for (a[0] of [2]); a
+const a = [1]; b[a] = 1; a
+const a = [1]; b[a].c = 1; a
+const a = [1]; a.b.c.d = 1; a
+const a = [1]; a["push"](2); a
+const a = [1]; a["pu" + "sh"](2); a
+const a = [1]; a[x](2); a
+const a = [1]; a.map(x => x); a
+const a = [1]; a.sort(); a
+const a = [1]; a?.push(2); a
+const a = [1]; a.push?.(2); a
+const a = [1]; (a).push(2); a
+const a = [1]; (a.push)(2); a
+const a = [1]; a.x.push(2); a
+const a = [1]; a.push; a
+const a = [1]; new a.push(); a
+const a = "x"; a.b = 1; a
+const a = 1; a.b = 1; a
+const a = null; a.b = 1; a
+const a = /x/; a.lastIndex = 1; a
+const a = new Map(); a.x = 1; a
+const a = Math; a.x = 1; a
+const a = Math.max; a.x = 1; a
+const a = String; a.x = 1; a
+const { a } = { a: 1 }; a
+const [a] = [1]; a
+const a = 1, b = 2; a + b
+let a = 1; a
+let a = 1; a = 2; a
+let a = 1; a++; a
+let a = 1; a += 1; a
+let a; a
+let a; a = 1; a
+let a = 1; [a] = [2]; a
+let a = 1; ({ a } = { a: 2 }); a
+let a = 1; for (a of []); a
+let a = 1; for (a in {}); a
+let a = 1; function f() { a = 2 } a
+let a = 1; function f() { return a } a
+let a = 1; typeof a; a
+var a = 1; a
+var a = 1; var a = 2; a
+var a = 1; var a; a
+var a; var a = 1; a
+var a = 1; function a() {} a
+function a() {} a
+class a {} a
+import a from "a"; a
+import { a } from "a"; a
+import * as a from "a"; a
+function f(a) { return a }
+function f(a = 1) { return a }
+try {} catch (a) { a }
+for (const a = 1;;) { a }
+for (const a of [1]) { a }
+for (const a in {}) { a }
+for (let a = 1;;) { a }
+for (let a = 1; a < 2; a++) { a }
+{ const a = 1; { const a = 2; a } a }
+const a = 1; function f() { const a = 2; return a } a
+const a = 1; function f(a) { return a }
+const undefined = 1; undefined
+const Number = 1; Number
+const Number = String; Number(1)
+let undefined; undefined
+function f(undefined) { return undefined }
+function f(Number) { return Number("1") }
+function f() { var Math; return Math.max(1) }
+Number = 1; Number("1")
+Math.max = 1; Math.max(1, 2)
+using a = 1; a
+a = 1
+a += 1
+a ||= 1
+a = b = 1
+[a = 1]
+[a = 1] = []
+(a = 1) + 1
+a++
+--a
+delete a
+new.target
+import.meta
+import("a")
+this
+super.a
+async () => await 1
+function* f() { yield 1 }
+a`b`
+a?.b`c`
+`a${b}`
+<a />
+1 as number
+1 as const
+"a" as const
+[1, 2] as const
+(1 as any) + 1
+1 satisfies number
+<number>1
+"a"!
+"abc"!.length
+null!
+null!.a
+null?.a!
+null?.a!.b
+(null?.a)!.b
+(null?.a!).b
+const a = null; a?.b!.c
+const a = null; a!?.b
+const a = { b: 1 }; a!.b
+const a = [1]; a!.push(2); a
+const a = [1]; (a as any).push(2); a
+Math.max<number>(1, 2)
+String<string>
+String.raw<string>`a`
+enum E { A = 1 } E.A
+namespace N { export const a = 1 } N.a
+declare const a: 1; a
+const a: number = 1; a
+let a: number = 1; type T = typeof a; a
+[(0.5).toString(2), (0.1).toString(2), (0.1).toString(3), (1 / 3).toString(3), (255.5).toString(16), (-255.75).toString(16), (1e21).toString(7), (1e21).toString(16), (2 ** 53 + 2).toString(3), (1.7976931348623157e308).toString(36), (5e-324).toString(2).length, (5e-324).toString(36), (0.999999999999999).toString(2), (0.9999999999999999).toString(36), (123.456).toString(36), (Math.PI).toString(8), (1e-7).toString(5), (35.99999999999999).toString(36), (2 ** 60).toString(10), (2 ** 60).toString(32), (3 ** 40).toString(3), (-1e300).toString(2).length]
+[Math.f16round(1.337), Math.f16round(65504), Math.f16round(65519), Math.f16round(65520), Math.f16round(-65520), Math.f16round(1e-8), Math.f16round(2.98e-8), Math.f16round(2.99e-8), Math.f16round(5.96e-8), Math.f16round(6.1e-5), Math.f16round(0.1), Math.f16round(-0), Math.f16round(NaN), Math.f16round(Infinity), Math.f16round(2049), Math.f16round(2051), Math.f16round(1.0009765625), Math.f16round(1.00048828125), Math.f16round(1.000732421875)]
+[Math.max.name, parseInt.name, "".trim.name, "".trimLeft.name, Symbol.for.name, String.name, Number.parseFloat.name, new Set().keys.name]
+[String({ [Symbol.iterator]: 1 }), `${{ [Symbol.for("a")]: 1 }}`]
+const a = { f: "".toUpperCase }; a.f()
+const a = { f: "".toString }; a.f()
+const a = [1, 2]; const b = { f: "".concat, toString: 1 }; b.f()
+const a = { f: "".slice, 0: 1 }; a.f(1, 7)

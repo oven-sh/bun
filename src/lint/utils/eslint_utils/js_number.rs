@@ -252,21 +252,60 @@ pub(super) fn to_precision(n: f64, precision: usize) -> Vec<u8> {
     with_sign(n, digits)
 }
 
-/// `n.toString(radix)` for `radix` in `2..=36`. `None` for a number with a fraction or beyond
-/// `Number.MAX_SAFE_INTEGER` in a radix other than 10: engines differ in the digits.
-pub(super) fn to_radix_string(n: f64, radix: u32) -> Option<Vec<u8>> {
+/// `n.toString(radix)` for `radix` in `2..=36`. The specification leaves the digits open for a
+/// radix other than 10: this is the algorithm of V8.
+pub(super) fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     if radix == 10 || !n.is_finite() {
-        return Some(number_to_string(n));
+        return number_to_string(n);
     }
-    if n.fract() != 0.0 || n.abs() > 9_007_199_254_740_991.0 {
-        return None;
+    let base = f64::from(radix);
+    let value = n.abs();
+    let mut integer = value.floor();
+    let mut fraction = value - integer;
+    // Half the distance to the next number: digits beyond it say nothing.
+    let mut delta = (0.5 * (value.next_up() - value)).max(5e-324);
+    let mut fraction_digits: Vec<u8> = Vec::new();
+    if fraction >= delta {
+        loop {
+            fraction *= base;
+            delta *= base;
+            let digit = fraction as u8;
+            fraction_digits.push(digit);
+            fraction -= f64::from(digit);
+            if (fraction > 0.5 || (fraction == 0.5 && digit & 1 == 1)) && fraction + delta > 1.0 {
+                // Round up, with the carry.
+                loop {
+                    match fraction_digits.pop() {
+                        None => {
+                            integer += 1.0;
+                            break;
+                        }
+                        Some(digit) if u32::from(digit) + 1 < radix => {
+                            fraction_digits.push(digit + 1);
+                            break;
+                        }
+                        Some(_) => {}
+                    }
+                }
+                break;
+            }
+            if fraction < delta {
+                break;
+            }
+        }
     }
-    let mut rest = n.abs() as u64;
-    let mut digits = Vec::new();
+    // The least significant first.
+    let mut digits: Vec<u8> = Vec::new();
+    while integer / base >= 9_007_199_254_740_992.0 {
+        integer /= base;
+        digits.push(b'0');
+    }
     loop {
-        digits.push(char::from_digit((rest % u64::from(radix)) as u32, radix)? as u8);
-        rest /= u64::from(radix);
-        if rest == 0 {
+        let remainder = integer % base;
+        digits.push(DIGITS[remainder as usize % 36]);
+        integer = (integer - remainder) / base;
+        if integer <= 0.0 {
             break;
         }
     }
@@ -274,5 +313,9 @@ pub(super) fn to_radix_string(n: f64, radix: u32) -> Option<Vec<u8>> {
         digits.push(b'-');
     }
     digits.reverse();
-    Some(digits)
+    if !fraction_digits.is_empty() {
+        digits.push(b'.');
+        digits.extend(fraction_digits.iter().map(|&digit| DIGITS[usize::from(digit) % 36]));
+    }
+    digits
 }

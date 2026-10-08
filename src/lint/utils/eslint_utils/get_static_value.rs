@@ -2,7 +2,7 @@
 
 use super::builtins::{Member, get_member, global_value, set_property};
 use super::calls::{assign, call, construct, iterate, sorted_flags, string_raw};
-use super::globals::is_defined_global;
+use crate::utils::ast_utils::is_configured_global;
 use super::js_string;
 use super::operators::{binary, unary};
 use super::static_value::{Eval, MAX_LEN, PropertyKey, StaticValue, Stop, parse_bigint_digits};
@@ -29,6 +29,10 @@ use std::borrow::Cow;
 /// Upstream's `optional`, which tells that the value is the `undefined` of a `?.` that cut the
 /// evaluation short, is only used inside: no rule reads it.
 pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<StaticValue<'a>> {
+    // ESTree has a pattern there, which has no value.
+    if matches!(expr.kind(), ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. }) && is_assignment_target(expr) {
+        return None;
+    }
     let mut evaluator = Evaluator {
         resolves: scope.is_some(),
         depth: 0,
@@ -174,10 +178,12 @@ impl<'a> Evaluator<'a> {
         if !self.resolves {
             return Err(Stop::NotStatic);
         }
-        let Some(symbol) = e.symbol() else {
+        // What only an assignment in JavaScript declares is not declared as far as ESLint is concerned.
+        let is_declared = |symbol: &Symbol<'a>| symbol.declarations().any(|it| !matches!(it, Declaration::Other));
+        let Some(symbol) = e.symbol().filter(is_declared) else {
             let name = e.as_ident().map_or(&b""[..], |name| name.bytes());
             return match global_value(name) {
-                Some(value) if is_defined_global(e.file(), name) => Ok(value),
+                Some(value) if is_configured_global(e.file(), name) => Ok(value),
                 _ => Err(Stop::NotStatic),
             };
         };

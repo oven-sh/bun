@@ -1,6 +1,8 @@
 //! `has-side-effect.mjs`
 
-use crate::ast::{BinOp, Expr, ExprKind, FnKind, Key, KeyKind, Node, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, File, FnKind, Key, KeyKind, Node, UnOp};
+use crate::tokens::skip_trivia;
+use crate::utils::estree_compat::is_assignment_target;
 
 /// eslint-utils' `HasSideEffectOptions`.
 #[derive(Copy, Clone, Default, Debug)]
@@ -41,9 +43,24 @@ fn is_literal(e: Expr<'_>) -> bool {
     )
 }
 
-fn converts_key(key: Option<Key<'_>>, options: HasSideEffectOptions) -> bool {
-    options.consider_implicit_type_conversion
-        && matches!(key.map(Key::kind), Some(KeyKind::Computed(e)) if !is_literal(e))
+/// Whether `key` is computed and not a `Literal`.
+fn converts_key<'a>(key: Option<Key<'a>>, file: &'a File<'a>, options: HasSideEffectOptions) -> bool {
+    if !options.consider_implicit_type_conversion {
+        return false;
+    }
+    match key.map(Key::kind) {
+        Some(KeyKind::Computed(e)) => !is_literal(e),
+        // Also a template without substitutions, and a number with a sign.
+        Some(KeyKind::ComputedString(_) | KeyKind::ComputedNumber(_)) => {
+            let start = key.map_or(0, |key| key.span(file).start);
+            let mut at = skip_trivia(file.text(), start + 1);
+            while file.text().get(at as usize) == Some(&b'(') {
+                at = skip_trivia(file.text(), at + 1);
+            }
+            !matches!(file.text().get(at as usize), Some(b'"' | b'\'' | b'.' | b'0'..=b'9'))
+        }
+        _ => false,
+    }
 }
 
 fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
@@ -53,10 +70,12 @@ fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
         Node::Func(func) => {
             matches!(func.kind(), FnKind::Decl | FnKind::StaticBlock) && visit_children(node, options)
         }
-        Node::Member(member) => converts_key(member.key(), options) || visit_children(node, options),
-        Node::Prop(prop) => converts_key(prop.key(), options) || visit_children(node, options),
-        Node::PatProp(prop) => converts_key(prop.key(), options) || visit_children(node, options),
+        Node::Member(member) => converts_key(member.key(), node.file(), options) || visit_children(node, options),
+        Node::Prop(prop) => converts_key(prop.key(), node.file(), options) || visit_children(node, options),
+        Node::PatProp(prop) => converts_key(prop.key(), node.file(), options) || visit_children(node, options),
         Node::Expr(e) => match e.kind() {
+            // ESTree's `AssignmentPattern`
+            ExprKind::Assign { .. } if is_assignment_target(e) => visit_children(node, options),
             ExprKind::Assign { .. }
             | ExprKind::Await(_)
             | ExprKind::Call(_)

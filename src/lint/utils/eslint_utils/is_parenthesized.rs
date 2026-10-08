@@ -18,9 +18,15 @@ pub fn is_parenthesized<'a>(node: impl Into<Node<'a>>) -> bool {
 /// eslint-utils' `isParenthesized(times, node, sourceCode)`: whether `node` is in at least `times`
 /// pairs of parentheses. False for `times == 0`, for which upstream throws.
 pub fn is_parenthesized_times<'a>(times: usize, node: impl Into<Node<'a>>) -> bool {
-    let node = node.into();
+    let mut node = node.into();
     if times == 0 {
         return false;
+    }
+    // A function or a class expression is the expression.
+    if let Node::Func(_) | Node::Class(_) = node
+        && let owner @ Node::Expr(_) = node.parent()
+    {
+        node = owner;
     }
     match node {
         // The HIR records only the parentheses that are expressions of their own.

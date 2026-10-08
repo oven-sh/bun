@@ -5,6 +5,7 @@ use super::builtins::Builtin;
 use super::js_number::string_to_number;
 use super::js_string;
 use crate::utils::text::{number_to_string, trim};
+use bun_core::strings;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -212,7 +213,7 @@ impl<'a> StaticValue<'a> {
         )
     }
 
-    /// `String(value)`. `None` if that throws, or is the source text of a function.
+    /// `String(value)`. `None` if that throws.
     pub fn to_js_string(&self) -> Option<Cow<'a, [u8]>> {
         match self {
             StaticValue::Symbol(symbol) => {
@@ -234,7 +235,9 @@ impl<'a> StaticValue<'a> {
             StaticValue::Object(properties) => {
                 let changes_conversion = |key: &PropertyKey| match key {
                     PropertyKey::String(name) => matches!(&**name, b"toString" | b"valueOf"),
-                    PropertyKey::Symbol(_) => true,
+                    PropertyKey::Symbol(symbol) => {
+                        matches!(symbol, StaticSymbol::WellKnown("toPrimitive" | "toStringTag"))
+                    }
                 };
                 if properties.iter().any(|(key, _)| changes_conversion(key)) {
                     return Err(Stop::Abort);
@@ -246,7 +249,12 @@ impl<'a> StaticValue<'a> {
             StaticValue::Iterator(IteratorKind::Array, _) => b"[object Array Iterator]",
             StaticValue::Iterator(IteratorKind::Map, _) => b"[object Map Iterator]",
             StaticValue::Iterator(IteratorKind::Set, _) => b"[object Set Iterator]",
-            StaticValue::Builtin(builtin) if builtin.is_callable() => return Err(Stop::Abort),
+            // As V8 prints it.
+            StaticValue::Builtin(builtin) if builtin.is_callable() => {
+                let name = builtin.name().as_bytes();
+                let name = strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot + 1..]);
+                return Ok(StaticValue::string([b"function ", name, b"() { [native code] }"].concat()));
+            }
             StaticValue::Builtin(builtin) => {
                 return Ok(StaticValue::string([b"[object ", builtin.name().as_bytes(), b"]"].concat()));
             }

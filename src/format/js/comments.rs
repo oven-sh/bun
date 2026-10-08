@@ -283,13 +283,25 @@ impl<'a> Comments<'a> {
 
     /// The comments after `pos` up to one that ends its line, if nothing but blanks, `=`, `:` and
     /// `,` is in between.
-    pub(crate) fn end_of_line_comments_after(&self, mut pos: u32) -> &'a [Comment] {
+    pub(crate) fn end_of_line_comments_after(&self, pos: u32) -> &'a [Comment] {
+        self.end_of_line_comments_after_bytes(pos, |b| matches!(b, b'\t' | b' ' | b'=' | b':' | b','))
+    }
+
+    /// The same after the left side of an assignment or the key of a property, which ends at `pos`:
+    /// an operator and `(` can be in between. `a ||= ( // comment`
+    pub(crate) fn end_of_line_comments_after_left_side(&self, pos: u32) -> &'a [Comment] {
+        self.end_of_line_comments_after_bytes(pos, |b| {
+            matches!(
+                b,
+                b'\t' | b' ' | b'=' | b':' | b'(' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'<' | b'>' | b'?'
+            )
+        })
+    }
+
+    fn end_of_line_comments_after_bytes(&self, mut pos: u32, can_be_between: impl Fn(u8) -> bool) -> &'a [Comment] {
         let comments = self.comments_after(pos);
         for (index, comment) in comments.iter().enumerate() {
-            let is_adjacent = self.source_text.all_bytes_match(pos, comment.span.start, |b| {
-                matches!(b, b'\t' | b' ' | b'=' | b':' | b',')
-            });
-            if !is_adjacent {
+            if !self.source_text.all_bytes_match(pos, comment.span.start, &can_be_between) {
                 break;
             }
             if comment.is_line() || comment.followed_by_newline() {

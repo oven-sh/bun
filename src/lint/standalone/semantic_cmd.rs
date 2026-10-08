@@ -43,7 +43,7 @@ impl Offsets {
 
     fn of(&self, offset: u32) -> u32 {
         match &self.0 {
-            Some(table) => table.get(offset as usize).or(table.last()).copied().unwrap_or(0),
+            Some(table) => table.get(offset as usize).or_else(|| table.last()).copied().unwrap_or(0),
             None => offset,
         }
     }
@@ -125,6 +125,11 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
             number(u32::from(scope.is_strict())),
             scope.parent().map_or(Json::Null, |it| scope_key(it, offsets)),
             scope_key(scope.variable_scope(), offsets),
+            {
+                let mut through: Vec<u32> = scope.through().map(|it| offsets.of(it.span().start)).collect();
+                through.sort_unstable();
+                Json::Array(through.into_iter().map(number).collect())
+            },
         ]));
         for symbol in scope.symbols() {
             let names = symbol.declarations().filter_map(|it| it.name_span());
@@ -150,8 +155,8 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
         if with_nodes && !matches!(node, Node::File(_) | Node::TupleElem(_)) {
             // The range of ESLint's node.
             let span = match node {
-                Node::Func(f) => f.scope().map_or(node.span(), |it| it.span()),
-                Node::Class(c) => c.scope().map_or(node.span(), |it| it.span()),
+                Node::Func(f) => f.scope().map_or_else(|| node.span(), |it| it.span()),
+                Node::Class(c) => c.scope().map_or_else(|| node.span(), |it| it.span()),
                 Node::Stmt(s) => s.span_without_export(),
                 _ => node.span(),
             };
@@ -188,7 +193,7 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
             let mut keys: Vec<String> = (symbols.iter())
                 .map(|&it| match symbol_key(it, offsets) {
                     Json::Number(n) => format!("{n}"),
-                    Json::String(text) => String::from_utf8_lossy(&text).into_owned(),
+                    Json::String(text) => bstr::BStr::new(&text).to_string(),
                     _ => String::new(),
                 })
                 .collect();
@@ -209,6 +214,11 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
     fields
 }
 
+fn path_of(case: &Json) -> &str {
+    let path = case.get(b"filename").and_then(Json::as_str);
+    path.and_then(|it| std::str::from_utf8(it).ok()).unwrap_or("file.js")
+}
+
 fn language_of(case: &Json, path: &str) -> LanguageOptions {
     let object = |keys: &[&str], from: &Json| {
         let fields = keys.iter().filter_map(|key| Some((key.as_bytes().to_vec(), from.get(key.as_bytes())?.clone())));
@@ -220,7 +230,7 @@ fn language_of(case: &Json, path: &str) -> LanguageOptions {
     parser_options.push((b"ecmaFeatures".to_vec(), features));
     let mut language = object(&["ecmaVersion", "sourceType"], case);
     let parser = case.get(b"parser").cloned();
-    language.push((b"parser".to_vec(), parser.unwrap_or(string(if is_javascript { "espree" } else { "typescript" }))));
+    language.push((b"parser".to_vec(), parser.unwrap_or_else(|| string(if is_javascript { "espree" } else { "typescript" }))));
     language.push((b"parserOptions".to_vec(), Json::Object(parser_options)));
     LanguageOptions::from_json(&Json::Object(language), &Json::Null)
 }
@@ -258,7 +268,7 @@ fn write(value: &Json, out: &mut Vec<u8>) {
 fn print(fields: Vec<(Vec<u8>, Json)>) {
     let mut line = Vec::new();
     write(&Json::Object(fields), &mut line);
-    println!("{}", String::from_utf8_lossy(&line));
+    println!("{}", bstr::BStr::new(&line));
 }
 
 fn dump_case(path: &str, code: &[u8], language: &LanguageOptions, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
@@ -291,12 +301,12 @@ fn dump_command(args: &[String]) {
         [batch, cases] if batch == "--batch" => {
             std::panic::set_hook(Box::new(|_| {}));
             let cases = std::fs::read(cases).expect("the cases");
-            for line in cases.split(|&byte| byte == b'\n').filter(|it| !it.is_empty()) {
+            for line in bun_core::strings::split(&cases, b"\n").filter(|it| !it.is_empty()) {
                 let case = bun_lint::json::parse(line).expect("a case");
-                let path = String::from_utf8_lossy(case.get(b"filename").and_then(Json::as_str).unwrap_or(b"file.js"));
+                let path = path_of(&case);
                 let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
                 let mut fields = vec![(b"id".to_vec(), case.get(b"id").cloned().unwrap_or(Json::Null))];
-                fields.extend(dump_case(&path, code, &language_of(&case, &path), with_nodes));
+                fields.extend(dump_case(path, code, &language_of(&case, path), with_nodes));
                 print(fields);
             }
         }
@@ -321,11 +331,11 @@ fn fuzz(args: &[String]) {
         state ^= state << 17;
         (state % below.max(1) as u64) as usize
     };
-    for line in cases.split(|&byte| byte == b'\n').filter(|it| !it.is_empty()) {
+    for line in bun_core::strings::split(&cases, b"\n").filter(|it| !it.is_empty()) {
         let case = bun_lint::json::parse(line).expect("a case");
-        let path = String::from_utf8_lossy(case.get(b"filename").and_then(Json::as_str).unwrap_or(b"file.js"));
+        let path = path_of(&case);
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-        let language = language_of(&case, &path);
+        let language = language_of(&case, path);
         for _ in 0..rounds {
             let mut damaged = code.to_vec();
             let (a, b) = (random(code.len() + 1), random(code.len() + 1));
@@ -344,10 +354,10 @@ fn fuzz(args: &[String]) {
                 }
             }
             tried += 1;
-            let dumped = dump_code(&path, &damaged, &language, true, true);
+            let dumped = dump_code(path, &damaged, &language, true, true);
             if matches!(dumped.first(), Some((key, Json::String(what))) if key == b"error" && what == b"panicked") {
                 panicked += 1;
-                println!("──── {path}\n{}", String::from_utf8_lossy(&damaged));
+                println!("──── {path}\n{}", bstr::BStr::new(&damaged));
             }
         }
     }

@@ -857,7 +857,7 @@ impl<'a> Scope<'a> {
     #[inline]
     fn data(self) -> &'a scopes::ScopeData {
         let scopes = &self.file.scope_tree().scopes;
-        scopes.get(self.id.idx()).unwrap_or(&scopes[0])
+        scopes.get(self.id.idx()).unwrap_or_else(|| &scopes[0])
     }
 
     /// Its number among the scopes of the file, in the order they start. It is not the binder's.

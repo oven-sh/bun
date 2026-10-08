@@ -142,6 +142,21 @@ function dump(it: Case) {
       declared.push([startOf(node), variables.map(variableKey).sort().join()]);
     }
   });
+  const isConstAssertion = (reference: any) =>
+    reference.identifier.name === "const" && reference.isTypeReference && reference.resolved?.defs.length === 0;
+  const all = scopeManager.scopes.flatMap((scope: any) => scope.references).filter((it: any) => !isConstAssertion(it));
+  // What goes through a scope in the normalized model.
+  const through = (scope: any) =>
+    [
+      ...scope.through.filter((it: any) => !isConstAssertion(it)),
+      ...all.filter((it: any) =>
+        scope.type === "global"
+          ? it.resolved && variableKey(it.resolved) === null
+          : it.resolved?.scope === scope && isInnerClassName(it.resolved),
+      ),
+    ]
+      .map((it: any) => it.identifier.range[0])
+      .sort((a: number, b: number) => a - b);
   const scopes: unknown[] = [];
   const variables: unknown[] = [];
   const references: unknown[][] = [];
@@ -153,6 +168,7 @@ function dump(it: Case) {
       scope.isStrict ? 1 : 0,
       scope.upper ? scopeKey(scope.upper) : null,
       scopeKey(scope.variableScope),
+      through(scope),
     ]);
     for (const variable of scope.variables) {
       if (isInnerClassName(variable)) continue;
@@ -166,7 +182,7 @@ function dump(it: Case) {
     }
     for (const reference of scope.references) {
       const resolved = reference.resolved;
-      if (reference.identifier.name === "const" && reference.isTypeReference && resolved?.defs.length === 0) continue;
+      if (isConstAssertion(reference)) continue;
       const isType = reference.isTypeReference ?? false;
       const isValue = reference.isValueReference ?? true;
       references.push([

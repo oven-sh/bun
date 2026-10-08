@@ -455,7 +455,7 @@ impl<'a> Comments<'a> {
             }
             let at = self.inner.partition_point(|comment| comment.end() < end);
             match self.inner.get(at) {
-                Some(comment) if comment.end() == end && comment.start() >= span.start => end = comment.start(),
+                Some(comment) if comment.end() == end && (span.start..end).contains(&comment.start()) => end = comment.start(),
                 _ => return Span::new(span.start, end),
             }
         }
@@ -498,12 +498,6 @@ impl<'a> Comments<'a> {
     /// ends is behind it.
     pub(crate) fn comments_before_end_of(&self, span: Span) -> &'a [Comment] {
         let count = self.comments_before_iter(span.end).take_while(|c| !c.is_moved() || c.end() < span.end).count();
-        &self.unprinted_comments()[..count]
-    }
-
-    /// Of the comments that end at or before `pos`, the first ones that are block comments.
-    pub(crate) fn block_comments_before(&self, pos: u32) -> &'a [Comment] {
-        let count = self.comments_before_iter(pos).take_while(|c| c.is_block()).count();
         &self.unprinted_comments()[..count]
     }
 
@@ -587,10 +581,6 @@ impl<'a> Comments<'a> {
     /// Whether a comment before `start` ends its line.
     pub(crate) fn has_leading_own_line_comment(&self, start: u32) -> bool {
         self.comments_before_iter(start).any(|c| c.followed_by_newline())
-    }
-
-    pub(crate) fn has_end_of_line_comment_after(&self, pos: u32) -> bool {
-        !self.end_of_line_comments_after(pos).is_empty()
     }
 
     /// Has to be called for each comment that is printed.

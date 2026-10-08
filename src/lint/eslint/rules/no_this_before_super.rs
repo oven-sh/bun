@@ -94,7 +94,6 @@ impl NoThisBeforeSuper {
                 Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node, cx),
                 Step::Event(Event::CodePathEnd(path, node)) => self.on_code_path_end(path, node, cx),
                 Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
-                Step::Event(Event::SegmentLoop(from, to, node)) => self.on_segment_loop(from, to, node, cx),
                 Step::Event(_) => {}
                 Step::Enter(node) => self.on_this_or_super(node, cx),
                 Step::Exit(node) => self.on_call_exit(node, cx),
@@ -124,6 +123,9 @@ impl NoThisBeforeSuper {
         if !cx.state.func_infos.pop().is_some_and(|it| it.is_constructor_of_derived_class) {
             return;
         }
+        // ESLint's `onCodePathSegmentLoop` marks the segments of a loop before all of which `super()` is
+        // called. There is no need to: this leaves out a segment if it leaves out all that precede
+        // it, so one that is marked for what precedes it is not looked at, marked or not.
         // In a `finally` block a node belongs to several segments.
         let mut reported = FxHashSet::default();
         code_path.traverse_segments(|segment, controller| {
@@ -151,28 +153,6 @@ impl NoThisBeforeSuper {
             invalid_nodes: SmallVec::new(),
         };
         cx.state.seg_info_map.insert(segment.id(), info);
-    }
-
-    fn on_segment_loop<'a>(
-        &self,
-        from_segment: Segment<'a>,
-        to_segment: Segment<'a>,
-        _: Node<'a>,
-        cx: &mut Cx<'a, Self>,
-    ) {
-        let Some(code_path) = cx.state.constructor_of_derived_class() else {
-            return;
-        };
-        let state = &mut cx.state;
-        code_path.traverse_segments_between(Some(to_segment), Some(from_segment), |segment, controller| {
-            let is_called_before = state.is_called_before(segment);
-            let info = state.seg_info_map.entry(segment.id()).or_default();
-            if info.super_called {
-                controller.skip();
-            } else if is_called_before {
-                info.super_called = true;
-            }
-        });
     }
 
     /// At a `this` or a `super`.

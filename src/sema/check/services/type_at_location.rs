@@ -467,6 +467,11 @@ impl Services<'_, '_, '_> {
             return TypeId::ERROR;
         }
         let kind = hir.kind(at);
+        // `isPartOfTypeNode` is true of every `null`, also of the expression, which so has the type
+        // of the type node and not the one that widens.
+        if kind == Kind::NullKeyword && matches!(hir.data(at), NodeData::Expr(_)) {
+            return TypeId::NULL;
+        }
         if hir.is_part_of_type_node(at) {
             return self.type_of_part_of_type_node(node);
         }

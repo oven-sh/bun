@@ -13,4 +13,7 @@ Each makes small programs, formats them with the npm package of Prettier and wit
 | `comments-in-real-code.ts` (+ `-report.ts`) | a comment at every line of statements of real code. It can also compare with oxfmt, in its flavor |
 | `line-endings.ts` | fixtures with CRLF and CR |
 | `cursor.ts` | the cursor at every offset of real files: `cursorOffset` |
+| `graphql.ts` | GraphQL: a comment in every gap, random ranges, options and line endings, tokens taken out or replaced |
+| `markdown.ts` | Markdown: snapshot inputs with random changes, or a soup of markers. Compares the output, the syntax tree with its positions, or MDX |
+| `markdown-guards.ts` | not a comparison: 102 shapes of Markdown that are slow or nest without end in other parsers, under a limit on time and memory |
 | `each-line.ts` | not a fuzzer: every line of a file on its own, for lists of small programs |

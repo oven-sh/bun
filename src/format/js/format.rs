@@ -812,28 +812,49 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// `: T`, ESTree's `TSTypeAnnotation`.
-#[derive(Copy, Clone)]
-pub(crate) struct FormatTypeAnnotation<'a>(pub(crate) TypeNode<'a>);
-
-impl<'a> Format<'a> for FormatTypeAnnotation<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let ty = self.0;
-        if f.is_quiet() {
-            return print::ts_types::write_ts_type_annotation(ty, f);
-        }
-        let node = AstNodes::TSTypeAnnotation(ty);
-        if f.comments().has_comment_before(node.span().start) {
-            write!(f, space());
-        }
-        format_node(node.span(), || node.parent(), f, |f| print::ts_types::write_ts_type_annotation(ty, f));
+/// ESTree's `TSTypeAnnotation` around `ty`, which is written after `mark` and a space.
+#[inline]
+fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &mut Formatter<'a>) {
+    let write = |f: &mut Formatter<'a>| write!(f, [mark, mark.map(|_| space()), ty]);
+    if f.is_quiet() {
+        return write(f);
     }
+    let node = AstNodes::TSTypeAnnotation(ty);
+    if f.comments().has_comment_before(node.span().start) {
+        write!(f, space());
+    }
+    format_node(node.span(), || node.parent(), f, write);
 }
 
-impl Spanned for FormatTypeAnnotation<'_> {
-    fn span(&self) -> Span {
-        self.0.annotation_span()
-    }
+macro_rules! type_annotations {
+    ($($(#[$doc:meta])* $name:ident => $mark:expr,)*) => {
+        $(
+            $(#[$doc])*
+            #[derive(Copy, Clone)]
+            pub(crate) struct $name<'a>(pub(crate) TypeNode<'a>);
+
+            impl<'a> Format<'a> for $name<'a> {
+                fn fmt(&self, f: &mut Formatter<'a>) {
+                    format_type_annotation($mark, self.0, f);
+                }
+            }
+
+            impl Spanned for $name<'_> {
+                fn span(&self) -> Span {
+                    self.0.annotation_span()
+                }
+            }
+        )*
+    };
+}
+
+type_annotations! {
+    /// `: T`
+    FormatTypeAnnotation => Some(":"),
+    /// `=> T`: the return type of a function type or a constructor type.
+    FormatReturnTypeOfFunctionType => Some("=>"),
+    /// The `T` of `a is T`.
+    FormatTypeOfPredicate => None,
 }
 
 // ───────────────────────────── everything else ─────────────────────────────

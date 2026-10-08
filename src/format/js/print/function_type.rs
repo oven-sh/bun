@@ -3,7 +3,7 @@
 use super::function::should_group_function_parameters;
 use super::parameters::FormatFormalParameters;
 use super::type_parameters::type_parameters;
-use crate::js::format::FormatTypeAnnotation;
+use crate::js::format::{FormatReturnTypeOfFunctionType, FormatTypeAnnotation};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::format_computed_or_property_key;
 use crate::js::utils::typescript::end_of_line_comments;
@@ -132,10 +132,14 @@ impl Spanned for FormatReturnType<'_> {
 
 impl<'a> Format<'a> for FormatReturnType<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let Some(return_type) = self.0.return_type().map(FormatTypeAnnotation) else {
+        let Some(return_type) = self.0.return_type() else {
             return;
         };
-        let has_comment = !f.is_quiet() && f.comments().has_comment_before(return_type.span().start);
-        write!(f, [has_comment.then_some(space()), return_type]);
+        let has_comment = !f.is_quiet() && f.comments().has_comment_before(return_type.annotation_span().start);
+        write!(f, has_comment.then_some(space()));
+        match self.0.owner() {
+            Node::Type(_) => write!(f, FormatReturnTypeOfFunctionType(return_type)),
+            _ => write!(f, FormatTypeAnnotation(return_type)),
+        }
     }
 }

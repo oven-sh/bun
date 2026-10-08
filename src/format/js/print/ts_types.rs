@@ -7,7 +7,7 @@ use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::type_parameters::type_arguments;
 use crate::cursor::extend_node;
-use crate::js::format::{FormatTypeAnnotation, identifier, write_trailing_comments_of};
+use crate::js::format::{FormatTypeOfPredicate, identifier, write_trailing_comments_of};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::number::format_number_token;
@@ -47,6 +47,11 @@ pub(crate) fn write_ts_type_reference<'a>(
     args: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
+    // What it is only matters for a long name, and for comments.
+    if f.is_quiet() && name.len() <= 2 && !f.file().is_javascript() && !keeps_parentheses_of_intrinsic(f) {
+        f.join_with(".").entries(name.parts().map(|part| source_text(part.span())));
+        return write!(f, type_arguments(args, Node::Type(ty)));
+    }
     let node = ty.as_ast_nodes();
     if name.len() > 2 && matches!(node, AstNodes::TSInterfaceHeritage(_) | AstNodes::TSClassImplements(_)) {
         return write!(f, [heritage_name(name, node), type_arguments(args, Node::Type(ty))]);
@@ -530,14 +535,5 @@ pub(crate) fn write_ts_type_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a
     if let Some(parameter) = parameter {
         write!(f, format_trailing_comments(ty.span(), parameter.span(), type_annotation.span().start));
     }
-    write!(f, [space(), "is", space(), FormatTypeAnnotation(type_annotation)]);
-}
-
-/// The `: T` around `ty`. For the return type of a function type, `=> T`.
-pub(crate) fn write_ts_type_annotation<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
-    match AstNodes::TSTypeAnnotation(ty).parent() {
-        AstNodes::TSFunctionType(_) | AstNodes::TSConstructorType(_) => write!(f, ["=>", space(), ty]),
-        AstNodes::TSTypePredicate(_) => write!(f, ty),
-        _ => write!(f, [":", space(), ty]),
-    }
+    write!(f, [space(), "is", space(), FormatTypeOfPredicate(type_annotation)]);
 }

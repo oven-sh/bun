@@ -2,6 +2,8 @@
 // the fixtures, and compares the exit code, the files afterwards, and which files `--check` and `--list-different` name.
 //
 //   bun oxfmt-fixtures.mjs --oxc=<checkout of oxc> --oxfmt=<path of oxfmt> --scratch=<directory> --bin="<bun-lint> cli @format" [--only=substring] [--show]
+//
+// `--record=<file>` writes the fixtures and what oxfmt does with them, for `test/cli/format/oxfmt-cli/oxfmt-cli.test.ts`.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -47,6 +49,21 @@ function run(command, fixtures, test) {
 
 const listed = text => [...new Set(text.replace(/\x1b\[[0-9;]*m/g, "").split("\n").map(line => line.replace(/^\[warn\] /, "").replace(/ \(\d+ms\)$/, "")).filter(line => compared.test(line) && !line.includes(" ")))].sort().join("\n");
 
+// Every file of a directory of fixtures. A link is `{ link }`.
+function fixturesOf(root) {
+  const files = {};
+  for (const entry of fs.readdirSync(root, { withFileTypes: true, recursive: true })) {
+    const file = path.join(entry.parentPath, entry.name);
+    if (entry.isSymbolicLink()) files[path.relative(root, file)] = { link: fs.readlinkSync(file) };
+    else if (entry.isFile()) files[path.relative(root, file)] = fs.readFileSync(file, "utf8");
+  }
+  // What is listed through a link to a directory.
+  const links = Object.keys(files).filter(name => typeof files[name] !== "string");
+  for (const name of Object.keys(files)) if (links.some(link => name.startsWith(`${link}/`))) delete files[name];
+  return files;
+}
+const record = { fixtures: {}, cases: [] };
+
 let [passed, skipped] = [0, 0];
 const failed = [];
 for (const name of fs.readdirSync(tests).sort()) {
@@ -62,6 +79,21 @@ for (const name of fs.readdirSync(tests).sort()) {
     const fixtures = path.join(tests, name, "fixtures");
     const expected = run(oxfmt, fixtures, test);
     const actual = run(bin, fixtures, test);
+    const before = readAll(fixtures);
+    record.fixtures[name] ??= fixturesOf(fixtures);
+    record.cases.push({
+      name,
+      index,
+      args: test.args,
+      cwd: test.cwd,
+      env: test.env,
+      gitignore: test.gitignore,
+      stdin: test.stdin,
+      exitCode: expected.status,
+      changed: Object.fromEntries(Object.entries(expected.files).filter(([file, text]) => before[file] !== text && !test.gitignore?.[file])),
+      listed: test.args.some(it => it === "--check" || it === "--list-different") ? listed(expected.stdout).split("\n").filter(Boolean) : undefined,
+      stdout: test.stdin ? expected.stdout : undefined,
+    });
     const problems = [];
     if (expected.status !== actual.status) problems.push(`exit code: expected ${expected.status}, got ${actual.status}`);
     for (const file of new Set([...Object.keys(expected.files), ...Object.keys(actual.files)])) {
@@ -79,5 +111,6 @@ for (const name of fs.readdirSync(tests).sort()) {
     }
   }
 }
+if (flag("record")) fs.writeFileSync(flag("record"), JSON.stringify(record, null, 1) + "\n");
 console.log(`${passed} passed, ${failed.length} failed, ${skipped} left out`);
 process.exit(failed.length ? 1 : 0);

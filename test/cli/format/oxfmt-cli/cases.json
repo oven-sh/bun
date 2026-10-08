@@ -1,0 +1,2112 @@
+{
+ "fixtures": {
+  "config_file": {
+   ".oxfmtrc.json": "{\n  \"semi\": true\n}\n",
+   ".oxfmtrc.jsonc": "{\n  \"semi\": false,\n}\n",
+   "fmt.config.ts": "export default {\n  semi: true,\n};\n",
+   "fmt.json": "{\n  \"semi\": true\n}\n",
+   "fmt.jsonc": "{\n  // Supports JSONC!\n  \"semi\": true,\n}\n",
+   "nested/.oxfmtrc.jsonc": "{\n  \"semi\": true,\n}\n",
+   "nested/deep/test.js": "const a = 1\n"
+  },
+  "config_ignore_patterns": {
+   "basic/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\"not-formatted/\"]\n}\n",
+   "basic/fmtrc.jsonc": "{\n  \"ignorePatterns\": [\"*.js\"],\n}\n",
+   "nested_cwd/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\"sub/generated/**\"]\n}\n",
+   "basic/not-formatted/bad.js": "  class                 Bar {}\n",
+   "basic/not-formatted/err.js": "class\n",
+   "nested_cwd/generated/error.html": "<link rel=stylesheet href=/styles.css />\n",
+   "nested_cwd/src/test.js": "// This file should be formatted\nconst x=1\n",
+   "nested_cwd/sub/generated/error.html": "<link rel=stylesheet href=/styles.css />\n",
+   "nested_cwd/sub/src/test.js": "// This file should be formatted\nconst x=1\n"
+  },
+  "config_in_subdirectory": {
+   "outside/file.js": "const x = 1;\n",
+   "subdir/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\"ignored/\"]\n}\n",
+   "subdir/ignored/broken.js": "class X {\n"
+  },
+  "editorconfig": {
+   "basic/.editorconfig": "[*]\nindent_style = tab\nindent_size = 4\nmax_line_length = 40\n",
+   "basic/test.js": "if (condition) { console.log(\"hello world\"); }\n",
+   "empty/.editorconfig": "",
+   "empty/test.js": "if (true) { console.log(\"hello\"); }\n",
+   "nested_cwd/.editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 2\n\n[sub/*.ts]\nindent_size = 8\n",
+   "no_root_section/.editorconfig": "[*.js]\nindent_style = tab\nindent_size = 4\n",
+   "no_root_section/test.js": "if (true) { console.log(\"js\"); }\n",
+   "no_root_section/test.ts": "if (true) { console.log(\"ts\"); }\n",
+   "partial_override/.editorconfig": "[*]\nindent_style = tab\n",
+   "partial_override/.oxfmtrc.json": "{\n  \"tabWidth\": 8\n}\n",
+   "partial_override/test.js": "if (true) { console.log(\"hello\"); }\n",
+   "per_file_override/.editorconfig": "[*]\nindent_style = space\nindent_size = 2\n\n[*.ts]\nindent_size = 4\n\n[nested/**/*.js]\nindent_size = 8\n\n[nested/deep/*.json]\nindent_style = tab\nmax_line_length = 40\n",
+   "per_file_override/test.js": "if (true) { console.log(\"js\"); }\n",
+   "per_file_override/test.ts": "if (true) { console.log(\"ts\"); }\n",
+   "quote_type/.editorconfig": "[*]\nquote_type = single\n",
+   "quote_type/test.js": "const a = \"hello\";\nconst b = \"world\";\n",
+   "tab_width_fallback/.editorconfig": "[*]\nindent_style = space\ntab_width = 8\n",
+   "tab_width_fallback/test.js": "if (condition) { console.log(\"hello world\"); }\n",
+   "with_oxfmtrc/.editorconfig": "[*]\nindent_style = tab\nindent_size = 8\n",
+   "with_oxfmtrc/.oxfmtrc.json": "{\n  \"useTabs\": false,\n  \"tabWidth\": 2\n}\n",
+   "with_oxfmtrc/test.js": "if (true) { console.log(\"hello\"); }\n",
+   "nested_cwd/sub/test.ts": "function foo() {\n        if (true) {\n                console.log(\"should be indented with 8 spaces\");\n        }\n}\n",
+   "per_file_override/nested/deep/test.js": "if (true) { console.log(\"nested js\"); }\n",
+   "per_file_override/nested/deep/test.json": "{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8}\n"
+  },
+  "exclude_nested": {
+   "ok.js": "const a = 1;\n",
+   "foo/ok.js": "const a = 1;\n",
+   "foo/bar/error.js": "// This file should be excluded\nclass {\n",
+   "foo/bar/ok.js": "const a = 1;\n"
+  },
+  "extensions": {
+   "Jakefile": "desc(\"Jake build task\");\ntask(\"default\", function () {});\n",
+   "_noextension": "This is a file without extension\nIt should not be processed by oxfmt\nconst notJavaScript = \"this won't be formatted\"",
+   "_test.go": "package main\n\nimport \"fmt\"\n\nfunc main() {\n    fmt.Println(\"This is Go code\")\n    variable := 42\n    _ = variable\n}\n",
+   "_test.rb": "class Test\n  def initialize\n    puts \"This is Ruby code\"\n    @variable = 42\n  end\nend\n",
+   "_test.xml": "fn main() {\n    println!(\"This is Rust code\");\n    let variable = 42;\n    println!(\"Value: {}\", variable);\n}\n",
+   "test.cjs": "module.exports = \"cjs\";\n",
+   "test.cts": "module.exports = { typed: \"cts\" as string };\n",
+   "test.es6": "const es6 = \"ecmascript6\";\n",
+   "test.js": "const standard = \"js\";\n",
+   "test.jsm": "const jsModule = \"javascript module\";\n",
+   "test.jsx": "const Component = () => <div>JSX</div>;\n",
+   "test.mjs": "export const module = \"mjs\";\n",
+   "test.mts": "export const typedModule: string = \"mts\";\n",
+   "test.pac": "const standard = \"pac\";\n",
+   "test.ts": "const typed: string = \"ts\";\n",
+   "test.tsx": "const Component: React.FC = () => <div>TSX</div>;\n"
+  },
+  "gitignore": {
+   "ignored-by-root.js": "const   y=2\n",
+   "root.js": "const   x=1\n",
+   "another/another.js": "const   v=5\n",
+   "subdir/ignored-by-subdir.js": "const   w=4\n",
+   "subdir/sub.js": "const   z=3\n"
+  },
+  "gitignore_parent": {
+   "apps/keep.js": "const x   =2;\n",
+   "apps/dist/unformatted.js": "const a   =1;\n"
+  },
+  "glob_patterns": {
+   "lib/util.js": "class X {\n",
+   "src/a.js": "const a=1\n",
+   "src/b.js": "const b=2\n",
+   "src/c.ts": "const c:number=3\n",
+   "src/{d}.js": "const d=4\n"
+  },
+  "ignore_and_override": {
+   "ignore1": "should_ignore\nshould_format/*\n",
+   "ignore2": "should_ignore\nshould_format/*\n!should_format/ok.js\n",
+   "should_format/ok.js": "const a=1\n",
+   "should_ignore/err.js": "class {\n"
+  },
+  "ignore_patterns": {
+   ".prettierignore": "not-formatted/\n",
+   "custom.ignore": "ignored/\n",
+   "gitignore.txt": "ignored/\n",
+   "good.ts": "class Foo {}\n",
+   "formatted/good.js": "class Foo {}\n",
+   "ignored/should-be-ignored.js": "class     Baz    {   }\n",
+   "ignored/should-be-ignored.ts": "class     Baz2    {   }\n",
+   "not-formatted/.prettierignore": "# This should be ignored - only cwd/.prettierignore should be used\n*.js\n*.ts\n",
+   "not-formatted/bad.js": "class          Bar   {  }\n",
+   "not-formatted/bad.ts": "class          Qux   {  }\n"
+  },
+  "ignore_symlink": {
+   "bar.js": {
+    "link": "foo"
+   },
+   "root.js": "const  introduce     =     \"I am root.js\"\n",
+   "foo/file.js": "const   message       =  2\n"
+  },
+  "insert_final_newline": {
+   "editorconfig_only/.editorconfig": "root = true\n\n[*]\ninsert_final_newline = false\n",
+   "editorconfig_only/test.css": ".foo { color: red }\n",
+   "editorconfig_only/test.toml": "[foo]\nbar = 1\n",
+   "editorconfig_only/test.ts": "const foo = 1\n",
+   "oxfmtrc_only/.oxfmtrc.json": "{\n  \"insertFinalNewline\": false\n}\n",
+   "oxfmtrc_only/test.css": ".foo { color: red }\n",
+   "oxfmtrc_only/test.toml": "[foo]\nbar = 1\n",
+   "oxfmtrc_only/test.ts": "const foo = 1\n"
+  },
+  "js_config": {
+   "basic/oxfmt.config.ts": "export default {\n  semi: false,\n};\n",
+   "basic/test.ts": "const a = 1;\n",
+   "error_no_default/oxfmt.config.ts": "export const semi = false;\n",
+   "error_no_default/test.ts": "const a = 1;\n",
+   "error_not_object/oxfmt.config.ts": "export default \"not an object\";\n",
+   "error_not_object/test.ts": "const a = 1;\n",
+   "priority/.oxfmtrc.json": "{\n  \"semi\": false\n}\n",
+   "priority/oxfmt.config.ts": "export default {\n  semi: true,\n};\n",
+   "priority/test.ts": "const a = 1;\n"
+  },
+  "multiple_files": {
+   "app.tsx": "interface   Props   {\n    title  :  string\n    count  :  number\n}\nconst   App   :   React.FC  <  Props  >   =   (  {  title  ,  count  }  )   =>   {\nreturn   <div  >\n        <h1  >  {  title  }  </h1>\n    <span  >  Count  :  {  count  }  </span>\n</div>\n}\n",
+   "arrow.js": "const   Element   =   (  )   =>   <button   onClick  =  {  (  )  =>  alert  (  \"clicked\"  )  }  >\n    Click   me\n</button>",
+   "component.jsx": "const   Component   =   (  )   =>   {\n    return   <div   className  =  \"container\"  >\n        <h1  >  Hello  </h1>\n<p  >  World  </p>\n    </div>\n}\n",
+   "simple.js": "const   foo    =    \"bar\"\n    const   baz = 42\nfunction   test  (  )   {\nreturn   true\n    }",
+   "simple.ts": "interface   Person   {\n    name  :  string\nage:number\n}\nconst   user   :   Person   =   {  name  :  \"Alice\"  ,  age  :  30  }\n",
+   "types.d.ts": "declare   module   \"my-module\"   {\nexport   function   hello  (  name  :  string  )  :  void\n    export   interface   Config   {\n        enabled  :  boolean\n    }\n}\nexport const visitorKeys: Record<\nstring, string[]\n>;\n"
+  },
+  "nested_config": {
+   ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sibling-a/.oxfmtrc.json": "{ \"semi\": false }\n",
+   "sibling-a/a.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sibling-b/b.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sibling-b/oxfmt.config.ts": "export default {\n  singleQuote: true,\n};\n",
+   "sub/.oxfmtrc.json": "{ \"tabWidth\": 2 }\n",
+   "sub/nested.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/deep/.oxfmtrc.json": "{ \"tabWidth\": 8 }\n",
+   "sub/deep/deep.js": "function foo() { if (true) { console.log(\"hello\"); } }\n"
+  },
+  "nested_config_empty_child": {
+   ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/.oxfmtrc.json": "{}\n",
+   "sub/test.js": "function foo() { if (true) { console.log(\"hello\"); } }\n"
+  },
+  "nested_config_ignore_patterns": {
+   ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/.oxfmtrc.json": "{ \"tabWidth\": 2, \"ignorePatterns\": [\"ignored.js\"] }\n",
+   "sub/formatted.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/ignored.js": "function foo() { if (true) { console.log(\"hello\"); } }\n"
+  },
+  "nested_config_ignore_scope": {
+   ".oxfmtrc.json": "{ \"ignorePatterns\": [\"project-a\", \"lib\", \"temp.js\"], \"tabWidth\": 4 }\n",
+   ".prettierignore": "globally-ignored.js\n",
+   "globally-ignored.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "temp.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "lib/helper.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "project-a/.oxfmtrc.json": "{ \"tabWidth\": 2 }\n",
+   "project-a/globally-ignored.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "project-a/src/app.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "lib/packages/sub/.oxfmtrc.json": "{ \"tabWidth\": 8 }\n",
+   "lib/packages/sub/app.js": "function foo() { if (true) { console.log(\"hello\"); } }\n"
+  },
+  "nested_config_ignore_scope_prettierignore": {
+   ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
+   ".prettierignore": "project-a\n",
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "project-a/.oxfmtrc.json": "{ \"tabWidth\": 2 }\n",
+   "project-a/src/app.js": "function foo() { if (true) { console.log(\"hello\"); } }\n"
+  },
+  "nested_config_no_root": {
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/.oxfmtrc.json": "{ \"tabWidth\": 8 }\n",
+   "sub/test.js": "function foo() { if (true) { console.log(\"hello\"); } }\n"
+  },
+  "nested_config_parse_error": {
+   ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }",
+   "sub/.oxfmtrc.json": "{ invalid json }"
+  },
+  "nested_config_prettierignore": {
+   ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
+   ".prettierignore": "root-ignored.js\n",
+   "root-ignored.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "root.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/.oxfmtrc.json": "{ \"tabWidth\": 2, \"ignorePatterns\": [\"sub-ignored.js\"] }\n",
+   "sub/formatted.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/sub-ignored.js": "function foo() { if (true) { console.log(\"hello\"); } }\n"
+  },
+  "no_error_on_unmatched_pattern": {
+   ".oxfmtrc.json": "{\n  \"ignorePatterns\": [\"ignored-by-config/\"]\n}\n",
+   ".prettierignore": "ignored-by-prettierignore/\n",
+   "custom.ignore": "ignored-by-ignore-path/\n",
+   "formatted/good.js": "const x = 1;\n",
+   "ignored-by-config/bad.js": "class A{\n",
+   "ignored-by-ignore-path/bad.js": "class A{\n",
+   "ignored-by-prettierignore/bad.js": "class A{\n"
+  },
+  "node_modules_dirs": {
+   "root.js": "  const       foo    =    1;\n",
+   "node_modules/test.js": "  const       ignored    =    3;\n",
+   "regular_dir/test.js": "  const       bar    =    2;\n",
+   "regular_dir/node_modules/test.js": "  const       also_ignored    =    4;\n"
+  },
+  "oxfmtrc_overrides": {
+   "basic/.oxfmtrc.json": "{\n  \"tabWidth\": 2,\n  \"overrides\": [\n    {\n      \"files\": [\"*_test.js\", \"*_test.ts\", \".*rc.js\"],\n      \"excludeFiles\": [\"*.min.js\", \"vendor/**\"],\n      \"options\": {\n        \"tabWidth\": 4\n      }\n    }\n  ]\n}\n",
+   "basic/.testrc.js": "const x = {\n    foo: 1,\n    bar: 2,\n};\n",
+   "basic/app.js": "const x = {\n  foo: 1,\n  bar: 2,\n};\n",
+   "basic/app_test.js": "const x = {\n    foo: 1,\n    bar: 2,\n};\n",
+   "basic/app_test.min.js": "const x = {\n  foo: 1,\n  bar: 2,\n};\n",
+   "basic/app_test.ts": "const x: object = {\n    foo: 1,\n    bar: 2,\n};\n",
+   "bool_reset_override/.oxfmtrc.json": "{\n  \"sortImports\": { \"order\": \"desc\" },\n  \"overrides\": [\n    {\n      \"files\": [\"reset-to-default.js\"],\n      \"options\": { \"sortImports\": true }\n    },\n    {\n      \"files\": [\"disabled.js\"],\n      \"options\": { \"sortImports\": false }\n    }\n  ]\n}\n",
+   "bool_reset_override/desc-sorted.js": "import z from \"z\";\nimport c from \"c\";\nimport a from \"a\";\n",
+   "bool_reset_override/disabled.js": "import z from \"z\";\nimport a from \"a\";\n",
+   "bool_reset_override/reset-to-default.js": "import a from \"a\";\nimport c from \"c\";\nimport z from \"z\";\n",
+   "editorconfig_root_only/.editorconfig": "[*]\nindent_style = tab\n",
+   "editorconfig_root_only/.oxfmtrc.json": "{\n  \"overrides\": [{ \"files\": [\"*.js\"], \"options\": { \"semi\": false } }]\n}\n",
+   "editorconfig_root_only/test.js": "if (true) {\n\tconsole.log(\"hello\")\n}\n",
+   "multiple_overrides/.oxfmtrc.json": "{\n  \"tabWidth\": 2,\n  \"semi\": true,\n  \"overrides\": [\n    {\n      \"files\": [\"src/**/*.js\"],\n      \"options\": {\n        \"tabWidth\": 4\n      }\n    },\n    {\n      \"files\": [\"src/**/*_test.js\"],\n      \"options\": {\n        \"semi\": false\n      }\n    },\n    {\n      \"files\": [\"src/deep/**/*.js\"],\n      \"options\": {\n        \"tabWidth\": 6\n      }\n    }\n  ]\n}\n",
+   "multiple_overrides/root.js": "const x = {\n  foo: 1,\n  bar: 2,\n};\n",
+   "path_with_slash/.oxfmtrc.json": "{\n  \"tabWidth\": 2,\n  \"overrides\": [\n    {\n      \"files\": [\"src/*.js\"],\n      \"options\": {\n        \"tabWidth\": 4\n      }\n    }\n  ]\n}\n",
+   "prettier_overrides/.oxfmtrc.json": "{\n  \"experimentalSortPackageJson\": false,\n  \"vueIndentScriptAndStyle\": false,\n  \"overrides\": [\n    {\n      \"files\": [\"sorted/package.json\"],\n      \"options\": {\n        \"experimentalSortPackageJson\": true\n      }\n    },\n    {\n      \"files\": [\"indented.vue\"],\n      \"options\": {\n        \"vueIndentScriptAndStyle\": true\n      }\n    }\n  ]\n}\n",
+   "prettier_overrides/indented.vue": "<script>\n  export default {};\n</script>\n\n<style>\n  .foo {\n    color: red;\n  }\n</style>\n",
+   "prettier_overrides/not-indented.vue": "<script>\nexport default {};\n</script>\n\n<style>\n.foo {\n  color: red;\n}\n</style>\n",
+   "priority_over_editorconfig/.editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 8\n",
+   "priority_over_editorconfig/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\".oxfmtrc.json\"],\n  \"overrides\": [\n    {\n      \"files\": [\"*.js\"],\n      \"options\": {\n        \"tabWidth\": 4\n      }\n    }\n  ]\n}\n",
+   "tailwindcss_options/.oxfmtrc.json": "{\n  \"experimentalTailwindcss\": {},\n  \"overrides\": [\n    {\n      \"files\": [\"use-clsx.tsx\"],\n      \"options\": {\n        \"experimentalTailwindcss\": {\n          \"functions\": [\"clsx\"]\n        }\n      }\n    },\n    {\n      \"files\": [\"use-cn.tsx\"],\n      \"options\": {\n        \"experimentalTailwindcss\": {\n          \"functions\": [\"cn\"]\n        }\n      }\n    }\n  ]\n}\n",
+   "tailwindcss_options/use-clsx.tsx": "const A = <div className={clsx(\"flex bg-red-500 p-4\")}>clsx sorted</div>;\nconst B = <div className={cn(\"p-4 flex\")}>cn NOT sorted</div>;\n",
+   "tailwindcss_options/use-cn.tsx": "const A = <div className={clsx(\"p-4 flex\")}>clsx NOT sorted</div>;\nconst B = <div className={cn(\"flex bg-red-500 p-4\")}>cn sorted</div>;\n",
+   "basic/vendor/lib.js": "const x = {\n  foo: 1,\n  bar: 2,\n};\n",
+   "multiple_overrides/src/app.js": "const x = {\n    foo: 1,\n    bar: 2,\n};\n",
+   "multiple_overrides/src/app_test.js": "const x = {\n    foo: 1,\n    bar: 2,\n}\n",
+   "path_with_slash/lib/app.js": "const x = {\n  foo: 1,\n  bar: 2,\n};\n",
+   "path_with_slash/src/app.js": "const x = {\n    foo: 1,\n    bar: 2,\n};\n",
+   "prettier_overrides/sorted/package.json": "{\n  \"name\": \"sorted\",\n  \"version\": \"1.0.0\",\n  \"description\": \"This should be sorted\"\n}\n",
+   "prettier_overrides/unsorted/package.json": "{\n  \"description\": \"This should NOT be sorted\",\n  \"version\": \"1.0.0\",\n  \"name\": \"unsorted\"\n}\n",
+   "priority_over_editorconfig/src/nested/app.js": "const x = {\n    foo: 1,\n    bar: 2,\n};\n",
+   "multiple_overrides/src/deep/nested/app.js": "const x = {\n      foo: 1,\n      bar: 2,\n};\n"
+  },
+  "oxfmtrc_overrides_invalid": {
+   "cross_field_conflict.json": "{\n  \"sortImports\": {\n    \"partitionByNewline\": true,\n    \"newlinesBetween\": false\n  },\n  \"overrides\": [\n    {\n      \"files\": [\"*\"],\n      \"options\": {\n        \"sortImports\": {\n          \"newlinesBetween\": true\n        }\n      }\n    }\n  ]\n}\n",
+   "invalid_value.json": "{\n  \"overrides\": [\n    {\n      \"files\": [\"*\"],\n      \"options\": {\n        \"printWidth\": 500\n      }\n    }\n  ]\n}\n",
+   "root_invalid.json": "{\n  \"printWidth\": 500\n}\n",
+   "test.js": "const x=1\n"
+  },
+  "single_file": {
+   "simple.js": "const   foo    =    \"bar\"\n    const   baz = 42\nfunction   test  (  )   {\nreturn   true\n    }"
+  },
+  "sort_imports": {
+   "custom_groups.json": "{\n    \"experimentalSortImports\": {\n        \"customGroups\": [\n            { \"elementNamePattern\": [\"~/stores/*\"], \"groupName\": \"stores\" },\n            { \"elementNamePattern\": [\"~/utils/*\"], \"groupName\": \"utils\" }\n        ],\n        \"groups\": [\"stores\", \"utils\", \"sibling\"]\n    }\n}\n",
+   "custom_groups.ts": "import { store } from \"~/stores/store\";\n\nimport { util } from \"~/utils/util\";\n\nimport { foo } from \"./foo\";\n",
+   "custom_groups_selector_modifiers.json": "{\n    \"experimentalSortImports\": {\n        \"customGroups\": [\n            {\n                \"groupName\": \"scope-types\",\n                \"elementNamePattern\": [\"@scope/**\"],\n                \"modifiers\": [\"type\"]\n            },\n            {\n                \"groupName\": \"scope-values\",\n                \"elementNamePattern\": [\"@scope/**\"],\n                \"modifiers\": [\"value\"]\n            },\n            {\n                \"groupName\": \"externals\",\n                \"selector\": \"external\"\n            }\n        ],\n        \"groups\": [\"scope-types\", \"scope-values\", \"externals\", \"unknown\"]\n    }\n}\n",
+   "custom_groups_selector_modifiers.ts": "import type { BarType } from \"@scope/bar\";\nimport type { FooType } from \"@scope/foo\";\n\nimport { bar } from \"@scope/bar\";\nimport { foo } from \"@scope/foo\";\n\nimport { ext } from \"external-lib\";\n\nimport { sibling } from \"./sibling\";\n"
+  },
+  "sort_package_json": {
+   "disabled.json": "{\n  \"experimentalSortPackageJson\": false\n}\n",
+   "package.json": "{\n  \"scripts\": {\n    \"test\": \"vitest\",\n    \"build\": \"tsc\",\n    \"dev\": \"vite\"\n  },\n  \"name\": \"fixture\",\n  \"devDependencies\": {\n    \"typescript\": \"5.0.0\",\n    \"vitest\": \"1.0.0\"\n  },\n  \"version\": \"1.0.0\",\n  \"dependencies\": {\n    \"react\": \"18.0.0\"\n  }\n}\n",
+   "sort_scripts.json": "{\n  \"experimentalSortPackageJson\": {\n    \"sortScripts\": true\n  }\n}\n"
+  },
+  "stdin": {
+   "input.graphql": "{   user(id:1){name}}",
+   "input.rb": "puts 'hello'",
+   "input.ts": "const   x:number=1"
+  },
+  "stdin_ignore_patterns": {
+   ".oxfmtrc.json": "{\n  \"ignorePatterns\": [\"ignored/\"]\n}\n",
+   ".prettierignore": "prettierignored/\n",
+   "input.ts": "const   x:number=1\n"
+  },
+  "stdin_nested_config": {
+   ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
+   "input.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
+   "sub/.oxfmtrc.json": "{ \"tabWidth\": 2 }\n"
+  },
+  "vcs_dirs": {
+   "root.js": "// This file should NOT be ignored\nconst   y   =   2;\n",
+   "regular_dir/test.js": "// This file should NOT be ignored\nconst   x   =   1;\n",
+   "regular_dir/.jj/test.js": "// This file should be ignored\nconst   x   =   1;\n"
+  },
+  "write_mode": {
+   "already_formatted.js": "class Foo {}\n",
+   "complex.js": "const     obj   =   {\n  foo:    \"bar\",\n    baz:      123\n};\n",
+   "unformatted.js": "  class                 Foo {}\n"
+  }
+ },
+ "cases": [
+  {
+   "name": "config_file",
+   "index": 0,
+   "args": [
+    "--check",
+    "!*.{json,jsonc,ts}"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "config_file",
+   "index": 1,
+   "args": [
+    "--check",
+    "!*.{json,jsonc,ts}"
+   ],
+   "cwd": "nested",
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "deep/test.js"
+   ]
+  },
+  {
+   "name": "config_file",
+   "index": 2,
+   "args": [
+    "--check",
+    "!*.{json,jsonc,ts}"
+   ],
+   "cwd": "nested/deep",
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "test.js"
+   ]
+  },
+  {
+   "name": "config_file",
+   "index": 3,
+   "args": [
+    "--check",
+    "!*.{json,jsonc,ts}",
+    "--config",
+    "./fmt.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "nested/deep/test.js"
+   ]
+  },
+  {
+   "name": "config_file",
+   "index": 4,
+   "args": [
+    "--check",
+    "!*.{json,jsonc,ts}",
+    "--config",
+    "./fmt.jsonc"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "nested/deep/test.js"
+   ]
+  },
+  {
+   "name": "config_file",
+   "index": 5,
+   "args": [
+    "--check",
+    "!*.{json,jsonc,ts}",
+    "--config",
+    "./fmt.config.ts"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "nested/deep/test.js"
+   ]
+  },
+  {
+   "name": "config_file",
+   "index": 6,
+   "args": [
+    "--check",
+    "--config",
+    "NOT_EXISTS.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "config_ignore_patterns",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "cwd": "basic",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "config_ignore_patterns",
+   "index": 1,
+   "args": [
+    "--check",
+    "--config",
+    "fmtrc.jsonc"
+   ],
+   "cwd": "basic",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "config_ignore_patterns",
+   "index": 2,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "nested_cwd/sub",
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/test.js"
+   ]
+  },
+  {
+   "name": "config_ignore_patterns",
+   "index": 3,
+   "args": [
+    "--check",
+    "--config",
+    "../.oxfmtrc.json",
+    "."
+   ],
+   "cwd": "nested_cwd/sub",
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/test.js"
+   ]
+  },
+  {
+   "name": "config_in_subdirectory",
+   "index": 0,
+   "args": [
+    "--check",
+    "-c",
+    "./subdir/.oxfmtrc.json",
+    "./subdir"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "config_in_subdirectory",
+   "index": 1,
+   "args": [
+    "--check",
+    "-c",
+    "./subdir/.oxfmtrc.json",
+    "./outside/file.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "editorconfig",
+   "index": 0,
+   "args": [
+    "test.js"
+   ],
+   "cwd": "basic",
+   "exitCode": 0,
+   "changed": {
+    "basic/test.js": "if (condition) {\n\tconsole.log(\"hello world\");\n}\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 1,
+   "args": [
+    "test.js"
+   ],
+   "cwd": "with_oxfmtrc",
+   "exitCode": 0,
+   "changed": {
+    "with_oxfmtrc/test.js": "if (true) {\n  console.log(\"hello\");\n}\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 2,
+   "args": [
+    "test.js",
+    "test.ts",
+    "nested/deep/test.js",
+    "nested/deep/test.json"
+   ],
+   "cwd": "per_file_override",
+   "exitCode": 0,
+   "changed": {
+    "per_file_override/test.js": "if (true) {\n  console.log(\"js\");\n}\n",
+    "per_file_override/test.ts": "if (true) {\n    console.log(\"ts\");\n}\n",
+    "per_file_override/nested/deep/test.js": "if (true) {\n        console.log(\"nested js\");\n}\n",
+    "per_file_override/nested/deep/test.json": "{\n\t\"a\": 1,\n\t\"b\": 2,\n\t\"c\": 3,\n\t\"d\": 4,\n\t\"e\": 5,\n\t\"f\": 6,\n\t\"g\": 7,\n\t\"h\": 8\n}\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 3,
+   "args": [
+    "test.js",
+    "test.ts"
+   ],
+   "cwd": "no_root_section",
+   "exitCode": 0,
+   "changed": {
+    "no_root_section/test.js": "if (true) {\n\tconsole.log(\"js\");\n}\n",
+    "no_root_section/test.ts": "if (true) {\n  console.log(\"ts\");\n}\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 4,
+   "args": [
+    "test.js"
+   ],
+   "cwd": "partial_override",
+   "exitCode": 0,
+   "changed": {
+    "partial_override/test.js": "if (true) {\n\tconsole.log(\"hello\");\n}\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 5,
+   "args": [
+    "test.js"
+   ],
+   "cwd": "tab_width_fallback",
+   "exitCode": 0,
+   "changed": {
+    "tab_width_fallback/test.js": "if (condition) {\n        console.log(\"hello world\");\n}\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 6,
+   "args": [
+    "test.js"
+   ],
+   "cwd": "quote_type",
+   "exitCode": 0,
+   "changed": {
+    "quote_type/test.js": "const a = 'hello';\nconst b = 'world';\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 7,
+   "args": [
+    "test.js"
+   ],
+   "cwd": "empty",
+   "exitCode": 0,
+   "changed": {
+    "empty/test.js": "if (true) {\n  console.log(\"hello\");\n}\n"
+   }
+  },
+  {
+   "name": "editorconfig",
+   "index": 8,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "nested_cwd/sub",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 0,
+   "args": [
+    "--check",
+    "!foo/bar/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 1,
+   "args": [
+    "--check",
+    "!foo/bar"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 2,
+   "args": [
+    "--check",
+    "!foo"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 3,
+   "args": [
+    "--check",
+    "!**/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 4,
+   "args": [
+    "--check",
+    "foo",
+    "!foo/bar/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 5,
+   "args": [
+    "--check",
+    "foo",
+    "!foo/bar"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 6,
+   "args": [
+    "--check",
+    "foo",
+    "!**/bar/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 7,
+   "args": [
+    "--check",
+    "foo",
+    "!**/bar/*"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 8,
+   "args": [
+    "--check",
+    ".",
+    "!foo/bar/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 9,
+   "args": [
+    "--check",
+    ".",
+    "!foo/bar"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 10,
+   "args": [
+    "--check",
+    ".",
+    "!foo"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 11,
+   "args": [
+    "--check",
+    ".",
+    "!**/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 12,
+   "args": [
+    "--check",
+    "./foo",
+    "!**/bar/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 13,
+   "args": [
+    "--check",
+    "./foo",
+    "!**/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 14,
+   "args": [
+    "--check",
+    "./foo",
+    "!**/bar/*"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 15,
+   "args": [
+    "--check",
+    "./foo",
+    "!foo/bar/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 16,
+   "args": [
+    "--check",
+    "./foo",
+    "!foo/bar"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 17,
+   "args": [
+    "--check",
+    "*",
+    "!**/error.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "exclude_nested",
+   "index": 18,
+   "args": [
+    "--check",
+    "foo/**/*.js",
+    "!**/bar/*"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "extensions",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "gitignore",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "gitignore": {
+    ".gitignore": "ignored-by-root.js\nsubdir/"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "another/another.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "gitignore",
+   "index": 1,
+   "args": [
+    "--check"
+   ],
+   "gitignore": {
+    ".gitignore": "ignored-by-root.js",
+    "subdir/.gitignore": "ignored-by-subdir.js\n"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "another/another.js",
+    "root.js",
+    "subdir/sub.js"
+   ]
+  },
+  {
+   "name": "gitignore_parent",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "cwd": "apps",
+   "gitignore": {
+    ".gitignore": "dist/\n"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "keep.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 0,
+   "args": [
+    "--check",
+    "src/*.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/a.js",
+    "src/b.js",
+    "src/{d}.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 1,
+   "args": [
+    "--check",
+    "**/*.js",
+    "!util.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/a.js",
+    "src/b.js",
+    "src/{d}.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 2,
+   "args": [
+    "--check",
+    "src/{a,b}.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/a.js",
+    "src/b.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 3,
+   "args": [
+    "--check",
+    "src/{a}.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/a.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 4,
+   "args": [
+    "--check",
+    "src/c.ts",
+    "src/*.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/a.js",
+    "src/b.js",
+    "src/c.ts",
+    "src/{d}.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 5,
+   "args": [
+    "--check",
+    "src/a.js",
+    "src/*.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/a.js",
+    "src/b.js",
+    "src/{d}.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 6,
+   "args": [
+    "--check",
+    "src/{d}.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/{d}.js"
+   ]
+  },
+  {
+   "name": "glob_patterns",
+   "index": 7,
+   "args": [
+    "--check",
+    "**/*.js"
+   ],
+   "gitignore": {
+    ".gitignore": "lib/\n"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "src/a.js",
+    "src/b.js",
+    "src/{d}.js"
+   ]
+  },
+  {
+   "name": "ignore_and_override",
+   "index": 0,
+   "args": [
+    "--check",
+    "!**/err.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "should_format/ok.js"
+   ]
+  },
+  {
+   "name": "ignore_and_override",
+   "index": 1,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "ignore1"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "ignore_and_override",
+   "index": 2,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "ignore1",
+    "should_format/ok.js"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "ignore_and_override",
+   "index": 3,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "ignore1",
+    "should_format/ok.js",
+    "--no-error-on-unmatched-pattern"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "ignore_and_override",
+   "index": 4,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "ignore2"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "should_format/ok.js"
+   ]
+  },
+  {
+   "name": "ignore_and_override",
+   "index": 5,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "ignore2",
+    "should_format/ok.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "should_format/ok.js"
+   ]
+  },
+  {
+   "name": "ignore_patterns",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "ignored/should-be-ignored.js",
+    "ignored/should-be-ignored.ts"
+   ]
+  },
+  {
+   "name": "ignore_patterns",
+   "index": 1,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "gitignore.txt"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "not-formatted/bad.js",
+    "not-formatted/bad.ts"
+   ]
+  },
+  {
+   "name": "ignore_patterns",
+   "index": 2,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "gitignore.txt",
+    "--ignore-path",
+    ".prettierignore"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "ignore_patterns",
+   "index": 3,
+   "args": [
+    "--check",
+    "--ignore-path",
+    "nonexistent.ignore"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "ignore_symlink",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "foo/file.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "insert_final_newline",
+   "index": 0,
+   "args": [
+    "test.ts",
+    "test.css",
+    "test.toml"
+   ],
+   "cwd": "oxfmtrc_only",
+   "exitCode": 0,
+   "changed": {
+    "oxfmtrc_only/test.css": ".foo {\n  color: red;\n}",
+    "oxfmtrc_only/test.ts": "const foo = 1;"
+   }
+  },
+  {
+   "name": "insert_final_newline",
+   "index": 1,
+   "args": [
+    "test.ts",
+    "test.css",
+    "test.toml"
+   ],
+   "cwd": "editorconfig_only",
+   "exitCode": 0,
+   "changed": {
+    "editorconfig_only/test.css": ".foo {\n  color: red;\n}",
+    "editorconfig_only/test.ts": "const foo = 1;"
+   }
+  },
+  {
+   "name": "js_config",
+   "index": 0,
+   "args": [
+    "--check",
+    "test.ts"
+   ],
+   "cwd": "basic",
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "test.ts"
+   ]
+  },
+  {
+   "name": "js_config",
+   "index": 1,
+   "args": [
+    "--check",
+    "test.ts"
+   ],
+   "cwd": "error_no_default",
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "js_config",
+   "index": 2,
+   "args": [
+    "--check",
+    "test.ts"
+   ],
+   "cwd": "error_not_object",
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "js_config",
+   "index": 3,
+   "args": [
+    "--check",
+    "test.ts"
+   ],
+   "cwd": "priority",
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "multiple_files",
+   "index": 0,
+   "args": [
+    "--check",
+    "simple.js",
+    "arrow.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "arrow.js",
+    "simple.js"
+   ]
+  },
+  {
+   "name": "multiple_files",
+   "index": 1,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "app.tsx",
+    "arrow.js",
+    "component.jsx",
+    "simple.js",
+    "simple.ts",
+    "types.d.ts"
+   ]
+  },
+  {
+   "name": "multiple_files",
+   "index": 2,
+   "args": [
+    "--check",
+    "."
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "app.tsx",
+    "arrow.js",
+    "component.jsx",
+    "simple.js",
+    "simple.ts",
+    "types.d.ts"
+   ]
+  },
+  {
+   "name": "multiple_files",
+   "index": 3,
+   "args": [
+    "--check",
+    "./"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "app.tsx",
+    "arrow.js",
+    "component.jsx",
+    "simple.js",
+    "simple.ts",
+    "types.d.ts"
+   ]
+  },
+  {
+   "name": "multiple_files",
+   "index": 4,
+   "args": [
+    "--check",
+    ".//simple.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "simple.js"
+   ]
+  },
+  {
+   "name": "multiple_files",
+   "index": 5,
+   "args": [
+    "--check",
+    ".///simple.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "simple.js"
+   ]
+  },
+  {
+   "name": "multiple_files",
+   "index": 6,
+   "args": [
+    "--check",
+    "!*.{ts,tsx}"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "arrow.js",
+    "component.jsx",
+    "simple.js"
+   ]
+  },
+  {
+   "name": "nested_config",
+   "index": 0,
+   "args": [
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-a/a.js": "function foo() {\n  if (true) {\n    console.log(\"hello\")\n  }\n}\n",
+    "sibling-b/b.js": "function foo() {\n  if (true) {\n    console.log('hello');\n  }\n}\n",
+    "sub/nested.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n",
+    "sub/deep/deep.js": "function foo() {\n        if (true) {\n                console.log(\"hello\");\n        }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config",
+   "index": 1,
+   "args": [
+    "--config",
+    ".oxfmtrc.json",
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-a/a.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-b/b.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-b/oxfmt.config.ts": "export default {\n    singleQuote: true,\n};\n",
+    "sub/nested.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sub/deep/deep.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config",
+   "index": 2,
+   "args": [
+    "--check",
+    "**/*.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "root.js",
+    "sibling-a/a.js",
+    "sibling-b/b.js",
+    "sub/deep/deep.js",
+    "sub/nested.js"
+   ]
+  },
+  {
+   "name": "nested_config",
+   "index": 3,
+   "args": [
+    "--disable-nested-config"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-a/a.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-b/b.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-b/oxfmt.config.ts": "export default {\n    singleQuote: true,\n};\n",
+    "sub/nested.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sub/deep/deep.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config",
+   "index": 4,
+   "args": [],
+   "cwd": "sub",
+   "exitCode": 0,
+   "changed": {
+    "sub/nested.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n",
+    "sub/deep/deep.js": "function foo() {\n        if (true) {\n                console.log(\"hello\");\n        }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config",
+   "index": 5,
+   "args": [
+    "--disable-nested-config"
+   ],
+   "cwd": "sub",
+   "exitCode": 0,
+   "changed": {
+    "sub/nested.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n",
+    "sub/deep/deep.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_empty_child",
+   "index": 0,
+   "args": [
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sub/test.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_ignore_patterns",
+   "index": 0,
+   "args": [
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sub/formatted.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_ignore_scope",
+   "index": 0,
+   "args": [
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "project-a/src/app.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n",
+    "lib/packages/sub/app.js": "function foo() {\n        if (true) {\n                console.log(\"hello\");\n        }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_ignore_scope",
+   "index": 1,
+   "args": [
+    "project-a/src/app.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "project-a/src/app.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_ignore_scope",
+   "index": 2,
+   "args": [
+    "lib/"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "lib/packages/sub/app.js": "function foo() {\n        if (true) {\n                console.log(\"hello\");\n        }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_ignore_scope",
+   "index": 3,
+   "args": [
+    "temp.js"
+   ],
+   "exitCode": 2,
+   "changed": {}
+  },
+  {
+   "name": "nested_config_ignore_scope",
+   "index": 4,
+   "args": [
+    "**/*.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "project-a/src/app.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n",
+    "lib/packages/sub/app.js": "function foo() {\n        if (true) {\n                console.log(\"hello\");\n        }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_ignore_scope",
+   "index": 5,
+   "args": [
+    "project-a/**/*.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "project-a/src/app.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_ignore_scope_prettierignore",
+   "index": 0,
+   "args": [
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_no_root",
+   "index": 0,
+   "args": [
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n",
+    "sub/test.js": "function foo() {\n        if (true) {\n                console.log(\"hello\");\n        }\n}\n"
+   }
+  },
+  {
+   "name": "nested_config_parse_error",
+   "index": 0,
+   "args": [
+    "--check",
+    "."
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "nested_config_prettierignore",
+   "index": 0,
+   "args": [
+    "."
+   ],
+   "exitCode": 0,
+   "changed": {
+    "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sub/formatted.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+   }
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 0,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "__non__existent__file.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 1,
+   "args": [
+    "--check",
+    "__non__existent__file.js"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 2,
+   "args": [
+    "--check",
+    "__nonexistent__/**/*.js"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 3,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "__nonexistent__/**/*.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 4,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "ignored-by-config/bad.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 5,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "ignored-by-config"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 6,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "ignored-by-prettierignore/bad.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "no_error_on_unmatched_pattern",
+   "index": 7,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "--ignore-path",
+    "custom.ignore",
+    "ignored-by-ignore-path/bad.js"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "node_modules_dirs",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "regular_dir/test.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "node_modules_dirs",
+   "index": 1,
+   "args": [
+    "--check",
+    "--with-node-modules"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "node_modules/test.js",
+    "regular_dir/node_modules/test.js",
+    "regular_dir/test.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "node_modules_dirs",
+   "index": 2,
+   "args": [
+    "--check",
+    "**/*.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "regular_dir/test.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "node_modules_dirs",
+   "index": 3,
+   "args": [
+    "--check",
+    "--with-node-modules",
+    "**/*.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "node_modules/test.js",
+    "regular_dir/node_modules/test.js",
+    "regular_dir/test.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 0,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "basic",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 1,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "priority_over_editorconfig",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 2,
+   "args": [
+    "--check",
+    "test.js"
+   ],
+   "cwd": "editorconfig_root_only",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 3,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "path_with_slash",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 4,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "multiple_overrides",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 5,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "prettier_overrides",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 6,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "bool_reset_override",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides",
+   "index": 7,
+   "args": [
+    "--check",
+    "."
+   ],
+   "cwd": "tailwindcss_options",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides_invalid",
+   "index": 0,
+   "args": [
+    "-c",
+    "root_invalid.json",
+    "--check",
+    "test.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides_invalid",
+   "index": 1,
+   "args": [
+    "-c",
+    "invalid_value.json",
+    "--check",
+    "test.js"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides_invalid",
+   "index": 2,
+   "args": [
+    "-c",
+    "cross_field_conflict.json",
+    "--check",
+    "test.js"
+   ],
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "single_file",
+   "index": 0,
+   "args": [
+    "--check",
+    "simple.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "simple.js"
+   ]
+  },
+  {
+   "name": "single_file",
+   "index": 1,
+   "args": [
+    "--list-different",
+    "simple.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "simple.js"
+   ]
+  },
+  {
+   "name": "sort_imports",
+   "index": 0,
+   "args": [
+    "--check",
+    "--config",
+    "custom_groups.json",
+    "custom_groups.ts"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "sort_imports",
+   "index": 1,
+   "args": [
+    "--check",
+    "--config",
+    "custom_groups_selector_modifiers.json",
+    "custom_groups_selector_modifiers.ts"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "sort_package_json",
+   "index": 0,
+   "args": [
+    "package.json"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "package.json": "{\n  \"name\": \"fixture\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"test\": \"vitest\",\n    \"build\": \"tsc\",\n    \"dev\": \"vite\"\n  },\n  \"dependencies\": {\n    \"react\": \"18.0.0\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"5.0.0\",\n    \"vitest\": \"1.0.0\"\n  }\n}\n"
+   }
+  },
+  {
+   "name": "sort_package_json",
+   "index": 1,
+   "args": [
+    "-c",
+    "disabled.json",
+    "package.json"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  },
+  {
+   "name": "sort_package_json",
+   "index": 2,
+   "args": [
+    "-c",
+    "sort_scripts.json",
+    "package.json"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "package.json": "{\n  \"name\": \"fixture\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"dev\": \"vite\",\n    \"test\": \"vitest\"\n  },\n  \"dependencies\": {\n    \"react\": \"18.0.0\"\n  },\n  \"devDependencies\": {\n    \"typescript\": \"5.0.0\",\n    \"vitest\": \"1.0.0\"\n  }\n}\n"
+   }
+  },
+  {
+   "name": "stdin",
+   "index": 0,
+   "args": [
+    "--stdin-filepath",
+    "test.ts"
+   ],
+   "stdin": "input.ts",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "const x: number = 1;\n"
+  },
+  {
+   "name": "stdin",
+   "index": 1,
+   "args": [
+    "--stdin-filepath",
+    "test.graphql"
+   ],
+   "stdin": "input.graphql",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "{\n  user(id: 1) {\n    name\n  }\n}\n"
+  },
+  {
+   "name": "stdin",
+   "index": 2,
+   "args": [
+    "--stdin-filepath",
+    "test.rb"
+   ],
+   "stdin": "input.rb",
+   "exitCode": 1,
+   "changed": {},
+   "stdout": ""
+  },
+  {
+   "name": "stdin_ignore_patterns",
+   "index": 0,
+   "args": [
+    "--stdin-filepath",
+    "test.ts"
+   ],
+   "stdin": "input.ts",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "const x: number = 1;\n"
+  },
+  {
+   "name": "stdin_ignore_patterns",
+   "index": 1,
+   "args": [
+    "--stdin-filepath",
+    "ignored/test.ts"
+   ],
+   "stdin": "input.ts",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "const   x:number=1\n"
+  },
+  {
+   "name": "stdin_ignore_patterns",
+   "index": 2,
+   "args": [
+    "--stdin-filepath",
+    "prettierignored/test.ts"
+   ],
+   "stdin": "input.ts",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "const   x:number=1\n"
+  },
+  {
+   "name": "stdin_nested_config",
+   "index": 0,
+   "args": [
+    "--stdin-filepath",
+    "root.js"
+   ],
+   "stdin": "input.js",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n"
+  },
+  {
+   "name": "stdin_nested_config",
+   "index": 1,
+   "args": [
+    "--stdin-filepath",
+    "sub/nested.js"
+   ],
+   "stdin": "input.js",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+  },
+  {
+   "name": "vcs_dirs",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "regular_dir/test.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "vcs_dirs",
+   "index": 1,
+   "args": [
+    "--check",
+    "**/*.js"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "regular_dir/test.js",
+    "root.js"
+   ]
+  },
+  {
+   "name": "write_mode",
+   "index": 0,
+   "args": [
+    "unformatted.js",
+    "complex.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "complex.js": "const obj = {\n  foo: \"bar\",\n  baz: 123,\n};\n",
+    "unformatted.js": "class Foo {}\n"
+   }
+  },
+  {
+   "name": "write_mode",
+   "index": 1,
+   "args": [
+    "--write",
+    "unformatted.js",
+    "complex.js"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "complex.js": "const obj = {\n  foo: \"bar\",\n  baz: 123,\n};\n",
+    "unformatted.js": "class Foo {}\n"
+   }
+  },
+  {
+   "name": "write_mode",
+   "index": 2,
+   "args": [
+    "already_formatted.js"
+   ],
+   "exitCode": 0,
+   "changed": {}
+  }
+ ]
+}

@@ -6,9 +6,10 @@
 //! what they import, and exports with a `from` are sorted. An empty line or a line of comments
 //! separates groups, which are sorted on their own.
 
+use super::compare::lowercase;
 use super::sort::stable_sort_by;
 use bun_core::strings;
-use bun_lint::ast::{Export, ExportSpec, ExprTag, File, Ident, Import, ImportSpec, List, ModuleName, Node, Stmt, StmtKind};
+use bun_lint::ast::{Export, ExportSpec, ExprKind, ExprTag, File, Ident, Import, ImportSpec, List, ModuleName, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
 use bun_lint::tokens::TokenKind;
 use std::cmp::Ordering;
@@ -50,7 +51,7 @@ impl Comparer {
             Comparer::IgnoringCase if a.is_ascii() && b.is_ascii() => {
                 a.iter().map(u8::to_ascii_lowercase).cmp(b.iter().map(u8::to_ascii_lowercase))
             }
-            Comparer::IgnoringCase => String::from_utf8_lossy(a).to_lowercase().cmp(&String::from_utf8_lossy(b).to_lowercase()),
+            Comparer::IgnoringCase => lowercase(a).cmp(&lowercase(b)),
         }
     }
 }
@@ -349,7 +350,7 @@ impl<'a> Organizer<'a, '_> {
     /// `getLineStartPositionForPosition`
     fn line_start(&self, at: u32) -> u32 {
         let before = &self.text[..(at as usize).min(self.text.len())];
-        before.iter().rposition(|byte| matches!(byte, b'\n' | b'\r')).map_or(0, |it| it as u32 + 1)
+        strings::last_index_of_any(before, b"\n\r").map_or(0, |it| it as u32 + 1)
     }
 
     fn next_line_start(&self, at: u32) -> u32 {
@@ -383,7 +384,7 @@ impl<'a> Organizer<'a, '_> {
             return start;
         }
         if has_trailing_comment
-            && let Some(comment) = self.leading_comments(full_start).first().or(self.trailing_comments(full_start).first())
+            && let Some(comment) = (self.leading_comments(full_start).first().copied()).or_else(|| self.trailing_comments(full_start).first().copied())
         {
             return self.skip_trivia(comment.0.end, true, true);
         }
@@ -425,27 +426,37 @@ impl<'a> Organizer<'a, '_> {
         groups
     }
 
-    /// Whether a JSDoc comment names `name` where TypeScript takes it for a reference: in braces,
-    /// or after a tag that is followed by a name.
+    /// Whether a JSDoc comment names `name` where TypeScript takes it for a reference: in the type
+    /// after a tag, as what a `{@link}` links to, or after `@see` and the like.
     fn is_named_in_jsdoc(&self, name: &[u8]) -> bool {
+        let is_word = |byte: Option<&u8>| byte.is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii());
         self.comments.iter().filter(|comment| comment.1).any(|comment| {
             let text = self.file.slice(comment.0);
-            if !text.starts_with(b"/**") {
+            // One that follows something on its line documents nothing, unless that is a parameter.
+            let before = self.text[..comment.0.start as usize].trim_ascii_end();
+            let starts_line = before.is_empty() || self.has_line_break_in(before.len() as u32, comment.0.start);
+            if !text.starts_with(b"/**") || !(starts_line || matches!(before.last(), Some(b'(' | b','))) {
                 return false;
             }
             let mut from = 0;
             while let Some(found) = strings::index_of(&text[from..], name) {
                 let (start, end) = (from + found, from + found + name.len());
                 from = end;
-                let is_word = |byte: Option<&u8>| byte.is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii());
                 if is_word(text.get(start.wrapping_sub(1))) || is_word(text.get(end)) || text.get(start.wrapping_sub(1)) == Some(&b'.') {
                     continue;
                 }
-                let before = &text[..start];
-                let line = &before[before.iter().rposition(|byte| *byte == b'\n').map_or(0, |it| it + 1)..];
-                let is_in_braces = strings::last_index_of_char(before, b'{') > strings::last_index_of_char(before, b'}');
-                let tags: [&[u8]; 6] = [b"@see ", b"@link ", b"@extends ", b"@augments ", b"@implements ", b"@throws "];
-                if is_in_braces || tags.iter().any(|tag| line.trim_ascii_end().ends_with(tag.trim_ascii_end())) {
+                let before = text[..start].trim_ascii_end();
+                let open = strings::last_index_of_char(before, b'{').filter(|open| strings::last_index_of_char(before, b'}') < Some(*open));
+                let is_reference = match open.map(|open| (text[..open].trim_ascii_end(), &before[open + 1..])) {
+                    Some((_, [b'@', tag @ ..])) => matches!(tag, b"link" | b"linkcode" | b"linkplain"),
+                    // `@param {A}`
+                    Some((before_brace, _)) => {
+                        let word = before_brace.len() - before_brace.iter().rev().take_while(|byte| byte.is_ascii_alphabetic()).count();
+                        word > 0 && word < before_brace.len() && before_brace[word - 1] == b'@'
+                    }
+                    None => [&b"@see"[..], b"@extends", b"@augments", b"@implements", b"@throws"].iter().any(|tag| before.ends_with(tag)),
+                };
+                if is_reference {
                     return true;
                 }
             }
@@ -455,9 +466,14 @@ impl<'a> Organizer<'a, '_> {
 
     /// `isDeclarationUsed`
     fn is_used(&self, name: Ident<'a>, statement: Stmt<'a>) -> bool {
-        let symbol = Node::Stmt(statement).scope().get_name(name.name());
+        let Some(symbol) = Node::Stmt(statement).scope().get_name(name.name()) else {
+            return true;
+        };
+        // For TypeScript, neither part of the tag `<a:b>` is a name.
+        let is_in_namespaced_tag = |node: Node| matches!(node, Node::Expr(tag) if matches!(tag.kind(), ExprKind::String(_)));
         self.jsx_names.iter().any(|it| it == name.bytes())
-            || symbol.is_none_or(|symbol| symbol.references().any(|it| !it.is_jsx_pragma()))
+            || symbol.declarations().len() > 1
+            || symbol.references().any(|it| !it.is_jsx_pragma() && !is_in_namespaced_tag(it.node()))
             || self.is_named_in_jsdoc(name.bytes())
     }
 
@@ -550,7 +566,7 @@ impl<'a> Organizer<'a, '_> {
                     named: None,
                     ..(*it).clone()
                 }));
-                let Some(base) = defaults.first().or(named.first()) else {
+                let Some(base) = defaults.first().or_else(|| named.first()) else {
                     continue;
                 };
                 let mut specifiers: Vec<Specifier<'a>> = Vec::new();
@@ -970,10 +986,10 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>, options: &Options, end_of_line:
 
     let names: Vec<Vec<&[u8]>> = groups.iter().map(|group| group.iter().map(|it| it.module().unwrap_or_default()).collect()).collect();
     organizer.module_comparer = detect_case_sensitivity_by_sort(&names);
-    let orders = options.type_order.map_or(vec![TypeOrder::Last, TypeOrder::Inline, TypeOrder::First], |order| vec![order]);
+    let orders = options.type_order.map_or_else(|| vec![TypeOrder::Last, TypeOrder::Inline, TypeOrder::First], |order| vec![order]);
     let detected = detect_named_import_organization_by_sort(&imports, &orders);
     organizer.named_comparer = detected.map(|it| it.0);
-    organizer.type_order = options.type_order.or(detected.and_then(|it| it.1)).unwrap_or(TypeOrder::Last);
+    organizer.type_order = options.type_order.or_else(|| detected.and_then(|it| it.1)).unwrap_or(TypeOrder::Last);
 
     if options.jsx_needs_import && file.has_exprs([ExprTag::Jsx]) {
         // `/** @jsx h */`

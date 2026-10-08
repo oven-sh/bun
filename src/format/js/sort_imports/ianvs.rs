@@ -23,7 +23,7 @@ pub(super) enum Matcher {
     /// `<TYPES>` and nothing else.
     Types,
     /// `is_for_types`: it has `<TYPES>` in it.
-    Regex { regex: Regex, is_for_types: bool },
+    Regex { regex: Box<Regex>, is_for_types: bool },
 }
 
 /// An element of `importOrder`.

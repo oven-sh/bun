@@ -90,6 +90,8 @@ pub(super) struct Declaration<'a> {
     pub(super) is_type: bool,
     /// `specifiers`: a range of [`Model::orders`].
     pub(super) specifiers: (u32, u32),
+    /// The module specifier, with its quotes.
+    pub(super) source: Span,
     /// A node that a plugin has made has no attributes.
     pub(super) has_attributes: bool,
     pub(super) comments: Attached,
@@ -371,7 +373,22 @@ impl<'a> Model<'a> {
 
     /// The module specifier, with its quotes.
     pub(super) fn source_span(&self, declaration: &Declaration<'a>) -> Span {
-        declaration.import.spec_span().unwrap_or_default()
+        declaration.source
+    }
+
+    /// Where the module specifier of `import`, the statement at `span`, is.
+    fn find_source(&self, import: Import<'a>, span: Span) -> Span {
+        // Nearly always it is the last thing before the `;`, and has no escapes.
+        let text = self.file.slice(span);
+        let text = text.strip_suffix(b";").unwrap_or(text).trim_ascii_end();
+        if let Some((quote @ (b'"' | b'\''), before)) = text.split_last()
+            && let Some(value) = before.len().checked_sub(import.spec().bytes().len()).map(|at| before.split_at(at))
+            && value.1 == import.spec().bytes()
+            && value.0.last() == Some(quote)
+        {
+            return Span::new(span.start + value.0.len() as u32 - 1, span.start + text.len() as u32);
+        }
+        import.spec_span().unwrap_or_default()
     }
 
     fn attached_mut(&mut self, node: Node) -> Option<&mut Attached> {
@@ -387,13 +404,13 @@ impl<'a> Model<'a> {
 
     pub(super) fn comments_of(&self, node: Node, which: Which) -> List {
         match node {
-            Node::Interpreter => self.interpreter.map_or(List::default(), |it| it.1.get(which)),
+            Node::Interpreter => self.interpreter.map_or_else(List::default, |it| it.1.get(which)),
             Node::Directive(index) => self.directives[index as usize].comments.get(which),
             Node::Import(index) => self.declarations[index as usize].comments.get(which),
             Node::Specifier(index) => self.specifiers[index as usize].comments.get(which),
             Node::Empty => self.empty.get(which),
             Node::NewLine | Node::NewLineLiteral => List::default(),
-            _ => self.deep.iter().find(|it| it.0 == node && it.1 == which).map_or(List::default(), |it| it.2),
+            _ => self.deep.iter().find(|it| it.0 == node && it.1 == which).map_or_else(List::default, |it| it.2),
         }
     }
 
@@ -442,7 +459,7 @@ impl<'a> Model<'a> {
         let mut cursor = 0;
         // What the comments after it trail.
         let mut previous: Option<Node> = self.interpreter.map(|_| Node::Interpreter);
-        let mut previous_end = self.interpreter.map_or(self.text_start(), |it| it.0.end);
+        let mut previous_end = self.interpreter.map_or_else(|| self.text_start(), |it| it.0.end);
         let (mut is_in_prologue, mut has_seen_other) = (true, false);
         for statement in self.file.body().iter() {
             let span = statement.span();
@@ -527,6 +544,7 @@ impl<'a> Model<'a> {
             lines: Some(self.lines_of(span)),
             is_type: import.is_type_only(),
             specifiers: (first, self.orders.len() as u32 - first),
+            source: self.find_source(import, span),
             has_attributes: import.attributes().is_some_and(|it| !it.entries().is_empty()),
             comments: Attached::default(),
         });

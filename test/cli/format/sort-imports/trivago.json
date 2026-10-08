@@ -4400,5 +4400,530 @@
   "options": {},
   "input": "import { a } from \"x\";\nimport type { b } from \"x\";\nimport { c } from \"x\";\nexport const y = 1;\nimport w from \"w\";\n\n// c\n\n\n",
   "output": "import w from \"w\";\nimport { a } from \"x\";\nimport type { b } from \"x\";\nimport { c } from \"x\";\n\nexport const y = 1;\n\n// c\n"
+ },
+ {
+  "name": "fuzz-names/0/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $, B1a } from \".\";\nimport { éZ10 } from \"É \";\nimport { a2_, B日A } from \"10ZA\";\nimport { _日é, éAZ } from \"1.5/\";\nimport { B, é } from \"1É\";\nimport { aß } from \"z😀\";\nimport { _10, é$_, aé10, _a } from \"1.5\";\nimport { é__ } from \"!0x1f\";\n",
+  "output": "import { _日é, éAZ } from \"1.5/\";\nimport { B, é } from \"1É\";\nimport { _10, é$_, aé10, _a } from \"1.5\";\nimport { a2_, B日A } from \"10ZA\";\nimport { é__ } from \"!0x1f\";\nimport { $, B1a } from \".\";\nimport { aß } from \"z😀\";\nimport { éZ10 } from \"É \";\n"
+ },
+ {
+  "name": "fuzz-names/20/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $ } from \"zx22+\";\nimport { B } from \"яñæ\";\nimport { B10, é1日 } from \"😀üø\";\nimport { aA, _B } from \"üæ\";\nimport { _, é1, $A } from \"a\";\nimport { aß10, aé } from \"é007\";\nimport { é, B1 } from \"A😀b.\";\n",
+  "output": "import { é, B1 } from \"A😀b.\";\nimport { _, é1, $A } from \"a\";\nimport { $ } from \"zx22+\";\nimport { aß10, aé } from \"é007\";\nimport { aA, _B } from \"üæ\";\nimport { B } from \"яñæ\";\nimport { B10, é1日 } from \"😀üø\";\n"
+ },
+ {
+  "name": "fuzz-names/40/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $ } from \"#ø1.5x1\";\nimport { $x, aaa, ab } from \"102\";\nimport { $A, a, $A_ } from \"abb\";\nimport { B, é } from \" 1.5ß\";\nimport { Bßß } from \"-!2\";\nimport { é_é, $ß, BZ, BaA } from \"@ \";\nimport { a_, é2B } from \"ñ\";\n",
+  "output": "import { B, é } from \" 1.5ß\";\nimport { $x, aaa, ab } from \"102\";\nimport { $ } from \"#ø1.5x1\";\nimport { Bßß } from \"-!2\";\nimport { é_é, $ß, BZ, BaA } from \"@ \";\nimport { $A, a, $A_ } from \"abb\";\nimport { a_, é2B } from \"ñ\";\n"
+ },
+ {
+  "name": "fuzz-names/60/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $b2, _Aa, _ß, a } from \"!~éü\";\nimport { $, B, $$ } from \" \";\nimport { éÜ, Bß } from \"_ñx11\";\nimport { B_ } from \"!@ü\";\nimport { aB日, é, ax, _2 } from \"9😀x1\";\nimport { $Z, $10B, _z } from \"ø\";\nimport { _ } from \"ax2\";\nimport { $Ü日, B2, $_, éBx } from \"😀0x1f-\";\n",
+  "output": "import { $, B, $$ } from \" \";\nimport { aB日, é, ax, _2 } from \"9😀x1\";\nimport { B_ } from \"!@ü\";\nimport { $b2, _Aa, _ß, a } from \"!~éü\";\nimport { éÜ, Bß } from \"_ñx11\";\nimport { _ } from \"ax2\";\nimport { $Z, $10B, _z } from \"ø\";\nimport { $Ü日, B2, $_, éBx } from \"😀0x1f-\";\n"
+ },
+ {
+  "name": "fuzz-names/80/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _, B10, $Ü } from \"007+Z\";\nimport { _2, $éx, $, $$_ } from \"Bx2 \";\nimport { _1z, éZ_, $b, a_ } from \" 10\";\nimport { B$B, é日, Bbß } from \"ßñ\";\nimport { _日, BÜx, a, _x } from \"+9\";\nimport { B1Z } from \"2\";\nimport { $日Z, éxb } from \"1e3$@ß\";\nimport { _ÜZ, a10A, $z日 } from \"+1x10\";\n",
+  "output": "import { _, B10, $Ü } from \"007+Z\";\nimport { $日Z, éxb } from \"1e3$@ß\";\nimport { B1Z } from \"2\";\nimport { _日, BÜx, a, _x } from \"+9\";\nimport { _1z, éZ_, $b, a_ } from \" 10\";\nimport { _ÜZ, a10A, $z日 } from \"+1x10\";\nimport { _2, $éx, $, $$_ } from \"Bx2 \";\nimport { B$B, é日, Bbß } from \"ßñ\";\n"
+ },
+ {
+  "name": "fuzz-names/100/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { a, $zb } from \"Éñ\";\nimport { BBb, é, _é } from \"x1\";\nimport { é$b } from \"Z#b10\";\nimport { az2 } from \"bü1.5\";\nimport { B1B } from \"b\";\nimport { a_2, a1x, $za, BA } from \"@aæß\";\nimport { $_, $Ba, éB } from \"10+😀10\";\nimport { aZ, a日_ } from \"üя@1e3\";\n",
+  "output": "import { $_, $Ba, éB } from \"10+😀10\";\nimport { a_2, a1x, $za, BA } from \"@aæß\";\nimport { é$b } from \"Z#b10\";\nimport { B1B } from \"b\";\nimport { az2 } from \"bü1.5\";\nimport { BBb, é, _é } from \"x1\";\nimport { a, $zb } from \"Éñ\";\nimport { aZ, a日_ } from \"üя@1e3\";\n"
+ },
+ {
+  "name": "fuzz-names/120/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { aaz, $, éÜ10 } from \"11.5\";\nimport { _110, $ß, __é } from \"2x1A\";\nimport { _Z, $Ba, é_10 } from \"-_\";\nimport { é } from \"Z\";\nimport { aZ } from \"Ab\";\nimport { éb$, _, _z } from \"1\";\nimport { BÜ, a10z } from \"_\";\nimport { B日 } from \"z1e3\";\n",
+  "output": "import { éb$, _, _z } from \"1\";\nimport { _110, $ß, __é } from \"2x1A\";\nimport { aaz, $, éÜ10 } from \"11.5\";\nimport { _Z, $Ba, é_10 } from \"-_\";\nimport { aZ } from \"Ab\";\nimport { é } from \"Z\";\nimport { BÜ, a10z } from \"_\";\nimport { B日 } from \"z1e3\";\n"
+ },
+ {
+  "name": "fuzz-names/140/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { éxz, _, _1x, $ } from \"+😀/$\";\nimport { $$_, _2a } from \"É\";\nimport { a, a1, _a } from \"ßÉ/\";\nimport { BB, _B, aBÜ } from \"a@1\";\nimport { _a1, _$a, BA, abé } from \"z-0x1f007\";\nimport { BÜ, aA } from \"😀\";\nimport { B, _ßb } from \"æzB9\";\nimport { azB } from \"яя1!\";\n",
+  "output": "import { éxz, _, _1x, $ } from \"+😀/$\";\nimport { BB, _B, aBÜ } from \"a@1\";\nimport { _a1, _$a, BA, abé } from \"z-0x1f007\";\nimport { $$_, _2a } from \"É\";\nimport { a, a1, _a } from \"ßÉ/\";\nimport { B, _ßb } from \"æzB9\";\nimport { azB } from \"яя1!\";\nimport { BÜ, aA } from \"😀\";\n"
+ },
+ {
+  "name": "fuzz-names/160/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _Za, _, é$z } from \"Aü日本😀\";\nimport { é } from \"0x1f1e3#\";\nimport { a_A, éßé } from \"1.5aé\";\nimport { a } from \"#~\";\nimport { ééz, _日é, $é日 } from \"x11e3x10_\";\nimport { a10, __10 } from \"#1e39\";\nimport { ab, Bß1, _日 } from \"x1ü\";\n",
+  "output": "import { é } from \"0x1f1e3#\";\nimport { a_A, éßé } from \"1.5aé\";\nimport { a10, __10 } from \"#1e39\";\nimport { a } from \"#~\";\nimport { _Za, _, é$z } from \"Aü日本😀\";\nimport { ab, Bß1, _日 } from \"x1ü\";\nimport { ééz, _日é, $é日 } from \"x11e3x10_\";\n"
+ },
+ {
+  "name": "fuzz-names/180/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { é, BA } from \"я1e3\";\nimport { aÜ, _日, axA } from \"_A/$\";\nimport { B, $éé, $ } from \"É.😀\";\nimport { éB10, _, _x } from \"x1x10x1f\";\nimport { $A } from \"aA\";\nimport { Bé, é2, a, éZ } from \"+\";\nimport { $B日, BBé } from \"b@A@\";\nimport { é日, $日, a10 } from \"ZA$\";\n",
+  "output": "import { Bé, é2, a, éZ } from \"+\";\nimport { é日, $日, a10 } from \"ZA$\";\nimport { aÜ, _日, axA } from \"_A/$\";\nimport { $A } from \"aA\";\nimport { $B日, BBé } from \"b@A@\";\nimport { éB10, _, _x } from \"x1x10x1f\";\nimport { B, $éé, $ } from \"É.😀\";\nimport { é, BA } from \"я1e3\";\n"
+ },
+ {
+  "name": "fuzz-names/200/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { a } from \"üx2\";\nimport { $Ü$, a$2, a10, a10B } from \"x10É \";\nimport { _a, aéß } from \"æ1.5-A\";\nimport { éx, $AÜ, é } from \".A😀B\";\nimport { _b$, é$ß } from \"+\";\nimport { B日2, _zß, _10Z } from \"/ø#1.5\";\nimport { abb, _z, é_ } from \"Z~\";\nimport { Bz } from \"+æB1\";\n",
+  "output": "import { _b$, é$ß } from \"+\";\nimport { Bz } from \"+æB1\";\nimport { éx, $AÜ, é } from \".A😀B\";\nimport { B日2, _zß, _10Z } from \"/ø#1.5\";\nimport { abb, _z, é_ } from \"Z~\";\nimport { $Ü$, a$2, a10, a10B } from \"x10É \";\nimport { _a, aéß } from \"æ1.5-A\";\nimport { a } from \"üx2\";\n"
+ },
+ {
+  "name": "fuzz-names/220/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $é, _Z日, B2 } from \"02007\";\nimport { _10, ébA, BÜ } from \"ñ/02\";\nimport { B1 } from \"z\";\nimport { é日2 } from \"92zæ\";\nimport { é$, B$, _z } from \"-b9\";\nimport { _, $_ } from \"я\";\nimport { é, a, éz } from \"0x1f+É1e3\";\nimport { é2$ } from \"ABb\";\n",
+  "output": "import { é, a, éz } from \"0x1f+É1e3\";\nimport { $é, _Z日, B2 } from \"02007\";\nimport { é日2 } from \"92zæ\";\nimport { é$, B$, _z } from \"-b9\";\nimport { é2$ } from \"ABb\";\nimport { B1 } from \"z\";\nimport { _10, ébA, BÜ } from \"ñ/02\";\nimport { _, $_ } from \"я\";\n"
+ },
+ {
+  "name": "fuzz-names/240/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _B } from \"1.5A1e3x10\";\nimport { aZ, $ß1, _ } from \"007x2$007\";\nimport { _日, éz, é日_ } from \"a10x1\";\nimport { $a, __, a } from \"#ZbZ\";\nimport { $10, $zx } from \"0x1f\";\nimport { BÜ, Bx, aÜ } from \"__\";\nimport { é1, éZÜ, $$_ } from \"!ø02 \";\nimport { B, $ } from \" \";\n",
+  "output": "import { B, $ } from \" \";\nimport { aZ, $ß1, _ } from \"007x2$007\";\nimport { é1, éZÜ, $$_ } from \"!ø02 \";\nimport { $10, $zx } from \"0x1f\";\nimport { _B } from \"1.5A1e3x10\";\nimport { $a, __, a } from \"#ZbZ\";\nimport { BÜ, Bx, aÜ } from \"__\";\nimport { _日, éz, é日_ } from \"a10x1\";\n"
+ },
+ {
+  "name": "fuzz-names/260/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { éb日 } from \"+x1\";\nimport { a, B_Z, $é, $_Z } from \"x2Z😀ø\";\nimport { B, _Ü } from \"!@/$\";\nimport { éx } from \"ü$éñ\";\nimport { BB, _ba, é日z, é } from \"éæ\";\nimport { aé } from \"x1\";\nimport { $10é, $, Bxa } from \"ññb!\";\n",
+  "output": "import { B, _Ü } from \"!@/$\";\nimport { éb日 } from \"+x1\";\nimport { aé } from \"x1\";\nimport { a, B_Z, $é, $_Z } from \"x2Z😀ø\";\nimport { BB, _ba, é日z, é } from \"éæ\";\nimport { $10é, $, Bxa } from \"ññb!\";\nimport { éx } from \"ü$éñ\";\n"
+ },
+ {
+  "name": "fuzz-names/280/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { az, é } from \"@x10!\";\nimport { a } from \"B1e32\";\nimport { $, $aé, Bb } from \"007\";\nimport { aé, B_ } from \"0x1fx1ax2\";\nimport { aa, $$Ü, éb$ } from \"+\";\nimport { Baz, $b, axÜ, B1B } from \" \";\nimport { B日, _日2 } from \"1e3-z\";\n",
+  "output": "import { Baz, $b, axÜ, B1B } from \" \";\nimport { aé, B_ } from \"0x1fx1ax2\";\nimport { $, $aé, Bb } from \"007\";\nimport { B日, _日2 } from \"1e3-z\";\nimport { aa, $$Ü, éb$ } from \"+\";\nimport { az, é } from \"@x10!\";\nimport { a } from \"B1e32\";\n"
+ },
+ {
+  "name": "fuzz-names/300/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _$ } from \"ñ9\";\nimport { ax, $ZZ } from \"x1@\";\nimport { a } from \".\";\nimport { B, _Bz } from \"-10 \";\nimport { _Z } from \".@x101e3\";\nimport { $1, ébA, _Zé } from \"007æ\";\nimport { Bza, é, _b_ } from \"x10007~ \";\nimport { _, aA10, $B2 } from \"0x1fÉ1e3\";\n",
+  "output": "import { B, _Bz } from \"-10 \";\nimport { _, aA10, $B2 } from \"0x1fÉ1e3\";\nimport { $1, ébA, _Zé } from \"007æ\";\nimport { a } from \".\";\nimport { _Z } from \".@x101e3\";\nimport { ax, $ZZ } from \"x1@\";\nimport { Bza, é, _b_ } from \"x10007~ \";\nimport { _$ } from \"ñ9\";\n"
+ },
+ {
+  "name": "fuzz-names/320/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { Bb10, a, _x } from \"日本12-\";\nimport { éa_, $ } from \"яA1.5\";\nimport { _日$, aA10, _, B } from \"é!-a\";\nimport { aA$, é$, éa } from \"É\";\nimport { _日x, a日 } from \"#0x1f\";\nimport { a_é, B$, _ß, axB } from \"/!1e3x2\";\nimport { $z, é } from \"x2# É\";\n",
+  "output": "import { _日x, a日 } from \"#0x1f\";\nimport { a_é, B$, _ß, axB } from \"/!1e3x2\";\nimport { $z, é } from \"x2# É\";\nimport { aA$, é$, éa } from \"É\";\nimport { _日$, aA10, _, B } from \"é!-a\";\nimport { éa_, $ } from \"яA1.5\";\nimport { Bb10, a, _x } from \"日本12-\";\n"
+ },
+ {
+  "name": "fuzz-names/340/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B日日, a10, B$A, $ } from \"1e3x10@\";\nimport { éaé, éß } from \"æ@\";\nimport { Bé, _x } from \"022_\";\nimport { aÜ, a$_, aaZ } from \"x1010\";\nimport { $bb } from \"ü2\";\nimport { $B } from \"#!ø+\";\nimport { é2ß, $é1, B2 } from \"0x1fZ-\";\n",
+  "output": "import { é2ß, $é1, B2 } from \"0x1fZ-\";\nimport { Bé, _x } from \"022_\";\nimport { B日日, a10, B$A, $ } from \"1e3x10@\";\nimport { $B } from \"#!ø+\";\nimport { aÜ, a$_, aaZ } from \"x1010\";\nimport { éaé, éß } from \"æ@\";\nimport { $bb } from \"ü2\";\n"
+ },
+ {
+  "name": "fuzz-names/360/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { é日 } from \"øz \";\nimport { BAb } from \"bß1a\";\nimport { é } from \"@@1.5\";\nimport { _, $é, _é } from \"9-\";\nimport { _Z } from \"1!-1\";\nimport { aa, a$, $zÜ } from \"я$æÉ\";\nimport { aZ, $, __, _Ü } from \"2\";\nimport { aA, $1 } from \" 1e3\";\n",
+  "output": "import { _Z } from \"1!-1\";\nimport { aZ, $, __, _Ü } from \"2\";\nimport { _, $é, _é } from \"9-\";\nimport { aA, $1 } from \" 1e3\";\nimport { é } from \"@@1.5\";\nimport { BAb } from \"bß1a\";\nimport { é日 } from \"øz \";\nimport { aa, a$, $zÜ } from \"я$æÉ\";\n"
+ },
+ {
+  "name": "fuzz-names/380/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $z2, B } from \"-1e3\";\nimport { $, _AÜ, BAz, $zé } from \"$\";\nimport { $10 } from \"æx1.\";\nimport { _, Baß } from \"1\";\nimport { ab$, é10B } from \"ø\";\nimport { B日, Bß, é } from \"A0x1f#\";\nimport { _Üz, Bz_ } from \"æ B@\";\nimport { _日x, éB, _z, é2 } from \"10-.\";\n",
+  "output": "import { $z2, B } from \"-1e3\";\nimport { _, Baß } from \"1\";\nimport { _日x, éB, _z, é2 } from \"10-.\";\nimport { $, _AÜ, BAz, $zé } from \"$\";\nimport { B日, Bß, é } from \"A0x1f#\";\nimport { _Üz, Bz_ } from \"æ B@\";\nimport { $10 } from \"æx1.\";\nimport { ab$, é10B } from \"ø\";\n"
+ },
+ {
+  "name": "fuzz-names/400/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { é, a10, é_ß, a } from \"æß+ø\";\nimport { éZ, B10, B日 } from \"a1é\";\nimport { Bß, _ } from \"x1Z_\";\nimport { B } from \"zéb\";\nimport { aZA } from \"æ100x1f\";\nimport { Bßé, éb1 } from \"É😀~\";\nimport { éb, aÜ } from \"+1.5~ \";\nimport { éÜ } from \"B1.5üÉ\";\n",
+  "output": "import { éb, aÜ } from \"+1.5~ \";\nimport { éÜ } from \"B1.5üÉ\";\nimport { éZ, B10, B日 } from \"a1é\";\nimport { Bß, _ } from \"x1Z_\";\nimport { B } from \"zéb\";\nimport { Bßé, éb1 } from \"É😀~\";\nimport { aZA } from \"æ100x1f\";\nimport { é, a10, é_ß, a } from \"æß+ø\";\n"
+ },
+ {
+  "name": "fuzz-names/420/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { éb, $, éßZ, _10z } from \"x10 z\";\nimport { _2ß } from \"日本100x1f.\";\nimport { éé, éAé, Bé1 } from \"  Z\";\nimport { BA, $21, _B } from \"10\";\nimport { é } from \"z~😀~\";\nimport { $Bz, B2日, __, B } from \"ß_\";\nimport { a_, a日é } from \"#aA$\";\nimport { éß } from \"b+ßæ\";\n",
+  "output": "import { BA, $21, _B } from \"10\";\nimport { a_, a日é } from \"#aA$\";\nimport { éé, éAé, Bé1 } from \"  Z\";\nimport { éß } from \"b+ßæ\";\nimport { éb, $, éßZ, _10z } from \"x10 z\";\nimport { é } from \"z~😀~\";\nimport { $Bz, B2日, __, B } from \"ß_\";\nimport { _2ß } from \"日本100x1f.\";\n"
+ },
+ {
+  "name": "fuzz-names/440/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $, _10é, _x } from \" x22æ\";\nimport { B, BZz, a$ } from \"007 a\";\nimport { _x1 } from \"0079Z\";\nimport { Béa, a } from \"~b10~\";\nimport { Bbz } from \"éBæ\";\nimport { é } from \"ß2!😀\";\nimport { aÜ, BaÜ, _ } from \"Z-\";\n",
+  "output": "import { B, BZz, a$ } from \"007 a\";\nimport { _x1 } from \"0079Z\";\nimport { aÜ, BaÜ, _ } from \"Z-\";\nimport { $, _10é, _x } from \" x22æ\";\nimport { Béa, a } from \"~b10~\";\nimport { é } from \"ß2!😀\";\nimport { Bbz } from \"éBæ\";\n"
+ },
+ {
+  "name": "fuzz-names/460/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _1, $é, B } from \"ñ_2\";\nimport { a } from \"ñ9日本\";\nimport { B$ } from \"a007021e3\";\nimport { BB, $日 } from \"/\";\nimport { __A, aÜ10 } from \"日本1#\";\nimport { éZ, éé, $_, B10Z } from \"1.5@\";\nimport { aZ } from \"x10aa$\";\nimport { aé, $b, Bx } from \"/\";\n",
+  "output": "import { éZ, éé, $_, B10Z } from \"1.5@\";\nimport { BB, $日 } from \"/\";\nimport { aé, $b, Bx } from \"/\";\nimport { B$ } from \"a007021e3\";\nimport { aZ } from \"x10aa$\";\nimport { a } from \"ñ9日本\";\nimport { _1, $é, B } from \"ñ_2\";\nimport { __A, aÜ10 } from \"日本1#\";\n"
+ },
+ {
+  "name": "fuzz-names/480/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $, a, é1ß } from \"日本😀ü\";\nimport { aZ_ } from \"x1\";\nimport { $x, éaa } from \"~\";\nimport { é } from \"b-+\";\nimport { aBx, _1a, aé } from \"x1-x11.5\";\nimport { B } from \"æz.\";\nimport { $Ü$, a日b, aÜb } from \"0210\";\nimport { aZ, _ } from \"a!\";\n",
+  "output": "import { $Ü$, a日b, aÜb } from \"0210\";\nimport { aZ, _ } from \"a!\";\nimport { é } from \"b-+\";\nimport { aZ_ } from \"x1\";\nimport { aBx, _1a, aé } from \"x1-x11.5\";\nimport { $x, éaa } from \"~\";\nimport { B } from \"æz.\";\nimport { $, a, é1ß } from \"日本😀ü\";\n"
+ },
+ {
+  "name": "fuzz-names/500/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { a1, B10, $, é__ } from \"x1æü$\";\nimport { Béz } from \"2ñ1e3+\";\nimport { a, éÜé, B } from \"æñ\";\nimport { B102 } from \"ß\";\nimport { _Ü } from \"aü\";\nimport { a2, éz } from \"b😀\";\nimport { aA, BaZ, $$ } from \"я\";\nimport { B1 } from \"я1e3😀a\";\n",
+  "output": "import { Béz } from \"2ñ1e3+\";\nimport { _Ü } from \"aü\";\nimport { a2, éz } from \"b😀\";\nimport { a1, B10, $, é__ } from \"x1æü$\";\nimport { B102 } from \"ß\";\nimport { a, éÜé, B } from \"æñ\";\nimport { aA, BaZ, $$ } from \"я\";\nimport { B1 } from \"я1e3😀a\";\n"
+ },
+ {
+  "name": "fuzz-names/520/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $z_, a, $ } from \"ñx2日本$\";\nimport { BA, é, ab1 } from \"x1😀\";\nimport { $Üz, _x } from \"02!#a\";\nimport { éß } from \"ü\";\nimport { éZ_, Bß$, _Z, B2 } from \"$ñÉ1e3\";\nimport { $x$, a1Ü } from \"É日本z\";\nimport { B_, aZA, éB$ } from \"1e3\";\nimport { a日日 } from \"9_\";\n",
+  "output": "import { $Üz, _x } from \"02!#a\";\nimport { a日日 } from \"9_\";\nimport { B_, aZA, éB$ } from \"1e3\";\nimport { éZ_, Bß$, _Z, B2 } from \"$ñÉ1e3\";\nimport { BA, é, ab1 } from \"x1😀\";\nimport { $x$, a1Ü } from \"É日本z\";\nimport { $z_, a, $ } from \"ñx2日本$\";\nimport { éß } from \"ü\";\n"
+ },
+ {
+  "name": "fuzz-names/540/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B, B_, a } from \"#1.5я\";\nimport { _a, $AZ, $, Bé } from \" 007/é\";\nimport { Bb, a日a, é } from \"x12!\";\nimport { _1, B1z, _Z, _日 } from \"~@ñ9\";\nimport { B__, _ } from \"ñ/\";\nimport { $Ax, é2日, éA日, B2 } from \"Z\";\nimport { é1, é2z, $a } from \"æb1e3\";\nimport { a_1, Baz } from \"É\";\n",
+  "output": "import { _a, $AZ, $, Bé } from \" 007/é\";\nimport { B, B_, a } from \"#1.5я\";\nimport { $Ax, é2日, éA日, B2 } from \"Z\";\nimport { Bb, a日a, é } from \"x12!\";\nimport { _1, B1z, _Z, _日 } from \"~@ñ9\";\nimport { a_1, Baz } from \"É\";\nimport { é1, é2z, $a } from \"æb1e3\";\nimport { B__, _ } from \"ñ/\";\n"
+ },
+ {
+  "name": "fuzz-names/560/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _ } from \"++ZB\";\nimport { B, _$日, $ } from \"007ø\";\nimport { $ba, é, B$x } from \"007+\";\nimport { Bz1, a日Ü } from \"zZ\";\nimport { é10é } from \"~ññ\";\nimport { $B } from \".\";\nimport { é1, _b$, ab, $z } from \"1.5\";\nimport { $Zz, _bA, _ß } from \"9+\";\n",
+  "output": "import { $ba, é, B$x } from \"007+\";\nimport { B, _$日, $ } from \"007ø\";\nimport { é1, _b$, ab, $z } from \"1.5\";\nimport { $Zz, _bA, _ß } from \"9+\";\nimport { _ } from \"++ZB\";\nimport { $B } from \".\";\nimport { Bz1, a日Ü } from \"zZ\";\nimport { é10é } from \"~ññ\";\n"
+ },
+ {
+  "name": "fuzz-names/580/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { aB, _, a, $Z1 } from \"-\";\nimport { éÜb, é, aé, ézZ } from \"02\";\nimport { $1 } from \"ø\";\nimport { Béa, a10 } from \"02x2\";\nimport { $, ax } from \"A1x1\";\nimport { __ } from \"10ßx2\";\nimport { a1 } from \"яAx1\";\nimport { B } from \"-+$x1\";\n",
+  "output": "import { éÜb, é, aé, ézZ } from \"02\";\nimport { Béa, a10 } from \"02x2\";\nimport { __ } from \"10ßx2\";\nimport { aB, _, a, $Z1 } from \"-\";\nimport { B } from \"-+$x1\";\nimport { $, ax } from \"A1x1\";\nimport { $1 } from \"ø\";\nimport { a1 } from \"яAx1\";\n"
+ },
+ {
+  "name": "fuzz-names/600/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { abB, $Z_, BÜ2, B1 } from \"+/\";\nimport { $Az, aß, $bé } from \"!@\";\nimport { a } from \"ß\";\nimport { a_ } from \"_ø\";\nimport { B, a$, $1z } from \"@æø\";\nimport { ééb, B_1, aÜ, éz } from \"ø-é\";\nimport { BZ } from \"9!\";\nimport { _10x } from \"0x1f\";\n",
+  "output": "import { _10x } from \"0x1f\";\nimport { BZ } from \"9!\";\nimport { $Az, aß, $bé } from \"!@\";\nimport { abB, $Z_, BÜ2, B1 } from \"+/\";\nimport { B, a$, $1z } from \"@æø\";\nimport { a_ } from \"_ø\";\nimport { a } from \"ß\";\nimport { ééb, B_1, aÜ, éz } from \"ø-é\";\n"
+ },
+ {
+  "name": "fuzz-names/620/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { é10z } from \"0x1fÉÉ-\";\nimport { azZ, a } from \"#x10ßx10\";\nimport { aZb, __, a1 } from \"..~😀\";\nimport { $z_, axÜ } from \"x1x10üÉ\";\nimport { a日, $, B } from \"æ@x10\";\nimport { _ } from \"ß\";\nimport { BéA, éÜ, $xß } from \"$91.5\";\n",
+  "output": "import { é10z } from \"0x1fÉÉ-\";\nimport { azZ, a } from \"#x10ßx10\";\nimport { BéA, éÜ, $xß } from \"$91.5\";\nimport { aZb, __, a1 } from \"..~😀\";\nimport { $z_, axÜ } from \"x1x10üÉ\";\nimport { _ } from \"ß\";\nimport { a日, $, B } from \"æ@x10\";\n"
+ },
+ {
+  "name": "fuzz-names/640/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B } from \"/x10x2\";\nimport { B日 } from \"z1e3\";\nimport { B_, é, $a, éxZ } from \"x2x2.2\";\nimport { $AZ, _bZ, aZ$, Bzb } from \"æ\";\nimport { a, _, az } from \"øB\";\nimport { BAx, $, _日, éBß } from \"$\";\nimport { _$$, $Bb } from \"ü\";\nimport { $B10, _b$, __, _Üé } from \"9#я\";\n",
+  "output": "import { $B10, _b$, __, _Üé } from \"9#я\";\nimport { BAx, $, _日, éBß } from \"$\";\nimport { B } from \"/x10x2\";\nimport { B_, é, $a, éxZ } from \"x2x2.2\";\nimport { B日 } from \"z1e3\";\nimport { $AZ, _bZ, aZ$, Bzb } from \"æ\";\nimport { a, _, az } from \"øB\";\nimport { _$$, $Bb } from \"ü\";\n"
+ },
+ {
+  "name": "fuzz-names/660/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { Bß, $ } from \"😀\";\nimport { az, $BA, éA日, a } from \"~日本#\";\nimport { $a } from \"+2\";\nimport { a22, _ÜÜ } from \"1bñ/\";\nimport { _ } from \"AÉ\";\nimport { $z, é } from \"AÉ@日本\";\nimport { _2 } from \" A@\";\n",
+  "output": "import { a22, _ÜÜ } from \"1bñ/\";\nimport { $a } from \"+2\";\nimport { _2 } from \" A@\";\nimport { _ } from \"AÉ\";\nimport { $z, é } from \"AÉ@日本\";\nimport { az, $BA, éA日, a } from \"~日本#\";\nimport { Bß, $ } from \"😀\";\n"
+ },
+ {
+  "name": "fuzz-names/680/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { é2_, $xA, Bß, éé } from \"-x10 \";\nimport { a, $é_ } from \"日本x1\";\nimport { é, $a, _10_, aB } from \"!\";\nimport { B1 } from \"x1x1æZ\";\nimport { éA, aA, B22 } from \" \";\nimport { $, aßé } from \"x10_😀\";\nimport { $2, é1, _éZ } from \"1\";\n",
+  "output": "import { éA, aA, B22 } from \" \";\nimport { $2, é1, _éZ } from \"1\";\nimport { é, $a, _10_, aB } from \"!\";\nimport { é2_, $xA, Bß, éé } from \"-x10 \";\nimport { B1 } from \"x1x1æZ\";\nimport { $, aßé } from \"x10_😀\";\nimport { a, $é_ } from \"日本x1\";\n"
+ },
+ {
+  "name": "fuzz-names/700/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _日, _10$ } from \"x10 x10\";\nimport { éAb, éA, a } from \"Éя9\";\nimport { $, Bß } from \"1日本\";\nimport { Bßß, $102, B2 } from \"z~b\";\nimport { $10, é } from \"é~x10æ\";\nimport { B日, a1, _z } from \" \";\nimport { aéz, $ß } from \"я.Aé\";\nimport { $Üz, _$, $2 } from \"007Z/\";\n",
+  "output": "import { B日, a1, _z } from \" \";\nimport { $Üz, _$, $2 } from \"007Z/\";\nimport { $, Bß } from \"1日本\";\nimport { _日, _10$ } from \"x10 x10\";\nimport { Bßß, $102, B2 } from \"z~b\";\nimport { éAb, éA, a } from \"Éя9\";\nimport { $10, é } from \"é~x10æ\";\nimport { aéz, $ß } from \"я.Aé\";\n"
+ },
+ {
+  "name": "fuzz-names/720/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _$Ü, $1ß } from \"æ@@_\";\nimport { $ß, é, aB1 } from \"2ñ😀1.5\";\nimport { a, éz, Bß } from \"/\";\nimport { _1$, _1 } from \"Z1.5\";\nimport { B10A, aBÜ } from \".$029\";\nimport { é$, $A } from \"é1e310b\";\nimport { aBß, a_a } from \"z/ñ9\";\nimport { aBé, a_x, é日A } from \"$$\";\n",
+  "output": "import { $ß, é, aB1 } from \"2ñ😀1.5\";\nimport { aBé, a_x, é日A } from \"$$\";\nimport { B10A, aBÜ } from \".$029\";\nimport { a, éz, Bß } from \"/\";\nimport { _1$, _1 } from \"Z1.5\";\nimport { aBß, a_a } from \"z/ñ9\";\nimport { _$Ü, $1ß } from \"æ@@_\";\nimport { é$, $A } from \"é1e310b\";\n"
+ },
+ {
+  "name": "fuzz-names/740/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { aZB, $éé } from \"😀/é\";\nimport { $BB, Bx } from \"1.5 B\";\nimport { aa, $日B } from \"+02\";\nimport { é, _ } from \"B\";\nimport { é2, $Z, $ } from \"ø@\";\nimport { a, $bA, BÜ } from \"Bx2ñ\";\nimport { B日日, é$, aZ } from \"x10Ax1!\";\nimport { ézÜ, $ß_, Bß_ } from \"x1я\";\n",
+  "output": "import { $BB, Bx } from \"1.5 B\";\nimport { aa, $日B } from \"+02\";\nimport { é, _ } from \"B\";\nimport { a, $bA, BÜ } from \"Bx2ñ\";\nimport { ézÜ, $ß_, Bß_ } from \"x1я\";\nimport { B日日, é$, aZ } from \"x10Ax1!\";\nimport { é2, $Z, $ } from \"ø@\";\nimport { aZB, $éé } from \"😀/é\";\n"
+ },
+ {
+  "name": "fuzz-names/760/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B2, _a } from \"x2ø\";\nimport { $_, _$ } from \"æü\";\nimport { _, $Ü日, éB, é } from \"1É\";\nimport { éBz, BÜß } from \"1.5\";\nimport { $z, B, a_, aß_ } from \"9\";\nimport { B_x } from \"日本\";\nimport { aÜ1, B$ } from \"aéæü\";\nimport { a日, a$$, $éß } from \"É1e3æ\";\n",
+  "output": "import { _, $Ü日, éB, é } from \"1É\";\nimport { éBz, BÜß } from \"1.5\";\nimport { $z, B, a_, aß_ } from \"9\";\nimport { aÜ1, B$ } from \"aéæü\";\nimport { B2, _a } from \"x2ø\";\nimport { a日, a$$, $éß } from \"É1e3æ\";\nimport { $_, _$ } from \"æü\";\nimport { B_x } from \"日本\";\n"
+ },
+ {
+  "name": "fuzz-names/780/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { a } from \"x2øü\";\nimport { $, _, _10Ü } from \"я\";\nimport { B, éxb } from \"é10+я\";\nimport { _ßÜ, é } from \"x10Z1\";\nimport { $_$, aß, _ZÜ } from \"Z\";\nimport { _Z, $b, _日 } from \"x10/\";\nimport { ax$, _Üa, $1 } from \"02z!1e3\";\n",
+  "output": "import { ax$, _Üa, $1 } from \"02z!1e3\";\nimport { $_$, aß, _ZÜ } from \"Z\";\nimport { a } from \"x2øü\";\nimport { _Z, $b, _日 } from \"x10/\";\nimport { _ßÜ, é } from \"x10Z1\";\nimport { B, éxb } from \"é10+я\";\nimport { $, _, _10Ü } from \"я\";\n"
+ },
+ {
+  "name": "fuzz-names/800/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { aaZ } from \"ß😀@\";\nimport { BZx, $a, BZ, _ZB } from \"1.5😀02\";\nimport { é, $Bx } from \"ü021.5\";\nimport { a, aB, éAB, aAB } from \"~ø#\";\nimport { Bß$, B } from \"0x1f\";\nimport { ax, _ß } from \"1e3\";\nimport { _日b } from \"1.5a -\";\n",
+  "output": "import { _日b } from \"1.5a -\";\nimport { Bß$, B } from \"0x1f\";\nimport { BZx, $a, BZ, _ZB } from \"1.5😀02\";\nimport { ax, _ß } from \"1e3\";\nimport { a, aB, éAB, aAB } from \"~ø#\";\nimport { aaZ } from \"ß😀@\";\nimport { é, $Bx } from \"ü021.5\";\n"
+ },
+ {
+  "name": "fuzz-names/820/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $ß } from \"я\";\nimport { _, é } from \"-øx2é\";\nimport { B } from \"021.5-\";\nimport { $, a } from \"Éx1007~\";\nimport { $日, a日, _$ } from \"日本日本A\";\nimport { $$2 } from \"a1e3#x1\";\nimport { Bx2, $102 } from \"ü日本!\";\nimport { a1, _ß } from \"1Éé0x1f\";\n",
+  "output": "import { B } from \"021.5-\";\nimport { a1, _ß } from \"1Éé0x1f\";\nimport { _, é } from \"-øx2é\";\nimport { $$2 } from \"a1e3#x1\";\nimport { $, a } from \"Éx1007~\";\nimport { Bx2, $102 } from \"ü日本!\";\nimport { $ß } from \"я\";\nimport { $日, a日, _$ } from \"日本日本A\";\n"
+ },
+ {
+  "name": "fuzz-names/840/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { éA, B1Ü, a$, Béx } from \"z202\";\nimport { é1010, BÜ$, aB } from \"я\";\nimport { éé, é } from \"Z日本-$\";\nimport { $b, _ } from \"11\";\nimport { B2 } from \"я$10\";\nimport { $ß } from \"007a9_\";\nimport { $, _10x } from \"1e3#ø\";\nimport { $2, aé, aA2, _10b } from \"-\";\n",
+  "output": "import { $ß } from \"007a9_\";\nimport { $, _10x } from \"1e3#ø\";\nimport { $b, _ } from \"11\";\nimport { $2, aé, aA2, _10b } from \"-\";\nimport { éé, é } from \"Z日本-$\";\nimport { éA, B1Ü, a$, Béx } from \"z202\";\nimport { é1010, BÜ$, aB } from \"я\";\nimport { B2 } from \"я$10\";\n"
+ },
+ {
+  "name": "fuzz-names/860/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { BAB, éaA } from \"x110$É\";\nimport { Bzß, aé, $ß, B } from \"Z \";\nimport { $x, Béb } from \"я\";\nimport { é, é日日 } from \"日本\";\nimport { _, a, $b } from \"b007.\";\nimport { BA, aÜ, $10é, aZA } from \"0x1f0x1f\";\nimport { _ZA } from \"-\";\n",
+  "output": "import { BA, aÜ, $10é, aZA } from \"0x1f0x1f\";\nimport { _ZA } from \"-\";\nimport { Bzß, aé, $ß, B } from \"Z \";\nimport { _, a, $b } from \"b007.\";\nimport { BAB, éaA } from \"x110$É\";\nimport { $x, Béb } from \"я\";\nimport { é, é日日 } from \"日本\";\n"
+ },
+ {
+  "name": "fuzz-names/880/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { a1é } from \"02\";\nimport { _, é, _é } from \"~B\";\nimport { $, $Ü } from \"ñ\";\nimport { a1A, $ß, _Ü } from \"-é\";\nimport { _Zx, a2_, Bx$, B } from \"x10ß1+\";\nimport { BB, _B } from \"øx21\";\nimport { _10, BZ1 } from \"æø\";\n",
+  "output": "import { a1é } from \"02\";\nimport { a1A, $ß, _Ü } from \"-é\";\nimport { _Zx, a2_, Bx$, B } from \"x10ß1+\";\nimport { _, é, _é } from \"~B\";\nimport { _10, BZ1 } from \"æø\";\nimport { $, $Ü } from \"ñ\";\nimport { BB, _B } from \"øx21\";\n"
+ },
+ {
+  "name": "fuzz-names/900/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { é } from \"é1ññ\";\nimport { a, $日a } from \"É_.2\";\nimport { a10B, $zß, éA } from \"_\";\nimport { $é } from \"007\";\nimport { éa, é$é, $a, B } from \"😀00710x1f\";\nimport { éÜx, _a, éZé } from \"日本\";\nimport { é_z, _2 } from \"021!\";\nimport { a日日, _10b, aé } from \"1.5æ007b\";\n",
+  "output": "import { $é } from \"007\";\nimport { é_z, _2 } from \"021!\";\nimport { a日日, _10b, aé } from \"1.5æ007b\";\nimport { a10B, $zß, éA } from \"_\";\nimport { a, $日a } from \"É_.2\";\nimport { é } from \"é1ññ\";\nimport { éÜx, _a, éZé } from \"日本\";\nimport { éa, é$é, $a, B } from \"😀00710x1f\";\n"
+ },
+ {
+  "name": "fuzz-names/920/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B, _ } from \"1e3@Z\";\nimport { a$_, Ba, éß10, é日2 } from \"b\";\nimport { Bx_, éb } from \"é+\";\nimport { BBZ } from \"1.50x1f\";\nimport { é2 } from \"9ß\";\nimport { é日, é, é$x, ax } from \"я#ßa\";\nimport { a, $A } from \"1日本-\";\nimport { azb, éx } from \"æ#9\";\n",
+  "output": "import { BBZ } from \"1.50x1f\";\nimport { B, _ } from \"1e3@Z\";\nimport { a, $A } from \"1日本-\";\nimport { é2 } from \"9ß\";\nimport { a$_, Ba, éß10, é日2 } from \"b\";\nimport { azb, éx } from \"æ#9\";\nimport { Bx_, éb } from \"é+\";\nimport { é日, é, é$x, ax } from \"я#ßa\";\n"
+ },
+ {
+  "name": "fuzz-names/940/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B, a, é } from \".\";\nimport { _A2, a$ } from \"ñx10!_\";\nimport { B1, a_B, $, B2A } from \"Z\";\nimport { éx1 } from \"日本æ\";\nimport { a日b, aé日 } from \"007- \";\nimport { _A } from \"007007\";\nimport { a_a, aA, Bz } from \"日本a\";\nimport { _10$, $$a, é2 } from \"-bA\";\n",
+  "output": "import { a日b, aé日 } from \"007- \";\nimport { _A } from \"007007\";\nimport { _10$, $$a, é2 } from \"-bA\";\nimport { B, a, é } from \".\";\nimport { B1, a_B, $, B2A } from \"Z\";\nimport { _A2, a$ } from \"ñx10!_\";\nimport { a_a, aA, Bz } from \"日本a\";\nimport { éx1 } from \"日本æ\";\n"
+ },
+ {
+  "name": "fuzz-names/960/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B, é1, BÜ2, _é } from \"😀\";\nimport { $1, é2$ } from \"~\";\nimport { a2, é, $, é日 } from \"x10\";\nimport { BA, _10b } from \"é\";\nimport { aB, a, aZ2 } from \".007z\";\nimport { B$é, BÜ日, Bxb } from \" 1.5ß-\";\nimport { éZ1, éb } from \" #\";\nimport { _, $Zb } from \"日本\";\n",
+  "output": "import { B$é, BÜ日, Bxb } from \" 1.5ß-\";\nimport { éZ1, éb } from \" #\";\nimport { aB, a, aZ2 } from \".007z\";\nimport { a2, é, $, é日 } from \"x10\";\nimport { $1, é2$ } from \"~\";\nimport { BA, _10b } from \"é\";\nimport { _, $Zb } from \"日本\";\nimport { B, é1, BÜ2, _é } from \"😀\";\n"
+ },
+ {
+  "name": "fuzz-names/980/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _, é } from \"~\";\nimport { _x } from \"1e3102_\";\nimport { $z, $éé, $, Bz } from \"æ007日本b\";\nimport { B1, a } from \".\";\nimport { é2 } from \"x10 \";\nimport { éß日, _a10 } from \"bß~日本\";\nimport { _1, $bA } from \"9x22\";\nimport { éÜ, é$ß } from \"b日本\";\n",
+  "output": "import { _x } from \"1e3102_\";\nimport { _1, $bA } from \"9x22\";\nimport { B1, a } from \".\";\nimport { éß日, _a10 } from \"bß~日本\";\nimport { éÜ, é$ß } from \"b日本\";\nimport { é2 } from \"x10 \";\nimport { _, é } from \"~\";\nimport { $z, $éé, $, Bz } from \"æ007日本b\";\n"
+ },
+ {
+  "name": "fuzz-names/1000/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _ } from \"100x1fx2\";\nimport { _A, aé, B$, aZ } from \"0x1fя+\";\nimport { aA } from \"x1910\";\nimport { $éZ, $ } from \"é-~\";\nimport { aa } from \"007.日本\";\nimport { B, $x2 } from \" \";\nimport { é1 } from \"éx109\";\nimport { _2 } from \"0x1fяAü\";\n",
+  "output": "import { B, $x2 } from \" \";\nimport { _A, aé, B$, aZ } from \"0x1fя+\";\nimport { _2 } from \"0x1fяAü\";\nimport { aa } from \"007.日本\";\nimport { _ } from \"100x1fx2\";\nimport { aA } from \"x1910\";\nimport { $éZ, $ } from \"é-~\";\nimport { é1 } from \"éx109\";\n"
+ },
+ {
+  "name": "fuzz-names/1020/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { éB1, a, $ } from \"/\";\nimport { é_1, aß日, é } from \"1.5#日本_\";\nimport { B } from \"zæ_1\";\nimport { aab, éa, a$x, a日ß } from \"2я \";\nimport { aéx } from \"0x1fb\";\nimport { aÜ2, ab2 } from \"0x1fé\";\nimport { $b, é10, éA } from \"a1x2\";\nimport { _A2, _Bß } from \"x10B_\";\n",
+  "output": "import { aÜ2, ab2 } from \"0x1fé\";\nimport { aéx } from \"0x1fb\";\nimport { é_1, aß日, é } from \"1.5#日本_\";\nimport { aab, éa, a$x, a日ß } from \"2я \";\nimport { éB1, a, $ } from \"/\";\nimport { $b, é10, éA } from \"a1x2\";\nimport { _A2, _Bß } from \"x10B_\";\nimport { B } from \"zæ_1\";\n"
+ },
+ {
+  "name": "fuzz-names/1040/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _ßÜ } from \"-Z\";\nimport { B_B } from \"-@/ü\";\nimport { ab } from \"ßñ02z\";\nimport { B2 } from \"日本.\";\nimport { __é, ébB } from \" \";\nimport { é2, éßB } from \"!0x1f#\";\nimport { Béé, éxé } from \"._12\";\nimport { _BB, _2_ } from \"æ0x1f\";\n",
+  "output": "import { __é, ébB } from \" \";\nimport { é2, éßB } from \"!0x1f#\";\nimport { B_B } from \"-@/ü\";\nimport { _ßÜ } from \"-Z\";\nimport { Béé, éxé } from \"._12\";\nimport { ab } from \"ßñ02z\";\nimport { _BB, _2_ } from \"æ0x1f\";\nimport { B2 } from \"日本.\";\n"
+ },
+ {
+  "name": "fuzz-names/1060/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { a10, $10x, Bé } from \"~\";\nimport { éx, _, éÜZ, $2b } from \"0x1f\";\nimport { é, $BB } from \"@x10Bx2\";\nimport { a, B, _z$ } from \"1.5_\";\nimport { $ } from \"x2007я\";\nimport { a1, $aé } from \"0x1fx10\";\nimport { é10, $a10 } from \" \";\n",
+  "output": "import { é10, $a10 } from \" \";\nimport { a1, $aé } from \"0x1fx10\";\nimport { a, B, _z$ } from \"1.5_\";\nimport { é, $BB } from \"@x10Bx2\";\nimport { $ } from \"x2007я\";\nimport { éx, _, éÜZ, $2b } from \"0x1f\";\nimport { a10, $10x, Bé } from \"~\";\n"
+ },
+ {
+  "name": "fuzz-names/1080/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { éB, BB$ } from \"a\";\nimport { aA } from \"007Éx1\";\nimport { B, $z_, _日 } from \"я~\";\nimport { BBa, $A } from \"A+ñ\";\nimport { a, $ } from \"007\";\nimport { é } from \"ß\";\nimport { ax, ééA, _ß } from \"@1e302\";\nimport { $Ü, éz } from \"é\";\n",
+  "output": "import { a, $ } from \"007\";\nimport { aA } from \"007Éx1\";\nimport { ax, ééA, _ß } from \"@1e302\";\nimport { BBa, $A } from \"A+ñ\";\nimport { éB, BB$ } from \"a\";\nimport { é } from \"ß\";\nimport { $Ü, éz } from \"é\";\nimport { B, $z_, _日 } from \"я~\";\n"
+ },
+ {
+  "name": "fuzz-names/1100/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { é, _, é$A } from \"1ø21.5\";\nimport { _10, aa, B日z, _ßB } from \"b.Éü\";\nimport { Bb, éé } from \"@x1\";\nimport { a, B } from \"-$\";\nimport { $1, $ } from \"x1x10éя\";\nimport { BAÜ, B2Z, é2 } from \"9a\";\nimport { $_A } from \"0071e3x1x2\";\nimport { aß } from \"2 \";\n",
+  "output": "import { $_A } from \"0071e3x1x2\";\nimport { é, _, é$A } from \"1ø21.5\";\nimport { aß } from \"2 \";\nimport { BAÜ, B2Z, é2 } from \"9a\";\nimport { a, B } from \"-$\";\nimport { Bb, éé } from \"@x1\";\nimport { _10, aa, B日z, _ßB } from \"b.Éü\";\nimport { $1, $ } from \"x1x10éя\";\n"
+ },
+ {
+  "name": "fuzz-names/1120/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _, B21 } from \"Z!\";\nimport { _ß, a, B } from \"007+日本.\";\nimport { éx, $ } from \"#1\";\nimport { é, Bé } from \"007\";\nimport { $Ü, Béé } from \"00710\";\nimport { é$a } from \"1e3Aя\";\nimport { B10B } from \".😀+\";\n",
+  "output": "import { é, Bé } from \"007\";\nimport { _ß, a, B } from \"007+日本.\";\nimport { $Ü, Béé } from \"00710\";\nimport { é$a } from \"1e3Aя\";\nimport { éx, $ } from \"#1\";\nimport { B10B } from \".😀+\";\nimport { _, B21 } from \"Z!\";\n"
+ },
+ {
+  "name": "fuzz-names/1140/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { aÜ_, _2a, B } from \"/ \";\nimport { éB, _ } from \" \";\nimport { éa, a, éaA } from \"_x2A\";\nimport { _日, éAa, $, é10 } from \"1.5😀ßø\";\nimport { Bß10, a$ } from \"øñ9Z\";\nimport { B$, B日 } from \"-.\";\nimport { aé2, _Ü, é日Ü } from \"1\";\nimport { éZ, é日 } from \"Z@\";\n",
+  "output": "import { éB, _ } from \" \";\nimport { aé2, _Ü, é日Ü } from \"1\";\nimport { _日, éAa, $, é10 } from \"1.5😀ßø\";\nimport { B$, B日 } from \"-.\";\nimport { aÜ_, _2a, B } from \"/ \";\nimport { éZ, é日 } from \"Z@\";\nimport { éa, a, éaA } from \"_x2A\";\nimport { Bß10, a$ } from \"øñ9Z\";\n"
+ },
+ {
+  "name": "fuzz-names/1160/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $, _10b } from \"x1æ.É\";\nimport { _x, $Z } from \"😀+x10\";\nimport { $z } from \"10\";\nimport { a, a_z } from \"9x1\";\nimport { BA10, a$ } from \"x10ñb\";\nimport { _, B, é10, $10 } from \"éx10ß\";\nimport { éAé, $ßa, a_, Bß } from \"B2\";\n",
+  "output": "import { a, a_z } from \"9x1\";\nimport { $z } from \"10\";\nimport { éAé, $ßa, a_, Bß } from \"B2\";\nimport { $, _10b } from \"x1æ.É\";\nimport { BA10, a$ } from \"x10ñb\";\nimport { _, B, é10, $10 } from \"éx10ß\";\nimport { _x, $Z } from \"😀+x10\";\n"
+ },
+ {
+  "name": "fuzz-names/1180/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $ßb, a1 } from \"1e3\";\nimport { é1a } from \"10ø\";\nimport { $z } from \"+\";\nimport { $, é2, a2, é_ } from \"1ø0x1fß\";\nimport { _ } from \".-ñ007\";\nimport { $AÜ, B$B, BB日 } from \"$ZZ \";\nimport { é110, é, B } from \".x2\";\n",
+  "output": "import { $, é2, a2, é_ } from \"1ø0x1fß\";\nimport { é1a } from \"10ø\";\nimport { $ßb, a1 } from \"1e3\";\nimport { $AÜ, B$B, BB日 } from \"$ZZ \";\nimport { $z } from \"+\";\nimport { _ } from \".-ñ007\";\nimport { é110, é, B } from \".x2\";\n"
+ },
+ {
+  "name": "fuzz-names/1200/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B$, $_, ééé } from \"+z@b\";\nimport { $x日, _A10, $ } from \"я\";\nimport { $日日, _2b } from \"-æ\";\nimport { a10, $_10, __2, B$é } from \"éяü\";\nimport { aa1, a } from \"z2æ007\";\nimport { $a, é } from \"~1\";\nimport { _xé, $ab } from \"zæ\";\nimport { _Zß, _é, é日 } from \"ü-\";\n",
+  "output": "import { B$, $_, ééé } from \"+z@b\";\nimport { $日日, _2b } from \"-æ\";\nimport { aa1, a } from \"z2æ007\";\nimport { _xé, $ab } from \"zæ\";\nimport { $a, é } from \"~1\";\nimport { a10, $_10, __2, B$é } from \"éяü\";\nimport { _Zß, _é, é日 } from \"ü-\";\nimport { $x日, _A10, $ } from \"я\";\n"
+ },
+ {
+  "name": "fuzz-names/1220/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { aA1, éZ$ } from \"_z+é\";\nimport { éBé, BÜß, _bÜ } from \"日本\";\nimport { é, $z2, éz, a } from \"101!@\";\nimport { axÜ, aA, _1 } from \"øz\";\nimport { _ } from \"ø$ñ\";\nimport { $Ü, $2, B__, _xZ } from \"x1Éx1\";\nimport { B, $a1 } from \"ø9ü\";\nimport { $, a2$ } from \"日本😀0x1f\";\n",
+  "output": "import { é, $z2, éz, a } from \"101!@\";\nimport { aA1, éZ$ } from \"_z+é\";\nimport { $Ü, $2, B__, _xZ } from \"x1Éx1\";\nimport { B, $a1 } from \"ø9ü\";\nimport { _ } from \"ø$ñ\";\nimport { axÜ, aA, _1 } from \"øz\";\nimport { éBé, BÜß, _bÜ } from \"日本\";\nimport { $, a2$ } from \"日本😀0x1f\";\n"
+ },
+ {
+  "name": "fuzz-names/1240/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _ } from \"!\";\nimport { B } from \"/x10\";\nimport { é } from \"$A!\";\nimport { ééx } from \"a10\";\nimport { B10b, $Ü, $ } from \"_x1a\";\nimport { __, Béz, éß } from \"я0x1f1e3É\";\nimport { B$ } from \"..a/\";\nimport { Bzß, _日日 } from \"1@x10\";\n",
+  "output": "import { Bzß, _日日 } from \"1@x10\";\nimport { _ } from \"!\";\nimport { é } from \"$A!\";\nimport { B$ } from \"..a/\";\nimport { B } from \"/x10\";\nimport { B10b, $Ü, $ } from \"_x1a\";\nimport { ééx } from \"a10\";\nimport { __, Béz, éß } from \"я0x1f1e3É\";\n"
+ },
+ {
+  "name": "fuzz-names/1260/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { B, _ } from \"0x1f \";\nimport { $xz, a, $10, $1010 } from \"1.50x1f+\";\nimport { a_ } from \"ß1/\";\nimport { $日é, B2日, $Ü, éab } from \"02Aü\";\nimport { $Z } from \"日本é007\";\nimport { B日, $ß, Bx } from \"ø1\";\nimport { éß日, é, $, B_Z } from \" ~\";\n",
+  "output": "import { $日é, B2日, $Ü, éab } from \"02Aü\";\nimport { $xz, a, $10, $1010 } from \"1.50x1f+\";\nimport { éß日, é, $, B_Z } from \" ~\";\nimport { a_ } from \"ß1/\";\nimport { B日, $ß, Bx } from \"ø1\";\nimport { $Z } from \"日本é007\";\nimport { B, _ } from \"0x1f \";\n"
+ },
+ {
+  "name": "fuzz-names/1280/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { BÜ, B, éa, _ } from \"10я\";\nimport { a } from \"92007-\";\nimport { $, éß } from \"2aæ-\";\nimport { Bz10, é1 } from \"10\";\nimport { é } from \"02\";\nimport { aZB } from \"1x10\";\nimport { B1_, B10 } from \"@~~1e3\";\n",
+  "output": "import { é } from \"02\";\nimport { aZB } from \"1x10\";\nimport { $, éß } from \"2aæ-\";\nimport { Bz10, é1 } from \"10\";\nimport { BÜ, B, éa, _ } from \"10я\";\nimport { a } from \"92007-\";\nimport { B1_, B10 } from \"@~~1e3\";\n"
+ },
+ {
+  "name": "fuzz-names/1300/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { BBÜ, a, _, _b2 } from \"/æ@\";\nimport { Bz$, $, é } from \"-x2\";\nimport { $$ } from \"A\";\nimport { _z, BxÜ, _日 } from \" 日本\";\nimport { _2, aB } from \"ñ~x1/\";\nimport { _é, _a, éB, $z } from \"ab\";\nimport { é$_, $bZ, _x } from \"x2øB@\";\nimport { _Z, B_ } from \"ßé\";\n",
+  "output": "import { Bz$, $, é } from \"-x2\";\nimport { BBÜ, a, _, _b2 } from \"/æ@\";\nimport { $$ } from \"A\";\nimport { _é, _a, éB, $z } from \"ab\";\nimport { é$_, $bZ, _x } from \"x2øB@\";\nimport { _Z, B_ } from \"ßé\";\nimport { _2, aB } from \"ñ~x1/\";\nimport { _z, BxÜ, _日 } from \" 日本\";\n"
+ },
+ {
+  "name": "fuzz-names/1320/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $ } from \"x1B@\";\nimport { $b_, é, _Az } from \"+2\";\nimport { é$ß } from \"2\";\nimport { $B, a, _ } from \".B\";\nimport { $Üß, _1x } from \"A/ .\";\nimport { aA, $z, a1 } from \"9#!\";\nimport { $a } from \"02~\";\nimport { é10, é2ß } from \"022я\";\n",
+  "output": "import { $a } from \"02~\";\nimport { é10, é2ß } from \"022я\";\nimport { $b_, é, _Az } from \"+2\";\nimport { é$ß } from \"2\";\nimport { aA, $z, a1 } from \"9#!\";\nimport { $B, a, _ } from \".B\";\nimport { $Üß, _1x } from \"A/ .\";\nimport { $ } from \"x1B@\";\n"
+ },
+ {
+  "name": "fuzz-names/1340/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $, aZx, éé, _ } from \"日本9日本\";\nimport { _$, $$ß } from \"$\";\nimport { _ZÜ } from \"b\";\nimport { B, _é } from \"1ß+ü\";\nimport { a, Bz } from \"0x1f10\";\nimport { éb, é10_ } from \"ßø\";\nimport { B1B, _$1 } from \" É#0x1f\";\nimport { $z, aa, éxé } from \" É0x1f1e3\";\n",
+  "output": "import { a, Bz } from \"0x1f10\";\nimport { B, _é } from \"1ß+ü\";\nimport { _$, $$ß } from \"$\";\nimport { _ZÜ } from \"b\";\nimport { $z, aa, éxé } from \" É0x1f1e3\";\nimport { B1B, _$1 } from \" É#0x1f\";\nimport { éb, é10_ } from \"ßø\";\nimport { $, aZx, éé, _ } from \"日本9日本\";\n"
+ },
+ {
+  "name": "fuzz-names/1360/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _A, BBb } from \"ßZ~\";\nimport { $bb } from \"é\";\nimport { $zÜ, _2, _é } from \"x10\";\nimport { $ } from \"#é\";\nimport { $ß_, éa } from \"/_/B\";\nimport { _, éaß, _zx } from \"10101.5ß\";\nimport { a, _$$, B110 } from \"aüx2x10\";\n",
+  "output": "import { _, éaß, _zx } from \"10101.5ß\";\nimport { $ } from \"#é\";\nimport { $ß_, éa } from \"/_/B\";\nimport { a, _$$, B110 } from \"aüx2x10\";\nimport { $zÜ, _2, _é } from \"x10\";\nimport { _A, BBb } from \"ßZ~\";\nimport { $bb } from \"é\";\n"
+ },
+ {
+  "name": "fuzz-names/1380/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $x } from \"1\";\nimport { __ } from \"я\";\nimport { Ba } from \"😀\";\nimport { ébB } from \"+\";\nimport { $, a10, aax } from \"Éñ@É\";\nimport { _bx, $ßa, Bx } from \"10x10#\";\nimport { _日ß, é_ } from \"$@\";\nimport { a$日, B } from \"a\";\n",
+  "output": "import { $x } from \"1\";\nimport { _bx, $ßa, Bx } from \"10x10#\";\nimport { _日ß, é_ } from \"$@\";\nimport { ébB } from \"+\";\nimport { a$日, B } from \"a\";\nimport { $, a10, aax } from \"Éñ@É\";\nimport { __ } from \"я\";\nimport { Ba } from \"😀\";\n"
+ },
+ {
+  "name": "fuzz-names/1400/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _x日, aaB, _日 } from \"007\";\nimport { $_, é, _Z } from \" \";\nimport { $zz, $éZ, $x } from \"日本/\";\nimport { _ß_, aßb, _ } from \"1.5/.\";\nimport { $éB, é2, éßé, BéA } from \"2é+\";\nimport { ab, _A, éa2, ééÜ } from \"!\";\nimport { B日é } from \"üB0x1f\";\n",
+  "output": "import { $_, é, _Z } from \" \";\nimport { _x日, aaB, _日 } from \"007\";\nimport { _ß_, aßb, _ } from \"1.5/.\";\nimport { $éB, é2, éßé, BéA } from \"2é+\";\nimport { ab, _A, éa2, ééÜ } from \"!\";\nimport { B日é } from \"üB0x1f\";\nimport { $zz, $éZ, $x } from \"日本/\";\n"
+ },
+ {
+  "name": "fuzz-names/1420/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { a, B2x, $Ü } from \"$\";\nimport { a$, __, abB, éÜ } from \"@$\";\nimport { é, BZ, é1_, $ } from \"日本x2 \";\nimport { _bÜ, _1$ } from \"/\";\nimport { B10$, $bZ, BBb } from \"ßß@007\";\nimport { BB, aÜ, éb, $10 } from \"Z# \";\nimport { aé$, _ } from \"~Éñ02\";\nimport { $Z, _z } from \"1.52\";\n",
+  "output": "import { $Z, _z } from \"1.52\";\nimport { a, B2x, $Ü } from \"$\";\nimport { _bÜ, _1$ } from \"/\";\nimport { a$, __, abB, éÜ } from \"@$\";\nimport { BB, aÜ, éb, $10 } from \"Z# \";\nimport { aé$, _ } from \"~Éñ02\";\nimport { B10$, $bZ, BBb } from \"ßß@007\";\nimport { é, BZ, é1_, $ } from \"日本x2 \";\n"
+ },
+ {
+  "name": "fuzz-names/1440/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { _b, $ } from \".\";\nimport { éß } from \"+z\";\nimport { Bé10 } from \"22\";\nimport { a2$, B, é_ } from \"x2x10øx2\";\nimport { B2$, é, _$, _ } from \"~A\";\nimport { $a$ } from \"10\";\nimport { B1日 } from \"@\";\n",
+  "output": "import { $a$ } from \"10\";\nimport { Bé10 } from \"22\";\nimport { éß } from \"+z\";\nimport { _b, $ } from \".\";\nimport { B1日 } from \"@\";\nimport { a2$, B, é_ } from \"x2x10øx2\";\nimport { B2$, é, _$, _ } from \"~A\";\n"
+ },
+ {
+  "name": "fuzz-names/1460/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { __ } from \"x10ü/é\";\nimport { éé, $B } from \"/11a\";\nimport { Bb, a, éZ1, $Ü_ } from \"x10\";\nimport { B_, $, _Z } from \"日本z\";\nimport { B_b, éa, Ba, aB } from \"_日本@\";\nimport { _ } from \"😀日本1z\";\nimport { a1日 } from \".\";\nimport { aé, $x } from \"日本\";\n",
+  "output": "import { a1日 } from \".\";\nimport { éé, $B } from \"/11a\";\nimport { B_b, éa, Ba, aB } from \"_日本@\";\nimport { Bb, a, éZ1, $Ü_ } from \"x10\";\nimport { __ } from \"x10ü/é\";\nimport { aé, $x } from \"日本\";\nimport { B_, $, _Z } from \"日本z\";\nimport { _ } from \"😀日本1z\";\n"
+ },
+ {
+  "name": "fuzz-names/1480/0",
+  "filename": "fuzz.ts",
+  "options": {},
+  "input": "import { $x, a } from \"z101ü\";\nimport { a1, B } from \"#\";\nimport { éZ, Bba, BA10 } from \"A\";\nimport { Ba } from \"😀\";\nimport { é2, éZx, $ßa } from \"øb日本\";\nimport { $Aß, Béé } from \"ü1A\";\nimport { BxZ, $日 } from \"x2.\";\nimport { _xx, B1é, _z } from \"~x2\";\n",
+  "output": "import { a1, B } from \"#\";\nimport { éZ, Bba, BA10 } from \"A\";\nimport { BxZ, $日 } from \"x2.\";\nimport { $x, a } from \"z101ü\";\nimport { _xx, B1é, _z } from \"~x2\";\nimport { é2, éZx, $ßa } from \"øb日本\";\nimport { $Aß, Béé } from \"ü1A\";\nimport { Ba } from \"😀\";\n"
  }
 ]

@@ -163,8 +163,8 @@ fn strings(value: &Json, name: &str) -> Result<Vec<Vec<u8>>, Vec<u8>> {
     items.iter().map(|item| item.as_str().map(<[u8]>::to_vec).ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))).collect()
 }
 
-fn shown(name: &[u8]) -> std::borrow::Cow<'_, str> {
-    String::from_utf8_lossy(name)
+fn shown(name: &[u8]) -> &bstr::BStr {
+    bstr::BStr::new(name)
 }
 
 /// `value`: as it is written in JSON. `None`: imports are left as they are.

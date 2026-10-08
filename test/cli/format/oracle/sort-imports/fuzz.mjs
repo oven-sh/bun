@@ -1,9 +1,11 @@
 // Makes test cases: imports with comments and empty lines in all sorts of places.
 //
-//   node fuzz.mjs --modules=<dir> --out=cases.json [--mode=tokens|lines] [--count=500] [--seed=1] [--plugin=trivago|ianvs]
+//   node fuzz.mjs --modules=<dir> --out=cases.json [--mode=tokens|lines|names] [--count=500] [--seed=1] [--plugin=trivago|ianvs] [--crlf]
 //
 // - `tokens`: one comment at every boundary between two tokens of a few imports.
 // - `lines`: random comments and empty lines before, after and at the end of the lines of a few imports.
+// - `names`: module specifiers and names of all sorts of characters, for the orders that they are sorted by.
+// `--crlf`: with `\r\n` at the end of lines, and `endOfLine: "auto"`.
 import fs from "node:fs";
 import { SETS, flags, load } from "./oracle.mjs";
 
@@ -57,6 +59,19 @@ if ((named.mode ?? "tokens") === "tokens") {
         inputs.push(seed.slice(0, at) + comment + seed.slice(at));
       }
   }
+} else if (named.mode === "names") {
+  const parts = ["a", "b", "A", "B", "Z", "z", "1", "2", "10", "02", "007", "9", "_", "-", ".", "/", "@", "~", "#", "$", "+", "!", "é", "É", "ß", "ü", "ø", "æ", "ñ", "日本", "я", "😀", " ", "x1", "x10", "x2", "0x1f", "1e3", "1.5"];
+  const letters = ["a", "b", "A", "B", "z", "Z", "_", "$", "1", "2", "10", "é", "ß", "Ü", "日", "x"];
+  for (let index = 0; index < Number(named.count ?? 500); index++) {
+    let text = "";
+    const seen = new Set();
+    for (let line = 0; line < 8; line++) {
+      const source = Array.from({ length: 1 + Math.floor(random() * 4) }, () => pick(parts)).join("");
+      const names = Array.from({ length: 1 + Math.floor(random() * 4) }, () => pick(["a", "B", "_", "$", "é"]) + Array.from({ length: Math.floor(random() * 3) }, () => pick(letters)).join("")).filter(name => !seen.has(name) && seen.add(name));
+      if (names.length) text += `import { ${names.join(", ")} } from "${source}";\n`;
+    }
+    inputs.push(text);
+  }
 } else {
   const before = ["", "", "", "", "\n", "// c\n", "// c\n\n", "\n// c\n", "/* c */\n", "/* c */ ", "/**\n * doc\n */\n", "// c\n// d\n", "// prettier-ignore\n", "\n\n", "/* a\n   b */\n"];
   const after = ["", "", "", "", "", " // t", " /* t */", " /* t\n  u */", " // prettier-ignore"];
@@ -77,10 +92,11 @@ const cases = [];
 for (const plugin of named.plugin ? [named.plugin] : ["trivago", "ianvs"])
   for (const [index, input] of inputs.entries()) {
     const sets = SETS[plugin];
-    const chosen = named.mode === "lines" ? [index % sets.length] : sets.keys();
+    const chosen = named.mode === "tokens" || !named.mode ? sets.keys() : [index % sets.length];
     for (const set of chosen) {
-      const options = { ...sets[set], parser: "typescript" };
-      cases.push({ plugin, name: `fuzz/${index}/${set}`, filename: "fuzz.ts", options, input, ...(await expected(plugin, input, options, "/fuzz.ts")) });
+      const options = { ...sets[set], parser: "typescript", ...(named.crlf ? { endOfLine: "auto" } : {}) };
+      const written = named.crlf ? input.replaceAll("\n", "\r\n") : input;
+      cases.push({ plugin, name: `fuzz/${index}/${set}`, filename: "fuzz.ts", options, input: written, ...(await expected(plugin, written, options, "/fuzz.ts")) });
     }
   }
 fs.writeFileSync(named.out, JSON.stringify(cases));

@@ -1,6 +1,7 @@
 // The fixtures are the inputs of the tests of @trivago/prettier-plugin-sort-imports, of
 // @ianvs/prettier-plugin-sort-imports (both Apache-2.0) and of oxc's formatter (MIT), and generated ones with comments
-// and empty lines in odd places. What is expected is what Prettier 3.9.9 with the plugin, and oxfmt 0.72, print.
+// and empty lines in odd places. What is expected is what Prettier 3.9.9 with the plugin (for
+// prettier-plugin-organize-imports, with TypeScript 5.9), and oxfmt 0.72, print.
 // They are made by test/cli/format/oracle/sort-imports/make-fixtures.mjs.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -12,6 +13,7 @@ type Case = { name: string; filename: string; options: Record<string, unknown>; 
 const tools = {
   trivago: (options: object) => [".prettierrc.json", { plugins: ["@trivago/prettier-plugin-sort-imports"], ...options }],
   ianvs: (options: object) => [".prettierrc.json", { plugins: ["@ianvs/prettier-plugin-sort-imports"], ...options }],
+  organize: (options: object) => [".prettierrc.json", { plugins: ["prettier-plugin-organize-imports"], ...options }],
   oxfmt: (options: object) => [".oxfmtrc.json", options],
 } as const;
 

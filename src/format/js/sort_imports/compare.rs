@@ -4,6 +4,7 @@
 //! as bytes: everything is generic over [`Unit`], and other text is converted first.
 
 use super::collation_tables::{EXPANSIONS, PRIMARY, SECONDARY, TERTIARY};
+use bstr::ByteSlice;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
@@ -26,11 +27,20 @@ impl Unit for u16 {
     }
 }
 
+/// `text.toLowerCase()`
+pub(super) fn lowercase(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for lower in text.chars().flat_map(char::to_lowercase) {
+        out.extend_from_slice(lower.encode_utf8(&mut [0; 4]).as_bytes());
+    }
+    out
+}
+
 fn utf16(text: &[u8], is_lowercased: bool) -> Vec<u16> {
-    let text = String::from_utf8_lossy(text);
+    let units = |text: &[u8]| text.chars().flat_map(|it| it.encode_utf16(&mut [0; 2]).to_vec()).collect();
     match is_lowercased {
-        true => text.to_lowercase().encode_utf16().collect(),
-        false => text.encode_utf16().collect(),
+        true => units(&lowercase(text)),
+        false => units(text),
     }
 }
 
@@ -105,7 +115,7 @@ fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
 /// `isNaN(text)`
 fn is_nan_as_number<T: Unit>(text: &[T]) -> bool {
     // What nearly all text starts with.
-    if text.first().is_some_and(|unit| matches!(unit.code(), 0x21..=0x2A | 0x2C | 0x2F | 0x3A..=0x48 | 0x4A..=0x7E)) {
+    if text.first().is_some_and(|unit| matches!(unit.code(), 0x21..=0x2A | 0x2C | 0x2E | 0x2F | 0x3A..=0x48 | 0x4A..=0x7E)) {
         return true;
     }
     let start = text.iter().take_while(|unit| is_js_whitespace(unit.code())).count();
@@ -282,6 +292,17 @@ fn natural_sort_ascii(x: &[u8], y: &[u8]) -> Ordering {
         return natural_sort_units(x, y);
     }
     let common = x.iter().zip(y).take_while(|(x, y)| x == y).count();
+    // Nearly always they differ in the middle of text that is no number.
+    let is_text = |byte: u8| matches!(byte, 0x21..=0x2A | 0x2C | 0x2E | 0x2F | 0x3A..=0x48 | 0x4A..=0x7E);
+    if let (Some(&x_byte), Some(&y_byte)) = (x.get(common), y.get(common))
+        && !x_byte.is_ascii_digit()
+        && !y_byte.is_ascii_digit()
+    {
+        let text_start = common - x[..common].iter().rev().take_while(|byte| !byte.is_ascii_digit()).count();
+        if if text_start < common { is_text(x[text_start]) } else { is_text(x_byte) && is_text(y_byte) } {
+            return x_byte.cmp(&y_byte);
+        }
+    }
     let mut start = common;
     if let Some(before) = common.checked_sub(1) {
         start -= x[..common].iter().rev().take_while(|byte| byte.is_ascii_digit() == x[before].is_ascii_digit()).count();
@@ -380,21 +401,24 @@ impl<'t> Iterator for Elements<'t> {
                 Some(0) => {}
                 Some(255) => {
                     let letters = EXPANSIONS.iter().find(|it| u32::from(it.0) == code).map_or(*b"??", |it| it.1);
-                    let letter = |byte: u8| Element::Weights(u32::from(PRIMARY[usize::from(byte)]), 0, 2);
+                    let letter = |byte: u8| Element::Weights(u32::from(PRIMARY[usize::from(byte)]) << 24, 0, 2);
                     self.pending = Some(letter(letters[1]));
                     return Some(letter(letters[0]));
                 }
-                Some(&primary) => return Some(Element::Weights(u32::from(primary), SECONDARY[at], TERTIARY[at])),
+                Some(&primary) => return Some(Element::Weights(u32::from(primary) << 24, SECONDARY[at], TERTIARY[at])),
                 // Combining marks
                 None if matches!(code, 0x300..=0x36F) => {}
-                None => return Some(Element::Weights(0x1000 + code, 0, 0)),
+                // What the tables do not have, roughly: letters after those of the Latin script,
+                // symbols after `~`, which is before the digits. Among themselves, by code point.
+                None if char::from_u32(code).is_some_and(char::is_alphanumeric) => return Some(Element::Weights(0xFF00_0000 | code, 0, 0)),
+                None => return Some(Element::Weights((u32::from(PRIMARY[usize::from(b'~')]) << 24) | (code + 1), 0, 0)),
             }
         }
     }
 }
 
 fn compare_primary(a: Element, b: Element) -> Ordering {
-    let after_digits = u32::from(PRIMARY[usize::from(b'9')]);
+    let after_digits = u32::from(PRIMARY[usize::from(b'9')]) << 24;
     match (a, b) {
         (Element::Weights(a, ..), Element::Weights(b, ..)) => a.cmp(&b),
         (Element::Number(a), Element::Number(b)) => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
@@ -494,9 +518,8 @@ pub(super) fn natord(left: &[u8], right: &[u8], ignores_case: bool) -> Ordering 
         let char_of = |byte: &u8| char::from(if ignores_case { byte.to_ascii_lowercase() } else { *byte });
         return natord_chars(left.iter().map(char_of), right.iter().map(char_of));
     }
-    let (left, right) = (String::from_utf8_lossy(left), String::from_utf8_lossy(right));
     match ignores_case {
-        true => natord_chars(left.to_lowercase().chars(), right.to_lowercase().chars()),
+        true => natord_chars(lowercase(left).chars(), lowercase(right).chars()),
         false => natord_chars(left.chars(), right.chars()),
     }
 }

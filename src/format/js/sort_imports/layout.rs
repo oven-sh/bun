@@ -96,7 +96,7 @@ pub(super) fn is_unchanged(model: &Model, from: u32, new_text: &[u8], new_from: 
             PieceKind::Import(index) => {
                 let attributes = model.declarations[index as usize].import.attributes();
                 let is_broken = attributes.is_some_and(|it| {
-                    let first = it.entries().first().map_or(it.braces_span().end, |first| first.span().start);
+                    let first = it.entries().first().map_or_else(|| it.braces_span().end, |first| first.span().start);
                     strings::index_of_any(model.file.slice(bun_lint::span::Span::new(it.braces_span().start, first)), b"\n\r").is_some()
                 });
                 written == printed || (!is_exact && !is_broken && has_same_tokens(written, printed))

@@ -168,11 +168,11 @@ impl Settings {
                         ianvs::TYPES => Matcher::Types,
                         text => match strings::index_of(text, ianvs::TYPES) {
                             Some(at) => Matcher::Regex {
-                                regex: regex(&[&text[..at], &text[at + ianvs::TYPES.len()..]].concat())?,
+                                regex: Box::new(regex(&[&text[..at], &text[at + ianvs::TYPES.len()..]].concat())?),
                                 is_for_types: true,
                             },
                             None => Matcher::Regex {
-                                regex: regex(text)?,
+                                regex: Box::new(regex(text)?),
                                 is_for_types: false,
                             },
                         },

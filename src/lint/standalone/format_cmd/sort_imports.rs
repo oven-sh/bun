@@ -49,6 +49,7 @@ fn options_of(case: &Json, plugin: &[u8]) -> Result<FormatOptions, Vec<u8>> {
     let (mut options, mut settings) = (FormatOptions::default(), Settings::default());
     match plugin {
         b"organize" => settings.set(b"plugins", b"[\"prettier-plugin-organize-imports\"]"),
+        b"oxfmt" => false,
         _ => settings.set(b"plugins", &[b"[\"@", plugin, b"/prettier-plugin-sort-imports\"]"].concat()),
     };
     for (name, value) in case.get(b"options").and_then(Json::as_object).unwrap_or_default() {

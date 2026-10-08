@@ -103,7 +103,7 @@ struct Orphan {
 /// `extract_source_path`: `"./a.js?b"` is `./a.js`.
 fn source_path(written: &[u8]) -> &[u8] {
     let mut source = written;
-    for quote in [b'"', b'\''] {
+    for quote in *b"\"'" {
         while let [first, rest @ ..] = source
             && *first == quote
         {
@@ -362,7 +362,7 @@ impl<'a> ImportRun<'a> {
     #[inline]
     pub(crate) fn before_separator(&mut self, next: Stmt<'a>, is_plain: bool, f: &mut Formatter<'a>) {
         if self.how.is_some() {
-            self.end_statement(Some(next).filter(|_| is_plain), f);
+            self.end_statement(is_plain.then_some(next), f);
         }
     }
 

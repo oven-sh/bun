@@ -251,6 +251,20 @@ describe("bundler", () => {
       stdout: "value: 99",
     },
     {
+      // The import() puts async-mod.ts behind a wrapper, so the top-level await of
+      // the entry is one the linker makes: \`await init_async_mod()\`.
+      name: "StaticImportOfWrappedTLA",
+      files: {
+        "/entry.ts": `
+          import { value } from "./async-mod.ts";
+          console.log("value:", value);
+          export const later = () => import("./async-mod.ts");
+        `,
+        "/async-mod.ts": `export const value = await Promise.resolve(99);`,
+      },
+      stdout: "value: 99",
+    },
+    {
       // Multiple dynamic imports: several separate modules in the graph,
       // each with its own bytecode + ModuleInfo.
       name: "MultipleDynamicImports",

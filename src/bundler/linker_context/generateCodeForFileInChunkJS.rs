@@ -34,7 +34,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts: &mut StmtList,
     arena: &Bump,
     temp_arena: &Bump,
-    module_info: Option<&mut ModuleInfo>,
+    mut module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
 
@@ -520,9 +520,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    stmts
+    let has_await = stmts
         .inside_wrapper_prefix
         .append_async_await(c.promise_all_runtime_ref);
+    if has_await && flags.wrap == WrapKind::None {
+        if let Some(module_info) = module_info.as_deref_mut() {
+            module_info.flags.has_tla = true;
+        }
+    }
     stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());

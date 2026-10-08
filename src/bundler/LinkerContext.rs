@@ -5457,7 +5457,8 @@ impl InsideWrapperPrefix {
     }
 
     /// Ends the prefix: the file itself waits for its async dependencies. A wrapper returns the same promise each time.
-    pub(crate) fn append_async_await(&mut self, promise_all_ref: Ref) {
+    /// Returns whether there is an `await`.
+    pub(crate) fn append_async_await(&mut self, promise_all_ref: Ref) -> bool {
         // The `await` makes the calls that nothing comes after.
         for &(index, _) in self.async_dependencies.iter().rev() {
             if index + 1 != self.stmts.len() {
@@ -5499,7 +5500,7 @@ impl InsideWrapperPrefix {
             );
         }
         let promise = match self.async_dependencies.as_slice() {
-            [] => return,
+            [] => return false,
             &[(_, call_expr)] => call_expr,
             calls => {
                 let mut items = bun_ast::ExprNodeList::init_capacity(calls.len());
@@ -5537,6 +5538,7 @@ impl InsideWrapperPrefix {
             },
             Loc::EMPTY,
         ));
+        true
     }
 }
 

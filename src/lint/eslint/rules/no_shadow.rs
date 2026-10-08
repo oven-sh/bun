@@ -1,5 +1,7 @@
 use bun_lint::prelude::*;
+use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::ts_utils;
+use smallvec::SmallVec;
 
 /// Disallow variable declarations from shadowing variables declared in the outer scope.
 pub struct NoShadow(Checker);
@@ -112,14 +114,20 @@ impl<'a> Variable<'a> {
     }
 }
 
-/// ESLint's `isGlobalAugmentation`: in `declare global { }`.
-fn is_global_augmentation(scope: Scope) -> bool {
-    scope.chain().any(|it| {
-        it.kind() == ScopeKind::TsModule
-            && matches!(it.node(), Node::Stmt(statement)
-                if matches!(statement.kind(), StmtKind::Module(module)
-                    if matches!(module.name(), ModuleName::Global)))
-    })
+/// The scope of a `declare global { }`.
+fn is_scope_of_global_augmentation(scope: Scope) -> bool {
+    scope.kind() == ScopeKind::TsModule
+        && matches!(scope.node(), Node::Stmt(statement)
+            if matches!(statement.kind(), StmtKind::Module(module)
+                if matches!(module.name(), ModuleName::Global)))
+}
+
+/// ESLint's `isGlobalAugmentation`: in `declare global { }`. `all`: the scopes of these in the file.
+fn is_global_augmentation<'a>(scope: Scope<'a>, all: &[Scope<'a>]) -> bool {
+    match all.len() {
+        0..=8 => all.iter().any(|it| it.contains(scope)),
+        _ => scope.chain().any(is_scope_of_global_augmentation),
+    }
 }
 
 /// The `ImportDeclaration` that is the `parent` of a definition.
@@ -455,6 +463,7 @@ impl Checker {
         symbol: Symbol<'a>,
         shadowed: Option<Symbol<'a>>,
         is_global_value: bool,
+        global_augmentations: &[Scope<'a>],
     ) {
         let name = symbol.name();
         if name.is("this") || self.allow.iter().any(|it| **it == *name.bytes()) {
@@ -472,7 +481,7 @@ impl Checker {
             None => None,
         };
         let file = cx.file();
-        if is_global_augmentation(variable.scope)
+        if is_global_augmentation(variable.scope, global_augmentations)
             || variable.is_duplicated_class_name
             || self.is_declare_in_dts_file(file, &variable)
             || self.is_type_value_shadow(&variable, shadowed.as_ref())
@@ -493,7 +502,7 @@ impl Checker {
             return;
         }
         let is_enum = self.dialect == Dialect::TypeScriptEslint
-            && shadowed.symbol.declarations().any(|it| matches!(it, Declaration::Enum(_)));
+            && shadowed.symbol.declaration_kinds().contains(DeclarationKinds::TS_ENUM_NAME);
         let position = file.position(shadowed.identifier.start);
         cx.report(variable.identifier, if is_enum { NO_ENUM_SHADOW } else { NO_SHADOW })
             .data("name", name)
@@ -505,6 +514,10 @@ impl Checker {
     /// scope shadows nothing.
     pub fn check<'a, R: Rule>(&self, cx: &Cx<'a, R>) {
         let file = cx.file();
+        let mut global_augmentations: SmallVec<[Scope<'a>; 1]> = SmallVec::new();
+        if file.has_stmts([StmtTag::Module]) {
+            global_augmentations.extend(file.scopes().filter(|it| is_scope_of_global_augmentation(*it)));
+        }
         for scope in file.scopes() {
             let Some(upper) = scope.parent() else {
                 continue;
@@ -521,7 +534,8 @@ impl Checker {
                 };
                 // What TypeScript merges from several namespaces is listed in the scope of each.
                 if (shadowed.is_some() || global.is_some()) && symbol.scope() == scope {
-                    self.check_variable(cx, symbol, shadowed, global.is_none_or(|it| it.is_value));
+                    let is_global_value = global.is_none_or(|it| it.is_value);
+                    self.check_variable(cx, symbol, shadowed, is_global_value, &global_augmentations);
                 }
             }
         }

@@ -22,7 +22,7 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, property: I
     let operator = if e.is_optional() { "?." } else { "." };
     let property_start = property.start();
     let has_own_line_comment = !f.is_quiet() && f.comments().has_leading_own_line_comment(property_start);
-    let is_inline = !has_own_line_comment && should_inline(e, object, property, start, f);
+    let is_inline = !has_own_line_comment && should_inline(e, object, start, f);
     let property = identifier(property, e.as_chain_element());
 
     if is_inline {
@@ -54,16 +54,35 @@ fn is_member(node: AstNodes<'_>) -> bool {
 /// Whether there is no line break between the object and the `.`, however long the line.
 ///
 /// `object_start`: where the elements of the object start in what is written.
-fn should_inline<'a>(
-    e: Expr<'a>,
-    object: Expr<'a>,
-    property: Ident<'a>,
-    object_start: usize,
-    f: &Formatter<'a>,
-) -> bool {
-    if property.bytes().starts_with(b"#") && never_breaks_before_private_name(f) {
+fn should_inline<'a>(e: Expr<'a>, object: Expr<'a>, object_start: usize, f: &Formatter<'a>) -> bool {
+    let is_private = e.is_private_member();
+    if is_private && never_breaks_before_private_name(f) {
         return true;
     }
+
+    // What follows comes to this unless the member accesses and `!`s around `e` are in one of a few
+    // kinds of nodes.
+    let is_wrapper = |node: Node<'a>| matches!(node, Node::Expr(it) if it.tag() == ExprTag::NonNull);
+    let is_member_or_wrapper =
+        |node: Node<'a>| matches!(node, Node::Expr(it) if matches!(it.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::NonNull));
+    let mut outer = e.parent();
+    while is_wrapper(outer) {
+        outer = outer.parent();
+    }
+    let is_in_member = is_member_or_wrapper(outer);
+    if !is_in_member && !is_private && object.tag() == ExprTag::Ident {
+        return true;
+    }
+    while is_member_or_wrapper(outer) {
+        outer = outer.parent();
+    }
+    match outer {
+        Node::Expr(it) if !matches!(it.tag(), ExprTag::Assign | ExprTag::New) => return false,
+        Node::VarDecl(_) if is_in_member => return false,
+        Node::Stmt(_) | Node::Prop(_) | Node::Func(_) => return false,
+        _ => {}
+    }
+
     let parent = e.as_chain_element().parent();
 
     let mut first_non_wrapper_parent = parent;
@@ -73,8 +92,6 @@ fn should_inline<'a>(
 
     if is_member(first_non_wrapper_parent) {
         // `a.b` of `a.b.c`
-    } else if matches!(object.kind(), ExprKind::Ident(_)) && !property.bytes().starts_with(b"#") {
-        return true;
     } else if matches!(first_non_wrapper_parent, AstNodes::AssignmentExpression(_) | AstNodes::VariableDeclarator(_))
         && (matches!(strip_chain_element_wrappers(object).kind(), ExprKind::Call(call) if !call.args().is_empty())
             || (is_member_chain_or_member_of_one(object)

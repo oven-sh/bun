@@ -21,11 +21,18 @@ pub(crate) mod typescript;
 use crate::prelude::*;
 
 /// `connect(a, b, c)(d)`: `call` is the callee of a call that has fewer arguments, but some.
+#[inline]
 pub(crate) fn is_long_curried_call(call: Expr<'_>) -> bool {
-    let (Some(this), AstNodes::CallExpression(parent)) = (call.call(), call.as_chain_element().parent()) else {
+    matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent))
+}
+
+/// `parent`: the call that `call` is in. The whole of an optional chain is in a `ChainExpression`.
+fn is_long_curried_callee<'a>(call: Expr<'a>, parent: Expr<'a>) -> bool {
+    let (Some(this), Some(parent)) = (call.call(), parent.call()) else {
         return false;
     };
-    parent.call().is_some_and(|parent| {
-        parent.callee() == call && this.args().len() > parent.args().len() && !parent.args().is_empty()
-    })
+    parent.callee() == call
+        && !is_chain_root(call)
+        && this.args().len() > parent.args().len()
+        && !parent.args().is_empty()
 }

@@ -8,19 +8,24 @@ use crate::prelude::*;
 /// the whole of an optional chain, the one has an `OptionalCallExpression` and the other a
 /// `ChainExpression` with the call in it, so what Prettier asks about the type of a node has
 /// different answers.
+#[inline]
 pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    matches!(e.kind(), ExprKind::Call(_)) && (f.file().is_javascript() || !is_chain_root(e))
+    e.tag() == ExprTag::Call && (f.file().is_javascript() || !is_chain_root(e))
 }
 
 /// Prettier's `isMemberExpression`. See [`is_call_expression`].
+#[inline]
 pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    matches!(e.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. }) && (f.file().is_javascript() || !is_chain_root(e))
+    matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && (f.file().is_javascript() || !is_chain_root(e))
 }
 
 /// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` is
 /// not a node here.
+#[inline]
 pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
-    while let ExprKind::NonNull(expression) = e.kind() {
+    while e.tag() == ExprTag::NonNull
+        && let ExprKind::NonNull(expression) = e.kind()
+    {
         e = expression;
     }
     e
@@ -28,7 +33,16 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
 
 /// Prettier's `isNextLineEmpty`: whether the line after the one that `position` is on is empty. What
 /// is behind `position` on its line may be `,`, `;` and comments.
+#[inline]
 pub(crate) fn is_next_line_empty(source_text: SourceText<'_>, position: u32) -> bool {
+    match source_text.as_bytes().get(position as usize..).unwrap_or_default() {
+        // Something else follows on the line.
+        [b',', b' ', next, ..] if !matches!(next, b',' | b';' | b' ' | b'\t' | b'/' | b'\n' | b'\r' | 0xE2) => false,
+        rest => is_line_after_the_rest_of_the_line_empty(rest),
+    }
+}
+
+fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
     fn skip_newline(text: &[u8]) -> Option<&[u8]> {
         match text {
             [b'\r', b'\n', rest @ ..] | [b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
@@ -40,7 +54,6 @@ pub(crate) fn is_next_line_empty(source_text: SourceText<'_>, position: u32) -> 
         text.get(count..).unwrap_or_default()
     }
 
-    let mut rest = source_text.as_bytes().get(position as usize..).unwrap_or_default();
     loop {
         let count = rest.iter().take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t')).count();
         rest = rest.get(count..).unwrap_or_default();
@@ -162,12 +175,9 @@ fn contains_a_test_pattern_of_oxfmt(e: Expr<'_>) -> bool {
 }
 
 fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
-    let ExprKind::Call(call) = e.kind() else {
+    let Some(call) = e.call().filter(|call| e.tag() == ExprTag::Call && !call.is_optional()) else {
         return false;
     };
-    if call.is_optional() {
-        return false;
-    }
     let callee = call.callee();
     let arguments = call.args();
     let mut args = arguments.iter();
@@ -183,10 +193,10 @@ fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
         }
         (Some(first), Some(second), third)
             if arguments.len() <= 3
-                && matches!(first.kind(), ExprKind::String(_) | ExprKind::Template(_))
+                && matches!(first.tag(), ExprTag::String | ExprTag::Template)
                 && is_test_callee(callee) =>
         {
-            if !third.is_none_or(|third| matches!(third.kind(), ExprKind::Number(_))) {
+            if !third.is_none_or(|third| third.tag() == ExprTag::Number) {
                 return false;
             }
             if is_angular_test_wrapper_expression(second) {
@@ -210,14 +220,12 @@ fn is_angular_test_wrapper_expression(e: Expr<'_>) -> bool {
 /// a call.
 pub(crate) fn is_angular_test_wrapper(e: Expr<'_>) -> bool {
     e.callee().is_some_and(|callee| {
-        matches!(callee.kind(), ExprKind::Ident(_))
-            && matches!(callee.text(), b"async" | b"inject" | b"fakeAsync" | b"waitForAsync")
+        callee.tag() == ExprTag::Ident && matches!(callee.text(), b"async" | b"inject" | b"fakeAsync" | b"waitForAsync")
     })
 }
 
 fn is_unit_test_set_up_callee(callee: Expr<'_>) -> bool {
-    matches!(callee.kind(), ExprKind::Ident(_))
-        && matches!(callee.text(), b"beforeEach" | b"beforeAll" | b"afterEach" | b"afterAll")
+    callee.tag() == ExprTag::Ident && matches!(callee.text(), b"beforeEach" | b"beforeAll" | b"afterEach" | b"afterAll")
 }
 
 /// The names of `a.b.c`, from the left. `None` if there are more than five or it is anything but

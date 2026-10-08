@@ -24,11 +24,7 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
         (!call.type_args().is_empty()).then_some(line_suffix_boundary())
     );
 
-    if is_template_on_its_own_line_only_argument(call.args(), f)
-        || is_simple_module_import(e, call, f)
-        || is_commonjs_or_amd_module_definition(e, call, f)
-        || is_test_call_expression_in_flavor(e, f)
-    {
+    if keeps_arguments_on_one_line(e, call, f) {
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);
     }
 
@@ -41,6 +37,22 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
         true => write!(f, group(&content)),
         false => write!(f, content),
     }
+}
+
+fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
+    // Each of these takes a name as the callee, or a string or a template as the first argument.
+    let Some(first) = call.args().first() else {
+        return false;
+    };
+    if call.callee().tag() != ExprTag::Ident
+        && !matches!(first.tag(), ExprTag::String | ExprTag::Template | ExprTag::TaggedTemplate)
+    {
+        return false;
+    }
+    is_template_on_its_own_line_only_argument(call.args(), f)
+        || is_simple_module_import(e, call, f)
+        || is_commonjs_or_amd_module_definition(e, call, f)
+        || is_test_call_expression_in_flavor(e, f)
 }
 
 pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
@@ -127,19 +139,22 @@ fn is_template_on_its_own_line_only_argument<'a>(args: List<'a, Expr<'a>>, f: &F
 /// Whether the only argument of `e` is a string, and there are no comments around it.
 fn is_lone_string_without_comments<'a>(e: Expr<'a>, args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
     args.len() == 1
-        && args.first().is_some_and(|first| matches!(first.kind(), ExprKind::String(_)))
+        && args.first().is_some_and(|first| first.tag() == ExprTag::String)
         && (f.is_quiet() || !f.comments().has_comment_before(e.span().end))
 }
 
 fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
-    matches!(e.kind(), ExprKind::Ident(_)) && e.text() == name
+    e.tag() == ExprTag::Ident && e.text() == name
 }
 
 /// Prettier's `isSimpleModuleImport` for a call: `require("a")`, `require.resolve("a")`,
 /// `require.resolve.paths("a")`, `import.meta.resolve("a")`. A long name of a module is no reason
 /// to break.
 fn is_simple_module_import<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
-    if call.args().len() != 1 || call.chain() != Chain::No {
+    if call.args().len() != 1
+        || call.chain() != Chain::No
+        || !call.args().first().is_some_and(|first| first.tag() == ExprTag::String)
+    {
         return false;
     }
     let callee = call.callee();
@@ -161,12 +176,12 @@ fn is_simple_module_import<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -
 /// Prettier's `isCommonsJsOrAmdModuleDefinition`: `require("a", b)`, and `define` of AMD.
 fn is_commonjs_or_amd_module_definition<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
     let callee = call.callee();
-    if !matches!(callee.kind(), ExprKind::Ident(_)) || call.is_optional() {
+    if callee.tag() != ExprTag::Ident || call.is_optional() {
         return false;
     }
     let args = call.args();
-    let is_string = |e: Option<Expr<'a>>| e.is_some_and(|e| matches!(e.kind(), ExprKind::String(_)));
-    let is_array = |e: Option<Expr<'a>>| e.is_some_and(|e| matches!(e.kind(), ExprKind::Array(_)));
+    let is_string = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::String);
+    let is_array = |e: Option<Expr<'a>>| e.is_some_and(|e| e.tag() == ExprTag::Array);
     match callee.text() {
         // `require(path.join(__dirname, "a"))` can break.
         b"require" => {

@@ -53,14 +53,32 @@ fn is_function_like(e: Expr<'_>) -> bool {
     e.as_fn().is_some()
 }
 
+/// The set of kinds of expressions that `tag` is the only one in.
+const fn kind(tag: ExprTag) -> u64 {
+    1 << tag as u8
+}
+
 impl<'a> Format<'a> for FormatArguments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        if self.args.is_empty() {
+        let last_index = match self.len() {
+            0 if f.is_quiet() => return write!(f, "()"),
             // `call/* comment1 */(/* comment2 */)`
-            return write!(f, ["(", format_dangling_comments(self.parent.span()).with_soft_block_indent(), ")"]);
-        }
+            0 => return write!(f, ["(", format_dangling_comments(self.parent.span()).with_soft_block_indent(), ")"]),
+            len => len - 1,
+        };
 
-        if is_react_hook_with_deps_array(self, f.comments()) {
+        // Most arguments are of none of the kinds that it takes for a layout other than the plain one.
+        let mut has = 0;
+        // An empty line between two arguments is kept, which takes breaking them all.
+        let mut has_empty_line = false;
+        for (index, argument) in self.iter().enumerate() {
+            has |= kind(argument.tag());
+            has_empty_line =
+                has_empty_line || (index != last_index && is_next_line_empty(f.source_text(), argument.span().end));
+        }
+        let has_function = has & kind(ExprTag::Fn) != 0;
+
+        if has_function && has & kind(ExprTag::Array) != 0 && is_react_hook_with_deps_array(self, f.comments()) {
             return write!(
                 f,
                 [
@@ -73,17 +91,23 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             );
         }
 
-        // An empty line between two arguments is kept, which takes breaking them all.
-        let has_empty_line =
-            self.iter().take(self.len().saturating_sub(1)).any(|argument| is_next_line_empty(f.source_text(), argument.span().end));
-
         if has_empty_line
-            || (!matches!(self.parent.parent(), AstNodes::Decorator(_)) && is_function_composition_args(self.args))
+            || (has & (kind(ExprTag::Fn) | kind(ExprTag::Call) | kind(ExprTag::NonNull)) != 0
+                && is_function_composition_args(self.args)
+                && !matches!(self.parent.parent(), AstNodes::Decorator(_)))
         {
             return format_all_args_broken_out(self, true, f);
         }
 
-        if let Some(group_layout) = arguments_grouped_layout(self.args, f) {
+        const CAN_BE_GROUPED: u64 = kind(ExprTag::Object)
+            | kind(ExprTag::Array)
+            | kind(ExprTag::As)
+            | kind(ExprTag::AsConst)
+            | kind(ExprTag::Satisfies)
+            | kind(ExprTag::Fn);
+        if has & CAN_BE_GROUPED != 0
+            && let Some(group_layout) = arguments_grouped_layout(self.args, f)
+        {
             write_grouped_arguments(self, group_layout, f);
         } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call)) {
             let trailing_separator = FormatTrailingCommas::All.trailing_separator(f.options());

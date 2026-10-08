@@ -11,6 +11,71 @@ struct Label {
     is_loop: bool,
 }
 
+/// The names of a scope, or the exports or the members of a symbol, while the file is being bound.
+/// Most have a few, which take no allocation and are compared one after the other.
+#[derive(Default)]
+struct Table {
+    few: SmallVec<[(Atom, SymbolId); 4]>,
+    /// In place of `few`, once there are more than `Table::FEW`.
+    many: Option<Box<FxHashMap<Atom, SymbolId>>>,
+}
+
+impl Table {
+    const FEW: usize = 12;
+
+    #[inline]
+    fn get(&self, name: &Atom) -> Option<&SymbolId> {
+        match &self.many {
+            None => (self.few.iter().find(|entry| entry.0 == *name)).map(|entry| &entry.1),
+            Some(many) => many.get(name),
+        }
+    }
+
+    #[inline]
+    fn contains_key(&self, name: &Atom) -> bool {
+        self.get(name).is_some()
+    }
+
+    /// Returns what the name stood for.
+    fn insert(&mut self, name: Atom, symbol: SymbolId) -> Option<SymbolId> {
+        if let Some(many) = &mut self.many {
+            return many.insert(name, symbol);
+        }
+        if let Some(entry) = self.few.iter_mut().find(|entry| entry.0 == name) {
+            return Some(std::mem::replace(&mut entry.1, symbol));
+        }
+        if self.few.len() < Table::FEW {
+            self.few.push((name, symbol));
+            return None;
+        }
+        let mut many: FxHashMap<Atom, SymbolId> = std::mem::take(&mut self.few).into_iter().collect();
+        many.insert(name, symbol);
+        self.many = Some(Box::new(many));
+        None
+    }
+
+    fn extend(&mut self, entries: impl IntoIterator<Item = (Atom, SymbolId)>) {
+        for (name, symbol) in entries {
+            self.insert(name, symbol);
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.many.as_ref().map_or(self.few.len(), |many| many.len())
+    }
+
+    /// In no particular order.
+    fn iter(&self) -> impl Iterator<Item = (&Atom, &SymbolId)> {
+        let few = self.few.iter().map(|entry| (&entry.0, &entry.1));
+        few.chain(self.many.iter().flat_map(|many| many.iter()))
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &Atom> {
+        self.iter().map(|entry| entry.0)
+    }
+}
+
 /// Set in the placeholder id of a label while the file is being bound. The remaining bits are its
 /// index in `Binder::label_edges`.
 const PENDING: u32 = 1 << 31;
@@ -35,7 +100,7 @@ pub(super) struct Binder<'f, 's, const LINT: bool> {
     options: BindOptions,
     atoms: &'f dyn crate::atom::Intern,
     b: BoundBuilder,
-    tables: Vec<FxHashMap<Atom, SymbolId>>,
+    tables: Vec<Table>,
     scope: ScopeId,
     /// The enclosing statement lists, innermost last: of the file, of namespaces and of blocks.
     statement_lists: Vec<IdList<StmtId>>,
@@ -269,7 +334,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     // ───────────────────────────── symbols and scopes ─────────────────────────────
 
     fn new_table(&mut self) -> TableId {
-        self.tables.push(FxHashMap::default());
+        self.tables.push(Table::default());
         TableId(self.tables.len() as u32 - 1)
     }
 
@@ -1897,6 +1962,8 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         }
         // Resolves names, now that everything is declared.
         let idents = std::mem::take(&mut self.idents);
+        // FOR SPEED, with `LINT`: what `resolve` has said of late. A name is often used again nearby.
+        let mut recent = [(ScopeId::NONE, Atom::NONE, None); 256];
         for &(expr, scope) in &idents {
             let ExprKind::Ident(name) = self.f[expr].kind else {
                 continue;
@@ -1906,7 +1973,16 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             if name == known::empty {
                 continue;
             }
-            let Some(symbol) = self.resolve(scope, name) else {
+            let resolved = if LINT {
+                let slot = &mut recent[(scope.0.wrapping_mul(31) ^ name.0) as usize % 256];
+                if (slot.0, slot.1) != (scope, name) {
+                    *slot = (scope, name, self.resolve(scope, name));
+                }
+                slot.2
+            } else {
+                self.resolve(scope, name)
+            };
+            let Some(symbol) = resolved else {
                 self.b.arguments_objects.push(expr);
                 continue;
             };
@@ -2044,10 +2120,12 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         self.b
     }
 
-    fn list(&mut self, items: &[u32]) -> (u32, u32) {
-        let start = self.b.ids.len() as u32;
-        self.b.ids.extend_from_slice(items);
-        (start, items.len() as u32)
+    /// Moves `items[first..]` to the end of `ids`. Returns where they are.
+    fn list(ids: &mut Vec<u32>, items: &mut Vec<u32>, first: usize) -> (u32, u32) {
+        let (start, len) = (ids.len() as u32, (items.len() - first) as u32);
+        ids.extend_from_slice(&items[first..]);
+        items.truncate(first);
+        (start, len)
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -3218,9 +3296,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             SymFlags::TYPE_PARAMETER,
             SymFlags::TYPE_PARAMETER_EXCLUDES,
         );
-        self.tables[locals.idx()]
-            .entry(self.f[p].name)
-            .or_insert(symbol);
+        if !self.tables[locals.idx()].contains_key(&self.f[p].name) {
+            self.tables[locals.idx()].insert(self.f[p].name, symbol);
+        }
         symbol
     }
 
@@ -3309,9 +3387,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             self.false_target,
             self.cur_fn,
             std::mem::take(&mut self.labels),
-            std::mem::take(&mut self.returns),
-            std::mem::take(&mut self.yields),
         );
+        // Those of this function are what is added from here on.
+        let (first_return, first_yield) = (self.returns.len(), self.yields.len());
         // `getImmediatelyInvokedFunctionExpression`
         let is_invoked = matches!(f.kind, FnKind::Expr | FnKind::Arrow)
             && matches!(owner, FnOwner::Expr(e) if matches!(self.b.expr_parent[e.idx()], Parent::Expr(call)
@@ -3480,13 +3558,12 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         } else {
             FlowId::NONE
         };
-        let returns = std::mem::take(&mut self.returns);
-        let yields = std::mem::take(&mut self.yields);
         // `forEachYieldExpression` visits a static block like any statement: its yield expressions
         // belong to the enclosing function.
         let passes_yields_on = f.kind == FnKind::StaticBlock;
-        let (rs, rl) = self.list(&returns);
-        let (ys, yl) = self.list(&yields[..if passes_yields_on { 0 } else { yields.len() }]);
+        let (rs, rl) = Self::list(&mut self.b.ids, &mut self.returns, first_return);
+        let first_yield = if passes_yields_on { self.yields.len() } else { first_yield };
+        let (ys, yl) = Self::list(&mut self.b.ids, &mut self.yields, first_yield);
         self.b.fns[id.idx()] = FnInfo {
             owner,
             scope,
@@ -3526,14 +3603,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             self.false_target,
             self.cur_fn,
             self.labels,
-            self.returns,
-            self.yields,
         ) = saved;
         if is_immediately_invoked {
             self.flow = exit;
-        }
-        if passes_yields_on {
-            self.yields.extend_from_slice(&yields);
         }
         self.pop_scope();
         if has_own_name {

@@ -457,10 +457,12 @@ fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         return format_expression_in_general(e, f);
     }
     let tag = e.tag();
-    // Nearly half of all expressions are names. The names that can need parentheses have 3 to 9 letters.
+    // Nearly half of all expressions are names. The names that can need parentheses have 3 to 9
+    // letters, and are longer only if they are written with escapes.
     if tag == ExprTag::Ident {
         let span = e.span();
-        return match (3..=9).contains(&span.len()) && parentheses::expression::needs_parentheses(e, f) {
+        let may_need_parentheses = span.len() >= 3 && (span.len() <= 9 || !f.is_plain_source(span));
+        return match may_need_parentheses && parentheses::expression::needs_parentheses(e, f) {
             true => format_expression_in_general(e, f),
             false => write!(f, source_text(span)),
         };

@@ -95,6 +95,8 @@ struct Checks<'a> {
 /// More errors than this are not told apart: the file is refused with one of these.
 const MAX_CANDIDATES: usize = 1024;
 
+const NO_SOURCE: &str = "'source' is not a valid meta-property for keyword 'import'.";
+
 /// `is_of_prettier`: the version that Prettier 3.9 has, which does not look at the values of import attributes.
 pub(super) fn first_error<'a>(file: &'a File<'a>, is_of_prettier: bool) -> Option<SyntaxError> {
     let mut checks = Checks {
@@ -1182,10 +1184,25 @@ impl<'a> Checks<'a> {
                 }
             }
             Some(hir::ExprKind::ImportCall { args }) => {
-                // The dialect of Babel, in which `bun format` has every file parsed, has it.
-                if self.is_of_prettier && it.import_call_phase() == Some("source") {
-                    let message = "'source' is not a valid meta-property for keyword 'import'.";
-                    self.fail(it.span(), it.span().start, message);
+                // `import.source()`: the dialect of Babel, in which `bun format` has every file parsed, has it.
+                if self.is_of_prettier && it.import_call_phase().is_some() {
+                    let dot = skip_trivia(file.text(), it.span().start + "import".len() as u32);
+                    // It is `defer` or `source`, or the parser had not taken it. The first letter can be `\u0073` or `\u{73}`.
+                    let is_source = match file
+                        .text()
+                        .get(skip_trivia(file.text(), dot + 1) as usize..)
+                    {
+                        Some([b's', ..]) => true,
+                        Some([b'\\', b'u', digits @ ..]) => {
+                            let digits = digits.strip_prefix(b"{").unwrap_or(digits);
+                            let zeros = digits.iter().take_while(|it| **it == b'0').count();
+                            digits[zeros..].starts_with(b"73")
+                        }
+                        _ => false,
+                    };
+                    if is_source {
+                        self.fail(it.span(), it.span().start, NO_SOURCE);
+                    }
                 }
                 let args = file.hir.ids.get(args.range()).unwrap_or_default();
                 let is_missing = |id: u32| {
@@ -1462,6 +1479,13 @@ impl<'a> Checks<'a> {
             // `import.defer` that is not called: the `(` is missing.
             1005 if it.args.first().is_some_and(|it| **it == *b"(") => {
                 let end = self.file.end_of_token_before(at);
+                // In the dialect of Babel.
+                if let Some(name) = end.checked_sub("source".len() as u32)
+                    && self.file.slice(Span::new(name, end)) == b"source"
+                    && let Some(start) = self.import_before(name)
+                {
+                    self.fail(Span::new(start, end), start, NO_SOURCE);
+                }
                 let Some(name) = end.checked_sub("defer".len() as u32) else {
                     return;
                 };

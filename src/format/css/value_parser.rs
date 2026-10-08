@@ -202,15 +202,45 @@ fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
 }
 
 /// `source` and `sourceIndex`, and what Prettier's `calculateLoc` makes of them.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Loc {
-    source_index: Option<u32>,
+    /// `NONE`: there is none. The same for the others.
+    source_index: u32,
+    start_line: u32,
+    start_offset: u32,
+    end_offset: u32,
+}
+
+const NONE: u32 = u32::MAX;
+
+impl Default for Loc {
+    fn default() -> Self {
+        Loc {
+            source_index: NONE,
+            start_line: NONE,
+            start_offset: NONE,
+            end_offset: NONE,
+        }
+    }
+}
+
+impl Loc {
+    fn source_index(&self) -> Option<u32> {
+        Some(self.source_index).filter(|&it| it != NONE)
+    }
+
     /// `source.start.line`
-    pub(crate) start_line: Option<u32>,
-    /// Whether there is a `source.end`.
-    has_end: bool,
-    pub(crate) start_offset: Option<u32>,
-    pub(crate) end_offset: Option<u32>,
+    pub(crate) fn start_line(&self) -> Option<u32> {
+        Some(self.start_line).filter(|&it| it != NONE)
+    }
+
+    pub(crate) fn start_offset(&self) -> Option<u32> {
+        Some(self.start_offset).filter(|&it| it != NONE)
+    }
+
+    pub(crate) fn end_offset(&self) -> Option<u32> {
+        Some(self.end_offset).filter(|&it| it != NONE)
+    }
 }
 
 /// What the parser says of where a node is.
@@ -268,6 +298,8 @@ pub(crate) type ValueId = u32;
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct ValueNode {
     pub(crate) kind: ValueKind,
+    /// The first byte of `value`, or 0.
+    pub(crate) first_byte: u8,
     /// `value`, if it is a string.
     value: Span,
     /// Of a number.
@@ -286,18 +318,23 @@ pub(crate) struct ValueNode {
     groups: (u32, u32),
     pub(crate) selector: SelectorId,
     pub(crate) loc: Loc,
+    /// Whether there is a `source.end`.
+    has_end: bool,
     /// For the parser: the nodes of a container, what follows in the container that it is in, and `unbalanced`.
     first_child: ValueId,
     last_child: ValueId,
     next_sibling: ValueId,
-    /// `None`: it has no such property.
-    unbalanced: Option<i32>,
+    /// `NO_BALANCE`: it has no such property.
+    unbalanced: i32,
 }
+
+const NO_BALANCE: i32 = i32::MIN;
 
 impl ValueNode {
     fn new(kind: ValueKind) -> Self {
         ValueNode {
             kind,
+            first_byte: 0,
             value: (0, 0),
             unit: (0, 0),
             is_hex: false,
@@ -310,16 +347,17 @@ impl ValueNode {
             groups: (0, 0),
             selector: 0,
             loc: Loc::default(),
+            has_end: false,
             first_child: 0,
             last_child: 0,
             next_sibling: 0,
-            unbalanced: None,
+            unbalanced: NO_BALANCE,
         }
     }
 
     /// Whether it has a `source`, after `calculateLoc`.
     pub(crate) fn has_source(&self) -> bool {
-        self.loc.start_offset.is_some() || self.loc.has_end
+        self.loc.start_offset != NONE || self.has_end
     }
 
     /// A group with nothing in it, which nothing says where it is.
@@ -329,7 +367,7 @@ impl ValueNode {
 
     /// `fillEmptyLocFromParent`
     fn fill_empty_loc(&mut self, parent: &Loc) {
-        if self.is_empty_group() && parent.end_offset.is_some() {
+        if self.is_empty_group() && parent.end_offset != NONE {
             self.loc.start_offset = parent.start_offset;
             self.loc.end_offset = parent.start_offset;
             self.loc.start_line = parent.start_line;
@@ -393,8 +431,6 @@ pub(crate) struct Values {
     tokens: Vec<Token>,
     /// `cache` of the parser.
     cache: Vec<ValueId>,
-    /// The nodes of the containers that are being grouped.
-    container: Vec<ValueId>,
     open_parens: Vec<OpenParen>,
     groups: Vec<ValueId>,
     group: Vec<ValueId>,
@@ -478,18 +514,19 @@ impl ValuesParser<'_> {
         };
         let max_end = self.root_offset + self.len as u32;
         let loc = Loc {
-            source_index: Some(source.index),
-            start_line: Some(source.start_line),
-            has_end: true,
-            start_offset: Some((start + self.root_offset).min(max_end)),
-            end_offset: Some((end + self.root_offset).min(max_end)),
+            source_index: source.index,
+            start_line: source.start_line,
+            start_offset: (start + self.root_offset).min(max_end),
+            end_offset: (end + self.root_offset).min(max_end),
         };
         let id = self.values.nodes.len() as ValueId;
         self.values.nodes.push(ValueNode {
+            first_byte: self.values.text(value).first().copied().unwrap_or(0),
+            has_end: true,
             value,
             before: if std::mem::take(&mut self.spaces) { Before::Spaces } else { Before::Empty },
             loc,
-            unbalanced: (kind == ValueKind::Func).then_some(-1),
+            unbalanced: if kind == ValueKind::Func { -1 } else { NO_BALANCE },
             ..ValueNode::new(kind)
         });
         let current = self.current;
@@ -621,29 +658,33 @@ impl ValuesParser<'_> {
         }
         if let Some(last) = self.last_of_current()
             && self.node(last).kind == ValueKind::Func
-            && self.node(last).unbalanced.is_some_and(|it| it < 0)
+            && self.node(last).unbalanced < 0
         {
-            self.node(last).unbalanced = Some(0);
+            self.node(last).unbalanced = 0;
             self.current = last;
         }
         let current = self.current;
         let current = self.node(current);
-        current.unbalanced = current.unbalanced.map(|it| it + 1);
+        if current.unbalanced != NO_BALANCE {
+            current.unbalanced += 1;
+        }
         self.simple(ValueKind::Paren, token);
         Ok(())
     }
 
     fn paren_close(&mut self, token: Token) -> Result<(), ParseError> {
         self.simple(ValueKind::Paren, token);
-        let is_zero = |unbalanced: Option<i32>| unbalanced.is_none_or(|it| it == 0);
+        let is_zero = |unbalanced: i32| unbalanced == NO_BALANCE || unbalanced == 0;
         let current = self.current;
         if self.position + 1 >= self.values.tokens.len() && is_zero(self.node(current).unbalanced) {
             return Ok(());
         }
         let current = self.node(current);
-        current.unbalanced = current.unbalanced.map(|it| it - 1);
-        if current.unbalanced.is_some_and(|it| it < 0) {
-            return Err(ParseError);
+        if current.unbalanced != NO_BALANCE {
+            current.unbalanced -= 1;
+            if current.unbalanced < 0 {
+                return Err(ParseError);
+            }
         }
         if is_zero(current.unbalanced)
             && let Some(outer) = self.values.cache.pop()
@@ -732,6 +773,15 @@ impl ValuesParser<'_> {
 
 // ───────────────────────────── Prettier's `parse-value.js` ─────────────────────────────
 
+/// What is looked at of a node to put it into a group.
+struct NodeToGroup {
+    kind: ValueKind,
+    first_byte: u8,
+    value: Span,
+    unit: Span,
+    group: ValueId,
+}
+
 struct Grouper<'t> {
     values: &'t mut Values,
     selectors: &'t mut Selectors,
@@ -746,13 +796,14 @@ impl Grouper<'_> {
         &self.values.nodes[id as usize]
     }
 
-    fn add(&mut self, node: ValueNode) -> ValueId {
-        self.values.nodes.push(node);
+    fn add(&mut self, node: &ValueNode) -> ValueId {
+        self.values.nodes.push(*node);
         (self.values.nodes.len() - 1) as ValueId
     }
 
     /// Adds a group, which is where the nodes in it are: `fillLocFromChildren`, `fillEmptyChildLocs`.
-    fn add_group(&mut self, mut node: ValueNode) -> ValueId {
+    fn add_group(&mut self, node: &ValueNode) -> ValueId {
+        let mut node = *node;
         let (nodes, lists) = (&mut self.values.nodes, &self.values.lists);
         let children = || {
             let groups = lists.get(node.groups.0 as usize..node.groups.1 as usize).unwrap_or_default();
@@ -762,29 +813,24 @@ impl Grouper<'_> {
         for child in children() {
             let child = &nodes[child as usize];
             has_empty_group |= child.is_empty_group();
-            if let (Some(start), Some(end)) = (child.loc.start_offset, child.loc.end_offset) {
-                match (&mut node.loc.start_offset, &mut node.loc.end_offset) {
-                    (Some(first), Some(last)) => {
-                        if start < *first {
-                            node.loc.start_line = child.loc.start_line;
-                        }
-                        *first = start.min(*first);
-                        *last = end.max(*last);
-                    }
-                    _ => {
-                        node.loc.start_offset = Some(start);
-                        node.loc.end_offset = Some(end);
-                        node.loc.start_line = child.loc.start_line;
-                    }
+            let (start, end) = (child.loc.start_offset, child.loc.end_offset);
+            if start != NONE && end != NONE {
+                // The first time, it is before `NONE`.
+                if start < node.loc.start_offset {
+                    node.loc.start_line = child.loc.start_line;
+                    node.loc.start_offset = start;
+                }
+                if node.loc.end_offset == NONE || end > node.loc.end_offset {
+                    node.loc.end_offset = end;
                 }
             }
         }
-        if has_empty_group && node.loc.start_offset.is_some() {
+        if has_empty_group && node.loc.start_offset != NONE {
             for child in children() {
                 nodes[child as usize].fill_empty_loc(&node.loc);
             }
         }
-        self.add(node)
+        self.add(&node)
     }
 
     /// What is between the parentheses of the function whose `group` is `group`, counted from the start of the
@@ -794,7 +840,7 @@ impl Grouper<'_> {
         if group.kind != ValueKind::ParenGroup || group.open == 0 || group.close == 0 {
             return None;
         }
-        Some((self.node(group.open).loc.source_index? as usize + 1, self.node(group.close).loc.source_index? as usize))
+        Some((self.node(group.open).loc.source_index()? as usize + 1, self.node(group.close).loc.source_index()? as usize))
     }
 
     /// A `value-comma_group` of `self.values.group[start..]`, after `flattenGroups`: if it is only one, that is it.
@@ -804,7 +850,7 @@ impl Grouper<'_> {
             return only;
         }
         let groups = self.values.add_list_from_group(start);
-        self.add_group(ValueNode {
+        self.add_group(&ValueNode {
             groups,
             ..ValueNode::new(ValueKind::CommaGroup)
         })
@@ -828,18 +874,19 @@ impl Grouper<'_> {
             }
             child = self.node(child).next_sibling;
         }
-        let container_start = self.values.container.len();
+        // How many there are, and the last two.
+        let (mut len, mut last, mut before_last) = (0usize, 0, 0);
         let mut child = self.node(id).first_child;
         while child != 0 {
-            self.values.container.push(child);
+            len += 1;
+            (before_last, last) = (last, child);
             child = self.node(child).next_sibling;
         }
-        let len = self.values.container.len() - container_start;
-        let at = |grouper: &Self, index: usize| grouper.values.container[container_start + index];
-        let is_closing = |grouper: &Self, id: ValueId| grouper.node(id).kind == ValueKind::Paren && grouper.values.value(id) == Some(b")");
         // Whether a comma is followed by a comment and the `)` that ends the list.
-        let ends_with_comment_and_paren =
-            len >= 3 && self.node(at(self, len - 2)).kind == ValueKind::Comment && is_closing(self, at(self, len - 1));
+        let ends_with_comment_and_paren = len >= 3
+            && self.node(before_last).kind == ValueKind::Comment
+            && self.node(last).kind == ValueKind::Paren
+            && self.node(last).first_byte == b')';
 
         let (parens_start, groups_start, group_start) =
             (self.values.open_parens.len(), self.values.groups.len(), self.values.group.len());
@@ -849,9 +896,18 @@ impl Grouper<'_> {
             group_start,
         });
 
+        let mut next = self.node(id).first_child;
         for i in 0..len {
-            let id = at(self, i);
-            let node = *self.node(id);
+            let id = next;
+            let node = self.node(id);
+            next = node.next_sibling;
+            let node = NodeToGroup {
+                kind: node.kind,
+                first_byte: node.first_byte,
+                value: node.value,
+                unit: node.unit,
+                group: node.group,
+            };
             if self.syntax == Syntax::Scss
                 && node.kind == ValueKind::Number
                 && self.values.text(node.unit) == b".."
@@ -874,8 +930,8 @@ impl Grouper<'_> {
                         selector,
                         ..ValueNode::new(ValueKind::Selector)
                     };
-                    selector.loc.source_index = Some(start as u32);
-                    let selector = self.add(selector);
+                    selector.loc.source_index = start as u32;
+                    let selector = self.add(&selector);
                     self.values.nodes[node.group as usize].groups = self.values.add_list(&[selector]);
                 }
                 if is_url && self.node(node.group).kind == ValueKind::ParenGroup {
@@ -913,7 +969,7 @@ impl Grouper<'_> {
                         let inner = self.values.text.get(self.base + start..self.base + end).unwrap_or_default();
                         let skipped = inner.len() - text::trim_start(inner).len();
                         let start = self.base + start + skipped;
-                        let text = self.add(ValueNode {
+                        let text = self.add(&ValueNode {
                             value: (start as u32, (start + text::trim(inner).len()) as u32),
                             ..ValueNode::new(ValueKind::Text)
                         });
@@ -923,7 +979,7 @@ impl Grouper<'_> {
             }
 
             match node.kind {
-                ValueKind::Paren if self.values.text(node.value) == b"(" => {
+                ValueKind::Paren if node.first_byte == b'(' => {
                     self.values.open_parens.push(OpenParen {
                         open: id,
                         groups_start: self.values.groups.len(),
@@ -943,7 +999,7 @@ impl Grouper<'_> {
                         self.values.groups.push(last);
                     }
                     let groups = self.values.add_list_from_groups(paren.groups_start);
-                    let group = self.add_group(ValueNode {
+                    let group = self.add_group(&ValueNode {
                         open: paren.open,
                         close: id,
                         groups,
@@ -971,14 +1027,13 @@ impl Grouper<'_> {
             self.values.groups.push(last);
         }
         self.values.open_parens.truncate(parens_start);
-        self.values.container.truncate(container_start);
         self.values.group.truncate(group_start);
         if let [only] = self.values.groups[groups_start..] {
             self.values.groups.truncate(groups_start);
             return only;
         }
         let groups = self.values.add_list_from_groups(groups_start);
-        self.add_group(ValueNode {
+        self.add_group(&ValueNode {
             groups,
             ..ValueNode::new(ValueKind::ParenGroup)
         })
@@ -1084,8 +1139,8 @@ impl Values {
             value: self.add_text(value),
             ..ValueNode::new(ValueKind::Unknown)
         };
-        node.loc.start_offset = Some(root_offset);
-        node.loc.end_offset = Some(root_offset + value.len() as u32);
+        node.loc.start_offset = root_offset;
+        node.loc.end_offset = root_offset + value.len() as u32;
         self.nodes.push(node);
         (self.nodes.len() - 1) as ValueId
     }
@@ -1114,7 +1169,7 @@ impl Values {
         // The `Value`, which is the only node of the root.
         let container = first_node as ValueId;
         self.nodes.push(ValueNode {
-            unbalanced: Some(0),
+            unbalanced: 0,
             ..ValueNode::new(ValueKind::Value)
         });
         let parsed = tokenize(value, &mut self.tokens).and_then(|()| {
@@ -1146,9 +1201,8 @@ impl Values {
         // `fillLocFromChildren`
         let loc = self.nodes[group as usize].loc;
         let loc = Loc {
-            source_index: None,
-            has_end: false,
-            ..if loc.start_offset.is_some() && loc.end_offset.is_some() { loc } else { Loc::default() }
+            source_index: NONE,
+            ..if loc.start_offset != NONE && loc.end_offset != NONE { loc } else { Loc::default() }
         };
         self.nodes[container as usize].group = group;
         self.nodes[container as usize].loc = loc;
@@ -1157,8 +1211,8 @@ impl Values {
             ..ValueNode::new(ValueKind::Root)
         };
         root.loc.start_line = loc.start_line;
-        root.loc.start_offset = Some(root_offset);
-        root.loc.end_offset = Some(root_offset + value.len() as u32);
+        root.loc.start_offset = root_offset;
+        root.loc.end_offset = root_offset + value.len() as u32;
         self.nodes.push(root);
         let root = (self.nodes.len() - 1) as ValueId;
         match is_unbalanced {

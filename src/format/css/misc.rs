@@ -163,11 +163,16 @@ fn number_len(text: &[u8]) -> Option<usize> {
 
 /// `adjustNumbers`
 pub(crate) fn adjust_numbers(value: &[u8]) -> Cow<'_, [u8]> {
+    let is_word_start = |b: u8| b == b'_' || b.is_ascii_alphabetic() || b >= 0x80;
+    let is_word_part = |b: u8| text::is_word_character(b) || b == b'-' || b >= 0x80;
     if !value.iter().any(u8::is_ascii_digit) {
         return Cow::Borrowed(value);
     }
-    let is_word_start = |b: u8| b == b'_' || b.is_ascii_alphabetic() || b >= 0x80;
-    let is_word_part = |b: u8| text::is_word_character(b) || b == b'-' || b >= 0x80;
+    // The numbers in a word are part of it, and so is everything in a name.
+    let name = &value[value.iter().take_while(|&&b| b == b'-').count()..];
+    if name.first().is_some_and(|&b| is_word_start(b)) && name.iter().all(|&b| is_word_part(b)) {
+        return Cow::Borrowed(value);
+    }
     let unit_len = |from: usize| value[from..].iter().take_while(|b| b.is_ascii_alphabetic()).count();
     let mut out = Vec::with_capacity(value.len());
     let mut at = 0;

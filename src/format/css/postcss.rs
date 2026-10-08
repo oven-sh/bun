@@ -56,6 +56,7 @@ impl Texts<'_> {
     }
 
     /// `a + b`
+    #[inline]
     fn join(&mut self, a: Range, b: Range) -> Range {
         if a.is_empty() {
             b
@@ -64,6 +65,13 @@ impl Texts<'_> {
         } else if a.end == b.start {
             Range::new(a.start, b.end)
         } else {
+            self.join_apart(a, b)
+        }
+    }
+
+    /// `a + b`, which do not touch and are not empty.
+    fn join_apart(&mut self, a: Range, b: Range) -> Range {
+        {
             let offset = extra_start(self.css);
             // What has been added last grows in place.
             let (start, parts) = match (a.start as usize).checked_sub(offset) {
@@ -214,6 +222,7 @@ impl<'a> Tokenizer<'a> {
         Ok(next)
     }
 
+    #[inline]
     fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, SyntaxError> {
         if let Some(token) = self.returned.pop() {
             return Ok(token);
@@ -222,20 +231,74 @@ impl<'a> Tokenizer<'a> {
         let Some(&code) = css.get(pos) else {
             return Ok(None);
         };
+        // Most tokens are blanks, punctuation and words.
+        let (kind, next) = match code {
+            b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
+                let mut end = pos + 1;
+                while is_space(css.get(end)) {
+                    end += 1;
+                }
+                (TokenKind::Space, end - 1)
+            }
+            b'[' | b']' | b'{' | b'}' | b':' | b';' | b')' => (TokenKind::Control(code), pos),
+            b',' | b'(' | b'\'' | b'"' | b'@' | b'\\' | b'#' | b'/' => return self.next_special_token(code, ignore_unclosed).map(Some),
+            _ => (TokenKind::Word, self.end_of_word(pos) - 1),
+        };
+        Ok(Some(self.token(kind, pos, next, false)))
+    }
+
+    /// Where the word ends that starts at `pos`.
+    #[inline]
+    fn end_of_word(&mut self, pos: usize) -> usize {
+        let css = self.css;
+        let set = if self.syntax == Syntax::Scss { &SCSS_WORD_END } else { &WORD_END };
+        let mut end = pos + 1;
+        loop {
+            match set.find(css, end) {
+                None => end = css.len(),
+                Some(at) => {
+                    end = at;
+                    if css[end] == b'/' && css.get(end + 1) != Some(&b'*') {
+                        end += 1;
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+        self.buffer.push(Range::new(pos as u32, end as u32));
+        end
+    }
+
+    /// The token from `pos` to `next`, which is its last character. The next one starts behind it.
+    #[inline]
+    fn token(&mut self, kind: TokenKind, pos: usize, next: usize, inline: bool) -> Token {
+        self.pos = next + 1;
+        let start = (pos - self.shift) as u32;
+        let last = match kind {
+            TokenKind::Space | TokenKind::Control(_) => None,
+            // What `postcss-scss` says of a comma.
+            TokenKind::Word if self.syntax == Syntax::Scss && self.css[pos] == b',' => Some(start + 1),
+            _ => Some((next - self.shift) as u32),
+        };
+        Token {
+            kind,
+            range: Range::new(pos as u32, (next + 1).min(self.css.len()) as u32),
+            start,
+            last,
+            inline,
+        }
+    }
+
+    /// The token that starts with `code`, where `self.pos` is.
+    fn next_special_token(&mut self, code: u8, ignore_unclosed: bool) -> Result<Token, SyntaxError> {
+        let (css, pos) = (self.css, self.pos);
         let is_scss = self.syntax == Syntax::Scss;
         // The position of the last character of the token.
         let next;
         let kind;
         let mut inline = false;
         match code {
-            b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
-                let mut end = pos + 1;
-                while is_space(css.get(end)) {
-                    end += 1;
-                }
-                (kind, next) = (TokenKind::Space, end - 1);
-            }
-            b'[' | b']' | b'{' | b'}' | b':' | b';' | b')' => (kind, next) = (TokenKind::Control(code), pos),
             b',' if is_scss => (kind, next) = (TokenKind::Word, pos),
             b'(' => {
                 let prev = self.buffer.pop().map_or(&b""[..], |range| range.of(css));
@@ -270,11 +333,16 @@ impl<'a> Tokenizer<'a> {
                     };
                     self.next_close = Some(close);
                     // `/.[\r\n"'(/\\]/`
+                    static BAD: ByteSet = ByteSet::new(b"\r\n\"'(/\\");
                     let is_bad = |content: &[u8]| {
-                        (1..content.len()).any(|at| {
-                            !matches!(content[at - 1], b'\n' | b'\r')
-                                && matches!(content[at], b'\r' | b'\n' | b'"' | b'\'' | b'(' | b'/' | b'\\')
-                        })
+                        let mut from = 1;
+                        while let Some(at) = BAD.find(content, from) {
+                            if !matches!(content[at - 1], b'\n' | b'\r') {
+                                return true;
+                            }
+                            from = at + 1;
+                        }
+                        false
                     };
                     match close {
                         Some(close) if !is_bad(&css[pos..=close]) => (kind, next) = (TokenKind::Brackets, close),
@@ -348,41 +416,9 @@ impl<'a> Tokenizer<'a> {
                 (kind, next) = (TokenKind::Comment, end - 1);
                 inline = true;
             }
-            _ => {
-                let set = if is_scss { &SCSS_WORD_END } else { &WORD_END };
-                let mut end = pos + 1;
-                loop {
-                    match set.find(css, end) {
-                        None => end = css.len(),
-                        Some(at) => {
-                            end = at;
-                            if css[end] == b'/' && css.get(end + 1) != Some(&b'*') {
-                                end += 1;
-                                continue;
-                            }
-                        }
-                    }
-                    break;
-                }
-                (kind, next) = (TokenKind::Word, end - 1);
-                self.buffer.push(Range::new(pos as u32, end as u32));
-            }
+            _ => (kind, next) = (TokenKind::Word, self.end_of_word(pos) - 1),
         }
-        self.pos = next + 1;
-        let start = (pos - self.shift) as u32;
-        let last = match kind {
-            TokenKind::Space | TokenKind::Control(_) => None,
-            // What `postcss-scss` says of a comma.
-            TokenKind::Word if is_scss && code == b',' => Some(start + 1),
-            _ => Some((next - self.shift) as u32),
-        };
-        Ok(Some(Token {
-            kind,
-            range: Range::new(pos as u32, (next + 1).min(css.len()) as u32),
-            start,
-            last,
-            inline,
-        }))
+        Ok(self.token(kind, pos, next, inline))
     }
 }
 

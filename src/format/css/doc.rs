@@ -1277,5 +1277,6 @@ impl<'o> Printer<'o> {
 pub(crate) fn print(doc: Doc<'_>, options: &FormatOptions, text: &[u8], out: &mut Vec<u8>) {
     let mut elements = Elements::default();
     elements.document(&doc);
+    drop(doc);
     Printer::new(options, text, out).print(&elements, 0, 0);
 }

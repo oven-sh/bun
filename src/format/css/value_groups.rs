@@ -14,7 +14,7 @@ fn is_at_word_placeholder(node: ValueRef<'_>) -> bool {
 }
 
 fn is_operator(node: ValueRef<'_>, operator: u8) -> bool {
-    node.kind() == ValueKind::Operator && node.value() == Some(&[operator])
+    node.kind() == ValueKind::Operator && node.node().first_byte == operator
 }
 
 fn is_multiplication(node: ValueRef<'_>) -> bool {
@@ -34,7 +34,7 @@ fn is_subtraction(node: ValueRef<'_>) -> bool {
 }
 
 fn is_math_operator(node: ValueRef<'_>) -> bool {
-    node.kind() == ValueKind::Operator && matches!(node.value(), Some(b"*" | b"/" | b"+" | b"-" | b"%"))
+    node.kind() == ValueKind::Operator && matches!(node.node().first_byte, b'*' | b'/' | b'+' | b'-' | b'%')
 }
 
 fn word(node: ValueRef<'_>) -> Option<&[u8]> {
@@ -81,7 +81,7 @@ fn paren_group_open(node: ValueRef<'_>) -> Option<ValueRef<'_>> {
 }
 
 fn ends_where_starts(a: ValueRef<'_>, b: ValueRef<'_>) -> bool {
-    a.node().loc.end_offset.is_some() && a.node().loc.end_offset == b.node().loc.start_offset
+    a.node().loc.end_offset().is_some() && a.node().loc.end_offset() == b.node().loc.start_offset()
 }
 
 /// `isColorAdjusterFuncNode`
@@ -412,7 +412,7 @@ impl<'a> Printer<'a, '_> {
             if is_grid_value {
                 if i_node.node().has_source()
                     && next_node.node().has_source()
-                    && i_node.node().loc.start_line != next_node.node().loc.start_line
+                    && i_node.node().loc.start_line() != next_node.node().loc.start_line()
                 {
                     self.sink.fill_separator(Separator::HardLine);
                     did_break = true;
@@ -655,11 +655,11 @@ impl<'a> Printer<'a, '_> {
                 // `printTrailingComma`
                 let has_comma = || {
                     let (Some(start), Some(end)) =
-                        (child.node().loc.start_offset, Some(close).filter(|&it| it != 0).and_then(|it| node.at(it).node().loc.start_offset))
+                        (child.node().loc.start_offset(), Some(close).filter(|&it| it != 0).and_then(|it| node.at(it).node().loc.start_offset()))
                     else {
                         return false;
                     };
-                    text::trim_end(self.text().get(start as usize..end as usize).unwrap_or_default()).ends_with(b",")
+                    text::trim_end(self.original_text().get(start as usize..end as usize).unwrap_or_default()).ends_with(b",")
                 };
                 let is_only_comments = is_comment(child) || (child.kind() == ValueKind::CommaGroup && child.groups().all(is_comment));
                 if is_var && has_comma() {
@@ -672,11 +672,11 @@ impl<'a> Printer<'a, '_> {
             if !is_last
                 && child.kind() == ValueKind::CommaGroup
                 && let Some(last) = child.groups().next_back()
-                && let Some(end) = last.node().loc.end_offset.filter(|_| last.node().has_source())
+                && let Some(end) = last.node().loc.end_offset().filter(|_| last.node().has_source())
             {
                 // It may look at what follows the declaration.
                 self.is_memoizable = false;
-                if is_next_line_empty(self.text(), end as usize) {
+                if is_next_line_empty(self.original_text(), end as usize) {
                     self.sink.hard_line();
                 }
             }

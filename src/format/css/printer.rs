@@ -115,7 +115,7 @@ impl<'a> Printer<'a, '_> {
     }
 
     /// `options.originalText`
-    pub(crate) fn text(&self) -> &'a [u8] {
+    pub(crate) fn original_text(&self) -> &'a [u8] {
         self.context.original_text
     }
 
@@ -206,7 +206,7 @@ impl<'a> Printer<'a, '_> {
 
     /// `printSequence` for the nodes of `block`, which `scope` is for, and `after` behind a blank unless it is empty.
     fn print_sequence(&mut self, scope: &Scope<'_, 'a>, block: &Node, after: &[u8], parsed: &mut Parsed) {
-        let (text, tree) = (self.text(), scope.tree);
+        let (text, tree) = (self.original_text(), scope.tree);
         let memo_context = self.memo_context(scope);
         let mut previous = None;
         let mut first = block.first_child;
@@ -301,7 +301,7 @@ impl<'a> Printer<'a, '_> {
         parsed: &mut Parsed,
         converted: Option<&mut Option<CssNode<'a>>>,
     ) {
-        let (text, tree) = (self.text(), parent.tree);
+        let (text, tree) = (self.original_text(), parent.tree);
         let raw = &tree.nodes[id as usize];
         let start = (raw.start as usize).min(text.len());
         if previous.is_some_and(|it| it.kind == Kind::Comment && matches!(text::trim(self.context.of(it.text)), b"prettier-ignore" | b"oxfmt-ignore")) {
@@ -544,7 +544,7 @@ impl<'a> Printer<'a, '_> {
         if parent.is_some_and(|parent| matches!(parent.value, Value::Rule(_))) {
             self.has_failed = true;
         }
-        parent.is_some_and(|parent| !parent.semicolon) && scope.node.end.checked_sub(1).and_then(|at| self.text().get(at)) != Some(&b';')
+        parent.is_some_and(|parent| !parent.semicolon) && scope.node.end.checked_sub(1).and_then(|at| self.original_text().get(at)) != Some(&b';')
     }
 
     fn print_at_rule(&mut self, scope: &Scope<'_, 'a>, raw: &Node, parsed: &mut Parsed) {
@@ -953,9 +953,9 @@ impl<'a> Printer<'a, '_> {
             && values.node(func).kind == ValueKind::Func
             && values.value(func) == Some(b"selector")
         {
-            let start = values.node(paren_group.open).loc.end_offset.map_or(0, |at| at as usize + 1);
-            let end = values.node(paren_group.close).loc.start_offset.map_or(0, |at| at as usize);
-            let selector = text::trim(self.text().get(start..end).unwrap_or_default());
+            let start = values.node(paren_group.open).loc.end_offset().map_or(0, |at| at as usize + 1);
+            let end = values.node(paren_group.close).loc.start_offset().map_or(0, |at| at as usize);
+            let selector = text::trim(self.original_text().get(start..end).unwrap_or_default());
             if last_line_has_inline_comment(selector) {
                 self.sink.break_parent();
             }
@@ -965,7 +965,7 @@ impl<'a> Printer<'a, '_> {
         let parent = statement.node();
         if self.value_stack.is_empty() && !parent.raw_selector.is_empty() {
             let end = parent.start + parent.raw_selector.len();
-            return self.sink.text(text::trim(self.text().get(parent.start..end).unwrap_or_default()));
+            return self.sink.text(text::trim(self.original_text().get(parent.start..end).unwrap_or_default()));
         }
         self.sink.text(value);
     }
@@ -992,8 +992,8 @@ impl<'a> Printer<'a, '_> {
             ValueKind::Root | ValueKind::Value => self.print_child_value(statement, id, node.group),
             ValueKind::Comment => {
                 self.is_memoizable = false;
-                let (start, end) = (node.loc.start_offset.unwrap_or(0) as usize, node.loc.end_offset.unwrap_or(0) as usize);
-                let text = self.text().get(start..end).unwrap_or_default();
+                let (start, end) = (node.loc.start_offset().unwrap_or(0) as usize, node.loc.end_offset().unwrap_or(0) as usize);
+                let text = self.original_text().get(start..end).unwrap_or_default();
                 match node.inline {
                     true => {
                         self.sink.start_line_suffix();

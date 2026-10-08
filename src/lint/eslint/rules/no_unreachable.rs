@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashSet;
 
 /// Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements.
 pub struct NoUnreachable;
@@ -77,7 +78,7 @@ fn has_constructor_without_super_call<'a>(file: &'a File<'a>) -> bool {
             _ => None,
         })
     };
-    let with_call: Vec<Member> = (file.exprs_of_kind(ExprTag::Super))
+    let with_call: FxHashSet<Member> = (file.exprs_of_kind(ExprTag::Super))
         .filter(|&e| matches!(e.parent(), Node::Expr(parent) if parent.as_call().is_some_and(|call| call.callee() == e)))
         .filter_map(constructor_around)
         .collect();

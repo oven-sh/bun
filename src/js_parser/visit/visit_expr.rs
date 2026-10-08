@@ -336,6 +336,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 .ref_,
                         ),
                 )
+                .with_is_template_tag(matches!(
+                    (p.template_tag, expr.data),
+                    (Data::EIdentifier(tag), Data::EIdentifier(id)) if tag.ref_.eql(id.ref_)
+                ))
                 .with_was_originally_identifier(true)
                 .with_is_property_access_target(in_.is_property_access_target),
         );
@@ -1874,6 +1878,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
+        if p.has_import_meta {
+            if p.is_import_meta_glob(&e_) {
+                *e = p.visit_import_meta_glob(&mut e_, expr.loc, false);
+                return;
+            }
+            if let Some(mut glob) = p.import_meta_glob_in_object_keys(&e_) {
+                let arg = &mut e_.args.slice_mut()[0];
+                *arg = p.visit_import_meta_glob(&mut glob, arg.loc, true);
+            }
+        }
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -1950,6 +1964,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
             }
             _ => {}
+        }
+
+        if p.options.features.inject_jest_globals {
+            p.unwrap_import_in_mock_path(&mut e_);
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`

@@ -27,8 +27,8 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
-    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
-    WorkerExecArgvFlags,
+    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, TimersLeft,
+    VirtualMachine, WorkerExecArgvFlags,
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
@@ -828,7 +828,21 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `wait_for_promise` directly.
         {
             // SAFETY: per fn contract.
-            if unsafe { &*vm }.is_watcher_enabled() {
+            if unsafe { &*vm }.is_main_thread
+                && crate::test_runner::jest::Jest::runner_ptr().is_some()
+            {
+                // SAFETY: per fn contract — short-lived `&mut *vm`.
+                let never_loads = unsafe {
+                    (*vm).wait_for_test_runner_load(format_args!(
+                        "preload {}",
+                        bun_core::fmt::format_json_string_latin1(preload_slice),
+                    ))
+                };
+                if let Some(rejected) = never_loads {
+                    return Ok(rejected);
+                }
+            // SAFETY: per fn contract.
+            } else if unsafe { &*vm }.is_watcher_enabled() {
                 // pending_internal_promise can change if hot module reloading is
                 // enabled.
                 // SAFETY: `el` is the live per-thread event loop.
@@ -1293,6 +1307,19 @@ fn timer_min_delay_ms() -> u32 {
     unsafe { (*all).fake_timers.min_delay_ms() }
 }
 
+fn timers_left() -> TimersLeft {
+    let all = timer_all();
+    if all.is_null() {
+        return TimersLeft::default();
+    }
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, reads only.
+    let all = unsafe { &*all };
+    TimersLeft {
+        armed: all.timers.has_program_timer(),
+        holds_loop_ref: all.active_timer_count > 0,
+    }
+}
+
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
 ///
@@ -1495,6 +1522,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timer_insert,
     timer_remove,
     timer_min_delay_ms,
+    timers_left,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
@@ -3326,61 +3354,31 @@ fn transpile_source_code_inner(
                 });
             }
 
-            // auto-watch for non-virtual absolute paths.
-            'auto_watch: {
-                if args.virtual_source.is_some() {
-                    break 'auto_watch;
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if !unsafe { &*jsc_vm }.is_watcher_enabled() {
-                    break 'auto_watch;
-                }
-                if !bun_paths::is_absolute(path.text)
-                    || bun_core::strings::contains(path.text, b"node_modules")
-                {
-                    break 'auto_watch;
-                }
-                // kqueue watchers need a file descriptor to receive event
-                // notifications on it; inotify/win32 watch by path.
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    if path.text.len() >= buf.len() {
-                        break 'auto_watch;
-                    }
-                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
-                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
-                        Ok(fd) => fd,
-                        Err(_) => break 'auto_watch,
-                    }
-                } else {
-                    bun_sys::Fd::INVALID
-                };
-                let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                let added =
-                    watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
-                if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                    // Not adopted (already watched, or add failed); close the
-                    // fd this arm opened.
-                    if input_fd.is_valid() {
-                        use bun_sys::FdExt as _;
-                        input_fd.close();
-                    }
-                }
+            if args.virtual_source.is_none() {
+                auto_watch_file(jsc_vm, path.text);
             }
 
             // `export default <path string>`.
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-            // The bundler emits `{}` as the JS stub for a plain CSS import
-            // (esbuild parity); match that here instead of leaking the file path
-            // as the default export. `.module.css` still diverges: the bundler
-            // emits a class-name map there, runtime CSS-module scoping is not
-            // implemented.
             if matches!(loader, L::Css) {
+                if bun_css::css_modules::is_module_path(path.text) {
+                    return Ok(ResolvedSource {
+                        jsvalue_for_export: css_module_exports(
+                            jsc_vm,
+                            global_object,
+                            path.text,
+                            args.virtual_source,
+                            // SAFETY: `args.log` is the caller's live `Log`; nothing else borrows it in this arm.
+                            unsafe { &mut *args.log },
+                        )?,
+                        source_url: input_specifier.create_if_different(path.text),
+                        tag: ResolvedSourceTag::ExportsObject,
+                        ..Default::default()
+                    });
+                }
+                // The bundler emits `{}` as the JS stub for a plain CSS import
+                // (esbuild parity); match that here instead of leaking the file path
+                // as the default export.
                 return Ok(ResolvedSource {
                     jsvalue_for_export: JSValue::create_empty_object(global_object, 0),
                     source_url: input_specifier.create_if_different(path.text),
@@ -3466,6 +3464,333 @@ fn maybe_watch_file(
     ) {
         *should_close_input_file_fd = false;
     }
+}
+
+/// Register a file that was not opened for parsing with the watcher (if
+/// enabled, absolute, and not in `node_modules`).
+fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    if !bun_paths::is_absolute(path_text) || bun_core::strings::contains(path_text, b"node_modules")
+    {
+        return;
+    }
+    // kqueue watchers need a file descriptor to receive event
+    // notifications on it; inotify/win32 watch by path.
+    let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path_text.len() >= buf.len() {
+            return;
+        }
+        let z = bun_paths::resolve_path::z(path_text, &mut buf);
+        match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+            Ok(fd) => fd,
+            Err(_) => return,
+        }
+    } else {
+        bun_sys::Fd::INVALID
+    };
+    let hash = bun_watcher::Watcher::get_hash(path_text);
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
+    // set when `is_watcher_enabled()`; cast recovers the concrete
+    // type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    let added = watcher.add_file::<true>(input_fd, path_text, hash, bun_sys::Fd::INVALID, None);
+    if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+        // Not adopted (already watched, or add failed); close the
+        // fd opened above.
+        if input_fd.is_valid() {
+            use bun_sys::FdExt as _;
+            input_fd.close();
+        }
+    }
+}
+
+/// A file reached from a CSS module that was imported at runtime.
+struct CssModuleFile {
+    source: bun_ast::Source,
+    /// `None` when the file's loader is not CSS.
+    sheet: Option<bun_css::BundlerStyleSheet>,
+    symbols: Vec<bun_ast::Symbol>,
+    import_records: Vec<bun_ast::ImportRecord>,
+}
+
+impl CssModuleFile {
+    fn read(
+        bump: &'static bun_alloc::Arena,
+        path_text: &[u8],
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<&'static [u8]> {
+        match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_text) {
+            Ok(contents) => {
+                let contents = match bun_core::strings::BOM::detect(&contents) {
+                    Some(bom) => bom.remove_and_convert_to_utf8_and_free(contents),
+                    None => contents,
+                };
+                Ok(bump.alloc_slice_copy(&contents))
+            }
+            Err(err) => {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} reading \"{}\"",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(path_text),
+                    ),
+                );
+                Err(crate::Error::ParseError)
+            }
+        }
+    }
+
+    /// Gives `contents` the path and the parser options the bundler gives the file at `path_text`.
+    fn parse(
+        jsc_vm: *mut VirtualMachine,
+        bump: &'static bun_alloc::Arena,
+        source_index: usize,
+        path_text: &[u8],
+        contents: Option<&'static [u8]>,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<CssModuleFile> {
+        let path = bun_bundler::generic_path_with_pretty_initialized(
+            &Fs::Path::init(intern_transpile_path(path_text)),
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            unsafe { &*jsc_vm }.transpiler.options.target,
+            Fs::FileSystem::get().top_level_dir,
+            bump,
+        )?;
+        let mut file = CssModuleFile {
+            source: bun_ast::Source {
+                path,
+                ..Default::default()
+            },
+            sheet: None,
+            symbols: Vec::new(),
+            import_records: Vec::new(),
+        };
+        let Some(contents) = contents else {
+            return Ok(file);
+        };
+        file.source.contents = std::borrow::Cow::Borrowed(contents);
+
+        let mut options = bun_css::ParserOptions::default(Some(&mut *log));
+        if bun_css::css_modules::is_module_path(path.pretty) {
+            options.filename = path.pretty;
+            options.css_modules = Some(bun_css::css_modules::Config::default());
+        }
+        match bun_css::BundlerStyleSheet::parse_bundler(
+            bump,
+            contents,
+            options,
+            &mut file.import_records,
+            bun_ast::Index::init(source_index),
+        ) {
+            Ok((sheet, extra)) => {
+                file.sheet = Some(sheet);
+                file.symbols = extra.symbols;
+                Ok(file)
+            }
+            Err(err) => {
+                let _ = err.add_to_logger(log, &file.source);
+                Err(crate::Error::ParseError)
+            }
+        }
+    }
+}
+
+struct CssModuleGraph(Vec<CssModuleFile>);
+
+impl bun_css::css_modules::ComposesGraph for CssModuleGraph {
+    fn stylesheet(&self, source_index: u32) -> Option<&bun_css::BundlerStyleSheet> {
+        self.0[source_index as usize].sheet.as_ref()
+    }
+
+    fn source(&self, source_index: u32) -> &bun_ast::Source {
+        &self.0[source_index as usize].source
+    }
+
+    fn import_record(&self, source_index: u32, import_record_index: u32) -> &bun_ast::ImportRecord {
+        &self.0[source_index as usize].import_records[import_record_index as usize]
+    }
+}
+
+impl CssModuleGraph {
+    /// Parses the CSS module at `path_text` and every file it reaches through `composes: name from "file"`.
+    /// `virtual_source`: what a plugin supplied in place of the file's contents.
+    fn load(
+        &mut self,
+        jsc_vm: *mut VirtualMachine,
+        bump: &'static bun_alloc::Arena,
+        path_text: &[u8],
+        virtual_source: Option<&bun_ast::Source>,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<()> {
+        let contents = match virtual_source {
+            Some(source) => &*bump.alloc_slice_copy(&source.contents),
+            None => CssModuleFile::read(bump, path_text, log)?,
+        };
+        self.0.push(CssModuleFile::parse(
+            jsc_vm,
+            bump,
+            0,
+            path_text,
+            Some(contents),
+            log,
+        )?);
+
+        let mut source_index = 0;
+        while source_index < self.0.len() {
+            for record_index in 0..self.0[source_index].import_records.len() {
+                let file = &self.0[source_index];
+                let record = &file.import_records[record_index];
+                if record.kind != ImportKind::Composes {
+                    continue;
+                }
+                let specifier = record.path.text;
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let resolved = unsafe {
+                    (*jsc_vm).transpiler.resolver.resolve(
+                        file.source.path.source_dir(),
+                        specifier,
+                        record.kind,
+                    )
+                };
+                let Ok(mut resolved) = resolved else {
+                    log.add_resolve_error_with_text_dupe(
+                        Some(&file.source),
+                        record.range,
+                        format_args!(
+                            "Could not resolve: \"{}\"{}",
+                            bstr::BStr::new(specifier),
+                            if bun_paths::is_package_path(specifier) {
+                                ". Maybe you need to \"bun install\"?"
+                            } else {
+                                ""
+                            },
+                        ),
+                        specifier,
+                        record.kind,
+                    );
+                    continue;
+                };
+                if resolved.flags.is_external() {
+                    continue;
+                }
+                let Some(path) = resolved.path().map(|path| *path) else {
+                    continue;
+                };
+                let composed_index = match self
+                    .0
+                    .iter()
+                    .position(|file| file.source.path.text == path.text)
+                {
+                    Some(index) => index,
+                    None => {
+                        auto_watch_file(jsc_vm, path.text);
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        let loaders = unsafe { &(*jsc_vm).transpiler.options.loaders };
+                        let contents = if loader_for_path(&path, loaders) == Some(Loader::Css) {
+                            Some(CssModuleFile::read(bump, path.text, log)?)
+                        } else {
+                            None
+                        };
+                        let index = self.0.len();
+                        self.0.push(CssModuleFile::parse(
+                            jsc_vm, bump, index, path.text, contents, log,
+                        )?);
+                        index
+                    }
+                };
+                self.0[source_index].import_records[record_index].source_index =
+                    bun_ast::Index::init(composed_index);
+            }
+            bun_css::css_modules::check_composes_from(&*self, source_index as u32, log);
+            source_index += 1;
+        }
+        if log.has_errors() {
+            return Err(crate::Error::ParseError);
+        }
+        Ok(())
+    }
+
+    /// Each local of the first file with the string the bundler exports for it, up to the first error.
+    fn exports(&self, scratch: &bun_alloc::Arena, log: &mut bun_ast::Log) -> Vec<(&[u8], Vec<u8>)> {
+        use bun_css::css_modules::{ComposesVisitor, ExportedName, scoped_name};
+
+        let Some(sheet) = self.0.first().and_then(|file| file.sheet.as_ref()) else {
+            return Vec::new();
+        };
+        let mut visitor = ComposesVisitor::new(self);
+        let mut exports = Vec::with_capacity(sheet.local_scope.count());
+        for (local_name, local) in sheet.local_scope.iter() {
+            let names = visitor.exported_names(sheet, local.ref_, 0, log);
+            if log.has_errors() {
+                break;
+            }
+            let mut value = Vec::new();
+            for name in names {
+                if !value.is_empty() {
+                    value.push(b' ');
+                }
+                match *name {
+                    ExportedName::Local(ref_) => {
+                        let file = &self.0[ref_.source_index() as usize];
+                        value.extend_from_slice(&scoped_name(
+                            scratch,
+                            file.source.path.pretty,
+                            file.symbols[ref_.inner_index() as usize]
+                                .original_name
+                                .slice(),
+                        ));
+                    }
+                    ExportedName::Global(name) => value.extend_from_slice(name),
+                }
+            }
+            exports.push((&**local_name, value));
+        }
+        exports
+    }
+}
+
+/// The object `Bun.build` makes the default export of the CSS module at `path_text`.
+#[cold]
+#[inline(never)]
+fn css_module_exports(
+    jsc_vm: *mut VirtualMachine,
+    global: &JSGlobalObject,
+    path_text: &[u8],
+    virtual_source: Option<&bun_ast::Source>,
+    log: &mut bun_ast::Log,
+) -> crate::Result<JSValue> {
+    let arena = bun_alloc::Arena::new();
+    // SAFETY: `arena` owns every file's bytes; only `graph` and `arena_log` borrow from it and, declared later, drop first.
+    let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let mut graph = CssModuleGraph(Vec::new());
+    let mut arena_log = bun_ast::Log::init();
+
+    let exports = graph
+        .load(jsc_vm, bump, path_text, virtual_source, &mut arena_log)
+        .map(|()| graph.exports(bump, &mut arena_log));
+    let exports = match exports {
+        Ok(exports) if !arena_log.has_errors() => exports,
+        _ => {
+            arena_log.append_to_with_recycled(log, false);
+            return Err(crate::Error::ParseError);
+        }
+    };
+
+    let object = JSValue::create_empty_object(global, exports.len());
+    for (name, value) in &exports {
+        object.put_may_be_index(
+            global,
+            &bun_core::String::clone_utf8(name),
+            bun_string_jsc::create_utf8_for_js(global, value)?,
+        )?;
+    }
+    Ok(object)
 }
 
 // Generated `bun:sqlite` import shims.
@@ -3985,15 +4310,10 @@ unsafe fn get_loader_and_virtual_source<'a>(
     let is_main = specifier == unsafe { &*jsc_vm }.main();
 
     // package.json sniff for `.js`/`.ts` module-type.
-    let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
-        // SAFETY: per fn contract — `transpiler.resolver` is a value field of
-        // the VM; `read_dir_info` is re-entrant on the JS thread.
-        match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
-            _ => None,
-        }
+    let package_json = if is_js_like {
+        // SAFETY: per fn contract.
+        unsafe { package_json_of(jsc_vm, &path) }
     } else {
         None
     };
@@ -4006,6 +4326,58 @@ unsafe fn get_loader_and_virtual_source<'a>(
         specifier,
         package_json,
     })
+}
+
+/// The package.json of the package `path` is in.
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM; the returned borrow lives as long as its resolver caches.
+unsafe fn package_json_of<'a>(
+    jsc_vm: *mut VirtualMachine,
+    path: &Fs::Path<'_>,
+) -> Option<&'a bun_resolver::package_json::PackageJSON> {
+    let dir = path.name().dir;
+    if !bun_paths::is_absolute(dir) {
+        return None;
+    }
+    // SAFETY: per fn contract — `transpiler.resolver` is a value field of
+    // the VM; `read_dir_info` is re-entrant on the JS thread.
+    match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
+        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        _ => None,
+    }
+}
+
+/// What the extension of `path`, else its package.json, says it is. `Unknown`: its contents decide.
+fn module_type_of(
+    path: &Fs::Path<'_>,
+    package_json: Option<&bun_resolver::package_json::PackageJSON>,
+) -> ModuleType {
+    let ext = path.name().ext;
+    // regex /\.[cm][jt]s$/
+    if ext.len() == b".cjs".len() {
+        if ext == b".cjs" {
+            return ModuleType::Cjs;
+        }
+        if ext == b".mjs" {
+            return ModuleType::Esm;
+        }
+        if ext == b".cts" {
+            return ModuleType::Cjs;
+        }
+        if ext == b".mts" {
+            return ModuleType::Esm;
+        }
+    }
+    // regex /\.[jt]s$/
+    if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
+        // Use the package.json module type if it exists.
+        return package_json
+            .map(|pkg| pkg.module_type)
+            .unwrap_or(ModuleType::Unknown);
+    }
+    // For JSX/TSX and other extensions, let the file contents decide.
+    ModuleType::Unknown
 }
 
 thread_local! {
@@ -4177,35 +4549,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         }
     }
 
-    // ── module_type sniff from extension / package.json ─────────────────────
-    let module_type: ModuleType = 'brk: {
-        let ext = lr.path.name().ext;
-        // regex /\.[cm][jt]s$/
-        if ext.len() == b".cjs".len() {
-            if ext == b".cjs" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mjs" {
-                break 'brk ModuleType::Esm;
-            }
-            if ext == b".cts" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mts" {
-                break 'brk ModuleType::Esm;
-            }
-        }
-        // regex /\.[jt]s$/
-        if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-            // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
-        }
-        // For JSX/TSX and other extensions, let the file contents decide.
-        ModuleType::Unknown
-    };
+    let module_type = module_type_of(&lr.path, lr.package_json);
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
@@ -4218,11 +4562,10 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     'transpile_async: {
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let (has_loaded, is_in_preload, has_plugins, store_enabled) = unsafe {
+        let (has_loaded, is_in_preload, store_enabled) = unsafe {
             (
                 (*jsc_vm).has_loaded,
                 (*jsc_vm).is_in_preload,
-                (*jsc_vm).global().has_plugins(),
                 (*jsc_vm).transpiler_store.enabled,
             )
         };
@@ -4231,9 +4574,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()
             && !lr.is_main
-            // Plugins make this complicated.
-            // TODO: allow running concurrently when no onLoad handlers match a plugin.
-            && !has_plugins
             && store_enabled
             // With the Node compile cache enabled, transpile on-thread so the
             // fetch hook sees every module.
@@ -4492,11 +4832,18 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         p
     });
 
+    let module_type = if loader.is_java_script_like() {
+        // SAFETY: `jsc_vm` is the live per-thread VM.
+        module_type_of(&path, unsafe { package_json_of(jsc_vm, &path) })
+    } else {
+        ModuleType::Unknown
+    };
+
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let mut extra = TranspileExtra {
         path,
         loader,
-        module_type: ModuleType::Unknown,
+        module_type,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
     };

@@ -783,6 +783,53 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+// What a load that can never finish left in the registry goes, so that the next importer loads it anew.
+// Returns a "\nnote: " line for each of the first few modules that the others were waiting for.
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__evictUnfinishedModules(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* loader = globalObject->moduleLoader();
+
+    Vector<JSC::Identifier> unfinished;
+    Vector<std::pair<int64_t, String>> awaiting;
+    Vector<String> fetching;
+    Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
+        if (isModuleLoadSettled(entry))
+            return;
+        auto key = JSC::Identifier::fromUid(vm, specifier);
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (!entry->record())
+            fetching.append(key.string());
+        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0))
+            awaiting.append({ loader->asyncEvaluationOrderForKey(key), key.string() });
+        unfinished.append(WTF::move(key));
+    });
+    for (auto& key : unfinished)
+        loader->removeEntry(key);
+
+    std::sort(awaiting.begin(), awaiting.end(), [](auto& a, auto& b) { return a.first < b.first; });
+    std::sort(fetching.begin(), fetching.end(), WTF::codePointCompareLessThan);
+
+    constexpr size_t maxNotes = 5;
+    size_t count = 0;
+    StringBuilder notes;
+    for (auto& [order, specifier] : awaiting) {
+        if (count++ < maxNotes) {
+            notes.append("\nnote: unsettled top-level await in "_s);
+            notes.appendQuotedJSONString(specifier);
+        }
+    }
+    for (auto& specifier : fetching) {
+        if (count++ < maxNotes) {
+            notes.append("\nnote: an onLoad() plugin or a mock.module() factory never settled for "_s);
+            notes.appendQuotedJSONString(specifier);
+        }
+    }
+    if (count > maxNotes)
+        notes.append("\nnote: and "_s, count - maxNotes, " more"_s);
+    return Bun::toStringRef(notes.toString());
+}
+
 // The loader whose registry require.cache / require() of `requirer` (a CommonJS module, or
 // undefined) reads: its Bun.ModuleGraph's — null once that is disposed — or the global object's.
 static JSC::JSModuleLoader* moduleLoaderOfRequirer(JSC::JSGlobalObject* globalObject, JSValue requirer)
@@ -3518,7 +3565,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(globalObject)) {
+        if (!globalObject->onLoadPlugins.hasVirtualModules() && globalObject->onResolvePlugins.isEmpty()) {
             Latin1CString narrowed;
             std::span<const Latin1Character> chars;
             if (moduleName->is8Bit())
@@ -3665,6 +3712,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     }
 
     ASSERT(result);
+    if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
+        Bun::didStartDynamicImport(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     return result;
 }
 

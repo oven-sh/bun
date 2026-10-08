@@ -52,9 +52,17 @@ struct OnLoadResult {
 
 extern "C" bool isBunTest;
 
-class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
+class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<7> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<3>;
+    using Base = JSC::JSInternalFieldObjectImpl<7>;
+
+    // After the specifier, the referrer and the promise. Each is empty if there is none.
+    enum Field : unsigned {
+        TypeAttribute = 3,
+        ModuleGraph,
+        OnLoadPath, // Set while waiting for the promise of an onLoad callback, which may decline.
+        OnLoadCallbacks, // To ask next.
+    };
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -106,6 +114,7 @@ JSValue fetchCommonJSModule(
     BunString* referrer,
     BunString* typeAttribute);
 
+// `pluginContents`: what a plugin supplied in place of the file's, or null.
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
@@ -119,7 +128,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
-    JSC::ThrowScope& scope);
+    JSC::ThrowScope& scope,
+    const CodeString* pluginContents = nullptr);
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,

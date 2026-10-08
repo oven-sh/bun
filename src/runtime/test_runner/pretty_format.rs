@@ -2502,6 +2502,16 @@ impl<'a> Formatter<'a> {
         // `self.global_this` is restored to the previous value at the end.
         self.global_this = global_this;
 
+        if matches!(result.tag, Tag::Object | Tag::Array | Tag::JSON) {
+            match super::dom_format::print_in_snapshot(self, writer, value) {
+                Ok(false) => {}
+                printed => {
+                    self.global_this = prev_global_this;
+                    return printed.map(drop);
+                }
+            }
+        }
+
         // This looks incredibly redundant. Each tag variant dispatches to its
         // own small formatting function; that _should_ limit the stack usage
         // because each version of the function will be relatively small.

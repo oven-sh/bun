@@ -18,7 +18,8 @@
 namespace Bun {
 using namespace JSC;
 
-static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
+// `thrown`: where to put what the callback throws; null to report it as uncaught.
+static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue, EncodedJSValue* thrown)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -34,12 +35,16 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     }
 
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
-        // This was a Bun.sleep() call
-        promise->resolve(globalObject, vm, jsUndefined());
+        // Bun.sleep(), which has no arguments, or util.promisify() of a faked timer function, which has the value.
+        promise->resolve(globalObject, vm, argumentsValue);
     } else {
         auto callData = JSC::getCallData(callbackValue);
         if (callData.type == CallData::Type::None) {
-            Bun__reportUnhandledError(globalObject, JSValue::encode(createNotAFunctionError(globalObject, callbackValue)));
+            auto notAFunction = JSValue::encode(createNotAFunctionError(globalObject, callbackValue));
+            if (thrown)
+                *thrown = notAFunction;
+            else
+                Bun__reportUnhandledError(globalObject, notAFunction);
             return true;
         }
 
@@ -66,6 +71,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         (void)scope.tryClearException();
         if (vm.isTerminationException(exception))
             Bun__VM__takeTerminationOutsideScript(globalObject);
+        else if (thrown)
+            *thrown = JSValue::encode(exception->value());
         else
             Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;
@@ -79,14 +86,14 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 }
 
 // Returns true if an exception was thrown.
-extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
+extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue, EncodedJSValue* thrown)
 {
     auto& vm = globalObject->vm();
     if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
         return true;
     }
 
-    return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue));
+    return call(globalObject, JSValue::decode(timerObject), JSValue::decode(callbackValue), JSValue::decode(argumentsValue), thrown);
 }
 
 }

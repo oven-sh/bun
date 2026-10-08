@@ -199,6 +199,19 @@ impl Stopped {
     }
 }
 
+/// Why [`EventLoop::wait_at_top_level`] gave up.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopLevelWaitError {
+    /// See [`Stopped`].
+    #[error("Stopped")]
+    Stopped,
+    /// No work is queued, and no handle or timer is left to queue any.
+    #[error(
+        "it is waiting for something that can no longer happen: the event loop has nothing left to run"
+    )]
+    NothingLeft,
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
 // `Task { tag, ptr }`. Per PORTING.md, the *high tier owns the match loop*:
@@ -1142,6 +1155,45 @@ impl EventLoop {
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
+        }
+        Ok(())
+    }
+
+    /// [`auto_tick`](Self::auto_tick) for a wait that goes on whether or not anything keeps the loop alive.
+    /// With nothing that does, `auto_tick` only polls, and such a wait spins until the next timer is due.
+    pub fn auto_tick_asleep(&mut self) {
+        if self.vm_ref().is_event_loop_alive_despite_errors() {
+            return self.auto_tick();
+        }
+        self.ref_keep_alive();
+        self.auto_tick();
+        self.unref_keep_alive();
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) for a wait with no script beneath it, the only kind
+    /// that may decide that what it waits for will never happen: ticks until `is_done`, and gives up
+    /// once nothing is left that could run script again.
+    pub fn wait_at_top_level(
+        &mut self,
+        mut is_done: impl FnMut() -> bool,
+    ) -> Result<(), TopLevelWaitError> {
+        let jsc_vm = self.vm_ref().jsc_vm();
+        debug_assert!(!jsc_vm.is_entered());
+        while !is_done() {
+            if jsc_vm.execution_forbidden()
+                || !self.vm_ref().script_allowed()
+                || self.global_ref().has_pending_termination_exception()
+            {
+                return Err(TopLevelWaitError::Stopped);
+            }
+            self.tick();
+            if is_done() {
+                break;
+            }
+            if !self.vm_ref().has_work_left() {
+                return Err(TopLevelWaitError::NothingLeft);
+            }
+            self.auto_tick_asleep();
         }
         Ok(())
     }

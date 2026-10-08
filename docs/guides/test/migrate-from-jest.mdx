@@ -64,11 +64,11 @@ Bun implements most of Jest's matchers, but compatibility isn't 100%. See the co
 
 ---
 
-If you use `testEnvironment: "jsdom"` to run your tests in a browser-like environment, follow the [DOM testing with Bun and happy-dom](/guides/test/happy-dom) guide to inject browser APIs into the global scope. That guide uses [`happy-dom`](https://github.com/capricorn86/happy-dom), a leaner and faster alternative to [`jsdom`](https://github.com/jsdom/jsdom).
+Replace `testEnvironment: "jsdom"` in your Jest config with `environment` in `bunfig.toml`, and install `jsdom` itself (`bun add -d jsdom`). `@jest-environment` comments in test files work as they are. [`happy-dom`](https://github.com/capricorn86/happy-dom) is a leaner and faster alternative. See [DOM testing](/test/dom#test-environments).
 
 ```toml bunfig.toml icon="settings"
 [test]
-preload = ["./happydom.ts"]
+environment = "jsdom"
 ```
 
 ---

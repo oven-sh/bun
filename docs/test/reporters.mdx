@@ -73,6 +73,28 @@ You can also configure the JUnit reporter in `bunfig.toml`:
 junit = "path/to/junit.xml"  # Output path for JUnit XML report
 ```
 
+#### Describe Blocks in JUnit Reports
+
+By default, each `describe` block is a `<testsuite>` nested in the `<testsuite>` of its file. Some tools only read the `<testcase>` elements directly inside a file's `<testsuite>`. For those, use `--reporter-junit-suites=flat`:
+
+```sh terminal icon="terminal"
+bun test --reporter=junit --reporter-outfile=./junit.xml --reporter-junit-suites=flat
+```
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "path/to/junit.xml"
+junitSuites = "flat"  # "nested" (default) or "flat"
+```
+
+The report then has one `<testsuite>` per file. The names of the `describe` blocks go in front of the name of the test, and `classname` is the file:
+
+```xml junit.xml icon="file-code"
+<testsuite name="math.test.ts" file="math.test.ts" tests="1" ...>
+  <testcase name="add &gt; negative numbers &gt; returns the sum" classname="math.test.ts" file="math.test.ts" line="5" ... />
+</testsuite>
+```
+
 #### Environment Variables in JUnit Reports
 
 The JUnit reporter includes environment information as `<properties>` in the XML output, so you can tell which environment and commit a test run was for.

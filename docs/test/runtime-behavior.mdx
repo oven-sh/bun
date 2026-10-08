@@ -127,6 +127,22 @@ test("test 1", () => {
 Promise.reject(new Error("Unhandled rejection"));
 ```
 
+### Unsettled Top-Level Await
+
+No timeout applies while a test file is loading. When a top-level `await` or `import` is still pending and nothing is left on the event loop that could settle it, `bun test` fails the file, names the modules that are stuck, and moves on to the next file.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+await new Promise(() => {});
+```
+
+```txt
+error: "/path/to/test.ts" never finished loading
+note: it is waiting for something that can no longer happen: the event loop has nothing left to run
+note: unsettled top-level await in "/path/to/test.ts"
+```
+
+The same goes for a `--preload` script, an async `describe()` callback, and a test or hook whose timeout is `0`. A timer, socket, subprocess or worker that is still open counts as something that could settle it, even after `.unref()`.
+
 ### Custom Error Handling
 
 You can set up custom error handlers in your test setup:
@@ -244,6 +260,8 @@ You can also import them explicitly:
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach, jest, vi } from "bun:test";
 ```
+
+A file that imports some of them can still use the others as globals.
 
 ## Process Integration
 

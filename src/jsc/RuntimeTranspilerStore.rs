@@ -374,6 +374,7 @@ impl RuntimeTranspilerStore {
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
+                has_plugins: global_object.has_plugins(),
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -406,6 +407,9 @@ impl RuntimeTranspilerStore {
 // the 64-slot hive is unconditional here.
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
+/// The parser's error for a call of a macro under `no_macros`.
+const MACROS_ARE_DISABLED: &[u8] = b"Macros are disabled";
+
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
@@ -431,6 +435,8 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
+    /// A macro is loaded through `Bun.plugin()` callbacks, so the JS thread runs it: the pool thread's VM has none.
+    has_plugins: bool,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -539,7 +545,19 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        let (specifier, result) = match self.parse_error {
+        let loader = self.loader;
+        // SAFETY: JS thread; leaf scalar field read on the VM that owns this job.
+        let calls_macro = self.has_plugins
+            && !unsafe { (*vm).transpiler.options.no_macros }
+            && log
+                .msgs
+                .iter()
+                .any(|msg| &*msg.data.text == MACROS_ARE_DISABLED);
+        let (specifier, mut result) = match self.parse_error {
+            Some(_) if calls_macro => (
+                core::mem::take(&mut self.non_threadsafe_input_specifier),
+                Err(crate::CrateError::ParseError),
+            ),
             Some(e) => (String::clone_utf8(self.path.text), Err(e)),
             None => {
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
@@ -561,6 +579,20 @@ impl TranspilerJob {
                 .store
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
+
+        if calls_macro {
+            log = bun_ast::Log::init();
+            result = VirtualMachine::fetch_without_on_load_plugins(
+                // SAFETY: JS thread; the job's slot, which is inside the VM, was given back above.
+                unsafe { &mut *vm },
+                &global_this,
+                &specifier,
+                &referrer,
+                Some(loader),
+                &mut log,
+                crate::module_loader::FetchFlags::Transpile,
+            );
+        }
 
         AsyncModule::fulfill(
             &global_this,
@@ -711,6 +743,9 @@ impl TranspilerJob {
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
+        if self.has_plugins {
+            transpiler.options.no_macros = true;
+        }
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a
         // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box

@@ -422,6 +422,12 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if opts.coverage.enabled {
         argv.push(lit(b"--coverage\0"));
     }
+    if let Some(environment) = opts.environment {
+        argv.push(print_z(format_args!(
+            "--environment={}",
+            environment.name()
+        ))?);
+    }
 
     argv.push(core::ptr::null());
     // Callers index by .len(), so keep the trailing null in the boxed slice.

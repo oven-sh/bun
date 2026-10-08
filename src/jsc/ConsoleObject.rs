@@ -1615,6 +1615,8 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        /// Set for `bun:test` matcher messages. True when it printed `value`, a DOM node or collection.
+        pub dom_printer: Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
     }
 
     impl<'a> Formatter<'a> {
@@ -1646,6 +1648,7 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                dom_printer: None,
             }
         }
 
@@ -1682,6 +1685,7 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                dom_printer: self.dom_printer,
             }
         }
 
@@ -3180,6 +3184,14 @@ pub mod formatter {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
+        if value.js_type() == jsc::JSType::GlobalProxy {
+            let prototype = value.get_proxy_target().get_prototype(global_this)?;
+            let Some(constructor) = prototype.get(global_this, "constructor")? else {
+                return Ok(None);
+            };
+            let name_str = constructor.get_name(global_this)?;
+            return Ok((!name_str.is_empty() && !name_str.eq_ascii(b"Object")).then_some(name_str));
+        }
         let name_str = value.get_class_name(global_this)?;
         if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
@@ -3297,6 +3309,14 @@ pub mod formatter {
                 armed: &raw const remove_before_recurse,
                 value,
             };
+
+            if let Some(print_dom) = self.dom_printer {
+                if matches!(format, Tag::Object | Tag::Proxy | Tag::Array)
+                    && print_dom(self, writer_, value)?
+                {
+                    return Ok(());
+                }
+            }
 
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
             // `print_as` frame stays small enough to recurse 512 levels under
@@ -3855,6 +3875,11 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            if self.single_line {
+                let _ = write!(writer_, "[{}]", value.to_bun_string(self.global_this)?);
+                return Ok(());
+            }
+
             // Temporarily remove from the visited map to allow
             // printErrorlikeObject to process it. The circular reference
             // check is already done in print_as, so we know it's safe.
@@ -4344,9 +4369,13 @@ pub mod formatter {
                     }
                     if nonempty_count >= 100 {
                         writer.print_comma::<C>();
-                        writer.write_all(b"\n"); // we want the line break to be unconditional here
-                        *writer.estimated_line_length = 0;
-                        writer.write_indent(self.indent);
+                        if self.single_line {
+                            writer.space();
+                        } else {
+                            writer.write_all(b"\n");
+                            *writer.estimated_line_length = 0;
+                            writer.write_indent(self.indent);
+                        }
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(
@@ -5420,9 +5449,7 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            if self.single_line {
-                let _ = writer_.write_all(b" ");
-            } else if self.always_newline_scope || self.good_time_for_a_new_line() {
+            if !self.single_line && (self.always_newline_scope || self.good_time_for_a_new_line()) {
                 let _ = writer_.write_all(b"\n");
                 let _ = self.write_indent(writer_);
                 self.reset_line();

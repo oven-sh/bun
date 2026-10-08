@@ -11,6 +11,7 @@ import {
 } from "harness";
 import { join } from "path";
 import util from "util";
+import vm from "vm";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,
@@ -1320,5 +1321,126 @@ it("object property enumeration scales linearly with property count", () => {
     // Per-property cost must stay roughly constant as n grows 10x. The previous
     // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
     expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
+  });
+});
+
+describe("own non-enumerable properties are not printed", () => {
+  const hide = (object, key, descriptor = { value: { hidden: true } }) =>
+    Object.defineProperty(object, key, descriptor);
+
+  it("string and symbol keys", () => {
+    const obj = hide(hide({}, Symbol("impl")), "hiddenString");
+    obj[Symbol("enumerable")] = 3;
+    obj.visible = 4;
+    expect(Bun.inspect(obj)).toBe("{\n  [Symbol(enumerable)]: 3,\n  visible: 4,\n}");
+  });
+
+  it("nothing else to print", () => {
+    expect(Bun.inspect(hide({}, "a"))).toBe("{}");
+    expect(Bun.inspect(hide(Object.create(null), "a"))).toBe("[Object: null prototype] {}");
+    expect(Bun.inspect(hide(new (class Foo {})(), "a"))).toBe("Foo {}");
+  });
+
+  it("next to an accessor", () => {
+    const obj = {
+      get visible() {
+        return 1;
+      },
+    };
+    hide(obj, "data");
+    hide(obj, "accessor", { get() {} });
+    expect(Bun.inspect(obj)).toBe("{\n  visible: [Getter],\n}");
+  });
+
+  it("nested", () => {
+    expect(Bun.inspect({ a: hide({ b: 1 }, "c") })).toBe("{\n  a: {\n    b: 1,\n  },\n}");
+    expect(Bun.inspect([hide({ b: 1 }, "c")])).toBe("[\n  {\n    b: 1,\n  }\n]");
+  });
+
+  it("array", () => {
+    const array = hide([1, 2], "hidden");
+    array.visible = 3;
+    expect(Bun.inspect(array)).toBe("[ 1, 2, visible: 3 ]");
+  });
+
+  it("sorted", () => {
+    expect(Bun.inspect(hide({ b: 1, a: 2 }, "c"), { sorted: true })).toBe("{\n  a: 2,\n  b: 1,\n}");
+  });
+
+  it("hides the property of the prototype that it shadows", () => {
+    expect(Bun.inspect(hide(Object.create({ a: "inherited", b: 2 }), "a"))).toBe("{\n  b: 2,\n}");
+    class Foo {
+      get a() {
+        return "inherited";
+      }
+      get b() {
+        return 2;
+      }
+    }
+    expect(Bun.inspect(hide(new Foo(), "a"))).toBe("Foo {\n  b: [Getter],\n}");
+  });
+
+  it("members of the prototypes are still printed", () => {
+    class Foo {
+      field = 1;
+      get getter() {
+        return 1;
+      }
+      method() {}
+    }
+    expect(Bun.inspect(new Foo())).toBe("Foo {\n  field: 1,\n  getter: [Getter],\n  method: [Function: method],\n}");
+    expect(Bun.inspect(new TextDecoder())).toContain('encoding: "utf-8"');
+  });
+});
+
+describe("values of another realm", () => {
+  it("the members of its Object.prototype are not printed", () => {
+    expect(Bun.inspect(vm.runInNewContext("({ a: 1 })"))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInNewContext("({})"))).toBe("{}");
+    expect(Bun.inspect(vm.runInNewContext("({ a: { b: [{ c: 1 }] } })"))).toBe(Bun.inspect({ a: { b: [{ c: 1 }] } }));
+    expect(Bun.inspect(vm.runInNewContext("Object.create({ a: 1 })"))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInNewContext("new (class Foo { x = 1; m() {} })()"))).toBe(
+      "Foo {\n  x: 1,\n  m: [Function: m],\n}",
+    );
+  });
+
+  it("its global prints its enumerable properties", () => {
+    expect(Bun.inspect(vm.runInContext("this", vm.createContext({ a: 1 })))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInContext("var b = 2; this", vm.createContext({})))).toBe("{\n  b: 2,\n}");
+    expect(Bun.inspect(vm.runInNewContext("this"))).toBe("{}");
+    expect(
+      Bun.inspect(vm.runInNewContext("Object.setPrototypeOf(this, (class Window { m() {} }).prototype); this.a = 1; this")),
+    ).toBe("Window {\n  a: 1,\n  m: [Function: m],\n}");
+  });
+
+  it("its global ends a prototype chain", () => {
+    expect(Bun.inspect(Object.create(vm.runInContext("this", vm.createContext({ a: 1 }))))).toBe("{}");
+  });
+});
+
+describe("compact prints one line", () => {
+  it("an array of more than 100 items", () => {
+    expect(Bun.inspect(Array(150).fill(0), { compact: true })).toBe(
+      `[ ${Array(100).fill(0).join(", ")}, ... 50 more items ]`,
+    );
+    expect(Bun.inspect({ a: Array(101).fill(0) }, { compact: true })).toBe(
+      `{ a: [ ${Array(100).fill(0).join(", ")}, ... 1 more items ] }`,
+    );
+  });
+
+  it("an object past the depth", () => {
+    expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
+    expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
+  });
+
+  it("an error", () => {
+    expect(Bun.inspect(new Error("boom"), { compact: true })).toBe("[Error: boom]");
+    expect(Bun.inspect({ e: new TypeError("boom") }, { compact: true })).toBe("{ e: [TypeError: boom] }");
+    expect(Bun.inspect([new Error(), new (class MyError extends Error {})("mine")], { compact: true })).toBe(
+      "[ [Error], [Error: mine] ]",
+    );
+    expect(Bun.inspect({ e: new Error("boom", { cause: new Error("why") }) }, { compact: true })).toBe(
+      "{ e: [Error: boom] }",
+    );
   });
 });

@@ -17,7 +17,9 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::context::{
+    Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment,
+};
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
@@ -621,6 +623,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
     ),
     parse_param!(
+        "--reporter-junit-suites <STR>    How --reporter=junit writes describe blocks: 'nested' (default, a \\<testsuite\\> in the file's \\<testsuite\\>) or 'flat' (a prefix of the test's name)."
+    ),
+    parse_param!(
         "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
     ),
     parse_param!(
@@ -656,6 +661,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
+    ),
+    parse_param!(
+        "--environment <STR>              Globals test files run with: 'node' (default), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -1838,6 +1846,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
     }
 
+    if let Some(name) = args.option(b"--reporter-junit-suites") {
+        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --reporter-junit-suites expects 'nested' or 'flat', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.reporters.junit_suites = Some(suites);
+    }
+
     if let Some(reporter) = args.option(b"--reporter") {
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
@@ -2016,6 +2035,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
         );
         Global::exit(1);
+    }
+    if let Some(name) = args.option(b"--environment") {
+        let Some(environment) = TestEnvironment::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --environment expects 'node', 'jsdom' or 'happy-dom', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.environment = Some(environment);
     }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");

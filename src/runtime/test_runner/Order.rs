@@ -39,9 +39,17 @@ impl Order {
         Ok(())
     }
 
-    pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    /// `runs_a_test`: vitest leaves out the hooks of a scope in which every test is skipped.
+    pub(crate) fn generate_all_order(
+        &mut self,
+        entries: &[Box<ExecutionEntry>],
+        runs_a_test: bool,
+    ) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
+            if !runs_a_test && entry_box.calling.is_vitest() {
+                continue;
+            }
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
             // `&[Box<_>]` and recover each Box's heap pointer as *mut to mutate through the
             // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
@@ -86,7 +94,7 @@ impl Order {
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.before_all)?
+            self.generate_all_order(&current.before_all, current.base.has_callback)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -111,7 +119,7 @@ impl Order {
 
         // gather afterAll
         let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all)?
+            self.generate_all_order(&current.after_all, current.base.has_callback)?
         } else {
             AllOrderResult::EMPTY
         };

@@ -371,6 +371,48 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
+test("own non-enumerable properties are not printed", () => {
+  class Wrapper {
+    visible = 1;
+    [Symbol("visibleSymbol")] = 2;
+    constructor() {
+      Object.defineProperty(this, Symbol("impl"), { value: { hidden: true } });
+      Object.defineProperty(this, "hidden", { value: { hidden: true } });
+      Object.defineProperty(this, "accessor", { get() {} });
+    }
+  }
+  expect(new Wrapper()).toMatchInlineSnapshot(`
+    Wrapper {
+      "visible": 1,
+      [Symbol(visibleSymbol)]: 2,
+    }
+  `);
+  expect([Object.defineProperty({}, "hidden", { value: 1 })]).toMatchInlineSnapshot(`
+    [
+      {},
+    ]
+  `);
+  expect(() => expect(new Wrapper()).toEqual({ visible: 2 })).toThrow(`expect(received).toEqual(expected)
+
+- {
+-   "visible": 2,
++ Wrapper {
++   "visible": 1,
++   [Symbol(visibleSymbol)]: 2,
+  }
+
+- Expected  - 2
++ Received  + 3
+`);
+  expect(() => expect(new Wrapper()).toBeNull()).toThrow(`expect(received).toBeNull()
+
+Received: Wrapper {
+  visible: 1,
+  [Symbol(visibleSymbol)]: 2,
+}
+`);
+});
+
 class InlineSnapshotTester {
   tmpdir: string;
   tmpid: number;

@@ -4764,14 +4764,7 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
-
-        // The explicit base URL should take precedence over the implicit base URL
-        // if present. This matters when a tsconfig.json file overrides "baseUrl"
-        // from another extended tsconfig.json file but doesn't override "paths".
-        if tsconfig.has_base_url() {
-            abs_base_url = &tsconfig.base_url;
-        }
+        let abs_base_url = tsconfig.abs_base_url_for_paths();
 
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -4815,59 +4808,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        struct TSConfigMatch<'b> {
-            prefix: &'b [u8],
-            suffix: &'b [u8],
-            original_paths: &'b [Box<[u8]>],
-        }
-
-        let mut longest_match: Option<TSConfigMatch> = None;
-        let mut longest_match_prefix_length: i32 = -1;
-        let mut longest_match_suffix_length: i32 = -1;
-
-        for (key, original_paths) in tsconfig
-            .paths
-            .keys()
-            .iter()
-            .zip(tsconfig.paths.values().iter())
-        {
-            if let Some(star) = strings::index_of_char(key, b'*') {
-                let star = star as usize;
-                let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
-                let suffix: &[u8] = if star == key.len() - 1 {
-                    b""
-                } else {
-                    &key[star + 1..]
-                };
-
-                // Find the match with the longest prefix. If two matches have the same
-                // prefix length, pick the one with the longest suffix. This second edge
-                // case isn't handled by the TypeScript compiler, but we handle it
-                // because we want the output to always be deterministic
-                let plen = i32::try_from(prefix.len()).expect("int cast");
-                let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.len() >= prefix.len() + suffix.len()
-                    && path.starts_with(prefix)
-                    && path.ends_with(suffix)
-                    && (plen > longest_match_prefix_length
-                        || (plen == longest_match_prefix_length
-                            && slen > longest_match_suffix_length))
-                {
-                    longest_match_prefix_length = plen;
-                    longest_match_suffix_length = slen;
-                    longest_match = Some(TSConfigMatch {
-                        prefix,
-                        suffix,
-                        original_paths,
-                    });
-                }
-            }
-        }
-
         // If there is at least one match, only consider the one with the longest
         // prefix. This matches the behavior of the TypeScript compiler.
-        if longest_match_prefix_length != -1 {
-            let longest_match = longest_match.unwrap();
+        if let Some(longest_match) = tsconfig.match_paths_wildcard(path) {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "Found a fuzzy match for \"{}*{}\" in \"paths\"",
@@ -4940,7 +4883,7 @@ impl<'a> Resolver<'a> {
     /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
     /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
     /// must still resolve `import "@/env.d.ts"`.
-    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+    pub(crate) fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
         const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
             substitution

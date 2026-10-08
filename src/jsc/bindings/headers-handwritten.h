@@ -304,7 +304,9 @@ inline constexpr BunLoaderType BunLoaderTypeJSONC = 8;
 inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
 inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
 inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
+inline constexpr BunLoaderType BunLoaderTypeText = 14;
 inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
+inline constexpr BunLoaderType BunLoaderTypeJSON5 = 20;
 inline constexpr BunLoaderType BunLoaderTypeMD = 21;
 inline constexpr BunLoaderType BunLoaderTypeXML = 22;
 
@@ -383,10 +385,6 @@ extern "C" bool Bun__transpileVirtualModule(
     const EncodedSlice* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
-
-extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
-    JSC::JSGlobalObject* global,
-    const BunString* specifier);
 
 extern "C" JSC::JSPromise* Bun__transpileFile(
     void* bunVM,

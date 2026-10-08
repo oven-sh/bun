@@ -19,7 +19,9 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::context::{
+    MacroImportReplacementMap, MacroMap, MacroOptions, TestEnvironment,
+};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -424,6 +426,24 @@ impl<'a> Parser<'a> {
                         expr.as_bool().expect("infallible: type checked");
                 }
 
+                if let Some(expr) = test.get(b"environment") {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(environment) = TestEnvironment::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"environment\" to be \"node\", \"jsdom\" or \"happy-dom\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --environment is parsed first and wins.
+                    if self.ctx.test_options.environment.is_none() {
+                        self.ctx.test_options.environment = Some(environment);
+                    }
+                }
+
                 if let Some(expr) = test.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.enabled =
@@ -447,6 +467,26 @@ impl<'a> Parser<'a> {
                                     Some(estring_to_owned(s, self.bump));
                             }
                         }
+                    }
+                    if let Some(suites_expr) = expr.get(b"junitSuites") {
+                        self.expect_string(&suites_expr)?;
+                        let name = suites_expr.as_string(self.bump).unwrap_or(b"");
+                        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name)
+                        else {
+                            return self.add_error_format(
+                                suites_expr.loc,
+                                format_args!(
+                                    "expected \"junitSuites\" to be \"nested\" or \"flat\" but received \"{}\"",
+                                    bstr::BStr::new(name)
+                                ),
+                            );
+                        };
+                        // --reporter-junit-suites is parsed first and wins.
+                        self.ctx
+                            .test_options
+                            .reporters
+                            .junit_suites
+                            .get_or_insert(suites);
                     }
                     if let Some(dots_expr) = expr.get(b"dots").or_else(|| expr.get(b"dot")) {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;

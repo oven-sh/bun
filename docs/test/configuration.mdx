@@ -85,6 +85,23 @@ mock.module("./external-api", () => ({
 }));
 ```
 
+### Environment
+
+`environment` is the DOM that test files run with: `"happy-dom"`, `"jsdom"`, or `"node"` for none (the default). The package has to be installed in your project. See [DOM testing](/test/dom#test-environments).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "happy-dom"
+```
+
+This is equivalent to using `--environment` on the command line, which overrides `bunfig.toml`:
+
+```bash terminal icon="terminal"
+bun test --environment=happy-dom
+```
+
+A `// @vitest-environment <name>` or `// @jest-environment <name>` comment in a test file overrides both.
+
 ### Path Ignore Patterns
 
 `pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.

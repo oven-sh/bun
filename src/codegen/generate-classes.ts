@@ -1731,6 +1731,7 @@ function generateRust(
     structuredClone = false,
     rustPath,
     sharedThis = true,
+    protoFnCaller,
   } = {} as ClassDefinition,
 ) {
   const gc_fields = Object.entries({
@@ -1878,12 +1879,17 @@ function generateRust(
 
       if (names.fn) {
         const id = rustSnakeIdent(fn);
+        if (protoFnCaller && passThis) {
+          throw new Error(`${typeName}.${name}: \`passThis\` is not supported with \`protoFnCaller\``);
+        }
         thunk(
           names.fn,
           `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
           passThis
             ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
-            : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
+            : protoFnCaller
+              ? `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${rustSnakeIdent(protoFnCaller)}(t, g, c, ${T}::${id}))`
+              : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
         );
       }
     }

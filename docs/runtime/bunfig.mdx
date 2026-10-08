@@ -190,6 +190,17 @@ Same as the top-level `preload` field, but only applies to `bun test`.
 preload = ["./setup.ts"]
 ```
 
+### `test.environment`
+
+The DOM that test files run with: `"happy-dom"`, `"jsdom"`, or `"node"` for none. Default `"node"`. A `// @vitest-environment <name>` comment in a test file overrides it. See [DOM testing](/test/dom#test-environments).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "happy-dom"
+```
+
+Equivalent CLI flag: `--environment`, which overrides the `bunfig.toml` value.
+
 ### `test.pathIgnorePatterns`
 
 Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
@@ -389,6 +400,18 @@ junit = "test-results.xml"
 ```
 
 CI systems and other tools can consume the report.
+
+#### `test.reporter.junitSuites`
+
+How the JUnit report represents `describe` blocks. `"nested"` writes a `<testsuite>` for each block inside the `<testsuite>` of its file. `"flat"` writes one `<testsuite>` per file and puts the names of the blocks in front of the name of each test. Default `"nested"`.
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "test-results.xml"
+junitSuites = "flat"
+```
+
+Equivalent to the `--reporter-junit-suites` flag.
 
 ## Package manager
 

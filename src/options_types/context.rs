@@ -466,6 +466,9 @@ pub struct TestOptions {
     pub timings_files: Vec<Box<[u8]>>,
     /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
     pub update_timings: bool,
+    /// `bun test --environment=<name>`, else `[test] environment`: what a test file
+    /// without an `@vitest-environment` / `@jest-environment` comment runs in.
+    pub environment: Option<TestEnvironment>,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -477,11 +480,59 @@ pub struct Shard {
     pub count: u32,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum TestEnvironment {
+    Node,
+    Jsdom,
+    HappyDom,
+}
+
+impl TestEnvironment {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"node" => Some(Self::Node),
+            b"jsdom" => Some(Self::Jsdom),
+            b"happy-dom" => Some(Self::HappyDom),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Jsdom => "jsdom",
+            Self::HappyDom => "happy-dom",
+        }
+    }
+}
+
 #[derive(Default, Copy, Clone)]
 pub struct Reporters {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: bool,
+    /// `bun test --reporter-junit-suites=<name>`, else `[test.reporter] junitSuites`.
+    pub junit_suites: Option<JunitSuites>,
+}
+
+/// What a `describe` block becomes in the JUnit report.
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub enum JunitSuites {
+    /// A `<testsuite>` inside the file's `<testsuite>`.
+    #[default]
+    Nested,
+    /// A prefix of the `name` of its `<testcase>`s.
+    Flat,
+}
+
+impl JunitSuites {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"nested" => Some(Self::Nested),
+            b"flat" => Some(Self::Flat),
+            _ => None,
+        }
+    }
 }
 
 impl TestOptions {
@@ -532,6 +583,7 @@ impl Default for TestOptions {
             shard: None,
             timings_files: Vec::new(),
             update_timings: false,
+            environment: None,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }

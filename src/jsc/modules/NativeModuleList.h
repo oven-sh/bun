@@ -7,6 +7,7 @@
 
 #define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("bun:test"_s, BunTest) \
+    macro("bun:test/vitest"_s, BunTestVitest) \
     macro("bun:jsc"_s, BunJSC) \
     macro("bun:app"_s, BunApp) \
     macro("node:buffer"_s, NodeBuffer) \

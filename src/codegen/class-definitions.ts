@@ -119,6 +119,13 @@ export class ClassDefinition {
    */
   sharedThis?: boolean;
   /**
+   * Name of a method that calls every prototype function of the class:
+   * ```rust
+   * pub fn call_proto_fn(&self, global: &JSGlobalObject, frame: &CallFrame, function: impl FnOnce(&Self, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>) -> JsResult<JSValue>;
+   * ```
+   */
+  protoFnCaller?: string;
+  /**
    * Class constructor is newable. Called before the JSValue corresponding to
    * the object is created. Throwing an exception prevents the object from being
    * created.

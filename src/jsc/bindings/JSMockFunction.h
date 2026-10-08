@@ -7,12 +7,22 @@
 namespace WebCore {
 }
 
+namespace Zig {
+class GlobalObject;
+}
+
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
 
 class JSMockFunction;
+
+// The exports of a module with every function in them mocked. With `spy` the mocks call through, and objects nested in `exports` are changed in place unless `leaveOriginalAlone`.
+JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
+
+// For `vi.dynamicImportSettled`. `import` is the module loader's promise for an `import()`, not the one script gets.
+void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import);
 
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
@@ -45,6 +55,13 @@ public:
     // This is useful for iterating through every non-GC'd mock function
     // This list includes activeSpies
     JSC::WriteBarrier<JSC::Unknown> activeMocks;
+
+    // What `vi.stubEnv` / `vi.stubGlobal` replaced: a JSMap from name to original, created by the first stub
+    JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
+    JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
+
+    // A JSSet of what `didStartDynamicImport` was given, less the settled ones that were swept
+    JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

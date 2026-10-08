@@ -1,7 +1,7 @@
 use bun_jsc::generated::JSTimeout as js;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::Kind;
+use super::{Clock, Kind};
 
 // Struct + `RefCounted`/`Default` impls + the forwarder host-fns
 // (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
@@ -17,8 +17,9 @@ impl TimeoutObject {
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
+        clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, kind, interval, callback, arguments)
+        Self::init_with(cx, id, kind, interval, callback, arguments, clock)
     }
 
     #[bun_jsc::host_fn(method)]

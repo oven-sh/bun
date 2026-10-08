@@ -13,6 +13,9 @@ use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
 use super::execution::TimespecExt as _;
+use super::test_context::{self, Deferred, TestContext};
+use super::test_context_fixtures::TestFixtures;
+use super::test_context_parameter::ContextParameter;
 
 bun_core::declare_scope!(bun_test_group, hidden);
 // Callers use `group_log!` / `group_begin!` / `group_end!` below.
@@ -130,6 +133,8 @@ pub(crate) mod js_fns {
         AfterAll,
         #[strum(serialize = "onTestFinished")]
         OnTestFinished,
+        #[strum(serialize = "onTestFailed")]
+        OnTestFailed,
     }
     impl GenericHookTag {
         const fn as_hook_tag(self) -> Option<HookTag> {
@@ -138,7 +143,7 @@ pub(crate) mod js_fns {
                 Self::BeforeEach => Some(HookTag::BeforeEach),
                 Self::AfterEach => Some(HookTag::AfterEach),
                 Self::AfterAll => Some(HookTag::AfterAll),
-                Self::OnTestFinished => None,
+                Self::OnTestFinished | Self::OnTestFailed => None,
             }
         }
         /// Per-variant signature string: the tag name plus `"()"`.
@@ -149,6 +154,14 @@ pub(crate) mod js_fns {
                 Self::AfterEach => b"afterEach()",
                 Self::AfterAll => b"afterAll()",
                 Self::OnTestFinished => b"onTestFinished()",
+                Self::OnTestFailed => b"onTestFailed()",
+            }
+        }
+        const fn deferred(self) -> Option<Deferred> {
+            match self {
+                Self::OnTestFinished => Some(Deferred::OnTestFinished),
+                Self::OnTestFailed => Some(Deferred::OnTestFailed),
+                _ => None,
             }
         }
     }
@@ -158,6 +171,7 @@ pub(crate) mod js_fns {
     // (one fn per JS function so JSFunction::create gets a distinct address).
     pub(crate) fn generic_hook_impl(
         tag: GenericHookTag,
+        flavor: Flavor,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -169,29 +183,42 @@ pub(crate) mod js_fns {
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
 
-            let args = ScopeFunctions::parse_arguments(
+            let mut args = ScopeFunctions::parse_arguments(
                 global_this,
                 call_frame,
                 Signature::Str(sig_bytes),
-                ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
+                ScopeFunctions::ParseArgumentsCfg {
+                    callback: ScopeFunctions::CallbackMode::Require,
+                    kind: ScopeFunctions::FunctionKind::Hook,
+                    inherited: Default::default(),
+                },
             )?;
 
-            let has_done_parameter = if let Some(callback) = args.callback {
-                callback.get_length(global_this)? > 0
-            } else {
-                false
+            let calling = match (flavor, args.callback) {
+                (Flavor::Vitest, _) => Calling::Vitest { context: true },
+                (Flavor::Jest, Some(callback)) => Calling::Jest { done: callback.get_length(global_this)? > 0 },
+                (Flavor::Jest, None) => Calling::default(),
             };
+            // `test.beforeAll` / `test.afterAll` of an extended `test` are bound to its fixtures.
+            let mut fixtures = None;
+            if let (Flavor::Vitest, GenericHookTag::BeforeAll | GenericHookTag::AfterAll, Some(callback)) =
+                (flavor, tag, args.callback)
+            {
+                fixtures = Some(call_frame.this()).filter(|&this| TestFixtures::from_js(this).is_some());
+                args.callback = Some(test_context::suite_hook(global_this, tag_name, callback, fixtures.is_some())?);
+            }
 
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
             let cfg = ExecutionEntryCfg {
-                has_done_parameter,
+                calling,
+                fixtures,
                 timeout: args.options.timeout,
                 ..Default::default()
             };
 
             let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
-                if tag == GenericHookTag::OnTestFinished {
+                if tag.deferred().is_some() {
                     return Err(global_this.throw(format_args!(
                         "Cannot call {}() in preload. It can only be called inside a test.",
                         tag_name
@@ -199,37 +226,45 @@ pub(crate) mod js_fns {
                 }
                 bun_core::scoped_log!(bun_test_group, "genericHook in preload");
 
-                let _ = bun_test_root.hook_scope.append_hook(
+                bun_test_root.hook_scope.append_hook(
                     tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
-                )?;
+                );
                 return Ok(JSValue::UNDEFINED);
             };
 
             match bun_test.phase {
                 Phase::Collection => {
-                    if tag == GenericHookTag::OnTestFinished {
+                    if tag.deferred().is_some() {
                         return Err(global_this.throw(format_args!(
                             "Cannot call {}() outside of a test. It can only be called inside a test.",
                             tag_name
                         )));
                     }
-                    let _ = bun_test.collection.active_scope_mut().append_hook(
+                    if fixtures.is_some() {
+                        bun_test.expect_file_scoped_fixtures();
+                    }
+                    bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
-                    )?;
+                    );
                     Ok(JSValue::UNDEFINED)
                 }
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
                     let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
-                        return Err(if tag == GenericHookTag::OnTestFinished {
+                        return Err(if tag.deferred().is_some() && flavor == Flavor::Vitest {
+                            global_this.throw(format_args!(
+                                "Cannot call {0}() here. It cannot be called inside a concurrent test. Use the one of the test context: test(name, ({{ {0} }}) => {{}})",
+                                tag_name
+                            ))
+                        } else if tag == GenericHookTag::OnTestFinished {
                             global_this.throw(format_args!(
                                 "Cannot call {}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
                                 tag_name
@@ -241,6 +276,28 @@ pub(crate) mod js_fns {
                             ))
                         });
                     };
+
+                    if let (Flavor::Vitest, Some(when), Some(callback)) = (flavor, tag.deferred(), args.callback) {
+                        let (RefDataValue::Execution { group_index, entry_data: Some(entry_data) }, Some(strong)) =
+                            (active, super::clone_active_strong())
+                        else {
+                            return Ok(JSValue::UNDEFINED);
+                        };
+                        // SAFETY: as below.
+                        let sequence = unsafe { &mut *sequence.as_ptr() };
+                        if sequence.test_entry.is_none() {
+                            return Err(global_this.throw(format_args!(
+                                "Cannot call {}() here. It can only be called inside a test.",
+                                tag_name
+                            )));
+                        }
+                        let context = sequence.context(global_this, &strong, group_index, entry_data.sequence_index);
+                        if let Some(context) = TestContext::from_js(context) {
+                            // SAFETY: `sequence.context` keeps the wrapper, which owns the payload, alive.
+                            unsafe { &*context }.defer(bun_test, when, callback, cfg.timeout);
+                        }
+                        return Ok(JSValue::UNDEFINED);
+                    }
 
                     // SAFETY: `get_current_and_valid_execution_sequence` returns a NonNull
                     // into `execution.sequences`; deref at point-of-use only.
@@ -325,21 +382,27 @@ pub(crate) mod js_fns {
     pub(crate) mod generic_hook {
         use super::*;
         macro_rules! hook {
-            ($name:ident, $tag:ident) => {
+            ($name:ident, $tag:ident, $flavor:ident) => {
                 #[bun_jsc::host_fn]
                 pub(crate) fn $name(
                     global_this: &JSGlobalObject,
                     call_frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    super::generic_hook_impl(GenericHookTag::$tag, global_this, call_frame)
+                    super::generic_hook_impl(GenericHookTag::$tag, Flavor::$flavor, global_this, call_frame)
                 }
             };
         }
-        hook!(before_all, BeforeAll);
-        hook!(before_each, BeforeEach);
-        hook!(after_each, AfterEach);
-        hook!(after_all, AfterAll);
-        hook!(on_test_finished, OnTestFinished);
+        hook!(before_all, BeforeAll, Jest);
+        hook!(before_each, BeforeEach, Jest);
+        hook!(after_each, AfterEach, Jest);
+        hook!(after_all, AfterAll, Jest);
+        hook!(on_test_finished, OnTestFinished, Jest);
+        hook!(vitest_before_all, BeforeAll, Vitest);
+        hook!(vitest_before_each, BeforeEach, Vitest);
+        hook!(vitest_after_each, AfterEach, Vitest);
+        hook!(vitest_after_all, AfterAll, Vitest);
+        hook!(vitest_on_test_finished, OnTestFinished, Vitest);
+        hook!(vitest_on_test_failed, OnTestFailed, Vitest);
     }
 }
 
@@ -640,6 +703,10 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
+    /// Has no callback, and runs after everything of the file: see `defer_to_file_end`.
+    file_end: Option<Box<ExecutionEntry>>,
+    /// What the callbacks of tests with fixtures destructure. The entries keep the keys alive.
+    context_parameters: bun_collections::HashMap<JSValue, Rc<ContextParameter>>,
 
     pub(crate) phase: Phase,
     pub(crate) collection: Collection,
@@ -677,7 +744,64 @@ impl BunTest {
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
+            file_end: None,
+            context_parameters: Default::default(),
         }
+    }
+
+    /// For a test or a hook whose fixtures may outlive it.
+    pub(crate) fn expect_file_scoped_fixtures(&mut self) {
+        self.file_end.get_or_insert_with(|| {
+            ExecutionEntry::create(
+                None,
+                None,
+                ExecutionEntryCfg { calling: Calling::Vitest { context: false }, ..Default::default() },
+                None,
+                BaseScopeCfg::default(),
+                AddedInPhase::Collection,
+            )
+        });
+    }
+
+    /// `callback` runs after the `afterAll` hooks of the file, before what was deferred earlier.
+    pub(crate) fn defer_to_file_end(&mut self, callback: JSValue, timeout: u32) {
+        if self.file_end.is_none() {
+            return;
+        }
+        let entry = self.create_vitest_entry(callback, timeout, false).as_ptr();
+        if let Some(file_end) = self.file_end.as_deref_mut() {
+            // SAFETY: just allocated.
+            unsafe {
+                (*entry).next = file_end.next;
+                (*entry).failure_skip_past = Some(entry);
+            }
+            file_end.next = Some(entry);
+        }
+    }
+
+    /// An entry made while the tests run, for the caller to link into a sequence. It is freed with the file.
+    pub(crate) fn create_vitest_entry(&mut self, callback: JSValue, timeout: u32, context: bool) -> NonNull<ExecutionEntry> {
+        let entry = bun_core::heap::into_raw_nn(ExecutionEntry::create(
+            None,
+            Some(callback),
+            ExecutionEntryCfg { timeout, calling: Calling::Vitest { context }, ..Default::default() },
+            None,
+            BaseScopeCfg::default(),
+            AddedInPhase::Execution,
+        ));
+        self.extra_execution_entries.push(entry.as_ptr());
+        entry
+    }
+
+    pub(crate) fn set_context_parameter(&mut self, callback: JSValue, parameter: Rc<ContextParameter>) {
+        self.context_parameters.insert(callback, parameter);
+    }
+
+    pub(crate) fn context_parameter(&mut self, callback: JSValue) -> Rc<ContextParameter> {
+        self.context_parameters
+            .entry(callback)
+            .or_insert_with(|| Rc::new(ContextParameter::of(callback, 0)))
+            .clone()
     }
 
     pub(crate) fn get_current_state_data(&self) -> RefDataValue {
@@ -770,6 +894,9 @@ impl BunTest {
         if !has_one_ref && !is_catch {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
             return Ok(());
+        }
+        if !is_catch {
+            this.adopt_teardown(&refdata.phase, result);
         }
 
         this.add_result(refdata.phase);
@@ -1045,7 +1172,7 @@ impl BunTest {
 
                 let root = self.bun_test_root.get();
                 let beforeall_order: Order::AllOrderResult = if self.first_last.first {
-                    order.generate_all_order(&root.hook_scope.before_all)?
+                    order.generate_all_order(&root.hook_scope.before_all, true)?
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
@@ -1072,8 +1199,11 @@ impl BunTest {
                     }
                 }
                 beforeall_order.set_failure_skip_to(&mut order);
+                if let Some(file_end) = &self.file_end {
+                    order.generate_all_order(core::slice::from_ref(file_end), true)?;
+                }
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
-                    order.generate_all_order(&root.hook_scope.after_all)?
+                    order.generate_all_order(&root.hook_scope.after_all, true)?
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
@@ -1097,6 +1227,7 @@ impl BunTest {
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         cfg_callback: JSValue,
+        cfg_args: &[JSValue],
         cfg_done_parameter: bool,
         cfg_data: RefDataValue,
         timeout: &Timespec,
@@ -1129,7 +1260,7 @@ impl BunTest {
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
-        let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
+        let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,
             global_this,
@@ -1234,6 +1365,9 @@ impl BunTest {
                     }
                     PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
+                        let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
+                        // SAFETY: as in the `Rejected` arm.
+                        unsafe { (*this).adopt_teardown(&cfg_data, value) };
                         return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
@@ -1257,7 +1391,42 @@ impl BunTest {
         }
 
         bun_core::scoped_log!(bun_test_group, "callTestCallback -> sync");
+        if !result.is_empty() {
+            // SAFETY: re-derived after the JS callback returned; sole `&mut` at this point.
+            unsafe { (*this).adopt_teardown(&cfg_data, result) };
+        }
         Some(cfg_data)
+    }
+
+    /// vitest: a function that `beforeEach` / `beforeAll` returns runs after the matching after-hooks.
+    fn adopt_teardown(&mut self, data: &RefDataValue, returned: JSValue) {
+        if !returned.is_callable() {
+            return;
+        }
+        let Some((sequence, _)) = self.execution.get_current_and_valid_execution_sequence(data) else {
+            return;
+        };
+        // SAFETY: NonNull into `execution.sequences`; nothing else borrows it here.
+        let sequence = unsafe { sequence.as_ref() };
+        let Some(hook) = sequence.active_entry else {
+            return;
+        };
+        // SAFETY: entries outlive the sequences that run them.
+        let (calling, timeout, scope) = unsafe { (hook.as_ref().calling, hook.as_ref().timeout, hook.as_ref().base.parent) };
+        if !calling.is_vitest() {
+            return;
+        }
+        if sequence.test_entry.is_none() {
+            // SAFETY: a hook's scope outlives it.
+            if let Some(slot) = scope.and_then(|scope| unsafe { &mut *scope }.teardown_slot(hook.as_ptr())) {
+                slot.callback = Some(strong_create(returned));
+            }
+        } else if sequence.test_follows(hook)
+            && let Some(context) = sequence.context.as_ref().and_then(|context| TestContext::from_js(context.get()))
+        {
+            // SAFETY: `sequence.context` keeps the wrapper, which owns the payload, alive.
+            unsafe { &*context }.defer(self, Deferred::Teardown, returned, timeout);
+        }
     }
 
     /// called from the uncaught exception handler, or if a test callback rejects or throws an error
@@ -1279,6 +1448,12 @@ impl BunTest {
         };
 
         bun_core::scoped_log!(bun_test_group, "onUncaughtException -> {}", <&'static str>::from(handle_status));
+
+        if let (Phase::Execution, Some(thrown)) = (self.phase, exception)
+            && let Err(err) = self.execution.record_error(global_this, user_data, thrown)
+        {
+            global_this.bun_vm().as_mut().run_error_handler(global_this.take_exception(err), None);
+        }
 
         if handle_status == HandleUncaughtExceptionResult::HideError {
             return; // do not print error, it was already consumed
@@ -1589,8 +1764,38 @@ pub(crate) enum ConcurrentMode {
     Yes,
 }
 
+/// Whose semantics a function of the test module has: those of the module it was imported from.
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub(crate) enum Flavor {
+    /// "bun:test", "@jest/globals"
+    #[default]
+    Jest,
+    /// "vitest"
+    Vitest,
+}
+
+/// How the callback of an entry is called.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Calling {
+    /// `done`: it declares a parameter, so it gets a callback, which the entry waits for.
+    Jest { done: bool },
+    /// `context`: it gets the test context, or `({}, suite)` in `beforeAll` / `afterAll`.
+    Vitest { context: bool },
+}
+impl Default for Calling {
+    fn default() -> Self {
+        Calling::Jest { done: false }
+    }
+}
+impl Calling {
+    pub(crate) fn is_vitest(self) -> bool {
+        matches!(self, Calling::Vitest { .. })
+    }
+}
+
 #[derive(Copy, Clone, Default)]
 pub(crate) struct BaseScopeCfg {
+    pub(crate) flavor: Flavor,
     pub(crate) self_concurrent: ConcurrentMode,
     pub(crate) self_mode: ScopeMode,
     pub(crate) self_only: bool,
@@ -1741,6 +1946,10 @@ pub(crate) struct DescribeScope {
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     pub(crate) failed: bool,
+
+    /// What vitest callbacks see of this scope: `test_context::suite_task`.
+    pub(crate) task: Option<Strong>,
+    pub(crate) inherited: ScopeFunctions::InheritedOptions,
 }
 
 impl DescribeScope {
@@ -1753,6 +1962,8 @@ impl DescribeScope {
             after_all: Vec::new(),
             after_each: Vec::new(),
             failed: false,
+            task: None,
+            inherited: Default::default(),
         })
     }
     // destroy → Drop on Box<DescribeScope>; all fields own their contents.
@@ -1791,6 +2002,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
         let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
+        child.inherited = self.inherited;
         child.base.propagate(false);
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
@@ -1835,11 +2047,40 @@ impl DescribeScope {
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
-    ) -> JsResult<&mut ExecutionEntry> {
+    ) {
         let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
-        let list = self.get_hook_entries(tag);
-        list.push(entry);
-        Ok(&mut **list.last_mut().unwrap())
+        // Nothing in a skipped scope runs, and an entry without a callback is reported as a test.
+        if entry.callback.is_none() {
+            return;
+        }
+        let is_vitest = cfg.calling.is_vitest();
+        let first_teardown_slot = self.after_all.len() - self.vitest_before_all().count();
+        match tag {
+            HookTag::BeforeAll if is_vitest => {
+                let slot_cfg = ExecutionEntryCfg {
+                    timeout: cfg.timeout,
+                    calling: Calling::Vitest { context: false },
+                    ..Default::default()
+                };
+                let slot = ExecutionEntry::create(None, None, slot_cfg, Some(std::ptr::from_mut(self)), base, phase);
+                self.after_all.insert(first_teardown_slot, slot);
+                self.before_all.push(entry);
+            }
+            // vitest runs the after-hooks of a scope last registered first.
+            HookTag::AfterEach | HookTag::AfterAll if is_vitest => self.get_hook_entries(tag).insert(0, entry),
+            HookTag::AfterAll => self.after_all.insert(first_teardown_slot, entry),
+            _ => self.get_hook_entries(tag).push(entry),
+        }
+    }
+
+    fn vitest_before_all(&self) -> impl Iterator<Item = &ExecutionEntry> {
+        self.before_all.iter().map(|hook| &**hook).filter(|hook| hook.calling.is_vitest())
+    }
+
+    /// `after_all` ends with an entry for each vitest `beforeAll` hook, the last hook's first: it runs what the hook returns.
+    fn teardown_slot(&mut self, hook: *const ExecutionEntry) -> Option<&mut ExecutionEntry> {
+        let nth = self.vitest_before_all().position(|candidate| core::ptr::eq(candidate, hook))?;
+        self.after_all.iter_mut().nth_back(nth).map(|slot| &mut **slot)
     }
 }
 
@@ -1855,7 +2096,9 @@ pub(crate) enum HookTag {
 pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
-    pub(crate) has_done_parameter: bool,
+    pub(crate) calling: Calling,
+    /// The `TestFixtures` of the `test.extend()` the entry was made with.
+    pub(crate) fixtures: Option<JSValue>,
     /// Number of times to retry a failed test (0 = no retries)
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
@@ -1874,7 +2117,8 @@ pub(crate) struct ExecutionEntry {
     pub callback: Option<Strong>,
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
-    pub(crate) has_done_parameter: bool,
+    pub(crate) calling: Calling,
+    pub(crate) fixtures: Option<Strong>,
     /// '.epoch' = not set
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     pub(crate) timespec: Timespec,
@@ -1902,7 +2146,8 @@ impl ExecutionEntry {
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,
             timeout: cfg.timeout,
-            has_done_parameter: cfg.has_done_parameter,
+            calling: cfg.calling,
+            fixtures: None,
             added_in_phase: phase,
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,
@@ -1921,6 +2166,9 @@ impl ExecutionEntry {
                 _ => Some(strong_create(c)),
             };
         }
+        if entry.callback.is_some() {
+            entry.fixtures = cfg.fixtures.map(strong_create);
+        }
         entry
     }
 
@@ -1935,13 +2183,16 @@ impl ExecutionEntry {
             let is_test_entry = sequence
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
-            sequence.result = if is_test_entry {
-                if self.has_done_parameter {
+            let has_done_parameter = self.calling == Calling::Jest { done: true };
+            sequence.result = if sequence.is_vitest_fails() {
+                Execution::Result::Pass
+            } else if is_test_entry {
+                if has_done_parameter {
                     Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {
                     Execution::Result::FailBecauseTimeout
                 }
-            } else if self.has_done_parameter {
+            } else if has_done_parameter {
                 Execution::Result::FailBecauseHookTimeoutWithDoneCallback
             } else {
                 Execution::Result::FailBecauseHookTimeout

@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
 #include "helpers.h"
@@ -82,7 +83,25 @@ public:
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
-        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);
+        bool isLookingForModuleMockCycle = false;
+        // Module mocks a preload made that the running test file replaced or removed. They are back for the next file.
+        Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
+        // Counts the test files that share this global object, from 1.
+        unsigned testFile = 1;
+        // The test file that was running when each module was last fetched. None for what a preload fetched.
+        WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+
+        // The callbacks whose filter matches `path`, in the order they were registered. Those before `next` have been asked.
+        struct Matches {
+            JSC::JSString* path { nullptr };
+            JSC::MarkedArgumentBuffer callbacks;
+            size_t next { 0 };
+        };
+
+        // Fills `matches` for the module `key` and asks them.
+        JSC::JSValue run(JSC::JSGlobalObject* globalObject, const String& key, Matches& matches);
+        // Asks the next callback while `answer` declines. Returns an object, a pending or rejected promise, or empty: all declined.
+        static JSC::JSValue ask(JSC::JSGlobalObject* globalObject, Matches& matches, JSC::JSValue answer);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
@@ -96,6 +115,7 @@ public:
             delete virtualModules;
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
+            displacedPreloadModuleMocks.clear();
         }
 
         ~OnLoad()
@@ -123,6 +143,9 @@ class GlobalObject;
 } // namespace Zig
 
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock);
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
+JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
+// The exports of what runVirtualModule returned for a module mock, or a promise for them. Anything else is returned as it is.
+JSC::JSValue runModuleMock(Zig::GlobalObject*, JSC::JSValue moduleMock, bool synchronous);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

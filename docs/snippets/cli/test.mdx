@@ -42,6 +42,11 @@ bun test <patterns>
   Maximum number of concurrent tests to execute at once (default 20)
 </ParamField>
 
+<ParamField path="--environment" type="string" default="node">
+  Globals test files run with: <code>node</code>, <code>jsdom</code> or <code>happy-dom</code>. A{" "}
+  <code>@vitest-environment</code> or <code>@jest-environment</code> comment in a file overrides it
+</ParamField>
+
 ### Test Filtering
 
 <ParamField path="--todo" type="boolean">
@@ -61,6 +66,11 @@ bun test <patterns>
 
 <ParamField path="--reporter-outfile" type="string">
   Output file path for the reporter format (required with --reporter=junit)
+</ParamField>
+
+<ParamField path="--reporter-junit-suites" type="string">
+  How --reporter=junit writes describe blocks: <code>nested</code> (default, a testsuite in the file's testsuite) or{" "}
+  <code>flat</code> (a prefix of the test's name)
 </ParamField>
 
 <ParamField path="--dots" type="boolean">

@@ -1,0 +1,753 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+const prelude = `
+  import { afterAll, afterEach, beforeAll, describe, expect, jest, test } from "bun:test";
+  const later = (value, ms = 1) => new Promise(resolve => setTimeout(resolve, ms, value));
+  const laterReject = (value, ms = 1) => new Promise((_, reject) => setTimeout(reject, ms, value));
+  const never = () => new Promise(() => {});
+`;
+
+async function run(cmd: string[], files: Record<string, string>, written: string[] = []) {
+  using dir = tempDir("expect-deferred", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    env: { ...bunEnv, CI: "false" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // A matcher that blocks on a promise which never settles cannot be interrupted from inside.
+    timeout: 60_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = stderr
+    .split("\n")
+    .filter(line => /^\((pass|fail|skip|todo)\)/.test(line))
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+  // Where each reported error points, in order, among the results.
+  const report = stderr
+    .split("\n")
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""))
+    .filter(line => /^\((pass|fail|skip|todo)\)|^error: |^# Unhandled error|^\s+\^ this test timed out/.test(line));
+  return {
+    stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
+    stderr,
+    results,
+    report,
+    exitCode,
+    signalCode: proc.signalCode,
+    written: await Promise.all(written.map(name => Bun.file(`${dir}/${name}`).text())),
+  };
+}
+
+const runTests = (source: string, written?: string[]) => run(["test"], { "a.test.js": prelude + source }, written);
+
+/** The line of `a.test.js` that the first frame of each stack trace is on. */
+function failingLines(stderr: string, source: string) {
+  const lines = (prelude + source).split("\n");
+  return [...stderr.matchAll(/^error: .*\n(?:(?!\s+at ).*\n)*?\s+at .*a\.test\.js:(\d+):\d+\)?$/gm)].map(match =>
+    lines[Number(match[1]) - 1].trim(),
+  );
+}
+
+describe.concurrent(".resolves and .rejects", () => {
+  test("return a promise, which fulfills with undefined once the matcher has passed", async () => {
+    const { stdout, exitCode } = await runTests(`
+      test("promises", async () => {
+        for (const [name, matcher] of [
+          ["settled resolves", expect(Promise.resolve(1)).resolves.toBe(1)],
+          ["settled rejects", expect(Promise.reject(1)).rejects.toBe(1)],
+          ["pending resolves", expect(later(1)).resolves.toBe(1)],
+          ["pending rejects", expect(laterReject(1)).rejects.toBe(1)],
+          ["not", expect(later(1)).resolves.not.toBe(2)],
+          ["not first", expect(later(1)).not.resolves.toBe(2)],
+          ["returns this", expect(later({ a: 1 })).resolves.toContainKey("a")],
+        ]) {
+          console.log(name, matcher instanceof Promise, await matcher);
+        }
+        console.log("thenable", "then" in expect(later(1)).resolves);
+      });
+    `);
+    expect(stdout).toEqual([
+      "settled resolves true undefined",
+      "settled rejects true undefined",
+      "pending resolves true undefined",
+      "pending rejects true undefined",
+      "not true undefined",
+      "not first true undefined",
+      "returns this true undefined",
+      "thenable false",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("run nothing else before the matcher call returns", async () => {
+    const { stdout, exitCode, signalCode } = await runTests(`
+      test("the promise is settled by what follows the call", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        const matcher = expect(promise).resolves.toBe(25);
+        resolve(25);
+        await matcher;
+      });
+      test("timers and microtasks", async () => {
+        const ran = [];
+        setTimeout(() => ran.push("timeout"), 0);
+        setImmediate(() => ran.push("immediate"));
+        queueMicrotask(() => ran.push("microtask"));
+        const matcher = expect(later(1, 20)).resolves.toBe(1);
+        console.log("during the call: " + ran);
+        await matcher;
+        console.log("afterwards: " + ran.sort());
+      });
+      test("fake timers", async () => {
+        jest.useFakeTimers();
+        const matcher = expect(later("fake", 60_000)).resolves.toBe("fake");
+        jest.advanceTimersByTime(60_000);
+        await matcher;
+        jest.useRealTimers();
+      });
+    `);
+    expect(stdout).toEqual(["during the call: ", "afterwards: immediate,microtask,timeout"]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test("a failure rejects the promise with an error that points at the matcher call", async () => {
+    const source = `
+      async function helper() {
+        await expect(later(1)).resolves.toBe("in a helper");
+      }
+      test("value", async () => {
+        await expect(later(1)).resolves.toBe(2);
+      });
+      test("direction", async () => {
+        await expect(laterReject(new Error("boom"))).resolves.toBe("direction");
+      });
+      test("helper", async () => {
+        await helper();
+      });
+      test("caught", async () => {
+        const error = await expect(later(1), "my label").resolves.toBe(2).catch(error => error);
+        console.log(error instanceof Error, Bun.stripANSI(error.message).split("\\n")[0]);
+        await expect(expect(later(1)).rejects.toBe(1)).rejects.toThrow("Expected promise that rejects\\nReceived promise that resolved: Promise { <resolved> }");
+      });
+      test("arguments are checked when the matcher runs", async () => {
+        const matcher = expect(later(1)).resolves.toBeCloseTo("x");
+        await expect(matcher).rejects.toThrow("Expected expected to be a number for 'toBeCloseTo'.");
+      });
+    `;
+    const { stdout, stderr, results, exitCode } = await runTests(source);
+    expect(stdout).toEqual(["true my label"]);
+    expect(failingLines(stderr, source)).toEqual([
+      "await expect(later(1)).resolves.toBe(2);",
+      'await expect(laterReject(new Error("boom"))).resolves.toBe("direction");',
+      'await expect(later(1)).resolves.toBe("in a helper");',
+    ]);
+    expect(stderr).toContain("at helper (");
+    expect(results).toEqual([
+      "(fail) value",
+      "(fail) direction",
+      "(fail) helper",
+      "(pass) caught",
+      "(pass) arguments are checked when the matcher runs",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a promise that has settled is checked at once", async () => {
+    const { stdout, exitCode } = await runTests(`
+      test("throws", () => {
+        for (const call of [
+          () => expect(Promise.resolve(1)).resolves.toBe(1),
+          () => expect(Promise.resolve(1)).resolves.toBe(2),
+          () => expect(Promise.reject(1)).rejects.toBe(2),
+          () => expect(Promise.reject(1)).resolves.toBe(1),
+          () => expect(1).resolves.toBe(1),
+        ]) {
+          try {
+            console.log("returned", call());
+          } catch (error) {
+            console.log("threw", Bun.stripANSI(error.message).replaceAll("\\n", " "));
+          }
+        }
+      });
+    `);
+    expect(stdout).toEqual([
+      "returned Promise { <resolved> }",
+      "threw expect(received).toBe(expected)  Expected: 2 Received: 1 ",
+      "threw expect(received).toBe(expected)  Expected: 2 Received: 1 ",
+      "threw expect(received).resolves.toBe(expected)  Expected promise that resolves Received promise that rejected: Promise { <rejected> } ",
+      "threw expect(received).resolves.toBe(expected)  Expected promise Received: 1 ",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a test waits for the matchers it did not await, and their failures are its own", async () => {
+    const source = `
+      test("passes", () => {
+        expect(later(1)).resolves.toBe(1).then(() => console.log("passes: checked"));
+      });
+      test("fails", () => {
+        expect(later(1)).resolves.toBe("not awaited");
+      });
+      test("next", () => {});
+      test("async", async () => {
+        expect(later(1, 5)).resolves.toBe("not awaited in an async test");
+        await later(0);
+      });
+      test("done", done => {
+        expect(later(1)).resolves.toBe("not awaited before done()");
+        done();
+      });
+      test("several", () => {
+        const promise = later(1);
+        expect(promise).resolves.toBe("first of several");
+        expect(promise).rejects.toBe("second of several");
+      });
+      test.failing("failing", () => {
+        expect(later(1)).resolves.toBe(2);
+      });
+      test.failing("failing, but it passes", () => {
+        expect(later(1)).resolves.toBe(1);
+      });
+      test("handled later", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        const matcher = expect(promise).resolves.toBe("handled later");
+        resolve(1);
+        await later();
+        await matcher.catch(() => console.log("handled later: caught"));
+      });
+    `;
+    const { stdout, stderr, report, exitCode } = await runTests(source);
+    expect(stdout).toEqual(["passes: checked", "handled later: caught"]);
+    expect(report).toEqual([
+      "(pass) passes",
+      "error: expect(received).toBe(expected)",
+      "(fail) fails",
+      "(pass) next",
+      "error: expect(received).toBe(expected)",
+      "(fail) async",
+      "error: expect(received).toBe(expected)",
+      "(fail) done",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).rejects.toBe(expected)",
+      "(fail) several",
+      "(pass) failing",
+      "(fail) failing, but it passes",
+      "error: expect(received).toBe(expected)",
+      "(fail) handled later",
+    ]);
+    expect(failingLines(stderr, source)).toEqual([
+      'expect(later(1)).resolves.toBe("not awaited");',
+      'expect(later(1, 5)).resolves.toBe("not awaited in an async test");',
+      'expect(later(1)).resolves.toBe("not awaited before done()");',
+      'expect(promise).resolves.toBe("first of several");',
+      'expect(promise).rejects.toBe("second of several");',
+      'const matcher = expect(promise).resolves.toBe("handled later");',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("hooks wait for their matchers too, each before the next entry starts", async () => {
+    const { stdout, report, exitCode } = await runTests(`
+      const check = name => expect(later(1, 5)).resolves.toBe(1).then(() => console.log(name, "checked"));
+      describe("passing", () => {
+        beforeAll(() => void check("beforeAll"));
+        afterEach(() => void check("afterEach"));
+        afterAll(() => void check("afterAll"));
+        test("test", () => {
+          console.log("test");
+          check("test");
+        });
+      });
+      describe("failing", () => {
+        afterEach(() => {
+          expect(later(1)).resolves.toBe(2);
+        });
+        test("test", () => {});
+      });
+      test("last", () => console.log("last"));
+    `);
+    expect(stdout).toEqual([
+      "beforeAll checked",
+      "test",
+      "test checked",
+      "afterEach checked",
+      "afterAll checked",
+      "last",
+    ]);
+    expect(report).toEqual([
+      "(pass) passing > test",
+      "error: expect(received).toBe(expected)",
+      "(fail) failing > test",
+      "(pass) last",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("the timeout of the test ends the wait", async () => {
+    const { stdout, report, exitCode, signalCode } = await runTests(`
+      test("awaited", async () => {
+        await expect(never()).resolves.toBe(1);
+      }, 50);
+      test("not awaited", () => {
+        expect(never()).rejects.toBe(1);
+      }, 50);
+      const late = Promise.withResolvers();
+      test("too late", async () => {
+        await expect(late.promise).resolves.toBe(2);
+        console.log("not reached");
+      }, 50);
+      test("next", async () => {
+        late.resolve(1);
+        await later();
+      });
+      const first = Promise.withResolvers();
+      let attempt = 0;
+      test("the matchers of an earlier attempt", async () => {
+        expect.assertions(1);
+        if (++attempt === 1) {
+          expect(first.promise).resolves.toBe("settles during the second attempt");
+          await never();
+        }
+        first.resolve(1);
+        await expect(later(1)).resolves.toBe(1);
+      }, { retry: 1, timeout: 500 });
+    `);
+    expect(stdout).toEqual([]);
+    expect(report).toEqual([
+      "(fail) awaited",
+      "  ^ this test timed out after 50ms.",
+      "(fail) not awaited",
+      "  ^ this test timed out after 50ms.",
+      "(fail) too late",
+      "  ^ this test timed out after 50ms.",
+      "(pass) next",
+      "(pass) the matchers of an earlier attempt (attempt 2)",
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  test("a test that has failed does not wait", async () => {
+    const { report, exitCode } = await runTests(`
+      test("throws", () => {
+        expect(never()).resolves.toBe(1);
+        throw new Error("thrown by the test");
+      });
+    `);
+    expect(report).toEqual(["error: thrown by the test", "(fail) throws"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("concurrent tests go on while one of them waits for a matcher", async () => {
+    const source = `
+      const log = [];
+      const a = Promise.withResolvers(), b = Promise.withResolvers();
+      describe("each settles the promise of the other", () => {
+        test.concurrent("a", async () => {
+          log.push("a starts");
+          const matcher = expect(a.promise).resolves.toBe("a");
+          b.resolve("b");
+          await matcher;
+          log.push("a ends");
+        });
+        test.concurrent("b", async () => {
+          log.push("b starts");
+          await expect(b.promise).resolves.toBe("b");
+          a.resolve("a");
+          log.push("b ends");
+        });
+      });
+      test("order", () => console.log(log.join()));
+      describe("failures", () => {
+        test.concurrent("not awaited", () => {
+          expect(later(1, 5)).resolves.toBe("not awaited");
+        });
+        test.concurrent("awaited", async () => {
+          await later(0);
+          await expect(later(1)).resolves.toBe("awaited");
+        });
+        test.concurrent("passes", async () => {
+          await later(0);
+          await expect(later(1)).resolves.toBe(1);
+        });
+      });
+    `;
+    const { stdout, stderr, results, exitCode, signalCode } = await runTests(source);
+    expect(stdout).toEqual(["a starts,b starts,b ends,a ends"]);
+    expect(results.toSorted()).toEqual([
+      "(fail) failures > awaited",
+      "(fail) failures > not awaited",
+      "(pass) each settles the promise of the other > a",
+      "(pass) each settles the promise of the other > b",
+      "(pass) failures > passes",
+      "(pass) order",
+    ]);
+    expect(stderr).not.toContain("Unhandled error");
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  test("count towards expect.assertions() once, when they run", async () => {
+    const { results, exitCode } = await runTests(`
+      expect.extend({
+        async toBeLater(received, expected) {
+          await later();
+          return { pass: received === expected, message: () => "" };
+        },
+      });
+      test("awaited", async () => {
+        expect.assertions(3);
+        await expect(later(1)).resolves.toBe(1);
+        await expect(laterReject(1)).rejects.toBe(1);
+        await expect(Promise.resolve(1)).resolves.toBe(1);
+      });
+      test("not awaited", () => {
+        expect.assertions(2);
+        const number = Promise.withResolvers(), object = Promise.withResolvers();
+        expect(number.promise).resolves.toBeGreaterThan(0);
+        expect(object.promise).resolves.toContainKey("a");
+        number.resolve(1);
+        object.resolve({ a: 1 });
+      });
+      test("hasAssertions", () => {
+        expect.hasAssertions();
+        expect(later(1)).resolves.toBe(1);
+      });
+      test("matchers that find a pending promise on their way", async () => {
+        expect.assertions(5);
+        await expect(async () => { await later(); throw new Error("thrown"); }).toThrow("thrown");
+        await expect(1).toBeLater(1);
+        await expect(later(1)).resolves.toBeLater(1);
+        await expect([1, later(2)]).toEqual([expect.toBeLater(1), expect.resolvesTo.toBeLater(2)]);
+        await expect(later("one")).toEqual(expect.resolvesTo.stringContaining("one"));
+      });
+      test("too few", async () => {
+        expect.assertions(2);
+        await expect(later(1)).resolves.toBe(1);
+      });
+    `);
+    expect(results).toEqual([
+      "(pass) awaited",
+      "(pass) not awaited",
+      "(pass) hasAssertions",
+      "(pass) matchers that find a pending promise on their way",
+      "(fail) too few",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("the flags of the call are those it was made with", async () => {
+    const { results, exitCode } = await runTests(`
+      test("one chain, several matchers", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        const chain = expect(promise).resolves;
+        const first = chain.toBe(1);
+        const second = chain.not.toBe(2);
+        const third = chain.not.toBe(1);
+        resolve(1);
+        await Promise.all([first, second, third]);
+      });
+    `);
+    expect(results).toEqual(["(pass) one chain, several matchers"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("snapshot matchers find their test and their call", async () => {
+    const source = `
+      test("inline", async () => {
+        await expect(later({ a: 1 })).resolves.toMatchInlineSnapshot();
+          expect(later("not awaited")).resolves.toMatchInlineSnapshot();
+        await expect(async () => { await later(); throw new Error("thrown later"); }).toThrowErrorMatchingInlineSnapshot();
+      });
+      test("file", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        const matcher = expect(promise).resolves.toMatchSnapshot();
+        resolve("first");
+        await matcher;
+        expect("second").toMatchSnapshot();
+      });
+    `;
+    const { results, exitCode, written } = await runTests(source, ["a.test.js", "__snapshots__/a.test.js.snap"]);
+    expect(results).toEqual(["(pass) inline", "(pass) file"]);
+    expect(written[0].slice(prelude.length)).toBe(`
+      test("inline", async () => {
+        await expect(later({ a: 1 })).resolves.toMatchInlineSnapshot(\`
+          {
+            "a": 1,
+          }
+        \`);
+          expect(later("not awaited")).resolves.toMatchInlineSnapshot(\`"not awaited"\`);
+        await expect(async () => { await later(); throw new Error("thrown later"); }).toThrowErrorMatchingInlineSnapshot(\`"thrown later"\`);
+      });
+      test("file", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        const matcher = expect(promise).resolves.toMatchSnapshot();
+        resolve("first");
+        await matcher;
+        expect("second").toMatchSnapshot();
+      });
+    `);
+    expect(written[1]).toContain(
+      'exports[`file 1`] = `"first"`;\n\nexports[`file 2`] = `"second"`;',
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("call a function and wait for what it returns", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      test("functions", async () => {
+        const fn = jest.fn(async () => { throw "Oops"; });
+        await expect(fn).rejects.toEqual("Oops");
+        await expect(() => later(5)).resolves.toBe(5);
+        await expect(() => Promise.resolve(6)).resolves.toBe(6);
+        await expect(() => ({ then: resolve => resolve(7) })).resolves.toBe(7);
+        expect(fn).toHaveBeenCalledTimes(1);
+      });
+      test("that return no promise, or throw", () => {
+        expect(() => expect(() => 1).resolves.toBe(1)).toThrow("Expected promise\\nReceived: [Function]");
+        expect(() => expect(() => { throw new Error("thrown by the function"); }).rejects.toThrow()).toThrow("thrown by the function");
+      });
+      test("a function with then() is a thenable", async () => {
+        const fn = jest.fn();
+        await expect(Object.assign(fn, { then: resolve => resolve("thenable") })).resolves.toBe("thenable");
+        expect(fn).not.toHaveBeenCalled();
+      });
+    `);
+    expect(stdout).toEqual([]);
+    expect(results).toEqual([
+      "(pass) functions",
+      "(pass) that return no promise, or throw",
+      "(pass) a function with then() is a thenable",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("work outside of bun test", async () => {
+    const { stdout, stderr, exitCode } = await run(["a.js"], {
+      "a.js":
+        prelude.replace(/import .*/, 'import { expect } from "bun:test";') +
+        `
+      const ran = [];
+      setImmediate(() => ran.push("immediate"));
+      const matcher = expect(later(1, 5)).resolves.toBe(1);
+      console.log("during the call: " + ran);
+      console.log(await matcher);
+      console.log(await expect(later(1)).resolves.toBe(2).catch(error => Bun.stripANSI(error.message).split("\\n")[0]));
+      function notAwaited() {
+        expect(later(1)).resolves.toBe(3);
+      }
+      notAwaited();
+    `,
+    });
+    expect(stdout).toEqual(["during the call: ", "undefined", "expect(received).toBe(expected)"]);
+    expect(stderr).toContain("Expected: 3\nReceived: 1");
+    expect(stderr).toContain("at notAwaited (");
+    expect(exitCode).toBe(1);
+  });
+
+  test("what is pending when its file ends is dropped", async () => {
+    for (const args of [[], ["--isolate"]]) {
+      const { stdout, report, stderr, exitCode } = await run(["test", ...args, "./a.test.js", "./b.test.js"], {
+        "a.test.js":
+          prelude +
+          `
+          test("times out", async () => {
+            expect(later(1, 100)).resolves.toBe(2).finally(() => console.log("not reached"));
+            await never();
+          }, 20);
+        `,
+        "b.test.js": prelude + `test("goes on for a while", () => later(0, 200));`,
+      });
+      expect(stdout).toEqual([]);
+      expect(report).toEqual([
+        "(fail) times out",
+        "  ^ this test timed out after 20ms.",
+        "(pass) goes on for a while",
+      ]);
+      expect(stderr).not.toContain("Unhandled error");
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("survive garbage collection while they wait", async () => {
+    const { stdout, exitCode } = await runTests(`
+      test("gc", async () => {
+        const matchers = [], settle = [];
+        const pending = value => new Promise(resolve => settle.push(() => resolve(value)));
+        for (let i = 0; i < 100; i++) {
+          matchers.push(expect(pending({ i })).resolves.toEqual({ i }));
+          matchers.push(expect([pending(i)]).toEqual([expect.resolvesTo.any(Number)]));
+          matchers.push(expect(async () => { await pending(); throw new Error("e" + i); }).toThrow("e" + i));
+          if (i % 20 === 0) Bun.gc(true);
+        }
+        Bun.gc(true);
+        for (const [i, fn] of settle.entries()) {
+          fn();
+          if (i % 60 === 0) {
+            await later();
+            Bun.gc(true);
+          }
+        }
+        console.log((await Promise.all(matchers)).length);
+      });
+    `);
+    expect(stdout).toEqual(["300"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("matchers that meet a pending promise", () => {
+  test("toThrow() calls the function once and returns a promise", async () => {
+    const source = `
+      test("passes", async () => {
+        const fn = jest.fn(async () => { await later(); throw new TypeError("thrown later"); });
+        const matcher = expect(fn).toThrow(TypeError);
+        console.log(matcher instanceof Promise, await matcher, fn.mock.calls.length);
+        await expect(async () => { await later(); }).not.toThrow();
+        console.log(expect(() => { throw new Error("now"); }).toThrow("now"));
+      });
+      test("fails", async () => {
+        await expect(async () => { await later(); }).toThrow();
+      });
+      test("fails, not awaited", () => {
+        expect(async () => { await later(); throw new Error("thrown later"); }).not.toThrow();
+      });
+      test("times out", async () => {
+        await expect(never).toThrow();
+      }, 50);
+    `;
+    const { stdout, stderr, report, exitCode, signalCode } = await runTests(source);
+    expect(stdout).toEqual(["true undefined 1", "undefined"]);
+    expect(report).toEqual([
+      "(pass) passes",
+      "error: expect(received).toThrow()",
+      "(fail) fails",
+      "error: expect(received).not.toThrow()",
+      "(fail) fails, not awaited",
+      "(fail) times out",
+      "  ^ this test timed out after 50ms.",
+    ]);
+    expect(failingLines(stderr, source)).toEqual([
+      "await expect(async () => { await later(); }).toThrow();",
+      'expect(async () => { await later(); throw new Error("thrown later"); }).not.toThrow();',
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  test("a custom matcher may return one", async () => {
+    const source = `
+      const toBeLater = jest.fn(async function (received, expected) {
+        await later();
+        return { pass: received === expected, message: () => \`\${this.promise}|\${this.isNot}|\${received}|\${expected}\` };
+      });
+      expect.extend({
+        toBeLater,
+        async toRejectLater() {
+          await later();
+          throw new Error("rejected later");
+        },
+        toThrowNow(received) {
+          throw new Error("thrown on " + received);
+        },
+      });
+      test("passes", async () => {
+        const matcher = expect(1).toBeLater(1);
+        console.log(matcher instanceof Promise, await matcher, toBeLater.mock.calls.length);
+        await expect(1).not.toBeLater(2);
+        await expect(later(3)).resolves.toBeLater(3);
+        await expect(laterReject(4)).rejects.not.toBeLater(5);
+        console.log(toBeLater.mock.calls.length);
+      });
+      test("inside another value, each use is called once", async () => {
+        toBeLater.mockClear();
+        await expect([1, 1, { a: 3 }]).toEqual([expect.toBeLater(1), expect.not.toBeLater(2), { a: expect.toBeLater(3) }]);
+        console.log(toBeLater.mock.calls.join(" "));
+        await expect([1]).not.toEqual([expect.toBeLater(2)]);
+      });
+      test("fails", async () => {
+        await expect(later(1)).resolves.not.toBeLater(1);
+      });
+      test("fails, not awaited", () => {
+        expect(1).toBeLater(2);
+      });
+      test("rejects", async () => {
+        await expect(expect(1).toRejectLater()).rejects.toThrow("Matcher \`toRejectLater\` returned a promise that rejected");
+      });
+      test("throws", async () => {
+        await expect(later(1)).resolves.toThrowNow();
+      });
+    `;
+    const { stdout, stderr, results, exitCode } = await runTests(source);
+    expect(stdout).toEqual(["true undefined 1", "4", "1,1 1,2 3,3"]);
+    expect(results).toEqual([
+      "(pass) passes",
+      "(pass) inside another value, each use is called once",
+      "(fail) fails",
+      "(fail) fails, not awaited",
+      "(pass) rejects",
+      "(fail) throws",
+    ]);
+    expect(stderr).toContain("resolves|true|1|1");
+    expect(stderr).toContain("|false|1|2");
+    expect(stderr).toMatch(/error: thrown on 1\n\s+at toThrowNow \(.*\n\s+at <anonymous> \(.*a\.test\.js:\d+:\d+\)/);
+    expect(failingLines(stderr, source)).toEqual([
+      "await expect(later(1)).resolves.not.toBeLater(1);",
+      "expect(1).toBeLater(2);",
+      'throw new Error("rejected later");',
+      'throw new Error("thrown on " + received);',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("expect.resolvesTo and expect.rejectsTo", async () => {
+    const source = `
+      test("passes", async () => {
+        const matcher = expect(later("one")).toEqual(expect.resolvesTo.stringContaining("on"));
+        console.log(matcher instanceof Promise, await matcher);
+        console.log(expect(Promise.resolve("one")).toEqual(expect.resolvesTo.stringContaining("on")));
+        await expect({ a: later("one", 5), b: [laterReject("two")] }).toEqual({
+          a: expect.resolvesTo.stringContaining("on"),
+          b: [expect.rejectsTo.stringContaining("tw")],
+        });
+        await expect({ a: later("one") }).not.toEqual({ a: expect.resolvesTo.stringContaining("two") });
+        await expect({ a: later("one") }).toEqual({ a: expect.not.resolvesTo.stringContaining("two") });
+        await expect({ a: later("one") }).not.toEqual({ a: expect.rejectsTo.anything() });
+        await expect({ a: later("one"), b: 1 }).toMatchObject({ a: expect.resolvesTo.any(String) });
+        const fn = jest.fn();
+        fn(later(1));
+        await expect(fn).toHaveBeenCalledWith(expect.resolvesTo.any(Number));
+      });
+      test("calls then() once", async () => {
+        const then = jest.fn(resolve => void setTimeout(resolve, 1, "thenable"));
+        await expect([{ then }, later(1, 5)]).toEqual([expect.resolvesTo.stringContaining("thenable"), expect.resolvesTo.any(Number)]);
+        expect(then).toHaveBeenCalledTimes(1);
+      });
+      test("not awaited", () => {
+        expect(later("one")).toEqual(expect.resolvesTo.stringContaining("one"));
+      });
+      test("fails", async () => {
+        await expect({ a: later("one") }).toEqual({ a: expect.resolvesTo.stringContaining("two") });
+      });
+      test("fails, not awaited", () => {
+        expect(later("one")).toEqual(expect.rejectsTo.anything());
+      });
+      test("times out", async () => {
+        await expect(never()).toEqual(expect.resolvesTo.anything());
+      }, 50);
+    `;
+    const { stdout, stderr, results, exitCode, signalCode } = await runTests(source);
+    expect(stdout).toEqual(["true undefined", "undefined"]);
+    expect(results).toEqual([
+      "(pass) passes",
+      "(pass) calls then() once",
+      "(pass) not awaited",
+      "(fail) fails",
+      "(fail) fails, not awaited",
+      "(fail) times out",
+    ]);
+    expect(failingLines(stderr, source)).toEqual([
+      'await expect({ a: later("one") }).toEqual({ a: expect.resolvesTo.stringContaining("two") });',
+      'expect(later("one")).toEqual(expect.rejectsTo.anything());',
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+});

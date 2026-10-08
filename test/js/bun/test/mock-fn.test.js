@@ -36,7 +36,7 @@ describe("mock()", () => {
   if (isBun) {
     test("exists as jest.fn, bunTest.mock, and vi.fn", () => {
       expect(jest.fn).toBe(mock);
-      expect(jest.fn).toBe(vi.fn);
+      expect(vi.fn).toBeFunction();
     });
 
     test("mock", () => {
@@ -948,7 +948,7 @@ describe("resetAllMocks", () => {
 
   if (isBun) {
     test("vi.resetAllMocks removes implementations too", () => {
-      const fn = vi.fn(() => 42);
+      const fn = jest.fn(() => 42);
       expect(fn()).toBe(42);
 
       vi.resetAllMocks();
@@ -1211,8 +1211,9 @@ describe("spyOn", () => {
       expect(obj[213]).toBe(obj);
       expect(fn).toHaveBeenCalledTimes(2);
 
-      // Same as named keys: the index is an accessor now, so it cannot be spied again.
-      expect(() => spyOn(obj, 213)).toThrow("does not support accessor properties");
+      // Same as named keys: spying again gives the same spy, without reading the property.
+      expect(spyOn(obj, 213)).toBe(fn);
+      expect(fn).toHaveBeenCalledTimes(2);
 
       fn.mockRestore();
       expect(obj[213]).toBe(obj);
@@ -1344,12 +1345,7 @@ describe("spyOn", () => {
       expect(arr[3]).toBeUndefined();
 
       fn.mockRestore();
-      expect(Object.getOwnPropertyDescriptor(arr, 3)).toEqual({
-        value: undefined,
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
+      expect(Object.getOwnPropertyDescriptor(arr, 3)).toBeUndefined();
       expect(arr[3]).toBeUndefined();
       expect(fn).not.toHaveBeenCalled();
     });
@@ -1371,13 +1367,8 @@ describe("spyOn", () => {
       expect(fn.mock.calls).toEqual([[], ["x"], []]);
 
       fn.mockRestore();
-      // Same as a missing named key: restore writes the original `undefined` back as a data property.
-      expect(Object.getOwnPropertyDescriptor(obj, 169)).toEqual({
-        value: undefined,
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
+      // Same as a missing named key: it is missing again.
+      expect(Object.getOwnPropertyDescriptor(obj, 169)).toBeUndefined();
       expect(obj[169]).toBeUndefined();
       expect(fn).not.toHaveBeenCalled();
     });
@@ -1429,5 +1420,2190 @@ describe("spyOn", () => {
     });
   }
 
-  // spyOn does not work with getters/setters yet.
+  test("restoring a spy on an inherited method removes the own property", () => {
+    class A {
+      method() {
+        return 1;
+      }
+    }
+    const a = new A();
+    const fn = spyOn(a, "method");
+    expect(Object.hasOwn(a, "method")).toBe(true);
+    expect(a.method()).toBe(1);
+    fn.mockRestore();
+    expect(Object.hasOwn(a, "method")).toBe(false);
+    expect(a.method).toBe(A.prototype.method);
+  });
+
+  describe("through a Proxy", () => {
+    test("an own method", () => {
+      const method = function () {
+        return this;
+      };
+      const target = { method };
+      const proxy = new Proxy(target, {});
+      const fn = spyOn(proxy, "method");
+      expect(proxy.method).toBe(fn);
+      expect(target.method).toBe(fn);
+      expect(spyOn(proxy, "method")).toBe(fn);
+      expect(proxy.method()).toBe(proxy);
+      expect(fn).toHaveBeenCalledTimes(1);
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(target, "method")).toEqual({
+        value: method,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    });
+
+    test("an inherited method", () => {
+      class A {
+        method() {
+          return 1;
+        }
+      }
+      const target = new A();
+      const proxy = new Proxy(new Proxy(target, {}), {});
+      const fn = spyOn(proxy, "method");
+      expect(proxy.method()).toBe(1);
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(Object.hasOwn(target, "method")).toBe(true);
+      fn.mockRestore();
+      expect(Object.hasOwn(target, "method")).toBe(false);
+      expect(proxy.method).toBe(A.prototype.method);
+    });
+
+    test("getters, setters and a method that a getter returns", () => {
+      let value = 1;
+      const method = () => "method";
+      const target = {
+        get x() {
+          return value;
+        },
+        set x(next) {
+          value = next;
+        },
+        get method() {
+          return method;
+        },
+      };
+      const descriptors = Object.getOwnPropertyDescriptors(target);
+      const proxy = new Proxy(target, {});
+
+      const getter = spyOn(proxy, "x", "get");
+      const setter = spyOn(proxy, "x", "set");
+      const fn = spyOn(proxy, "method");
+      proxy.x = 2;
+      expect(setter.mock.calls).toEqual([[2]]);
+      expect(proxy.x).toBe(2);
+      expect(getter).toHaveBeenCalledTimes(1);
+      getter.mockReturnValue(5);
+      expect(proxy.x).toBe(5);
+      expect(proxy.method).toBe(fn);
+      expect(proxy.method()).toBe("method");
+
+      fn.mockRestore();
+      setter.mockRestore();
+      getter.mockRestore();
+      expect(Object.getOwnPropertyDescriptors(target)).toEqual(descriptors);
+    });
+
+    test("the traps decide", () => {
+      const defineProperty = jest.fn(Reflect.defineProperty);
+      const deleteProperty = jest.fn(Reflect.deleteProperty);
+      const target = Object.create({ get x() { return 1; } }); // prettier-ignore
+      const proxy = new Proxy(target, { defineProperty, deleteProperty });
+      const getter = spyOn(proxy, "x", "get");
+      expect(defineProperty).toHaveBeenCalledTimes(1);
+      getter.mockRestore();
+      expect(deleteProperty).toHaveBeenCalledTimes(1);
+
+      // Jest throws too, and then once more when it restores the spy that it could not install.
+      if (!isBun) return;
+      const frozen = new Proxy(Object.freeze({ method() {}, get x() { return 1; } }), {}); // prettier-ignore
+      expect(() => spyOn(frozen, "method")).toThrow(TypeError);
+      expect(() => spyOn(frozen, "x", "get")).toThrow(TypeError);
+    });
+  });
+
+  describe("getters and setters", () => {
+    function counter() {
+      let value = 1;
+      const obj = {
+        get x() {
+          return this === obj ? value : "wrong this";
+        },
+        set x(next) {
+          value = this === obj ? next : "wrong this";
+        },
+      };
+      return obj;
+    }
+
+    test("a getter spy calls through, can be mocked, and restores the descriptor", () => {
+      const obj = counter();
+      const original = Object.getOwnPropertyDescriptor(obj, "x");
+
+      const getter = spyOn(obj, "x", "get");
+      expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual({ ...original, get: getter });
+      expect(getter).not.toHaveBeenCalled();
+      expect(obj.x).toBe(1);
+      expect(getter.mock.calls).toEqual([[]]);
+      expect(getter.mock.contexts[0]).toBe(obj);
+      expect(getter.mock.results).toEqual([{ type: "return", value: 1 }]);
+
+      obj.x = 5;
+      expect(getter).toHaveBeenCalledTimes(1);
+      expect(obj.x).toBe(5);
+
+      getter.mockReturnValue(9);
+      expect(obj.x).toBe(9);
+      getter.mockImplementation(function () {
+        return this === obj;
+      });
+      expect(obj.x).toBe(true);
+
+      getter.mockRestore();
+      const restored = Object.getOwnPropertyDescriptor(obj, "x");
+      expect(restored).toEqual(original);
+      expect(restored.get).toBe(original.get);
+      expect(restored.set).toBe(original.set);
+      expect(obj.x).toBe(5);
+    });
+
+    test("a setter spy calls through, can be mocked, and restores the descriptor", () => {
+      const obj = counter();
+      const original = Object.getOwnPropertyDescriptor(obj, "x");
+
+      const setter = spyOn(obj, "x", "set");
+      expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual({ ...original, set: setter });
+      obj.x = 7;
+      expect(setter.mock.calls).toEqual([[7]]);
+      expect(setter.mock.contexts[0]).toBe(obj);
+      expect(obj.x).toBe(7);
+
+      setter.mockImplementation(() => {});
+      obj.x = 8;
+      expect(setter.mock.calls).toEqual([[7], [8]]);
+      expect(obj.x).toBe(7);
+
+      setter.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
+      obj.x = 10;
+      expect(obj.x).toBe(10);
+    });
+
+    test("spying twice gives the same spy", () => {
+      const obj = counter();
+      const getter = spyOn(obj, "x", "get");
+      const setter = spyOn(obj, "x", "set");
+      expect(getter).not.toBe(setter);
+      expect(spyOn(obj, "x", "get")).toBe(getter);
+      expect(spyOn(obj, "x", "set")).toBe(setter);
+      setter.mockRestore();
+      getter.mockRestore();
+    });
+
+    test.each([
+      ["getter first", (getter, setter) => (getter.mockRestore(), setter.mockRestore())],
+      ["setter first", (getter, setter) => (setter.mockRestore(), getter.mockRestore())],
+      ["restoreAllMocks", () => jest.restoreAllMocks()],
+    ])("both halves spied, restored %s", (_, restore) => {
+      // Jest and Vitest leave the getter spy installed unless the setter spy is restored first.
+      if (!isBun) return;
+      const obj = counter();
+      const original = Object.getOwnPropertyDescriptor(obj, "x");
+      const getter = spyOn(obj, "x", "get");
+      const setter = spyOn(obj, "x", "set");
+      expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual({ ...original, get: getter, set: setter });
+      obj.x = 3;
+      expect(obj.x).toBe(3);
+      expect(getter).toHaveBeenCalledTimes(1);
+      expect(setter).toHaveBeenCalledTimes(1);
+
+      restore(getter, setter);
+      expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
+    });
+
+    test("an inherited accessor is shadowed on the object and the shadow is removed again", () => {
+      class A {
+        value = 4;
+        get x() {
+          return this.value;
+        }
+      }
+      const original = Object.getOwnPropertyDescriptor(A.prototype, "x");
+      const a = new A();
+
+      const getter = spyOn(a, "x", "get");
+      expect(Object.getOwnPropertyDescriptor(a, "x")).toEqual({ ...original, get: getter });
+      expect(Object.getOwnPropertyDescriptor(A.prototype, "x")).toEqual(original);
+      expect(a.x).toBe(4);
+      getter.mockReturnValue(1);
+      expect(a.x).toBe(1);
+      expect(new A().x).toBe(4);
+
+      getter.mockRestore();
+      expect(Object.hasOwn(a, "x")).toBe(false);
+      expect(Object.getOwnPropertyDescriptor(A.prototype, "x")).toEqual(original);
+      expect(a.x).toBe(4);
+    });
+
+    test("prototype and static accessors", () => {
+      class A {
+        value = 4;
+        get x() {
+          return this.value;
+        }
+        static get y() {
+          return this === A;
+        }
+      }
+      const a = new A();
+      const original = Object.getOwnPropertyDescriptor(A.prototype, "x");
+      const x = spyOn(A.prototype, "x", "get");
+      expect(a.x).toBe(4);
+      expect(x.mock.contexts[0]).toBe(a);
+      x.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(A.prototype, "x")).toEqual(original);
+
+      const y = spyOn(A, "y", "get");
+      expect(A.y).toBe(true);
+      y.mockReturnValue(8);
+      expect(A.y).toBe(8);
+      y.mockRestore();
+      expect(A.y).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(A, "y").enumerable).toBe(false);
+    });
+
+    test("symbol and index keys", () => {
+      const symbol = Symbol("key");
+      const array = [1, 2];
+      Object.defineProperty(array, 1, { get: () => 1, configurable: true, enumerable: true });
+      for (const [obj, key] of [
+        [{ get [symbol]() { return 1; } }, symbol], // prettier-ignore
+        [{ get 0() { return 1; } }, 0], // prettier-ignore
+        [array, 1],
+      ]) {
+        const original = Object.getOwnPropertyDescriptor(obj, key);
+        const getter = spyOn(obj, key, "get").mockReturnValue(2);
+        expect(obj[key]).toBe(2);
+        getter.mockRestore();
+        expect(obj[key]).toBe(1);
+        expect(Object.getOwnPropertyDescriptor(obj, key)).toEqual(original);
+      }
+    });
+
+    test("a method that a getter returns", () => {
+      let reads = 0;
+      function method(arg) {
+        return [this === obj, arg];
+      }
+      const obj = {
+        get method() {
+          reads++;
+          return method;
+        },
+      };
+      const original = Object.getOwnPropertyDescriptor(obj, "method");
+
+      const fn = spyOn(obj, "method");
+      expect(reads).toBe(1);
+      expect(obj.method).toBe(fn);
+      expect(obj.method(1)).toEqual([true, 1]);
+      expect(fn.mock.calls).toEqual([[1]]);
+      expect(reads).toBe(1);
+      const spied = Object.getOwnPropertyDescriptor(obj, "method");
+      expect(spied).toEqual({ ...original, get: expect.any(Function) });
+      expect(spied.get).not.toBe(original.get);
+      expect(spyOn(obj, "method")).toBe(fn);
+
+      fn.mockReturnValue("mocked");
+      expect(obj.method(2)).toBe("mocked");
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(obj, "method")).toEqual(original);
+      expect(obj.method).toBe(method);
+    });
+
+    test("a method that a getter returns keeps its setter", () => {
+      let method = () => 1;
+      const obj = {
+        get method() {
+          return method;
+        },
+        set method(next) {
+          method = next;
+        },
+      };
+      const fn = spyOn(obj, "method");
+      obj.method = () => 2;
+      expect(obj.method).toBe(fn);
+      expect(method()).toBe(2);
+      fn.mockRestore();
+      expect(obj.method()).toBe(2);
+    });
+
+    test("a method that an inherited getter returns", () => {
+      const method = () => 1;
+      class A {
+        get method() {
+          return method;
+        }
+      }
+      const a = new A();
+      const fn = spyOn(a, "method");
+      expect(a.method).toBe(fn);
+      expect(new A().method).toBe(method);
+      fn.mockRestore();
+      expect(Object.hasOwn(a, "method")).toBe(false);
+      expect(a.method).toBe(method);
+    });
+
+    test("a getter that returns a mock", () => {
+      const fn = jest.fn();
+      const obj = {
+        get method() {
+          return fn;
+        },
+      };
+      const original = Object.getOwnPropertyDescriptor(obj, "method");
+      expect(spyOn(obj, "method")).toBe(fn);
+      expect(Object.getOwnPropertyDescriptor(obj, "method")).toEqual(original);
+    });
+
+    test.each([
+      ["number", { get x() { return 1; } }], // prettier-ignore
+      ["undefined", { get x() { return undefined; } }], // prettier-ignore
+      ["null", { get x() { return null; } }], // prettier-ignore
+      ["undefined", { set x(value) {} }], // prettier-ignore
+    ])("a getter that returns %s cannot be spied as a method", (type, obj) => {
+      const original = Object.getOwnPropertyDescriptor(obj, "x");
+      if (isBun) {
+        expect(() => spyOn(obj, "x")).toThrow(
+          new TypeError(`Cannot spy on the \`x\` property because it is not a function; ${type} given instead`),
+        );
+      } else {
+        expect(() => spyOn(obj, "x")).toThrow();
+      }
+      expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
+    });
+
+    test("a missing property has no getter or setter to spy on", () => {
+      const obj = {};
+      if (isBun) {
+        expect(() => spyOn(obj, "x", "get")).toThrow(
+          new TypeError("spyOn(target, prop, accessType) expects target to have the property `x`"),
+        );
+        expect(() => spyOn(obj, Symbol("y"), "set")).toThrow(
+          new TypeError("spyOn(target, prop, accessType) expects target to have the property `Symbol(y)`"),
+        );
+      } else {
+        expect(() => spyOn(obj, "x", "get")).toThrow();
+      }
+      expect(Reflect.ownKeys(obj)).toEqual([]);
+    });
+
+    if (isBun) {
+      test("accessType has to be get or set", () => {
+        const obj = counter();
+        const original = Object.getOwnPropertyDescriptor(obj, "x");
+        for (const accessType of ["value", "GET", 1, {}, true]) {
+          expect(() => spyOn(obj, "x", accessType)).toThrow(
+            new TypeError('spyOn(target, prop, accessType) expects accessType to be "get" or "set"'),
+          );
+        }
+        expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
+      });
+
+      test("the getter runs with the object as this when the method is read", () => {
+        class A {
+          #method = () => 7;
+          get method() {
+            return this.#method;
+          }
+        }
+        const a = new A();
+        spyOn(a, "method");
+        expect(a.method()).toBe(7);
+      });
+
+      // Vitest allows these, Jest throws "does not have access type".
+      test("the half of an accessor that is missing", () => {
+        const readonly = { get x() { return 1; } }; // prettier-ignore
+        const setter = spyOn(readonly, "x", "set");
+        readonly.x = 3;
+        expect(setter.mock.calls).toEqual([[3]]);
+        expect(readonly.x).toBe(1);
+        setter.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(readonly, "x").set).toBeUndefined();
+
+        const writeonly = { set x(value) {} }; // prettier-ignore
+        const getter = spyOn(writeonly, "x", "get");
+        expect(writeonly.x).toBeUndefined();
+        expect(getter).toHaveBeenCalledTimes(1);
+        getter.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(writeonly, "x").get).toBeUndefined();
+      });
+
+      test("a data property", () => {
+        const obj = { x: 1 };
+        const original = Object.getOwnPropertyDescriptor(obj, "x");
+
+        const getter = spyOn(obj, "x", "get");
+        expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual({
+          get: getter,
+          set: undefined,
+          enumerable: true,
+          configurable: true,
+        });
+        expect(obj.x).toBe(1);
+        expect(getter).toHaveBeenCalledTimes(1);
+        getter.mockReturnValue(2);
+        expect(obj.x).toBe(2);
+        getter.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
+
+        const setter = spyOn(obj, "x", "set");
+        obj.x = 5;
+        expect(setter.mock.calls).toEqual([[5]]);
+        setter.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
+
+        // the engine serves this one specially: it cannot become an accessor
+        function Foo() {}
+        expect(() => spyOn(Foo, "prototype", "get")).toThrow(
+          "Cannot spy on the `prototype` property because it is not a function",
+        );
+      });
+
+      // Like a spy on a method, which replaces a read-only or non-configurable property too.
+      test("non-configurable, frozen and non-extensible targets", () => {
+        const fixed = Object.defineProperty({}, "x", { get: () => 1 });
+        const frozen = Object.freeze({ get x() { return 1; } }); // prettier-ignore
+        const sealed = Object.preventExtensions(Object.create(fixed));
+        // what TypeScript emits for `export { method }` in CommonJS
+        const exports = Object.defineProperty({}, "method", { enumerable: true, get: () => Math.abs });
+
+        for (const obj of [fixed, frozen, sealed]) {
+          const original = Object.getOwnPropertyDescriptor(obj, "x");
+          const getter = spyOn(obj, "x", "get").mockReturnValue(2);
+          expect(obj.x).toBe(2);
+          getter.mockRestore();
+          expect(obj.x).toBe(1);
+          expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
+        }
+
+        const original = Object.getOwnPropertyDescriptor(exports, "method");
+        const fn = spyOn(exports, "method");
+        expect(exports.method(-1)).toBe(1);
+        expect(fn).toHaveBeenCalledWith(-1);
+        fn.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(exports, "method")).toEqual(original);
+      });
+
+      test("properties that the object does not store", () => {
+        for (const [obj, key] of [
+          [[1, 2], "length"],
+          [new String("ab"), "length"],
+          [new String("ab"), 0],
+          [new Uint8Array(2), 0],
+          [/a/g, "lastIndex"],
+        ]) {
+          const original = Object.getOwnPropertyDescriptor(obj, key);
+          expect(() => spyOn(obj, key, "get")).toThrow(
+            new TypeError(`Cannot spy on the getter of the \`${key}\` property because it cannot be redefined`),
+          );
+          expect(() => spyOn(obj, key, "set")).toThrow(
+            new TypeError(`Cannot spy on the setter of the \`${key}\` property because it cannot be redefined`),
+          );
+          expect(Object.getOwnPropertyDescriptor(obj, key)).toEqual(original);
+        }
+        // an accessor on the prototype can be shadowed
+        const bytes = new Uint8Array(2);
+        const length = spyOn(bytes, "length", "get").mockReturnValue(9);
+        expect(bytes.length).toBe(9);
+        length.mockRestore();
+        expect(bytes.length).toBe(2);
+      });
+
+      test("accessors implemented natively", () => {
+        const original = Object.getOwnPropertyDescriptor(Response.prototype, "status");
+        const onPrototype = spyOn(Response.prototype, "status", "get");
+        expect(new Response("", { status: 201 }).status).toBe(201);
+        expect(onPrototype).toHaveBeenCalledTimes(1);
+        onPrototype.mockReturnValue(5);
+        expect(new Response("").status).toBe(5);
+        onPrototype.mockRestore();
+        expect(Object.getOwnPropertyDescriptor(Response.prototype, "status")).toEqual(original);
+        expect(new Response("", { status: 202 }).status).toBe(202);
+
+        const response = new Response("", { status: 203 });
+        const onInstance = spyOn(response, "status", "get");
+        expect(response.status).toBe(203);
+        onInstance.mockReturnValue(1);
+        expect(response.status).toBe(1);
+        expect(new Response("").status).toBe(200);
+        onInstance.mockRestore();
+        expect(Object.hasOwn(response, "status")).toBe(false);
+        expect(response.status).toBe(203);
+
+        for (const [obj, key] of [
+          [process, "title"],
+          [process, "platform"],
+          [navigator, "userAgent"],
+          [globalThis, "navigator"],
+        ]) {
+          const original = Object.getOwnPropertyDescriptor(obj, key);
+          const value = obj[key];
+          const getter = spyOn(obj, key, "get");
+          expect(obj[key]).toBe(value);
+          getter.mockReturnValue("mocked");
+          expect(obj[key]).toBe("mocked");
+          getter.mockRestore();
+          expect(Object.getOwnPropertyDescriptor(obj, key)).toEqual(original);
+          expect(obj[key]).toBe(value);
+        }
+      });
+
+      test("the exports of a module namespace object are not accessors", async () => {
+        const namespace = await import("./test-interop.js");
+        expect(() => spyOn(namespace, "default", "get")).toThrow(
+          new TypeError(
+            "Cannot spy on the getter of the `default` export because the exports of a module namespace object are not accessors",
+          ),
+        );
+        expect(() => spyOn(namespace, "default", "set")).toThrow(
+          new TypeError(
+            "Cannot spy on the setter of the `default` export because the exports of a module namespace object are not accessors",
+          ),
+        );
+        expect(namespace.default).toBe(test_interop);
+      });
+
+      test("a name that a module namespace object does not export", async () => {
+        const namespace = await import("./test-interop.js");
+        expect(() => spyOn(namespace, "notAnExport")).toThrow(
+          new TypeError("spyOn(target, prop) expects the module namespace object to export `notAnExport`"),
+        );
+        expect("notAnExport" in namespace).toBe(false);
+        expect(Object.keys(namespace)).toEqual(["default"]);
+      });
+
+      test("spies are named after the accessor", () => {
+        const symbol = Symbol("key");
+        const obj = { get x() { return 1; }, set x(value) {}, get [symbol]() { return 1; } }; // prettier-ignore
+        expect(spyOn(obj, "x", "get").name).toBe("get x");
+        expect(spyOn(obj, "x", "set").name).toBe("set x");
+        expect(spyOn(obj, symbol, "get").name).toBe("get [key]");
+      });
+
+      test("using", () => {
+        const obj = counter();
+        {
+          using getter = spyOn(obj, "x", "get").mockReturnValue(2);
+          expect(obj.x).toBe(2);
+          expect(getter).toHaveBeenCalledTimes(1);
+        }
+        expect(obj.x).toBe(1);
+      });
+    }
+  });
 });
+
+if (isBun) {
+  describe("new on a mock", () => {
+    test("a class implementation constructs", () => {
+      class A {
+        field = 1;
+        constructor(x) {
+          this.x = x;
+          this.newTarget = new.target;
+        }
+        method() {
+          return "method " + this.x;
+        }
+      }
+      const Mock = vi.fn(A);
+      const instance = new Mock(2);
+      expect(instance).toBeInstanceOf(A);
+      expect(instance).toBeInstanceOf(Mock);
+      expect(instance.x).toBe(2);
+      expect(instance.field).toBe(1);
+      expect(instance.method()).toBe("method 2");
+      expect(instance.newTarget).toBe(Mock);
+      expect(instance.constructor).toBe(Mock);
+      expect(Object.getPrototypeOf(instance)).toBe(Mock.prototype);
+      expect(Object.getPrototypeOf(Mock.prototype)).toBe(A.prototype);
+      expect(Mock.mock.calls).toEqual([[2]]);
+      expect(Mock.mock.instances).toEqual([instance]);
+      expect(Mock.mock.instances[0]).toBe(instance);
+      expect(Mock.mock.contexts[0]).toBe(instance);
+      expect(Mock.mock.results[0].type).toBe("return");
+      expect(Mock.mock.results[0].value).toBe(instance);
+      expect(() => Mock()).toThrow(TypeError);
+    });
+
+    test("a function implementation gets the new object as this", () => {
+      let newTarget, resultsDuring;
+      const Mock = vi.fn(function (w) {
+        newTarget = new.target;
+        resultsDuring = structuredClone(Mock.mock.results);
+        this.w = w;
+      });
+      const instance = new Mock(9);
+      expect(instance.w).toBe(9);
+      expect(resultsDuring).toEqual([{ type: "incomplete", value: undefined }]);
+      expect(instance).toBeInstanceOf(Mock);
+      expect(newTarget).toBe(Mock);
+      expect(Mock.mock.instances[0]).toBe(instance);
+      expect(Mock.mock.contexts[0]).toBe(instance);
+      expect(Mock.mock.results[0].value).toBe(instance);
+      Mock.call({});
+      expect(newTarget).toBeUndefined();
+    });
+
+    test("what a function implementation returns", () => {
+      const object = {};
+      const ReturnsObject = vi.fn(function () {
+        return object;
+      });
+      expect(new ReturnsObject()).toBe(object);
+      expect(ReturnsObject.mock.instances[0]).toBe(object);
+
+      const ReturnsPrimitive = vi.fn(function () {
+        this.w = 1;
+        return 5;
+      });
+      expect(new ReturnsPrimitive()).toEqual({ w: 1 });
+    });
+
+    test("the prototype of a function implementation is behind mock.prototype", () => {
+      function F() {}
+      F.prototype.hi = () => "hi";
+      const Mock = vi.fn(F);
+      expect(Mock.prototype.hi()).toBe("hi");
+      Mock.prototype.hi = () => "shadowed";
+      expect(new Mock().hi()).toBe("shadowed");
+      expect(new Mock()).toBeInstanceOf(F);
+      expect(F.prototype.hi()).toBe("hi");
+    });
+
+    test("without an implementation", () => {
+      for (const fn of [jest.fn, vi.fn, mock]) {
+        const Mock = fn();
+        const instance = new Mock(1);
+        expect(typeof instance).toBe("object");
+        expect(instance).toBeInstanceOf(Mock);
+        expect(Object.getPrototypeOf(instance)).toBe(Mock.prototype);
+        expect(Mock.mock.calls).toEqual([[1]]);
+        expect(Mock.mock.instances[0]).toBe(instance);
+        expect(Mock.mock.contexts[0]).toBe(instance);
+      }
+    });
+
+    test("mock.prototype", () => {
+      const Mock = jest.fn();
+      expect(Object.getOwnPropertyDescriptor(Mock, "prototype")).toEqual({
+        value: Mock.prototype,
+        writable: true,
+        enumerable: false,
+        configurable: false,
+      });
+      expect(Object.getOwnPropertyDescriptor(Mock.prototype, "constructor")).toEqual({
+        value: Mock,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+
+      Mock.prototype.speak = jest.fn(() => "bark");
+      const instance = new Mock();
+      expect(instance.speak()).toBe("bark");
+      expect(Mock.prototype.speak.mock.contexts[0]).toBe(instance);
+
+      const prototype = { z: 1 };
+      Mock.prototype = prototype;
+      expect(Object.getPrototypeOf(new Mock())).toBe(prototype);
+    });
+
+    // Vitest throws "is not a constructor" for these; Jest, and Bun so far, call them.
+    test("implementations that are not constructors are called on a new object", () => {
+      const object = { a: 1 };
+      for (const fn of [jest.fn, vi.fn]) {
+        const Arrow = fn(() => object);
+        expect(new Arrow()).toBe(object);
+        expect(Arrow.mock.results).toEqual([{ type: "return", value: object }]);
+        expect(Arrow.mock.instances[0]).toBeInstanceOf(Arrow);
+        expect(Arrow.mock.contexts[0]).toBe(Arrow.mock.instances[0]);
+
+        const ArrowPrimitive = fn(() => 3);
+        expect(new ArrowPrimitive()).toBe(ArrowPrimitive.mock.instances[0]);
+        expect(ArrowPrimitive.mock.instances[0]).toBeInstanceOf(ArrowPrimitive);
+
+        const Method = fn({ method() { this.q = 1; } }.method); // prettier-ignore
+        expect(new Method()).toEqual({ q: 1 });
+
+        expect(new (fn(async () => {}))()).toBeInstanceOf(Promise);
+      }
+    });
+
+    // Vitest throws "Cannot use `mockReturnValue` when called with `new`".
+    test("mockReturnValue and friends", async () => {
+      const object = {};
+      for (const fn of [jest.fn, vi.fn]) {
+        expect(new (fn().mockReturnValue(object))()).toBe(object);
+        expect(new (fn().mockReturnValueOnce(object))()).toBe(object);
+        const Primitive = fn().mockReturnValue(4);
+        expect(new Primitive()).toBe(Primitive.mock.instances[0]);
+        expect(await new (fn().mockResolvedValue(1))()).toBe(1);
+        expect(new (fn().mockRejectedValue(2))()).rejects.toBe(2);
+        const This = fn().mockReturnThis();
+        const instance = new This();
+        expect(instance).toBeInstanceOf(This);
+        expect(This.mock.results[0].value).toBe(instance);
+      }
+    });
+
+    test("mockImplementation(class)", () => {
+      class A {
+        method() {
+          return "A";
+        }
+      }
+      const Mock = jest.fn().mockImplementation(A);
+      expect(Object.getPrototypeOf(Mock.prototype)).toBe(A.prototype);
+      const instance = new Mock();
+      expect(instance).toBeInstanceOf(A);
+      expect(instance.method()).toBe("A");
+    });
+
+    test("mockImplementationOnce(class)", () => {
+      class A {
+        a = 1;
+      }
+      class B {
+        b = 1;
+      }
+      const Mock = jest.fn(A).mockImplementationOnce(B);
+      expect(Object.getPrototypeOf(Mock.prototype)).toBe(B.prototype);
+      expect(new Mock()).toEqual({ b: 1 });
+      expect(new Mock()).toEqual({ a: 1 });
+      expect(Object.getPrototypeOf(Mock.prototype)).toBe(A.prototype);
+    });
+
+    test("withImplementation(class)", () => {
+      class A {
+        method() {
+          return "A";
+        }
+      }
+      class B {
+        method() {
+          return "B";
+        }
+      }
+      const Mock = jest.fn(A);
+      let inside;
+      Mock.withImplementation(B, () => {
+        inside = new Mock().method();
+      });
+      expect(inside).toBe("B");
+      expect(Object.getPrototypeOf(Mock.prototype)).toBe(A.prototype);
+      expect(new Mock().method()).toBe("A");
+    });
+
+    test("a constructor that throws", () => {
+      const error = new Error("boom");
+      const Mock = vi.fn(
+        class {
+          constructor() {
+            throw error;
+          }
+        },
+      );
+      expect(() => new Mock()).toThrow(error);
+      expect(Mock.mock.results).toEqual([{ type: "throw", value: error }]);
+      expect(Mock.mock.instances).toEqual([undefined]);
+      expect(Mock.mock.contexts).toEqual([undefined]);
+    });
+
+    test("spyOn a class", () => {
+      class K {
+        constructor(a) {
+          this.a = a;
+        }
+        method() {
+          return this.a;
+        }
+        static create() {
+          return "created by " + this.name;
+        }
+        static value = 2;
+      }
+      const obj = { K };
+      const spy = spyOn(obj, "K");
+      const instance = new obj.K(3);
+      expect(instance).toBeInstanceOf(K);
+      expect(instance).toBeInstanceOf(obj.K);
+      expect(instance.method()).toBe(3);
+      expect(spy.mock.calls).toEqual([[3]]);
+      expect(spy.mock.instances[0]).toBe(instance);
+      expect(obj.K.create()).toBe("created by K");
+      expect(obj.K.value).toBe(2);
+
+      class Fake {
+        method() {
+          return "fake";
+        }
+      }
+      spy.mockImplementation(Fake);
+      expect(new obj.K().method()).toBe("fake");
+      expect(new obj.K()).not.toBeInstanceOf(K);
+
+      spy.mockRestore();
+      expect(obj.K).toBe(K);
+    });
+
+    test("spyOn a builtin class", () => {
+      const obj = { Date };
+      const spy = spyOn(obj, "Date");
+      const date = new obj.Date(0);
+      expect(date).toBeInstanceOf(Date);
+      expect(date.getTime()).toBe(0);
+      expect(obj.Date.UTC(1970)).toBe(0);
+      expect(spy).toHaveBeenCalledWith(0);
+    });
+
+    test("extending a mock", () => {
+      const Base = jest.fn(function () {
+        this.base = 1;
+      });
+      class Sub extends Base {
+        sub = 2;
+      }
+      const instance = new Sub();
+      expect(instance).toEqual({ base: 1, sub: 2 });
+      expect(instance).toBeInstanceOf(Sub);
+      expect(instance).toBeInstanceOf(Base);
+      expect(Base.mock.instances[0]).toBe(instance);
+
+      class A {
+        constructor() {
+          this.newTarget = new.target;
+        }
+      }
+      class SubOfClass extends jest.fn(A) {}
+      expect(new SubOfClass().newTarget).toBe(SubOfClass);
+      expect(new SubOfClass()).toBeInstanceOf(A);
+    });
+
+    test("Reflect.construct with another new.target", () => {
+      class A {}
+      class Other {}
+      const Mock = jest.fn(A);
+      const instance = Reflect.construct(Mock, [], Other);
+      expect(instance).toBeInstanceOf(Other);
+      expect(instance).not.toBeInstanceOf(Mock);
+    });
+
+    test("mock.instances holds this for plain calls", () => {
+      const fn = jest.fn();
+      const obj = { fn };
+      obj.fn();
+      fn();
+      fn.call(5);
+      expect(fn.mock.instances).toEqual([obj, undefined, 5]);
+      expect(fn.mock.instances[0]).toBe(obj);
+      expect(fn.mock.contexts).toEqual(fn.mock.instances);
+      fn.mockClear();
+      expect(fn.mock.instances).toEqual([]);
+    });
+
+    test("mock.results entries are completed in place", () => {
+      let during;
+      const fn = jest.fn(() => {
+        during = fn.mock.results[0];
+        return 1;
+      });
+      fn();
+      expect(during).toBe(fn.mock.results[0]);
+      expect(during).toEqual({ type: "return", value: 1 });
+    });
+  });
+
+  describe("static members of the implementation", () => {
+    test("are copied by fn(implementation) and spyOn", () => {
+      const symbol = Symbol("static");
+      class A {
+        static inherited() {
+          return "inherited";
+        }
+      }
+      class B extends A {
+        static own() {
+          return this;
+        }
+        static value = 1;
+        static get accessor() {
+          return "accessor";
+        }
+        static [symbol] = 2;
+      }
+      for (const Mock of [jest.fn(B), spyOn({ B }, "B")]) {
+        expect(Mock.inherited()).toBe("inherited");
+        expect(Mock.own()).toBe(Mock);
+        expect(Mock[symbol]).toBe(2);
+        expect(Object.getOwnPropertyDescriptor(Mock, "value")).toEqual(Object.getOwnPropertyDescriptor(B, "value"));
+        expect(Object.getOwnPropertyDescriptor(Mock, "own")).toEqual(Object.getOwnPropertyDescriptor(B, "own"));
+        expect(Object.getOwnPropertyDescriptor(Mock, "accessor")).toEqual(
+          Object.getOwnPropertyDescriptor(B, "accessor"),
+        );
+        expect(Mock.name).toBe("B");
+        expect(Mock.prototype).not.toBe(B.prototype);
+      }
+      expect(jest.fn().mockImplementation(B).own).toBeUndefined();
+    });
+
+    test("do not replace what a mock has", () => {
+      function implementation() {}
+      implementation.mockClear = "mockClear";
+      implementation.mock = "mock";
+      implementation.call = "call";
+      implementation.other = "other";
+      const fn = jest.fn(implementation);
+      expect(fn.other).toBe("other");
+      expect(fn.mock.calls).toEqual([]);
+      expect(fn.mockClear()).toBe(fn);
+      expect(fn.call).toBe(Function.prototype.call);
+    });
+
+    test("fetch.preconnect survives spyOn(globalThis, 'fetch')", () => {
+      using spy = spyOn(globalThis, "fetch");
+      expect(fetch).toBe(spy);
+      expect(fetch.preconnect).toBeFunction();
+    });
+
+    test("util.promisify.custom is left out, so that promisify() calls the mock", async () => {
+      const { promisify } = require("node:util");
+      function implementation(callback) {
+        callback(null, "callback");
+      }
+      implementation[promisify.custom] = async () => "custom";
+      implementation[Symbol.for("other")] = "other";
+      const fn = jest.fn(implementation);
+      expect(Object.getOwnPropertySymbols(fn)).toEqual([Symbol.for("other")]);
+      expect(await promisify(fn)()).toBe("callback");
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+  });
+}
+
+if (isBun) {
+  describe("vi.mockObject", () => {
+    const modes = [
+      ["automock", undefined],
+      ["spy", { spy: true }],
+    ];
+
+    test("functions become mocks that return undefined", () => {
+      const original = {
+        simple: () => "value",
+        nested: { method: (a, b) => "real" },
+        prop: "foo",
+      };
+      const mocked = vi.mockObject(original);
+      expect(mocked).not.toBe(original);
+      expect(mocked.nested).not.toBe(original.nested);
+      expect(Object.keys(mocked)).toEqual(["simple", "nested", "prop"]);
+      expect(mocked.prop).toBe("foo");
+      expect(vi.isMockFunction(mocked.simple)).toBe(true);
+      expect(mocked.simple()).toBeUndefined();
+      expect(mocked.nested.method(1)).toBeUndefined();
+      expect(mocked.nested.method).toHaveBeenCalledWith(1);
+      expect(mocked.nested.method.name).toBe("method");
+      expect(mocked.nested.method.length).toBe(2);
+      mocked.simple.mockReturnValue("mocked");
+      expect(mocked.simple()).toBe("mocked");
+
+      expect(vi.isMockFunction(original.simple)).toBe(false);
+      expect(original.simple()).toBe("value");
+    });
+
+    test("{ spy: true } keeps the implementations, and the objects they run on", () => {
+      class Service {
+        #secret = "secret";
+        reveal() {
+          return this.#secret;
+        }
+      }
+      const original = {
+        simple: () => "value",
+        nested: { method: () => "real" },
+        service: new Service(),
+      };
+      const { nested, service } = original;
+      const spied = vi.mockObject(original, { spy: true });
+      expect(spied).toBe(original);
+      expect(spied.nested).toBe(nested);
+      expect(spied.service).toBe(service);
+      expect(spied.simple()).toBe("value");
+      expect(spied.simple).toHaveBeenCalledTimes(1);
+      expect(spied.nested.method()).toBe("real");
+      expect(spied.service.reveal()).toBe("secret");
+      expect(spied.service.reveal).toHaveBeenCalledTimes(1);
+      expect(spied.service).toBeInstanceOf(Service);
+      spied.simple.mockReturnValue("mocked");
+      expect(spied.simple()).toBe("mocked");
+    });
+
+    test.each(modes)("%s: primitives and a lone function", (_, options) => {
+      for (const value of [1, "a", null, undefined, true, 10n, Symbol.iterator]) {
+        expect(vi.mockObject(value, options)).toBe(value);
+      }
+      function lone(a) {
+        return "lone";
+      }
+      const mocked = vi.mockObject(lone, options);
+      expect(mocked).not.toBe(lone);
+      expect(vi.isMockFunction(mocked)).toBe(true);
+      expect(mocked.name).toBe("lone");
+      expect(mocked.length).toBe(1);
+      expect(mocked()).toBe(options ? "lone" : undefined);
+    });
+
+    test.each(modes)("%s: every kind of function", (_, options) => {
+      const mocked = vi.mockObject(
+        {
+          arrow: () => 1,
+          async: async () => 1,
+          *generator() {},
+          async *asyncGenerator() {},
+          bound: function () {}.bind(null),
+          proxy: new Proxy(function () {}, {}),
+          [Symbol.for("symbol")]: () => 1,
+          0: () => 1,
+        },
+        options,
+      );
+      for (const key of Reflect.ownKeys(mocked)) {
+        expect(vi.isMockFunction(mocked[key])).toBe(true);
+      }
+      expect(Reflect.ownKeys(mocked)).toHaveLength(8);
+    });
+
+    test.each(modes)("%s: builtin and tagged objects, and mocks, are kept", (_, options) => {
+      class Tagged {
+        get [Symbol.toStringTag]() {
+          return "Tagged";
+        }
+        method() {}
+      }
+      const kept = {
+        date: new Date(0),
+        regexp: /x/,
+        map: new Map(),
+        set: new Set(),
+        weakMap: new WeakMap(),
+        promise: Promise.resolve(),
+        error: new Error("x"),
+        bytes: new Uint8Array(2),
+        buffer: new ArrayBuffer(1),
+        boxed: Object(1),
+        url: new URL("http://localhost"),
+        tagged: new Tagged(),
+        mock: vi.fn(() => "already a mock"),
+        globalThis,
+        console,
+      };
+      const mocked = vi.mockObject({ ...kept }, options);
+      for (const key of Object.keys(kept)) {
+        expect([key, mocked[key] === kept[key]]).toEqual([key, true]);
+      }
+      expect(vi.isMockFunction(mocked.tagged.method)).toBe(false);
+      expect(mocked.mock()).toBe("already a mock");
+    });
+
+    test("arrays become empty", () => {
+      const original = { list: [1, () => 2] };
+      const mocked = vi.mockObject(original);
+      expect(mocked.list).toEqual([]);
+      expect(original.list).toHaveLength(2);
+      expect(vi.mockObject([1, 2])).toEqual([]);
+    });
+
+    test("{ spy: true } maps arrays", () => {
+      const element = { method: () => "element" };
+      // prettier-ignore
+      const list = [1, element, () => 2, "s", null, , [() => 3]];
+      const spied = vi.mockObject({ list }, { spy: true });
+      expect(spied.list).not.toBe(list);
+      expect(spied.list).toHaveLength(7);
+      expect(spied.list[0]).toBe(1);
+      expect(spied.list[1].method()).toBe("element");
+      expect(spied.list[1].method).toHaveBeenCalledTimes(1);
+      expect(spied.list[2]()).toBe(2);
+      expect(vi.isMockFunction(spied.list[2])).toBe(true);
+      expect(spied.list.slice(3, 5)).toEqual(["s", null]);
+      expect(5 in spied.list).toBe(false);
+      expect(spied.list[6]).toBeArrayOfSize(1);
+      expect(spied.list[6][0]()).toBe(3);
+      expect(vi.isMockFunction(list[2])).toBe(false);
+    });
+
+    test.each(modes)("%s: cycles and shared references", (_, options) => {
+      const shared = { method() {} };
+      const fn = () => 1;
+      const list = [1];
+      const original = { a: shared, b: shared, fn1: fn, fn2: fn, list1: list, list2: list, child: {} };
+      original.self = original;
+      original.child.parent = original;
+      fn.owner = original;
+
+      const mocked = vi.mockObject(original, options);
+      expect(mocked.self).toBe(mocked);
+      expect(mocked.child.parent).toBe(mocked);
+      expect(mocked.a).toBe(mocked.b);
+      expect(mocked.fn1).toBe(mocked.fn2);
+      expect(mocked.fn1.owner).toBe(mocked);
+      expect(mocked.list1).toBe(mocked.list2);
+      expect(Object.keys(mocked)).toEqual(["a", "b", "fn1", "fn2", "list1", "list2", "child", "self"]);
+    });
+
+    test.each(modes)("%s: a graph deeper than the stack", (_, options) => {
+      const { isDebug, isASAN } = require("harness");
+      const levels = isDebug || isASAN ? 2_000 : 100_000;
+      let original = { leaf() {} };
+      for (let i = 0; i < levels; i++) original = { child: original };
+      let mocked = vi.mockObject(original, options);
+      let depth = 0;
+      for (; mocked.child; mocked = mocked.child) depth++;
+      expect(depth).toBe(levels);
+      expect(vi.isMockFunction(mocked.leaf)).toBe(true);
+    });
+
+    test("getters and setters are mocked without being run", () => {
+      const run = vi.fn();
+      const original = {
+        get both() {
+          run();
+          return 1;
+        },
+        set both(value) {
+          run();
+        },
+        get readonly() {
+          run();
+          return 1;
+        },
+        set writeonly(value) {
+          run();
+        },
+      };
+      Object.defineProperty(original, "hidden", { get: run, enumerable: false, configurable: false });
+
+      const mocked = vi.mockObject(original);
+      expect(run).not.toHaveBeenCalled();
+      expect(Object.getOwnPropertyDescriptor(mocked, "both")).toEqual({
+        get: expect.any(Function),
+        set: expect.any(Function),
+        enumerable: true,
+        configurable: true,
+      });
+      expect(Object.getOwnPropertyDescriptor(mocked, "readonly")).toEqual({
+        get: expect.any(Function),
+        set: undefined,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(Object.getOwnPropertyDescriptor(mocked, "hidden")).toEqual({
+        get: expect.any(Function),
+        set: undefined,
+        enumerable: false,
+        configurable: false,
+      });
+      expect(Object.getOwnPropertyDescriptor(mocked, "writeonly")).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(mocked.both).toBeUndefined();
+      mocked.both = 1;
+      expect(mocked.readonly).toBeUndefined();
+      expect(run).not.toHaveBeenCalled();
+
+      vi.spyOn(mocked, "both", "get").mockReturnValue(2);
+      expect(mocked.both).toBe(2);
+    });
+
+    test("{ spy: true } leaves getters and setters alone", () => {
+      const run = vi.fn(() => 1);
+      const original = {
+        get both() {
+          return run();
+        },
+        set both(value) {
+          run();
+        },
+        set writeonly(value) {
+          run();
+        },
+      };
+      const descriptors = Object.getOwnPropertyDescriptors(original);
+      const spied = vi.mockObject(original, { spy: true });
+      expect(run).not.toHaveBeenCalled();
+      expect(Object.getOwnPropertyDescriptors(spied)).toEqual(descriptors);
+      expect(spied.both).toBe(1);
+    });
+
+    test("the nearest definition of a property wins", () => {
+      class A {
+        get x() {
+          return "A";
+        }
+        method() {
+          return "A";
+        }
+      }
+      class B extends A {
+        get x() {
+          return "B";
+        }
+        method() {
+          return "B";
+        }
+      }
+      const Spied = vi.mockObject(B, { spy: true });
+      expect(new Spied().x).toBe("B");
+      expect(new Spied().method()).toBe("B");
+      const shadowing = Object.create({ get x() { return "getter"; } }, { x: { value: "value", enumerable: true } }); // prettier-ignore
+      expect(vi.mockObject(shadowing).x).toBe("value");
+    });
+
+    test("an instance is flattened into a plain object", () => {
+      class A {
+        inherited() {}
+      }
+      class B extends A {
+        field = 1;
+        method() {}
+      }
+      const mocked = vi.mockObject(new B());
+      expect(Object.getPrototypeOf(mocked)).toBe(Object.prototype);
+      expect(Object.keys(mocked).sort()).toEqual(["constructor", "field", "inherited", "method"]);
+      expect(mocked.field).toBe(1);
+      expect(vi.isMockFunction(mocked.method)).toBe(true);
+      expect(vi.isMockFunction(mocked.inherited)).toBe(true);
+      expect(vi.isMockFunction(B.prototype.method)).toBe(false);
+    });
+
+    test("properties are copied as if assigned", () => {
+      const symbol = Symbol("symbol");
+      const original = Object.create(null, {
+        hidden: { value() {}, enumerable: false },
+        fixed: { value: 1, enumerable: true },
+        [symbol]: { value: 2 },
+      });
+      const mocked = vi.mockObject(original);
+      expect(Object.getPrototypeOf(mocked)).toBe(Object.prototype);
+      for (const key of ["hidden", "fixed", symbol]) {
+        expect(Object.getOwnPropertyDescriptor(mocked, key)).toEqual({
+          value: mocked[key],
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      }
+    });
+
+    test("an own __proto__ property stays a property", () => {
+      const mocked = vi.mockObject(JSON.parse('{ "__proto__": { "polluted": true } }'));
+      expect(Object.getPrototypeOf(mocked)).toBe(Object.prototype);
+      expect(mocked.polluted).toBeUndefined();
+      expect(Object.getOwnPropertyDescriptor(mocked, "__proto__").value).toEqual({ polluted: true });
+    });
+
+    test("{ spy: true } skips what cannot be assigned", () => {
+      const method = () => 1;
+      const frozen = Object.freeze({ method, nested: { method } });
+      const spied = vi.mockObject(frozen, { spy: true });
+      expect(spied.method).toBe(method);
+      expect(vi.isMockFunction(spied.nested.method)).toBe(true);
+    });
+
+    test("methods called name, length and caller are mocked too", () => {
+      const mocked = vi.mockObject({ name() {}, length() {}, caller() {}, arguments() {} });
+      expect(Object.keys(mocked)).toEqual(["name", "length", "caller", "arguments"]);
+      for (const key of Object.keys(mocked)) expect(vi.isMockFunction(mocked[key])).toBe(true);
+    });
+
+    test.each(modes)("%s: static members of a function", (_, options) => {
+      function original() {
+        return "original";
+      }
+      original.method = () => "method";
+      original.value = 1;
+      original.nested = { method: () => "nested" };
+      const mocked = vi.mockObject(original, options);
+      expect(mocked.value).toBe(1);
+      expect(mocked.method()).toBe(options ? "method" : undefined);
+      expect(mocked.method).toHaveBeenCalledTimes(1);
+      expect(mocked.nested.method()).toBe(options ? "nested" : undefined);
+      expect(mocked.nested.method).toHaveBeenCalledTimes(1);
+      expect(mocked.prototype.constructor).toBe(mocked);
+    });
+
+    describe("classes", () => {
+      class Base {
+        static inheritedStatic() {
+          return "inheritedStatic";
+        }
+        inherited() {
+          return "inherited";
+        }
+      }
+      class Klass extends Base {
+        static ownStatic() {
+          return "ownStatic";
+        }
+        static get accessor() {
+          return "accessor";
+        }
+        field = "field";
+        constructor(x) {
+          super();
+          this.x = x;
+        }
+        method() {
+          return "method " + this.x;
+        }
+        get accessor() {
+          return "accessor " + this.x;
+        }
+      }
+
+      test("automock", () => {
+        const Mocked = vi.mockObject(Klass);
+        expect(Mocked.name).toBe("Klass");
+        expect(Mocked.length).toBe(1);
+        expect(Mocked.ownStatic()).toBeUndefined();
+        expect(Mocked.inheritedStatic()).toBeUndefined();
+        expect(Mocked.inheritedStatic).toHaveBeenCalledTimes(1);
+        expect(Mocked.accessor).toBeUndefined();
+        expect(Mocked.prototype).not.toBe(Klass.prototype);
+        expect(Object.getPrototypeOf(Mocked.prototype)).toBe(Object.prototype);
+        expect(Mocked.prototype.constructor).toBe(Mocked);
+
+        const instance = new Mocked(1);
+        expect(instance).toBeInstanceOf(Mocked);
+        expect(instance).not.toBeInstanceOf(Klass);
+        expect(instance.constructor).toBe(Mocked);
+        expect(instance.x).toBeUndefined();
+        expect(instance.field).toBeUndefined();
+        expect(instance.accessor).toBeUndefined();
+        expect(instance.method()).toBeUndefined();
+        expect(instance.inherited()).toBeUndefined();
+        expect(Mocked.mock.calls).toEqual([[1]]);
+        expect(Mocked.mock.instances[0]).toBe(instance);
+        expect(Mocked()).toBeUndefined();
+
+        expect(vi.isMockFunction(Klass.prototype.method)).toBe(false);
+        expect(vi.isMockFunction(Klass.ownStatic)).toBe(false);
+      });
+
+      test("{ spy: true }", () => {
+        class Spied extends Klass {}
+        const Mocked = vi.mockObject(Spied, { spy: true });
+        expect(Mocked).not.toBe(Spied);
+        expect(Mocked.ownStatic()).toBe("ownStatic");
+        expect(Mocked.ownStatic).toHaveBeenCalledTimes(1);
+        expect(Mocked.inheritedStatic()).toBe("inheritedStatic");
+        expect(Mocked.accessor).toBe("accessor");
+        expect(Mocked.prototype).toBe(Spied.prototype);
+
+        const instance = new Mocked(1);
+        expect(instance).toBeInstanceOf(Mocked);
+        expect(instance).toBeInstanceOf(Klass);
+        expect(instance.x).toBe(1);
+        expect(instance.field).toBe("field");
+        expect(instance.accessor).toBe("accessor 1");
+        expect(instance.method()).toBe("method 1");
+        expect(instance.method).toHaveBeenCalledTimes(1);
+        expect(instance.inherited()).toBe("inherited");
+        expect(Mocked.mock.instances[0]).toBe(instance);
+        expect(() => Mocked()).toThrow(TypeError);
+
+        expect(vi.isMockFunction(Klass.prototype.method)).toBe(false);
+      });
+
+      test.each(modes)("%s: every instance has its own mocks, which the prototype's mocks see", (_, options) => {
+        class K {
+          method() {
+            return "real";
+          }
+        }
+        const real = options ? "real" : undefined;
+        const Mocked = vi.mockObject(K, options);
+        const a = new Mocked();
+        const b = new Mocked();
+        expect(a.method).not.toBe(b.method);
+        expect(a.method).not.toBe(Mocked.prototype.method);
+        expect(Object.keys(a)).toEqual(["method"]);
+        expect(a.method.name).toBe("method");
+
+        expect(a.method(1)).toBe(real);
+        b.method(2);
+        b.method(3);
+        expect(a.method.mock.calls).toEqual([[1]]);
+        expect(b.method.mock.calls).toEqual([[2], [3]]);
+        expect(Mocked.prototype.method.mock.calls).toEqual([[1], [2], [3]]);
+        expect(Mocked.prototype.method.mock.contexts).toEqual([a, b, b]);
+        expect(Mocked.prototype.method.mock.instances[0]).toBe(a);
+        expect(Mocked.prototype.method.mock.results[0]).toBe(a.method.mock.results[0]);
+        expect(Mocked.prototype.method.mock.invocationCallOrder[1]).toBe(b.method.mock.invocationCallOrder[0]);
+
+        Mocked.prototype.method.mockReturnValue("prototype");
+        expect([a.method(), b.method()]).toEqual(["prototype", "prototype"]);
+        a.method.mockReturnValue("a");
+        expect([a.method(), b.method()]).toEqual(["a", "prototype"]);
+        expect(Mocked.prototype.method).toHaveBeenCalledTimes(7);
+        Mocked.prototype.method.mockReturnValueOnce("once");
+        expect([a.method(), b.method(), b.method()]).toEqual(["a", "once", "prototype"]);
+
+        a.method.mockClear();
+        expect(a.method).not.toHaveBeenCalled();
+        expect(Mocked.prototype.method).toHaveBeenCalledTimes(10);
+      });
+
+      test.each(modes)("%s: what a subclass or the constructor defines is left alone", (_, options) => {
+        class K {
+          overridden() {}
+          kept() {}
+        }
+        const Mocked = vi.mockObject(K, options);
+        class Sub extends Mocked {
+          overridden() {
+            return "sub";
+          }
+        }
+        const sub = new Sub();
+        expect(sub.overridden()).toBe("sub");
+        expect(Object.keys(sub)).toEqual(["kept"]);
+        expect(vi.isMockFunction(sub.kept)).toBe(true);
+      });
+
+      test("mockImplementation on an automocked class", () => {
+        const Mocked = vi.mockObject(Klass);
+        Mocked.mockImplementation(
+          class {
+            constructor() {
+              this.fake = true;
+            }
+          },
+        );
+        const instance = new Mocked();
+        expect(instance.fake).toBe(true);
+        expect(instance).toBeInstanceOf(Mocked);
+        expect(vi.isMockFunction(instance.method)).toBe(true);
+      });
+    });
+
+    describe("modules", () => {
+      test.each(modes)("%s: a module namespace object", async (_, options) => {
+        using dir = require("harness").tempDir("mock-object", {
+          "module.js": `
+            export const value = 1;
+            export function fn() { return "fn"; }
+            export const object = { method() { return "method"; } };
+            export class Klass { method() { return "Klass.method"; } }
+            export default function () { return "default"; }
+            export * as nested from "./module.js";
+          `,
+        });
+        const namespace = await import(require("node:path").join(String(dir), "module.js"));
+        const mocked = vi.mockObject(namespace, options);
+        expect(Object.getPrototypeOf(mocked)).toBeNull();
+        expect(Object.getOwnPropertyDescriptor(mocked, Symbol.toStringTag)).toEqual({
+          value: "Module",
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        });
+        expect(Object.keys(mocked).sort()).toEqual(["Klass", "default", "fn", "nested", "object", "value"]);
+        expect(mocked.value).toBe(1);
+        expect(mocked.fn()).toBe(options ? "fn" : undefined);
+        expect(mocked.default()).toBe(options ? "default" : undefined);
+        expect(mocked.object.method()).toBe(options ? "method" : undefined);
+        expect(new mocked.Klass().method()).toBe(options ? "Klass.method" : undefined);
+        expect(Object.getPrototypeOf(mocked.nested)).toBeNull();
+        expect(mocked.nested[Symbol.toStringTag]).toBe("Module");
+        expect(mocked.nested.default).toBe(mocked.default);
+        expect(vi.isMockFunction(namespace.fn)).toBe(false);
+      });
+
+      test("vi.mock(path, { spy: true }) leaves the exports object of the original alone", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("mock-object-module", {
+          "dep.cjs": `
+            module.exports = { fn() { return "real"; }, value: 1 };
+            module.exports.self = module.exports;
+            Object.defineProperty(module.exports, "lazy", { enumerable: true, get: () => function lazy() { return "lazy"; } });
+          `,
+          "instance.cjs": `
+            class Service {
+              #secret = "secret";
+              reveal() { return this.#secret; }
+            }
+            module.exports = new Service();
+          `,
+          "spy.test.js": `
+            import { expect, test, vi } from "bun:test";
+            vi.mock("./dep.cjs", { spy: true });
+            vi.mock("node:path", { spy: true });
+            vi.mock("./instance.cjs", { spy: true });
+            const dep = require("./dep.cjs");
+            const path = require("node:path");
+            const instance = require("./instance.cjs");
+
+            test("the mocks are spies and the originals are not", async () => {
+              expect(dep.fn()).toBe("real");
+              expect(dep.fn).toHaveBeenCalledTimes(1);
+              expect(dep.value).toBe(1);
+              expect(dep.self).toBe(dep);
+              expect(dep.lazy()).toBe("lazy");
+              expect(dep.lazy).toHaveBeenCalledTimes(1);
+              expect(path.basename("a/b")).toBe("b");
+              expect(path.basename).toHaveBeenCalledTimes(1);
+
+              for (const [mocked, specifier] of [[dep, "./dep.cjs"], [path, "node:path"]]) {
+                const { default: original } = await vi.importActual(specifier);
+                expect(original === mocked).toBe(false);
+                expect(Object.keys(original)).toEqual(Object.keys(mocked));
+                expect(Object.keys(original).filter(key => vi.isMockFunction(original[key]))).toEqual([]);
+              }
+            });
+
+            test("an instance of a class is not a container of exports", () => {
+              expect(instance.reveal()).toBe("secret");
+              expect(instance.reveal).toHaveBeenCalledTimes(1);
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "spy.test.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 2 pass\n 0 fail\n");
+        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      test("vi.mock(builtin, { spy: true }) leaves the builtin alone", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("mock-object-builtin", {
+          "spy.test.js": `
+            import { expect, test, vi } from "bun:test";
+            vi.mock("node:fs", { spy: true });
+            vi.mock("node:path", { spy: true });
+            vi.mock("node:util", { spy: true });
+            vi.mock("node:events", { spy: true });
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const util = require("node:util");
+            const { EventEmitter } = require("node:events");
+
+            test("the mocks are spies, at every depth", async () => {
+              expect(path.win32.basename("a\\\\b")).toBe("b");
+              expect(path.win32.basename).toHaveBeenCalledTimes(1);
+              expect(util.format("%s", 1)).toBe("1");
+              expect(util.format).toHaveBeenCalledTimes(1);
+              expect(util.types.isDate(new Date())).toBe(true);
+              expect(util.types.isDate).toHaveBeenCalledTimes(1);
+              expect(await fs.promises.readFile(import.meta.path, "utf8")).toContain("at every depth");
+              expect(fs.promises.readFile).toHaveBeenCalledTimes(1);
+
+              const listener = vi.fn();
+              const emitter = new EventEmitter();
+              emitter.on("event", listener);
+              expect(emitter.emit("event", 1)).toBe(true);
+              expect(listener).toHaveBeenCalledWith(1);
+              expect(emitter.emit).toHaveBeenCalledWith("event", 1);
+              expect(EventEmitter.prototype.emit).toHaveBeenCalledWith("event", 1);
+              expect(emitter).toBeInstanceOf((await vi.importActual("node:events")).EventEmitter);
+            });
+
+            test("the builtins are not", async () => {
+              const actual = {
+                fs: (await vi.importActual("node:fs")).default,
+                path: (await vi.importActual("node:path")).default,
+                util: (await vi.importActual("node:util")).default,
+                events: (await vi.importActual("node:events")).default,
+              };
+              expect(
+                Object.entries({
+                  "fs.readFileSync": actual.fs.readFileSync,
+                  "fs.promises.readFile": actual.fs.promises.readFile,
+                  "fs.ReadStream": actual.fs.ReadStream,
+                  "fs.ReadStream.prototype._read": actual.fs.ReadStream.prototype._read,
+                  "path.basename": actual.path.basename,
+                  "path.win32.basename": actual.path.win32.basename,
+                  "util.format": actual.util.format,
+                  "util.types.isDate": actual.util.types.isDate,
+                  "EventEmitter": actual.events.EventEmitter,
+                  "EventEmitter.prototype.emit": actual.events.EventEmitter.prototype.emit,
+                  "EventEmitter.prototype.constructor": actual.events.EventEmitter.prototype.constructor,
+                  "process.emit": process.emit,
+                })
+                  .filter(([, value]) => vi.isMockFunction(value))
+                  .map(([name]) => name),
+              ).toEqual([]);
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "spy.test.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 2 pass\n 0 fail\n");
+        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      test("vi.mock(builtin) mocks the exports that are accessors", async () => {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("mock-object-builtin-automock", {
+          "automock.test.js": `
+            import { expect, test, vi } from "bun:test";
+            vi.mock("node:fs");
+            vi.mock("node:util");
+            const fs = require("node:fs");
+            const util = require("node:util");
+
+            test("automock", async () => {
+              expect(Object.getOwnPropertyDescriptor((await vi.importActual("node:util")).default, "format").get).toBeFunction();
+              expect(util.format("%s", 1)).toBeUndefined();
+              expect(util.format).toHaveBeenCalledWith("%s", 1);
+              expect(fs.promises.readFile("missing")).toBeUndefined();
+              expect(fs.promises.readFile).toHaveBeenCalledTimes(1);
+              expect(new fs.ReadStream("missing")).toBeInstanceOf(fs.ReadStream);
+              expect((await vi.importActual("node:util")).format("%s", 1)).toBe("1");
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "automock.test.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(" 1 pass\n 0 fail\n");
+        expect({ stdout: stdout.replace(/^bun test .*\n/, ""), exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      test("the getters of a transpiled module are read, once", () => {
+        const reads = vi.fn();
+        const exports = { __esModule: true };
+        Object.defineProperty(exports, "fn", { enumerable: true, get: () => (reads(), () => "fn") });
+        Object.defineProperty(exports, "value", { enumerable: true, get: () => (reads(), 5) });
+
+        const mocked = vi.mockObject(exports);
+        expect(reads).toHaveBeenCalledTimes(2);
+        expect(Object.getOwnPropertyDescriptors(mocked)).toEqual({
+          __esModule: { value: true, writable: true, enumerable: true, configurable: true },
+          fn: { value: expect.any(Function), writable: true, enumerable: true, configurable: true },
+          value: { value: 5, writable: true, enumerable: true, configurable: true },
+        });
+        expect(vi.isMockFunction(mocked.fn)).toBe(true);
+      });
+    });
+
+    test("an error thrown while the value is read is passed on", () => {
+      const error = new Error("trap");
+      const proxy = new Proxy({}, { ownKeys: () => { throw error; } }); // prettier-ignore
+      expect(() => vi.mockObject({ proxy })).toThrow(error);
+      const exports = { __esModule: true, get broken() { throw error; } }; // prettier-ignore
+      expect(() => vi.mockObject(exports)).toThrow(error);
+    });
+
+    test("clearAllMocks and resetAllMocks reach the mocks", () => {
+      const mocked = vi.mockObject({ method() {} });
+      mocked.method.mockReturnValue(1);
+      mocked.method();
+      vi.clearAllMocks();
+      expect(mocked.method).not.toHaveBeenCalled();
+      expect(mocked.method()).toBe(1);
+      vi.resetAllMocks();
+      expect(mocked.method()).toBeUndefined();
+    });
+
+    test("survives garbage collection while it runs", () => {
+      const original = {};
+      for (let i = 0; i < 200; i++) {
+        original["key" + i] = {
+          get [Symbol.toStringTag]() {
+            if (i % 50 === 0) Bun.gc(true);
+            return "Object";
+          },
+          method() {},
+          list: [i],
+          klass: class {
+            method() {}
+          },
+        };
+      }
+      const mocked = vi.mockObject(original);
+      Bun.gc(true);
+      for (let i = 0; i < 200; i++) {
+        const entry = mocked["key" + i];
+        expect(vi.isMockFunction(entry.method)).toBe(true);
+        expect(new entry.klass().method()).toBeUndefined();
+      }
+    });
+  });
+
+  describe("mock utilities", () => {
+    test("isMockFunction", () => {
+      expect(jest.isMockFunction).toBe(vi.isMockFunction);
+      expect(vi.isMockFunction(vi.fn())).toBe(true);
+      expect(vi.isMockFunction(jest.fn())).toBe(true);
+      expect(vi.isMockFunction(mock())).toBe(true);
+      expect(vi.isMockFunction(spyOn({ method() {} }, "method"))).toBe(true);
+      for (const value of [() => {}, {}, null, undefined, 1, { _isMockFunction: true }]) {
+        expect(vi.isMockFunction(value)).toBe(false);
+      }
+      expect(vi.isMockFunction()).toBe(false);
+    });
+
+    test("mocked", () => {
+      expect(jest.mocked).toBe(vi.mocked);
+      const value = { method() {} };
+      expect(vi.mocked(value)).toBe(value);
+      expect(vi.mocked(value, true)).toBe(value);
+      expect(vi.mocked(value, { deep: true, partial: true })).toBe(value);
+      expect(vi.mocked()).toBeUndefined();
+    });
+
+    test("mockThrow and mockThrowOnce", () => {
+      const error = new Error("always");
+      const fn = jest.fn(() => "implementation");
+      expect(fn.mockThrowOnce("once")).toBe(fn);
+      expect(fn).toThrow("once");
+      expect(fn()).toBe("implementation");
+      expect(fn.mockThrow(error)).toBe(fn);
+      expect(fn).toThrow(error);
+      expect(() => new fn()).toThrow(error);
+      expect(fn.mock.results).toEqual([
+        { type: "throw", value: "once" },
+        { type: "return", value: "implementation" },
+        { type: "throw", value: error },
+        { type: "throw", value: error },
+      ]);
+      expect(fn.mock.calls).toHaveLength(4);
+      expect(fn.mock.settledResults[0]).toEqual({ type: "rejected", value: "once" });
+      fn.mockReset();
+      expect(fn()).toBeUndefined();
+      expect(() => fn.mockThrow.call({})).toThrow(TypeError);
+    });
+
+    test("mock.settledResults", async () => {
+      const error = new Error("thrown");
+      const { promise: pending, resolve } = Promise.withResolvers();
+      const fn = jest
+        .fn()
+        .mockResolvedValueOnce(1)
+        .mockRejectedValueOnce(2)
+        .mockReturnValueOnce(3)
+        .mockImplementationOnce(() => pending)
+        .mockImplementationOnce(() => {
+          throw error;
+        });
+      expect(fn.mock.settledResults).toEqual([]);
+
+      const fulfilled = fn();
+      const rejected = fn().catch(() => {});
+      fn();
+      fn();
+      expect(fn).toThrow(error);
+      await fulfilled;
+      await rejected;
+
+      expect(fn.mock.settledResults).toEqual([
+        { type: "fulfilled", value: 1 },
+        { type: "rejected", value: 2 },
+        { type: "fulfilled", value: 3 },
+        { type: "incomplete", value: undefined },
+        { type: "rejected", value: error },
+      ]);
+      resolve(4);
+      await pending;
+      expect(fn.mock.settledResults[3]).toEqual({ type: "fulfilled", value: 4 });
+
+      fn.mockClear();
+      expect(fn.mock.settledResults).toEqual([]);
+    });
+
+    test("mock.settledResults when the test has written to mock.results", () => {
+      const fn = jest.fn(() => 1);
+      fn();
+      fn.mock.results.push(undefined, null, 5, {}, { type: "other", value: 2 });
+      fn.mock.results.length++;
+      fn.mock.results.push({ type: "return", value: 3 }, { type: "throw", value: 4 });
+      const incomplete = { type: "incomplete", value: undefined };
+      expect(fn.mock.settledResults).toEqual([
+        { type: "fulfilled", value: 1 },
+        incomplete,
+        incomplete,
+        incomplete,
+        incomplete,
+        incomplete,
+        incomplete,
+        { type: "fulfilled", value: 3 },
+        { type: "rejected", value: 4 },
+      ]);
+    });
+
+    test("mock.settledResults is incomplete while the call runs", () => {
+      let during;
+      const fn = jest.fn(() => {
+        during = fn.mock.settledResults;
+      });
+      fn();
+      expect(during).toEqual([{ type: "incomplete", value: undefined }]);
+      expect(fn.mock.settledResults).toEqual([{ type: "fulfilled", value: undefined }]);
+    });
+
+    test("reading mock.settledResults does not handle a rejection", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { jest } = Bun.jest(import.meta.path);
+          process.on("unhandledRejection", reason => console.log("unhandled", reason));
+          const fn = jest.fn().mockRejectedValue("reason");
+          fn();
+          console.log(JSON.stringify(fn.mock.settledResults));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: '[{"type":"rejected","value":"reason"}]\nunhandled reason\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+}
+
+// What each column does was checked against Vitest 5.0 and Jest 30.
+if (isBun) {
+  describe("mocks made through vi behave as Vitest's, the others as Jest's", () => {
+    const flavors = [
+      ["vi", true, vi.fn, vi.spyOn],
+      ["jest", false, jest.fn, jest.spyOn],
+      ["bun:test", false, mock, spyOn],
+    ];
+
+    test("vi.fn and vi.spyOn are functions of their own", () => {
+      expect(vi.fn).not.toBe(jest.fn);
+      expect(vi.spyOn).not.toBe(jest.spyOn);
+      expect(jest.spyOn).toBe(spyOn);
+      expect(vi.fn.name).toBe("fn");
+      expect(vi.fn.length).toBe(jest.fn.length);
+      expect(vi.spyOn.name).toBe("spyOn");
+      expect(vi.spyOn.length).toBe(jest.spyOn.length);
+    });
+
+    test.each(flavors)("%s: fn(implementation).mockReset()", (_, isVitest, fn) => {
+      const implementation = () => "initial";
+      const mocked = fn(implementation)
+        .mockImplementation(() => "later")
+        .mockImplementationOnce(() => "once");
+      mocked();
+      expect(mocked.mockReset()).toBe(mocked);
+      expect(mocked).not.toHaveBeenCalled();
+      expect(mocked()).toBe(isVitest ? "initial" : undefined);
+      expect(mocked()).toBe(isVitest ? "initial" : undefined);
+      expect(mocked.getMockImplementation()).toBe(isVitest ? implementation : undefined);
+
+      const bare = fn().mockReturnValue(1);
+      bare.mockReset();
+      expect(bare()).toBeUndefined();
+    });
+
+    test.each(flavors)("%s: fn(implementation).mockRestore()", (_, isVitest, fn) => {
+      const mocked = fn(() => "initial").mockImplementation(() => "later");
+      mocked();
+      mocked.mockRestore();
+      expect(mocked).not.toHaveBeenCalled();
+      expect(mocked()).toBe(isVitest ? "initial" : undefined);
+    });
+
+    test.each(flavors)("%s: fn(class).mockReset()", (_, isVitest, fn) => {
+      class A {}
+      const Mock = fn(A).mockImplementation(class B {});
+      Mock.mockReset();
+      expect(Object.getPrototypeOf(Mock.prototype)).toBe(isVitest ? A.prototype : Object.prototype);
+      expect(new Mock() instanceof A).toBe(isVitest);
+    });
+
+    test.each(flavors)("%s: spy.mockReset()", (_, isVitest, fn, spyOn) => {
+      const obj = { method: () => "original" };
+      const spy = spyOn(obj, "method").mockReturnValue("mocked");
+      obj.method();
+      spy.mockReset();
+      expect(obj.method).toBe(spy);
+      expect(spy).not.toHaveBeenCalled();
+      expect(obj.method()).toBe(isVitest ? "original" : undefined);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(flavors)("%s: spy.mockRestore()", (_, isVitest, fn, spyOn) => {
+      const method = () => "original";
+      const obj = { method };
+      const spy = spyOn(obj, "method").mockReturnValue("mocked");
+      obj.method();
+      spy.mockRestore();
+      expect(obj.method).toBe(method);
+      expect(spy).not.toHaveBeenCalled();
+      expect(spy()).toBe(isVitest ? "original" : undefined);
+      expect(spyOn(obj, "method")).not.toBe(spy);
+    });
+
+    test.each(flavors)("%s: getter and setter spies and mockReset()", (_, isVitest, fn, spyOn) => {
+      let value = 1;
+      const obj = {
+        get x() {
+          return value;
+        },
+        set x(next) {
+          value = next;
+        },
+      };
+      const getter = spyOn(obj, "x", "get").mockReturnValue(9);
+      const setter = spyOn(obj, "x", "set").mockImplementation(() => {});
+      getter.mockReset();
+      setter.mockReset();
+      obj.x = 2;
+      expect(value).toBe(isVitest ? 2 : 1);
+      expect(obj.x).toBe(isVitest ? 2 : undefined);
+      expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual({
+        get: getter,
+        set: setter,
+        enumerable: true,
+        configurable: true,
+      });
+    });
+
+    // Every *AllMocks function acts on all mocks, on each in the way of the function that made it.
+    const everyApi = [
+      ["vi", vi],
+      ["jest", jest],
+    ];
+
+    test.each(everyApi)("%s.resetAllMocks()", (_, api) => {
+      for (const [, isVitest, fn, spyOn] of flavors) {
+        const obj = { method: () => "original" };
+        const withImplementation = fn(() => "initial").mockImplementation(() => "later");
+        const bare = fn().mockReturnValue(5);
+        const spy = spyOn(obj, "method").mockReturnValue("mocked");
+        withImplementation();
+        obj.method();
+
+        expect(api.resetAllMocks()).toBe(api);
+        expect(withImplementation).not.toHaveBeenCalled();
+        expect(spy).not.toHaveBeenCalled();
+        expect(withImplementation()).toBe(isVitest ? "initial" : undefined);
+        expect(bare()).toBeUndefined();
+        expect(obj.method).toBe(spy);
+        expect(obj.method()).toBe(isVitest ? "original" : undefined);
+      }
+    });
+
+    test.each([...everyApi, ["mock", { restoreAllMocks: () => mock.restore() }]])(
+      "%s.restoreAllMocks()",
+      (name, api) => {
+        for (const [, isVitest, fn, spyOn] of flavors) {
+          let value = 1;
+          const method = () => "original";
+          const obj = {
+            method,
+            get x() {
+              return value;
+            },
+            set x(next) {
+              value = next;
+            },
+          };
+          const descriptor = Object.getOwnPropertyDescriptor(obj, "x");
+          const withImplementation = fn(() => "initial").mockImplementation(() => "later");
+          const bare = fn().mockReturnValue(5);
+          const spy = spyOn(obj, "method").mockReturnValue("mocked");
+          const getter = spyOn(obj, "x", "get").mockReturnValue(9);
+          const setter = spyOn(obj, "x", "set").mockImplementation(() => {});
+          withImplementation();
+          bare();
+          obj.method();
+          obj.x = obj.x;
+
+          const returned = api.restoreAllMocks();
+          if (name !== "mock") expect(returned).toBe(api);
+
+          expect(obj.method).toBe(method);
+          expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(descriptor);
+          // mocks that are not spies are left as they are
+          expect(withImplementation).toHaveBeenCalledTimes(1);
+          expect(bare).toHaveBeenCalledTimes(1);
+          expect(withImplementation()).toBe("later");
+          expect(bare()).toBe(5);
+          // Vitest and Jest 30 leave the spies as they are too; Bun has always reset them
+          expect(spy).toHaveBeenCalledTimes(isVitest ? 1 : 0);
+          expect(getter).toHaveBeenCalledTimes(isVitest ? 1 : 0);
+          expect(setter).toHaveBeenCalledTimes(isVitest ? 1 : 0);
+          expect(spy()).toBe(isVitest ? "mocked" : undefined);
+        }
+      },
+    );
+
+    test.each(everyApi)("%s.clearAllMocks()", (_, api) => {
+      for (const [, , fn, spyOn] of flavors) {
+        const obj = { method: () => "original" };
+        const mocked = fn(() => "initial").mockImplementation(() => "later");
+        const spy = spyOn(obj, "method").mockReturnValue("mocked");
+        mocked();
+        obj.method();
+        expect(api.clearAllMocks()).toBe(api);
+        expect(mocked).not.toHaveBeenCalled();
+        expect(spy).not.toHaveBeenCalled();
+        expect(mocked()).toBe("later");
+        expect(obj.method()).toBe("mocked");
+      }
+    });
+
+    test.each(flavors)("%s: fn.mock across mockClear()", (_, isVitest, fn) => {
+      const mocked = fn();
+      const state = mocked.mock;
+      const { calls } = state;
+      mocked(1);
+      mocked.mockClear();
+      expect(mocked.mock === state).toBe(isVitest);
+      expect(mocked.mock.calls).not.toBe(calls);
+      expect(calls).toEqual([[1]]);
+      expect(state.calls).toEqual(isVitest ? [] : [[1]]);
+      mocked(2);
+      expect(mocked.mock.calls).toEqual([[2]]);
+      expect(mocked.mock.contexts).toEqual([undefined]);
+      expect(mocked.mock.instances).toEqual([undefined]);
+      expect(mocked.mock.results).toEqual([{ type: "return", value: undefined }]);
+      expect(mocked.mock.invocationCallOrder).toHaveLength(1);
+      expect(mocked.mock.lastCall).toEqual([2]);
+      expect(state.calls).toEqual(isVitest ? [[2]] : [[1]]);
+      expect(mocked).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(flavors)("%s: fn(mock)", (_, isVitest, fn) => {
+      const mocked = fn();
+      expect(fn(mocked) === mocked).toBe(isVitest);
+    });
+
+    test.each(flavors)("%s: what withImplementation() returns", (_, isVitest, fn) => {
+      const mocked = fn();
+      expect(mocked.withImplementation(() => 1, () => {})).toBe(isVitest ? mocked : undefined); // prettier-ignore
+    });
+
+    test.each(flavors)("%s: new on a function implementation", (_, isVitest, fn) => {
+      let newTarget, instancesDuring;
+      function implementation() {
+        newTarget = new.target;
+        instancesDuring = [...Mock.mock.instances];
+        this.w = 1;
+        return 5;
+      }
+      const Mock = fn(implementation);
+      const instance = new Mock();
+      expect(instance).toEqual({ w: 1 });
+      expect(instance).toBeInstanceOf(Mock);
+      expect(newTarget).toBe(isVitest ? Mock : undefined);
+      expect(instancesDuring).toEqual([isVitest ? undefined : instance]);
+      expect(Mock.mock.instances[0]).toBe(instance);
+      expect(Mock.mock.contexts[0]).toBe(instance);
+      expect(Mock.mock.results).toEqual([{ type: "return", value: isVitest ? instance : 5 }]);
+
+      const other = {};
+      const ReturnsObject = fn(function () {
+        return other;
+      });
+      expect(new ReturnsObject()).toBe(other);
+      expect(ReturnsObject.mock.instances[0] === other).toBe(isVitest);
+      expect(ReturnsObject.mock.results[0].value).toBe(other);
+
+      const Throws = fn(function () {
+        throw new Error("boom");
+      });
+      expect(() => new Throws()).toThrow("boom");
+      expect(Throws.mock.instances[0] === undefined).toBe(isVitest);
+    });
+
+    test.each(flavors)("%s: new without an implementation", (_, isVitest, fn) => {
+      const Mock = fn();
+      const instance = new Mock();
+      expect(instance).toBeInstanceOf(Mock);
+      expect(Mock.mock.results).toEqual([{ type: "return", value: isVitest ? instance : undefined }]);
+      const Primitive = fn().mockReturnValue(4);
+      const other = new Primitive();
+      expect(other).toBeInstanceOf(Primitive);
+      expect(Primitive.mock.results).toEqual([{ type: "return", value: isVitest ? other : 4 }]);
+    });
+
+    test.each(flavors)("%s: new on a class implementation", (_, isVitest, fn, spyOn) => {
+      class A {
+        constructor() {
+          this.newTarget = new.target;
+        }
+      }
+      for (const Mock of [fn(A), spyOn({ A }, "A")]) {
+        const instance = new Mock();
+        expect(instance).toBeInstanceOf(A);
+        expect(instance.newTarget).toBe(Mock);
+        expect(Mock.mock.instances[0]).toBe(instance);
+        expect(Mock.mock.results[0].value).toBe(instance);
+      }
+    });
+
+    test("vi.mockObject(value, { spy: true }) goes back to the originals", () => {
+      class K {
+        method() {
+          return "real";
+        }
+      }
+      const spied = vi.mockObject({ fn: () => "real", K }, { spy: true });
+      const instance = new spied.K();
+      spied.fn.mockReturnValue("mocked");
+      spied.K.prototype.method.mockReturnValue("mocked");
+      instance.method.mockReturnValue("mocked");
+
+      vi.restoreAllMocks();
+      expect(spied.fn()).toBe("mocked");
+
+      jest.resetAllMocks();
+      expect(spied.fn()).toBe("real");
+      expect(instance.method()).toBe("real");
+      expect(new spied.K().method()).toBe("real");
+      expect(new spied.K()).toBeInstanceOf(K);
+    });
+  });
+}

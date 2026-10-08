@@ -234,6 +234,7 @@ impl Collection {
                 buntest_strong,
                 global_this,
                 callback.get(),
+                &[],
                 false,
                 RefDataValue::Collection { active_scope: previous_scope },
                 &Timespec::EPOCH,

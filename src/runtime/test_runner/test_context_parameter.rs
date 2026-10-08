@@ -1,0 +1,95 @@
+//! What a callback asks of the test context: the properties its parameter destructures.
+
+use bun_ast::b::B;
+use bun_ast::expr::Data;
+use bun_ast::stmt::Data as StmtData;
+use bun_ast::{G, Stmt};
+use bun_jsc::JSValue;
+
+pub(crate) enum ContextParameter {
+    /// The function has no such parameter, or is not written in JavaScript.
+    Absent,
+    /// `({ a, b: c, d = 1 }) => {}` is `a`, `b`, `d`.
+    Properties(Vec<Box<[u8]>>),
+    /// `({ a, ...rest }) => {}`
+    RestProperty,
+    /// Not an object pattern: its name, if it is a plain parameter.
+    Other(Option<Box<[u8]>>),
+}
+
+unsafe extern "C" {
+    safe fn Bun__JSFunction__sourceFromParameters(
+        function: JSValue,
+        is_arrow_function: &mut bool,
+    ) -> bun_core::String;
+}
+
+impl ContextParameter {
+    /// The parameter at `index` of `function`.
+    pub(crate) fn of(function: JSValue, index: usize) -> ContextParameter {
+        let mut is_arrow_function = false;
+        let from_parameters = Bun__JSFunction__sourceFromParameters(function, &mut is_arrow_function);
+        if from_parameters.is_dead() {
+            return ContextParameter::Absent;
+        }
+        // Every function body parses as an async generator's, every arrow function's as an async one's.
+        let prefix: &[u8] = if is_arrow_function { b"(async " } else { b"(async function*" };
+        let text = [prefix, from_parameters.to_utf8().slice(), b")"].concat();
+
+        let arena = bun_alloc::Arena::new();
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+        let source = bun_ast::Source::init_path_string(&b"function.js"[..], &text[..]);
+        let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
+        options.features.no_macros = true;
+        options.suppress_warnings_about_weird_code = true;
+        let define = bun_js_parser::Define::default();
+        let mut log = bun_ast::Log::init();
+        bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena)
+            .and_then(|parser| {
+                parser.parse_only(|parsed| {
+                    let [Stmt { data: StmtData::SExpr(only), .. }] = parsed.stmts else {
+                        return ContextParameter::Absent;
+                    };
+                    let (args, has_rest_arg): (&[G::Arg], bool) = match &only.value.data {
+                        Data::EArrow(arrow) => (arrow.args.slice(), arrow.has_rest_arg),
+                        Data::EFunction(function) => (
+                            function.func.args.slice(),
+                            function.func.flags.contains(bun_ast::flags::Function::HasRestArg),
+                        ),
+                        _ => return ContextParameter::Absent,
+                    };
+                    let Some(arg) = args.get(index) else {
+                        return ContextParameter::Absent;
+                    };
+                    match &arg.binding.data {
+                        B::BObject(_) if has_rest_arg && index + 1 == args.len() => ContextParameter::Other(None),
+                        B::BObject(object) => Self::properties(object.properties.slice(), &arena),
+                        B::BIdentifier(id) if !(has_rest_arg && index + 1 == args.len()) => {
+                            ContextParameter::Other(Some(parsed.name_of(id.r#ref).into()))
+                        }
+                        _ => ContextParameter::Other(None),
+                    }
+                })
+            })
+            .unwrap_or(ContextParameter::Absent)
+    }
+
+    fn properties(properties: &[bun_ast::b::Property], arena: &bun_alloc::Arena) -> ContextParameter {
+        let mut names = Vec::with_capacity(properties.len());
+        for property in properties {
+            if property.flags.contains(bun_ast::flags::Property::IsSpread) {
+                return ContextParameter::RestProperty;
+            }
+            if property.flags.contains(bun_ast::flags::Property::IsComputed) {
+                continue;
+            }
+            if let Data::EString(name) = &property.key.data
+                && let Ok(name) = name.string(arena)
+            {
+                names.push(name.into());
+            }
+        }
+        ContextParameter::Properties(names)
+    }
+}

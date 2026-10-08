@@ -202,6 +202,8 @@ test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
 });
 ```
 
+`test.sequential` is an alias, for compatibility with Vitest.
+
 ## Retry failed tests
 
 Use the `--retry` flag to automatically retry failed tests up to a given number of times. If a test fails and then passes on a subsequent attempt, Bun reports it as passing.

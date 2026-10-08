@@ -1,4 +1,6 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import assert from "node:assert";
+import { isDeepStrictEqual } from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -76,6 +78,74 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       const areEqual = vm.runInContext("Bun.deepEquals(globalThis, mainGlobal)", ctx);
       expect(areEqual).toBe(false);
     });
+  });
+});
+
+describe("the global of a node:vm context compares by its properties", () => {
+  const notContextified = (properties: object) =>
+    Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), properties);
+  const contextified = (properties: object) => vm.runInContext("this", vm.createContext({ ...properties }));
+  const declared = (code: string) => {
+    const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+    vm.runInContext(code, context);
+    return context;
+  };
+  const same = notContextified({ a: 1 });
+
+  // loose: Bun.deepEquals(a, b), toEqual, assert.deepEqual. Node, Jest and vitest give these answers.
+  // strict: Bun.deepEquals(a, b, true), toStrictEqual. Equal class names are required.
+  // nodeStrict: assert.deepStrictEqual, util.isDeepStrictEqual. Node gives these answers.
+  it.each([
+    ["itself", same, same, true, true, true],
+    ["an object with the same properties", notContextified({ a: 1 }), { a: 1 }, true, false, false],
+    ["an object with no properties", notContextified({ a: 1 }), {}, false, false, false],
+    ["an object with another value", notContextified({ a: 1 }), { a: 2 }, false, false, false],
+    ["an object with one more property", notContextified({ a: 1 }), { a: 1, b: 2 }, false, false, false],
+    ["nothing added, an empty object", notContextified({}), {}, true, false, false],
+    ["nested values", notContextified({ o: { x: [1, 2] } }), { o: { x: [1, 2] } }, true, false, false],
+    ["a top-level var", declared("var a = 1"), { a: 1 }, true, false, false],
+    ["a top-level let", declared("let a = 1"), {}, true, false, false],
+    ["inside another object", { global: notContextified({ a: 1 }) }, { global: { a: 1 } }, true, false, false],
+    [
+      "another global with the same properties",
+      notContextified({ a: 1 }),
+      notContextified({ a: 1 }),
+      true,
+      true,
+      false,
+    ],
+    ["another global with another value", notContextified({ a: 1 }), notContextified({ a: 2 }), false, false, false],
+    ["contextified, an object with the same properties", contextified({ a: 1 }), { a: 1 }, true, false, true],
+    ["contextified, an object with another value", contextified({ a: 1 }), { a: 2 }, false, false, false],
+    ["contextified, another one", contextified({ a: 1 }), contextified({ a: 1 }), true, true, true],
+    ["contextified and not contextified", contextified({ a: 1 }), notContextified({ a: 1 }), true, true, false],
+    ["an array", notContextified({ 0: 1 }), [1], false, false, false],
+  ])("%s", (_, left, right, loose, strict, nodeStrict) => {
+    for (const [a, b] of [
+      [left, right],
+      [right, left],
+    ]) {
+      expect({
+        loose: Bun.deepEquals(a, b),
+        strict: Bun.deepEquals(a, b, true),
+        nodeStrict: isDeepStrictEqual(a, b),
+      }).toEqual({ loose, strict, nodeStrict });
+      (loose ? expect(a) : expect(a).not).toEqual(b);
+      (strict ? expect(a) : expect(a).not).toStrictEqual(b);
+      (loose ? assert.deepEqual : assert.notDeepEqual)(a, b);
+      (nodeStrict ? assert.deepStrictEqual : assert.notDeepStrictEqual)(a, b);
+    }
+  });
+
+  it("the main global is only equal to itself", () => {
+    for (const other of [{}, { ...globalThis }, notContextified({}), contextified({})]) {
+      expect({
+        loose: [Bun.deepEquals(globalThis, other), Bun.deepEquals(other, globalThis)],
+        strict: [Bun.deepEquals(globalThis, other, true), Bun.deepEquals(other, globalThis, true)],
+        nodeStrict: [isDeepStrictEqual(globalThis, other), isDeepStrictEqual(other, globalThis)],
+      }).toEqual({ loose: [false, false], strict: [false, false], nodeStrict: [false, false] });
+    }
+    expect(Bun.deepEquals(globalThis, globalThis, true)).toBe(true);
   });
 });
 

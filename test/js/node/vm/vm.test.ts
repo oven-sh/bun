@@ -6,6 +6,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1806,6 +1807,308 @@ describe("DONT_CONTEXTIFY", () => {
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
   });
+
+  test("the returned object is the context's globalThis", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect({
+      scriptThis: runInContext("this", ctx) === ctx,
+      globalThis: runInContext("globalThis", ctx) === ctx,
+      sloppyFunctionThis: runInContext("(function () { return this; })()", ctx) === ctx,
+      insideTheContext: runInContext("this === globalThis", ctx),
+      isContext: isContext(ctx),
+      createContextAgain: createContext(ctx) === ctx,
+    }).toEqual({
+      scriptThis: true,
+      globalThis: true,
+      sloppyFunctionThis: true,
+      insideTheContext: true,
+      isContext: true,
+      createContextAgain: true,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/43671
+  test("a private field stamped on the returned object is found on `this` inside the context", () => {
+    class ReturnValue {
+      constructor(value: object) {
+        return value;
+      }
+    }
+    class Brand extends ReturnValue {
+      #brand = true;
+      static has(value: object) {
+        return #brand in value;
+      }
+    }
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    new Brand(ctx);
+    expect({
+      handle: Brand.has(ctx),
+      scriptThis: Brand.has(runInContext("this", ctx)),
+      globalThis: Brand.has(runInContext("globalThis", ctx)),
+    }).toEqual({ handle: true, scriptThis: true, globalThis: true });
+  });
+
+  test("top-level declarations are kept between scripts", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    runInContext("var declaredVar = 3; function declaredFunction() { return declaredVar + 1; }", ctx);
+    runInContext("let declaredLet = 5; const declaredConst = 6; class DeclaredClass {}", ctx);
+    runInContext("(0, eval)('var evalVar = 7')", ctx);
+    runInContext("implicitGlobal = 8", ctx);
+    new Script("var scriptVar = 9").runInContext(ctx);
+
+    expect(
+      runInContext(
+        "[declaredVar, declaredFunction(), declaredLet, declaredConst, typeof DeclaredClass, evalVar, implicitGlobal, scriptVar].join()",
+        ctx,
+      ),
+    ).toBe("3,4,5,6,function,7,8,9");
+    expect(Object.keys(ctx).sort()).toEqual([
+      "declaredFunction",
+      "declaredVar",
+      "evalVar",
+      "implicitGlobal",
+      "scriptVar",
+    ]);
+    expect({
+      declaredVar: Object.getOwnPropertyDescriptor(ctx, "declaredVar"),
+      declaredFunction: ctx.declaredFunction(),
+      evalVar: Object.getOwnPropertyDescriptor(ctx, "evalVar"),
+      implicitGlobal: Object.getOwnPropertyDescriptor(ctx, "implicitGlobal"),
+    }).toEqual({
+      declaredVar: { value: 3, writable: true, enumerable: true, configurable: false },
+      declaredFunction: 4,
+      evalVar: { value: 7, writable: true, enumerable: true, configurable: true },
+      implicitGlobal: { value: 8, writable: true, enumerable: true, configurable: true },
+    });
+    expect(() => runInContext("let declaredLet", ctx)).toThrow(expect.objectContaining({ name: "SyntaxError" }));
+    expect(() => runInContext("missingName", ctx)).toThrow(expect.objectContaining({ name: "ReferenceError" }));
+  });
+
+  test("the global has no interceptors", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.deletable = 1;
+    runInContext("var notDeletable = 1", ctx);
+    const symbol = Symbol("symbol");
+    (ctx as any)[symbol] = 2;
+    ctx[0] = 3;
+    expect({
+      builtinsAreOwn: Object.getOwnPropertyNames(ctx).includes("Array"),
+      deleted: [runInContext("delete globalThis.deletable", ctx), "deletable" in ctx],
+      notDeleted: [runInContext("delete globalThis.notDeletable", ctx), "notDeletable" in ctx],
+      symbol: runInContext("Object.getOwnPropertySymbols(globalThis)", ctx)[0] === symbol,
+      index: runInContext("this[0]", ctx),
+    }).toEqual({
+      builtinsAreOwn: true,
+      deleted: [true, false],
+      notDeleted: [false, true],
+      symbol: true,
+      index: 3,
+    });
+
+    const prototype = { fromPrototype: 4 };
+    Object.setPrototypeOf(ctx, prototype);
+    expect(runInContext("fromPrototype", ctx)).toBe(4);
+    expect(runInContext("Object.getPrototypeOf(globalThis)", ctx)).toBe(prototype);
+  });
+
+  test("Bun.inspect() prints its enumerable properties", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect(Bun.inspect(ctx)).toBe("{}");
+    ctx.assigned = 1;
+    expect(Bun.inspect(ctx)).toBe("{\n  assigned: 1,\n}");
+
+    const declared = createContext(constants.DONT_CONTEXTIFY);
+    runInContext("var declaredVar = 2; let declaredLet = 3", declared);
+    expect(Bun.inspect(declared)).toBe("{\n  declaredVar: 2,\n}");
+
+    expect(Bun.inspect(runInContext("this", createContext({ contextified: 4 })))).toBe("{\n  contextified: 4,\n}");
+  });
+
+  test("nothing can be declared on a frozen global", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    runInContext("Object.freeze(globalThis)", ctx);
+    const typeError = expect.objectContaining({ name: "TypeError" });
+    expect(Object.isFrozen(ctx)).toBe(true);
+    expect(() => runInContext("var declaredVar = 1", ctx)).toThrow(typeError);
+    expect(() => runInContext("function declaredFunction() {}", ctx)).toThrow(typeError);
+    expect(runInContext("let declaredLet = 1; declaredLet", ctx)).toBe(1);
+  });
+
+  test.each([
+    ["vm.runInNewContext()", (code: string, context: any, options?: any) => runInNewContext(code, context, options)],
+    [
+      "Script#runInNewContext()",
+      (code: string, context: any, options?: any) => new Script(code).runInNewContext(context, options),
+    ],
+  ])("%s", (_, run) => {
+    expect(
+      run("var a = 1; function b() {} [this === globalThis, typeof a, typeof b].join()", constants.DONT_CONTEXTIFY),
+    ).toBe("true,number,function");
+    expect(isContext(run("globalThis", constants.DONT_CONTEXTIFY))).toBe(true);
+    expect(() => run("eval('1')", constants.DONT_CONTEXTIFY, { contextCodeGeneration: { strings: false } })).toThrow(
+      expect.objectContaining({ name: "EvalError" }),
+    );
+
+    // There is no object to make a new context around: the code runs in the context it is given.
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    run("var declaredVar = 1; let declaredLet = 2", ctx);
+    expect(ctx.declaredVar).toBe(1);
+    expect(run("declaredLet", ctx)).toBe(2);
+    expect(run("globalThis", ctx)).toBe(ctx);
+  });
+
+  test("compileFunction() takes it as parsingContext", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.inContext = 11;
+    expect(compileFunction("return inContext", [], { parsingContext: ctx })()).toBe(11);
+    expect(() => compileFunction("return 1", [], { parsingContext: constants.DONT_CONTEXTIFY as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  test("modules evaluate in it", async () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const module = new SourceTextModule("export default Function('return this')()", { context: ctx });
+    await module.link(() => {
+      throw new Error("unreachable");
+    });
+    await module.evaluate();
+    expect((module.namespace as any).default).toBe(ctx);
+  });
+});
+
+describe.each([
+  ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
+  ["a contextified object", () => createContext({})],
+])("a bare identifier in %s", (_, makeContext) => {
+  // What jsdom does: the accessors and the Proxy are made in the outer realm, in strict mode.
+  function receiverName(inner: object, receiver: unknown) {
+    if (receiver === inner) return "globalThis";
+    if (receiver === globalThis) return "the outer globalThis";
+    return typeof receiver;
+  }
+
+  test("reaches accessors on the global's prototype chain with globalThis as `this`", () => {
+    const ctx = makeContext();
+    const inner = runInContext("this", ctx);
+    const receivers: string[] = [];
+    const prototype = Object.create(runInContext("Object.prototype", ctx), {
+      strict: {
+        get() {
+          receivers.push("get " + receiverName(inner, this));
+        },
+        set() {
+          receivers.push("set " + receiverName(inner, this));
+        },
+      },
+      sloppy: {
+        get: Function(
+          "push",
+          "return function () { push(this); }",
+        )((receiver: unknown) => receivers.push("sloppy get " + receiverName(inner, receiver))),
+      },
+    });
+    Object.setPrototypeOf(inner, prototype);
+
+    runInContext("strict; typeof strict; sloppy; (function () { 'use strict'; strict; })(); strict = 1;", ctx);
+    expect(receivers).toEqual([
+      "get globalThis",
+      "get globalThis",
+      "sloppy get globalThis",
+      "get globalThis",
+      "set globalThis",
+    ]);
+  });
+
+  test("passes globalThis as the receiver to a Proxy on the global's prototype chain", () => {
+    const ctx = makeContext();
+    const inner = runInContext("this", ctx);
+    const traps: string[] = [];
+    const target = { fromProxy: 7 };
+    const proxy = new Proxy(target, {
+      get(target, key, receiver) {
+        if (typeof key === "string") traps.push(`get ${key} ${receiverName(inner, receiver)}`);
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value, receiver) {
+        traps.push(`set ${String(key)} ${receiverName(inner, receiver)}`);
+        return Reflect.set(target, key, value, receiver);
+      },
+    });
+    // The running program installs it: https://github.com/oven-sh/bun/issues/42331
+    inner.install = () => Object.setPrototypeOf(inner, Object.create(proxy));
+
+    expect(
+      runInContext(
+        `install();
+        var results = [fromProxy];
+        createdByStore = 9;
+        results.push(createdByStore, Object.hasOwn(globalThis, "createdByStore"));
+        fromProxy = 8;
+        results.push(fromProxy, Object.hasOwn(globalThis, "fromProxy"));
+        results.join()`,
+        ctx,
+      ),
+    ).toBe("7,9,true,8,true");
+    expect(traps).toEqual(["get fromProxy globalThis", "set createdByStore globalThis", "set fromProxy globalThis"]);
+    expect(target).toEqual({ fromProxy: 7 });
+  });
+});
+
+test.concurrent("DONT_CONTEXTIFY: `this` of an accessor does not depend on how hot the code is", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+      console.log(vm.runInContext(\`
+        var wrong = 0;
+        var accessor = {
+          get() { "use strict"; if (this !== globalThis) wrong++; return 1; },
+          set() { "use strict"; if (this !== globalThis) wrong++; },
+        };
+        Object.defineProperty(globalThis, "own", accessor);
+        Object.setPrototypeOf(globalThis, Object.create(Object.prototype, { inherited: accessor }));
+        (function () {
+          for (var i = 0; i < 10000; i++) {
+            own + inherited;
+            own = inherited = i;
+          }
+        })();
+        wrong\`, vm.createContext(vm.constants.DONT_CONTEXTIFY)));`,
+    ],
+    // The optimizing tiers take over at a fixed iteration instead of whenever their threads are done.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+});
+
+// Running code in it made the global its own contextified object: every lookup recursed until the stack overflowed.
+test.concurrent("the globalThis of a contextified context is not itself a context", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+      const inner = vm.runInContext("this", vm.createContext({ fromSandbox: 1 }));
+      console.log(vm.isContext(inner));
+      for (const run of [() => vm.runInContext("fromSandbox", inner), () => new vm.Script("fromSandbox").runInContext(inner)]) {
+        try {
+          console.log(run());
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+      }`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const rejected = `ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n`;
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n" + rejected + rejected, stderr: "", exitCode: 0 });
 });
 
 describe("defineProperty errors use vm-realm global", () => {

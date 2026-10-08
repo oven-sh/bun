@@ -136,13 +136,21 @@ cfg_jsc! {
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;
+    #[path = "dom_format.rs"]     pub(crate) mod dom_format;
     #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
+    #[path = "environment.rs"]    pub(crate) mod environment;
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
+    #[path = "module_mock.rs"]    mod module_mock;
     #[path = "Order.rs"]          pub(crate) mod order;
     #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
     #[path = "snapshot.rs"]       pub(crate) mod snapshot;
+    #[path = "test_context.rs"]   pub(crate) mod test_context;
+    #[path = "test_context_fixtures.rs"] pub(crate) mod test_context_fixtures;
+    #[path = "test_context_parameter.rs"] mod test_context_parameter;
+    #[path = "vi_utils.rs"]       pub(crate) mod vi_utils;
+    #[path = "vi_wait.rs"]        pub(crate) mod vi_wait;
 
     // expect.rs is the umbrella file (Expect struct + asymmetric matchers +
     // ExpectStatic + mock helpers); each `expect/to*.rs` adds one inherent
@@ -282,6 +290,7 @@ pub(crate) mod expect {
     pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
+        f.dom_printer = Some(super::dom_format::print_in_message);
         f
     }
 
@@ -422,7 +431,11 @@ pub(crate) mod expect {
     }
     impl<'a> FormatterTestExt for Formatter<'a> {
         #[inline]
-        fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
+        fn with_quote_strings(mut self, b: bool) -> Self {
+            self.quote_strings = b;
+            self.dom_printer = Some(super::dom_format::print_in_message);
+            self
+        }
     }
 
     // ── matcher modules ───────────────────────────────────────────────
@@ -435,6 +448,8 @@ pub(crate) mod expect {
         };
     }
     matchers! {
+        "addEqualityTesters.rs"                 => add_equality_testers,
+        "getState.rs"                           => get_state,
         "simple_matchers.rs"                    => simple_matchers,
         "toBe.rs"                               => to_be,
         "toBeArrayOfSize.rs"                    => to_be_array_of_size,
@@ -462,6 +477,8 @@ pub(crate) mod expect {
         "toEqual.rs"                            => to_equal,
         "toEqualIgnoringWhitespace.rs"          => to_equal_ignoring_whitespace,
         "toHaveBeenCalled.rs"                   => to_have_been_called,
+        "toHaveBeenCalledBefore.rs"             => to_have_been_called_before,
+        "toHaveBeenCalledExactlyOnceWith.rs"    => to_have_been_called_exactly_once_with,
         "toHaveBeenCalledOnce.rs"               => to_have_been_called_once,
         "toHaveBeenCalledTimes.rs"              => to_have_been_called_times,
         "toHaveBeenCalledWith.rs"               => to_have_been_called_with,
@@ -471,6 +488,8 @@ pub(crate) mod expect {
         "toHaveLength.rs"                       => to_have_length,
         "toHaveNthReturnedWith.rs"              => to_have_nth_returned_with,
         "toHaveProperty.rs"                     => to_have_property,
+        "toHaveResolved.rs"                     => to_have_resolved,
+        "toHaveResolvedWith.rs"                 => to_have_resolved_with,
         "toHaveReturned.rs"                     => to_have_returned,
         "toHaveReturnedWith.rs"                 => to_have_returned_with,
         "toIncludeRepeated.rs"                  => to_include_repeated,

@@ -1652,3 +1652,1458 @@ describe.concurrent("onResolve", () => {
     });
   });
 });
+
+describe.concurrent("onLoad that declines", () => {
+  const ways = ["statement", "export", "import", "require", "meta-require"];
+  const files = {
+    ...Object.fromEntries(ways.map(way => [`dep-${way}.ts`, `export default "${way} from disk" as string;`])),
+    "entry.ts": `
+      import statement from "./dep-statement.ts";
+      export { default as exported } from "./dep-export.ts";
+      import * as self from "./entry.ts";
+      function attempt(load) {
+        try { return load(); } catch (error) { return error.name + ": " + error.message.replace(import.meta.dir, "").replaceAll("\\\\", "/"); }
+      }
+      console.log(statement);
+      console.log(self.exported);
+      console.log((await import("./dep-import.ts")).default);
+      console.log(attempt(() => require("./dep-require.ts").default));
+      console.log(attempt(() => import.meta.require("./dep-meta-require.ts").default));
+      console.log(globalThis.asked.join());
+    `,
+  };
+  async function run(
+    setup: string,
+    extra: Record<string, string> = {},
+    args = ["--preload", "./plugin.ts", "entry.ts"],
+  ) {
+    using dir = tempDir("plugin-onload-declines", {
+      ...files,
+      ...extra,
+      "plugin.ts": `
+        import { basename } from "node:path";
+        globalThis.asked = [];
+        function asked(name, callback) {
+          return args => (globalThis.asked.push(name + " " + basename(args.path).replace(/^dep-|\\.ts$/g, "")), callback(args));
+        }
+        Bun.plugin({ name: "declines", setup(build) { ${setup} } });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  const settled = [
+    ["undefined", "() => undefined"],
+    ["null", "() => null"],
+    ["nothing", "() => {}"],
+    ["a promise fulfilled with undefined", "() => Promise.resolve(undefined)"],
+    ["a promise fulfilled with null", "() => Promise.resolve(null)"],
+    ["the promise of an async function that does not await", "async () => {}"],
+  ];
+  const pending = [
+    ["a promise that is pending, then fulfilled with undefined", "async () => { await 0; }"],
+    ["a promise that is pending, then fulfilled with null", "async () => { await Bun.sleep(1); return null; }"],
+  ];
+  const unsupported = (way: string) =>
+    `TypeError: require() async module "/dep-${way}.ts" is unsupported. use "await import()" instead.`;
+
+  describe.each([...settled.map(row => [...row, false] as const), ...pending.map(row => [...row, true] as const)])(
+    "with %s",
+    (_, declines, isPending) => {
+      it("has the file loaded as if no plugin had matched", async () => {
+        expect(await run(`build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("only", ${declines}));`)).toEqual({
+          stdout: [
+            "statement from disk",
+            "export from disk",
+            "import from disk",
+            isPending ? unsupported("require") : "require from disk",
+            isPending ? unsupported("meta-require") : "meta-require from disk",
+            ways.map(way => "only " + way).join(),
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it("has the next matching callback asked, in the order they were registered", async () => {
+        const setup = `
+          build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("1st", ${declines}));
+          build.onLoad({ filter: /does-not-match/ }, asked("2nd", () => ({ contents: "export default '2nd'", loader: "ts" })));
+          build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("3rd", ${declines}));
+          build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("4th", ({ path }) => ({ contents: "export default " + JSON.stringify(basename(path) + " from the 4th"), loader: "ts" })));
+          build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("5th", () => ({ contents: "export default '5th'", loader: "ts" })));
+        `;
+        expect(await run(setup)).toEqual({
+          stdout: [
+            "dep-statement.ts from the 4th",
+            "dep-export.ts from the 4th",
+            "dep-import.ts from the 4th",
+            isPending ? unsupported("require") : "dep-require.ts from the 4th",
+            isPending ? unsupported("meta-require") : "dep-meta-require.ts from the 4th",
+            expect.any(String),
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    },
+  );
+
+  it("asks each callback once for each file, and none after the one that answers", async () => {
+    const setup = `
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("sync", () => {}));
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("pending", async () => { await 0; }));
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("sync again", () => null));
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("pending again", async () => { await Bun.sleep(1); }));
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("answers", async () => { await 0; return { exports: { default: "answered" }, loader: "object" }; }));
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("not asked", () => {}));
+    `;
+    const entry = `console.log((await import("./dep-import.ts")).default); console.log(globalThis.asked.join());`;
+    expect(await run(setup, { "entry.ts": entry })).toEqual({
+      stdout: ["answered", "sync import,pending import,sync again import,pending again import,answers import"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each([
+    ["returned", "value => value"],
+    ["in a fulfilled promise", "value => Promise.resolve(value)"],
+    ["in a promise that is pending", "async value => { await 0; return value; }"],
+  ])("is not what anything else that is not an object does: %s", async (_, wrap) => {
+    const names = ["number", "zero", "false", "true", "empty-string", "string", "bigint", "symbol"];
+    const setup = `
+      const wrap = ${wrap};
+      const values = { number: 42, zero: 0, false: false, true: true, "empty-string": "", string: "contents", bigint: 10n, symbol: Symbol() };
+      build.onLoad({ filter: /\\.value$/ }, asked("1st", () => {}));
+      build.onLoad({ filter: /\\.value$/ }, asked("2nd", ({ path }) => wrap(values[basename(path, ".value")])));
+      build.onLoad({ filter: /\\.value$/ }, asked("3rd", () => ({ contents: "", loader: "js" })));
+    `;
+    const entry = `
+      for (const name of ${JSON.stringify(names)})
+        await import("./" + name + ".value").then(
+          () => console.log(name, "loaded"),
+          error => console.log(name, error.name + ": " + error.message),
+        );
+      console.log(globalThis.asked.join());
+    `;
+    const extra = { "entry.ts": entry, ...Object.fromEntries(names.map(name => [name + ".value", ""])) };
+    expect(await run(setup, extra)).toEqual({
+      stdout: [
+        ...names.map(name => name + " TypeError: onLoad() expects an object returned"),
+        names.map(name => `1st ${name}.value,2nd ${name}.value`).join(),
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each([
+    ["throws", "() => { throw new Error('from the 2nd'); }"],
+    ["returns a rejected promise", "() => Promise.reject(new Error('from the 2nd'))"],
+    ["returns a promise that is pending, then rejected", "async () => { await 0; throw new Error('from the 2nd'); }"],
+  ])("leaves the import to fail when the next callback %s", async (_, fails) => {
+    for (const declines of ["() => {}", "async () => { await 0; }"]) {
+      const setup = `
+        build.onLoad({ filter: /dep-import\\.ts$/ }, asked("1st", ${declines}));
+        build.onLoad({ filter: /dep-import\\.ts$/ }, asked("2nd", ${fails}));
+        build.onLoad({ filter: /dep-import\\.ts$/ }, asked("3rd", () => {}));
+      `;
+      const entry = `
+        await import("./dep-import.ts").catch(error => console.log(error.message));
+        console.log(globalThis.asked.join());
+      `;
+      expect(await run(setup, { "entry.ts": entry })).toEqual({
+        stdout: ["from the 2nd", "1st import,2nd import"],
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
+
+  // What is thrown is all that happens: nothing is loaded, and nothing is rejected, once the promise is settled.
+  it("later than require() can wait for leaves nothing behind", async () => {
+    const setup = `
+      globalThis.promises = [];
+      build.onLoad({ filter: /(dep-require|syntax-error)\\.ts$/ }, asked("only", () => {
+        promises.push((async () => { await 0; })());
+        return promises.at(-1);
+      }));
+    `;
+    const entry = `
+      for (const specifier of ["./dep-require.ts", "./syntax-error.ts"])
+        try { require(specifier); } catch (error) { console.log(error.name); }
+      await Promise.all(promises);
+      console.log(Object.keys(require.cache).filter(key => /dep-require|syntax-error/.test(key)));
+    `;
+    expect(await run(setup, { "entry.ts": entry, "syntax-error.ts": "export default (;" })).toEqual({
+      stdout: ["TypeError", "TypeError", "[]"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("keeps the type the file is imported with", async () => {
+    const setup = `build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("only", process.env.PENDING ? async () => { await 0; } : () => {}));`;
+    const entry = `
+      import statement from "./dep-statement.ts" with { type: "text" };
+      console.log(statement);
+      console.log((await import("./dep-import.ts", { with: { type: "text" } })).default);
+      console.log((await import("./dep-import.ts")).default);
+    `;
+    for (const PENDING of [undefined, "1"]) {
+      using dir = tempDir("plugin-onload-declines-type", {
+        ...files,
+        "entry.ts": entry,
+        "plugin.ts": `function asked(_, callback) { return callback; } Bun.plugin({ name: "declines", setup(build) { ${setup} } });`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./plugin.ts", "entry.ts"],
+        cwd: String(dir),
+        env: { ...bunEnv, PENDING },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `export default "statement from disk" as string;\nexport default "import from disk" as string;\nimport from disk\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
+
+  it("keeps the Bun.ModuleGraph the file is imported into", async () => {
+    const setup = `build.onLoad({ filter: /in-graph\\.[cm]js$/ }, asked("only", async () => { await 0; }));`;
+    const entry = `
+      const graph = new Bun.ModuleGraph();
+      console.log((await graph.import(import.meta.dir + "/in-graph.cjs")).default);
+      console.log((await graph.import(import.meta.dir + "/in-graph.mjs")).default);
+      console.log(Object.keys(require.cache).filter(key => key.includes("in-graph")));
+    `;
+    const extra = {
+      "entry.ts": entry,
+      "in-graph.cjs": `module.exports = "CommonJS";`,
+      "in-graph.mjs": `export default "ES module";`,
+    };
+    expect(await run(setup, extra)).toEqual({ stdout: ["CommonJS", "ES module", "[]"], stderr: "", exitCode: 0 });
+  });
+
+  // Only the request that waits holds on to them.
+  it("has the callbacks that matched asked after Bun.plugin.clearAll() and a collection", async () => {
+    const setup = `
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("1st", async () => {
+        Bun.plugin.clearAll();
+        await Bun.sleep(1);
+        Bun.gc(true);
+      }));
+      for (const name of ["2nd", "3rd"])
+        build.onLoad({ filter: /dep-import\\.ts$/ }, asked(name, async () => {
+          await Bun.sleep(1);
+          Bun.gc(true);
+        }));
+      build.onLoad({ filter: /dep-import\\.ts$/ }, asked("4th", () => ({ exports: { default: Buffer.alloc(64, "4").toString() }, loader: "object" })));
+    `;
+    const entry = `
+      console.log((await import("./dep-import.ts")).default);
+      console.log((await import("./dep-require.ts")).default);
+      console.log(globalThis.asked.join());
+    `;
+    expect(await run(setup, { "entry.ts": entry })).toEqual({
+      stdout: [Buffer.alloc(64, "4").toString(), "require from disk", "1st import,2nd import,3rd import,4th import"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("leaves a builtin to be loaded under bun test, where plugins are asked about builtins", async () => {
+    const setup = `
+      build.onLoad({ filter: /.*/, namespace: "node" }, asked("sync", () => {}));
+      build.onLoad({ filter: /.*/, namespace: "node" }, asked("pending", async () => { await 0; }));
+    `;
+    const test = `
+      import { expect, test } from "bun:test";
+      import { escape } from "node:querystring";
+      test("builtins", async () => {
+        expect(escape("a b")).toBe("a%20b");
+        expect((await import("node:zlib")).gzipSync).toBeFunction();
+        expect(globalThis.asked).toEqual(["sync querystring", "pending querystring", "sync zlib", "pending zlib"]);
+      });
+    `;
+    const { stderr, exitCode } = await run(setup, { "builtins.test.ts": test }, [
+      "test",
+      "--preload",
+      "./plugin.ts",
+      "./builtins.test.ts",
+    ]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("in a namespace leaves nothing to load", async () => {
+    const setup = `build.onLoad({ filter: /.*/, namespace: "declined" }, asked("only", ({ path }) => (path === "pending" ? Bun.sleep(1) : undefined)));`;
+    const entry = `
+      for (const specifier of ["declined:sync", "declined:pending"])
+        await import(specifier).catch(error => console.log(error.message));
+    `;
+    expect(await run(setup, { "entry.ts": entry })).toEqual({
+      stdout: [`ENOENT reading "declined:sync"`, `ENOENT reading "declined:pending"`],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// A file that no onLoad serves is transpiled off the main thread, so microtasks alone do not finish its import().
+describe.concurrent("a graph of modules is loaded the way it is without plugins", () => {
+  // Module i imports 3i+1, 3i+2 and 3i+3. Its value is i plus theirs.
+  const count = 40;
+  const children = (i: number) => [3 * i + 1, 3 * i + 2, 3 * i + 3].filter(child => child < count);
+  const source = (i: number, own: number) =>
+    children(i)
+      .map(child => `import { value as v${child} } from "./m${child}";\n`)
+      .join("") + `export const value: number = ${[own, ...children(i).map(child => "v" + child)].join(" + ")};\n`;
+  const total = (own: (i: number) => number) => Array.from({ length: count }, (_, i) => own(i)).reduce((a, b) => a + b);
+  const modules = Object.fromEntries(Array.from({ length: count }, (_, i) => [`src/m${i}.ts`, source(i, i)]));
+  const serve = `
+    const source = ${source}, children = ${children}, count = ${count};
+    function serve(path) {
+      const i = Number(/m(\\d+)\\.ts$/.exec(path)[1]);
+      return i % 4 === 0 ? { contents: source(i, i + 1000), loader: "ts" } : undefined;
+    }
+  `;
+  const fromDisk = total(i => i);
+  const someServed = total(i => (i % 4 === 0 ? i + 1000 : i));
+  const loadedOffThread = (file: string) => `
+    let loaded = false;
+    const promise = import("./${file}").then(() => { loaded = true; });
+    for (let i = 0; i < 10_000; i++) await undefined;
+    const byMicrotasksAlone = loaded;
+    await promise;
+  `;
+
+  describe.each([
+    ["only an onResolve", `build.onResolve({ filter: /\\.never$/ }, () => {});`, fromDisk],
+    ["an onLoad whose filter matches nothing", `build.onLoad({ filter: /\\.never$/ }, () => {});`, fromDisk],
+    ["an onLoad that declines every file", `build.onLoad({ filter: /\\.ts$/ }, () => {});`, fromDisk],
+    [
+      "an onLoad that declines every file with a promise that is pending",
+      `build.onLoad({ filter: /\\.ts$/ }, async () => { await 0; });`,
+      fromDisk,
+    ],
+    [
+      "an onLoad that serves some files",
+      serve + `build.onLoad({ filter: /m\\d+\\.ts$/ }, ({ path }) => serve(path));`,
+      someServed,
+    ],
+    [
+      "an onLoad that serves some files with a promise that is pending",
+      serve + `build.onLoad({ filter: /m\\d+\\.ts$/ }, async ({ path }) => { await 0; return serve(path); });`,
+      someServed,
+    ],
+  ])("with %s", (_, setup, expected) => {
+    const names = ["a", "b", "c"];
+    const files = {
+      ...modules,
+      "plugin.ts": `Bun.plugin({ name: "plugin", setup(build) { ${setup} } });`,
+      "late.ts": `export {};`,
+      "entry.ts": `
+        import { value } from "./src/m0";
+        ${loadedOffThread("late.ts")}
+        console.log(JSON.stringify({ value, byMicrotasksAlone, loaded }));
+      `,
+      // (Each its own: --isolate keeps what one file has loaded for the next.)
+      ...Object.fromEntries(names.map(name => [`late-${name}.ts`, `export {};`])),
+      ...Object.fromEntries(
+        names.map(name => [
+          `${name}.test.ts`,
+          `
+            import { expect, test } from "bun:test";
+            import { value } from "./src/m0";
+            test("${name}", async () => {
+              ${loadedOffThread(`late-${name}.ts`)}
+              expect({ value, byMicrotasksAlone, loaded }).toEqual({ value: ${expected}, byMicrotasksAlone: false, loaded: true });
+            });
+          `,
+        ]),
+      ),
+    };
+    async function run(args: string[]) {
+      using dir = tempDir("plugin-onload-graph", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it("in a script", async () => {
+      expect(await run(["--preload", "./plugin.ts", "entry.ts"])).toEqual({
+        stdout: JSON.stringify({ value: expected, byMicrotasksAlone: false, loaded: true }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.each([[[]], [["--isolate"]], [["--parallel=2"]]])("in bun test %j", async flags => {
+      const { stderr, exitCode } = await run(["test", "--preload", "./plugin.ts", ...flags]);
+      expect(stderr).toContain(" 3 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
+describe.concurrent("onResolve is asked about a specifier with no extension and no namespace", () => {
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-onresolve-every-specifier", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  const alias = {
+    "preload.ts": `
+      import { plugin } from "bun";
+      plugin({ name: "alias", setup(b) { b.onResolve({ filter: /^aliased$/ }, () => ({ path: import.meta.dir + "/target.ts" })); } });
+    `,
+    "target.ts": `export const which = "the target";`,
+    "script.ts": `console.log((await import("aliased")).which);`,
+    "x.test.ts": `
+      import { expect, test } from "bun:test";
+      test("alias", async () => {
+        expect((await import("aliased")).which).toBe("the target");
+      });
+    `,
+  };
+  it("in a script", async () => {
+    expect(await run(alias, ["--preload", "./preload.ts", "script.ts"])).toEqual({
+      stdout: ["the target"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+  it("in bun test", async () => {
+    const { stderr, exitCode } = await run(alias, ["test", "--preload", "./preload.ts", "x.test.ts"]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  const specifiers = ["aliased", "@/aliased", "@scope/aliased", "./relative-no-ext", "../up", "/absolute/no-ext"];
+  const targets = ["bare", "at", "scoped", "relative", "up", "absolute"];
+  const files = {
+    ...Object.fromEntries(targets.map(target => [`targets/${target}.ts`, `export default "${target}";`])),
+    "plugin.ts": `
+      const targets = ${JSON.stringify(Object.fromEntries(specifiers.map((specifier, i) => [specifier, targets[i]])))};
+      Bun.plugin({
+        name: "aliases",
+        setup(build) {
+          build.onResolve({ filter: /aliased$|no-ext$|^\\.\\.\\/up$/ }, ({ path, importer }) => {
+            console.log("onResolve", path, "from", importer.slice(import.meta.dir.length + 1).replaceAll("\\\\", "/"));
+            return { path: import.meta.dir + "/targets/" + targets[path] + ".ts" };
+          });
+        },
+      });
+    `,
+  };
+  const S = `const S = ${JSON.stringify(specifiers)};\nconst name = path => require("node:path").basename(path);\n`;
+  it.each([
+    [
+      "an import statement",
+      "entry.mjs",
+      specifiers.map((specifier, i) => `import $${i} from "${specifier}";\n`).join("") +
+        `console.log([${specifiers.map((_, i) => "$" + i)}].join());`,
+      targets.join(),
+    ],
+    [
+      "export from",
+      "entry.mjs",
+      specifiers.map((specifier, i) => `export { default as $${i} } from "${specifier}";\n`).join("") +
+        `import * as self from "./entry.mjs";\nconsole.log(Object.values(self).join());`,
+      targets.join(),
+    ],
+    ["import()", "entry.mjs", S + `for (const s of S) console.log((await import(s)).default);`, null],
+    ["require()", "entry.cjs", S + `for (const s of S) console.log(require(s).default);`, null],
+    ["module.require()", "entry.cjs", S + `for (const s of S) console.log(module.require(s).default);`, null],
+    ["import.meta.require()", "entry.mjs", S + `for (const s of S) console.log(import.meta.require(s).default);`, null],
+    ["require.resolve()", "entry.cjs", S + `for (const s of S) console.log(name(require.resolve(s), ".ts"));`, ".ts"],
+    [
+      "require.resolve() with paths",
+      "entry.cjs",
+      S + `for (const s of S) console.log(name(require.resolve(s, { paths: ["/not/there"] })));`,
+      ".ts",
+    ],
+    ["import.meta.resolve()", "entry.mjs", S + `for (const s of S) console.log(name(import.meta.resolve(s)));`, ".ts"],
+    [
+      "import.meta.resolveSync()",
+      "entry.mjs",
+      S + `for (const s of S) console.log(name(import.meta.resolveSync(s)));`,
+      ".ts",
+    ],
+    [
+      "Bun.resolveSync()",
+      "entry.mjs",
+      S + `for (const s of S) console.log(name(Bun.resolveSync(s, import.meta.dir)));`,
+      ".ts",
+    ],
+    [
+      "Bun.resolve()",
+      "entry.mjs",
+      S + `for (const s of S) console.log(name(await Bun.resolve(s, import.meta.dir)));`,
+      ".ts",
+    ],
+  ])("once, by %s", async (_, name, source, expected) => {
+    // Bun.resolveSync() and Bun.resolve() are given a directory.
+    const importer = source.includes("import.meta.dir") ? "src/sub" : "src/sub/" + name;
+    const asked = specifiers.map(specifier => `onResolve ${specifier} from ${importer}`);
+    expect(
+      await run({ ...files, ["src/sub/" + name]: source }, ["--preload", "./plugin.ts", "src/sub/" + name]),
+    ).toEqual({
+      stdout:
+        expected === null || expected === ".ts"
+          ? specifiers.flatMap((_, i) => [asked[i], targets[i] + (expected ?? "")])
+          : [...asked, expected],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and import.meta.resolve() of a path answers what it does without plugins when onResolve declines", async () => {
+    const source = `
+      Bun.plugin({ name: "declines", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => { console.log("onResolve", path); }); } });
+      for (const specifier of ["./not-there", "../not-there.js", "/not/there", "file:///not/there.js"])
+        console.log(import.meta.resolve(specifier).replace(Bun.pathToFileURL(import.meta.dir).href, "file://<dir>"));
+    `;
+    expect(await run({ "src/entry.mjs": source }, ["src/entry.mjs"])).toEqual({
+      stdout: [
+        "onResolve ./not-there",
+        "file://<dir>/not-there",
+        "onResolve ../not-there.js",
+        expect.stringMatching(/^file:.*\/not-there\.js$/),
+        "onResolve /not/there",
+        expect.stringMatching(/^file:\/\/\/(\w:\/)?not\/there$/),
+        expect.stringMatching(/^onResolve (\w:)?[\\/]not[\\/]there\.js$/),
+        "file:///not/there.js",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("once when its answer matches its own filter", async () => {
+    const files = {
+      "node_modules/my-pkg/package.json": `{ "name": "my-pkg", "main": "index.js" }`,
+      "node_modules/my-pkg/index.js": `module.exports = "my-pkg";`,
+      "node_modules/my-pkg/dist/index.js": `module.exports = "my-pkg/dist";`,
+      "plugin.ts": `
+        Bun.plugin({ name: "dist", setup(build) { build.onResolve({ filter: /^my-pkg/ }, ({ path }) => (console.log("onResolve", path), { path: path + "/dist" })); } });
+      `,
+      "entry.mjs": `
+        import statement from "my-pkg";
+        console.log(statement, (await import("my-pkg")).default, import.meta.require("my-pkg"));
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "entry.mjs"])).toEqual({
+      stdout: ["onResolve my-pkg", "onResolve my-pkg", "onResolve my-pkg", "my-pkg/dist my-pkg/dist my-pkg/dist"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // As in the documentation of onLoad.
+  it("and can move it into a namespace", async () => {
+    const source = `
+      Bun.plugin({
+        name: "env plugin",
+        setup(build) {
+          build.onResolve({ filter: /^env$/ }, args => ({ path: args.path, namespace: "env" }));
+          build.onLoad({ filter: /env/, namespace: "env" }, () => ({
+            contents: "export default " + JSON.stringify({ FOO: process.env.FOO }),
+            loader: "js",
+          }));
+        },
+      });
+      console.log((await import("env")).default.FOO, require("env").default.FOO, require.resolve("env"));
+    `;
+    using dir = tempDir("plugin-onresolve-env", { "entry.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, FOO: "bar" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "bar bar env:env\n", stderr: "", exitCode: 0 });
+  });
+
+  const packages = {
+    "node_modules/dep-pkg/package.json": `{ "name": "dep-pkg", "main": "main.js" }`,
+    "node_modules/dep-pkg/main.js": `module.exports = "dep-pkg";`,
+    "lib/foo.js": `module.exports = "lib/foo";`,
+    "index.js": `module.exports = "index";`,
+    "sub/index.js": `module.exports = "sub/index";`,
+  };
+
+  it("and answering with what it was asked about changes nothing", async () => {
+    const files = {
+      ...packages,
+      "plugin.ts": `
+        globalThis.asked = [];
+        Bun.plugin({ name: "no-op", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => (asked.push(path.replace(import.meta.dir, "").replaceAll("\\\\", "/")), { path })); } });
+      `,
+      "sub/entry.cjs": `
+        asked.length = 0;
+        for (const specifier of ["dep-pkg", "..", ".", "./", "../", "../lib/foo", require("node:path").join(__dirname, "../lib/foo"), "not-there", "./not-there", "...", " "])
+          try { console.log(require(specifier)); } catch (error) { console.log(error.message.split("\\n")[0]); }
+        import("dep-pkg").then(({ default: dep }) => console.log(dep, JSON.stringify(asked)));
+      `,
+    };
+    expect(await run(files, ["--no-install", "--preload", "./plugin.ts", "sub/entry.cjs"])).toEqual({
+      stdout: [
+        "dep-pkg",
+        "index",
+        "sub/index",
+        "sub/index",
+        "index",
+        "lib/foo",
+        "lib/foo",
+        "Cannot find module 'not-there'",
+        "Cannot find module './not-there'",
+        "Cannot find module '...'",
+        "Cannot find module ' '",
+        "dep-pkg " +
+          JSON.stringify([
+            ...["dep-pkg", "..", ".", "./", "../", "../lib/foo", "/lib/foo", "not-there", "./not-there", "...", " "],
+            "dep-pkg",
+          ]),
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("but not about the name of a builtin", async () => {
+    const files = {
+      ...packages,
+      "plugin.ts": `
+        Bun.plugin({ name: "logs", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => { console.log("onResolve", path); }); } });
+      `,
+      "entry.mjs": `
+        import fs from "fs";
+        import { sleep } from "bun";
+        console.log("loaded");
+        require("os"); await import("path");
+        console.log(["fs", "fs/promises", "ws", "undici", "bun", "node:fs", "bun:jsc"].map(name => require.resolve(name)).join());
+        await import("node:os"); require("bun:jsc");
+        console.log(import.meta.resolve("path"), Bun.resolveSync("zlib", import.meta.dir));
+        console.log(require("dep-pkg"));
+      `,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", "entry.mjs"]);
+    expect({ stdout: stdout.slice(1), stderr, exitCode }).toEqual({
+      // (After the entry point.)
+      stdout: [
+        "loaded",
+        "fs,fs/promises,ws,undici,bun,node:fs,bun:jsc",
+        "node:path node:zlib",
+        "onResolve dep-pkg",
+        "dep-pkg",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A catch-all that loads a package when it is first called would be called about that package, and so on.
+  it("but not about what a callback, or a package it calls, loads while it runs", async () => {
+    const files = {
+      ...packages,
+      "node_modules/helper-pkg/package.json": `{ "name": "helper-pkg", "main": "index.js" }`,
+      "node_modules/helper-pkg/index.js": `let lazy; exports.help = path => (lazy ??= require("./lib/lazy"))(path);`,
+      "node_modules/helper-pkg/lib/lazy.js": `module.exports = path => (path === "aliased" ? { path: "dep-pkg" } : undefined);`,
+      "plugin.ts": `
+        Bun.plugin({
+          name: "catch-all",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, ({ path }) => {
+              console.log("onResolve", path);
+              return require("helper-pkg").help(path);
+            });
+          },
+        });
+      `,
+      "entry.cjs": `console.log(require("aliased"), require("./lib/foo"), require("helper-pkg").help("aliased").path);`,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", "entry.cjs"]);
+    expect({ stdout: stdout.slice(1), stderr, exitCode }).toEqual({
+      stdout: ["onResolve aliased", "onResolve ./lib/foo", "onResolve helper-pkg", "dep-pkg lib/foo dep-pkg"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and what a callback resolves is apart from the paths of the require.resolve() that asks", async () => {
+    const files = {
+      ...packages,
+      "x.js": ``,
+      "other/x.js": ``,
+      "other/node_modules/only-there/package.json": `{ "name": "only-there", "main": "main.js" }`,
+      "other/node_modules/only-there/main.js": ``,
+      "plugin.ts": `
+        const short = path => path.slice(import.meta.dir.length + 1).replaceAll("\\\\", "/");
+        Bun.plugin({
+          name: "resolves",
+          setup(build) {
+            build.onResolve({ filter: /^(\\.\\/x|\\.\\/x\\.js|only-there)$/ }, ({ path }) => {
+              console.log("onResolve", path, short(require.resolve("./x")), short(require.resolve("./foo", { paths: [import.meta.dir + "/lib"] })));
+            });
+          },
+        });
+      `,
+      "entry.cjs": `
+        const short = path => path.slice(__dirname.length + 1).replaceAll("\\\\", "/");
+        for (const specifier of ["./x", "./x.js", "only-there"])
+          console.log(short(require.resolve(specifier, { paths: [__dirname + "/other"] })));
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "entry.cjs"])).toEqual({
+      stdout: [
+        "onResolve ./x x.js lib/foo.js",
+        "other/x.js",
+        "onResolve ./x.js x.js lib/foo.js",
+        "other/x.js",
+        "onResolve only-there x.js lib/foo.js",
+        "other/node_modules/only-there/main.js",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("in the namespace that is its prefix, then in the namespace file as it is written", async () => {
+    const source = `
+      Bun.plugin({
+        name: "namespaces",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "other" }, ({ path }) => { console.log("other", path); });
+          build.onResolve({ filter: /.*/, namespace: "file" }, ({ path }) => { console.log("file", path); });
+        },
+      });
+      for (const specifier of ["bare", "./relative", "other:bare", "file:bare"])
+        await import(specifier).catch(() => {});
+    `;
+    expect(await run({ "entry.mjs": source }, ["--no-install", "entry.mjs"])).toEqual({
+      stdout: ["file bare", "file ./relative", "other bare", "file other:bare", "file bare"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("with a prefix, by a filter that matches the whole of it", async () => {
+    const source = `
+      Bun.plugin({
+        name: "virtual",
+        setup({ onResolve, onLoad }) {
+          onResolve({ filter: /^virtual:/ }, ({ path }) => (console.log("onResolve", path), { path, namespace: "v" }));
+          onLoad({ filter: /.*/, namespace: "v" }, ({ path }) => ({ exports: { path }, loader: "object" }));
+        },
+      });
+      console.log((await import("virtual:thing")).path, require("virtual:other.js").path, require.resolve("virtual:thing"));
+    `;
+    expect(await run({ "entry.ts": source }, ["entry.ts"])).toEqual({
+      stdout: [
+        "onResolve virtual:thing",
+        "onResolve virtual:other.js",
+        "onResolve virtual:thing",
+        "virtual:thing virtual:other.js v:virtual:thing",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("that names a package or a path in it", async () => {
+    const source = `
+      Bun.plugin({
+        name: "intercept",
+        setup(build) {
+          build.onResolve({ filter: /^@somemodule\\/foo(\\/.*)?$/ }, args => ({ path: args.path, namespace: "host" }));
+          build.onLoad({ filter: /.*/, namespace: "host" }, args => ({ exports: { path: args.path }, loader: "object" }));
+        },
+      });
+      console.log((await import("@somemodule/foo")).path, (await import("@somemodule/foo/bar")).path);
+    `;
+    expect(await run({ "entry.ts": source }, ["entry.ts"])).toEqual({
+      stdout: ["@somemodule/foo @somemodule/foo/bar"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("again after a callback has thrown", async () => {
+    const source = `
+      Bun.plugin({
+        name: "throws",
+        setup(build) {
+          build.onResolve({ filter: /^throws$/ }, () => { throw new Error("from onResolve"); });
+          build.onResolve({ filter: /^aliased$/ }, () => ({ path: "./target" }));
+        },
+      });
+      try { require("throws"); } catch (error) { console.log(error.message); }
+      console.log(require("aliased"));
+    `;
+    expect(await run({ "entry.cjs": source, "target.js": `module.exports = "the target";` }, ["entry.cjs"])).toEqual({
+      stdout: ["from onResolve", "the target"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and can answer with a file it has just written", async () => {
+    const source = `
+      import { writeFileSync } from "node:fs";
+      // The directory is read while the files are not there.
+      await import("./generated/not-there").catch(() => {});
+      Bun.plugin({
+        name: "generates",
+        setup(build) {
+          build.onResolve({ filter: /^generated\\// }, ({ path }) => {
+            writeFileSync(import.meta.dir + "/" + path + ".ts", "export default " + JSON.stringify(path));
+            return { path: import.meta.dir + "/" + path };
+          });
+        },
+      });
+      console.log((await import("generated/a")).default, require("generated/b").default);
+    `;
+    expect(await run({ "entry.ts": source, "generated/.keep": "" }, ["entry.ts"])).toEqual({
+      stdout: ["generated/a generated/b"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// Files are transpiled off the main thread, where there are no plugins. A macro is a module that plugins can serve.
+describe.concurrent("a macro called in a file that is not the entry point", () => {
+  const files = {
+    "macro.ts": `export function macro() { return "macro.ts"; }`,
+    "other-macro.ts": `export function macro() { return "other-macro.ts"; }`,
+    "imports-alias.ts": `import aliased from "aliased"; export function macro() { return "imports " + aliased; }`,
+    "target.ts": `export default "the target";`,
+    "macro.custom": `not JavaScript`,
+    "calls-plain.ts": `import { macro } from "./macro.ts" with { type: "macro" }; export default macro();`,
+    "calls-custom.ts": `import { macro } from "./macro.custom" with { type: "macro" }; export default macro();`,
+    "calls-redirected.ts": `import { macro } from "./redirected-macro.ts" with { type: "macro" }; export default macro();`,
+    "redirected-macro.ts": `export function macro() { return "redirected-macro.ts"; }`,
+    "calls-alias.ts": `import { macro } from "./imports-alias.ts" with { type: "macro" }; export default macro();`,
+    "plugin.ts": `
+      Bun.plugin({
+        name: "plugin",
+        setup(build) {
+          build.onLoad({ filter: /\\.custom$/ }, () => ({ contents: "export function macro() { return 'served by onLoad'; }", loader: "js" }));
+          build.onResolve({ filter: /redirected-macro\\.ts$/ }, () => ({ path: import.meta.dir + "/other-macro.ts" }));
+          build.onResolve({ filter: /^aliased$/ }, () => ({ path: import.meta.dir + "/target.ts" }));
+        },
+      });
+    `,
+  };
+  const cases = [
+    ["that no plugin is about", "plain", "macro.ts"],
+    ["that an onLoad serves", "custom", "served by onLoad"],
+    ["that an onResolve redirects", "redirected", "other-macro.ts"],
+    ["that imports what an onResolve answers about", "alias", "imports the target"],
+  ];
+  async function run(extra: Record<string, string>, args: string[]) {
+    using dir = tempDir("plugin-macro", { ...files, ...extra });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // (A debug build logs the calls.)
+    return { stdout: stdout.replace(/^\[macro\].*\n/gm, ""), stderr, exitCode };
+  }
+
+  it.each(cases)("%s, in a script", async (_, name, expected) => {
+    const entry = `
+      import statement from "./calls-${name}.ts";
+      console.log(statement, (await import("./calls-${name}.ts?again")).default);
+    `;
+    expect(await run({ "entry.ts": entry }, ["--preload", "./plugin.ts", "entry.ts"])).toEqual({
+      stdout: `${expected} ${expected}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each([[[]], [["--isolate"]], [["--parallel=2"]]])("in bun test %j", async flags => {
+    const tests = Object.fromEntries(
+      ["a", "b"].map(file => [
+        `${file}.test.ts`,
+        `
+          import { expect, test } from "bun:test";
+          ${cases.map(([, name]) => `import ${name} from "./calls-${name}.ts";`).join("\n")}
+          test("${file}", () => {
+            expect([${cases.map(([, name]) => name)}]).toEqual(${JSON.stringify(cases.map(([, , expected]) => expected))});
+          });
+        `,
+      ]),
+    );
+    const { stderr, exitCode } = await run(tests, ["test", "--preload", "./plugin.ts", ...flags]);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("is an error, said once, when macros are disabled", async () => {
+    const entry = `await import("./calls-plain.ts").catch(error => console.log(error.message));`;
+    expect(await run({ "entry.ts": entry }, ["--no-macros", "--preload", "./plugin.ts", "entry.ts"])).toEqual({
+      stdout: "Macros are disabled\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+it.concurrent(
+  "a syntax error in a file that is not the entry point is reported once with a plugin registered",
+  async () => {
+    using dir = tempDir("plugin-syntax-error", {
+      "plugin.ts": `Bun.plugin({ name: "plugin", setup(build) { build.onLoad({ filter: /\\.ts$/ }, () => {}); } });`,
+      "syntax-error.ts": `export default (;\n`,
+      "entry.ts": `
+      await import("./syntax-error.ts").catch(error => console.log(error.name, error.message, error.position.line, error.position.column));
+      await import("./syntax-error.ts");
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.ts", "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout,
+      stderr: stderr.replaceAll(String(dir), "<dir>").replaceAll("\\", "/").split("\n\nBun v")[0],
+      exitCode,
+    }).toEqual({
+      stdout: "BuildMessage Unexpected ; 1 17\n",
+      stderr: `1 | export default (;\n                    ^\nerror: Unexpected ;\n    at <dir>/syntax-error.ts:1:17`,
+      exitCode: 1,
+    });
+  },
+);
+
+describe.concurrent("what a plugin supplies as contents is loaded like a file that holds it", () => {
+  // [loader, extension of a file of that type, contents, what import() gives, what require() gives]
+  const object = { a: 1, b: { c: 2 } };
+  const cases: Record<string, [string, string, string, unknown, unknown]> = {
+    "an ES module": [
+      "js",
+      "js",
+      `export const a = 1; export default { b: 2 };`,
+      { a: 1, default: { b: 2 } },
+      { a: 1, default: { b: 2 } },
+    ],
+    "a CommonJS module": [
+      "js",
+      "js",
+      `module.exports = { a: 1, b: { c: 2 } };`,
+      { ...object, default: object },
+      object,
+    ],
+    "a CommonJS module that exports a function": [
+      "js",
+      "cjs",
+      `module.exports = function f() {}; module.exports.x = 1;`,
+      { default: "function f", length: 0, name: "f", prototype: {}, x: 1 },
+      "function f",
+    ],
+    "JSX": [
+      "jsx",
+      "jsx",
+      `/** @jsxRuntime classic */ /** @jsx h */ const h = tag => tag; export default <div />;`,
+      { default: "div" },
+      { default: "div" },
+    ],
+    "TypeScript": [
+      "ts",
+      "ts",
+      `export const a: number = 1; export default { b: 2 } as object;`,
+      { a: 1, default: { b: 2 } },
+      { a: 1, default: { b: 2 } },
+    ],
+    "TypeScript that is CommonJS": [
+      "ts",
+      "cts",
+      `const a: number = 1; module.exports = { a };`,
+      { a: 1, default: { a: 1 } },
+      { a: 1 },
+    ],
+    "TSX": [
+      "tsx",
+      "tsx",
+      `/** @jsxRuntime classic */ /** @jsx h */ const h = (tag: string) => tag; export default <div />;`,
+      { default: "div" },
+      { default: "div" },
+    ],
+    "a JSON object": [
+      "json",
+      "json",
+      `{"a":1,"b":{"c":2},"default":3}`,
+      { ...object, default: { ...object, default: 3 } },
+      { ...object, default: 3 },
+    ],
+    "a JSON array": ["json", "json", `[1,2,3]`, { __esModule: true, default: [1, 2, 3] }, [1, 2, 3]],
+    "a JSON string": ["json", "json", `"string"`, { __esModule: true, default: "string" }, "string"],
+    "JSON that is empty": [
+      "json",
+      "json",
+      ``,
+      "SyntaxError: JSON Parse error: Unexpected EOF",
+      "SyntaxError: JSON Parse error: Unexpected EOF",
+    ],
+    "JSON that is cut short": [
+      "json",
+      "json",
+      `{"a":`,
+      "SyntaxError: JSON Parse error: Unexpected EOF",
+      "SyntaxError: JSON Parse error: Unexpected EOF",
+    ],
+    "JSONC": ["jsonc", "jsonc", `{ // comment\n"a":1,"b":{"c":2}, }`, { ...object, default: object }, object],
+    "JSON5": ["json5", "json5", `{ a: 1, b: { c: 2 }, }`, { ...object, default: object }, object],
+    "TOML": ["toml", "toml", `a = 1\n[b]\nc = 2\n`, { ...object, default: object }, object],
+    "TOML that is not valid": [
+      "toml",
+      "toml",
+      `\na = = 1`,
+      "BuildMessage: Expected a value but found '=' at 2:5",
+      "BuildMessage: Expected a value but found '=' at 2:5",
+    ],
+    "YAML": ["yaml", "yaml", `a: 1\nb:\n  c: 2\n`, { ...object, default: object }, object],
+    "a YAML sequence": ["yaml", "yaml", `- 1\n- 2\n`, { __esModule: true, default: [1, 2] }, [1, 2]],
+    "XML": [
+      "xml",
+      "xml",
+      `<a><b c="2">t</b></a>`,
+      { a: { b: { "@c": "2", "#text": "t" } }, default: { a: { b: { "@c": "2", "#text": "t" } } } },
+      { a: { b: { "@c": "2", "#text": "t" } } },
+    ],
+    "text": ["text", "txt", `hello\nwörld`, { default: "hello\nwörld" }, { default: "hello\nwörld" }],
+    "Markdown": [
+      "md",
+      "md",
+      `# hi\n\ntext`,
+      { default: "<h1>hi</h1>\n<p>text</p>\n" },
+      { default: "<h1>hi</h1>\n<p>text</p>\n" },
+    ],
+    "CSS": ["css", "css", `.a { color: red }`, { __esModule: true, default: {} }, {}],
+  };
+  const names = Object.keys(cases);
+  const slug = (name: string) => name.replaceAll(" ", "-");
+
+  // Each case is loaded from "<way>-<case>.<extension>", a file, and from "<way>-<case>.<extension>.virtual", which is empty.
+  const common = `
+    const cases = ${JSON.stringify(Object.fromEntries(names.map(name => [slug(name), cases[name].slice(0, 3)])))};
+    function supplied(path) {
+      const [loader, , contents] = cases[/[\\\\/][a-z]+_([^\\\\/]*?)\\.\\w+\\.virtual$/.exec(path)[1]];
+      return { loader, contents };
+    }
+    function shown(value) {
+      return JSON.parse(JSON.stringify(value, (_, value) => (typeof value === "function" ? "function " + value.name : value)) ?? "null");
+    }
+    function failed(error) {
+      return error.name + ": " + error.message + (error.position ? " at " + error.position.line + ":" + error.position.column : "");
+    }
+    async function load(way, name, suffix) {
+      const specifier = "./" + way + "_" + name + "." + cases[name][1] + suffix;
+      try {
+        return shown(way === "import" ? await import(specifier) : way === "require" ? require(specifier) : import.meta.require(specifier));
+      } catch (error) {
+        return failed(error).replace(suffix || "\\0", "");
+      }
+    }
+  `;
+  const files = Object.fromEntries(
+    ["import", "require", "metarequire", "statement"].flatMap(way =>
+      names.flatMap(name => {
+        const [, extension, contents] = cases[name];
+        return [
+          [`${way}_${slug(name)}.${extension}`, contents],
+          [`${way}_${slug(name)}.${extension}.virtual`, ""],
+        ];
+      }),
+    ),
+  );
+  async function run(extra: Record<string, string>, args: string[], env: Record<string, string> = {}) {
+    using dir = tempDir("plugin-contents", { ...files, ...extra });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const plugin = (callback: string) => `
+    ${common}
+    Bun.plugin({ name: "supplies", setup(build) { build.onLoad({ filter: /\\.virtual$/ }, ${callback}); } });
+  `;
+  const sync = plugin(`({ path }) => supplied(path)`);
+  const pending = plugin(`async ({ path }) => { await 0; return supplied(path); }`);
+  const expected = (index: 3 | 4) => Object.fromEntries(names.map(name => [slug(name), cases[name][index]]));
+
+  it.each([
+    ["import()", "import", sync, expected(3)],
+    ["import(), with a promise that is pending", "import", pending, expected(3)],
+    ["require()", "require", sync, expected(4)],
+    ["import.meta.require()", "metarequire", sync, expected(4)],
+  ])("by %s", async (_, way, plugin, expected) => {
+    const entry = `
+      ${plugin}
+      const loaded = { file: {}, plugin: {} };
+      for (const name in cases) {
+        loaded.file[name] = await load("${way}", name, "");
+        loaded.plugin[name] = await load("${way}", name, ".virtual");
+      }
+      console.log(JSON.stringify(loaded));
+    `;
+    const { stdout, stderr, exitCode } = await run({ "entry.ts": entry }, ["entry.ts"]);
+    expect({ loaded: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      loaded: { file: expected, plugin: expected },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  const valid = names.filter(name => typeof cases[name][3] !== "string");
+  const statements = (suffix: string) =>
+    valid
+      .map((name, i) => `import * as $${i} from "./statement_${slug(name)}.${cases[name][1]}${suffix}";\n`)
+      .join("") + `const statements = { ${valid.map((name, i) => `${JSON.stringify(slug(name))}: shown($${i})`)} };\n`;
+  const expectedStatements = Object.fromEntries(valid.map(name => [slug(name), cases[name][3]]));
+
+  it.each([
+    ["", sync],
+    [", with a promise that is pending", pending],
+  ])("by an import statement%s", async (_, plugin) => {
+    const extra = {
+      "plugin.ts": plugin + `globalThis.shown = shown;`,
+      "entry.ts": statements(".virtual") + `console.log(JSON.stringify(statements));`,
+    };
+    const { stdout, stderr, exitCode } = await run(extra, ["--preload", "./plugin.ts", "entry.ts"]);
+    expect({ loaded: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      loaded: expectedStatements,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each([[[]], [["--isolate"]], [["--parallel=2"]]])("in bun test %j", async flags => {
+    const test = (file: string) => `
+      import { expect, test } from "bun:test";
+      ${statements(".virtual")}
+      test("${file}", async () => {
+        expect(statements).toEqual(${JSON.stringify(expectedStatements)});
+        for (const name in cases) {
+          expect([name, await load("import", name, ".virtual")]).toEqual([name, await load("import", name, "")]);
+          expect([name, await load("require", name, ".virtual")]).toEqual([name, await load("require", name, "")]);
+        }
+      });
+    `;
+    const extra = {
+      "plugin.ts": sync + `Object.assign(globalThis, { shown, load, cases });`,
+      "a.test.ts": test("a"),
+      "b.test.ts": test("b"),
+    };
+    const { stderr, exitCode } = await run(extra, ["test", "--preload", "./plugin.ts", ...flags]);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // --isolate keeps the source of what one file has loaded for the next, by path.
+  it("and is not taken for the file's by the next test file under --isolate", async () => {
+    const extra = {
+      "dep.ts": `export default "from disk";`,
+      "dep.cjs": `module.exports = "from disk";`,
+      "plugin.ts": `
+        import { existsSync, writeFileSync } from "node:fs";
+        // The preload runs again for each test file.
+        if (!existsSync(import.meta.dir + "/served")) {
+          writeFileSync(import.meta.dir + "/served", "");
+          Bun.plugin({ name: "supplies", setup(build) {
+            build.onLoad({ filter: /dep\\.ts$/ }, () => ({ contents: "export default 'from the plugin'", loader: "ts" }));
+            build.onLoad({ filter: /dep\\.cjs$/ }, () => ({ contents: "module.exports = 'from the plugin'", loader: "js" }));
+          } });
+        }
+      `,
+      "a.test.ts": `
+        import esm from "./dep.ts";
+        test("a", () => expect([esm, require("./dep.cjs")]).toEqual(["from the plugin", "from the plugin"]));
+      `,
+      "b.test.ts": `
+        import esm from "./dep.ts";
+        test("b", () => expect([esm, require("./dep.cjs")]).toEqual(["from disk", "from disk"]));
+      `,
+    };
+    const { stderr, exitCode } = await run(extra, [
+      "test",
+      "--isolate",
+      "--preload",
+      "./plugin.ts",
+      "./a.test.ts",
+      "./b.test.ts",
+    ]);
+    expect(stderr).toContain(" 2 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("whichever of import() and require() comes first", async () => {
+    const entry = `
+      ${sync}
+      const loaded = {};
+      for (const suffix of ["", ".virtual"])
+        loaded[suffix || "file"] = {
+          json: [await load("import", "a-JSON-object", suffix), await load("require", "a-JSON-object", suffix).then(() => shown(require("./import_a-JSON-object.json" + suffix)))],
+          cjs: [shown(require("./require_a-CommonJS-module.js" + suffix)), shown(await import("./require_a-CommonJS-module.js" + suffix)),
+                require("./require_a-CommonJS-module.js" + suffix) === (await import("./require_a-CommonJS-module.js" + suffix)).default],
+        };
+      console.log(JSON.stringify(loaded));
+    `;
+    const { stdout, stderr, exitCode } = await run({ "entry.ts": entry }, ["entry.ts"]);
+    const namespace = { ...object, default: { ...object, default: 3 } };
+    const each = { json: [namespace, namespace], cjs: [object, { ...object, default: object }, true] };
+    expect({ loaded: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      loaded: { file: each, ".virtual": each },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("with the loader of the type it is imported with, unless the plugin names one", async () => {
+    const plugin = `
+      Bun.plugin({
+        name: "supplies",
+        setup(build) {
+          build.onLoad({ filter: /no-loader-\\d\\.virtual$/ }, () => ({ contents: '{"a":1}' }));
+          build.onLoad({ filter: /pending-\\d\\.virtual$/ }, async () => { await 0; return { contents: '{"a":1}' }; });
+          build.onLoad({ filter: /named-\\d\\.virtual$/ }, () => ({ contents: '{"a":1}', loader: "json" }));
+        },
+      });
+    `;
+    const entry = `
+      import json from "./no-loader-1.virtual" with { type: "json" };
+      import text from "./no-loader-2.virtual" with { type: "text" };
+      console.log(JSON.stringify([
+        json,
+        text,
+        (await import("./no-loader-3.virtual", { with: { type: "jsonc" } })).a,
+        (await import("./pending-1.virtual", { with: { type: "json" } })).a,
+        (await import("./pending-2.virtual", { with: { type: "text" } })).default,
+        (await import("./named-1.virtual", { with: { type: "text" } })).a,
+        await import("./no-loader-4.virtual").catch(error => error.name),
+      ]));
+    `;
+    const extra = Object.fromEntries(
+      ["no-loader-1", "no-loader-2", "no-loader-3", "no-loader-4", "pending-1", "pending-2", "named-1"].map(name => [
+        name + ".virtual",
+        "",
+      ]),
+    );
+    const files = { ...extra, "plugin.ts": plugin, "entry.ts": entry };
+    expect(await run(files, ["--preload", "./plugin.ts", "entry.ts"])).toEqual({
+      stdout: JSON.stringify([{ a: 1 }, '{"a":1}', 1, 1, '{"a":1}', 1, "BuildMessage"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("from build.module() as well", async () => {
+    const entry = `
+      Bun.plugin({
+        name: "modules",
+        setup(build) {
+          build.module("virtual-json", () => ({ contents: '{"v":1}', loader: "json" }));
+          build.module("virtual-toml", () => ({ contents: 'v = 1', loader: "toml" }));
+          build.module("virtual-yaml", async () => { await 0; return { contents: "v: 2", loader: "yaml" }; });
+          build.module("virtual-cjs", () => ({ contents: "module.exports = { v: 3 };", loader: "js" }));
+        },
+      });
+      console.log(JSON.stringify([
+        await import("virtual-json"), require("virtual-toml"), await import("virtual-yaml"), require("virtual-cjs"), await import("virtual-cjs"),
+      ]));
+    `;
+    expect(await run({ "entry.ts": entry }, ["entry.ts"])).toEqual({
+      stdout:
+        JSON.stringify([
+          { default: { v: 1 }, v: 1 },
+          { v: 1 },
+          { default: { v: 2 }, v: 2 },
+          { v: 3 },
+          { default: { v: 3 }, v: 3 },
+        ]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/39786
+  it("when it is the file's own, a CommonJS module", async () => {
+    const extra = {
+      "target.js": "module.exports.greet = function greet(name) {\n  return `hello ${name}`\n}\n",
+      "app.js": `const { greet } = require('./target.js')\n\nconsole.log(greet('world'))\n`,
+      "preload.js": `
+        const { readFileSync } = require('node:fs')
+        Bun.plugin({
+          name: 'pass-through-source-hook',
+          setup(build) {
+            build.onLoad({ filter: /target\\.js$/, namespace: 'file' }, args => ({ loader: 'js', contents: readFileSync(args.path, 'utf8') }))
+          }
+        })
+      `,
+    };
+    expect(await run(extra, ["--preload", "./preload.js", "./app.js"])).toEqual({
+      stdout: "hello world\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("CommonJS or an ES module by its extension and package.json when nothing in it says", async () => {
+    const entry = `
+      import { readFileSync } from "node:fs";
+      Bun.plugin({ name: "passes through", setup(build) { build.onLoad({ filter: /neutral\\.[cm]?js$/ }, ({ path }) => ({ contents: readFileSync(path, "utf8"), loader: "js" })); } });
+      const loaded = {};
+      for (const file of ["neutral.js", "neutral.cjs", "neutral.mjs", "commonjs/neutral.js", "commonjs/neutral.mjs", "module/neutral.js", "module/neutral.cjs"])
+        loaded[file] = "default" in (await import("./" + file)) ? "CommonJS" : "ES module";
+      console.log(JSON.stringify(loaded));
+    `;
+    const extra = {
+      "entry.ts": entry,
+      "commonjs/package.json": `{ "type": "commonjs" }`,
+      "module/package.json": `{ "type": "module" }`,
+      ...Object.fromEntries(
+        [
+          "neutral.js",
+          "neutral.cjs",
+          "neutral.mjs",
+          "commonjs/neutral.js",
+          "commonjs/neutral.mjs",
+          "module/neutral.js",
+          "module/neutral.cjs",
+        ].map(file => [file, `globalThis.loaded = true;`]),
+      ),
+    };
+    const { stdout, stderr, exitCode } = await run(extra, ["entry.ts"]);
+    expect({ loaded: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      loaded: {
+        "neutral.js": "ES module",
+        "neutral.cjs": "CommonJS",
+        "neutral.mjs": "ES module",
+        "commonjs/neutral.js": "CommonJS",
+        "commonjs/neutral.mjs": "ES module",
+        "module/neutral.js": "ES module",
+        "module/neutral.cjs": "CommonJS",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("whether it is a string or bytes, which are UTF-8", async () => {
+    const entry = `
+      const text = "é 日本 😀";
+      const bytes = () => new Uint8Array(Buffer.from(text));
+      const kinds = {
+        string: () => text,
+        Buffer: () => Buffer.from(text),
+        Uint8Array: bytes,
+        "part of a Uint8Array": () => new Uint8Array(Buffer.from("xx" + text + "xx")).subarray(2, -2),
+        DataView: () => new DataView(bytes().buffer),
+        ArrayBuffer: () => bytes().buffer,
+        SharedArrayBuffer: () => { const shared = new SharedArrayBuffer(bytes().length); new Uint8Array(shared).set(bytes()); return shared; },
+        "an empty ArrayBuffer": () => new ArrayBuffer(0),
+      };
+      Bun.plugin({ name: "supplies", setup(build) { build.onLoad({ filter: /.*/, namespace: "kind" }, ({ path }) => ({ contents: kinds[path](), loader: "text" })); } });
+      const loaded = {};
+      for (const kind in kinds) loaded[kind] = (await import("kind:" + kind)).default;
+      console.log(JSON.stringify(loaded));
+    `;
+    const { stdout, stderr, exitCode } = await run({ "entry.ts": entry }, ["entry.ts"]);
+    const text = "é 日本 😀";
+    expect({ loaded: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      loaded: {
+        string: text,
+        Buffer: text,
+        Uint8Array: text,
+        "part of a Uint8Array": text,
+        DataView: text,
+        ArrayBuffer: text,
+        SharedArrayBuffer: text,
+        "an empty ArrayBuffer": "",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a CSS module, with the names a file at that path gets", async () => {
+    const css = `.title { color: red } .box { composes: title; }`;
+    const entry = `console.log(JSON.stringify([require("./a.module.css"), await import("./b.module.css")]));`;
+    const fromFile = await run({ "a.module.css": css, "b.module.css": css, "entry.ts": entry }, ["entry.ts"]);
+    const fromPlugin = await run(
+      {
+        "a.module.css": "",
+        "b.module.css": "",
+        "entry.ts": `Bun.plugin({ name: "css", setup(build) { build.onLoad({ filter: /\\.module\\.css$/ }, () => ({ contents: ${JSON.stringify(css)}, loader: "css" })); } });\n${entry}`,
+      },
+      ["entry.ts"],
+    );
+    expect(JSON.parse(fromFile.stdout)[0]).toEqual({
+      title: expect.stringMatching(/^title_\w+$/),
+      box: expect.stringMatching(/^title_\w+ box_\w+$/),
+    });
+    expect(fromPlugin).toEqual(fromFile);
+  });
+
+  it.each(["file", "napi", "wasm", "html", "sqlite", "dataurl", "base64", "nope", ""])(
+    "but not with the loader %j",
+    async loader => {
+      const entry = `
+      Bun.plugin({ name: "supplies", setup(build) { build.onLoad({ filter: /.*/, namespace: "ns" }, () => ({ contents: "", loader: ${JSON.stringify(loader)} })); } });
+      await import("ns:import").catch(error => console.log(error.message));
+      try { require("ns:require"); } catch (error) { console.log(error.message); }
+    `;
+      const message = `Expected loader to be one of "js", "jsx", "object", "ts", "tsx", "json", "jsonc", "json5", "toml", "yaml", "xml", "text", "md", or "css"`;
+      expect(await run({ "entry.ts": entry }, ["entry.ts"])).toEqual({
+        stdout: `${message}\n${message}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});

@@ -15,6 +15,7 @@
 pub mod data_url;
 pub mod dir_info;
 pub mod error;
+mod import_meta_glob;
 #[path = "fs.rs"]
 mod fs_full;
 pub mod node_fallbacks;

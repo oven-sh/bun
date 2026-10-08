@@ -10,9 +10,11 @@ use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
+use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_options_types::context::JunitSuites;
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -59,6 +61,7 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
+use crate::test_runner::environment::Environment;
 use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
@@ -219,6 +222,7 @@ pub(crate) struct JunitReporter {
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
     pub(crate) current_depth: u32,
+    pub(crate) suites: JunitSuites,
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
@@ -288,8 +292,11 @@ impl JunitReporter {
         None
     }
 
-    pub(crate) fn init() -> Box<JunitReporter> {
-        Box::new(JunitReporter::default())
+    pub(crate) fn init(suites: JunitSuites) -> Box<JunitReporter> {
+        Box::new(JunitReporter {
+            suites,
+            ..Default::default()
+        })
     }
 }
 
@@ -643,6 +650,16 @@ impl JunitReporter {
             self.begin_test_suite(t.file)?;
         }
 
+        if self.suites == JunitSuites::Flat {
+            let mut name: Vec<u8> = Vec::new();
+            for &(scope, _) in &t.scopes {
+                name.extend_from_slice(scope);
+                name.extend_from_slice(b" > ");
+            }
+            name.extend_from_slice(t.name);
+            return self.write_test_case(t, &name, t.file);
+        }
+
         // Keep the longest prefix of open describe suites that matches
         // `t.scopes`; close the rest, then open what is missing.
         let open = &self.suite_stack[1..];
@@ -667,13 +684,17 @@ impl JunitReporter {
             class_name.extend_from_slice(name);
         }
 
-        self.write_test_case(t, &class_name)
+        self.write_test_case(t, t.name, &class_name)
     }
 
-    fn write_test_case(&mut self, t: &TestCaseReport<'_>, class_name: &[u8]) -> crate::Result<()> {
+    fn write_test_case(
+        &mut self,
+        t: &TestCaseReport<'_>,
+        name: &[u8],
+        class_name: &[u8],
+    ) -> crate::Result<()> {
         let TestCaseReport {
             file,
-            name,
             status,
             assertions,
             elapsed_ns,
@@ -1899,7 +1920,9 @@ impl TestCommand {
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
         if ctx.test_options.reporters.junit && !ctx.test_options.test_worker {
-            reporter.reporters.junit = Some(JunitReporter::init());
+            reporter.reporters.junit = Some(JunitReporter::init(
+                ctx.test_options.reporters.junit_suites.unwrap_or_default(),
+            ));
         }
         if ctx.test_options.reporters.dots {
             reporter.reporters.dots = true;
@@ -2823,6 +2846,44 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
+    /// A promise rejected with why the runner gave up waiting for `what`.
+    fn never_settled(
+        global: &jsc::JSGlobalObject,
+        what: &str,
+        file_path: &[u8],
+    ) -> *mut jsc::JSInternalPromise {
+        let rejected = jsc::JSPromise::rejected_promise(
+            global,
+            global.create_error_instance(format_args!(
+                "{what} of {} never settled\nnote: {}",
+                bun_fmt::quote(file_path),
+                TopLevelWaitError::NothingLeft,
+            )),
+        );
+        rejected.set_handled();
+        std::ptr::from_mut(rejected)
+    }
+
+    /// In words, and what tells it from the runner's next step. `None`: several tests at once.
+    fn what_runner_waits_for(
+        buntest: &bun_test::BunTest,
+    ) -> (&'static str, Option<(*const (), i64)>) {
+        match buntest.get_current_state_data() {
+            bun_test::RefDataValue::Collection { active_scope } => (
+                "A describe() callback",
+                Some((active_scope.as_ptr().cast_const().cast(), 0)),
+            ),
+            bun_test::RefDataValue::Execution {
+                entry_data: Some(entry),
+                ..
+            } => (
+                "A test or a hook without a timeout",
+                Some((entry.entry, entry.remaining_repeat_count)),
+            ),
+            _ => ("A test or a hook without a timeout", None),
+        }
+    }
+
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
@@ -2884,6 +2945,8 @@ impl TestCommand {
         let mut repeat_index: u32 = 0;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
+        let mut environment =
+            Environment::of_file(file_path, reporter.jest.test_options.environment);
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
@@ -2909,6 +2972,7 @@ impl TestCommand {
                 unsafe { (*bun_test_root_ptr).exit_file(); }
                 // A mock.module() patch still pending must not hold up the next file.
                 bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+                bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global);
             }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
@@ -2938,10 +3002,24 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let mut promise = environment.load_entry_point(vm, file_path)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
+            }
+
+            if jsc::JSInternalPromise::opaque_mut(promise).status()
+                != jsc::js_promise::Status::Rejected
+            {
+                vm.event_loop_ref().tick();
+
+                // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+                let patched = vm
+                    .event_loop_ref()
+                    .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
+                if patched == Err(TopLevelWaitError::NothingLeft) {
+                    promise = Self::never_settled(global, "A mock.module() factory", file_path);
+                }
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
@@ -2985,17 +3063,11 @@ impl TestCommand {
                         unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
+                    crate::test_runner::vi_utils::on_test_file_end(vm.global());
+                    environment.teardown(vm);
                     return Ok(());
                 }
                 _ => {}
-            }
-
-            vm.event_loop_ref().tick();
-
-            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
-            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
-                vm.event_loop_ref().auto_tick();
-                vm.event_loop_ref().tick();
             }
 
             'blk: {
@@ -3024,7 +3096,24 @@ impl TestCommand {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    vm.event_loop_ref().auto_tick();
+                    if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
+                        && !vm.has_work_left()
+                    {
+                        let (what, waits_for) = Self::what_runner_waits_for(buntest);
+                        let p = jsc::JSPromise::opaque_mut(Self::never_settled(
+                            global, what, file_path,
+                        ));
+                        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
+                        // The error ends a describe() or a test, not a hook or concurrent tests:
+                        // then what is left of the file never runs.
+                        if waits_for.is_none()
+                            || waits_for == Self::what_runner_waits_for(buntest).1
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                    vm.event_loop_ref().auto_tick_asleep();
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
@@ -3063,9 +3152,14 @@ impl TestCommand {
                 // need tracking to remain enabled and populated until then.
                 vm.auto_killer.clear();
                 vm.auto_killer.disable();
+                crate::test_runner::vi_utils::on_test_file_end(vm.global());
             }
 
             repeat_index += 1;
+            // Here, an error it throws is still this file's.
+            if repeat_index == repeat_count {
+                environment.teardown(vm);
+            }
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(None);

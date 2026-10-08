@@ -141,6 +141,155 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  // https://github.com/oven-sh/bun/issues/18857
+  describe("resolves and rejects on a thenable", () => {
+    /** @returns {PromiseLike<any>} */
+    const thenable = (/** @type {"resolve" | "reject"} */ how, /** @type {unknown} */ value) => ({
+      then(resolve, reject) {
+        /** @type {any} */ (how === "resolve" ? resolve : reject)(value);
+        return /** @type {any} */ (undefined);
+      },
+    });
+
+    test("settles with what then() passes to its callbacks", async () => {
+      await expect(thenable("resolve", "done")).resolves.toBe("done");
+      await expect(thenable("resolve", 4)).resolves.not.toBe(5);
+      await expect(thenable("resolve", { a: 1, b: 2 })).resolves.toMatchObject({ a: 1 });
+      await expect(thenable("reject", 4)).rejects.toBe(4);
+      await expect(thenable("reject", 4)).rejects.not.toBe(5);
+      await expect(thenable("reject", new Error("thenable error"))).rejects.toThrow("thenable error");
+
+      // Different task
+      await expect({
+        then(/** @type {(value: string) => void} */ resolve) {
+          setTimeout(() => resolve("later"), 0);
+        },
+      }).resolves.toBe("later");
+    });
+
+    test("finds then() wherever a property lookup does", async () => {
+      class Inherited {
+        then(/** @type {(value: string) => void} */ resolve) {
+          resolve("inherited");
+        }
+      }
+      await expect(new Inherited()).resolves.toBe("inherited");
+      await expect(Object.create(thenable("resolve", "prototype"))).resolves.toBe("prototype");
+      await expect(
+        new Proxy({}, { get: (_, key) => (key === "then" ? thenable("resolve", "proxy").then : undefined) }),
+      ).resolves.toBe("proxy");
+    });
+
+    test("calls then() once, with the thenable as this", async () => {
+      const then = jest.fn((/** @type {(value: string) => void} */ resolve) => resolve("called"));
+      const value = { then };
+      await expect(value).resolves.toBe("called");
+      expect(then).toHaveBeenCalledTimes(1);
+      expect(then.mock.contexts).toEqual([value]);
+    });
+
+    test_skipIf(!isBun)("fails when the thenable settles the other way, or then is not callable", async () => {
+      await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
+        "Expected promise that rejects\nReceived promise that resolved: {",
+      );
+      await expectFailure(() => expect(thenable("reject", 4)).resolves.toBe(4)).toThrow(
+        "Expected promise that resolves\nReceived promise that rejected: {",
+      );
+      for (const value of [{ then: 4 }, { then: null }, { then: {} }, { a: 4 }, [], "then", 4, null, undefined]) {
+        await expectFailure(() => expect(value).resolves.toBe(value)).toThrow("Expected promise\nReceived: ");
+        await expectFailure(() => expect(value).rejects.toBe(value)).toThrow("Expected promise\nReceived: ");
+      }
+    });
+
+    // Jest hands its own callbacks to then(), so what `await` does around that call does not happen.
+    test_skipIf(isJest)("adopts the thenable as await does", async () => {
+      const error = new Error("thrown by then()");
+      await expect({
+        then() {
+          throw error;
+        },
+      }).rejects.toBe(error);
+      // Only the first call of either callback counts.
+      await expect({
+        then(/** @type {(value: number) => void} */ resolve, /** @type {(reason: number) => void} */ reject) {
+          resolve(1);
+          reject(2);
+          resolve(3);
+          throw error;
+        },
+      }).resolves.toBe(1);
+      await expect(thenable("resolve", thenable("resolve", "nested"))).resolves.toBe("nested");
+      await expect(thenable("resolve", thenable("reject", "nested"))).rejects.toBe("nested");
+      await expect(thenable("resolve", Promise.resolve("promise"))).resolves.toBe("promise");
+      await expect(thenable("reject", thenable("resolve", "not adopted"))).rejects.toHaveProperty("then");
+      await expect(Object.assign(() => {}, thenable("resolve", "function"))).resolves.toBe("function");
+    });
+
+    test_skipIf(!isBun)("reads then once, and a getter that throws is a rejection", async () => {
+      const get = jest.fn(() => thenable("resolve", "getter").then);
+      await expect(Object.defineProperty({}, "then", { get })).resolves.toBe("getter");
+      expect(get).toHaveBeenCalledTimes(1);
+
+      const error = new Error("thrown by the getter");
+      const throws = {
+        get then() {
+          throw error;
+        },
+      };
+      await expect(throws).rejects.toBe(error);
+      await expectFailure(() => expect(throws).resolves.toBe(1)).toThrow("Received promise that rejected");
+    });
+
+    test_skipIf(!isBun)("expect.resolvesTo and expect.rejectsTo", () => {
+      expect({ a: thenable("resolve", "one") }).toEqual({ a: expect.resolvesTo.stringContaining("one") });
+      expect({ a: thenable("reject", "two") }).toEqual({ a: expect.rejectsTo.stringContaining("two") });
+      expect({ a: thenable("resolve", "one") }).not.toEqual({ a: expect.rejectsTo.stringContaining("one") });
+      expect({ a: { then: 1 } }).not.toEqual({ a: expect.resolvesTo.anything() });
+    });
+
+    // Bun.$ and Bun.sql return such promises. In a child process, because no test timeout ends the wait for one that never starts.
+    test_skipIf(!isBun)("a Promise subclass that starts its work in then()", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { expect } = require("bun:test");
+        class Lazy extends Promise {
+          static get [Symbol.species]() {
+            return Promise;
+          }
+          static create(how) {
+            let start;
+            const lazy = new Lazy((resolve, reject) => {
+              start = () => (how === "resolve" ? resolve : reject)("started");
+            });
+            lazy.start = start;
+            return lazy;
+          }
+          then(onFulfilled, onRejected) {
+            this.start();
+            return super.then(onFulfilled, onRejected);
+          }
+        }
+        await expect(Lazy.create("resolve")).resolves.toBe("started");
+        await expect(Lazy.create("reject")).rejects.toBe("started");
+        await expect(Bun.$\`exit 0\`.quiet()).resolves.toMatchObject({ exitCode: 0 });
+        await expect(Bun.$\`exit 7\`.quiet()).rejects.toMatchObject({ exitCode: 7 });
+        console.log("ok");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: "ok\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });
@@ -4931,11 +5080,15 @@ describe("expect()", () => {
   test("pass to return undefined", () => {
     expect(expect().pass()).toBeUndefined();
   });
-  test("rejects to return undefined", () => {
-    expect(expect(Promise.reject("error")).rejects.toBe("error")).toBeUndefined();
+  test("rejects to return a promise of undefined", async () => {
+    const result = expect(Promise.reject("error")).rejects.toBe("error");
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBeUndefined();
   });
-  test("resolves to return undefined", () => {
-    expect(expect(Promise.resolve(1)).resolves.toBe(1)).toBeUndefined();
+  test("resolves to return a promise of undefined", async () => {
+    const result = expect(Promise.resolve(1)).resolves.toBe(1);
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBeUndefined();
   });
   test("toBe to return undefined", () => {
     expect(expect(true).toBe(true)).toBeUndefined();

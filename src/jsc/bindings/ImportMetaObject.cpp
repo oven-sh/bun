@@ -340,6 +340,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     return result;
 }
 
+extern "C" JSC::EncodedJSValue Bun__resolveWithOnResolve(JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from);
+
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -404,36 +406,45 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto fromWTFString = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto a = Bun::toString(specifier);
+    auto b = Bun::toString(fromWTFString);
+    JSValue result = jsUndefined();
+
     // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
     if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)
 #if OS(WINDOWS)
         || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
 #endif
     ) {
-        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
-        if (!fromURL.isValid()) {
-            JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
-            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+        if (!globalObject->onResolvePlugins.fileNamespace.filters.isEmpty()) [[unlikely]] {
+            result = JSValue::decode(Bun__resolveWithOnResolve(globalObject, &a, &b));
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
-        WTF::URL url(fromURL, specifier);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
-    }
+        if (result.isUndefined()) {
+            auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
+            if (!fromURL.isValid()) {
+                JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
+                RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+            }
 
-    // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
-    if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s)) [[unlikely]] {
-        return JSValue::encode(jsString(vm, specifier));
-    }
+            WTF::URL url(fromURL, specifier);
+            RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+        }
+    } else {
+        // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
+        if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s)) [[unlikely]] {
+            return JSValue::encode(jsString(vm, specifier));
+        }
 
-    // Run it through the module resolver, errors at this point are actual errors.
-    auto a = Bun::toString(specifier);
-    auto b = Bun::toString(fromWTFString);
-    auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
-    RETURN_IF_EXCEPTION(scope, {});
+        // Run it through the module resolver, errors at this point are actual errors.
+        result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
+        RETURN_IF_EXCEPTION(scope, {});
 
-    if (!result.isString()) {
-        JSC::throwException(globalObject, scope, result);
-        return {};
+        if (!result.isString()) {
+            JSC::throwException(globalObject, scope, result);
+            return {};
+        }
     }
 
     auto resultString = result.toWTFString(globalObject);

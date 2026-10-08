@@ -12,6 +12,7 @@ import {
   type Mock,
   spyOn,
   test,
+  vi,
   xdescribe,
   xit,
   xtest,
@@ -349,6 +350,43 @@ expectType(spy.mock.calls).is<any[][]>();
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
 
+expectType(jest.useFakeTimers({ now: new Date(0), doNotFake: ["performance"], advanceTimers: 20, timerLimit: 100 })).is<
+  typeof jest
+>();
+expectType(
+  vi.useFakeTimers({
+    now: 0,
+    toFake: ["setTimeout", "Date"],
+    shouldAdvanceTime: true,
+    advanceTimeDelta: 20,
+    loopLimit: 100,
+  }),
+).is<typeof vi>();
+jest.useFakeTimers("legacy");
+// @ts-expect-error
+vi.useFakeTimers({ toFake: ["setTimeOut"] });
+expectType(jest.advanceTimersByTimeAsync(1)).is<Promise<void>>();
+expectType(jest.advanceTimersToNextTimerAsync(2)).is<Promise<void>>();
+expectType(jest.runAllTimersAsync()).is<Promise<void>>();
+expectType(jest.runOnlyPendingTimersAsync()).is<Promise<void>>();
+expectType(vi.advanceTimersByTimeAsync(1)).is<Promise<typeof vi>>();
+expectType(vi.advanceTimersToNextTimerAsync()).is<Promise<typeof vi>>();
+expectType(vi.runAllTimersAsync()).is<Promise<typeof vi>>();
+expectType(vi.runOnlyPendingTimersAsync()).is<Promise<typeof vi>>();
+expectType(vi.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks()).is<typeof vi>();
+expectType(jest.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks().runAllImmediates()).is<
+  typeof jest
+>();
+vi.setTimerTickMode("nextTimerAsync").setTimerTickMode("interval", 5).setTimerTickMode("manual");
+// @ts-expect-error
+vi.setTimerTickMode("manual", 5);
+jest.setTimerTickMode({ mode: "interval", delta: 5 }).setTimerTickMode({ mode: "nextAsync" });
+expectType(vi.setSystemTime("2020-01-01T00:00:00.000Z")).is<typeof vi>();
+jest.setSystemTime("2020-01-01T00:00:00.000Z");
+expectType(vi.getMockedSystemTime()).is<Date | null>();
+expectType(vi.getRealSystemTime()).is<number>();
+expectType(jest.getRealSystemTime()).is<number>();
+
 xtest("", () => {});
 xdescribe("", () => {});
 xit("", () => {});
@@ -421,3 +459,105 @@ unknownMatchers.toContainEqual([""]);
 unknownMatchers.toEqual(["a", "b"]);
 unknownMatchers.toBeCloseTo(2);
 unknownMatchers.toBe("a");
+
+// test.for(), test.extend() and the test context
+test.for([
+  [1, "a"],
+  [2, "b"],
+] as const)("test.for", ([n, s], context) => {
+  expectType<1 | 2>(n);
+  expectType<"a" | "b">(s);
+  expectType<string>(context.task.name);
+  expectType<"run" | "pass" | "fail" | "skip">(context.task.result.state);
+  expectType<AbortSignal>(context.signal);
+  context.expect(n).toBeNumber();
+  context.onTestFinished(({ task }) => {
+    expectType<string>(task.fullName);
+  });
+  context.onTestFailed(async () => {}, 1000);
+  context.skip(n === 1, "note");
+});
+test.for([1, 2])("test.for", { timeout: 100 }, (n, { expect }) => {
+  expect(n).toBe(n);
+});
+describe.for([[1, 2]])("describe.for", row => {
+  expectType<readonly [1, 2]>(row);
+});
+test.each`
+  a    | b
+  ${1} | ${2}
+`("$a $b", ({ a, b }, done) => {
+  expectType<any>(a + b);
+  expectType<(err?: unknown) => void>(done);
+});
+
+const extended = test.extend<{ port: number; url: string; label: string }>({
+  port: async ({}, use) => {
+    await use(3000);
+  },
+  url: [
+    async ({ port, task }, use) => {
+      expectType<number>(port);
+      expectType<string>(task.name);
+      await use(`http://localhost:${port}`);
+    },
+    { auto: true, scope: "test" },
+  ],
+  label: "a value",
+});
+extended("test.extend", ({ port, url, label, task, expect }) => {
+  expectType<number>(port);
+  expectType<string>(url);
+  expectType<string>(label);
+  expectType<string>(task.name);
+  expect(port).toBe(3000);
+});
+extended.skip("test.extend", { retry: 1 }, async ({ url }) => expectType<string>(url));
+extended.concurrent.for([1])("test.extend", (row, { port }) => {
+  expectType<number>(row + port);
+});
+extended.each([[1, "a"]] as const)("test.extend", (n, s) => {
+  expectType<1>(n);
+  expectType<"a">(s);
+});
+extended.beforeEach(({ port }) => {
+  expectType<number>(port);
+  return () => {};
+});
+extended.afterAll(({ port }, suite) => {
+  expectType<number>(port);
+  expectType<string>(suite.name);
+});
+extended.override({ label: "another" }).override({ port: async ({}, use) => use(1) });
+// @ts-expect-error
+extended.override({ label: 1 });
+// @ts-expect-error
+extended("test.extend", ({ nope }) => {});
+// @ts-expect-error
+test.extend<{ port: number }>({ port: "not a number" });
+
+const further = extended.extend<{ port: string; extra: boolean }>({
+  port: async ({ url }, use) => use(url),
+  extra: true,
+});
+further("test.extend", ({ port, extra, label }) => {
+  expectType<string>(port);
+  expectType<boolean>(extra);
+  expectType<string>(label);
+});
+const built = test
+  .extend("one", 1)
+  .extend("two", async ({ one }) => `${one}`)
+  .extend("three", { scope: "file" }, ({}, { onCleanup }) => {
+    onCleanup(async () => {});
+    return true;
+  });
+built("test.extend", ({ one, two, three }) => {
+  expectType<number>(one);
+  expectType<string>(two);
+  expectType<boolean>(three);
+});
+test.describe("test.describe", () => {
+  test.beforeEach(() => {});
+  test.afterAll(done => done());
+});

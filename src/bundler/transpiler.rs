@@ -1479,6 +1479,7 @@ impl<'a> Transpiler<'a> {
                     jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
+                    import_meta_glob: None,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
@@ -1588,6 +1589,15 @@ impl<'a> Transpiler<'a> {
                         .macro_context
                         .as_mut()
                         .map(|m| &mut *core::ptr::from_mut(m));
+                }
+                if !self.options.transform_only {
+                    // SAFETY: the resolver outlives the parse, which only calls it from this thread.
+                    opts.import_meta_glob = Some(unsafe {
+                        js_ast::ImportMetaGlobResolver::new(
+                            js_ast::ImportMetaGlobResolverKind::Resolver,
+                            &raw mut self.resolver,
+                        )
+                    });
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.

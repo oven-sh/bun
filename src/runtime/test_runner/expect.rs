@@ -16,6 +16,7 @@ use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
+use self::expect_deferred::ExpectDeferred;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
@@ -25,6 +26,9 @@ use bun_jsc::js_error_to_write_error;
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.
+
+#[path = "expect_deferred.rs"]
+pub(crate) mod expect_deferred;
 
 
 
@@ -185,12 +189,16 @@ impl Expect {
     }
 
     pub(crate) fn increment_expect_call_counter(&self) {
+        self.add_to_expect_call_counter(1);
+    }
+
+    fn add_to_expect_call_counter(&self, count: i32) {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
         let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
         if let Some(sequence) = parent.phase.sequence(buntest) {
             // found active sequence
-            sequence.expect_call_count = sequence.expect_call_count.saturating_add(1);
+            sequence.expect_call_count = sequence.expect_call_count.saturating_add_signed(count);
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
             if let Some(reporter) = buntest.reporter {
@@ -199,7 +207,7 @@ impl Expect {
                 // aliased mutably elsewhere here.
                 unsafe {
                     let s = (*reporter.as_ptr()).summary();
-                    s.expectations = s.expectations.saturating_add(1);
+                    s.expectations = s.expectations.saturating_add_signed(count);
                 }
             }
         }
@@ -431,10 +439,16 @@ impl Expect {
             self.flags.get(),
             global_this,
             value,
+            Self::settled_promise(this_value),
             bstr::BStr::new(matcher_name),
             matcher_params,
             false,
         )
+    }
+
+    /// What `call_matcher` found `.resolves` / `.rejects` to be about. `None`: not a promise.
+    fn settled_promise(this_value: JSValue) -> Option<bun_jsc::AnyPromise> {
+        super::expect::js::result_value_get_cached(this_value)?.as_any_promise()
     }
 
     /// Shared failure path for the three `.resolves`/`.rejects` mismatch cases
@@ -471,32 +485,49 @@ impl Expect {
         }
     }
 
-    /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
+    /// The promise that settles as `await value` does, or `None` when `value` is not thenable.
+    fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
+        if let Some(promise) = value.as_any_promise() {
+            promise.set_handled(global_this.vm());
+            if promise.status() != js_promise::Status::Pending {
+                return Ok(Some(promise));
+            }
+        }
+        let adopted = bun_jsc::JSPromise::create(global_this);
+        adopted.set_handled();
+        adopted.resolve(global_this, value)?;
+        // `then` is called in a microtask, so only a value without one has fulfilled `adopted` by now.
+        Ok((adopted.status() != js_promise::Status::Fulfilled).then_some(bun_jsc::AnyPromise::Normal(adopted)))
+    }
+
+    /// The promise `expect(received).resolves` / `.rejects` is about: `received`, or what it returns.
+    fn received_promise(global_this: &JSGlobalObject, received: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
+        match Self::promise_to_await(global_this, received)? {
+            None if received.is_callable() => {
+                Self::promise_to_await(global_this, received.call(global_this, JSValue::UNDEFINED, &[])?)
+            }
+            promise => Ok(promise),
+        }
+    }
+
+    /// Processes the async flags (resolves/rejects).
     /// If no flags, returns the original value
-    /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
+    /// If either flag is set, returns what `promise`, which stands for `value` and has settled, settled with, or an error if the expectation failed (in which case if silent is false, also throws a js exception)
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn process_promise(
         custom_label: &bun_core::String,
         flags: Flags,
         global_this: &JSGlobalObject,
         value: JSValue,
+        promise: Option<bun_jsc::AnyPromise>,
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         silent: bool,
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = value.as_any_promise() {
-                    let vm = global_this.vm();
-                    promise.set_handled(vm);
-
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
-
-                    let new_value = promise.result(vm);
+                if let Some(promise) = promise {
+                    let new_value = promise.result(global_this.vm());
                     match promise.status() {
                         js_promise::Status::Fulfilled => match resolution {
                             Promise::Resolves => {}
@@ -609,7 +640,14 @@ impl Expect {
         // (note that matcher_name/matcher_args are not used because silent=true)
         // SAFETY: value is a valid in/out-ptr provided by C++ caller
         let v = unsafe { *value };
-        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
+        let promise = match flags.promise() {
+            Promise::None => None,
+            _ => match ExpectDeferred::settled(global_this, [v, JSValue::UNDEFINED], || Self::promise_to_await(global_this, v)) {
+                Ok(promise) => promise,
+                Err(_) => return false,
+            },
+        };
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, promise, "", "", true) {
             Ok(new) => {
                 // SAFETY: value is a valid in/out-ptr provided by C++ caller
                 unsafe { *value = new };
@@ -628,58 +666,25 @@ impl Expect {
             .entry(buntest)
             .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
 
-        let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
-
-        let mut length: usize = 0;
-        let mut curr_scope = execution_entry.base.parent;
-        while let Some(scope) = curr_scope {
-            // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
-            let scope = unsafe { &*scope };
-            if let Some(name) = scope.base.name.as_deref() {
-                if !name.is_empty() {
-                    length += name.len() + 1;
-                }
-            }
-            curr_scope = scope.base.parent;
-        }
-        length += test_name.len();
+        let mut name = super::expect::get_state::full_test_name(execution_entry);
         if !hint.is_empty() {
-            length += hint.len() + 2;
+            name.extend_from_slice(b": ");
+            name.extend_from_slice(hint);
         }
-
-        let mut buf = vec![0u8; length];
-
-        let mut index = buf.len();
-        if !hint.is_empty() {
-            index -= hint.len();
-            buf[index..].copy_from_slice(hint);
-            index -= test_name.len() + 2;
-            buf[index..index + test_name.len()].copy_from_slice(test_name);
-            buf[index + test_name.len()..index + test_name.len() + 2].copy_from_slice(b": ");
-        } else {
-            index -= test_name.len();
-            buf[index..].copy_from_slice(test_name);
-        }
-        // copy describe scopes in reverse order
-        curr_scope = execution_entry.base.parent;
-        while let Some(scope) = curr_scope {
-            // SAFETY: `parent` is a live `*mut DescribeScope` owned by the BunTest arena.
-            let scope = unsafe { &*scope };
-            if let Some(name) = scope.base.name.as_deref() {
-                if !name.is_empty() {
-                    index -= name.len() + 1;
-                    buf[index..index + name.len()].copy_from_slice(name);
-                    buf[index + name.len()] = b' ';
-                }
-            }
-            curr_scope = scope.base.parent;
-        }
-
-        Ok(buf)
+        Ok(name)
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        Self::call_in(global_this, callframe, None)
+    }
+
+    /// `state`: the test the call belongs to, if not the one that is running.
+    pub(crate) fn call_in(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        state: Option<bun_test::RefDataValue>,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.len() < 1 { JSValue::UNDEFINED } else { arguments[0] };
 
@@ -692,7 +697,7 @@ impl Expect {
 
         let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
             let buntest_strong = buntest_strong_;
-            let state = buntest_strong.get().get_current_state_data();
+            let state = state.unwrap_or_else(|| buntest_strong.get().get_current_state_data());
             Some(bun_test::BunTest::ref_(&buntest_strong, state))
         } else {
             None
@@ -847,6 +852,19 @@ impl Expect {
             return Err(global_this.throw(format_args!("Expected value must be a function")));
         }
 
+        let key = [value, JSValue::UNDEFINED];
+        let thrown_by = |promise: bun_jsc::AnyPromise, returned: JSValue| match promise
+            .unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled)
+        {
+            js_promise::Unwrapped::Fulfilled(_) => Ok((None, returned)),
+            // since we know for sure it rejected, we should always return the error
+            js_promise::Unwrapped::Rejected(rejected) => Ok((Some(rejected.to_error().unwrap_or(rejected)), returned)),
+            js_promise::Unwrapped::Pending => Err(ExpectDeferred::wait_for(global_this, key, promise)),
+        };
+        if let Some(promise) = ExpectDeferred::waited_for(global_this, key)? {
+            return thrown_by(promise, promise.as_value());
+        }
+
         let mut return_value: JSValue = JSValue::ZERO;
 
         // Drain existing unhandled rejections
@@ -869,19 +887,8 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
-            match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
-                js_promise::Unwrapped::Fulfilled(_) => {
-                    return Ok((None, return_value_from_function));
-                }
-                js_promise::Unwrapped::Rejected(rejected) => {
-                    // since we know for sure it rejected, we should always return the error
-                    return Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function));
-                }
-                js_promise::Unwrapped::Pending => unreachable!(),
-            }
+            return thrown_by(promise, return_value_from_function);
         }
 
         if return_value != return_value_from_function {
@@ -1087,7 +1094,8 @@ impl Expect {
             let buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
-            let srcloc = call_frame.get_caller_src_loc(global_this);
+            let srcloc = ExpectDeferred::call_site(global_this, call_frame)
+                .unwrap_or_else(|| call_frame.get_caller_src_loc(global_this));
             let file_id = buntest.file_id;
             // MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.
@@ -1140,7 +1148,7 @@ impl Expect {
             if !value.jest_deep_match(prop_matchers, global_this, true)? {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
-                let mut formatter = ConsoleObject::Formatter::new(global_this);
+                let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(false);
                 return throw!(
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
@@ -1210,7 +1218,7 @@ impl Expect {
                         global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
                     }
                     _ => {
-                        let mut formatter = ConsoleObject::Formatter::new(global_this);
+                        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(false);
                         global_this.throw(format_args!("Failed to snapshot value: {}", value.to_fmt(&mut formatter)))
                     }
                 });
@@ -1422,32 +1430,29 @@ impl Expect {
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
+    /// `user`: with the left value, tells this use of the matcher from the others in the same `expect()` matcher call.
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
+        user: JSValue,
         args: &[JSValue],
         flags: Flags,
         silent: bool,
     ) -> JsResult<bool> {
-        // prepare the this object
-        // JsClass::to_js takes `self` by value and boxes internally.
-        let matcher_context_jsvalue = ExpectMatcherContext { flags }.to_js(global_this);
-        matcher_context_jsvalue.ensure_still_alive();
-
-        // call the custom matcher implementation
-        let mut result = matcher_fn.call(global_this, matcher_context_jsvalue, args)?;
+        let key = [user, args[0]];
+        let mut result = match ExpectDeferred::waited_for(global_this, key)? {
+            Some(promise) => promise.as_value(),
+            // call the custom matcher implementation
+            None => matcher_fn.call(global_this, ExpectMatcherContext { flags }.to_js(global_this), args)?,
+        };
         // support for async matcher results
         if let Some(promise) = result.as_any_promise() {
             let vm = global_this.vm();
             promise.set_handled(vm);
-
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+            if promise.status() == js_promise::Status::Pending {
+                return Err(ExpectDeferred::wait_for(global_this, key, promise));
+            }
 
             result = promise.result(vm);
             result.ensure_still_alive();
@@ -1456,7 +1461,6 @@ impl Expect {
                 js_promise::Status::Pending => unreachable!(),
                 js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
-                    // TODO: rewrite this code to use .then() instead of blocking the event loop
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
                     VirtualMachine::get().as_mut().run_error_handler(result, None);
                     return Err(global_this.throw(format_args!(
@@ -1529,7 +1533,23 @@ impl Expect {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        // retrieve the user-provided matcher function (matcher_fn)
+        // try to retrieve the Expect instance
+        let Some(expect_ptr) = Expect::from_js(call_frame.this()) else {
+            // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
+            return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, Self::custom_matcher_fn(global_this, call_frame)?);
+        };
+        // SAFETY: from_js returned a non-null live m_ctx pointer owned by the JS wrapper.
+        // R-2: deref as shared (`&*`) — the matcher runs user JS, which can call another matcher on this same
+        // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
+        let expect = unsafe { &*expect_ptr };
+
+        // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
+        // so now execute the symmetric matching
+        expect.call_matcher(global_this, call_frame, Self::custom_matcher)
+    }
+
+    /// The user-provided matcher function (matcher_fn) of the custom matcher that `call_frame` calls.
+    fn custom_matcher_fn(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let func: JSValue = call_frame.callee();
         let matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
         if !matcher_fn.js_type().is_function() {
@@ -1538,22 +1558,13 @@ impl Expect {
                 (),
             ));
         }
-        matcher_fn.ensure_still_alive();
+        Ok(matcher_fn)
+    }
 
-        // try to retrieve the Expect instance
+    fn custom_matcher(&self, global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let expect = self;
         let this_value: JSValue = call_frame.this();
-        let Some(expect_ptr) = Expect::from_js(this_value) else {
-            // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
-            return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, matcher_fn);
-        };
-        // SAFETY: from_js returned a non-null live m_ctx pointer owned by the JS wrapper.
-        // R-2: deref as shared (`&*`) — `process_promise` below may re-enter JS (await on a
-        // thenable's user-defined `then`), which can call another matcher on this same
-        // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
-        let expect = unsafe { &*expect_ptr };
-
-        // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
-        // so now execute the symmetric matching
+        let matcher_fn = Self::custom_matcher_fn(global_this, call_frame)?;
 
         // retrieve the matcher name
         let matcher_name = matcher_fn.get_name(global_this)?;
@@ -1574,6 +1585,7 @@ impl Expect {
             expect.flags.get(),
             global_this,
             value,
+            Self::settled_promise(this_value),
             &matcher_name,
             &matcher_params,
             false,
@@ -1592,7 +1604,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -1606,6 +1618,11 @@ impl Expect {
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub(crate) fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::has_assertions_in(global_this, None)
+    }
+
+    /// `state`: as for `call_in`.
+    pub(crate) fn has_assertions_in(global_this: &JSGlobalObject, state: Option<bun_test::RefDataValue>) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
@@ -1613,7 +1630,7 @@ impl Expect {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
-        let state_data = buntest.get_current_state_data();
+        let state_data = state.unwrap_or_else(|| buntest.get_current_state_data());
         let Some(execution) = state_data.sequence(buntest) else {
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
@@ -1626,6 +1643,15 @@ impl Expect {
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub(crate) fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::assertions_in(global_this, call_frame, None)
+    }
+
+    /// `state`: as for `call_in`.
+    pub(crate) fn assertions_in(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+        state: Option<bun_test::RefDataValue>,
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
@@ -1665,7 +1691,7 @@ impl Expect {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
-        let state_data = buntest.get_current_state_data();
+        let state_data = state.unwrap_or_else(|| buntest.get_current_state_data());
         let Some(execution) = state_data.sequence(buntest) else {
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
@@ -2290,6 +2316,9 @@ pub(crate) mod expect_array_containing_js {
 pub(crate) mod expect_custom_asymmetric_matcher_js {
     bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; matcherFn, capturedArgs);
 }
+pub(crate) mod expect_matcher_utils_js {
+    bun_jsc::codegen_cached_accessors!("ExpectMatcherUtils"; equalityTesters, equals, state, deferred);
+}
 
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ExpectAnything {
@@ -2587,7 +2616,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, this_value, &matcher_args, this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2683,8 +2712,7 @@ pub(crate) struct ExpectMatcherContext {
 impl ExpectMatcherContext {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_utils(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        // SAFETY: FFI call with valid &JSGlobalObject
-        unsafe { ExpectMatcherUtils__getSingleton(global_this) }
+        ExpectMatcherUtils::singleton(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2707,8 +2735,17 @@ impl ExpectMatcherContext {
         JSValue::FALSE
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn equals(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_equals(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
+        let utils = ExpectMatcherUtils::singleton(global_this);
+        expect_matcher_utils_js::equals_get_cached(utils).unwrap_or_else(|| {
+            let equals = JSFunction::create(global_this, "equals", equals_shim, 4, Default::default());
+            expect_matcher_utils_js::equals_set_cached(utils, global_this, equals);
+            equals
+        })
+    }
+
+    fn equals(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 2 {
             return Err(global_this.throw2(
@@ -2716,18 +2753,74 @@ impl ExpectMatcherContext {
                 (),
             ));
         }
-        Ok(JSValue::from(args[0].jest_deep_equals(args[1], global_this)?))
+        let [a, b, custom_testers, strict_check] = callframe.arguments_as_array::<4>();
+        let custom_testers = if custom_testers.is_undefined() {
+            JSValue::ZERO
+        } else if !custom_testers.js_type().is_array() {
+            return Err(global_this.throw_invalid_argument_type_value("customTesters", "array", custom_testers));
+        } else if custom_testers.get_length(global_this)? == 0 {
+            JSValue::ZERO
+        } else {
+            custom_testers
+        };
+        let _testers = super::expect::add_equality_testers::EqualityTestersScope::enter(global_this, custom_testers)?;
+        Ok(JSValue::from(if strict_check.to_boolean() {
+            a.jest_strict_deep_equals(b, global_this)?
+        } else {
+            a.jest_deep_equals(b, global_this)?
+        }))
     }
 }
 
+/// A host function that ignores `this`: as in Jest, a matcher may destructure it or pass it on.
+macro_rules! plain_host_fn {
+    ($shim:ident, $function:path) => {
+        bun_jsc::jsc_host_abi! {
+            unsafe fn $shim(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue {
+                // SAFETY: JSC guarantees both pointers are live for the call.
+                let (global, frame) = unsafe { (&*global, &*frame) };
+                bun_jsc::to_js_host_fn_result(global, $function(global, frame))
+            }
+        }
+    };
+}
+plain_host_fn!(equals_shim, ExpectMatcherContext::equals);
+plain_host_fn!(stringify_shim, ExpectMatcherUtils::stringify);
+plain_host_fn!(print_expected_shim, ExpectMatcherUtils::print_expected);
+plain_host_fn!(print_received_shim, ExpectMatcherUtils::print_received);
+plain_host_fn!(matcher_hint_shim, ExpectMatcherUtils::matcher_hint);
+
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
+///
+/// The one cell of `expect` that each global roots, so it also holds what `expect` keeps per global.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
-pub(crate) struct ExpectMatcherUtils {}
+#[derive(Default)]
+pub(crate) struct ExpectMatcherUtils {
+    /// How many of the leading equality testers preload scripts registered. Those outlive the test file.
+    pub(crate) preload_testers: Cell<u32>,
+    /// `BunTestRoot::file_generation` of the test file that registered the other equality testers.
+    pub(crate) testers_file: Cell<u32>,
+}
 
 impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
-        ExpectMatcherUtils {}.to_js(global_this)
+        ExpectMatcherUtils::default().to_js(global_this).put_host_functions(
+            global_this,
+            &[
+                ("stringify", stringify_shim, 1),
+                ("printExpected", print_expected_shim, 1),
+                ("printReceived", print_received_shim, 1),
+                ("EXPECTED_COLOR", print_expected_shim, 1),
+                ("RECEIVED_COLOR", print_received_shim, 1),
+                ("matcherHint", matcher_hint_shim, 1),
+            ],
+        )
+    }
+
+    pub(crate) fn singleton(global_this: &JSGlobalObject) -> JSValue {
+        // SAFETY: FFI call with valid &JSGlobalObject
+        unsafe { ExpectMatcherUtils__getSingleton(global_this) }
     }
 
     fn print_value(
@@ -2755,29 +2848,25 @@ impl ExpectMatcherUtils {
         bun_string_jsc::create_utf8_for_js(global_this, mutable_string.slice())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn stringify(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    fn stringify(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Self::print_value(global_this, value, None)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn print_expected(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    fn print_expected(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Self::print_value(global_this, value, Some("<green>"))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn print_received(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    fn print_received(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Self::print_value(global_this, value, Some("<red>"))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn matcher_hint(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    fn matcher_hint(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
 
         if arguments.is_empty() || !arguments[0].is_string() {

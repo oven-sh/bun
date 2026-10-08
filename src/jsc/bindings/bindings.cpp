@@ -4896,7 +4896,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 
     JSObject* obj = value.toObject(arg1);
 
-    auto calculated = JSObject::calculatedClassName(obj);
+    auto calculated = Zig::functionNameForDisplay(JSC::getVM(arg1), JSObject::calculatedClassName(obj));
     if (calculated.length() > 0) {
         return toStringAdopt(WTF::move(calculated));
     }
@@ -4943,7 +4943,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
             return toStringAdopt(WTF::move(actualName));
         }
 
-        return Bun::toStringRef(function->jsExecutable()->name().string());
+        return toStringAdopt(Zig::functionNameForDisplay(vm, function->jsExecutable()->name().string()));
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
@@ -4963,7 +4963,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = value.getObject();
-    auto displayName = JSC::getCalculatedDisplayName(vm, object);
+    auto displayName = Zig::functionNameForDisplay(vm, JSC::getCalculatedDisplayName(vm, object));
 
     // JSC doesn't include @@toStringTag in calculated display name
     if (displayName.isEmpty()) {

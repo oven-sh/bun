@@ -442,6 +442,15 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
     return Zig::sourceURL(function->jsExecutable()->source());
 }
 
+String functionNameForDisplay(JSC::VM& vm, String name)
+{
+    // Identity, as in JSFunction::nameWithoutGC: a function that is itself named "starDefault" keeps its name.
+    if (name.impl() == vm.propertyNames->starDefaultPrivateName.impl()) [[unlikely]]
+        return vm.propertyNames->defaultKeyword.string();
+
+    return name;
+}
+
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 {
     auto codeType = codeBlock->codeType();
@@ -452,7 +461,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaNameWithoutGC();
+        return functionNameForDisplay(vm, uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaNameWithoutGC());
     }
 
     return String();
@@ -503,7 +512,7 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
         }
     }
 
-    return functionName;
+    return functionNameForDisplay(vm, WTF::move(functionName));
 }
 
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)

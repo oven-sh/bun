@@ -206,6 +206,9 @@ public:
     static constexpr unsigned AddNewKeyword = 1 << 4;
 };
 
+// Shows the private name `*default*` of an anonymous `export default` as "default", like JSFunction::reifyName.
+String functionNameForDisplay(JSC::VM& vm, String name);
+
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);

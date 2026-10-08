@@ -81,7 +81,10 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
             (Flags::ABSTRACT, "abstract "),
             (Flags::OVERRIDE, "override "),
         ] {
-            if has_modifier(member, flag) {
+            // An error, and not in typescript-estree's tree.
+            let is_dropped =
+                flag == Flags::OVERRIDE && member.constructor_keyword().is_some() && !constructor_keeps_override(f);
+            if has_modifier(member, flag) && !is_dropped {
                 write!(f, keyword);
             }
         }
@@ -109,16 +112,23 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     }
 }
 
+fn constructor_keeps_override(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `constructor`, which can be written as a string, and is quoted like any other name.
 fn write_constructor_keyword<'a>(keyword: Ident<'a>, node: AstNodes<'a>, f: &mut Formatter<'a>) {
     let span = keyword.span();
     let source = f.source_text().text_for(&span);
     if source.starts_with(b"\"") || source.starts_with(b"'") {
-        let is_unquoted = match f.options().quote_properties {
-            QuoteProperties::AsNeeded => true,
-            QuoteProperties::Preserve => false,
-            QuoteProperties::Consistent => !f.context().is_quote_needed(),
-        };
+        // Not `"\x63onstructor"`.
+        let is_name = source.get(1..source.len().saturating_sub(1)) == Some(b"constructor");
+        let is_unquoted = is_name
+            && match f.options().quote_properties {
+                QuoteProperties::AsNeeded => true,
+                QuoteProperties::Preserve => false,
+                QuoteProperties::Consistent => !f.context().is_quote_needed(),
+            };
         format_node(span, || node, f, |f| match is_unquoted {
             true => write!(f, source_text(span.shrink(1, 1))),
             false => write!(f, FormatLiteralStringToken::new(source, false, StringLiteralParentKind::Expression)),
@@ -199,6 +209,10 @@ impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
                     param.ty().map(FormatTypeAnnotation)
                 ]
             );
+            // An error.
+            if let Some(default) = param.default() {
+                write!(f, [space(), "=", space(), default]);
+            }
         });
     }
 }
@@ -226,10 +240,19 @@ impl<'a> Format<'a> for FormatClassImplements<'a> {
 pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     match class.owner() {
         Node::Expr(e) if class.decorators().next().is_some() && needs_parentheses(e, f) => {
-            write!(f, soft_block_indent(&FormatClass(class)));
+            match matches!(e.ast_parent(), AstNodes::ExportDefaultDeclaration(_)) && decorators_in_export_start_a_line(f) {
+                true => write!(f, [indent(&format_args!(empty_line(), FormatClass(class))), soft_line_break()]),
+                false => write!(f, soft_block_indent(&FormatClass(class))),
+            }
         }
         _ => FormatClass(class).fmt(f),
     }
+}
+
+/// Prettier's `printDecorators` starts with a line break in an `export`, also behind the line break
+/// after the parenthesis of `export default (@a class {})`.
+fn decorators_in_export_start_a_line(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 struct FormatClass<'a>(Class<'a>);

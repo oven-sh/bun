@@ -2941,6 +2941,17 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // A question about an argument first resolves the calls around it, and gets to the outermost call by call.
+    test("5,500 generic calls, each the argument of the last", async () => {
+      using dir = project({
+        "a.ts": `declare function g<T>(a: T): T;\ndeclare const a: any;\nexport const r = ${repeat("g(", 5_500)}a${repeat(")", 5_500)};\n`,
+        "b.ts": `export const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
     // The way Kobalte types a component that renders as any element. Where `Elements[keyof Elements]` is a
     // parameter its members meet in one intersection. Whether that is `never` is decided name by name, and
     // comparing every pair of members for every name took minutes here.

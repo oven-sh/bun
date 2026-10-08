@@ -122,6 +122,10 @@ impl<'p, 's> Checker<'p, 's> {
                             && self.p.calls.get(&self.task, &(file, parent)).is_none()
                             && !self.stack.contains(&Query::Call(file, parent))
                         {
+                            // No query is entered on the way up through calls in arguments of calls, so nothing else looks at the stack.
+                            if self.is_stack_low() {
+                                return;
+                            }
                             // The call may be an argument itself: resolve the outermost enclosing call first. As the outermost query,
                             // `resolved_signature` does that itself. Doing it twice doubles the work per nesting level if the enclosing
                             // calls are non-cacheable.

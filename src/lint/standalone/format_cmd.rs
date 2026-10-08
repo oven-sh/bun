@@ -116,7 +116,12 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         }
     };
     fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<WithCursor, FormatError> {
-        if bun_lint::linter::refused_by_prettier(file) {
+        // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
+        let types = match options.parser.as_deref() {
+            Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts") => bun_lint::linter::TypesInJavaScript::Tolerated,
+            _ => bun_lint::linter::TypesInJavaScript::Refused,
+        };
+        if bun_lint::linter::refused_by_prettier_with(file, types) {
             return Err(FormatError::SyntaxError);
         }
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());

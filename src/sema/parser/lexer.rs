@@ -34,13 +34,16 @@ pub(crate) struct Lexer<'a> {
     pub(crate) refused_at: (u32, &'static core::panic::Location<'static>),
     /// `</` is one token.
     pub(crate) is_jsx: bool,
+    /// `Dialect::ecmascript`, in a JavaScript file.
+    pub(crate) is_ecmascript: bool,
+    /// The goal symbol is Script.
+    pub(crate) is_script: bool,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,
     /// `hir::File::comment_directives`
     pub(crate) comment_directives: Vec<CommentDirective>,
     /// The comments before the first token.
     pub(crate) leading_comments: Vec<(u32, u32)>,
-    is_before_first_token: bool,
     /// Where values with escapes are decoded.
     buffer: Vec<u8>,
 }
@@ -118,11 +121,12 @@ impl<'a> Lexer<'a> {
             refusal: None,
             refused_at: (0, core::panic::Location::caller()),
             is_jsx: false,
+            is_ecmascript: false,
+            is_script: false,
             atoms,
             names,
             comment_directives: Vec::new(),
             leading_comments: Vec::new(),
-            is_before_first_token: true,
             buffer: Vec::new(),
         }
     }
@@ -189,14 +193,19 @@ impl<'a> Lexer<'a> {
     }
 
     /// Scans the next token.
+    #[inline(always)]
     pub(crate) fn next(&mut self) {
-        let src = self.src;
-        let mut pos = self.end as usize;
         self.full_start = self.end;
         self.newline_before = false;
+        self.scan(self.end as usize);
+    }
+
+    /// Scans the token at `pos`, or after the blanks and comments there. Every call in it is the
+    /// last thing it does, so it saves no register.
+    fn scan(&mut self, mut pos: usize) {
+        let src = self.src;
         loop {
             let Some(&byte) = src.get(pos) else {
-                self.is_before_first_token = false;
                 return self.set(T::Eof, src.len(), src.len());
             };
             let next = pos + 1;
@@ -238,34 +247,25 @@ impl<'a> Lexer<'a> {
                 b'~' => self.set(T::Tilde, pos, next),
                 b'@' => self.set(T::At, pos, next),
                 b'.' => match (self.at(next), self.at(next + 1)) {
-                    (b'0'..=b'9', _) => self.number(pos),
+                    (b'0'..=b'9', _) => return self.number(pos),
                     (b'.', b'.') => self.set(T::DotDotDot, pos, pos + 3),
                     _ => self.set(T::Dot, pos, next),
                 },
                 b'=' => match (self.at(next), self.at(next + 1)) {
-                    (b'=', b'=') if self.at(pos + 3) == b'=' => self.refuse(Refusal::ConflictMarker),
+                    (b'=', b'=') if self.at(pos + 3) == b'=' => return self.refuse(Refusal::ConflictMarker),
                     (b'=', b'=') => self.set(T::EqualsEqualsEquals, pos, pos + 3),
                     (b'=', _) => self.set(T::EqualsEquals, pos, pos + 2),
                     (b'>', _) => self.set(T::EqualsGreaterThan, pos, pos + 2),
                     _ => self.set(T::Equals, pos, next),
                 },
-                b'\'' | b'"' => self.string(pos, byte),
+                b'\'' | b'"' => return self.string(pos, byte),
                 b'/' => match self.at(next) {
-                    b'/' => {
-                        pos = self.line_comment(pos);
-                        continue;
-                    }
-                    b'*' => {
-                        let Some(end) = self.block_comment(pos) else {
-                            return self.refuse(Refusal::Unterminated);
-                        };
-                        pos = end;
-                        continue;
-                    }
+                    b'/' => return self.line_comment(pos),
+                    b'*' => return self.block_comment(pos),
                     b'=' => self.set(T::SlashEquals, pos, pos + 2),
                     _ => self.set(T::Slash, pos, next),
                 },
-                b'0'..=b'9' => self.number(pos),
+                b'0'..=b'9' => return self.number(pos),
                 b'!' => match (self.at(next), self.at(next + 1)) {
                     (b'=', b'=') => self.set(T::ExclamationEqualsEquals, pos, pos + 3),
                     (b'=', _) => self.set(T::ExclamationEquals, pos, pos + 2),
@@ -280,19 +280,21 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::Question, pos, next),
                 },
                 b'<' => match (self.at(next), self.at(next + 1)) {
-                    (b'<', b'<') => self.refuse(Refusal::ConflictMarker),
+                    (b'<', b'<') => return self.refuse(Refusal::ConflictMarker),
                     (b'<', b'=') => self.set(T::LessThanLessThanEquals, pos, pos + 3),
                     (b'<', _) => self.set(T::LessThanLessThan, pos, pos + 2),
                     (b'=', _) => self.set(T::LessThanEquals, pos, pos + 2),
-                    (b'/', after) if self.is_jsx && after != b'*' => {
+                    (b'/', after) if self.is_jsx && !self.is_ecmascript && after != b'*' => {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
-                    (b'!', b'-') if self.at(pos + 3) == b'-' => self.refuse(Refusal::HtmlComment),
+                    (b'!', b'-') if self.is_script && self.at(pos + 3) == b'-' => {
+                        return self.rest_of_line(pos);
+                    }
                     _ => self.set(T::LessThan, pos, next),
                 },
                 // The parser asks for `>=`, `>>` and so on where they can be.
                 b'>' => {
-                    if src.get(pos..pos + 7) == Some(b">>>>>>>") {
+                    if self.at(next) == b'>' && src.get(pos..pos + 7) == Some(b">>>>>>>") {
                         return self.refuse(Refusal::ConflictMarker);
                     }
                     self.set(T::GreaterThan, pos, next);
@@ -303,7 +305,12 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::Plus, pos, next),
                 },
                 b'-' => match (self.at(next), self.at(next + 1)) {
-                    (b'-', b'>') => self.refuse(Refusal::HtmlComment),
+                    // Only blanks and comments are before it on its line.
+                    (b'-', b'>')
+                        if self.is_script && (self.newline_before || self.full_start == 0) =>
+                    {
+                        return self.rest_of_line(pos);
+                    }
                     (b'-', _) => self.set(T::MinusMinus, pos, pos + 2),
                     (b'=', _) => self.set(T::MinusEquals, pos, pos + 2),
                     _ => self.set(T::Minus, pos, next),
@@ -325,7 +332,7 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::Ampersand, pos, next),
                 },
                 b'|' => match (self.at(next), self.at(next + 1)) {
-                    (b'|', b'|') => self.refuse(Refusal::ConflictMarker),
+                    (b'|', b'|') => return self.refuse(Refusal::ConflictMarker),
                     (b'|', b'=') => self.set(T::BarBarEquals, pos, pos + 3),
                     (b'|', _) => self.set(T::BarBar, pos, pos + 2),
                     (b'=', _) => self.set(T::BarEquals, pos, pos + 2),
@@ -335,71 +342,108 @@ impl<'a> Lexer<'a> {
                     b'=' => self.set(T::CaretEquals, pos, pos + 2),
                     _ => self.set(T::Caret, pos, next),
                 },
-                b'`' => self.template(pos, true),
+                b'`' => return self.template(pos, true),
                 b'#' => {
-                    if pos == 0 && self.at(next) == b'!' {
-                        pos = self.end_of_line(pos);
-                        continue;
+                    let is_first = pos == 0 || pos == 3 && src.starts_with(b"\xEF\xBB\xBF");
+                    if is_first && self.at(next) == b'!' {
+                        return self.rest_of_line(pos);
                     }
-                    self.private_name(pos);
+                    return self.private_name(pos);
                 }
-                b'\\' => self.name_slowly(pos, pos),
-                0x80.. => {
-                    let Some((c, len)) = decode(&src[pos..]) else {
-                        return self.refuse(Refusal::NotUtf8);
-                    };
-                    if c == 0x2028 || c == 0x2029 {
-                        self.newline_before = true;
-                    } else if !is_unicode_blank(c) {
-                        self.is_before_first_token = false;
-                        return self.name_slowly(pos, pos);
-                    }
-                    pos += len;
-                    continue;
-                }
-                _ => self.refuse(Refusal::UnexpectedCharacter),
+                b'\\' => return self.name_slowly(pos, pos),
+                0x80.. => return self.not_ascii(pos),
+                _ => return self.refuse(Refusal::UnexpectedCharacter),
             }
-            self.is_before_first_token = false;
             return;
         }
+    }
+
+    /// At a character that is not ASCII, where a token can start.
+    #[cold]
+    #[inline(never)]
+    fn not_ascii(&mut self, pos: usize) {
+        let Some((c, len)) = decode(&self.src[pos..]) else {
+            return self.refuse(Refusal::NotUtf8);
+        };
+        if c == 0x2028 || c == 0x2029 {
+            self.newline_before = true;
+        } else if !is_unicode_blank(c) {
+            return self.name_slowly(pos, pos);
+        }
+        self.scan(pos + len);
+    }
+
+    /// Passes over the rest of the line of `pos` and scans the token after it.
+    #[cold]
+    #[inline(never)]
+    fn rest_of_line(&mut self, pos: usize) {
+        let end = self.end_of_line(pos);
+        self.scan(end);
     }
 
     // ───────────────────────────── names ─────────────────────────────
 
     /// A name or a keyword that starts at `start` with an ASCII letter, `_` or `$`.
-    #[inline(always)]
+    #[inline(never)]
     fn name(&mut self, start: usize) {
-        self.is_before_first_token = false;
         self.has_escape = false;
-        let src = self.src;
-        if let Some(chunk) = src.get(start..).and_then(|rest| rest.first_chunk::<16>()) {
-            let len = name_run(u8x16::from_array(*chunk));
-            if let Some(&after) = chunk.get(len as usize) {
-                if after < 0x80 && after != b'\\' {
-                    let end = start + len as usize;
-                    let text = src.get(start..end).unwrap_or_default();
-                    let (atom, kind) = self.names.short(chunk, len, text, self.atoms);
-                    self.atom = atom;
-                    return self.set(kind, start, end);
-                }
-                return self.name_slowly(start, start + len as usize);
-            }
+        let Some(chunk) = self.src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
+            return self.name_of_any_length(start);
+        };
+        let len = name_run(u8x16::from_array(*chunk));
+        if len == 16 {
+            return self.long_name(start);
         }
-        self.long_name(start);
+        let after = chunk[(len & 15) as usize];
+        if after >= 0x80 || after == b'\\' {
+            return self.name_slowly(start, start + len as usize);
+        }
+        let words = crate::names::short_words(chunk, len);
+        match self.names.find_short(words) {
+            Some((atom, kind)) => {
+                self.atom = atom;
+                self.set(kind, start, start + len as usize);
+            }
+            None => self.new_short_name(start, len as usize, words),
+        }
     }
 
-    /// The same for a name of 16 bytes or more, or near the end of the text.
+    #[cold]
+    #[inline(never)]
+    fn new_short_name(&mut self, start: usize, len: usize, words: [u64; 2]) {
+        let text = self.src.get(start..start + len).unwrap_or_default();
+        let (atom, kind) = self.names.add_short(words, text, self.atoms);
+        self.atom = atom;
+        self.set(kind, start, start + len);
+    }
+
+    /// The same for a name of 16 bytes or more.
     #[inline(never)]
     fn long_name(&mut self, start: usize) {
         let src = self.src;
-        let mut end = start;
-        while let Some(chunk) = src.get(end..).and_then(|rest| rest.first_chunk::<16>()) {
-            let len = name_run(u8x16::from_array(*chunk)) as usize;
-            end += len;
-            if len < 16 {
-                break;
-            }
+        let Some(chunk) = (src.get(start + 16..)).and_then(|rest| rest.first_chunk::<16>()) else {
+            return self.name_of_any_length(start);
+        };
+        let len = 16 + name_run(u8x16::from_array(*chunk)) as usize;
+        if len == 32 {
+            return self.name_of_any_length(start);
         }
+        let after = chunk[len & 15];
+        if after >= 0x80 || after == b'\\' {
+            return self.name_slowly(start, start + len);
+        }
+        let text = src.get(start..start + len).unwrap_or_default();
+        self.atom = self.names.long(text, self.atoms);
+        // No keyword is that long.
+        self.set(T::Identifier, start, start + len);
+    }
+
+    /// The same for a name of 32 bytes or more, or near the end of the text.
+    #[cold]
+    #[inline(never)]
+    fn name_of_any_length(&mut self, start: usize) {
+        let src = self.src;
+        let mut end = start;
         while src.get(end).is_some_and(|&byte| is_name_byte(byte)) {
             end += 1;
         }
@@ -408,12 +452,7 @@ impl<'a> Lexer<'a> {
         }
         let text = src.get(start..end).unwrap_or_default();
         self.atom = self.names.atom(text, self.atoms);
-        let kind = match text.len() {
-            // No keyword is longer than `constructor`.
-            0..=11 => crate::token::keyword(text),
-            _ => T::Identifier,
-        };
-        self.set(kind, start, end);
+        self.set(crate::token::keyword(text), start, end);
     }
 
     /// A name that starts at `start` and has a character that is not ASCII, or an escape, at
@@ -449,8 +488,15 @@ impl<'a> Lexer<'a> {
                 None => break,
             };
             let belongs = match text.is_empty() {
-                true => is_identifier_start(c),
-                false => is_identifier_part(c),
+                true => {
+                    is_identifier_start(c)
+                        || self.is_ecmascript
+                            && bun_core::lexer::is_recent_identifier_start(c as i32)
+                }
+                false => {
+                    is_identifier_part(c)
+                        || self.is_ecmascript && bun_core::lexer::is_recent_identifier_part(c as i32)
+                }
             };
             if !belongs {
                 if src[pos] == b'\\' {
@@ -471,8 +517,17 @@ impl<'a> Lexer<'a> {
             return self.refuse(Refusal::UnexpectedCharacter);
         }
         self.atom = self.names.atom(&text, self.atoms);
-        let kind = crate::token::keyword(&text);
+        let mut kind = crate::token::keyword(&text);
         self.buffer = text;
+        if self.has_escape && kind != T::Identifier {
+            // A word that is only reserved in some places is a name if it is written with an escape.
+            // For TypeScript it is the keyword, and an error where it is read as one.
+            if !self.is_ecmascript || kind.is_reserved_word() || matches!(kind, T::Await | T::Yield)
+            {
+                return self.refuse(Refusal::EscapedKeyword);
+            }
+            kind = T::Identifier;
+        }
         self.set(kind, start, pos);
     }
 
@@ -557,11 +612,11 @@ impl<'a> Lexer<'a> {
         src.len()
     }
 
-    /// The `//` comment at `start`. Returns its end.
+    /// Passes over the `//` comment at `start` and scans the token after it.
     #[inline(never)]
-    fn line_comment(&mut self, start: usize) -> usize {
+    fn line_comment(&mut self, start: usize) {
         let end = self.end_of_line(start + 2);
-        if self.is_before_first_token {
+        if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
         // `processCommentDirective`: "Skip opening //", "Skip another / if present"
@@ -571,12 +626,12 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.comment_directive(start, pos, end);
-        end
+        self.scan(end);
     }
 
-    /// The `/*` comment at `start`. Returns its end.
+    /// Passes over the `/*` comment at `start` and scans the token after it.
     #[inline(never)]
-    fn block_comment(&mut self, start: usize) -> Option<usize> {
+    fn block_comment(&mut self, start: usize) {
         let src = self.src;
         let mut pos = start + 2;
         // The start of its last line.
@@ -595,7 +650,10 @@ impl<'a> Lexer<'a> {
                 }
                 pos += mask.trailing_zeros() as usize;
             }
-            match *src.get(pos)? {
+            let Some(&byte) = src.get(pos) else {
+                return self.refuse(Refusal::Unterminated);
+            };
+            match byte {
                 b'*' if src.get(pos + 1) == Some(&b'/') => break pos + 2,
                 b'\n' | b'\r' => {
                     self.newline_before = true;
@@ -609,7 +667,7 @@ impl<'a> Lexer<'a> {
             }
             pos += 1;
         };
-        if self.is_before_first_token {
+        if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
         // `processCommentDirective`: "Skip whitespace", "Skip combinations of / and *"
@@ -621,7 +679,7 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.comment_directive(last_line, pos, end);
-        Some(end)
+        self.scan(end);
     }
 
     /// `processCommentDirective`, from the blanks before the `@` on.
@@ -660,7 +718,7 @@ impl<'a> Lexer<'a> {
     // ───────────────────────────── strings ─────────────────────────────
 
     /// The string at `start`, in the quotes `quote`.
-    #[inline(always)]
+    #[inline(never)]
     fn string(&mut self, start: usize, quote: u8) {
         let src = self.src;
         let mut pos = start + 1;
@@ -678,13 +736,37 @@ impl<'a> Lexer<'a> {
             }
             pos += mask.trailing_zeros() as usize;
             if src.get(pos) == Some(&quote) {
-                let text = src.get(start + 1..pos).unwrap_or_default();
-                self.atom = self.names.atom(text, self.atoms);
+                self.atom = self.atom_of_source(start + 1, pos);
                 return self.set(T::String, start, pos + 1);
             }
             break;
         }
         self.string_slowly(start, quote);
+    }
+
+    /// The atom of the text from `start` to `end`, which has no zero byte and after which 16 more
+    /// bytes of the source follow.
+    #[inline]
+    fn atom_of_source(&mut self, start: usize, end: usize) -> Atom {
+        let text = self.src.get(start..end).unwrap_or_default();
+        let len = text.len();
+        if len >= 16 {
+            return match len {
+                16..=32 => self.names.long(text, self.atoms),
+                _ => self.atoms.intern(text),
+            };
+        }
+        let Some(chunk) = self.src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
+            return self.names.atom(text, self.atoms);
+        };
+        if len == 0 {
+            return bun_sema::atom::known::empty;
+        }
+        let words = crate::names::short_words(chunk, len as u32);
+        match self.names.find_short(words) {
+            Some((atom, _)) => atom,
+            None => self.names.add_short(words, text, self.atoms).0,
+        }
     }
 
     /// Appends the UTF-16 code unit or the code point `c` to `text`, which is WTF-8: the second half
@@ -1099,7 +1181,7 @@ impl Lexer<'_> {
             match src.get(start) {
                 None => return self.set(T::Eof, src.len(), src.len()),
                 Some(b'{') => return self.set(T::OpenBrace, start, start + 1),
-                Some(b'<') if src.get(start + 1) == Some(&b'/') => {
+                Some(b'<') if src.get(start + 1) == Some(&b'/') && !self.is_ecmascript => {
                     return self.set(T::LessThanSlash, start, start + 2);
                 }
                 Some(b'<') => return self.set(T::LessThan, start, start + 1),

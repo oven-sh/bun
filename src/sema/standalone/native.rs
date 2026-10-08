@@ -379,13 +379,22 @@ unsafe extern "C" fn highway_memmem(
     if hay.len() < needle.len() {
         return core::ptr::null();
     }
+    // As the kernel does: where the first and the last byte of the needle are both in place, 32 positions at a time.
     let last = hay.len() - needle.len();
+    let (head, tail) = (needle[0], needle[needle.len() - 1]);
+    let (heads, tails) = (&hay[..=last], &hay[needle.len() - 1..]);
     let mut at = 0;
     while at <= last {
-        at += first(&hay[at..=last], |c| c == needle[0]);
-        if at > last {
-            break;
+        for (heads, tails) in heads[at..].chunks_exact(32).zip(tails[at..].chunks_exact(32)) {
+            if heads.iter().zip(tails).fold(false, |is_found, (&a, &b)| is_found | ((a == head) & (b == tail))) {
+                break;
+            }
+            at += 32;
         }
+        let Some(found) = heads[at..].iter().zip(&tails[at..]).position(|(&a, &b)| a == head && b == tail) else {
+            break;
+        };
+        at += found;
         if hay[at..at + needle.len()] == *needle {
             // SAFETY: `at` is a position in `hay`, which begins at `h`.
             return unsafe { h.add(at) };
@@ -539,7 +548,7 @@ unsafe extern "C" fn simdutf__validate_ascii_with_errors(
     len: usize,
 ) -> SimdutfResult {
     // SAFETY: the caller passes a slice, as a pointer and a length.
-    match unsafe { bytes(p, len) }.iter().position(|&c| c > 127) {
+    match Some(first(unsafe { bytes(p, len) }, |c| c > 127)).filter(|&at| at < len) {
         // simdutf's TOO_LARGE
         Some(at) => SimdutfResult {
             status: 5,

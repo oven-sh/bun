@@ -15,6 +15,7 @@
 //!
 //! - `bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]`: what types cost.
 //! - `bun-lint types smoke <directory> [--jobs=n]`: which files make a query panic.
+//! - `bun-lint types time <files..> [--threads=n] [--rules=a,b]`: how long these files take.
 //! - `bun-lint types typescript-tests ..`: TypeScript's own tests, as `bun check
 //!   --run-typescript-tests` runs them (test/cli/check/typescript-go/conformance.ts). The types and
 //!   the symbols that they compare are those that the linter is given.
@@ -50,6 +51,12 @@ pub(crate) struct Project<'a> {
     /// Files that are not on the disk, or have another text there: absolute paths and texts.
     pub(crate) overlay: Vec<(String, Vec<u8>)>,
     pub(crate) threads: usize,
+}
+
+/// `BUN_LINT_CHECKS_LIKE_TSC`: what the named files import is checked too, and the projects that
+/// theirs references are built, as `bun check` does. To measure what that costs.
+fn checks_like_an_editor() -> bool {
+    std::env::var_os("BUN_LINT_CHECKS_LIKE_TSC").is_none()
 }
 
 fn linter() -> &'static Linter {
@@ -175,6 +182,9 @@ pub(crate) fn lint_project<R: Send>(
         task_clock: None,
         plan_options: bun_sema_driver::PlanOptions {
             after_file_is_for_checked_files: true,
+            checks_only_named: checks_like_an_editor(),
+            reads_sources_of_references: checks_like_an_editor(),
+            current_directory_is_of_the_project: checks_like_an_editor(),
             ..Default::default()
         },
         retains_everything: false,
@@ -192,7 +202,12 @@ pub(crate) fn lint_project<R: Send>(
     for (path, text) in project.overlay {
         provided.already_read.insert(bun_sema_driver::host::from_native(path.as_bytes()), text);
     }
-    bun_sema_driver::check_provided_then(&request, provided, |_| ());
+    bun_sema_driver::check_provided_then(&request, provided, |report| {
+        if std::env::var_os("BUN_LINT_SHOWS_WHAT_IS_CHECKED").is_some() {
+            let (loaded, checked, projects) = (report.files_loaded, report.files_checked, report.projects_checked);
+            println!("{loaded} files loaded, {checked} checked, in {projects} projects: {:.3} s to load, {:.3} s to check", report.load_time.as_secs_f64(), report.check_time.as_secs_f64());
+        }
+    });
     let results = results.into_inner().unwrap_or_else(|it| it.into_inner());
     results.into_iter().map(|it| (it.1, it.2)).collect()
 }
@@ -880,6 +895,29 @@ fn smoke(args: &[String]) {
     println!("{} files, {} panicked", files.len(), panicked.into_inner());
 }
 
+/// `bun-lint types time <files..> [--threads=n] [--rules=a,b]`: how long it takes to lint these files, each in the project that
+/// has it.
+fn time(args: &[String]) {
+    let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
+    let files: Vec<String> = args.iter().filter(|a| !a.starts_with("--")).map(|it| absolute(it)).collect();
+    let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().into_owned();
+    let rules = flag("--rules=").unwrap_or("no-floating-promises,no-unsafe-member-access,no-unnecessary-condition");
+    let rules = rules.split(',').map(|name| (RuleId::Known(find_rule(name).expect("the rule").meta).to_vec(), Json::Number(2.0)));
+    let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(rules.collect()))]);
+    let config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
+    let project = Project {
+        cwd: &cwd,
+        config: None,
+        files: &files,
+        overlay: Vec::new(),
+        threads: flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(0),
+    };
+    let started = std::time::Instant::now();
+    let results = lint_project(project, &LanguageOptions::default(), &|file| linter().lint(file, &config, &LintOptions::default()).messages.len());
+    let messages: usize = results.iter().map(|it| it.1).sum();
+    println!("{:.3} s: {} of {} files linted, {messages} messages", started.elapsed().as_secs_f64(), results.len(), files.len());
+}
+
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("dump") => dump_file(&args[1..]),
@@ -888,6 +926,7 @@ pub(crate) fn run(args: &[String]) {
         Some("run") => run_one(&args[1..]),
         Some("bench") => bench(&args[1..]),
         Some("smoke") => smoke(&args[1..]),
+        Some("time") => time(&args[1..]),
         Some("typescript-tests") => {
             let rest: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
             if !bun_sema_standalone::baselines::run_from_command_line(&rest) {

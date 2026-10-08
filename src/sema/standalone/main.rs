@@ -289,6 +289,9 @@ fn run(args: &[String]) {
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
                 after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
+                checks_only_named: defaults.checks_only_named,
+                reads_sources_of_references: defaults.reads_sources_of_references,
+                current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,

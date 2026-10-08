@@ -197,6 +197,16 @@ pub struct PlanOptions {
     /// not in the default library or in `node_modules`, count as checked even with `skipLibCheck`,
     /// which still means that nothing is reported for them.
     pub after_file_is_for_checked_files: bool,
+    /// Of a program, only the files in `Request::paths` are checked, not what they import. The
+    /// types of what they import are computed where they are asked for, as in an editor.
+    pub checks_only_named: bool,
+    /// `useSourceOfProjectReferenceRedirect`, as in an editor: an import that leads into a
+    /// referenced project reads its source, also where it names a declaration file that the project
+    /// would emit. No referenced project is checked for the sake of another, and nothing is emitted.
+    pub reads_sources_of_references: bool,
+    /// `GetCurrentDirectory` of a program is the directory of its configuration file, as that of a
+    /// `ConfiguredProject` of tsserver is. Without one it is `Request::cwd`, as always otherwise.
+    pub current_directory_is_of_the_project: bool,
 }
 
 impl Default for PlanOptions {
@@ -215,6 +225,9 @@ impl Default for PlanOptions {
             reproduces_symbol_ids: true,
             projects_at_once: 4,
             after_file_is_for_checked_files: false,
+            checks_only_named: false,
+            reads_sources_of_references: false,
+            current_directory_is_of_the_project: false,
         }
     }
 }
@@ -2152,7 +2165,14 @@ fn check_with_references(
             Some((output_dir.clone(), root_dir.to_vec()))
         })
         .collect();
-    let up_stream: Vec<Vec<usize>> = projects.iter().map(|p| p.up_stream.clone()).collect();
+    let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
+    // Nothing waits for what is not emitted.
+    let up_stream: Vec<Vec<usize>> = (projects.iter())
+        .map(|p| match reads_sources {
+            true => Vec::new(),
+            false => p.up_stream.clone(),
+        })
+        .collect();
     // `ResolvedProjectReferencePaths`: what the program of a project is made from. One that closes a
     // cycle is among them.
     let references: Vec<Vec<usize>> = (projects.iter())
@@ -2178,8 +2198,13 @@ fn check_with_references(
             _ => true,
         })
         .collect();
-    let mut is_left_out: Vec<bool> = has_named.iter().map(|has| !has).collect();
-    let mut pending: Vec<usize> = (0..count).filter(|&index| has_named[index]).collect();
+    let mut is_left_out: Vec<bool> = (has_named.iter().enumerate())
+        // What is only read is read from its sources, by the program that reads it.
+        .map(|(index, has)| !has || reads_sources && !reports_references && Some(index) != root_index)
+        .collect();
+    let mut pending: Vec<usize> = (0..count)
+        .filter(|&index| has_named[index] && !reads_sources)
+        .collect();
     while let Some(index) = pending.pop() {
         let referenced = references[index].iter();
         pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
@@ -2190,8 +2215,9 @@ fn check_with_references(
     };
     // Under `noEmit` nothing is emitted, and a `.d.ts` next to a `.js` source would be resolved
     // in its place.
-    let writes_declaration_files =
-        |index: usize| is_read_later(index) && !options_of_projects[index].no_emit;
+    let writes_declaration_files = |index: usize| {
+        is_read_later(index) && !options_of_projects[index].no_emit && !reads_sources
+    };
     let output_of = |index: usize| {
         let output = outputs[index].as_ref();
         output.map(|it| (it.0.as_slice(), it.1.as_slice(), is_case_sensitive))
@@ -2218,7 +2244,7 @@ fn check_with_references(
         false => to_path(&name, false).into_owned(),
     };
     let mut expected = Expected::default();
-    for (index, sources) in roots.iter().enumerate() {
+    for (index, sources) in roots.iter().enumerate().filter(|_| !reads_sources) {
         for source in sources {
             if writes_declaration_files(index)
                 && output_declaration_file_name(source, None).is_some()
@@ -2275,7 +2301,9 @@ fn check_with_references(
             files: FxHashMap::default(),
             directories: FxHashSet::default(),
             expected: &expected,
-            is_pending: (0..count).map(|i| i < index && !is_built[i]).collect(),
+            is_pending: (0..count)
+                .map(|i| i < index && !is_built[i] && !reads_sources)
+                .collect(),
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
         };
@@ -2293,7 +2321,10 @@ fn check_with_references(
             .flat_map(|(at, &i)| {
                 let output = output_of(i);
                 roots[i].iter().map(move |source| {
-                    let output_dts = output_declaration_file_name(source, output);
+                    let output_dts = match reads_sources {
+                        true => None,
+                        false => output_declaration_file_name(source, output),
+                    };
                     let path = to_path(source, is_case_sensitive).into_owned();
                     (
                         path,
@@ -2316,6 +2347,10 @@ fn check_with_references(
         output_dts.dedup_by(|a, b| a.0 == b.0);
         project.options.referenced_sources = sources;
         project.options.referenced_output_dts = output_dts;
+        if reads_sources {
+            let outputs = referenced.iter().filter_map(|&i| outputs[i].clone());
+            project.options.referenced_outputs = outputs.collect();
+        }
         let own: FxHashSet<&[u8]> = root_paths[index].iter().map(Vec::as_slice).collect();
         let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
             .filter(|&i| is_referenced[i])
@@ -2354,7 +2389,7 @@ fn check_with_references(
             return Err(awaited);
         }
         // `HandleNoEmitOnError`
-        if !(no_emit_on_error && !checked.diagnostics.is_empty()) {
+        if !(no_emit_on_error && !checked.diagnostics.is_empty()) && !reads_sources {
             let mut emitted = emitted[index].lock();
             for (source, written) in std::mem::take(&mut checked.declaration_files) {
                 let path = declaration_file_path(index, &source);
@@ -2609,7 +2644,12 @@ fn check_named_files(
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
-    project.options.current_directory = host::from_native(request.cwd);
+    project.options.current_directory = match project.config_path.as_slice() {
+        config_path if request.plan_options.current_directory_is_of_the_project && !config_path.is_empty() => {
+            dirname::<Posix>(config_path).to_vec()
+        }
+        _ => host::from_native(request.cwd),
+    };
     let conditions = request.conditions.iter().map(|it| it.to_vec());
     project.options.custom_conditions.extend(conditions);
     let config_path = project.config_path.clone();
@@ -2751,7 +2791,11 @@ fn check_named_files(
                 }
                 here
             });
-            for edge in modules[i].edges.iter().copied().chain(scripts) {
+            let edges = match request.plan_options.checks_only_named {
+                true => &[][..],
+                false => modules[i].edges,
+            };
+            for edge in edges.iter().copied().chain(scripts) {
                 if !std::mem::replace(&mut is_reached[edge.idx()], true) {
                     to_follow.push(edge.idx());
                 }

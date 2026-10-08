@@ -120,7 +120,7 @@ impl<'a> Expr<'a> {
         match raw.kind {
             hir::ExprKind::Missing => ExprKind::Missing,
             hir::ExprKind::Ident(name) => ExprKind::Ident(file.name(name)),
-            hir::ExprKind::PrivateIdentifier(name) => ExprKind::PrivateIdentifier(file.name(name)),
+            hir::ExprKind::PrivateIdentifier(name) => ExprKind::PrivateIdentifier(file.private_name(name)),
             hir::ExprKind::This => ExprKind::This,
             hir::ExprKind::Super => ExprKind::Super,
             hir::ExprKind::Null => ExprKind::Null,
@@ -163,7 +163,10 @@ impl<'a> Expr<'a> {
                 chain,
             } => ExprKind::Dot {
                 obj: e(obj),
-                name: file.ident(name, name_pos),
+                name: match file.hir.text.get(name_pos as usize) {
+                    Some(b'#') => file.ident(file.private_name(name).atom(), name_pos),
+                    _ => file.ident(name, name_pos),
+                },
                 chain,
             },
             hir::ExprKind::Index { obj, index, chain } => ExprKind::Index {

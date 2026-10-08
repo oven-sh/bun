@@ -491,7 +491,7 @@ impl<'a> Key<'a> {
                 }
                 KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal))))
             }
-            hir::PropKey::Private(name) => KeyKind::Private(file.name(name)),
+            hir::PropKey::Private(name) => KeyKind::Private(file.private_name(name)),
             hir::PropKey::Computed(e) => KeyKind::Computed(Expr::new(file, e)),
             hir::PropKey::Name(name) => {
                 let name = file.name(name);

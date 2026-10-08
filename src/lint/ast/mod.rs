@@ -371,6 +371,19 @@ impl<'a> File<'a> {
         Name::new(self, atom)
     }
 
+    /// The name `#x` that `atom` stands for. In a program that has been checked, the HIR has a
+    /// spelling for it that tells the `#x` of one class from that of another.
+    pub(crate) fn private_name(&'a self, atom: Atom) -> Name<'a> {
+        if self.types.is_none() || atom.is_none() {
+            return self.name(atom);
+        }
+        let spelled = self.atoms.bytes(atom);
+        match bun_sema::atom::written_name(spelled) {
+            written if written.len() == spelled.len() => self.name(atom),
+            written => self.intern(written),
+        }
+    }
+
     /// `text` as a name.
     #[inline]
     pub(crate) fn intern(&'a self, text: &[u8]) -> Name<'a> {

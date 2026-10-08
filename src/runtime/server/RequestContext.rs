@@ -746,18 +746,21 @@ where
 
     /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
-        if let Body::Value::Locked(locked) = response.get_body_value()
-            && locked.has_consumer()
-        {
-            return;
-        }
+        let is_stream = match response.get_body_value() {
+            Body::Value::Locked(locked) if locked.has_consumer() => return,
+            Body::Value::Locked(_) => true,
+            _ => false,
+        };
         if let Some(stream) = response.get_body_readable_stream() {
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);
             // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
             crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
         }
-        *response.get_body_value() = Body::Value::Used;
+        // Any other body was not read, so a Response the handler keeps can still be sent.
+        if is_stream {
+            *response.get_body_value() = Body::Value::Used;
+        }
     }
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.

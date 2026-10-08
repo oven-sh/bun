@@ -1,6 +1,7 @@
 import { serve } from "bun";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import net from "node:net";
 import { connectH2, request as h2Request } from "./serve-http2-helpers";
 
 // A fetch handler that returns a Response whose body has already been used
@@ -482,6 +483,132 @@ describe("returning the same Response without a body for every request", () => {
       "content-length": "5",
       "transfer-encoding": "chunked",
       "x-kept": "1",
+    });
+  });
+
+  // The server drops the Response of a request that it does not answer: the client left, the
+  // request became a WebSocket, or the server stopped. Only a stream body is cancelled then. A
+  // Response without a body stays as it was, so the handler can return it again.
+  describe("a request that the server does not answer leaves the Response unused", () => {
+    const shapes = [
+      { make: () => new Response(null, { status: 401, headers: challenge }), status: 401, headers: challenge },
+      { make: () => new Response("", { headers: { "x-kept": "1" } }), status: 200, headers: { "x-kept": "1" } },
+      { make: () => new Response(null, { status: 204, headers: cors }), status: 204, headers: cors },
+    ];
+    type Drop = (req: Request, server: Bun.Server<undefined>, response: Response, i: number) => unknown;
+
+    // `/<i>` answers with kept Response i. `/drop/<i>` is the request that `drop` leaves without an answer.
+    function setup(drop: Drop) {
+      const kept = shapes.map(shape => shape.make());
+      const errors: unknown[] = [];
+      const options = {
+        port: 0,
+        fetch(req: Request, server: Bun.Server<undefined>) {
+          const [, first, second] = new URL(req.url).pathname.split("/");
+          return first === "drop" ? drop(req, server, kept[+second], +second) : kept[+first];
+        },
+        websocket: { message() {} },
+        error(err: any) {
+          errors.push(err.code);
+          return new Response("handled", { status: 500 });
+        },
+      } as unknown as Bun.Serve.Options<undefined>;
+      return { kept, errors, options };
+    }
+
+    async function expectUnused(url: URL, kept: Response[], errors: unknown[]) {
+      const seen: Answer[][] = [];
+      for (const i of shapes.keys()) seen.push(await threeAnswers(new URL(`/${i}`, url)));
+      expect({ seen, bodyUsed: kept.map(response => response.bodyUsed), errors }).toEqual({
+        seen: shapes.map(({ status, headers }, i) => [
+          { status, headers: expect.objectContaining(headers) },
+          seen[i][0],
+          seen[i][0],
+        ]),
+        bodyUsed: shapes.map(() => false),
+        errors: [],
+      });
+    }
+
+    it.each(["close", "reset"] as const)("the client leaves by a %s while the handler awaits", async how => {
+      const started = shapes.map(() => Promise.withResolvers<void>());
+      const returned = shapes.map(() => Promise.withResolvers<void>());
+      const { kept, errors, options } = setup(async (req, _server, response, i) => {
+        const aborted = Promise.withResolvers<void>();
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        started[i].resolve();
+        await aborted.promise;
+        returned[i].resolve();
+        return response;
+      });
+      await using server = serve(options);
+
+      for (const i of shapes.keys()) {
+        const socket = net.connect(server.port!, "127.0.0.1");
+        socket.on("error", err => started[i].reject(err));
+        socket.write(`GET /drop/${i} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+        await started[i].promise;
+        if (how === "reset") socket.resetAndDestroy();
+        else socket.destroy();
+        await returned[i].promise;
+      }
+      await expectUnused(server.url, kept, errors);
+    });
+
+    it.each([
+      ["a handler", (response: Response) => response],
+      ["an async handler", async (response: Response) => response],
+    ] as const)("%s returns the Response behind server.upgrade()", async (_name, give) => {
+      const { kept, errors, options } = setup((req, server, response) => {
+        server.upgrade(req);
+        return give(response);
+      });
+      await using server = serve(options);
+
+      for (const i of shapes.keys()) {
+        const url = new URL(`/drop/${i}`, server.url);
+        url.protocol = "ws:";
+        const closed = Promise.withResolvers<void>();
+        const ws = new WebSocket(url);
+        ws.onopen = () => ws.close();
+        ws.onerror = () => closed.reject(new Error("the WebSocket did not open"));
+        ws.onclose = () => closed.resolve();
+        await closed.promise;
+      }
+      await expectUnused(server.url, kept, errors);
+    });
+
+    it("server.stop(true) closes the request while the handler awaits", async () => {
+      const started = shapes.map(() => Promise.withResolvers<void>());
+      const returned = shapes.map(() => Promise.withResolvers<void>());
+      const release = Promise.withResolvers<void>();
+      const { kept, errors, options } = setup(async (_req, _server, response, i) => {
+        started[i].resolve();
+        await release.promise;
+        returned[i].resolve();
+        return response;
+      });
+      {
+        await using server = serve(options);
+        const closed = [...shapes.keys()].map(i => {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          const socket = net.connect(server.port!, "127.0.0.1");
+          // The server closes this connection: a reset is as good as a close here.
+          socket.on("error", () => resolve());
+          socket.on("close", () => resolve());
+          socket.write(`GET /drop/${i} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+          return promise;
+        });
+        await Promise.all(started.map(({ promise }) => promise));
+        await server.stop(true);
+        await Promise.all(closed);
+        release.resolve();
+        await Promise.all(returned.map(({ promise }) => promise));
+      }
+
+      // A new server over the same Response objects.
+      await using next = serve(options);
+      await expectUnused(next.url, kept, errors);
     });
   });
 });

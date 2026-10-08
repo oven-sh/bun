@@ -26,9 +26,12 @@ impl NewlinePerChainedCall {
             _ => return,
         };
 
+        // Counted only as far as it matters: each call of a long chain is asked.
         let mut depth = 1;
         let mut parent = Some(object);
-        while let Some(ExprKind::Call(call) | ExprKind::New(call)) = parent.map(Expr::kind) {
+        while depth <= self.ignore_chain_with_depth
+            && let Some(ExprKind::Call(call) | ExprKind::New(call)) = parent.map(Expr::kind)
+        {
             depth += 1;
             parent = object_of(call.callee());
         }

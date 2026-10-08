@@ -51,7 +51,7 @@ pub fn dump_ast(text: &[u8], out: &mut Vec<u8>) {
 
 /// Fills `tree` with the syntax of `text`, which is a description in a JSDoc comment. Returns the root.
 pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::NodeId> {
-    block::parse(text, tree)
+    block::parse_content(text, tree, true)
 }
 
 /// Prettier's `inferParser(options, { language })`: the parser for code in `language`.

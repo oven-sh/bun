@@ -5,7 +5,7 @@
 //! then it can open new ones, and what is left of it goes to the leaf block that is open, or starts one.
 //! The text of paragraphs, headings and table cells is parsed at the end, when all definitions are known.
 
-use super::ast::{Align, Kind, NONE, Node, NodeId, Str, Tree};
+use super::ast::{Align, Kind, NONE, NodeId, Str, Tree};
 use super::content::Content;
 use super::inline;
 use super::strings::{normalize_identifier, unescape};
@@ -102,6 +102,7 @@ struct Line<'t> {
 
 pub(crate) struct Parser<'t> {
     text: &'t [u8],
+    is_plain: bool,
     line: Line<'t>,
     tree: &'t mut Tree,
     root: NodeId,
@@ -134,26 +135,29 @@ pub(crate) fn is_blank(text: &[u8]) -> bool {
 pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Option<NodeId> {
     // What is parsed has blanks in the place of the front matter, so that all positions stay.
     let Some(front_matter) = super::front_matter::parse(text) else {
-        return parse_content(text, tree);
+        return parse_content(text, tree, false);
     };
     let mut blanked = text.to_vec();
     for byte in blanked[..front_matter.end].iter_mut().filter(|byte| **byte != b'\n') {
         *byte = b' ';
     }
-    let root = parse_content(&blanked, tree)?;
-    let node = tree.add(Node::new(Kind::FrontMatter, 0, front_matter.end as u32));
+    let root = parse_content(&blanked, tree, false)?;
+    let node = tree.add(Kind::FrontMatter, 0, front_matter.end as u32);
     tree.prepend(root, node);
     Some(root)
 }
 
-fn parse_content(text: &[u8], tree: &mut Tree) -> Option<NodeId> {
+/// `is_plain`: CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
+/// wiki links, or links that are not marked as such.
+pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Option<NodeId> {
     tree.clear();
     if u32::try_from(text.len()).is_err() || text.len() >= (1 << 30) {
         return None;
     }
-    let root = tree.add(Node::new(Kind::Root, 0, text.len() as u32));
+    let root = tree.add(Kind::Root, 0, text.len() as u32);
     let mut parser = Parser {
         text,
+        is_plain,
         line: Line { text, end: 0 },
         tree,
         root,
@@ -344,7 +348,7 @@ impl<'t> Parser<'t> {
 
     fn add_block(&mut self, kind: Kind, start: usize, end: usize) -> NodeId {
         let parent = self.parent();
-        let node = self.tree.add(Node::new(kind, start as u32, end as u32));
+        let node = self.tree.add(kind, start as u32, end as u32);
         self.tree.append(parent, node);
         node
     }
@@ -461,7 +465,7 @@ impl<'t> Parser<'t> {
                 }
                 is_first = false;
                 has_new_container = true;
-                self.open_container(new, cursor, &mut attempt);
+                self.open_container(&new, cursor, &mut attempt);
                 cursor = attempt;
                 if self.containers.len() > MAX_CONTAINERS {
                     self.is_nested_too_deeply = true;
@@ -615,8 +619,8 @@ impl<'t> Parser<'t> {
 
     /// `line_prefix_start`: where the white space before the marker starts. `cursor` is at the marker, and
     /// is moved behind what belongs to it.
-    fn open_container(&mut self, new: NewContainer, line_prefix_start: Cursor, cursor: &mut Cursor) {
-        match new {
+    fn open_container(&mut self, new: &NewContainer, line_prefix_start: Cursor, cursor: &mut Cursor) {
+        match *new {
             NewContainer::Blockquote => {
                 let node = self.add_block(Kind::Blockquote, cursor.offset, cursor.offset + 1);
                 Line::pass_byte(cursor);
@@ -704,7 +708,7 @@ impl<'t> Parser<'t> {
         let Some(&Container { node: list, .. }) = self.containers.get(index) else {
             return;
         };
-        let item = self.tree.add(Node::new(Kind::ListItem, marker_start.offset as u32, marker_end.offset as u32));
+        let item = self.tree.add(Kind::ListItem, marker_start.offset as u32, marker_end.offset as u32);
         self.tree.append(list, item);
         if let Some(Container {
             kind:
@@ -953,12 +957,12 @@ impl<'t> Parser<'t> {
                 let is_fence = size >= 3 && (marker != b'`' || !bun_core::strings::contains_char(&rest[size..], b'`'));
                 is_fence.then_some(LeafStart::Fenced(marker, size))
             }
-            b'$' => {
+            b'$' if !self.is_plain => {
                 let size = rest.iter().take_while(|&&byte| byte == b'$').count();
                 let is_fence = size >= 2 && !bun_core::strings::contains_char(&rest[size..], b'$');
                 is_fence.then_some(LeafStart::Fenced(b'$', size))
             }
-            b'{' => self.find_liquid_end(cursor).map(LeafStart::Liquid),
+            b'{' if !self.is_plain => self.find_liquid_end(cursor).map(LeafStart::Liquid),
             _ => None,
         }
     }
@@ -1100,7 +1104,7 @@ fn count_head_cells(row: &[u8]) -> Option<usize> {
         return None;
     }
     // An empty cell at the end, which `split_row` does not make one, does not count either.
-    Some(split_row(row).len()).filter(|_| !is_blank(row))
+    (!is_blank(row)).then(|| split_row(row).len())
 }
 
 impl<'t> Parser<'t> {
@@ -1431,7 +1435,7 @@ impl<'t> Parser<'t> {
         };
         // Nothing has been taken away from the lines: the value is in the text as it is.
         let is_plain = segments.iter().all(|it| it.virtual_spaces == 0)
-            && segments.windows(2).all(|pair| pair[0].end + 1 == pair[1].start)
+            && segments.iter().zip(&segments[1..]).all(|(line, next)| line.end + 1 == next.start)
             && !bun_core::strings::contains_char(&self.text[first_segment.start as usize..last_segment.end as usize], 0);
         if is_plain {
             return Str::source(first_segment.start, last_segment.end);
@@ -1593,7 +1597,7 @@ impl<'t> Parser<'t> {
     /// Whether the line at `cursor` is the row under the head of a table, which is the last line of the
     /// paragraph that is open. If so, the table is started.
     fn starts_table(&mut self, first_segment: usize, cursor: Cursor) -> bool {
-        if !matches!(self.line.byte(cursor), Some(b'|' | b'-' | b':')) {
+        if self.is_plain || !matches!(self.line.byte(cursor), Some(b'|' | b'-' | b':')) {
             return false;
         }
         let Some(aligns) = parse_delimiter_row(self.line.rest(cursor)) else {
@@ -1625,10 +1629,10 @@ impl<'t> Parser<'t> {
     }
 
     fn add_row(&mut self, table: NodeId, start: usize, end: usize) {
-        let row = self.tree.add(Node::new(Kind::TableRow, start as u32, end as u32));
+        let row = self.tree.add(Kind::TableRow, start as u32, end as u32);
         self.tree.append(table, row);
         for cell in split_row(&self.text[start..end]) {
-            let node = self.tree.add(Node::new(Kind::TableCell, (start + cell.start) as u32, (start + cell.end) as u32));
+            let node = self.tree.add(Kind::TableCell, (start + cell.start) as u32, (start + cell.end) as u32);
             self.tree.append(row, node);
             if let Some((content_start, content_end)) = cell.content {
                 self.add_pending(node, start + content_start, start + content_end);
@@ -1639,14 +1643,17 @@ impl<'t> Parser<'t> {
     /// Parses the text of paragraphs, headings and cells.
     fn parse_pending(&mut self) {
         let mut content = std::mem::take(&mut self.content);
+        let max_definition_len = self.definitions.iter().map(Vec::len).max().unwrap_or(0);
         for pending in std::mem::take(&mut self.pending) {
             let segments = &self.segments[pending.first_segment..pending.first_segment + pending.segment_count];
             content.fill(self.text, segments);
             let mut context = inline::Context {
                 text: self.text,
+                is_plain: self.is_plain,
                 tree: self.tree,
                 content: &content,
                 definitions: &self.definitions,
+                max_definition_len,
                 footnotes: &self.footnotes,
                 stack_check: self.stack_check,
                 is_nested_too_deeply: false,

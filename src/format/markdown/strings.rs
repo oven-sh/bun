@@ -142,7 +142,7 @@ pub(crate) fn push_lowercase(text: &[u8], out: &mut Vec<u8>) {
 /// micromark's `normalizeIdentifier`: white space is collapsed, and the case does not count.
 pub(crate) fn normalize_identifier(text: &[u8]) -> Vec<u8> {
     let mut collapsed = Vec::with_capacity(text.len());
-    for word in text.split(|byte| matches!(byte, b'\t' | b'\n' | b'\r' | b' ')).filter(|word| !word.is_empty()) {
+    for word in bun_core::strings::split_any(text, b"\t\n\r ").filter(|word| !word.is_empty()) {
         if !collapsed.is_empty() {
             collapsed.push(b' ');
         }

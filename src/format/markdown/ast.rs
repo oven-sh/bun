@@ -214,8 +214,9 @@ impl Tree {
         self.line_starts.clear();
     }
 
-    pub(crate) fn add(&mut self, node: Node) -> NodeId {
-        self.nodes.push(node);
+    /// Adds a node that is not in anything yet.
+    pub(crate) fn add(&mut self, kind: Kind, start: u32, end: u32) -> NodeId {
+        self.nodes.push(Node::new(kind, start, end));
         (self.nodes.len() - 1) as NodeId
     }
 

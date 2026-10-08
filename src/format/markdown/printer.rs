@@ -83,15 +83,25 @@ fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
     Doc::Array(parts)
 }
 
+/// The lengths of the runs of `marker` in `text`.
+fn runs_of(text: &[u8], marker: u8) -> impl Iterator<Item = usize> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        rest = &rest[bun_core::strings::index_of_char_usize(rest, marker)?..];
+        let len = rest.iter().take_while(|&&byte| byte == marker).count();
+        rest = &rest[len..];
+        Some(len)
+    })
+}
+
 /// The longest run of `marker` in `text`.
 fn max_continuous_count(text: &[u8], marker: u8) -> usize {
-    text.split(|&byte| byte != marker).map(<[u8]>::len).max().unwrap_or(0)
+    runs_of(text, marker).max().unwrap_or(0)
 }
 
 /// Prettier's `getMinNotPresentContinuousCount`
 fn min_not_present_continuous_count(text: &[u8], marker: u8) -> usize {
-    let mut present: smallvec::SmallVec<[usize; 8]> =
-        text.split(|&byte| byte != marker).map(<[u8]>::len).filter(|&len| len > 0).collect();
+    let mut present: smallvec::SmallVec<[usize; 8]> = runs_of(text, marker).collect();
     present.sort_unstable();
     present.dedup();
     (1..).zip(present.iter()).find(|(count, len)| count != *len).map_or(present.len() + 1, |(count, _)| count)
@@ -409,12 +419,15 @@ impl<'a> Printer<'a, '_> {
     /// Prettier's `isInSentenceWithCJSpaces`
     fn uses_cj_spaces(tokens: &[Token]) -> bool {
         let (mut with_space, mut without) = (0, 0);
-        for window in tokens.windows(3) {
+        for (index, token) in tokens.iter().enumerate().skip(1) {
+            let Some(next) = tokens.get(index + 1) else {
+                break;
+            };
             let is_between = matches!(
-                (window[0].kind, window[2].kind),
+                (tokens[index - 1].kind, next.kind),
                 (TokenKind::CjLetter, TokenKind::NonCjk) | (TokenKind::NonCjk, TokenKind::CjLetter)
             );
-            match window[1].kind {
+            match token.kind {
                 TokenKind::Space if is_between => with_space += 1,
                 TokenKind::NoSpace if is_between => without += 1,
                 _ => {}
@@ -505,8 +518,8 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    fn add_whitespace(parts: &mut FillParts<'a>, whitespace: Whitespace) {
-        match whitespace {
+    fn add_whitespace(parts: &mut FillParts<'a>, whitespace: &Whitespace) {
+        match *whitespace {
             Whitespace::Text(text) => parts.content.push(Doc::from(text)),
             Whitespace::Line => parts.separator(Doc::LINE),
             Whitespace::Softline => parts.separator(Doc::SOFTLINE),
@@ -535,7 +548,7 @@ impl<'a> Printer<'a, '_> {
                 && !after_next.is_some_and(|it| it.kind == TokenKind::NoSpace)
                 && !(self.options.prose_wrap == ProseWrap::Preserve && is_next_fake_setext_line);
             let prose_wrap = if joins { ProseWrap::Never } else { self.options.prose_wrap };
-            Self::add_whitespace(&mut parts, self.print_whitespace(tokens, index, prose_wrap, false, can_break));
+            Self::add_whitespace(&mut parts, &self.print_whitespace(tokens, index, prose_wrap, false, can_break));
         }
         parts.finish()
     }
@@ -598,7 +611,7 @@ impl<'a> Printer<'a, '_> {
                 true => parts.content.push(Doc::from(self.str(token.value))),
                 false => Self::add_whitespace(
                     &mut parts,
-                    self.print_whitespace(&tokens, index, self.options.prose_wrap, true, can_break),
+                    &self.print_whitespace(&tokens, index, self.options.prose_wrap, true, can_break),
                 ),
             }
         }
@@ -829,7 +842,7 @@ impl<'a> Printer<'a, '_> {
                 if self.is_setext_heading(node) {
                     let last_line = &self.text[self.tree.line_start(node.end.saturating_sub(1)) as usize..node.end as usize];
                     let find = |marker: u8| bun_core::strings::index_of_char_usize(last_line, marker);
-                    let underline = &last_line[find(b'=').max(find(b'-')).unwrap_or(last_line.len().saturating_sub(1))..];
+                    let underline = &last_line[find(b'=').max(find(b'-')).unwrap_or_else(|| last_line.len().saturating_sub(1))..];
                     return docs![self.print_children(id), hardline(), underline];
                 }
                 docs![[&b"######"[..node.number.min(6) as usize], b" "].concat(), self.print_children(id)]
@@ -849,7 +862,7 @@ impl<'a> Printer<'a, '_> {
             Kind::List => self.print_list(id, node),
             Kind::ListItem | Kind::TableRow => Doc::EMPTY,
             Kind::ThematicBreak => match self.find_ancestor(id, |it| it.kind == Kind::List) {
-                Some(list) if self.nth_list_sibling_index(list) % 2 == 0 => Doc::from("***"),
+                Some(list) if self.nth_list_sibling_index(list).is_multiple_of(2) => Doc::from("***"),
                 _ => Doc::from("---"),
             },
             Kind::LinkReference => {
@@ -1124,10 +1137,10 @@ impl<'a> Printer<'a, '_> {
                         _ => (u64::from(list.number) + index).min(999_999_999),
                     };
                     let mut prefix = number.to_string().into_bytes();
-                    prefix.extend_from_slice(if nth_sibling_index % 2 == 0 { b". " } else { b") " });
+                    prefix.extend_from_slice(if nth_sibling_index.is_multiple_of(2) { b". " } else { b") " });
                     prefix
                 }
-                false => (if nth_sibling_index % 2 == 0 { b"- " } else { b"* " }).to_vec(),
+                false => (if nth_sibling_index.is_multiple_of(2) { b"- " } else { b"* " }).to_vec(),
             };
             index += 1;
             if list.is_aligned && list.ordered {
@@ -1289,7 +1302,8 @@ fn escape_delimiter_runs(units: &[u16], before: Option<u16>, after: Option<u16>)
     let mut index = 0;
     'search: while index <= units.len() {
         // The leftmost match from `index` on.
-        for start in index..=units.len() {
+        let from = index;
+        for start in from..=units.len() {
             // `\\+`, `^` or `.`
             let backslashes = units[start..].iter().take_while(|&&unit| unit == BACKSLASH).count();
             let candidates = [
@@ -1306,7 +1320,7 @@ fn escape_delimiter_runs(units: &[u16], before: Option<u16>, after: Option<u16>)
                 let run_end = run_start + run_len;
                 let following_len = usize::from(run_end < units.len());
                 let preceding = &units[start..run_start];
-                out.extend_from_slice(&units[index..start]);
+                out.extend_from_slice(&units[from..start]);
                 let is_escaped = preceding.iter().all(|&unit| unit == BACKSLASH) && preceding.len() % 2 == 1;
                 let can_open_or_close = !is_escaped
                     && can_open_or_close_emphasis(

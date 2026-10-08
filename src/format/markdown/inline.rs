@@ -504,9 +504,13 @@ enum Item {
 pub(crate) struct Context<'c> {
     /// The whole text.
     pub(crate) text: &'c [u8],
+    /// See `block::parse_content`.
+    pub(crate) is_plain: bool,
     pub(crate) tree: &'c mut Tree,
     pub(crate) content: &'c Content,
     pub(crate) definitions: &'c FxHashSet<Vec<u8>>,
+    /// The length of the longest of them.
+    pub(crate) max_definition_len: usize,
     pub(crate) footnotes: &'c FxHashSet<Vec<u8>>,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) is_nested_too_deeply: bool,
@@ -514,7 +518,13 @@ pub(crate) struct Context<'c> {
 
 impl Context<'_> {
     fn new_node(&mut self, kind: Kind, start: usize, end: usize) -> NodeId {
-        self.tree.add(Node::new(kind, self.content.source(start), self.content.source_end(end)))
+        self.tree.add(kind, self.content.source(start), self.content.source_end(end))
+    }
+
+    fn set_value(&mut self, node: NodeId, value: Str) {
+        if let Some(node) = self.tree.get_mut(node) {
+            node.value = value;
+        }
     }
 
     /// The string at `start..end` of the content as it is.
@@ -602,6 +612,8 @@ impl Context<'_> {
         // The indices of the label starts that can still be matched.
         let mut label_starts: Vec<usize> = Vec::new();
         let mut first_resolver = None;
+        let mut next_wiki_link_end = 0;
+        let mut has_no_liquid_end = [false; 2];
         let mut index = 0;
         // Where the data that has not been made an item yet starts.
         let mut data_start = 0;
@@ -680,7 +692,7 @@ impl Context<'_> {
                     }
                     None => index += 1,
                 },
-                b'`' | b'$' => {
+                b'`' | b'$' if byte == b'`' || !self.is_plain => {
                     let size = bytes[index..].iter().take_while(|&&it| it == byte).count();
                     let end = if byte == b'$' && size < 2 { None } else { find_closing_run(bytes, index + size, byte, size) };
                     match end {
@@ -703,7 +715,7 @@ impl Context<'_> {
                     let node = if let Some(end) = parse_html(bytes, index) {
                         let node = self.new_node(Kind::Html, index, end);
                         let value = self.raw(index, end);
-                        self.tree.get_mut(node).map(|node| node.value = value);
+                        self.set_value(node, value);
                         Some((node, end))
                     } else if let Some((end, is_email)) = parse_autolink(bytes, index) {
                         let node = self.new_node(Kind::Link, index, end);
@@ -716,7 +728,7 @@ impl Context<'_> {
                             }),
                             false => self.raw(index + 1, end - 1),
                         };
-                        self.tree.get_mut(node).map(|node| node.value = url);
+                        self.set_value(node, url);
                         Some((node, end))
                     } else {
                         None
@@ -734,6 +746,7 @@ impl Context<'_> {
                 // An address can start with an underscore.
                 b'*' | b'_'
                     if byte == b'*'
+                        || self.is_plain
                         || !label_starts.is_empty()
                         || index.checked_sub(1).is_some_and(|before| bytes[before] == b'/' || is_gfm_atext(bytes[before]))
                         || parse_email_literal(bytes, index).is_none() =>
@@ -807,7 +820,7 @@ impl Context<'_> {
                     data_start = index;
                 }
                 b'[' => {
-                    if let Some((node, end)) = self.wiki_link(index).or_else(|| self.footnote_call(index)) {
+                    if let Some((node, end)) = self.wiki_link(index, &mut next_wiki_link_end).or_else(|| self.footnote_call(index)) {
                         flush!(index);
                         items.push(Item::Node(node));
                         index = end;
@@ -861,7 +874,7 @@ impl Context<'_> {
                         }
                     }
                 }
-                b'{' => match self.liquid(index) {
+                b'{' => match self.liquid(index, &mut has_no_liquid_end) {
                     Some((node, end)) => {
                         flush!(index);
                         items.push(Item::Node(node));
@@ -871,7 +884,7 @@ impl Context<'_> {
                     None => index += 1,
                 },
                 // No literal autolinks in what can still become the text of a link.
-                _ if is_gfm_atext(byte) && label_starts.is_empty() => {
+                _ if is_gfm_atext(byte) && label_starts.is_empty() && !self.is_plain => {
                     let previous = index.checked_sub(1).map(|before| bytes[before]);
                     let end = (previous.is_none_or(|it| it != b'/' && !is_gfm_atext(it)))
                         .then(|| parse_email_literal(bytes, index).map(|end| (end, &b"mailto:"[..])))
@@ -901,7 +914,7 @@ impl Context<'_> {
                                     out.extend_from_slice(&bytes[index..end]);
                                 }),
                             };
-                            self.tree.get_mut(node).map(|node| node.value = url);
+                            self.set_value(node, url);
                             items.push(Item::Node(node));
                             index = end;
                             data_start = index;
@@ -921,7 +934,7 @@ impl Context<'_> {
     fn text_node(&mut self, start: usize, end: usize) -> NodeId {
         let node = self.new_node(Kind::Text, start, end);
         let value = self.raw(start, end);
-        self.tree.get_mut(node).map(|node| node.value = value);
+        self.set_value(node, value);
         node
     }
 
@@ -955,18 +968,25 @@ impl Context<'_> {
         self.raw(start, end)
     }
 
-    /// `[[target]]`
-    fn wiki_link(&mut self, start: usize) -> Option<(NodeId, usize)> {
+    /// `[[target]]`. `next_end`: where the next `]` or line break is, as far as that has been looked for.
+    fn wiki_link(&mut self, start: usize, next_end: &mut usize) -> Option<(NodeId, usize)> {
         let bytes = &self.content.bytes;
-        let target = bytes.get(start..)?.strip_prefix(b"[[")?;
-        let len = bun_core::strings::index_of_any(target, b"]\n")?;
-        if !target[len..].starts_with(b"]]") || target[..len].iter().all(|&byte| is_space(byte)) {
+        let target_start = start + 2;
+        if self.is_plain || bytes.get(start..target_start) != Some(b"[[") {
             return None;
         }
-        let end = start + 2 + len + 2;
+        if *next_end < target_start {
+            let len = bun_core::strings::index_of_any(&bytes[target_start..], b"]\n");
+            *next_end = len.map_or(bytes.len(), |len| target_start + len);
+        }
+        let target_end = *next_end;
+        if !bytes[target_end..].starts_with(b"]]") || bytes[target_start..target_end].iter().all(|&byte| is_space(byte)) {
+            return None;
+        }
+        let end = target_end + 2;
         let node = self.new_node(Kind::WikiLink, start, end);
-        let value = self.raw(start + 2, end - 2);
-        self.tree.get_mut(node).map(|node| node.value = value);
+        let value = self.raw(target_start, target_end);
+        self.set_value(node, value);
         Some((node, end))
     }
 
@@ -999,18 +1019,25 @@ impl Context<'_> {
         Some((node, label_end + 1))
     }
 
-    /// `{{ .. }}`, `{% .. %}`
-    fn liquid(&mut self, start: usize) -> Option<(NodeId, usize)> {
+    /// `{{ .. }}`, `{% .. %}`. `has_no_end`: for each of the two, that its end has been looked for in vain.
+    fn liquid(&mut self, start: usize, has_no_end: &mut [bool; 2]) -> Option<(NodeId, usize)> {
         let bytes = &self.content.bytes;
-        let closing: &[u8] = match bytes.get(start + 1)? {
-            b'{' => b"}}",
-            b'%' => b"%}",
+        let (closing, has_no_end): (&[u8], &mut bool) = match bytes.get(start + 1)? {
+            b'{' => (b"}}", &mut has_no_end[0]),
+            b'%' => (b"%}", &mut has_no_end[1]),
             _ => return None,
         };
-        let end = start + 2 + bun_core::strings::index_of(&bytes[start + 2..], closing)? + 2;
+        if *has_no_end || self.is_plain {
+            return None;
+        }
+        let Some(len) = bun_core::strings::index_of(&bytes[start + 2..], closing) else {
+            *has_no_end = true;
+            return None;
+        };
+        let end = start + 2 + len + 2;
         let node = self.new_node(Kind::LiquidNode, start, end);
         let value = self.raw(start, end);
-        self.tree.get_mut(node).map(|node| node.value = value);
+        self.set_value(node, value);
         Some((node, end))
     }
 }
@@ -1058,6 +1085,21 @@ impl Context<'_> {
         (bytes.get(index) == Some(&b')')).then_some((destination, title, index + 1))
     }
 
+    /// Whether there is a definition for `label`.
+    fn is_defined(&self, label: &[u8]) -> bool {
+        // A label that is longer than any that is defined is not looked at as a whole. Changing the case makes a
+        // character at most three times as long.
+        let max_len = self.max_definition_len * 3;
+        let mut len = 0;
+        for byte in label {
+            len += usize::from(!matches!(byte, b'\t' | b'\n' | b'\r' | b' '));
+            if len > max_len {
+                return false;
+            }
+        }
+        len > 0 && self.definitions.contains(&normalize_identifier(label))
+    }
+
     /// The `]` at `close` is looked at, and the label start at `open` of `items`.
     fn label_end(&mut self, items: &mut Vec<Item>, open: usize, close: usize) -> LabelEnd {
         let Some(&Item::LabelStart {
@@ -1092,7 +1134,7 @@ impl Context<'_> {
         if is_inactive {
             return no(self, items);
         }
-        let is_defined = self.definitions.contains(&normalize_identifier(&bytes[label_start_end..close]));
+        let is_defined = self.is_defined(&bytes[label_start_end..close]);
 
         enum Target {
             Resource(Option<(usize, usize)>, Option<(usize, usize)>),
@@ -1107,7 +1149,7 @@ impl Context<'_> {
             },
             Some(b'[') => {
                 let full = parse_label(bytes, close + 1)
-                    .filter(|&end| self.definitions.contains(&normalize_identifier(&bytes[close + 2..end - 1])));
+                    .filter(|&end| self.is_defined(&bytes[close + 2..end - 1]));
                 match full {
                     Some(end) => (Target::Reference(ReferenceType::Full, (close + 2, end - 1)), end),
                     None if is_defined && bytes.get(close + 2) == Some(&b']') => {
@@ -1356,7 +1398,7 @@ impl Context<'_> {
             };
             let (start, end) = (range(&run[0]).0, range(&run[count - 1]).1);
             let is_plain = run.iter().all(|item| !matches!(item, Item::Encoded { .. }))
-                && run.windows(2).all(|pair| range(&pair[0]).1 == range(&pair[1]).0);
+                && run.iter().zip(&run[1..]).all(|(item, next)| range(item).1 == range(next).0);
             let value = match is_plain {
                 true => self.raw(start, end),
                 false => {
@@ -1373,7 +1415,7 @@ impl Context<'_> {
                 }
             };
             let node = self.new_node(Kind::Text, start, end);
-            self.tree.get_mut(node).map(|node| node.value = value);
+            self.set_value(node, value);
             self.tree.append(parent, node);
         }
     }

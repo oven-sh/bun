@@ -530,11 +530,15 @@ impl Rule for ConsistentTypeImports {
             return State::default();
         }
 
-        let language = file.language();
-        let options = file.types().map(|types| types.compiler_options()).unwrap_or_default();
-        if (options.experimental_decorators || language.experimental_decorators)
-            && (options.emit_decorator_metadata || language.emit_decorator_metadata)
-        {
+        // `parserOptions` say it only where there is no program to say it.
+        let (experimental_decorators, emit_decorator_metadata) = match file.types() {
+            Some(types) => {
+                let options = types.compiler_options();
+                (options.experimental_decorators, options.emit_decorator_metadata)
+            }
+            None => (file.language().experimental_decorators, file.language().emit_decorator_metadata),
+        };
+        if experimental_decorators && emit_decorator_metadata {
             on.classes(|_, class, cx| {
                 cx.state.has_decorator_metadata |= class.decorators().next().is_some();
             });

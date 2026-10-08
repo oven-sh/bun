@@ -385,7 +385,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     false
                 });
             }
-            false
+            // The members come last, and this is asked for each of them.
+            matches!(hir.data(clause), NodeData::Member(_))
         });
         for node in super_type_nodes {
             let base_type = self.type_at_location(NodeRef { file, node });

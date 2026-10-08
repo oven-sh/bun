@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// Enforce the consistent use of either backticks, double, or single quotes.
 pub struct Quotes {
@@ -96,12 +97,26 @@ fn is_directive(statement: Stmt) -> bool {
         if e.tag() == ExprTag::String && !ast_utils::is_parenthesised(e))
 }
 
+/// Where the first of `statements` starts that does not look like a directive. `None` if it is not
+/// among the first `limit`.
+fn end_of_directives<'a>(statements: List<'a, Stmt<'a>>, limit: usize) -> Option<u32> {
+    let mut statements = statements.iter();
+    match statements.by_ref().take(limit).find(|it| !is_directive(*it)) {
+        Some(first) => Some(first.span().start),
+        None => statements.next().is_none().then_some(u32::MAX),
+    }
+}
+
+/// [`end_of_directives`] of the bodies that start with many, by what they are the body of.
+type State<'a> = FxHashMap<Node<'a>, u32>;
+
 /// ESLint's `isExpressionInOrJustAfterDirectivePrologue`, for the statement that the expression is.
-fn is_in_or_just_after_directive_prologue(statement: Stmt) -> bool {
+fn is_in_or_just_after_directive_prologue<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> bool {
     if !ast_utils::is_top_level_expression_statement(statement) {
         return false;
     }
-    let siblings = match statement.parent() {
+    let parent = statement.parent();
+    let siblings = match parent {
         Node::File(file) => Some(file.body()),
         Node::Func(func) => func.body_statements(),
         Node::Stmt(parent) => match parent.kind() {
@@ -110,8 +125,13 @@ fn is_in_or_just_after_directive_prologue(statement: Stmt) -> bool {
         },
         _ => None,
     };
-    let mut siblings = siblings.into_iter().flatten();
-    siblings.find(|it| *it == statement || !is_directive(*it)) == Some(statement)
+    siblings.is_some_and(|siblings| {
+        let end = end_of_directives(siblings, 8).unwrap_or_else(|| {
+            let all = || end_of_directives(siblings, usize::MAX).unwrap_or(u32::MAX);
+            *state.entry(parent).or_insert_with(all)
+        });
+        statement.span().start <= end
+    })
 }
 
 impl Quotes {
@@ -195,7 +215,7 @@ impl Quotes {
             // ESLint's `isJSXLiteral`
             Node::Prop(prop) if prop.is_jsx_attribute() && e.jsx_container_span().is_none() => return,
             Node::Stmt(statement) if self.wants_backticks() => {
-                !ast_utils::is_parenthesised(e) && is_in_or_just_after_directive_prologue(statement)
+                !ast_utils::is_parenthesised(e) && is_in_or_just_after_directive_prologue(statement, &mut cx.state)
             }
             _ => false,
         };
@@ -271,7 +291,7 @@ impl Quotes {
 
 impl Rule for Quotes {
     const META: Meta = Meta::eslint("quotes", Kind::Layout).fixable(Fixable::Code).deprecated();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let (quote, alternate_quote, description) = match options.str(0) {
@@ -289,14 +309,14 @@ impl Rule for Quotes {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         let other_quotes: &[u8] = match self.quote {
             b'"' => b"'`",
             b'\'' => b"\"`",
             _ => b"\"'",
         };
         if strings::index_of_any(file.text(), other_quotes).is_none() {
-            return;
+            return State::default();
         }
         on.exprs([ExprTag::String], Self::check_string);
         if !self.allows_template_literals && !self.wants_backticks() {
@@ -329,5 +349,6 @@ impl Rule for Quotes {
             ],
             Self::check_statement,
         );
+        State::default()
     }
 }

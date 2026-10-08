@@ -28,8 +28,6 @@ use bun_lint::linter::{
     RuleId, Utf16Offsets, severity_of, testing,
 };
 use bun_lint::options::Json;
-use bun_lint::rule::Plugin;
-use bun_lint::runner::RuleEntry;
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, bind_for_lint};
 use bun_sema::session::Session;
@@ -77,50 +75,6 @@ pub(crate) fn with_file<R>(
     let bound = bind_for_lint(&hir, bind_options, &atoms, arena);
     let file = File::new(path.as_bytes(), &hir, &bound, &atoms, language, None);
     then(&file)
-}
-
-/// What the linter reports for a test case of a rule.
-pub(crate) struct CaseOutcome {
-    pub(crate) messages: Vec<LintMessage>,
-    /// The code after one pass of fixes. `None` if there is nothing to fix.
-    pub(crate) output: Option<Vec<u8>>,
-}
-
-/// Lints `code` as the `RuleTester` of the plugin of the rule does: with only that rule enabled, as
-/// an error, and with everything that comments in the code do.
-pub(crate) fn lint_case(
-    entry: &'static RuleEntry,
-    code: &[u8],
-    filename: &str,
-    options: &[Json],
-    language_options: &Json,
-    settings: &Json,
-) -> CaseOutcome {
-    let mut rule = vec![Json::Number(2.0)];
-    rule.extend_from_slice(options);
-    let id = RuleId::Known(entry.meta).to_vec();
-    let config = Json::Object(vec![
-        (b"languageOptions".to_vec(), language_options.clone()),
-        (b"settings".to_vec(), settings.clone()),
-        (
-            b"rules".to_vec(),
-            Json::Object(vec![(id, Json::Array(rule))]),
-        ),
-    ]);
-    let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
-    // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
-    config.linter.report_unused_disable_directives = match entry.meta.plugin {
-        Plugin::TypeScript => Severity::Warn,
-        _ => Severity::Off,
-    };
-    with_file(filename, code, &config.language, |file| {
-        let messages = linter()
-            .lint(file, &config, &LintOptions::default())
-            .messages;
-        let mut fixes: Vec<_> = messages.iter().filter_map(|it| it.fix.as_ref()).collect();
-        let output = bun_lint::fix::apply_fixes(code, &mut fixes);
-        CaseOutcome { messages, output }
-    })
 }
 
 fn read_cases(args: &[String]) -> Vec<Json> {

@@ -1,68 +1,9 @@
-//! Runs the test cases of the rules that look at other files. A case is a file of `fixtures/import-project` or
-//! `fixtures/n-project`, with other text than is on the disk.
+//! `bun-lint plugins ..`: the rules that look at other files.
 
-use crate::linter_cmd::{CaseOutcome, linter};
-use bun_lint::context::Severity;
-use bun_lint::linter::{Again, LintOptions, LintResult, ResolvedConfig, RuleId};
+use crate::linter_cmd::linter;
+use bun_lint::linter::{LintOptions, ResolvedConfig};
 use bun_lint::options::Json;
-use bun_lint::rule::Plugin;
-use bun_lint::runner::RuleEntry;
 use bun_lint_graph::{Graph, Store, with_file};
-use std::sync::OnceLock;
-
-static FIXTURES: OnceLock<String> = OnceLock::new();
-
-/// `fixtures`: the directory of the fixtures.
-pub(crate) fn set_fixtures(fixtures: &str) {
-    let absolute = std::fs::canonicalize(fixtures);
-    let _ = FIXTURES.set(absolute.map_or_else(|_| fixtures.to_owned(), |it| it.to_string_lossy().into_owned()));
-}
-
-/// Whether the cases of the rule are files of a project.
-pub(crate) fn is_for(entry: &RuleEntry) -> bool {
-    entry.meta.needs_modules || entry.meta.plugin == Plugin::Node
-}
-
-/// The same as `linter_cmd::lint_case`.
-pub(crate) fn lint_case(
-    entry: &'static RuleEntry,
-    code: &[u8],
-    filename: &str,
-    options: &[Json],
-    language_options: &Json,
-    settings: &Json,
-) -> CaseOutcome {
-    let mut rule = vec![Json::Number(2.0)];
-    rule.extend_from_slice(options);
-    let config = Json::Object(vec![
-        (b"languageOptions".to_vec(), language_options.clone()),
-        (b"settings".to_vec(), settings.clone()),
-        (b"rules".to_vec(), Json::Object(vec![(RuleId::Known(entry.meta).to_vec(), Json::Array(rule))])),
-    ]);
-    let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
-    config.linter.report_unused_disable_directives = Severity::Off;
-    let directory = if entry.meta.plugin == Plugin::Node { "n-project" } else { "import-project" };
-    let project = &format!("{}/{directory}", FIXTURES.get().map_or(".", |it| &it[..]));
-    let path = if filename.starts_with(['<', '/']) { filename.to_owned() } else { format!("{project}/{filename}") };
-    let store = Store::new(project.as_bytes());
-    let graph = Graph::new(&store);
-    let lint = |previous: Option<&LintResult>| {
-        let options = LintOptions {
-            again: previous.map(|previous| Again {
-                previous,
-                had_types: false,
-            }),
-            ..LintOptions::default()
-        };
-        with_file(path.as_bytes(), code, &config.language, Some(&graph), |file| linter().lint(file, &config, &options)).unwrap_or_default()
-    };
-    let first = lint(None);
-    let is_linted_again = !graph.complete(&|count, work| (0..count).for_each(work)).is_empty();
-    let messages = if is_linted_again { lint(Some(&first)).messages } else { first.messages };
-    let mut fixes: Vec<_> = messages.iter().filter_map(|it| it.fix.as_ref()).collect();
-    let output = bun_lint::fix::apply_fixes(code, &mut fixes);
-    CaseOutcome { messages, output }
-}
 
 /// `bun-lint plugins cycles <paths..> [--threads=n] [--json] [--oxlint] [options as JSON]`: `import/no-cycle` alone on all the files
 /// in `paths`, as the command line does it, with the time that each step takes. `--oxlint`: as with a configuration of oxlint.

@@ -66,7 +66,11 @@ describe("shared WebAssembly.Memory with a maximum of zero", () => {
              door + ": " + Object.prototype.toString.call(memory) +
                " " + memory.buffer.constructor.name + " " + memory.buffer.byteLength,
            );
-         const nextMessage = target => new Promise(resolve => (target.onmessage = event => resolve(event.data)));
+         const nextMessage = target =>
+           new Promise((resolve, reject) => {
+             target.onmessage = event => resolve(event.data);
+             target.onmessageerror = target.onerror = event => reject(new Error(event.message || event.type));
+           });
 
          report("structuredClone", structuredClone(zero()));
          report("structuredClone, nested", structuredClone({ a: 1, memory: zero() }).memory);
@@ -120,7 +124,7 @@ describe("shared WebAssembly.Memory with a maximum of zero", () => {
         "workerData",
         "Worker",
       ].map(door => door + ": [object WebAssembly.Memory] SharedArrayBuffer 0"),
-      stderr: expect.any(String),
+      stderr: "",
       signalCode: null,
       exitCode: 0,
     });

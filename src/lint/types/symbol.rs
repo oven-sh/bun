@@ -286,8 +286,9 @@ impl<'a> TsSymbol<'a> {
         self.file.query(|q| q.declaration_modifier_flags_from_symbol(self.id))
     }
 
-    /// `symbol.getJsDocTags(checker)`, the text of the `deprecated` one. `None`: not every
-    /// declaration has such a tag.
+    /// `symbol.getJsDocTags(checker).find(tag => tag.name === 'deprecated')`, as
+    /// `ts.displayPartsToString(tag.text)`: empty if nothing follows the tag. The tags are those of
+    /// all its declarations, or those that a member without any inherits.
     pub fn deprecation(self) -> Option<&'a [u8]> {
         self.file.query(|q| q.deprecation_of_symbol(self.id))
     }

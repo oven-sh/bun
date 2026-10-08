@@ -105,9 +105,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.c.flags(ty) & (tf::UNION | tf::ENUM_LITERAL) == tf::UNION | tf::ENUM_LITERAL
     }
 
+    /// `type.aliasSymbol`. That of the declared type of an enum with several members is the enum.
     pub fn alias_symbol(&mut self, ty: TypeId) -> Option<SymbolRef> {
-        if self.is_enum_union(ty) {
-            return None;
+        // `getUnresolvedSymbolForEntityName`
+        if let TypeData::UnresolvedName { name, .. } = *self.c.data(ty) {
+            let path = self.c.atoms().bytes(name);
+            let last = bun_core::strings::last_index_of_char(path, b'.').map_or(path, |dot| &path[dot + 1..]);
+            let last = self.c.atoms().intern(last);
+            return Some(self.named_symbol(super::symbols::Key::Undeclared(name), last));
         }
         let alias = self.c.alias_symbol_of_type(ty)?;
         Some(self.symbol(alias))
@@ -168,7 +173,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             TypeData::UnresolvedName { .. } => "error",
             TypeData::BoolLit { value: true, .. } => "true",
             TypeData::BoolLit { value: false, .. } => "false",
-            _ if ty == TypeId::BOOLEAN => "boolean",
+            _ if self.c.flags(ty) & tf::BOOLEAN != 0 => "boolean",
             _ => return None,
         })
     }

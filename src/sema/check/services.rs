@@ -12,6 +12,7 @@
 //!   it with, a parameter of a signature is a `SigParam`. This numbers them as they come up, so
 //!   that equal numbers are what TypeScript has one object for.
 
+mod jsdoc;
 pub(in crate::check) mod symbol_at_location;
 mod symbols;
 mod type_at_location;
@@ -30,6 +31,10 @@ use std::cell::OnceCell;
 use symbols::{Entry, Key};
 use visited::VisitedKind;
 
+/// Calls what it is given with the text of the file of the default library that has that name, if it
+/// can be read. The checker does not keep that text.
+pub type ReadLibrary<'r> = &'r (dyn Fn(&[u8], &mut dyn FnMut(&[u8])) + Sync);
+
 pub struct Services<'c, 'p, 's> {
     c: &'c mut Checker<'p, 's>,
     file: FileId,
@@ -39,6 +44,7 @@ pub struct Services<'c, 'p, 's> {
     symbol_ids: FxHashMap<Key<'c>, SymbolRef>,
     /// `Checker::symbols_of_declarations` of `file`.
     symbols_of_declarations: OnceCell<FxHashMap<Decl, SymbolId>>,
+    read_library: Option<ReadLibrary<'c>>,
     /// What the queries must not change for the files that the task checks next.
     flow_analysis_was_disabled: bool,
     had_run_out_of_stack: bool,
@@ -46,9 +52,12 @@ pub struct Services<'c, 'p, 's> {
 
 impl<'p, 's> Checker<'p, 's> {
     /// Calls `then` with the services for `file`, which has just been checked.
+    ///
+    /// `read_library`: without it nothing in the default library counts as deprecated.
     pub fn with_services<R>(
         &mut self,
         file: FileId,
+        read_library: Option<ReadLibrary<'_>>,
         then: impl FnOnce(&mut Services<'_, 'p, 's>) -> R,
     ) -> R {
         let arena = Arena::new();
@@ -58,6 +67,7 @@ impl<'p, 's> Checker<'p, 's> {
             c: self,
             file,
             arena: &arena,
+            read_library,
             symbols: Vec::new(),
             symbol_ids: FxHashMap::default(),
             symbols_of_declarations: OnceCell::new(),
@@ -481,45 +491,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             text = text.strip_prefix(modifier).map_or(text, |rest| rest.trim_ascii_start());
         }
         !text.starts_with(b"module")
-    }
-
-    pub fn deprecation_of_node(&mut self, node: NodeRef) -> Option<&'c [u8]> {
-        let (hir, at) = self.valid(node)?;
-        if hir.text.is_empty() {
-            return None;
-        }
-        let text = self.deprecated_tag_before(node.file, hir.start(at))?;
-        Some(self.list(&text))
-    }
-
-    /// The text after `@deprecated` in the JSDoc comment that ends right before `start`.
-    fn deprecated_tag_before(&self, file: FileId, start: u32) -> Option<Vec<u8>> {
-        let text = &self.c.hir(file).text[..];
-        let before = text.get(..start as usize)?.trim_ascii_end();
-        let before = before.strip_suffix(b"*/")?;
-        let open = bun_core::strings::last_index_of(before, b"/**")?;
-        let comment = &before[open + 3..];
-        let tag = bun_core::strings::index_of(comment, b"@deprecated")?;
-        let rest = &comment[tag + b"@deprecated".len()..];
-        if rest.first().is_some_and(|&next| is_identifier_part(next)) {
-            return None;
-        }
-        // Up to the next tag, with the `*` at the start of each line removed.
-        let mut reason = Vec::new();
-        for (index, line) in bun_core::strings::split(rest, b"\n").enumerate() {
-            let mut line = line.trim_ascii();
-            if index > 0 {
-                line = line.strip_prefix(b"*").unwrap_or(line).trim_ascii();
-                if line.starts_with(b"@") {
-                    break;
-                }
-                if !reason.is_empty() && !line.is_empty() {
-                    reason.push(b'\n');
-                }
-            }
-            reason.extend_from_slice(line);
-        }
-        Some(reason)
     }
 
     // ───────────────────────────── from a node ─────────────────────────────

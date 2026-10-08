@@ -88,6 +88,7 @@ mod ty;
 pub mod tsutils;
 pub mod utils;
 
+pub use bun_sema::check::services::ReadLibrary;
 pub use flags::*;
 pub use locate::{Locate, NameOf};
 pub use node::{SourceFile, SyntaxKind, TsNode};
@@ -730,12 +731,16 @@ impl<'a> Types<'a> {
 /// `bun_sema_driver`), on the thread that did. A task of the checker that turns out invalid is run
 /// again, so this can happen more than once for a file: the last time counts.
 ///
+/// `read_library`: see [`ReadLibrary`]. It is asked when a rule wants to know whether something
+/// that TypeScript's library declares is `@deprecated`.
+///
 /// `None`, without a call: the file is not one that can be linted. It is part of TypeScript's
 /// library, or its tree is incomplete because the parser or the binder ran out of stack.
 pub fn with_file<R>(
     checker: &mut bun_sema::check::Checker<'_, '_>,
     file: FileId,
     language: &crate::language::LanguageOptions,
+    read_library: Option<ReadLibrary<'_>>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
     let module = checker.p.files.module(file);
@@ -744,7 +749,7 @@ pub fn with_file<R>(
         return None;
     }
     let (path, atoms) = (module.file_name(), &checker.p.files.atoms);
-    Some(checker.with_services(file, |services| {
+    Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
         then(&File::new(path, hir, bound, atoms, language, Some(types)))
     }))

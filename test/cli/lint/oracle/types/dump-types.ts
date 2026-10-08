@@ -1,7 +1,7 @@
 // What TypeScript says the type at every node of every type-aware test case is, to compare with
 // `bun-lint types dump-fixtures`.
 //
-//   TYPESCRIPT_ESLINT_DIR=<checkout> BUN_LINT_TYPE_ROOTS=<a,b> bun dump-types.ts <fixtures> [--rule=r] [--jobs=n] [--ts-nodes] --out=<file>
+//   TYPESCRIPT_ESLINT_DIR=<checkout> BUN_LINT_TYPE_ROOTS=<a,b> bun dump-types.ts <fixtures> [--rule=r] [--jobs=n] [--ts-nodes | --profiles] --out=<file>
 //
 // For each case: `# <rule> <index>`, then one line `[start, end, "<ESTree type>", "<type>"]` for each
 // ESTree node, with offsets in UTF-8 bytes. The type is
@@ -9,6 +9,9 @@
 //
 // With `--ts-nodes`, a line `[start, end, "<SyntaxKind>", "<type>", symbol]` for each node of
 // TypeScript's own tree, where the symbol is `null` or `[name, flags, [[file, start], ..]]`.
+//
+// With `--profiles`, a line `[start, end, "<SyntaxKind>", { .. }]` for each expression, with what many
+// functions of the checker say about its type.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -138,7 +141,72 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
       const offsets = byteOffsets(testCase.code);
       const lines: any[] = [];
       const at = (offset: number) => (offsets ? offsets[offset] : offset);
-      if (process.argv.includes("--ts-nodes")) {
+      if (process.argv.includes("--profiles")) {
+        const sourceFile = program.getSourceFile(filePath)!;
+        const text = (type: import("typescript").Type) => checker.typeToString(type);
+        const optional = (type: import("typescript").Type | undefined) => (type ? text(type) : null);
+        const names = (flags: number, all: Record<string, any>, wanted: string[]) => wanted.filter(name => flags & all[name]);
+        const typeFlags = "Any Unknown String Number Boolean Enum BigInt StringLiteral NumberLiteral BooleanLiteral EnumLiteral BigIntLiteral ESSymbol UniqueESSymbol Void Undefined Null Never TypeParameter Object Union Intersection Index IndexedAccess Conditional Substitution NonPrimitive TemplateLiteral StringMapping".split(" ");
+        const objectFlags = "Class Interface Reference Anonymous Mapped Instantiated ObjectLiteral FreshLiteral ArrayLiteral ReverseMapped ObjectRestType InstantiationExpressionType".split(" ");
+        const tsutils = require("ts-api-utils");
+        const visit = (node: import("typescript").Node) => {
+          ts.forEachChild(node, visit);
+          if (!(ts as any).isExpressionNode(node) && !ts.isExpression(node)) return;
+          if (ts.isParenthesizedExpression(node)) return;
+          const profile: Record<string, unknown> = {};
+          const field = (name: string, get: () => unknown) => {
+            try {
+              profile[name] = get();
+            } catch (error) {
+              profile[name] = `!${error}`;
+            }
+          };
+          const type = checker.getTypeAtLocation(node);
+          const anyType = type as any;
+          field("type", () => text(type));
+          field("flags", () => names(type.flags, ts.TypeFlags, typeFlags));
+          field("objectFlags", () => names(type.flags & ts.TypeFlags.Object ? anyType.objectFlags : 0, ts.ObjectFlags, objectFlags));
+          field("symbol", () => type.symbol?.name ?? null);
+          field("aliasSymbol", () => type.aliasSymbol?.name ?? null);
+          field("aliasTypeArguments", () => (type.aliasTypeArguments ?? []).map(text));
+          field("types", () => (type.isUnionOrIntersection() ? type.types.map(text) : []));
+          field("typeArguments", () => (tsutils.isTypeReference(type) ? checker.getTypeArguments(type).map(text) : []));
+          field("isArray", () => checker.isArrayType(type));
+          field("isTuple", () => checker.isTupleType(type));
+          field("isArrayLike", () => checker.isArrayLikeType(type));
+          field("intrinsicName", () => (type.flags & (ts.TypeFlags as any).Intrinsic ? anyType.intrinsicName : null) ?? null);
+          field("apparent", () => text(checker.getApparentType(type)));
+          field("baseConstraint", () => optional(checker.getBaseConstraintOfType(type)));
+          field("awaited", () => optional(checker.getAwaitedType(type)));
+          field("widened", () => text(checker.getWidenedType(type)));
+          field("baseOfLiteral", () => text(checker.getBaseTypeOfLiteralType(type)));
+          field("nonNullable", () => text(checker.getNonNullableType(type)));
+          field("stringIndex", () => optional(type.getStringIndexType()));
+          field("numberIndex", () => optional(type.getNumberIndexType()));
+          field("properties", () => type.getProperties().slice(0, 40).map(it => it.name.replace(/^(__@\w+)@\d+$/, "$1")));
+          field("propertyTypes", () => type.getProperties().slice(0, 8).map(it => text(checker.getTypeOfSymbolAtLocation(it, node))));
+          field("propertyFlags", () => type.getProperties().slice(0, 8).map(it => it.flags & ~ts.SymbolFlags.Transient));
+          field("call", () => type.getCallSignatures().map(it => checker.signatureToString(it)));
+          field("construct", () => type.getConstructSignatures().map(it => checker.signatureToString(it)));
+          field("returns", () => type.getCallSignatures().map(it => text(it.getReturnType())));
+          field("parameters", () => type.getCallSignatures().map(signature => signature.parameters.map(it => [it.name, text(checker.getTypeOfSymbolAtLocation(it, node))])));
+          field("baseTypes", () => (type.isClassOrInterface() ? checker.getBaseTypes(type).map(text) : []));
+          field("contextual", () => optional(checker.getContextualType(node as import("typescript").Expression)));
+          field("thenable", () => tsutils.isThenableType(checker, node, type));
+          field("assignableToString", () => checker.isTypeAssignableTo(type, checker.getStringType()));
+          if (ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) {
+            const signature = checker.getResolvedSignature(node);
+            field("resolved", () => (signature ? checker.signatureToString(signature) : null));
+            field("resolvedDeclaration", () => (signature?.declaration ? ts.SyntaxKind[signature.declaration.kind] : null));
+            field("predicate", () => {
+              const predicate = signature && checker.getTypePredicateOfSignature(signature);
+              return predicate ? [ts.TypePredicateKind[predicate.kind], predicate.parameterIndex ?? -1, optional(predicate.type)] : null;
+            });
+          }
+          lines.push([at(node.getStart(sourceFile, false)), at(node.end), ts.SyntaxKind[node.kind], profile]);
+        };
+        ts.forEachChild(sourceFile, visit);
+      } else if (process.argv.includes("--ts-nodes")) {
         const sourceFile = program.getSourceFile(filePath)!;
         const describe = (symbol: import("typescript").Symbol) => [
           symbol.name,

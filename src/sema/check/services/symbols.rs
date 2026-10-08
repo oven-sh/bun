@@ -313,7 +313,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Key::Parameter(signature, index) => {
                 info.flags = SymbolFlags::FUNCTION_SCOPED_VARIABLE;
                 if let Some(parameter) = self.c.sig_params(signature).get(index as usize) {
-                    info.name = self.name_as_in_typescript(parameter.name);
+                    info.name = match parameter.name {
+                        // `bindParameter`: one whose name is a pattern.
+                        Atom::NONE => self.list(format!("__{index}").as_bytes()),
+                        name => self.name_as_in_typescript(name),
+                    };
                     if parameter.declaration.is_none() {
                         info.flags |= SymbolFlags::TRANSIENT;
                         if parameter.optional {
@@ -500,7 +504,20 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Key::Anonymous(file, node) => self.type_at_location(NodeRef { file, node }),
             Key::Parameter(signature, index) => {
                 let parameters = self.c.sig_params(signature);
-                parameters.get(index as usize).map_or(TypeId::ERROR, |it| it.ty)
+                let Some(parameter) = parameters.get(index as usize) else {
+                    return TypeId::ERROR;
+                };
+                // What the signature has is `getTypeOfParameter`, which adds `undefined` for an
+                // initializer. The variable does not have it.
+                if let Some((file, declaration)) = parameter.declaration
+                    && self.c.hir(file)[declaration].default.is_some()
+                {
+                    let origin = self.c.types().sig_origin(signature);
+                    let mapper = self.c.sig_decl(origin).map_or(MapperId::IDENTITY, |it| it.2);
+                    let declared = self.c.type_of_param(file, declaration);
+                    return self.c.instantiate(declared, mapper);
+                }
+                parameter.ty
             }
             Key::Prototype(class) => self.c.declared_type(class),
             Key::SyntheticDefault(module) => {
@@ -675,17 +692,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    /// `isDeprecatedSymbol`: every declaration has the tag. The text is that of the first.
-    pub fn deprecation_of_symbol(&mut self, symbol: SymbolRef) -> Option<&'c [u8]> {
-        let declarations = self.declarations(symbol);
-        let mut first = None;
-        for &declaration in declarations {
-            let reason = self.deprecation_of_node(declaration)?;
-            first = first.or(Some(reason));
-        }
-        first
-    }
-
     pub fn symbol_to_string(&mut self, symbol: SymbolRef) -> Vec<u8> {
         match self.entry(symbol) {
             Some((Key::Symbol(sym) | Key::Instantiated(sym, _), None)) => self.c.symbol_to_string(sym),
@@ -745,7 +751,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let symbols: SmallVec<[SymbolRef; 4]> =
             (0..parameters.len() as u32).map(|index| self.intern_symbol(Key::Parameter(signature, index), None)).collect();
         let type_parameters = self.c.sig_type_params(signature);
-        let origin = self.c.types().sig_origin(signature);
+        // `getDefaultConstructSignatures` clones the signature of the base class.
+        let origin = self.c.default_construct_base_sig(signature).unwrap_or(signature);
+        let origin = self.c.types().sig_origin(origin);
         let declaration = self.c.sig_decl(origin).map(|(file, function, _)| NodeRef {
             file,
             node: self.c.hir(file).node(function),
@@ -790,11 +798,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn type_at_position(&mut self, signature: SigId, index: u32) -> Option<TypeId> {
         let parameters = self.c.sig_params(signature);
         self.c.param_type_at(&parameters, index as usize)
-    }
-
-    pub fn deprecation_of_signature(&mut self, signature: SigId) -> Option<&'c [u8]> {
-        let declaration = self.signature_info(signature).declaration?;
-        self.deprecation_of_node(declaration)
     }
 
     pub fn signature_to_string(&mut self, signature: SigId) -> Vec<u8> {

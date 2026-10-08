@@ -990,7 +990,25 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         use super::super::errors_small::SymbolAtLocation;
         let key = match self.c.symbol_of_type(ty)? {
             SymbolAtLocation::Symbol(symbol) => return Some(self.symbol(symbol)),
-            SymbolAtLocation::Anonymous(file, node) => Key::Anonymous(file, node),
+            // The type of a method has the symbol of the method.
+            SymbolAtLocation::Anonymous(file, node) => match self.c.hir(file).data(node) {
+                NodeData::Member(member) => {
+                    let symbol = self.c.symbol_of_member(file, member);
+                    let name = self.c.declared_member_name(file, self.c.hir(file)[member].key);
+                    let symbol = self.c.files().canonical(symbol);
+                    return Some(self.named_symbol(Key::Symbol(symbol), name.unwrap_or(Atom::NONE)));
+                }
+                NodeData::Prop(p) => {
+                    let prop: &'c Prop<'c> = self.arena.alloc(Prop {
+                        name: self.c.hir(file)[p].key.name().unwrap_or(Atom::NONE),
+                        flags: PropFlags::empty(),
+                        source: PropSource::Literal(file, p),
+                        mapper: MapperId::IDENTITY,
+                    });
+                    return Some(self.intern_symbol(Key::LiteralMember(file, p), Some((prop, MapperId::IDENTITY))));
+                }
+                _ => Key::Anonymous(file, node),
+            },
             _ => return None,
         };
         Some(self.intern_symbol(key, None))

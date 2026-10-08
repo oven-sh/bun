@@ -1,9 +1,10 @@
 //! `bun-lint types ..`: the linter with types.
 //!
-//! - `bun-lint types dump <file> [--project=tsconfig.json] [--symbols] [--ts-nodes]`: the type (and
+//! - `bun-lint types dump <file> [--project=tsconfig.json] [--symbols] [--ts-nodes] [--profiles]`: the type (and
 //!   the symbol) at every expression, pattern and type of a file, or at every node of TypeScript's
-//!   tree, as JSON lines, to compare with TypeScript's.
-//! - `bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file] [--ts-nodes]`: the same for
+//!   tree, or what many functions of the checker say about the type of every expression, as JSON
+//!   lines, to compare with TypeScript's.
+//! - `bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file] [--ts-nodes] [--profiles]`: the same for
 //!   the code of every type-aware test case.
 //! - `bun-lint types run <rule> <file> [options as JSON] [--project=tsconfig.json]`: what one rule
 //!   reports for one file of a project.
@@ -25,7 +26,7 @@ use bun_lint::linter::{LintOptions, Linter, Registry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
-use bun_lint::types::{TsNode, TsSymbol};
+use bun_lint::types::{ObjectFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags, tsutils};
 use bun_sema::program::FileId;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -131,12 +132,17 @@ pub(crate) fn lint_project<R: Send>(
 
     let results: Mutex<Vec<(FileId, Vec<u8>, R)>> = Mutex::new(Vec::new());
     let wanted: Vec<Vec<u8>> = (project.files.iter()).map(|it| bun_sema_driver::host::from_native(it.as_bytes())).collect();
+    let read_library = |path: &[u8], then: &mut dyn FnMut(&[u8])| {
+        if let Ok(text) = std::fs::read(text(bun_sema_driver::host::to_native(path))) {
+            then(&text);
+        }
+    };
     let after_file = |checker: &mut bun_sema::check::Checker<'_, '_>, file: FileId| {
         let path = checker.p.files.module(file).file_name();
         if !wanted.iter().any(|it| it == path) {
             return;
         }
-        let Some(result) = bun_lint::types::with_file(checker, file, language, |file| then(file)) else {
+        let Some(result) = bun_lint::types::with_file(checker, file, language, Some(&read_library), |file| then(file)) else {
             return;
         };
         let mut results = results.lock().unwrap_or_else(|it| it.into_inner());
@@ -263,6 +269,125 @@ fn dump_ts_nodes<'a>(file: &'a File<'a>) -> String {
     out
 }
 
+const TYPE_FLAGS: [(TypeFlags, &str); 29] = [
+    (TypeFlags::ANY, "Any"),
+    (TypeFlags::UNKNOWN, "Unknown"),
+    (TypeFlags::STRING, "String"),
+    (TypeFlags::NUMBER, "Number"),
+    (TypeFlags::BOOLEAN, "Boolean"),
+    (TypeFlags::ENUM, "Enum"),
+    (TypeFlags::BIG_INT, "BigInt"),
+    (TypeFlags::STRING_LITERAL, "StringLiteral"),
+    (TypeFlags::NUMBER_LITERAL, "NumberLiteral"),
+    (TypeFlags::BOOLEAN_LITERAL, "BooleanLiteral"),
+    (TypeFlags::ENUM_LITERAL, "EnumLiteral"),
+    (TypeFlags::BIG_INT_LITERAL, "BigIntLiteral"),
+    (TypeFlags::ES_SYMBOL, "ESSymbol"),
+    (TypeFlags::UNIQUE_ES_SYMBOL, "UniqueESSymbol"),
+    (TypeFlags::VOID, "Void"),
+    (TypeFlags::UNDEFINED, "Undefined"),
+    (TypeFlags::NULL, "Null"),
+    (TypeFlags::NEVER, "Never"),
+    (TypeFlags::TYPE_PARAMETER, "TypeParameter"),
+    (TypeFlags::OBJECT, "Object"),
+    (TypeFlags::UNION, "Union"),
+    (TypeFlags::INTERSECTION, "Intersection"),
+    (TypeFlags::INDEX, "Index"),
+    (TypeFlags::INDEXED_ACCESS, "IndexedAccess"),
+    (TypeFlags::CONDITIONAL, "Conditional"),
+    (TypeFlags::SUBSTITUTION, "Substitution"),
+    (TypeFlags::NON_PRIMITIVE, "NonPrimitive"),
+    (TypeFlags::TEMPLATE_LITERAL, "TemplateLiteral"),
+    (TypeFlags::STRING_MAPPING, "StringMapping"),
+];
+
+const OBJECT_FLAGS: [(ObjectFlags, &str); 12] = [
+    (ObjectFlags::CLASS, "Class"),
+    (ObjectFlags::INTERFACE, "Interface"),
+    (ObjectFlags::REFERENCE, "Reference"),
+    (ObjectFlags::ANONYMOUS, "Anonymous"),
+    (ObjectFlags::MAPPED, "Mapped"),
+    (ObjectFlags::INSTANTIATED, "Instantiated"),
+    (ObjectFlags::OBJECT_LITERAL, "ObjectLiteral"),
+    (ObjectFlags::FRESH_LITERAL, "FreshLiteral"),
+    (ObjectFlags::ARRAY_LITERAL, "ArrayLiteral"),
+    (ObjectFlags::REVERSE_MAPPED, "ReverseMapped"),
+    (ObjectFlags::OBJECT_REST_TYPE, "ObjectRestType"),
+    (ObjectFlags::INSTANTIATION_EXPRESSION_TYPE, "InstantiationExpressionType"),
+];
+
+/// One line for each expression of `file`: `[start, end, kind, { .. }]`, with what many functions
+/// of the checker say about its type.
+fn dump_profiles<'a>(file: &'a File<'a>) -> String {
+    let text_of = |ty: Type| json_string(&ty.to_text());
+    let optional = |ty: Option<Type>| ty.map_or_else(|| "null".to_owned(), text_of);
+    let list = |all: &mut dyn Iterator<Item = String>| format!("[{}]", all.collect::<Vec<_>>().join(", "));
+    let mut lines: Vec<(u32, u32, String)> = Vec::new();
+    let mut work: Vec<TsNode<'a>> = file.type_checker().source_file().node().children().collect();
+    while let Some(node) = work.pop() {
+        work.extend(node.children());
+        if !matches!(node.to_ast(), Some(Node::Expr(_))) || node.kind() == SyntaxKind::ParenthesizedExpression {
+            continue;
+        }
+        let ty = node.get_type_at_location();
+        let (flags, object_flags) = (ty.flags(), ty.object_flags());
+        let mut fields: Vec<(&str, String)> = vec![
+            ("type", text_of(ty)),
+            ("flags", list(&mut TYPE_FLAGS.iter().filter(|it| flags.contains(it.0)).map(|it| format!("\"{}\"", it.1)))),
+            ("objectFlags", list(&mut OBJECT_FLAGS.iter().filter(|it| object_flags.contains(it.0)).map(|it| format!("\"{}\"", it.1)))),
+            ("symbol", ty.symbol().map_or_else(|| "null".to_owned(), |it| json_string(it.name()))),
+            ("aliasSymbol", ty.alias_symbol().map_or_else(|| "null".to_owned(), |it| json_string(it.name()))),
+            ("aliasTypeArguments", list(&mut ty.alias_type_arguments().iter().map(text_of))),
+            ("types", list(&mut ty.types().iter().map(text_of))),
+            ("typeArguments", list(&mut ty.get_type_arguments().iter().map(text_of))),
+            ("isArray", ty.is_array_type().to_string()),
+            ("isTuple", ty.is_tuple_type().to_string()),
+            ("isArrayLike", ty.is_array_like_type().to_string()),
+            ("intrinsicName", ty.intrinsic_name().map_or_else(|| "null".to_owned(), |it| format!("\"{it}\""))),
+            ("apparent", text_of(ty.get_apparent_type())),
+            ("baseConstraint", optional(ty.get_base_constraint_of_type())),
+            ("awaited", optional(ty.get_awaited_type())),
+            ("widened", text_of(ty.get_widened_type())),
+            ("baseOfLiteral", text_of(ty.get_base_type_of_literal_type())),
+            ("nonNullable", text_of(ty.get_non_nullable_type())),
+            ("stringIndex", optional(ty.get_string_index_type())),
+            ("numberIndex", optional(ty.get_number_index_type())),
+            ("properties", list(&mut ty.get_properties().iter().take(40).map(|it| json_string(it.name())))),
+            ("propertyTypes", list(&mut ty.get_properties().iter().take(8).map(|it| text_of(it.get_type_at_location(node))))),
+            ("propertyFlags", list(&mut ty.get_properties().iter().take(8).map(|it| (it.flags() - SymbolFlags::TRANSIENT).bits().to_string()))),
+            ("call", list(&mut ty.get_call_signatures().iter().map(|it| json_string(&it.to_text())))),
+            ("construct", list(&mut ty.get_construct_signatures().iter().map(|it| json_string(&it.to_text())))),
+            ("returns", list(&mut ty.get_call_signatures().iter().map(|it| text_of(it.get_return_type())))),
+            ("parameters", list(&mut ty.get_call_signatures().iter().map(|signature| {
+                list(&mut signature.parameters().iter().map(|it| format!("[{}, {}]", json_string(it.name()), text_of(it.get_type_at_location(node)))))
+            }))),
+            ("baseTypes", list(&mut ty.get_base_types().iter().map(text_of))),
+            ("contextual", optional(node.get_contextual_type())),
+            ("thenable", tsutils::is_thenable_type(node, ty).to_string()),
+            ("assignableToString", ty.is_assignable_to(file.type_checker().get_string_type()).to_string()),
+        ];
+        if matches!(node.kind(), SyntaxKind::CallExpression | SyntaxKind::NewExpression | SyntaxKind::TaggedTemplateExpression) {
+            let signature = node.get_resolved_signature();
+            fields.push(("resolved", signature.map_or_else(|| "null".to_owned(), |it| json_string(&it.to_text()))));
+            let declaration = signature.and_then(|it| it.declaration()).map(|it| format!("\"{:?}\"", it.kind()));
+            fields.push(("resolvedDeclaration", declaration.unwrap_or_else(|| "null".to_owned())));
+            let predicate = signature.and_then(|it| it.get_type_predicate());
+            fields.push(("predicate", predicate.map_or_else(|| "null".to_owned(), |it| {
+                format!("[\"{:?}\", {}, {}]", it.kind(), it.parameter_index().map_or(-1, |index| index as i64), optional(it.ty()))
+            })));
+        }
+        let fields: Vec<String> = fields.iter().map(|(name, value)| format!("\"{name}\": {value}")).collect();
+        let span = node.span();
+        lines.push((span.start, span.end, format!("\"{:?}\", {{{}}}", node.kind(), fields.join(", "))));
+    }
+    lines.sort();
+    let mut out = String::new();
+    for (start, end, line) in lines {
+        let _ = writeln!(out, "[{start}, {end}, {line}]");
+    }
+    out
+}
+
 fn dump_file(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let Some(path) = args.iter().find(|a| !a.starts_with("--")) else {
@@ -270,6 +395,7 @@ fn dump_file(args: &[String]) {
     };
     let with_symbols = args.iter().any(|a| a == "--symbols");
     let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
+    let as_profiles = args.iter().any(|a| a == "--profiles");
     let files = [absolute(path)];
     let config = flag("--project=").map(absolute);
     let cwd = absolute(".");
@@ -280,9 +406,10 @@ fn dump_file(args: &[String]) {
         overlay: Vec::new(),
         threads: 1,
     };
-    let dumped = lint_project(project, &LanguageOptions::default(), &|file| match as_ts_nodes {
-        true => dump_ts_nodes(file),
-        false => dump(file, with_symbols),
+    let dumped = lint_project(project, &LanguageOptions::default(), &|file| match (as_ts_nodes, as_profiles) {
+        (true, _) => dump_ts_nodes(file),
+        (_, true) => dump_profiles(file),
+        _ => dump(file, with_symbols),
     });
     for (_, lines) in dumped {
         print!("{lines}");
@@ -370,12 +497,14 @@ fn dump_fixtures(args: &[String]) {
     let cases = type_aware_cases(&fixtures);
     let dumps: Vec<Mutex<String>> = cases.iter().map(|_| Mutex::new(String::new())).collect();
     let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
+    let as_profiles = args.iter().any(|a| a == "--profiles");
     std::panic::set_hook(Box::new(|_| {}));
     bun_sema_standalone::for_each_parallel(jobs(args), cases.len(), |i| {
         let dumped = std::panic::catch_unwind(|| {
-            with_case(&project_root, cases[i].json, &LanguageOptions::default(), &|file| match as_ts_nodes {
-                true => dump_ts_nodes(file),
-                false => dump(file, false),
+            with_case(&project_root, cases[i].json, &LanguageOptions::default(), &|file| match (as_ts_nodes, as_profiles) {
+                (true, _) => dump_ts_nodes(file),
+                (_, true) => dump_profiles(file),
+                _ => dump(file, false),
             })
         });
         let dumped = match dumped {

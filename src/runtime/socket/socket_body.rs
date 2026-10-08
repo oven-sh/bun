@@ -54,8 +54,9 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
 }
 
-/// The error behind a close that the event loop initiated: the `recv()`
-/// failure or `SO_ERROR` that uSockets closed the socket with (`> 2`, see
+/// The error behind a close that the event loop initiated, or that
+/// `close_after_fatal_send` made for a failed send: the `recv()` failure,
+/// `SO_ERROR` or send errno the socket was closed with (`> 2`, see
 /// `on_close`). uSockets reports it in the platform's own numbering: an errno
 /// on POSIX, a WSA code (`WSAECONNRESET` = 10054) on Windows. `sys::Error`
 /// stores `SystemErrno` discriminants, so the WSA code has to be mapped first
@@ -90,10 +91,9 @@ pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
     <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
 }
 
-/// The close code for a send errno, or 0 for a plain close. Only an errno the
-/// kernel set on the socket is reported, because a read would return the same
-/// one (the peer-gone set of `us_socket_write_check_error`). One peer reset
-/// is `ECONNRESET` on linux and `EPIPE` on darwin: both report as the former.
+/// The close code for a send errno, or 0 for a plain close. Only an errno that
+/// a read of the socket would also return is reported: the peer-gone set of
+/// `us_socket_write_check_error` without `EPIPE`, which names no cause.
 fn dead_transport_close_code(errno: c_int) -> c_int {
     use sys::SystemErrno as E;
     #[cfg(not(windows))]
@@ -102,12 +102,9 @@ fn dead_transport_close_code(errno: c_int) -> c_int {
     #[cfg(windows)]
     let known = E::init(errno.unsigned_abs());
     match known {
-        #[cfg(not(windows))]
-        Some(E::EPIPE | E::ECONNABORTED) => E::ECONNRESET as c_int,
-        #[cfg(windows)]
-        Some(E::EPIPE | E::ECONNABORTED) => errno,
         Some(
             E::ECONNRESET
+            | E::ECONNABORTED
             | E::ENOTCONN
             | E::ETIMEDOUT
             | E::ENETDOWN
@@ -956,23 +953,22 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// A `send()` the kernel rejected outright takes the connection down. Close
-    /// with that errno, the way uSockets' loop closes a failed `recv()`:
-    /// `on_close` reports a code above the `CloseCode` range as the error that
-    /// ended the connection. A plain close would reach JS as a clean EOF.
+    /// with that errno, in the numbering uSockets' loop closes a failed `recv()`
+    /// with: `on_close` reports a code above the `CloseCode` range as the error
+    /// that ended the connection. A plain close would reach JS as a clean EOF.
+    /// Unlike the loop, this does not first read what is queued ahead of the error.
     pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
         let socket = self.socket.get();
-        let code = dead_transport_close_code(errno);
-        // darwin fails every send on a disconnected socket with EPIPE and leaves
-        // the cause (a reset, a timeout, an unreachable host) in SO_ERROR.
-        #[cfg(not(windows))]
-        let code = if errno == sys::SystemErrno::EPIPE as c_int {
-            match dead_transport_close_code(socket.get_error()) {
-                pending if pending > 2 => pending,
-                _ => code,
-            }
+        // The BSDs fail every send on a disconnected socket with EPIPE and keep the cause
+        // as the socket error. linux sends EPIPE when the peer's FIN came first: an EOF.
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        let code = if errno == sys::SystemErrno::EPIPE as c_int && !socket.is_closed() {
+            socket.get_error()
         } else {
-            code
+            dead_transport_close_code(errno)
         };
+        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+        let code = dead_transport_close_code(errno);
         // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out.
         if code > 2 {
             socket.close_with_error_code(code);
@@ -2314,11 +2310,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
         // close was driven by a recv() failure or a poll error (loop.c's
         // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
-        // error code. Neither producer can yield EPERM(1)/ENOENT(2) — recv
-        // never returns them and the poll-error branch clamps them away — so
-        // values >2 are real read errors and 0/1/2 are self-initiated closes
-        // that must not surface as a JS read error (matching Node's
-        // onStreamRead, which only sees errors that came from uv_read_cb).
+        // error code. `close_after_fatal_send` passes one too: the errno of a
+        // failed send that a read would also return. No producer can
+        // yield EPERM(1)/ENOENT(2): recv never returns them and the other two
+        // clamp them away. So values >2 are read errors and 0/1/2 are
+        // self-initiated closes that must not surface as a JS read error
+        // (matching Node's onStreamRead, which only sees errors that came
+        // from uv_read_cb).
         if err > 2 {
             js_error =
                 <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);

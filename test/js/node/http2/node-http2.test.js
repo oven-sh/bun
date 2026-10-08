@@ -6647,6 +6647,8 @@ describe.concurrent("a client session reports a peer reset that one of its write
     streamDestroyed: true,
   };
   const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+  // A debug build needs several seconds to load node:http2 in each child.
+  const timeout = isDebug ? 30_000 : undefined;
 
   async function runClient(fixture, onPeer, onStdout) {
     const server = net.createServer(socket => {
@@ -6692,32 +6694,40 @@ describe.concurrent("a client session reports a peer reset that one of its write
     ],
     // Node reports a clean close here. This is the one ordering where bun says more.
     ["inside the 'remoteSettings' event", `session.on("remoteSettings", () => busyThenRequest());`],
-  ])("on an idle session whose loop was busy while the reset arrived, request made from %s", async (_, fixture) => {
-    let peer = null;
-    let reset = false;
-    await runClient(
-      fixture,
-      socket => {
-        peer = socket;
-        socket.write(frame(4, 0)); // empty SETTINGS
-        socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
-      },
-      (stdout, proc) => {
-        if (!reset && stdout.includes("busy\n")) {
-          reset = true;
-          peer.resetAndDestroy();
-          proc.stdin.write("x");
-          proc.stdin.flush();
-        }
-      },
-    );
-    expect(reset).toBe(true);
-  });
+  ])(
+    "on an idle session whose loop was busy while the reset arrived, request made from %s",
+    async (_, fixture) => {
+      let peer = null;
+      let reset = false;
+      await runClient(
+        fixture,
+        socket => {
+          peer = socket;
+          socket.write(frame(4, 0)); // empty SETTINGS
+          socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
+        },
+        (stdout, proc) => {
+          if (!reset && stdout.includes("busy\n")) {
+            reset = true;
+            peer.resetAndDestroy();
+            proc.stdin.write("x");
+            proc.stdin.flush();
+          }
+        },
+      );
+      expect(reset).toBe(true);
+    },
+    timeout,
+  );
 
-  it("on the first request of a connection that the peer resets at the preface", async () => {
-    // The connect flush sends the preface and then the queued request's HEADERS. The peer
-    // resets as soon as the first bytes arrive, so the RST can land between the two sends.
-    // Whichever side sees it first, the request and the session report it, as in Node.
-    await runClient(`request();`, socket => socket.once("data", () => socket.resetAndDestroy()));
-  });
+  it(
+    "on the first request of a connection that the peer resets at the preface",
+    async () => {
+      // The connect flush sends the preface and then the queued request's HEADERS. The peer
+      // resets as soon as the first bytes arrive, so the RST can land between the two sends.
+      // Whichever side sees it first, the request and the session report it, as in Node.
+      await runClient(`request();`, socket => socket.once("data", () => socket.resetAndDestroy()));
+    },
+    timeout,
+  );
 });

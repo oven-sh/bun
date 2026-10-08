@@ -1,6 +1,6 @@
 // Makes test cases for prettier-plugin-organize-imports: imports and exports in random order, some of them not used.
 //
-//   node organize.mjs --modules=<dir> --out=cases.json [--count=1000] [--seed=1]
+//   node organize.mjs --modules=<dir> --out=cases.json [--count=1000] [--seed=1] [--inner] [--between=0.05]
 import fs from "node:fs";
 import { flags, load } from "./oracle.mjs";
 
@@ -39,6 +39,29 @@ const IMPORTS = [
   [`import { default as dd } from "../up";`, ["dd"]],
   [`import k1 from "k";`, ["k1"]],
   [`import k2 from "k";`, ["k2"]],
+  ...(named.inner
+    ? [
+        [`import {
+  // lead
+  m3,
+  m2, // trail
+  m1 /* in */,
+} from "./inner";`, ["m3", "m2", "m1"]],
+        [`import {
+  n2,
+  // eslint-disable-next-line x
+  n1,
+} from "./inner2";`, ["n2", "n1"]],
+        [`import { p2, /* mid */ p1 } from "./inner3";`, ["p2", "p1"]],
+        [`import { r2 /* a */, r1 /* b */ } from "./inner3";`, ["r2", "r1"]],
+        [`import {
+  s2,
+  s1,
+  // last
+} from "./inner4";`, ["s2", "s1"]],
+        [`import /* a */ o1 /* b */ from /* c */ "./o";`, ["o1"]],
+      ]
+    : []),
 ];
 const EXPORTS = [`export { q2, q1 } from "q";`, `export * from "star";`, `export * as nn from "nn";`, `export type { Y } from "./y";`, `export { r } from "./y";`, `export { s } from "q";`, `export * from "./aa";`];
 const SETS = [{}, {}, { organizeImportsSkipDestructiveCodeActions: true }, { organizeImportsTypeOrder: "first" }, { organizeImportsTypeOrder: "inline" }, { organizeImportsTypeOrder: "last" }];

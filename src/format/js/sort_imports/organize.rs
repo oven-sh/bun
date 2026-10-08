@@ -184,6 +184,8 @@ struct NewImport<'a> {
     namespace: Option<Ident<'a>>,
     /// `Some` and empty: `{}`.
     named: Option<Vec<Specifier<'a>>>,
+    /// The import whose `{ }` it has, and whether all that is written there is still in them.
+    braces: Option<(Import<'a>, bool)>,
 }
 
 impl<'a> NewImport<'a> {
@@ -193,6 +195,7 @@ impl<'a> NewImport<'a> {
             name: import.default(),
             namespace: import.namespace(),
             named: import.has_named_imports().then(|| import.named().iter().map(Specifier::Written).collect()),
+            braces: import.has_named_imports().then_some((import, true)),
         }
     }
 
@@ -234,6 +237,15 @@ impl<'a> NewImport<'a> {
                 }
             }
     }
+}
+
+/// An element of named imports or exports that is written.
+struct Element {
+    /// Where it is in the file, if it is.
+    span: Option<Span>,
+    code: Vec<u8>,
+    /// Where the statement starts that it is in, and which element of that it is.
+    place: (u32, usize),
 }
 
 struct Organizer<'a, 'o> {
@@ -463,6 +475,7 @@ impl<'a> Organizer<'a, '_> {
             if let Some(named) = &mut import.named {
                 let count = named.len();
                 named.retain(|it| matches!(it, Specifier::Written(it) if self.is_used(it.local(), statement)));
+                import.braces = import.braces.map(|it| (it.0, named.len() == count));
                 if named.is_empty() && count > 0 {
                     import.named = None;
                 }
@@ -551,11 +564,13 @@ impl<'a> Organizer<'a, '_> {
                 specifiers.extend(named.iter().flat_map(|it| it.named.iter().flatten()).copied());
                 stable_sort_by(&mut specifiers, |a, b| compare_specifiers(a.key(), b.key(), self.named_comparer.unwrap_or(Comparer::IgnoringCase), self.type_order));
                 let new_named = (!specifiers.is_empty() || new_default.is_none()).then_some(specifiers);
+                let braces = named.first().and_then(|it| it.braces);
                 let import = |base: &NewImport<'a>, name, named| NewImport {
                     base: base.base,
                     name,
                     namespace: None,
                     named,
+                    braces,
                 };
                 if is_type_only && new_default.is_some() && new_named.is_some() {
                     coalesced.push(import(base, new_default, None));
@@ -605,57 +620,86 @@ impl<'a> Organizer<'a, '_> {
         at
     }
 
-    /// The comments in `within` that belong to the specifier at `span`: those before it from the
-    /// line after the specifier before, and those after it on its line.
-    fn write_specifier(&self, span: Span, within: Span, code: &[u8], is_commented: bool, out: &mut Vec<u8>) {
-        if !is_commented {
-            out.extend_from_slice(code);
-            out.extend_from_slice(b", ");
-            return;
-        }
-        let first = self.comments.partition_point(|comment| comment.0.start < within.start);
-        let inside = self.comments[first..].iter().take_while(|comment| comment.0.end <= within.end);
-        let is_blank = |from: u32, to: u32| self.file.slice(Span::new(from, to)).iter().all(|byte| matches!(byte, b' ' | b'\t' | b','));
-        let is_trivia = |from: u32, to: u32| {
-            let mut at = from;
-            while at < to {
-                at = match self.comment_at(at) {
-                    Some(comment) => comment.0.end,
-                    None if self.text.get(at as usize).is_some_and(|byte| byte.is_ascii_whitespace()) => at + 1,
-                    None => return false,
-                };
-            }
-            true
-        };
-        let (mut leading, mut trailing) = (Vec::new(), Vec::new());
-        let mut end = span.end;
-        for comment in inside {
-            if comment.0.end <= span.start && is_trivia(comment.0.end, span.start) && self.line_start(comment.0.start) >= within.start {
-                let line = self.line_start(comment.0.start);
-                if is_trivia(line, comment.0.start) || line <= within.start {
-                    leading.push(*comment);
-                }
-            } else if comment.0.start >= end && is_blank(end, comment.0.start) {
-                trailing.push(*comment);
-                end = comment.0.end;
+    /// `getFullStart()` of what starts at `start`: where the token before it ends.
+    fn full_start_of(&self, start: u32) -> u32 {
+        let mut at = start;
+        loop {
+            at = self.text[..at as usize].trim_ascii_end().len() as u32;
+            let index = self.comments.partition_point(|comment| comment.0.end < at);
+            match self.comments.get(index).filter(|comment| comment.0.end == at) {
+                Some(comment) => at = comment.0.start,
+                None => return at,
             }
         }
-        for (span, _) in leading {
-            out.extend_from_slice(self.file.slice(span));
-            out.extend_from_slice(self.end_of_line);
-        }
-        out.extend_from_slice(code);
-        out.push(b',');
-        for (span, _) in trailing {
-            out.push(b' ');
-            out.extend_from_slice(self.file.slice(span));
-        }
-        out.extend_from_slice(self.end_of_line);
     }
 
-    fn has_comment_in(&self, span: Span) -> bool {
-        let first = self.comments.partition_point(|comment| comment.0.start < span.start);
-        self.comments.get(first).is_some_and(|comment| comment.0.end <= span.end)
+    fn has_line_break_in(&self, from: u32, to: u32) -> bool {
+        strings::index_of_any(self.text.get(from as usize..to as usize).unwrap_or_default(), b"\n\r").is_some()
+    }
+
+    fn write_comment(&self, comment: (Span, bool), out: &mut Vec<u8>) {
+        out.extend_from_slice(self.file.slice(comment.0));
+        let ends_line = !comment.1 || self.line_break_end(self.skip_blanks(comment.0.end)).is_some();
+        out.extend_from_slice(if ends_line { self.end_of_line } else { b" " });
+    }
+
+    /// `emitNodeList` for the elements of named imports or exports, with the comments that the
+    /// printer writes with them. `list`: the list that the braces are those of.
+    fn write_elements(&self, elements: &[Element], list: u32, is_multi_line: bool, has_trailing_comma: bool, out: &mut Vec<u8>) {
+        out.push(b'{');
+        let mut previous: Option<&Element> = None;
+        for element in elements {
+            // Whether it is written on a new line. If so, what is after the `,` before it is lost.
+            let breaks = is_multi_line
+                || match (previous, element.span) {
+                    (_, None) => false,
+                    (None, Some(span)) => element.place.0 == list && self.has_line_break_in(self.full_start_of(span.start), span.start),
+                    (Some(previous), Some(span)) => {
+                        previous.place == (element.place.0, element.place.1.wrapping_sub(1))
+                            && previous.span.is_some_and(|it| self.has_line_break_in(it.end, span.start))
+                    }
+                };
+            if previous.is_some() {
+                out.push(b',');
+            }
+            out.extend_from_slice(if breaks { self.end_of_line } else { b" " });
+            if let Some(span) = element.span {
+                let full_start = self.full_start_of(span.start);
+                if !breaks {
+                    self.trailing_comments(full_start).into_iter().for_each(|it| self.write_comment(it, out));
+                }
+                self.leading_comments(full_start).into_iter().for_each(|it| self.write_comment(it, out));
+            }
+            out.extend_from_slice(&element.code);
+            self.write_trailing_comments(element.span.map(|it| it.end), out);
+            previous = Some(element);
+        }
+        if let (true, Some(last)) = (has_trailing_comma, previous) {
+            out.push(b',');
+            self.write_trailing_comments(last.span.map(|it| self.skip_trivia(it.end, false, false) + 1), out);
+        }
+        out.extend_from_slice(if is_multi_line { self.end_of_line } else { b" " });
+        out.push(b'}');
+    }
+
+    /// The comments from `at` to the end of the line.
+    fn write_trailing_comments(&self, at: Option<u32>, out: &mut Vec<u8>) {
+        for (span, is_block) in at.map(|at| self.trailing_comments(at)).unwrap_or_default() {
+            out.push(b' ');
+            out.extend_from_slice(self.file.slice(span));
+            if !is_block {
+                out.extend_from_slice(self.end_of_line);
+            }
+        }
+    }
+
+    /// The `{ .. }` in `within`.
+    fn braces_in(&self, within: Span) -> Option<Span> {
+        let mut at = within.start;
+        while at < within.end && self.text.get(at as usize) != Some(&b'{') {
+            at = self.comment_at(at).map_or(at + 1, |comment| comment.0.end);
+        }
+        (at < within.end && self.text.get(within.end as usize - 1) == Some(&b'}')).then(|| Span::new(at, within.end))
     }
 
     /// `"m" with { type: "json" };`
@@ -671,46 +715,66 @@ impl<'a> Organizer<'a, '_> {
         if import.is_unchanged() {
             return self.file.slice(import.base.span()).to_vec();
         }
-        let mut out = b"import ".to_vec();
         let original = import.base.import();
-        if import.is_type_only() {
-            out.extend_from_slice(b"type ");
-        } else if import.has_clause() && original.is_some_and(|it| it.is_deferred()) {
-            out.extend_from_slice(b"defer ");
-        }
-        if let Some(name) = import.name {
-            out.extend_from_slice(self.file.slice(name.span()));
-            if import.namespace.is_some() || import.named.is_some() {
-                out.extend_from_slice(b", ");
-            }
-        }
-        if let Some(namespace) = import.namespace {
-            out.extend_from_slice(b"* as ");
-            out.extend_from_slice(self.file.slice(namespace.span()));
-        }
-        if let Some(named) = &import.named {
-            let is_commented = named.iter().any(|it| matches!(it, Specifier::Written(it) if self.has_comment_in(it.import().stmt().span())));
-            out.extend_from_slice(if is_commented { b"{\n" } else { b"{ " });
-            for specifier in named {
-                match specifier {
-                    Specifier::Default(name) => {
-                        let code = [b"default as ", self.file.slice(name.span())].concat();
-                        self.write_specifier(Span::default(), Span::default(), &code, false, &mut out);
-                        if is_commented {
-                            out.extend_from_slice(self.end_of_line);
-                        }
-                    }
-                    Specifier::Written(it) => {
-                        let is_redundant = it.is_renamed() && !it.imported().is_string() && it.imported().bytes() == it.local().bytes();
-                        let code = match is_redundant {
-                            true => [if it.is_type_only() { &b"type "[..] } else { b"" }, self.file.slice(it.local().span())].concat(),
-                            false => self.file.slice(it.span()).to_vec(),
-                        };
-                        self.write_specifier(it.span(), it.import().clause_span(), &code, is_commented, &mut out);
+        // What is before and after the braces is written as it is, with its comments.
+        let own_braces = original
+            .filter(|it| import.named.is_some() && import.braces.is_some_and(|braces| braces.0 == *it))
+            .and_then(|it| self.braces_in(it.clause_span()));
+        let has_same_name = import.namespace.is_none() && import.name.map(|it| it.span()) == original.and_then(|it| it.default()).map(|it| it.span());
+        let mut out = match own_braces.filter(|_| has_same_name) {
+            Some(braces) => self.file.slice(Span::new(import.base.span().start, braces.start)).to_vec(),
+            None => {
+                let mut out = b"import ".to_vec();
+                if import.is_type_only() {
+                    out.extend_from_slice(b"type ");
+                } else if import.has_clause() && original.is_some_and(|it| it.is_deferred()) {
+                    out.extend_from_slice(b"defer ");
+                }
+                if let Some(name) = import.name {
+                    out.extend_from_slice(self.file.slice(name.span()));
+                    if import.namespace.is_some() || import.named.is_some() {
+                        out.extend_from_slice(b", ");
                     }
                 }
+                if let Some(namespace) = import.namespace {
+                    out.extend_from_slice(b"* as ");
+                    out.extend_from_slice(self.file.slice(namespace.span()));
+                }
+                out
             }
-            out.push(b'}');
+        };
+        if let Some(named) = &import.named {
+            let elements: Vec<Element> = (named.iter())
+                .map(|specifier| match specifier {
+                    Specifier::Default(name) => Element {
+                        span: None,
+                        code: [b"default as ", self.file.slice(name.span())].concat(),
+                        place: (0, 0),
+                    },
+                    Specifier::Written(it) => {
+                        let is_redundant = it.is_renamed() && !it.imported().is_string() && it.imported().bytes() == it.local().bytes();
+                        Element {
+                            span: Some(it.span()),
+                            code: match is_redundant {
+                                true => [if it.is_type_only() { &b"type "[..] } else { b"" }, self.file.slice(it.local().span())].concat(),
+                                false => self.file.slice(it.span()).to_vec(),
+                            },
+                            place: (it.import().stmt().span().start, it.import().named().iter().position(|other| other == *it).unwrap_or(0)),
+                        }
+                    }
+                })
+                .collect();
+            let braces = import.braces.and_then(|it| Some((it.0, it.1, self.braces_in(it.0.clause_span())?)));
+            let is_multi_line = braces.is_some_and(|it| self.has_line_break_in(it.2.start, it.2.end));
+            let has_trailing_comma = braces.is_some_and(|it| it.1 && self.text[..it.2.end as usize - 1].trim_ascii_end().ends_with(b","));
+            self.write_elements(&elements, braces.map_or(0, |it| it.0.stmt().span().start), is_multi_line, has_trailing_comma, &mut out);
+        }
+        if let Some(braces) = own_braces {
+            out.extend_from_slice(self.file.slice(Span::new(braces.end, import.base.span().end)));
+            if !out.ends_with(b";") {
+                out.push(b';');
+            }
+            return out;
         }
         if import.has_clause() {
             out.extend_from_slice(b" from ");
@@ -779,12 +843,14 @@ impl<'a> Organizer<'a, '_> {
 
     fn export_code(&self, base: &Declaration<'a>, export: Export<'a>, items: &[ExportSpec<'a>]) -> Vec<u8> {
         let mut out = if export.is_type_only() { b"export type ".to_vec() } else { b"export ".to_vec() };
-        let is_commented = items.iter().any(|it| self.has_comment_in(it.export().stmt().span()));
-        out.extend_from_slice(if is_commented { b"{\n" } else { b"{ " });
-        for item in items {
-            self.write_specifier(item.span(), item.export().stmt().span(), self.file.slice(item.span()), is_commented, &mut out);
-        }
-        out.push(b'}');
+        let elements: Vec<Element> = (items.iter())
+            .map(|it| Element {
+                span: Some(it.span()),
+                code: self.file.slice(it.span()).to_vec(),
+                place: (it.export().stmt().span().start, it.export().items().iter().position(|other| other == *it).unwrap_or(0)),
+            })
+            .collect();
+        self.write_elements(&elements, base.span().start, false, false, &mut out);
         if export.has_from() {
             out.extend_from_slice(b" from ");
             self.write_source(base.statement, &mut out);

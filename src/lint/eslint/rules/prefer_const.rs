@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -17,17 +18,25 @@ fn is_init_of_for_statement(stmt: Stmt) -> bool {
         if matches!(parent.kind(), StmtKind::For { init: Some(init), .. } if init == stmt))
 }
 
-/// The first ancestor of `identifier`, an `Expr` or a `Pat`, whose type does not match ESLint's
-/// `PATTERN_TYPE`: it is no `Pattern` and no `RestElement`.
-fn skip_patterns<'a>(identifier: Node<'a>) -> Node<'a> {
-    let Node::Expr(mut at) = identifier else {
-        let mut ancestors = identifier.ancestors();
-        let found = ancestors.find(|it| !matches!(it, Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_)));
-        return found.unwrap_or(identifier);
-    };
-    // What is around a part of a pattern, up to the next assignment, is a part of it too.
-    let mut is_in_pattern = false;
-    loop {
+/// The ways out of patterns. In a deep one they are long, and many start in it: they are remembered.
+#[derive(Default)]
+struct Patterns<'a> {
+    /// By a part of a pattern in a declaration or a parameter.
+    declared: AncestorMemo<'a, Node<'a>>,
+    /// By a part of a pattern that is assigned to.
+    assigned: AncestorMemo<'a, Node<'a>>,
+}
+
+impl<'a> Patterns<'a> {
+    /// The first ancestor of `identifier`, an `Expr` or a `Pat`, whose type does not match ESLint's
+    /// `PATTERN_TYPE`: it is no `Pattern` and no `RestElement`.
+    fn skip(&mut self, identifier: Node<'a>) -> Node<'a> {
+        let Node::Expr(at) = identifier else {
+            let found = self.declared.find(identifier, |_, parent| {
+                (!matches!(parent, Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_))).then_some(parent)
+            });
+            return found.unwrap_or(identifier);
+        };
         let parent = match at.parent() {
             Node::Prop(property) => property.parent(),
             parent => parent,
@@ -35,22 +44,35 @@ fn skip_patterns<'a>(identifier: Node<'a>) -> Node<'a> {
         let Node::Expr(e) = parent else {
             return parent;
         };
-        is_in_pattern = match e.kind() {
-            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => {
-                is_in_pattern || utils::is_assignment_target(e)
-            }
+        let is_pattern = match e.kind() {
+            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => utils::is_assignment_target(e),
             ExprKind::Assign { target, .. } => target == at && utils::is_assignment_target(e),
             _ => false,
         };
-        if !is_in_pattern {
+        if !is_pattern {
             return parent;
         }
-        at = e;
+        // What is around a part of a pattern, up to the next assignment, is a part of it too.
+        let found = self.assigned.find(parent, |child, parent| match (child, parent) {
+            (Node::Expr(_), Node::Prop(_)) => None,
+            (_, Node::Expr(e)) => {
+                let is_pattern = match e.kind() {
+                    ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => true,
+                    ExprKind::Assign { target, .. } => {
+                        Node::Expr(target) == child && utils::is_assignment_target(e)
+                    }
+                    _ => false,
+                };
+                (!is_pattern).then_some(parent)
+            }
+            _ => Some(parent),
+        });
+        found.unwrap_or(parent)
     }
 }
 
-fn can_become_variable_declaration(identifier: Node) -> bool {
-    match skip_patterns(identifier) {
+fn can_become_variable_declaration<'a>(identifier: Node<'a>, patterns: &mut Patterns<'a>) -> bool {
+    match patterns.skip(identifier) {
         Node::VarDecl(_) => true,
         Node::Expr(e) if e.tag() == ExprTag::Assign => match e.parent() {
             Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Expr(_)) => {
@@ -95,6 +117,7 @@ struct Known<'a> {
     /// For a variable that is declared more than once: the identifier to report, and what writes
     /// to it if there is one.
     redeclared: FxHashMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
+    patterns: Patterns<'a>,
 }
 
 impl<'a> Known<'a> {
@@ -157,11 +180,11 @@ fn has_member_expression_assignment(node: Expr) -> bool {
 }
 
 /// The `VarDecl` or the `Expr` that is an assignment which `reference` is written by.
-fn get_destructuring_host<'a>(reference: Reference<'a>) -> Option<Node<'a>> {
+fn get_destructuring_host<'a>(reference: Reference<'a>, patterns: &mut Patterns<'a>) -> Option<Node<'a>> {
     if !reference.is_write() {
         return None;
     }
-    let node = skip_patterns(reference.node());
+    let node = patterns.skip(reference.node());
     match node {
         Node::VarDecl(_) => Some(node),
         Node::Expr(e) if e.tag() == ExprTag::Assign => Some(node),
@@ -181,11 +204,14 @@ fn is_destructuring(host: Node) -> bool {
 }
 
 /// ESLint's `findUp(identifier, "VariableDeclaration", ..)`.
-fn find_variable_declaration<'a>(identifier: Node<'a>) -> Option<(Stmt<'a>, List<'a, VarDecl<'a>>)> {
+fn find_variable_declaration<'a>(
+    identifier: Node<'a>,
+    patterns: &mut Patterns<'a>,
+) -> Option<(Stmt<'a>, List<'a, VarDecl<'a>>)> {
     let Node::Pat(_) = identifier else {
         return None;
     };
-    let Node::VarDecl(declarator) = skip_patterns(identifier) else {
+    let Node::VarDecl(declarator) = patterns.skip(identifier) else {
         return None;
     };
     let Node::Stmt(statement) = declarator.parent() else {
@@ -281,7 +307,7 @@ impl PreferConst {
                 if writer.is_some_and(|it| it.ident().start() != reference.ident().start()) {
                     return None;
                 }
-                if let Some(Node::Expr(host)) = get_destructuring_host(reference)
+                if let Some(Node::Expr(host)) = get_destructuring_host(reference, &mut known.patterns)
                     && let ExprKind::Assign { target, .. } = host.kind()
                     && known.assigns_to_others(host, target, scope)
                 {
@@ -296,7 +322,7 @@ impl PreferConst {
             }
         }
         let writer = writer?;
-        if writer.scope() != scope || !can_become_variable_declaration(writer.node()) {
+        if writer.scope() != scope || !can_become_variable_declaration(writer.node(), &mut known.patterns) {
             return None;
         }
         if !is_read_before_init {
@@ -325,7 +351,7 @@ impl PreferConst {
             if previous.replace(id) == Some(id) {
                 continue;
             }
-            if let Some(host) = get_destructuring_host(reference)
+            if let Some(host) = get_destructuring_host(reference, &mut known.patterns)
                 // A group that is a single `None` has no effect.
                 && (identifier.is_some() || is_destructuring(host))
             {
@@ -341,12 +367,19 @@ impl PreferConst {
         }
     }
 
-    fn check_group<'a>(&self, nodes: &[Option<Node<'a>>], checked: &mut Checked<'a>, cx: &Cx<'a, Self>) {
+    fn check_group<'a>(
+        &self,
+        nodes: &[Option<Node<'a>>],
+        checked: &mut Checked<'a>,
+        patterns: &mut Patterns<'a>,
+        cx: &Cx<'a, Self>,
+    ) {
         let count = nodes.iter().flatten().count();
         if !self.should_match_any_destructured_variable && count != nodes.len() {
             return;
         }
-        let parent = nodes.first().copied().flatten().and_then(find_variable_declaration);
+        let first = nodes.first().copied().flatten();
+        let parent = first.and_then(|it| find_variable_declaration(it, patterns));
 
         if let Some((_, declarations)) = parent
             && let Some(first) = declarations.first()
@@ -420,7 +453,7 @@ impl PreferConst {
         }
         let mut checked = Checked::default();
         for nodes in &groups.nodes {
-            self.check_group(nodes, &mut checked, cx);
+            self.check_group(nodes, &mut checked, &mut known.patterns, cx);
         }
     }
 }

@@ -12,7 +12,8 @@ const BANNED_CLASS_TYPE: Message = Message::new(
 /// It is what a class implements or what an interface extends, where a primitive cannot be.
 fn is_heritage(ty: TypeNode<'_>) -> bool {
     match ty.parent() {
-        Node::Class(class) => class.implements().iter().any(|it| it == ty),
+        // Before what it implements are only the type arguments of what it extends.
+        Node::Class(class) => class.implements().first().is_some_and(|first| first.span().start <= ty.span().start),
         Node::Stmt(statement) => statement.tag() == StmtTag::Interface,
         _ => false,
     }

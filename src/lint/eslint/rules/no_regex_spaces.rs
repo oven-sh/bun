@@ -121,7 +121,7 @@ impl Rule for NoRegexSpaces {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         on.exprs([ExprTag::Regex], check_literal);
-        if file.has_expr_named("RegExp") {
+        if file.mentions("RegExp") {
             on.exprs([ExprTag::Call, ExprTag::New], check_function);
         }
     }

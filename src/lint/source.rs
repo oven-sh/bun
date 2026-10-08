@@ -159,14 +159,15 @@ impl<'a> File<'a> {
 }
 
 impl<'a> File<'a> {
-    /// Whether a name or a string of the file may be `text`: an identifier, the name of a property, a key, a string, a template
-    /// without substitutions. `false` is certain, `true` is not.
+    /// Whether the file may mention `text`: as an identifier, the name of a property, a key, a name in a type, a string, a piece
+    /// of a template or text in JSX, however it is spelled. `false` is certain, `true` is not. Not for private names.
     ///
     /// For [`Rule::register`](crate::rule::Rule::register): a rule that is about `eval` or `hasOwnProperty` has nothing to listen
-    /// for in a file that does not mention it. It costs one search of the text, which is far less than a listener that is
-    /// called with every call or every member access of the file.
+    /// for in a file that does not mention it. That costs next to nothing, unlike a listener that is called with every call or
+    /// every member access of the file.
     pub fn mentions(&self, text: &str) -> bool {
-        bun_core::strings::contains(self.text(), text.as_bytes()) || self.has_other_spellings()
+        let bit = self.atoms.intern(text.as_bytes()).0 as usize % bun_sema::hir::MENTIONED_BITS;
+        self.hir.mentioned.get(bit / 64).is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
     /// `text` as a name of this file, to compare the names of many nodes with: `name == wanted` compares two numbers, where
@@ -178,26 +179,7 @@ impl<'a> File<'a> {
 
     /// Whether the file [mentions](File::mentions) one of `texts`.
     pub fn mentions_any(&self, texts: &[&str]) -> bool {
-        texts.iter().any(|text| bun_core::strings::contains(self.text(), text.as_bytes())) || self.has_other_spellings()
-    }
-
-    /// Whether a name or a string may be written otherwise than it reads: with `\u0061`, `\x61`, `\141`, a `\` before a line
-    /// break, or `&#97;` in JSX.
-    fn has_other_spellings(&self) -> bool {
-        *self.by_kind().has_other_spellings.get_or_init(|| {
-            let text = self.text();
-            if !self.hir.jsx.is_empty() && bun_core::strings::contains_char(text, b'&') {
-                return true;
-            }
-            let mut at = 0;
-            while let Some(found) = bun_core::strings::index_of_char_usize(&text[at..], b'\\') {
-                if matches!(text.get(at + found + 1), Some(b'u' | b'x' | b'0'..=b'9' | b'\r' | b'\n' | 0xE2)) {
-                    return true;
-                }
-                at = (at + found + 2).min(text.len());
-            }
-            false
-        })
+        texts.iter().any(|text| self.mentions(text))
     }
 }
 

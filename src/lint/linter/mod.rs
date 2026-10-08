@@ -74,7 +74,6 @@ pub mod testing {
     pub use super::comment::{
         parse_directive, parse_json_like_config, parse_list_config, parse_string_config,
     };
-    pub use super::directives::candidates;
     pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
     pub use super::schema::validate_by_id;

@@ -72,7 +72,7 @@ impl Rule for NoControlRegex {
                 check(e, literal.pattern(), literal.flags(), cx);
             }
         });
-        if file.has_expr_named("RegExp") {
+        if file.mentions("RegExp") {
             on.exprs([ExprTag::Call, ExprTag::New], |_, e, cx| {
                 let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
                     return;

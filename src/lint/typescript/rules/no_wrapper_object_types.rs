@@ -29,7 +29,7 @@ impl Rule for NoWrapperObjectTypes {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.has_entity_named_any(&["BigInt", "Boolean", "Number", "Object", "String", "Symbol"]) {
+        if !file.mentions_any(&["BigInt", "Boolean", "Number", "Object", "String", "Symbol"]) {
             return;
         }
         on.types([TypeTag::Ref], |_, ty, cx| {

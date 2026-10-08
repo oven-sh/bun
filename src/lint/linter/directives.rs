@@ -1,11 +1,9 @@
 //! Finds the comments of a file that configure the linter.
 
 use super::comment::parse_directive;
-use super::space::trim_end;
 use crate::ast::File;
 use crate::span::Span;
 use crate::tokens::TokenKind;
-use bun_core::strings;
 
 /// What a comment that configures the linter starts with.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -62,31 +60,11 @@ pub(crate) struct ConfigComment {
     pub(crate) is_only_of_oxlint: bool,
 }
 
-/// Where comments that may configure the linter start, in order: every `/*` and `//` that a label
-/// follows. Whether it is in a string or in another comment is not known yet.
-///
-/// A file without any costs three searches for a substring.
-pub fn candidates(text: &[u8]) -> Vec<u32> {
-    let mut found = Vec::new();
-    for needle in [&b"lint"[..], b"global", b"exported"] {
-        let mut from = 0;
-        while let Some(at) = strings::index_of(&text[from..], needle) {
-            let at = from + at;
-            from = at + needle.len();
-            let label = match needle {
-                b"lint" if text[..at].ends_with(b"es") || text[..at].ends_with(b"ox") => at - 2,
-                b"lint" => continue,
-                _ => at,
-            };
-            let before = trim_end(&text[..label]);
-            if before.ends_with(b"/*") || needle == b"lint" && before.ends_with(b"//") {
-                found.push(before.len() as u32 - 2);
-            }
-        }
-    }
-    found.sort_unstable();
-    found.dedup();
-    found
+/// Whether `value`, which is a comment without its delimiters, can start with a label.
+#[inline]
+fn may_start_with_label(value: &[u8]) -> bool {
+    // Or with whitespace that is not ASCII.
+    matches!(value.trim_ascii_start().first(), Some(b'e' | b'o' | b'g' | 0x0B | 0x80..))
 }
 
 /// The range of `inner`, which is a slice of `outer`, in `outer`.
@@ -100,22 +78,17 @@ fn range_in(outer: &[u8], inner: &[u8]) -> Span {
 /// ESLint's `getInlineConfigNodes`.
 pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
     let text = file.text();
-    let candidates = candidates(text);
-    if candidates.is_empty() {
-        return Vec::new();
-    }
-    let comment_at = |start: u32| -> Option<(Span, bool)> {
-        let comment = file
-            .comments_in(Span::new(start, text.len() as u32))
-            .next()?;
-        (comment.start() == start).then(|| (comment.span(), comment.kind() == TokenKind::Line))
-    };
-    let mut comments = Vec::with_capacity(candidates.len());
-    for start in candidates {
-        let Some((span, is_line)) = comment_at(start) else {
-            continue;
+    let mut comments = Vec::new();
+    for comment in file.comments() {
+        let (span, is_line) = match comment.kind() {
+            TokenKind::Line => (comment.span(), true),
+            TokenKind::Block => (comment.span(), false),
+            _ => continue,
         };
         let value = file.slice(span.shrink(2, if is_line { 0 } else { 2 }));
+        if !may_start_with_label(value) {
+            continue;
+        }
         let Some(directive) = parse_directive(value) else {
             continue;
         };

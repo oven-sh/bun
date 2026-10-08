@@ -60,7 +60,7 @@ impl Rule for NoRequireImports {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_expr_named("require") {
+        if file.mentions("require") {
             on.exprs([ExprTag::Call], Self::check_call);
         }
         if !self.allow_as_import {

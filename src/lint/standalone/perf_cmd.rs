@@ -62,6 +62,7 @@ fn rules(args: &[String]) {
     let zeros = || enabled.iter().map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
     let (cold, warm, reports) = (zeros(), zeros(), zeros());
     let (together, front_end) = (AtomicU64::new(0), AtomicU64::new(0));
+    let nodes: [AtomicU64; 4] = Default::default();
     let language = LanguageOptions::default();
     bun_sema_standalone::for_each_parallel(threads, files.len(), |i| {
         let (path, code) = &files[i];
@@ -89,6 +90,9 @@ fn rules(args: &[String]) {
         };
         let bound = bind_for_lint(&hir, bind_options, &atoms, arena);
         front_end.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+        for (count, len) in nodes.iter().zip([hir.exprs.len(), hir.stmts.len(), hir.types.len(), hir.pats.len()]) {
+            count.fetch_add(len as u64, Relaxed);
+        }
         // On a file of which nothing is computed yet, then once more: how long each takes, and how much is reported.
         let measure = |rules: &[Enabled]| {
             let file = File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None);
@@ -123,12 +127,13 @@ fn rules(args: &[String]) {
         println!("{:9.1} {:9.1} {:9}  {prefix}{}", ms(&cold[at]), ms(&warm[at]), reports[at].load(Relaxed), meta.name);
     }
     println!(
-        "{} rules: together {:.1} ms, sum of cold {:.1} ms, sum of warm {:.1} ms; parse + bind {:.1} ms",
+        "{} rules: together {:.1} ms, sum of cold {:.1} ms, sum of warm {:.1} ms; parse + bind {:.1} ms; {:?} expressions, statements, types, patterns",
         enabled.len(),
         ms(&together),
         cold.iter().map(ms).sum::<f64>(),
         warm.iter().map(ms).sum::<f64>(),
         ms(&front_end),
+        nodes.map(|count| count.load(Relaxed)),
     );
 }
 

@@ -18,7 +18,7 @@ impl Rule for NoUnsafeFunctionType {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.has_entity_named("Function") {
+        if !file.mentions("Function") {
             return;
         }
         // Also what a class implements and what an interface extends.

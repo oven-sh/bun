@@ -33,7 +33,7 @@ impl Rule for NoIterator {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_expr_named("__iterator__") {
+        if file.mentions("__iterator__") {
             on.exprs([ExprTag::Dot], |_, e, cx| {
                 if let ExprKind::Dot { name, .. } = e.kind()
                     && name.name().is("__iterator__")
@@ -51,7 +51,7 @@ impl Rule for NoIterator {
                 }
             });
         }
-        if file.is_javascript() || !file.has_entity_named("__iterator__") {
+        if file.is_javascript() || !file.mentions("__iterator__") {
             return;
         }
         // `interface I extends a.b`, `class C implements a.b`: typescript-eslint has the name as

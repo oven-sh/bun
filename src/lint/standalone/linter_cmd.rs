@@ -13,7 +13,7 @@
 //!   each file with the configuration that it has.
 //! - `resolve oxlint|eslintrc|flat <configuration.json> <directory>`: how many files of the directory are linted, with how many
 //!   different configurations, and how long it takes to find that out.
-//! - `bench <directory>`: how long it takes to find out that the files have no comments that configure.
+//! - `bench <directory>`: how long it takes to find out that the files are not refused.
 //! - `validate <cases.json>`: for each `{ rule, options }`, the message of ESLint if the options are invalid.
 //! - `parse-fixtures <fixtures>`: the test cases that the parser rejects, all of which ESLint parses.
 //! - `rules`: the names of the rules that exist.
@@ -758,23 +758,6 @@ fn bench(args: &[String]) {
         &mut texts,
         &mut paths,
     );
-    let bytes: usize = texts.iter().map(Vec::len).sum();
-    for _ in 0..3 {
-        let start = std::time::Instant::now();
-        let with_candidates = texts
-            .iter()
-            .filter(|text| !testing::candidates(text).is_empty())
-            .count();
-        let elapsed = start.elapsed();
-        println!(
-            "{} files, {:.1} MB, {with_candidates} with candidates: {:.2} ms, {:.1} GB/s, {:.2} us per file",
-            texts.len(),
-            bytes as f64 / 1e6,
-            elapsed.as_secs_f64() * 1e3,
-            bytes as f64 / 1e9 / elapsed.as_secs_f64(),
-            elapsed.as_secs_f64() * 1e6 / texts.len() as f64,
-        );
-    }
     // What it costs to find out that a file is not refused, beside what it costs to parse and bind it.
     for parser in [Parser::TypeScript, Parser::Espree] {
         let language = LanguageOptions {

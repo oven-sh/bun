@@ -9,7 +9,6 @@ use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
 use crate::semantic::Symbol;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
-use bun_sema::atom::Atom;
 use bun_sema::hir;
 use std::cell::OnceCell;
 
@@ -79,41 +78,14 @@ impl<const KINDS: usize> Grouped<KINDS> {
 struct Exprs {
     /// Each kind in two parts: first what is not part of an optional chain, then what is.
     grouped: Grouped<{ 2 * ExprTag::COUNT }>,
-    names: Names,
-}
-
-/// A set of names that may have more in it than was put in.
-struct Names(Box<[u64; Names::BITS / 64]>);
-
-impl Names {
-    const BITS: usize = 1 << 14;
-
-    #[inline]
-    fn add(&mut self, name: Atom) {
-        self.0[name.0 as usize % Names::BITS / 64] |= 1 << (name.0 % 64);
-    }
-
-    #[inline]
-    fn may_have(&self, name: Atom) -> bool {
-        self.0[name.0 as usize % Names::BITS / 64] & (1 << (name.0 % 64)) != 0
-    }
 }
 
 impl Exprs {
     fn new(file: &File) -> Exprs {
-        let mut names = Names(Box::new([0; Names::BITS / 64]));
         let (mut kinds, mut counts) = (Vec::new(), [0u32; MOST_KINDS + 2]);
         file.expr_tags_in_tree_as(&mut kinds, |tag, raw| {
             let chain = match raw.kind {
-                hir::ExprKind::Ident(name) | hir::ExprKind::PrivateIdentifier(name) | hir::ExprKind::String(name) => {
-                    names.add(name);
-                    Chain::No
-                }
-                hir::ExprKind::Dot { name, chain, .. } => {
-                    names.add(name);
-                    chain
-                }
-                hir::ExprKind::Index { chain, .. } => chain,
+                hir::ExprKind::Dot { chain, .. } | hir::ExprKind::Index { chain, .. } => chain,
                 hir::ExprKind::Call(call) => file.hir.calls.get(call.idx()).map_or(Chain::No, |call| call.chain),
                 _ => Chain::No,
             };
@@ -123,7 +95,6 @@ impl Exprs {
         });
         Exprs {
             grouped: Grouped::of_counted_kinds(0..kinds.len() as u32, &kinds, counts),
-            names,
         }
     }
 }
@@ -151,11 +122,8 @@ pub(crate) struct ByKind {
     enum_members: OnceCell<Vec<u32>>,
     import_specs: OnceCell<Vec<u32>>,
     export_specs: OnceCell<Vec<u32>>,
-    entity_names: OnceCell<Names>,
     pub(crate) nearby_line: crate::source::NearbyLine,
     pub(crate) string_literals: OnceCell<Vec<crate::literal::RawLiteral>>,
-    /// See [`File::mentions`].
-    pub(crate) has_other_spellings: OnceCell<bool>,
 }
 
 impl File<'_> {
@@ -179,37 +147,6 @@ impl File<'_> {
     #[inline(never)]
     pub(crate) fn chained_exprs_of(&self, tag: ExprTag) -> &[u32] {
         self.exprs().grouped.of(2 * tag as usize + 1)
-    }
-
-    /// Whether an expression of the file may be the identifier `text`, the member access `a.text`, or the string or the template
-    /// without substitutions `"text"`, however it is spelled. `false` is certain, `true` is not. Not for private names.
-    ///
-    /// For [`Rule::register`]: a rule that is about `eval` or `a.hasOwnProperty` has nothing to listen for in a file in which
-    /// no expression has that name. That costs next to nothing, unlike a listener that is called with every call or every member
-    /// access of the file. It says nothing about names that are not expressions: keys, bindings, names in types, imports.
-    pub fn has_expr_named(&self, text: &str) -> bool {
-        self.exprs().names.may_have(self.atoms.intern(text.as_bytes()))
-    }
-
-    /// Whether [`File::has_expr_named`] holds for one of `texts`.
-    pub fn has_expr_named_any(&self, texts: &[&str]) -> bool {
-        texts.iter().any(|text| self.has_expr_named(text))
-    }
-
-    /// The same for the names of which an [`EntityName`](crate::ast::EntityName) consists: whether `text` may be the `A`, the `B`
-    /// or the `C` of an `A.B.C` in a type, in a heritage clause or in `import x = A.B.C`.
-    pub fn has_entity_named(&self, text: &str) -> bool {
-        let names = self.by_kind().entity_names.get_or_init(|| {
-            let mut names = Names(Box::new([0; Names::BITS / 64]));
-            self.hir.names.iter().for_each(|name| names.add(name.text));
-            names
-        });
-        names.may_have(self.atoms.intern(text.as_bytes()))
-    }
-
-    /// Whether [`File::has_entity_named`] holds for one of `texts`.
-    pub fn has_entity_named_any(&self, texts: &[&str]) -> bool {
-        texts.iter().any(|text| self.has_entity_named(text))
     }
 
     #[inline(never)]

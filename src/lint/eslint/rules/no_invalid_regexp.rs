@@ -94,7 +94,7 @@ impl Rule for NoInvalidRegexp {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_expr_named("RegExp") {
+        if file.mentions("RegExp") {
             on.exprs([ExprTag::Call, ExprTag::New], Self::check);
         }
     }

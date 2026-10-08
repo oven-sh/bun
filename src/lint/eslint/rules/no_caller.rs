@@ -14,7 +14,7 @@ impl Rule for NoCaller {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_expr_named("arguments") {
+        if file.mentions("arguments") {
             on.exprs([ExprTag::Dot], |_, e, cx| {
                 let ExprKind::Dot { obj, name, .. } = e.kind() else {
                     return;
@@ -28,7 +28,7 @@ impl Rule for NoCaller {
             });
         }
         // What a class implements and what an interface extends is a `MemberExpression` too.
-        if file.has_entity_named("arguments") {
+        if file.mentions("arguments") {
             on.types([TypeTag::Ref], |_, ty, cx| {
                 if let TypeKind::Ref { name, .. } = ty.kind()
                     && let (Some(object), Some(property)) = (name.get(0), name.get(1))

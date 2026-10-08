@@ -10,7 +10,7 @@ pub(crate) mod ast;
 mod block;
 mod content;
 pub(crate) mod embed;
-mod front_matter;
+pub(crate) mod front_matter;
 mod inline;
 mod preprocess;
 mod printer;

@@ -262,6 +262,13 @@ fn parse_and_print<'o>(
     }
 }
 
+/// Prettier's `textToDoc`: the document for `text`, whose line breaks are `\n`, in another language.
+pub(crate) fn document(text: &[u8], parser: Parser, options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
+    let mut memo = Memo::default();
+    let sink = parse_and_print(text, parser, options, Sink::to_document(), &mut memo)?;
+    Ok(doc::strip_trailing_hardline(doc::clean(sink.into_document())))
+}
+
 /// Appends the formatted `text` to `out`.
 pub fn format(
     text: &[u8],

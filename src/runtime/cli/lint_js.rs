@@ -252,15 +252,15 @@ fn end_vm() {
         return;
     }
     let vm = VirtualMachine::get();
-    let lock = vm.global().vm().get_api_lock();
     if !bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false) {
+        let _lock = vm.global().vm().get_api_lock();
         return vm.as_mut().on_exit();
     }
-    core::mem::forget(lock);
+    // Never released: `exit_and_free` frees the VM that it is the lock of.
+    let _lock = core::mem::ManuallyDrop::new(vm.global().vm().get_api_lock());
     drop(crate::jsc_hooks::take_lint_vm());
     drop(core::mem::take(&mut vm.as_mut().argv));
-    // SAFETY: made by `start_vm` on this thread, which holds the lock from above for good. Nobody
-    // else has a pointer to it.
+    // SAFETY: made by `start_vm` on this thread, which holds its lock. Nobody else has a pointer to it.
     unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
 }
 

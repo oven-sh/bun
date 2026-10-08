@@ -116,7 +116,7 @@ impl NoUnnecessaryQualifier {
         let ExprKind::Dot { obj, .. } = node.kind() else {
             return;
         };
-        if !is_in_declaration(&cx.state, node.span().start) || !is_entity_name_expression(obj) {
+        if !is_in_declaration(&cx.state, node.span().start) {
             return;
         }
         if let Node::Expr(parent) = node.parent()
@@ -125,7 +125,7 @@ impl NoUnnecessaryQualifier {
         {
             return;
         }
-        if node.is_jsx_tag_name() {
+        if !is_entity_name_expression(obj) || node.is_jsx_tag_name() {
             return;
         }
         let namespaces = namespaces_in_scope(Node::Expr(node));

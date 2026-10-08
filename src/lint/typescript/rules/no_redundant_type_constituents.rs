@@ -340,17 +340,21 @@ impl NoRedundantTypeConstituents {
             if !seen_primitive_types.has(primitive) || !seen_literal_types.has(primitive) {
                 continue;
             }
+            let matched_literal_types = constituents
+                .parts
+                .iter()
+                .copied()
+                .filter(|it| Primitive::of_literal(it.type_flags) == Some(primitive));
+            let matched_literal_types = join(matched_literal_types);
             for (type_node, type_part_flags) in constituents.iter() {
                 if !type_part_flags.iter().any(|it| it.type_flags == primitive.flag()) {
                     continue;
                 }
-                let matched_literal_types = constituents
-                    .parts
-                    .iter()
-                    .copied()
-                    .filter(|it| Primitive::of_literal(it.type_flags) == Some(primitive));
+                if cx.has_reported_too_much() {
+                    return;
+                }
                 cx.report(type_node, PRIMITIVE_OVERRIDDEN)
-                    .data("literal", join(matched_literal_types))
+                    .data("literal", matched_literal_types.clone())
                     .data("primitive", primitive.name());
             }
         }

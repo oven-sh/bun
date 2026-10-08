@@ -19,7 +19,7 @@ const MAX_DEPTH: u32 = 100;
 /// ESLint has a `TSClassImplements` or a `TSInterfaceHeritage` for it, not a `TSTypeReference`.
 fn is_heritage(ty: TypeNode) -> bool {
     match ty.parent() {
-        Node::Class(class) => !class.extends_args().iter().any(|it| it == ty),
+        Node::Class(class) => class.extends_args().around(ty.span().start) != Some(ty),
         Node::Stmt(statement) => statement.tag() == StmtTag::Interface,
         _ => false,
     }

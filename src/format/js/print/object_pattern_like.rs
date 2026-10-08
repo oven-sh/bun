@@ -90,9 +90,7 @@ impl<'a> ObjectPatternLike<'a> {
                 true => ObjectPatternLayout::Inline,
                 false => ObjectPatternLayout::Group { expand: true },
             }
-        } else if self.is_inline() {
-            ObjectPatternLayout::Inline
-        } else if self.is_in_assignment_like() {
+        } else if self.is_inline() || self.is_in_assignment_like() {
             ObjectPatternLayout::Inline
         } else {
             ObjectPatternLayout::Group { expand: false }

@@ -12,7 +12,10 @@ enum Matcher {
     Name(Vec<u8>),
     /// `*.ext`: whatever ends so, in any directory.
     Suffix(Vec<u8>),
-    Pattern(Glob),
+    /// `/name`, `a/b/name`: what is there, from the directory of the file.
+    Path(Vec<u8>),
+    /// Anything else. What it matches starts with `prefix`.
+    Pattern { prefix: Vec<u8>, glob: Glob },
 }
 
 struct Pattern {
@@ -61,11 +64,18 @@ impl Pattern {
         };
         let pattern = pattern.trim_ascii_end();
         let name = pattern.strip_suffix(b"/").unwrap_or(pattern);
-        let is_plain = |text: &[u8]| !text.is_empty() && strings::index_of_any(text, b"/*?[]\\{}()!").is_none();
-        let matcher = match name {
-            name if is_plain(name) => Matcher::Name(name.to_vec()),
-            [b'*', suffix @ ..] if is_plain(suffix) => Matcher::Suffix(suffix.to_vec()),
-            _ => Matcher::Pattern(Glob::new(&to_minimatch(pattern))),
+        const SPECIAL: &[u8] = b"*?[]\\{}()!";
+        let is_plain = |text: &[u8]| !text.is_empty() && strings::index_of_any(text, SPECIAL).is_none() && !strings::contains_char(text, b'/');
+        let from_here = name.strip_prefix(b"/").unwrap_or(name);
+        let matcher = match (name, strings::index_of_any(from_here, SPECIAL)) {
+            (name, _) if is_plain(name) => Matcher::Name(name.to_vec()),
+            ([b'*', suffix @ ..], _) if is_plain(suffix) => Matcher::Suffix(suffix.to_vec()),
+            (_, None) if !from_here.is_empty() => Matcher::Path(from_here.to_vec()),
+            (_, special) => Matcher::Pattern {
+                // Without a slash it is for every directory.
+                prefix: if strings::contains_char(name, b'/') { from_here[..special.unwrap_or(0)].to_vec() } else { Vec::new() },
+                glob: Glob::new(&to_minimatch(pattern)),
+            },
         };
         Pattern {
             matcher,
@@ -82,7 +92,8 @@ impl Pattern {
             _ if self.is_for_directories && !is_directory => false,
             Matcher::Name(wanted) => name() == &wanted[..],
             Matcher::Suffix(suffix) => name().ends_with(suffix),
-            Matcher::Pattern(glob) => glob.matches(relative),
+            Matcher::Path(path) => relative.strip_suffix(b"/").unwrap_or(relative) == &path[..],
+            Matcher::Pattern { prefix, glob } => relative.starts_with(prefix) && glob.matches(relative),
         }
     }
 }

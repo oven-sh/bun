@@ -82,49 +82,34 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     }
 }
 
-/// A process that runs a script, and our ends of the pipes to it.
+/// Our ends of the pipes to a process that runs a script.
 struct Worker {
     /// Closed first: the script ends when there is nothing more to read.
-    input: Option<bun_sys::Fd>,
-    output: bun_sys::Fd,
+    input: Option<bun_sys::File>,
+    output: bun_sys::File,
 }
 
 impl bun_lint_driver::Channel for Worker {
-    fn send(&mut self, mut bytes: &[u8]) -> Result<(), Vec<u8>> {
-        let input = self.input.ok_or(&b"The pipe is closed."[..])?;
-        while !bytes.is_empty() {
-            match bun_sys::write(input, bytes) {
-                Ok(0) => return Err(b"The process does not read.".to_vec()),
-                Ok(count) => bytes = &bytes[count..],
-                Err(err) if err.get_errno() == bun_sys::E::INTR => {}
-                Err(err) => return Err(err.name().to_vec()),
-            }
-        }
-        Ok(())
+    fn send(&mut self, bytes: &[u8]) -> Result<(), Vec<u8>> {
+        let input = self.input.as_ref().ok_or(&b"The pipe is closed."[..])?;
+        input.write_all(bytes).map_err(|err| err.name().to_vec())
     }
 
-    fn receive(&mut self, mut into: &mut [u8]) -> Result<(), Vec<u8>> {
-        while !into.is_empty() {
-            match bun_sys::read(self.output, into) {
-                Ok(0) => return Err(b"The process has ended.".to_vec()),
-                Ok(count) => into = &mut into[count..],
-                Err(err) if err.get_errno() == bun_sys::E::INTR => {}
-                Err(err) => return Err(err.name().to_vec()),
-            }
+    fn receive(&mut self, into: &mut [u8]) -> Result<(), Vec<u8>> {
+        match self.output.read_all(into) {
+            Ok(count) if count == into.len() => Ok(()),
+            Ok(_) => Err(b"The process has ended.".to_vec()),
+            Err(err) => Err(err.name().to_vec()),
         }
-        Ok(())
     }
 }
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        if let Some(input) = self.input.take() {
-            input.close();
-        }
+        drop(self.input.take());
         // Until it has ended, so that what it prints for the user comes before what follows.
         let mut rest = [0; 4096];
-        while bun_sys::read(self.output, &mut rest).is_ok_and(|count| count > 0) {}
-        self.output.close();
+        while self.output.read(&mut rest).is_ok_and(|count| count > 0) {}
     }
 }
 
@@ -140,12 +125,9 @@ fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::Channel>, Ve
         .map(|it| std::ffi::CString::new(*it).map_err(|_| failed(b"an argument has a NUL in it")))
         .collect::<Result<_, _>>()?;
     let argv: Vec<&std::ffi::CStr> = argv.iter().map(|it| it.as_c_str()).collect();
-    // [read, write]
-    let to_worker = bun_sys::pipe().map_err(|err| failed(err.name()))?;
-    let from_worker = bun_sys::pipe().map_err(|err| {
-        to_worker.iter().for_each(|it| it.close());
-        failed(err.name())
-    })?;
+    // The end to read from, and the end to write to.
+    let pipe = || bun_sys::pipe().map(|ends| ends.map(bun_sys::File::from_fd)).map_err(|err| failed(err.name()));
+    let ([its_input, input], [output, its_output]) = (pipe()?, pipe()?);
     let spawned = spawn_process_cstr(
         &SpawnOptions {
             stdin: Stdio::Ignore,
@@ -153,7 +135,7 @@ fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::Channel>, Ve
             stdout: Stdio::Pipe(bun_sys::Fd::stderr()),
             stderr: Stdio::Inherit,
             // 3 and 4
-            extra_fds: Box::new([Stdio::Pipe(to_worker[0]), Stdio::Pipe(from_worker[1])]),
+            extra_fds: Box::new([Stdio::Pipe(its_input.handle()), Stdio::Pipe(its_output.handle())]),
             cwd: Box::<[u8]>::from(script.cwd),
             #[cfg(windows)]
             windows: crate::api::bun::process::WindowsOptions {
@@ -167,28 +149,14 @@ fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::Channel>, Ve
         &argv,
         SpawnEnv::Inherit,
     );
-    // The ends of the process are its own now.
-    to_worker[0].close();
-    from_worker[1].close();
-    let close_ours = || {
-        to_worker[1].close();
-        from_worker[0].close();
-    };
     match spawned {
-        Ok(Ok(_)) => {}
-        Ok(Err(err)) => {
-            close_ours();
-            return Err(failed(err.name()));
-        }
-        Err(err) => {
-            close_ours();
-            return Err(failed(err.name().as_bytes()));
-        }
+        Ok(Ok(_)) => Ok(Box::new(Worker {
+            input: Some(input),
+            output,
+        })),
+        Ok(Err(err)) => Err(failed(err.name())),
+        Err(err) => Err(failed(err.name().as_bytes())),
     }
-    Ok(Box::new(Worker {
-        input: Some(to_worker[1]),
-        output: from_worker[0],
-    }))
 }
 
 /// Reports that the command line of `bun <command>` cannot be used.

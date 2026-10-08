@@ -17,7 +17,7 @@ struct Label {
 struct Table {
     few: SmallVec<[(Atom, SymbolId); Table::FEW]>,
     /// In place of `few`, once there are more than `Table::FEW`.
-    many: Option<Box<Names>>,
+    many: Option<Names>,
 }
 
 type Names = FxHashMap<Atom, SymbolId>;
@@ -26,20 +26,20 @@ impl Table {
     const FEW: usize = 8;
 
     #[inline]
-    fn get(&self, name: &Atom) -> Option<&SymbolId> {
+    fn get(&self, name: Atom) -> Option<&SymbolId> {
         match &self.many {
-            None => (self.few.iter().find(|entry| entry.0 == *name)).map(|entry| &entry.1),
-            Some(many) => many.get(name),
+            None => (self.few.iter().find(|entry| entry.0 == name)).map(|entry| &entry.1),
+            Some(many) => many.get(&name),
         }
     }
 
     #[inline]
-    fn contains_key(&self, name: &Atom) -> bool {
+    fn contains_key(&self, name: Atom) -> bool {
         self.get(name).is_some()
     }
 
     /// Returns what the name stood for. `spare`: maps that are empty and have room.
-    fn insert(&mut self, name: Atom, symbol: SymbolId, spare: &mut Vec<Box<Names>>) -> Option<SymbolId> {
+    fn insert(&mut self, name: Atom, symbol: SymbolId, spare: &mut Vec<Names>) -> Option<SymbolId> {
         if let Some(many) = &mut self.many {
             return many.insert(name, symbol);
         }
@@ -57,7 +57,7 @@ impl Table {
         None
     }
 
-    fn extend(&mut self, entries: impl IntoIterator<Item = (Atom, SymbolId)>, spare: &mut Vec<Box<Names>>) {
+    fn extend(&mut self, entries: impl IntoIterator<Item = (Atom, SymbolId)>, spare: &mut Vec<Names>) {
         for (name, symbol) in entries {
             self.insert(name, symbol, spare);
         }
@@ -102,7 +102,7 @@ enum IsComputedName {
 pub(super) struct Room {
     pub(super) b: BoundBuilder,
     tables: Vec<Table>,
-    spare_names: Vec<Box<Names>>,
+    spare_names: Vec<Names>,
     statement_lists: Vec<IdList<StmtId>>,
     idents: Vec<(ExprId, ScopeId)>,
     assigned: Vec<ExprId>,
@@ -165,7 +165,7 @@ pub(super) struct Binder<'f, 's, const LINT: bool> {
     b: BoundBuilder,
     tables: Vec<Table>,
     /// For `Table::insert`.
-    spare_names: Vec<Box<Names>>,
+    spare_names: Vec<Names>,
     scope: ScopeId,
     /// The enclosing statement lists, innermost last: of the file, of namespaces and of blocks.
     statement_lists: Vec<IdList<StmtId>>,
@@ -722,7 +722,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         };
         // `InternalSymbolNameMissing`, `HasDynamicName`
         let is_in_no_table = name.is_none() || name == known::missing || name == known::computed;
-        let existing = self.tables[table.idx()].get(&name).copied();
+        let existing = self.tables[table.idx()].get(name).copied();
         let existing = existing.filter(|_| !is_in_no_table);
         let replaceable = SymFlags::REPLACEABLE_BY_METHOD;
         let symbol = match existing {
@@ -1495,7 +1495,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         if self.b.commonjs_indicator.is_some() {
             let locals = self.b.scopes[self.scope.idx()].locals;
             for name in [known::module, known::exports] {
-                if !self.tables[locals.idx()].contains_key(&name) {
+                if !self.tables[locals.idx()].contains_key(name) {
                     let (flags, decl) = (SymFlags::MODULE_EXPORTS, Decl::CommonJsVariable);
                     let variable = flags | SymFlags::FUNCTION_SCOPED_VARIABLE;
                     let symbol = self.bind_anonymous_declaration(decl, variable, name);
@@ -1520,7 +1520,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     /// =` are also exports of the `export =` symbol, which then becomes a namespace.
     fn bind_commonjs_type_exports(&mut self, module: SymbolId) {
         let exports = &self.tables[self.b.symbols[module.idx()].exports.idx()];
-        let Some(&equals) = exports.get(&known::export_equals) else {
+        let Some(&equals) = exports.get(known::export_equals) else {
             return;
         };
         let promoted: Vec<(Atom, SymbolId)> = exports
@@ -1545,7 +1545,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     /// declaration whose body is `scope`.
     fn lookup_name(&self, name: Atom, scope: ScopeId) -> Option<SymbolId> {
         let s = &self.b.scopes[scope.idx()];
-        if let Some(&local) = self.tables[s.locals.idx()].get(&name) {
+        if let Some(&local) = self.tables[s.locals.idx()].get(name) {
             let export_symbol = self.b.symbols[local.idx()].export_symbol;
             return Some(if export_symbol.is_some() {
                 export_symbol
@@ -1701,7 +1701,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         if exports.is_none() {
             return None;
         }
-        self.tables[exports.idx()].get(&name).copied()
+        self.tables[exports.idx()].get(name).copied()
     }
 
     /// Whether a declaration other than an assignment declares `name` among the exports of
@@ -1847,12 +1847,12 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             if let ScopeKind::PropertyDeclaration(_, constructor)
             | ScopeKind::PropertyType(_, constructor) = s.kind
                 && let Some(&local) =
-                    tables[b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()].get(&name)
+                    tables[b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()].get(name)
                 && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
             {
                 return Some(SymbolId::NONE);
             }
-            if let Some(&symbol) = tables[s.locals.idx()].get(&name)
+            if let Some(&symbol) = tables[s.locals.idx()].get(name)
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
@@ -1865,7 +1865,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             // namespace scope everything but the members.
             if s.symbol.is_some()
                 && name != known::default
-                && let Some(&symbol) = tables[b.symbols[s.symbol.idx()].exports.idx()].get(&name)
+                && let Some(&symbol) = tables[b.symbols[s.symbol.idx()].exports.idx()].get(name)
                 // "purely an export specifier, it is not actually considered in scope"
                 && !(b.symbols[symbol.idx()].flags.contains(SymFlags::EXPORT_ONLY)
                     && b.is_external_module(self.f, scope))
@@ -1885,7 +1885,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             // there `useResult` is false for a type and for a function scoped variable.
             if let ScopeKind::FunctionName(f) = s.kind
                 && let Some(&symbol) =
-                    tables[b.scopes[b.fns[f.idx()].scope.idx()].locals.idx()].get(&name)
+                    tables[b.scopes[b.fns[f.idx()].scope.idx()].locals.idx()].get(name)
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::ALIAS)
@@ -3434,7 +3434,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             SymFlags::TYPE_PARAMETER,
             SymFlags::TYPE_PARAMETER_EXCLUDES,
         );
-        if !self.tables[locals.idx()].contains_key(&self.f[p].name) {
+        if !self.tables[locals.idx()].contains_key(self.f[p].name) {
             self.tables[locals.idx()].insert(self.f[p].name, symbol, &mut self.spare_names);
         }
         self.declared_in(scope, Decl::TypeParam(p), symbol)
@@ -5086,7 +5086,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     /// `addLateBoundAssignmentDeclarationToSymbol`
     fn add_late_bound_assignment_declaration_to_symbol(&mut self, decl: Decl, symbol: SymbolId) {
         let (exports, name) = (self.get_exports(symbol), known::assignment_declaration);
-        match self.tables[exports.idx()].get(&name) {
+        match self.tables[exports.idx()].get(name) {
             Some(&all) => self.add_declaration_to_symbol(all, decl, SymFlags::empty()),
             None => {
                 let all = self.bind_anonymous_declaration(decl, SymFlags::empty(), name);

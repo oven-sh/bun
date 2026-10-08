@@ -55,11 +55,22 @@ pub struct Message {
     /// ESLint's `messageId`.
     pub id: &'static str,
     pub text: &'static str,
+    /// Whether there is a `{{` in `text`.
+    pub(crate) may_have_placeholders: bool,
 }
 
 impl Message {
     pub const fn new(id: &'static str, text: &'static str) -> Message {
-        Message { id, text }
+        let (bytes, mut at, mut may_have_placeholders) = (text.as_bytes(), 1, false);
+        while at < bytes.len() {
+            may_have_placeholders |= bytes[at - 1] == b'{' && bytes[at] == b'{';
+            at += 1;
+        }
+        Message {
+            id,
+            text,
+            may_have_placeholders,
+        }
     }
 }
 

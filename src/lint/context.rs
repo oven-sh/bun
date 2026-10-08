@@ -196,9 +196,7 @@ impl<'a> Report<'a> {
         {
             diagnostic.suggestions.push(Suggestion {
                 message_id: message.id,
-                message: interpolate(message.text, |name| {
-                    data.iter().find(|it| it.0 == name).map(|it| it.1)
-                }),
+                message: interpolate(message, |name| data.iter().find(|it| it.0 == name).map(|it| it.1)),
                 data: data.iter().map(|it| (it.0, it.1.to_vec())).collect(),
                 fix,
             });
@@ -210,9 +208,7 @@ impl<'a> Report<'a> {
 impl Drop for Report<'_> {
     fn drop(&mut self) {
         if let Some(mut diagnostic) = self.diagnostic.take() {
-            diagnostic.message = interpolate(self.message.text, |name| {
-                self.data.iter().find(|it| it.0 == name).map(|it| &*it.1)
-            });
+            diagnostic.message = interpolate(self.message, |name| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1));
             self.file.sink.diagnostics.borrow_mut().push(diagnostic);
         }
     }
@@ -220,12 +216,21 @@ impl Drop for Report<'_> {
 
 /// ESLint's `interpolate`: replaces each `{{ name }}` by `data(name)`, and leaves it if there is none. A name has no braces in it,
 /// so `{{{name}}}` is `{`, the value, `}`.
-fn interpolate<'d>(text: &str, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
+fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
+    let text = message.text;
     let bytes = text.as_bytes();
+    if !message.may_have_placeholders {
+        return bytes.to_vec();
+    }
     let mut out = Vec::with_capacity(text.len() + 16);
     let mut at = 0;
-    while let Some(found) = bun_core::strings::index_of(&bytes[at..], b"{{") {
+    while let Some(found) = bun_core::strings::index_of_char_usize(&bytes[at..], b'{') {
         let open = at + found;
+        if bytes.get(open + 1) != Some(&b'{') {
+            out.extend_from_slice(&bytes[at..=open]);
+            at = open + 1;
+            continue;
+        }
         let name_start = open + 2;
         let name_len = bun_core::strings::index_of_any(&bytes[name_start..], b"{}").unwrap_or(bytes.len() - name_start);
         let name_end = name_start + name_len;

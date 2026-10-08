@@ -826,11 +826,18 @@ pub struct Enabled<'r> {
 pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     run_rules(file, rules);
-    let mut diagnostics = file.sink.diagnostics.take();
+    let diagnostics = file.sink.diagnostics.take();
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
     // listener that is called on entering a node, the outer node first.
-    diagnostics.sort_by_key(|it| (it.span.start, std::cmp::Reverse(it.span.end), it.rule));
-    diagnostics
+    let key = |it: &Diagnostic| (it.span.start, std::cmp::Reverse(it.span.end), it.rule);
+    if diagnostics.is_sorted_by_key(key) {
+        return diagnostics;
+    }
+    // The keys are sorted, not what is reported, which is many times as large.
+    let mut order: Vec<_> = diagnostics.iter().enumerate().map(|(at, it)| (key(it), at as u32)).collect();
+    order.sort_unstable();
+    let mut diagnostics: Vec<Option<Diagnostic>> = diagnostics.into_iter().map(Some).collect();
+    order.iter().filter_map(|&(_, at)| diagnostics.get_mut(at as usize)?.take()).collect()
 }
 
 fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {

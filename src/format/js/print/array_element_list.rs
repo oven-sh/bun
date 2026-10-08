@@ -1,4 +1,6 @@
-use crate::js::utils::array::write_array_node;
+use crate::js::format::write_trailing_comments_of;
+use crate::js::utils::array::{is_line_after_element_empty, write_array_node};
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
 use crate::write;
 
@@ -32,25 +34,40 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
 
         // As many on each line as fit.
         let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
+        // A comment on a line of its own after the last element is written after the fill: what forces
+        // a line break in an item of a fill puts the item on a line of its own.
+        let last_with_own_line_comment = self.elements.last().filter(|last| {
+            !f.is_quiet()
+                && (f.comments().comments_in_range(last.span().end, self.array.span().end).first())
+                    .is_some_and(|comment| comment.preceded_by_newline())
+        });
         let mut filler = f.fill();
+        let mut previous_end = 0;
         for element in FormatSeparatedIter::new(self.elements.iter(), ",")
             .with_trailing_separator(trailing_separator)
             .with_group_id(Some(self.group_id))
         {
             filler.entry(
                 &format_with(|f| {
-                    if f.lines_before(element.span()) > 1 {
+                    if is_line_after_element_empty(f.source_text().as_bytes(), previous_end as usize) {
                         write!(f, empty_line());
-                    } else if f.comments().has_leading_own_line_comment(element.span().start) {
+                    } else if f.comments().comments_before_iter(element.span().start).any(|comment| comment.is_line()) {
                         write!(f, hard_line_break());
                     } else {
                         write!(f, soft_line_break_or_space());
                     }
                 }),
-                &element,
+                &format_with(|f| match last_with_own_line_comment == Some(*element) {
+                    true => FormatNodeWithoutTrailingComments(&element).fmt(f),
+                    false => element.fmt(f),
+                }),
             );
+            previous_end = element.span().end;
         }
         filler.finish();
+        if let Some(last) = last_with_own_line_comment {
+            write_trailing_comments_of(last.as_ast_nodes(), f);
+        }
     }
 }
 
@@ -60,9 +77,9 @@ pub(crate) fn can_concisely_print_array_list<'a>(
     list: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> bool {
-    if list.is_empty() {
+    let Some(first) = list.first() else {
         return false;
-    }
+    };
     let comments = f.comments();
     let mut comments_iter = comments.comments_before_iter(array_expression_span.end);
 
@@ -84,7 +101,7 @@ pub(crate) fn can_concisely_print_array_list<'a>(
     }
 
     // Not with a line comment behind an element.
-    !comments
-        .comments_before_iter(array_expression_span.end)
-        .any(|comment| comment.is_line() && !comment.preceded_by_newline())
+    !comments.comments_before_iter(array_expression_span.end).any(|comment| {
+        comment.is_line() && !comment.preceded_by_newline() && comment.span.start > first.span().start
+    })
 }

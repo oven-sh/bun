@@ -58,8 +58,8 @@ pub(crate) fn is_canonical_simple_number(text: &[u8]) -> bool {
     let Some(number) = std::str::from_utf8(text).ok().and_then(|it| it.parse::<f64>().ok()) else {
         return false;
     };
-    // Rust and JavaScript print the same digits below 1e21, where JavaScript changes notation.
-    number < 1e21 && number.to_string().as_bytes() == text
+    // Rust and JavaScript print the same digits. JavaScript changes notation at 1e21 and below 1e-6.
+    (number == 0.0 || (1e-6..1e21).contains(&number)) && number.to_string().as_bytes() == text
 }
 
 struct StringInformation {

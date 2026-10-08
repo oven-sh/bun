@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include <array>
 #include <optional>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
@@ -40,6 +41,18 @@ public:
     {
         if (view.is8Bit() && view.containsOnlyASCII())
             return function(byteCast<char>(view.span8()));
+        if (view.length() <= shortLength) {
+            std::array<char8_t, shortLength * 3> buffer;
+            if (auto utf8 = convertShort(view, buffer))
+                return function(byteCast<char>(*utf8));
+        }
+        if (view.is8Bit()) {
+            // The callback overload of tryGetUTF8 converts Latin-1 one character at a time.
+            auto utf8 = view.tryGetUTF8();
+            if (!utf8) [[unlikely]]
+                return std::nullopt;
+            return function(byteCast<char>(utf8->span()));
+        }
         auto result = view.tryGetUTF8([&](std::span<const char8_t> utf8) { return function(byteCast<char>(utf8)); });
         if (!result) [[unlikely]]
             return std::nullopt;
@@ -57,6 +70,11 @@ public:
 
 private:
     UTF8View() = default;
+
+    // The longest string, in code units, that tryWith() converts on the stack in one pass.
+    static constexpr size_t shortLength = 341;
+    // std::nullopt for ill-formed UTF-16: it takes the conversion that replaces each lone surrogate.
+    static std::optional<std::span<const char8_t>> convertShort(WTF::StringView, std::span<char8_t, shortLength * 3>);
 
     WTF::StringView m_borrowed {};
     WTF::UTF8CString m_converted {};

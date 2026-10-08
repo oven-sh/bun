@@ -1769,8 +1769,14 @@ impl<'s> File<'s> {
     /// Computes the data that `node` and `data` read. No HIR node is added afterwards.
     pub fn finish_nodes(&mut self) {
         self.bases = self.node_bases();
-        let mut fn_nodes = vec![Node::NONE; self.fns.len()];
-        let mut class_nodes = vec![Node::NONE; self.classes.len()];
+        // They have their lengths already if they are lent.
+        let arena = self.arena();
+        let room = |list: &mut Fixed<'s, Node>, len: usize| match list.len() == len {
+            true => std::mem::take(list),
+            false => Fixed::filled_in(arena, len, Node::NONE),
+        };
+        let mut fn_nodes = room(&mut self.fn_nodes, self.fns.len());
+        let mut class_nodes = room(&mut self.class_nodes, self.classes.len());
         for (i, statement) in self.stmts.iter().enumerate() {
             match statement.kind {
                 StmtKind::Fn(f) => fn_nodes[f.idx()] = StmtId(i as u32).row(self),
@@ -1803,9 +1809,8 @@ impl<'s> File<'s> {
                 _ => {}
             }
         }
-        let arena = self.arena();
-        self.fn_nodes = copy_to_arena(&mut fn_nodes, arena);
-        self.class_nodes = copy_to_arena(&mut class_nodes, arena);
+        self.fn_nodes = fn_nodes;
+        self.class_nodes = class_nodes;
     }
 
     /// `node.Kind`

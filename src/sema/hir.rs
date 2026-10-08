@@ -243,6 +243,8 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ArenaFew<'_, T> {
 /// Where the lists of a `FileIn` or a `BoundIn` are stored.
 pub trait Storage {
     type List<T>: DerefMut<Target = [T]>;
+    /// A list of nodes of a `FileIn`.
+    type Nodes<T: 'static>: DerefMut<Target = [T]>;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]>;
     type Map<K, V>;
@@ -261,6 +263,7 @@ pub struct Growable;
 
 impl Storage for Growable {
     type List<T> = Vec<T>;
+    type Nodes<T: 'static> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
     type Map<K, V> = FxHashMap<K, V>;
     type Set<K> = FxHashSet<K>;
@@ -274,6 +277,7 @@ pub struct InArena<'s>(PhantomData<&'s Arena>);
 
 impl<'s> Storage for InArena<'s> {
     type List<T> = ArenaVec<'s, T>;
+    type Nodes<T: 'static> = Fixed<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
     type Map<K, V> = ArenaHashMap<'s, K, V>;
     type Set<K> = ArenaHashSet<'s, K>;
@@ -285,10 +289,52 @@ impl<'s> Storage for InArena<'s> {
     type Lazy = Lazy<'s>;
 }
 
+/// A list that neither grows nor shrinks. It is in an arena and freed with it, or it is lent by one
+/// who still has it (`FileBuilder::lend`).
+pub struct Fixed<'s, T>(&'s mut [T]);
+
+impl<T> Default for Fixed<'_, T> {
+    fn default() -> Self {
+        Fixed(&mut [])
+    }
+}
+
+impl<'s, T: Copy> Fixed<'s, T> {
+    pub(crate) fn filled_in(arena: &'s Arena, len: usize, value: T) -> Self {
+        Fixed(arena.alloc_slice_fill_copy(len, value))
+    }
+}
+
+impl<T> Deref for Fixed<'_, T> {
+    type Target = [T];
+    #[inline(always)]
+    fn deref(&self) -> &[T] {
+        self.0
+    }
+}
+
+impl<T> DerefMut for Fixed<'_, T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.0
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Fixed<'_, T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
 /// What is computed from a loaded file on demand, by the first thread that needs it, in the arena of
 /// that thread.
 pub struct Lazy<'s> {
     pub(crate) session: &'s Session,
+    /// `File::arena`
+    pub(crate) arena: &'s Arena,
     /// `node.Parent`, by `Node`: `File::parent`.
     pub(crate) parents: OnceLock<crate::node::Parents<'s>>,
     /// `File::is_in_ambient_or_type_node`
@@ -1808,21 +1854,21 @@ pub struct FileIn<S: Storage> {
     pub comment_directives: S::Few<CommentDirective>,
     /// The start and the end of every `//` and `/* */` comment, in order. Not a `#!` line, nor a
     /// comment of HTML.
-    pub comments: S::List<(u32, u32)>,
+    pub comments: S::Nodes<(u32, u32)>,
     /// See `may_mention`. `MENTIONED_BITS` bits, or empty if the parser does not record them.
-    pub mentioned: S::List<u64>,
+    pub mentioned: S::Nodes<u64>,
     /// The span of the statement of each `with (e) statement`, from right after the `)` to its end.
     pub with_bodies: S::Few<(u32, u32)>,
     /// The position of the `{` of each function whose body is a block, except for a static block,
     /// where it is the `anchor`. Sorted.
-    pub body_starts: S::List<(FnId, u32)>,
+    pub body_starts: S::Nodes<(FnId, u32)>,
     /// The start of each token that follows a token the parser skipped in a list (`abortParsingListOrMoveToNextToken`). Sorted.
     pub after_skipped: S::Few<u32>,
     /// `node.Modifiers()` of a parameter, indexed by `ParamId`: see `param_modifiers`. Only as long
     /// as the last parameter with modifiers requires, and empty in most files. Deliberately a
     /// separate column and not a field of `Param`: few parameters have a modifier, and a field
     /// would cost every parameter.
-    pub modifiers_of_params: S::List<Span<ModifierId>>,
+    pub modifiers_of_params: S::Nodes<Span<ModifierId>>,
     /// `node.Modifiers()` of the members of object literals that have any: see `prop_modifiers`.
     /// Sorted.
     pub modifiers_of_props: S::Few<(PropId, Span<ModifierId>)>,
@@ -1834,7 +1880,7 @@ pub struct FileIn<S: Storage> {
     /// decorators. The expressions are separate statements.
     pub stray_decorators: S::Few<(u32, u32)>,
     /// The occurrences of module specifiers, except those of `import()`, which are expressions.
-    pub specifier_uses: S::List<SpecifierUse>,
+    pub specifier_uses: S::Nodes<SpecifierUse>,
 
     /// The specifier of each `import.defer(..)`, and the position of the `)` of the call.
     pub deferred_import_calls: S::Few<(ExprId, u32)>,
@@ -1850,7 +1896,7 @@ pub struct FileIn<S: Storage> {
     pub exports_from_expressions: S::Few<(StmtId, ExprId)>,
     /// `ParenthesizedExpression`: the inner expression, the start and the end of the parentheses.
     /// Ordered by expression, and for nested parentheses around one expression innermost first.
-    pub parens: S::List<(ExprId, u32, u32)>,
+    pub parens: S::Nodes<(ExprId, u32, u32)>,
     /// `x!!!` is one `NonNull`, which ends at the last `!`. The parser reads a run of `!` in a loop,
     /// so nothing bounds its length, and `x!!` has the type of `x!`. These are the other
     /// `NonNullExpression`s of the run: the `NonNull`, and where each ends. Ordered by expression, the
@@ -1858,7 +1904,7 @@ pub struct FileIn<S: Storage> {
     pub non_null_ends: S::Few<(ExprId, u32)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
-    pub jsx_expressions: S::List<(ExprId, u32, u32)>,
+    pub jsx_expressions: S::Nodes<(ExprId, u32, u32)>,
     /// The JSX pragmas from the leading comments of this file.
     pub jsx_pragmas: JsxPragmas,
     /// The spans of the JSDoc comments of a JavaScript file. Sorted. A node whose position is
@@ -1888,42 +1934,42 @@ pub struct FileIn<S: Storage> {
     /// not name the class of the `extends` clause, and the start of the 8023 in `diagnostics`.
     pub unmatched_augments_tags: S::Few<(ClassId, u32)>,
 
-    pub ids: S::List<u32>,
-    pub numbers: S::List<f64>,
-    pub exprs: S::List<Expr>,
-    pub stmts: S::List<Stmt>,
-    pub types: S::List<TypeNode>,
-    pub pats: S::List<Pat>,
-    pub pat_props: S::List<PatProp>,
-    pub pat_elems: S::List<PatElem>,
-    pub fns: S::List<Func>,
-    pub params: S::List<Param>,
-    pub type_params: S::List<TypeParam>,
-    pub classes: S::List<Class>,
-    pub interfaces: S::List<Interface>,
-    pub aliases: S::List<Alias>,
+    pub ids: S::Nodes<u32>,
+    pub numbers: S::Nodes<f64>,
+    pub exprs: S::Nodes<Expr>,
+    pub stmts: S::Nodes<Stmt>,
+    pub types: S::Nodes<TypeNode>,
+    pub pats: S::Nodes<Pat>,
+    pub pat_props: S::Nodes<PatProp>,
+    pub pat_elems: S::Nodes<PatElem>,
+    pub fns: S::Nodes<Func>,
+    pub params: S::Nodes<Param>,
+    pub type_params: S::Nodes<TypeParam>,
+    pub classes: S::Nodes<Class>,
+    pub interfaces: S::Nodes<Interface>,
+    pub aliases: S::Nodes<Alias>,
     pub enums: S::Few<Enum>,
     pub enum_members: S::Few<EnumMember>,
     pub modules: S::Few<Module>,
-    pub members: S::List<Member>,
-    pub props: S::List<Prop>,
-    pub var_decls: S::List<VarDecl>,
-    pub calls: S::List<Call>,
-    pub cases: S::List<Case>,
+    pub members: S::Nodes<Member>,
+    pub props: S::Nodes<Prop>,
+    pub var_decls: S::Nodes<VarDecl>,
+    pub calls: S::Nodes<Call>,
+    pub cases: S::Nodes<Case>,
     pub jsx: S::Few<Jsx>,
-    pub imports: S::List<Import>,
-    pub import_specs: S::List<ImportSpec>,
+    pub imports: S::Nodes<Import>,
+    pub import_specs: S::Nodes<ImportSpec>,
     pub import_equals: S::Few<ImportEquals>,
-    pub exports: S::List<Export>,
-    pub export_specs: S::List<ExportSpec>,
+    pub exports: S::Nodes<Export>,
+    pub export_specs: S::Nodes<ExportSpec>,
     pub tuple_elems: S::Few<TupleElem>,
     pub mapped: S::Few<Mapped>,
-    pub modifiers: S::List<Modifier>,
-    pub names: S::List<Name>,
+    pub modifiers: S::Nodes<Modifier>,
+    pub names: S::Nodes<Name>,
     /// See node.rs. Set by `finish_nodes`.
     pub bases: NodeBases,
-    pub fn_nodes: S::List<Node>,
-    pub class_nodes: S::List<Node>,
+    pub fn_nodes: S::Nodes<Node>,
+    pub class_nodes: S::Nodes<Node>,
     pub lazy: S::Lazy,
     /// The position of each `Identifier` whose text is one of `Atom::is_keyword_identifier`, or the
     /// start of its parent node.
@@ -2332,6 +2378,103 @@ macro_rules! long_lists {
     };
 }
 
+/// A `File` of the `FileBuilder` `$this`. `$long`: what becomes of a list of nodes.
+macro_rules! file_in_arena {
+    ($this:ident, $arena:ident, $session:ident, $long:ident) => {
+        File {
+                kind: $this.kind,
+                is_js: $this.is_js,
+                check_directive: $this.check_directive,
+                is_module_by_decree: $this.is_module_by_decree,
+                has_module_syntax: $this.has_module_syntax,
+                has_errors: $this.has_errors,
+                ran_out_of_stack: $this.ran_out_of_stack,
+                decorators: few_to_arena(std::mem::take(&mut $this.decorators), $arena),
+                legacy_decorators: $this.legacy_decorators,
+                diagnostics: Cow::Owned(std::mem::take(&mut $this.diagnostics)),
+                has_parse_diagnostics: $this.has_parse_diagnostics,
+                syntax_errors: $this.syntax_errors,
+                error_pos: $this.error_pos,
+                source_len: $this.source_len,
+                text: std::mem::take(&mut $this.text),
+                body: $this.body,
+                references: few_to_arena(std::mem::take(&mut $this.references), $arena),
+                comment_directives: few_to_arena(std::mem::take(&mut $this.comment_directives), $arena),
+                comments: $long!($this.comments),
+                mentioned: $long!($this.mentioned),
+                with_bodies: few_to_arena(std::mem::take(&mut $this.with_bodies), $arena),
+                body_starts: $long!($this.body_starts),
+                after_skipped: few_to_arena(std::mem::take(&mut $this.after_skipped), $arena),
+                modifiers_of_params: $long!($this.modifiers_of_params),
+                modifiers_of_props: few_to_arena(std::mem::take(&mut $this.modifiers_of_props), $arena),
+                unclosed_literals: few_to_arena(std::mem::take(&mut $this.unclosed_literals), $arena),
+                stray_decorators: few_to_arena(std::mem::take(&mut $this.stray_decorators), $arena),
+                specifier_uses: $long!($this.specifier_uses),
+                deferred_import_calls: few_to_arena(std::mem::take(&mut $this.deferred_import_calls), $arena),
+                import_call_type_args: few_to_arena(std::mem::take(&mut $this.import_call_type_args), $arena),
+                import_attributes: few_to_arena(std::mem::take(&mut $this.import_attributes), $arena),
+                specifier_expressions: few_to_arena(std::mem::take(&mut $this.specifier_expressions), $arena),
+                exports_from_expressions: few_to_arena(std::mem::take(&mut $this.exports_from_expressions), $arena),
+                parens: $long!($this.parens),
+                non_null_ends: few_to_arena(std::mem::take(&mut $this.non_null_ends), $arena),
+                jsx_expressions: $long!($this.jsx_expressions),
+                jsx_pragmas: $this.jsx_pragmas,
+                jsdoc_comments: few_to_arena(std::mem::take(&mut $this.jsdoc_comments), $arena),
+                jsdoc_asterisks: few_to_arena(std::mem::take(&mut $this.jsdoc_asterisks), $arena),
+                jsdoc_hosts: few_to_arena(std::mem::take(&mut $this.jsdoc_hosts), $arena),
+                jsdoc_types: few_to_arena(std::mem::take(&mut $this.jsdoc_types), $arena),
+                jsdoc_modifiers: few_to_arena(std::mem::take(&mut $this.jsdoc_modifiers), $arena),
+                jsdoc_member_comments: Cow::Owned(std::mem::take(&mut $this.jsdoc_member_comments)),
+                jsdoc_param_errors: Cow::Owned(std::mem::take(&mut $this.jsdoc_param_errors)),
+                functions_with_param_tags: few_to_arena(std::mem::take(&mut $this.functions_with_param_tags), $arena),
+                unmatched_augments_tags: few_to_arena(std::mem::take(&mut $this.unmatched_augments_tags), $arena),
+                ids: $long!($this.ids),
+                numbers: $long!($this.numbers),
+                exprs: $long!($this.exprs),
+                stmts: $long!($this.stmts),
+                types: $long!($this.types),
+                pats: $long!($this.pats),
+                pat_props: $long!($this.pat_props),
+                pat_elems: $long!($this.pat_elems),
+                fns: $long!($this.fns),
+                params: $long!($this.params),
+                type_params: $long!($this.type_params),
+                classes: $long!($this.classes),
+                interfaces: $long!($this.interfaces),
+                aliases: $long!($this.aliases),
+                enums: few_to_arena(std::mem::take(&mut $this.enums), $arena),
+                enum_members: few_to_arena(std::mem::take(&mut $this.enum_members), $arena),
+                modules: few_to_arena(std::mem::take(&mut $this.modules), $arena),
+                members: $long!($this.members),
+                props: $long!($this.props),
+                var_decls: $long!($this.var_decls),
+                calls: $long!($this.calls),
+                cases: $long!($this.cases),
+                jsx: few_to_arena(std::mem::take(&mut $this.jsx), $arena),
+                imports: $long!($this.imports),
+                import_specs: $long!($this.import_specs),
+                import_equals: few_to_arena(std::mem::take(&mut $this.import_equals), $arena),
+                exports: $long!($this.exports),
+                export_specs: $long!($this.export_specs),
+                tuple_elems: few_to_arena(std::mem::take(&mut $this.tuple_elems), $arena),
+                mapped: few_to_arena(std::mem::take(&mut $this.mapped), $arena),
+                modifiers: $long!($this.modifiers),
+                names: $long!($this.names),
+                bases: std::mem::take(&mut $this.bases),
+                fn_nodes: $long!($this.fn_nodes),
+                class_nodes: $long!($this.class_nodes),
+                lazy: Lazy {
+                    session: $session,
+                    arena: $arena,
+                    parents: OnceLock::new(),
+                    ambient_or_type_places: OnceLock::new(),
+                    keyword_identifiers: OnceLock::new(),
+                },
+                keyword_identifier_positions: few_to_arena(std::mem::take(&mut $this.keyword_identifier_positions), $arena),
+            }
+    };
+}
+
 impl FileBuilder {
     /// Adds a diagnostic without arguments for the range `start..end`.
     pub fn error(&mut self, kind: DiagnosticKind, start: u32, end: u32, code: u32) {
@@ -2346,102 +2489,36 @@ impl FileBuilder {
         arena: &'s Arena,
         session: &'s Session,
     ) -> (File<'s>, FileBuilder) {
-        let file = File {
-            kind: self.kind,
-            is_js: self.is_js,
-            check_directive: self.check_directive,
-            is_module_by_decree: self.is_module_by_decree,
-            has_module_syntax: self.has_module_syntax,
-            has_errors: self.has_errors,
-            ran_out_of_stack: self.ran_out_of_stack,
-            decorators: few_to_arena(self.decorators, arena),
-            legacy_decorators: self.legacy_decorators,
-            diagnostics: Cow::Owned(self.diagnostics),
-            has_parse_diagnostics: self.has_parse_diagnostics,
-            syntax_errors: self.syntax_errors,
-            error_pos: self.error_pos,
-            source_len: self.source_len,
-            text: self.text,
-            body: self.body,
-            references: few_to_arena(self.references, arena),
-            comment_directives: few_to_arena(self.comment_directives, arena),
-            comments: copy_to_arena(&mut self.comments, arena),
-            mentioned: copy_to_arena(&mut self.mentioned, arena),
-            with_bodies: few_to_arena(self.with_bodies, arena),
-            body_starts: copy_to_arena(&mut self.body_starts, arena),
-            after_skipped: few_to_arena(self.after_skipped, arena),
-            modifiers_of_params: copy_to_arena(&mut self.modifiers_of_params, arena),
-            modifiers_of_props: few_to_arena(self.modifiers_of_props, arena),
-            unclosed_literals: few_to_arena(self.unclosed_literals, arena),
-            stray_decorators: few_to_arena(self.stray_decorators, arena),
-            specifier_uses: copy_to_arena(&mut self.specifier_uses, arena),
-            deferred_import_calls: few_to_arena(self.deferred_import_calls, arena),
-            import_call_type_args: few_to_arena(self.import_call_type_args, arena),
-            import_attributes: few_to_arena(self.import_attributes, arena),
-            specifier_expressions: few_to_arena(self.specifier_expressions, arena),
-            exports_from_expressions: few_to_arena(self.exports_from_expressions, arena),
-            parens: copy_to_arena(&mut self.parens, arena),
-            non_null_ends: few_to_arena(self.non_null_ends, arena),
-            jsx_expressions: copy_to_arena(&mut self.jsx_expressions, arena),
-            jsx_pragmas: self.jsx_pragmas,
-            jsdoc_comments: few_to_arena(self.jsdoc_comments, arena),
-            jsdoc_asterisks: few_to_arena(self.jsdoc_asterisks, arena),
-            jsdoc_hosts: few_to_arena(self.jsdoc_hosts, arena),
-            jsdoc_types: few_to_arena(self.jsdoc_types, arena),
-            jsdoc_modifiers: few_to_arena(self.jsdoc_modifiers, arena),
-            jsdoc_member_comments: Cow::Owned(self.jsdoc_member_comments),
-            jsdoc_param_errors: Cow::Owned(self.jsdoc_param_errors),
-            functions_with_param_tags: few_to_arena(self.functions_with_param_tags, arena),
-            unmatched_augments_tags: few_to_arena(self.unmatched_augments_tags, arena),
-            ids: copy_to_arena(&mut self.ids, arena),
-            numbers: copy_to_arena(&mut self.numbers, arena),
-            exprs: copy_to_arena(&mut self.exprs, arena),
-            stmts: copy_to_arena(&mut self.stmts, arena),
-            types: copy_to_arena(&mut self.types, arena),
-            pats: copy_to_arena(&mut self.pats, arena),
-            pat_props: copy_to_arena(&mut self.pat_props, arena),
-            pat_elems: copy_to_arena(&mut self.pat_elems, arena),
-            fns: copy_to_arena(&mut self.fns, arena),
-            params: copy_to_arena(&mut self.params, arena),
-            type_params: copy_to_arena(&mut self.type_params, arena),
-            classes: copy_to_arena(&mut self.classes, arena),
-            interfaces: copy_to_arena(&mut self.interfaces, arena),
-            aliases: copy_to_arena(&mut self.aliases, arena),
-            enums: few_to_arena(self.enums, arena),
-            enum_members: few_to_arena(self.enum_members, arena),
-            modules: few_to_arena(self.modules, arena),
-            members: copy_to_arena(&mut self.members, arena),
-            props: copy_to_arena(&mut self.props, arena),
-            var_decls: copy_to_arena(&mut self.var_decls, arena),
-            calls: copy_to_arena(&mut self.calls, arena),
-            cases: copy_to_arena(&mut self.cases, arena),
-            jsx: few_to_arena(self.jsx, arena),
-            imports: copy_to_arena(&mut self.imports, arena),
-            import_specs: copy_to_arena(&mut self.import_specs, arena),
-            import_equals: few_to_arena(self.import_equals, arena),
-            exports: copy_to_arena(&mut self.exports, arena),
-            export_specs: copy_to_arena(&mut self.export_specs, arena),
-            tuple_elems: few_to_arena(self.tuple_elems, arena),
-            mapped: few_to_arena(self.mapped, arena),
-            modifiers: copy_to_arena(&mut self.modifiers, arena),
-            names: copy_to_arena(&mut self.names, arena),
-            bases: self.bases,
-            fn_nodes: copy_to_arena(&mut self.fn_nodes, arena),
-            class_nodes: copy_to_arena(&mut self.class_nodes, arena),
-            lazy: Lazy {
-                session,
-                parents: OnceLock::new(),
-                ambient_or_type_places: OnceLock::new(),
-                keyword_identifiers: OnceLock::new(),
-            },
-            keyword_identifier_positions: few_to_arena(self.keyword_identifier_positions, arena),
-        };
+        macro_rules! copied {
+            ($list:expr) => {{
+                let exact = Fixed(arena.alloc_slice_copy(&$list));
+                $list.clear();
+                exact
+            }};
+        }
+        let file = file_in_arena!(self, arena, session, copied);
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
         }
         long_lists!(each);
         (file, emptied)
+    }
+
+    /// The file for as long as `self` is not touched: the long lists stay where they are. What else
+    /// a `File` has is in `arena`, which is one of `session`.
+    pub fn lend<'s>(&'s mut self, arena: &'s Arena, session: &'s Session) -> File<'s> {
+        // Room for what `File::finish_nodes` computes.
+        self.fn_nodes.clear();
+        self.fn_nodes.resize(self.fns.len(), Node::NONE);
+        self.class_nodes.clear();
+        self.class_nodes.resize(self.classes.len(), Node::NONE);
+        macro_rules! lent {
+            ($list:expr) => {
+                Fixed(&mut $list[..])
+            };
+        }
+        file_in_arena!(self, arena, session, lent)
     }
 }
 
@@ -2453,7 +2530,7 @@ impl<'s> File<'s> {
 
     /// The arena that the lists are in.
     pub fn arena(&self) -> &'s Arena {
-        self.exprs.allocator()
+        self.lazy.arena
     }
 }
 

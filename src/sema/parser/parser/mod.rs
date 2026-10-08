@@ -125,7 +125,7 @@ file_lists! {
     modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
     decorators, modifiers_of_params, modifiers_of_props, with_bodies, import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
-    mentioned, diagnostics,
+    mentioned, fn_nodes, class_nodes, diagnostics,
 }
 
 /// The range and the code of an error that the checker reports about the syntax.

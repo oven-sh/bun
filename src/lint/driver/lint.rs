@@ -17,7 +17,6 @@ use bun_lint::rule::Kind;
 use bun_sema::atom::Intern;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
-use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -171,8 +170,7 @@ impl Context<'_, '_> {
             self.atoms.of_this_thread(),
             how.experimental_decorators,
             how.every_file_is_a_module,
-            |mut hir, atoms| {
-                hir.text = Cow::Borrowed(text);
+            |hir, atoms| {
                 let bind_options = BindOptions {
                     emit_standard_class_fields: true,
                     before_es2020: false,

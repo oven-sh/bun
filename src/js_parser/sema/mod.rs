@@ -710,19 +710,21 @@ pub fn summarize_in<'s>(
     )
 }
 
-/// [`summarize_in`] for one who is done with a file before the next: calls `then` with the file and
-/// with the interner of its atoms, which are the file's own and mean nothing in another file. They
-/// are those of `atoms` only if the text has errors.
-pub fn with_summary<'s, R>(
+/// [`summarize_in`] for one who is done with a file before the next: calls `then` with the file,
+/// which holds `text`, and with the interner of its atoms, which are the file's own and mean nothing
+/// in another file. They are those of `atoms` only if the text has errors.
+///
+/// The lists of nodes stay where the parser has left them. Little else is allocated in `arena`.
+pub fn with_summary<R>(
     dialect: bun_sema::resolve::Dialect,
-    (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    (arena, session): (&bun_alloc::Arena, &bun_sema::session::Session),
     path: &[u8],
     script_kind: Option<bun_sema::resolve::ScriptKind>,
     text: &[u8],
     atoms: &dyn bun_sema::atom::Intern,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
-    then: impl FnOnce(bun_sema::hir::File<'s>, &dyn bun_sema::atom::Intern) -> R,
+    then: impl for<'x> FnOnce(bun_sema::hir::File<'x>, &dyn bun_sema::atom::Intern) -> R,
 ) -> R {
     with_summary_in_place(
         dialect,
@@ -733,7 +735,18 @@ pub fn with_summary<'s, R>(
         atoms,
         experimental_decorators,
         every_file_is_a_module,
-        |file, atoms| then(file.into_arena((arena, session)), atoms),
+        |file, atoms| match file {
+            Summary::InArena(mut file) => {
+                file.text = std::borrow::Cow::Borrowed(text);
+                then(file, atoms)
+            }
+            Summary::InPlace(file) => {
+                let mut file = file.lend(arena, session);
+                file.finish_nodes();
+                file.text = std::borrow::Cow::Borrowed(text);
+                then(file, atoms)
+            }
+        },
     )
 }
 

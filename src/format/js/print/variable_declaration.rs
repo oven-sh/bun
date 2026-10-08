@@ -19,12 +19,15 @@ pub(crate) fn write_variable_declaration<'a>(
     declarations: List<'a, VarDecl<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    let parent = AstNodes::VariableDeclaration(statement).parent();
-    let semicolon = match parent {
-        AstNodes::ExportNamedDeclaration(_) => false,
-        AstNodes::ForStatement(parent) => parent.for_init() != Some(statement),
-        AstNodes::ForInStatement(parent) | AstNodes::ForOfStatement(parent) => parent.for_left() != Some(statement),
-        _ => true,
+    // Whether it ends with a `;`, and whether it is in a loop: in its head, or all of its body.
+    let (semicolon, is_parent_for_loop) = match statement.parent() {
+        _ if !statement.modifiers().is_empty() && statement.is_exported() => (statement.is_default_export(), false),
+        Node::Stmt(parent) => match parent.tag() {
+            StmtTag::For => (parent.for_init() != Some(statement), true),
+            StmtTag::ForIn | StmtTag::ForOf => (parent.for_left() != Some(statement), true),
+            _ => (true, false),
+        },
+        _ => (true, false),
     };
 
     if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT) {
@@ -32,21 +35,21 @@ pub(crate) fn write_variable_declaration<'a>(
     }
 
     let kind = declarations.first().map_or(VarKind::Var, VarDecl::var_kind);
-    write!(
-        f,
-        group(&format_args!(
-            var_kind_text(kind),
-            space(),
-            FormatVariableDeclarators {
-                declarations,
-                is_parent_for_loop: matches!(
-                    parent,
-                    AstNodes::ForStatement(_) | AstNodes::ForInStatement(_) | AstNodes::ForOfStatement(_)
-                ),
-            },
-            semicolon.then_some(OptionalSemicolon)
-        ))
+    let content = format_args!(
+        var_kind_text(kind),
+        space(),
+        FormatVariableDeclarators {
+            declarations,
+            is_parent_for_loop,
+        },
+        semicolon.then_some(OptionalSemicolon)
     );
+    // All that can break in `const a = b;` is in the group of the declarator, which fits if and only
+    // if a group around this fits.
+    match f.is_quiet() && declarations.len() == 1 && declarations.first().is_some_and(|it| it.init().is_some()) {
+        true => write!(f, content),
+        false => write!(f, group(&content)),
+    }
 }
 
 struct FormatVariableDeclarators<'a> {

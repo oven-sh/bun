@@ -5,6 +5,7 @@ use super::statements::{
     CommentPlacement, comment_placements, expression_statement_needs_semicolon, follows_type_cast_comment,
 };
 use crate::ir::element::TextWidth;
+use crate::js::format::FormatStatementBeforeAnother;
 use crate::js::sort_imports::ImportRun;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
@@ -55,6 +56,10 @@ fn trim_blanks_start(text: &[u8]) -> &[u8] {
 /// Commas, semicolons and comments after `position` are passed over.
 pub(crate) fn is_next_line_empty(source: SourceText<'_>, position: u32) -> bool {
     let mut rest = source.as_bytes().get(position as usize..).unwrap_or_default();
+    // Nearly always the line ends here.
+    if let [b'\n', next_line @ ..] = rest {
+        return strip_line_terminator(trim_blanks_start(next_line)).is_some();
+    }
     loop {
         let count = rest.iter().take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t')).count();
         rest = &rest[count..];
@@ -124,11 +129,16 @@ impl<'a> Format<'a> for FormatStatements<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let mut previous: Option<Stmt<'a>> = None;
         let mut imports = ImportRun::new(f);
-        for statement in self.0.iter().filter(|it| !matches!(it.kind(), StmtKind::Empty)) {
+        let last_index = self.0.len().saturating_sub(1);
+        for (index, statement) in self.0.iter().enumerate().filter(|(_, it)| it.tag() != StmtTag::Empty) {
+            let write_statement = |f: &mut Formatter<'a>| match index == last_index {
+                true => write!(f, statement),
+                false => write!(f, FormatStatementBeforeAnother(statement)),
+            };
             let Some(previous_statement) = previous.replace(statement) else {
                 imports.before_statement(statement, f);
                 write_semicolon_before_type_cast_comment(statement, f);
-                write!(f, statement);
+                write_statement(f);
                 continue;
             };
             // Nearly always, what is left between two statements starts its line.
@@ -147,13 +157,13 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 write!(f, FormatLeadingComments::Comments(std::slice::from_ref(comment)));
             }
             write_semicolon_before_type_cast_comment(statement, f);
-            write!(f, statement);
+            write_statement(f);
         }
 
         // `a; // comment\n;`: the comments around an empty statement at the end trail `a`.
         if previous.is_some()
             && !f.is_quiet()
-            && let Some(last) = self.0.last().filter(|last| matches!(last.kind(), StmtKind::Empty))
+            && let Some(last) = self.0.last().filter(|last| last.tag() == StmtTag::Empty)
         {
             let end = last.ast_parent().span().end;
             write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));

@@ -7,9 +7,8 @@ pub(crate) fn write_block_statement<'a>(statement: Stmt<'a>, body: List<'a, Stmt
     write!(f, "{");
 
     // See `write_catch_clause`.
-    let parent = statement.ast_parent();
-    let comments_before_catch_clause = match parent {
-        AstNodes::CatchClause(_) if f.context().has_cached_elements() => f.context().get_cached_element(&parent.span()),
+    let comments_before_catch_clause = match f.context().has_cached_elements().then(|| statement.ast_parent()) {
+        Some(parent @ AstNodes::CatchClause(_)) => f.context().get_cached_element(&parent.span()),
         _ => None,
     };
     let formatted_comments_before_catch_clause = format_with(|f| {
@@ -29,7 +28,7 @@ pub(crate) fn write_block_statement<'a>(statement: Stmt<'a>, body: List<'a, Stmt
                     format_dangling_comments(statement.span())
                 ))
             );
-        } else if is_non_collapsible(parent) {
+        } else if is_non_collapsible(statement.ast_parent()) {
             write!(f, hard_line_break());
         }
     } else {
@@ -40,7 +39,7 @@ pub(crate) fn write_block_statement<'a>(statement: Stmt<'a>, body: List<'a, Stmt
 
 /// There is nothing in it but empty statements.
 pub(crate) fn is_empty_block<'a>(block: List<'a, Stmt<'a>>) -> bool {
-    block.iter().all(|it| matches!(it.kind(), StmtKind::Empty))
+    block.iter().all(|it| it.tag() == StmtTag::Empty)
 }
 
 /// Whether an empty block in `parent` is written `{\n}` and not `{}`.

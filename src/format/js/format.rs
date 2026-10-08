@@ -38,8 +38,19 @@ impl<'a> Formatter<'a> {
         }
         next == u32::MAX || {
             let rest = self.source_text().slice_range(span.end, next);
-            bun_core::strings::index_of_any(rest, b"\n\r").is_some()
+            matches!(rest.first(), Some(b'\n' | b'\r')) || bun_core::strings::index_of_any(rest, b"\n\r").is_some()
         }
+    }
+
+    /// [`Formatter::in_scope`] for a `span` that is known to have no comments in it.
+    #[inline]
+    fn in_scope_without_comments(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+        if self.context().cursor.is_active() {
+            return self.in_scope_with_cursor(span, write);
+        }
+        let outer = std::mem::replace(&mut self.context_mut().is_quiet, true);
+        write(self);
+        self.context_mut().is_quiet = outer;
     }
 
     /// Calls `write`. If there is no comment in `span`, with [`Formatter::is_quiet`] set.
@@ -381,7 +392,9 @@ impl<'a> Format<'a> for FormatExpr<'a> {
         if !f.context_mut().has_stack_left() {
             return;
         }
-        let is_chain_expression = !self.is_in_chain_expression && is_chain_root(self.expr);
+        let is_chain_expression = !self.is_in_chain_expression
+            && matches!(self.expr.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull)
+            && is_chain_root(self.expr);
         match f.is_quiet() {
             true => self.write_in_parentheses(is_chain_expression, f),
             false => self.fmt_with_comments(is_chain_expression, f),
@@ -438,11 +451,24 @@ pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
         ExprTag::Null => write!(f, "null"),
         ExprTag::True => write!(f, "true"),
         ExprTag::False => write!(f, "false"),
+        ExprTag::Dot | ExprTag::Index => write_member_expression(e, f),
+        ExprTag::Assign => write_assignment_expression(e, f),
         _ => write_expression_with_parts(e, options, f),
     }
 }
 
-/// The frame of this function is large. What has no parts does not get here.
+#[inline(never)]
+fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    print::member_expression::write_member_expression(e, f);
+}
+
+#[inline(never)]
+fn write_assignment_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    print::expressions::write_assignment_expression(e, f);
+}
+
+/// The frame of this function is large. What has no parts does not get here, nor does what takes
+/// itself apart.
 #[inline(never)]
 fn write_expression_with_parts<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
     use print::{expressions, literals};
@@ -484,7 +510,7 @@ fn write_expression_with_parts<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
             print::function::write_function(func, options, f);
         }
         ExprKind::Class(class) => print::class::write_class(class, f),
-        ExprKind::Dot { .. } | ExprKind::Index { .. } => print::member_expression::write_member_expression(e, f),
+        ExprKind::Dot { .. } | ExprKind::Index { .. } => write_member_expression(e, f),
         ExprKind::Call(call) => print::call_like_expression::write_call_expression(e, call, f),
         ExprKind::New(call) => print::call_like_expression::write_new_expression(e, call, f),
         ExprKind::Unary {
@@ -496,7 +522,7 @@ fn write_expression_with_parts<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
             op: BinOp::Comma, ..
         } => print::sequence_expression::write_sequence_expression(e, f),
         ExprKind::Binary { .. } => print::binary_like_expression::write_binary_like_expression(e, f),
-        ExprKind::Assign { .. } => expressions::write_assignment_expression(e, f),
+        ExprKind::Assign { .. } => write_assignment_expression(e, f),
         ExprKind::Cond { .. } => expressions::write_conditional_expression(e, f),
         ExprKind::Spread(_) if e.jsx_container_span().is_some() => print::jsx::write_jsx_spread_child(e, f),
         ExprKind::Spread(argument) => write!(f, ["...", argument]),
@@ -521,21 +547,41 @@ fn write_expression_with_parts<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
 // ───────────────────────────── statements ─────────────────────────────
 
 impl<'a> Format<'a> for Stmt<'a> {
+    #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        if !f.context_mut().has_stack_left() {
+        format_statement(*self, false, f);
+    }
+}
+
+/// A statement that is followed by another one, which can be empty, in the same list.
+#[derive(Copy, Clone)]
+pub(crate) struct FormatStatementBeforeAnother<'a>(pub(crate) Stmt<'a>);
+
+impl<'a> Format<'a> for FormatStatementBeforeAnother<'a> {
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        format_statement(self.0, true, f);
+    }
+}
+
+fn format_statement<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Formatter<'a>) {
+    if !f.context_mut().has_stack_left() {
+        return;
+    }
+    if f.is_quiet() {
+        return write_statement(statement, f);
+    }
+    let span = statement.span();
+    if f.has_no_comments_in(Span::new(0, span.end)) {
+        f.in_scope_without_comments(span, |f| write_statement(statement, f));
+        // A comment that starts its line leads the next statement.
+        if is_before_another && f.comments().unprinted_comments().first().is_none_or(|it| it.preceded_by_newline()) {
             return;
         }
-        let (statement, span) = (*self, self.span());
-        if f.is_quiet() {
-            return write_statement(statement, f);
-        }
-        if f.has_no_comments_in(Span::new(0, span.end)) {
-            f.in_scope(span, |f| write_statement(statement, f));
-            // The comments between the last statement and the end of a block trail that statement.
-            return write_trailing_comments_in(span, || statement.ast_parent(), f);
-        }
-        format_statement_with_comments(statement, f);
+        // The comments between the last statement and the end of a block trail that statement.
+        return write_trailing_comments_in(span, || statement.ast_parent(), f);
     }
+    format_statement_with_comments(statement, f);
 }
 
 #[cold]
@@ -619,11 +665,8 @@ impl Spanned for FormatDeclaration<'_> {
 
 /// Step 5 for a statement.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    let is_declaration = !matches!(
-        statement.kind(),
-        StmtKind::ExportNamed(_) | StmtKind::ExportDefault(_) | StmtKind::ExportStar { .. }
-    );
-    match is_declaration && statement.is_exported() {
+    let is_declaration = !matches!(statement.tag(), StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar);
+    match is_declaration && !statement.modifiers().is_empty() && statement.is_exported() {
         true => print::export_declarations::write_exported_declaration(statement, f),
         false => write_declaration(statement, f),
     }
@@ -635,7 +678,9 @@ pub(crate) fn write_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) 
     match statement.kind() {
         StmtKind::Empty => statements::write_empty_statement(statement, f),
         StmtKind::Debugger => write!(f, ["debugger", print::semicolon::OptionalSemicolon]),
-        StmtKind::Expr(_) if statement.directive().is_some() => print::program::write_directive(statement, f),
+        StmtKind::Expr(expression) if expression.tag() == ExprTag::String && statement.directive().is_some() => {
+            print::program::write_directive(statement, f);
+        }
         StmtKind::Expr(expression) => statements::write_expression_statement(statement, expression, f),
         StmtKind::Var(declarations) => {
             print::variable_declaration::write_variable_declaration(statement, declarations, f);

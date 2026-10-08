@@ -53,16 +53,22 @@ pub fn get_operator_precedence_for_node(e: Expr<'_>) -> OperatorPrecedence {
         ExprKind::Yield { .. } => P::Yield,
         ExprKind::Fn(func) if func.is_arrow() => P::Yield,
         ExprKind::Cond { .. } => P::Conditional,
-        ExprKind::Binary { op: BinOp::Comma, .. } => P::Comma,
-        ExprKind::Binary { op: BinOp::EqEq, .. } | ExprKind::Assign { op: Some(_), .. } => {
-            P::Assignment
+        ExprKind::Binary {
+            op: BinOp::Comma, ..
+        } => P::Comma,
+        ExprKind::Binary {
+            op: BinOp::EqEq, ..
         }
+        | ExprKind::Assign { op: Some(_), .. } => P::Assignment,
         ExprKind::Binary { op, .. } => get_binary_operator_precedence(op),
         ExprKind::As { .. } | ExprKind::AsConst(_) => match e.is_angle_bracket_assertion() {
             true => P::Unary,
             false => P::Relational,
         },
-        ExprKind::Unary { op: UnOp::PostInc | UnOp::PostDec, .. } => P::Update,
+        ExprKind::Unary {
+            op: UnOp::PostInc | UnOp::PostDec,
+            ..
+        } => P::Update,
         ExprKind::NonNull(_) | ExprKind::Unary { .. } | ExprKind::Await(_) => P::Unary,
         ExprKind::Call(_) => P::LeftHandSide,
         ExprKind::New(call) => match call.args().is_empty() {
@@ -251,9 +257,7 @@ fn ts_parent_expression(e: Expr<'_>) -> Option<Expr<'_>> {
             && e.jsx_container_span().is_none())
         .then_some(parent),
         ExprKind::Dot { .. } if !is_member_expression(parent) => None,
-        ExprKind::Assign { .. }
-            if matches!(parent.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand) =>
-        {
+        ExprKind::Assign { .. } if matches!(parent.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand) => {
             None
         }
         _ => Some(parent),
@@ -280,7 +284,8 @@ pub fn get_operator_precedence_of_ts_parent(e: Expr<'_>) -> OperatorPrecedence {
     get_operator_precedence(
         ts_parent_syntax_kind(e),
         parent.map_or(SyntaxKind::Unknown, ts_operator_kind),
-        parent.is_some_and(|it| matches!(it.kind(), ExprKind::New(call) if !call.args().is_empty())),
+        parent
+            .is_some_and(|it| matches!(it.kind(), ExprKind::New(call) if !call.args().is_empty())),
     )
 }
 

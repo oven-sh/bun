@@ -28,7 +28,13 @@ pub fn to_uint32(n: f64) -> u32 {
 
 /// The length of the `StrUnsignedDecimalLiteral` that `text` starts with, without `Infinity`.
 fn decimal_literal_len(text: &[u8]) -> usize {
-    let digits = |from: usize| text.get(from..).unwrap_or_default().iter().take_while(|c| c.is_ascii_digit()).count();
+    let digits = |from: usize| {
+        text.get(from..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count()
+    };
     let whole = digits(0);
     let mut len = whole;
     let mut fraction = 0;
@@ -53,7 +59,10 @@ fn decimal_literal_len(text: &[u8]) -> usize {
 
 /// The value of ASCII text that `decimal_literal_len` accepts.
 fn decimal_value(text: &[u8]) -> f64 {
-    std::str::from_utf8(text).ok().and_then(|text| text.parse().ok()).unwrap_or(f64::NAN)
+    std::str::from_utf8(text)
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(f64::NAN)
 }
 
 /// The number that `digits` are in `radix`. `None` if it is not a number, or has more digits than
@@ -65,7 +74,9 @@ fn integer_value(digits: &[u8], radix: u32) -> Option<f64> {
     let mut value: u128 = 0;
     for &digit in digits {
         let digit = char::from(digit).to_digit(radix)?;
-        value = value.checked_mul(u128::from(radix))?.checked_add(u128::from(digit))?;
+        value = value
+            .checked_mul(u128::from(radix))?
+            .checked_add(u128::from(digit))?;
     }
     Some(value as f64)
 }
@@ -135,7 +146,10 @@ pub fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
         radix = 16;
     }
     let radix = if radix == 0 { 10 } else { radix as u32 };
-    let len = digits.iter().take_while(|&&c| char::from(c).is_digit(radix)).count();
+    let len = digits
+        .iter()
+        .take_while(|&&c| char::from(c).is_digit(radix))
+        .count();
     if len == 0 {
         return Some(f64::NAN);
     }
@@ -147,9 +161,21 @@ pub fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
 fn exact_digits(n: f64) -> (Vec<u8>, i32) {
     // A double has at most 767 significant digits.
     let text = format!("{n:.800e}");
-    let (mantissa, exponent) = text.as_bytes().split_at(text.len() - text.bytes().rev().take_while(|&c| c != b'e').count());
-    let digits = mantissa.iter().copied().filter(u8::is_ascii_digit).collect();
-    (digits, std::str::from_utf8(exponent).ok().and_then(|it| it.parse().ok()).unwrap_or(0))
+    let (mantissa, exponent) = text
+        .as_bytes()
+        .split_at(text.len() - text.bytes().rev().take_while(|&c| c != b'e').count());
+    let digits = mantissa
+        .iter()
+        .copied()
+        .filter(u8::is_ascii_digit)
+        .collect();
+    (
+        digits,
+        std::str::from_utf8(exponent)
+            .ok()
+            .and_then(|it| it.parse().ok())
+            .unwrap_or(0),
+    )
 }
 
 /// Rounds `digits` to the first `count`, half up. Returns whether that carried into a new first
@@ -203,7 +229,10 @@ pub fn to_fixed(n: f64, fraction_digits: usize) -> Vec<u8> {
     }
     // As many zeros in front as it takes for the first digit to be that of the units.
     if exponent < 0 {
-        digits.splice(0..0, std::iter::repeat_n(b'0', exponent.unsigned_abs() as usize));
+        digits.splice(
+            0..0,
+            std::iter::repeat_n(b'0', exponent.unsigned_abs() as usize),
+        );
         exponent = 0;
     }
     let mut whole = exponent as usize + 1;
@@ -240,7 +269,11 @@ pub fn to_exponential(n: f64, fraction_digits: Option<usize>) -> Vec<u8> {
             // The shortest digits that read back as `n`.
             let text = format!("{:e}", n.abs());
             let at = text.len() - text.bytes().rev().take_while(|&c| c != b'e').count();
-            digits = text.as_bytes()[..at].iter().copied().filter(u8::is_ascii_digit).collect();
+            digits = text.as_bytes()[..at]
+                .iter()
+                .copied()
+                .filter(u8::is_ascii_digit)
+                .collect();
             exponent = text[at..].parse().unwrap_or(0);
         }
         None => {}
@@ -330,7 +363,11 @@ pub fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
     digits.reverse();
     if !fraction_digits.is_empty() {
         digits.push(b'.');
-        digits.extend(fraction_digits.iter().map(|&digit| DIGITS[usize::from(digit) % 36]));
+        digits.extend(
+            fraction_digits
+                .iter()
+                .map(|&digit| DIGITS[usize::from(digit) % 36]),
+        );
     }
     digits
 }

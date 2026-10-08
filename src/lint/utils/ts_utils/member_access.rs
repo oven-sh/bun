@@ -103,8 +103,15 @@ pub fn is_array_method_call_with_predicate<'a>(
     call: Expr<'a>,
     is_array_or_tuple: impl FnOnce(Expr<'a>) -> bool,
 ) -> bool {
-    const ARRAY_PREDICATE_FUNCTIONS: [&str; 7] =
-        ["every", "filter", "find", "findIndex", "findLast", "findLastIndex", "some"];
+    const ARRAY_PREDICATE_FUNCTIONS: [&str; 7] = [
+        "every",
+        "filter",
+        "find",
+        "findIndex",
+        "findLast",
+        "findLastIndex",
+        "some",
+    ];
     object_of_called_method(call, &ARRAY_PREDICATE_FUNCTIONS).is_some_and(is_array_or_tuple)
 }
 
@@ -137,10 +144,13 @@ fn function_has_overload_signatures<'a>(statement: Stmt<'a>, func: Func<'a>) -> 
     };
     let export = statement.flags().intersection(EXPORT_DEFAULT);
     let name = func.name().map(|it| it.name());
-    siblings.iter().filter_map(as_declare_function).any(|(other, flags)| {
-        flags.intersection(EXPORT_DEFAULT) == export
-            && (export == EXPORT_DEFAULT || other.name().map(|it| it.name()) == name)
-    })
+    siblings
+        .iter()
+        .filter_map(as_declare_function)
+        .any(|(other, flags)| {
+            flags.intersection(EXPORT_DEFAULT) == export
+                && (export == EXPORT_DEFAULT || other.name().map(|it| it.name()) == name)
+        })
 }
 
 fn method_has_overload_signatures(member: Member<'_>) -> bool {

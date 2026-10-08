@@ -5,7 +5,10 @@ use super::calls::{assign, call, construct, iterate, sorted_flags, string_raw};
 use super::js_string;
 use super::operators::{binary, unary};
 use super::static_value::{Eval, MAX_LEN, PropertyKey, StaticValue, Stop, parse_bigint_digits};
-use crate::ast::{BinOp, Call, Chain, Expr, ExprKind, Key, KeyKind, List, Node, PropKind, Stmt, StmtKind, Template, UnOp, VarKind};
+use crate::ast::{
+    BinOp, Call, Chain, Expr, ExprKind, Key, KeyKind, List, Node, PropKind, Stmt, StmtKind,
+    Template, UnOp, VarKind,
+};
 use crate::semantic::{Declaration, Scope, Symbol};
 use crate::utils::estree_compat::is_assignment_target;
 use bun_core::strings;
@@ -30,11 +33,17 @@ use std::borrow::Cow;
 pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<StaticValue<'a>> {
     match expr.kind() {
         // ESTree has a pattern there, which has no value.
-        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. } if is_assignment_target(expr) => return None,
+        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. }
+            if is_assignment_target(expr) =>
+        {
+            return None;
+        }
         // `JSXText`, and the name of an element.
         ExprKind::String(_) | ExprKind::Ident(_) | ExprKind::Dot { .. }
-            if matches!(expr.parent().as_expr().map(Expr::kind), Some(ExprKind::Jsx(_)))
-                && expr.jsx_container_span().is_none() =>
+            if matches!(
+                expr.parent().as_expr().map(Expr::kind),
+                Some(ExprKind::Jsx(_))
+            ) && expr.jsx_container_span().is_none() =>
         {
             return None;
         }
@@ -102,8 +111,15 @@ impl<'a> Evaluator<'a> {
             ExprKind::Number(n) => Ok(StaticValue::Number(n)),
             ExprKind::String(text) => Ok(StaticValue::string(text.bytes())),
             ExprKind::BigInt(_) => {
-                let digits: Vec<u8> = e.text().iter().copied().filter(|&c| c != b'_' && c != b'n').collect();
-                Ok(StaticValue::BigInt(parse_bigint_digits(&digits)?.ok_or(Stop::Abort)?))
+                let digits: Vec<u8> = e
+                    .text()
+                    .iter()
+                    .copied()
+                    .filter(|&c| c != b'_' && c != b'n')
+                    .collect();
+                Ok(StaticValue::BigInt(
+                    parse_bigint_digits(&digits)?.ok_or(Stop::Abort)?,
+                ))
             }
             // The parser has validated it.
             ExprKind::Regex(regex) => Ok(StaticValue::Regex {
@@ -119,7 +135,9 @@ impl<'a> Evaluator<'a> {
                 let callee = self.eval(call.callee())?;
                 let args = self.elements(call.args())?;
                 match callee {
-                    StaticValue::Builtin(function) if function.member() == Member::Call => construct(function, &args),
+                    StaticValue::Builtin(function) if function.member() == Member::Call => {
+                        construct(function, &args)
+                    }
                     _ => Err(Stop::NotStatic),
                 }
             }
@@ -148,10 +166,18 @@ impl<'a> Evaluator<'a> {
                     BinOp::And => !left.is_truthy(),
                     _ => !left.is_nullish(),
                 };
-                if is_decided { Ok(left) } else { self.eval(right) }
+                if is_decided {
+                    Ok(left)
+                } else {
+                    self.eval(right)
+                }
             }
-            ExprKind::Binary { op, left, right } => binary(op, &self.eval(left)?, &self.eval(right)?),
-            ExprKind::Assign { op: None, value, .. } => self.eval(value),
+            ExprKind::Binary { op, left, right } => {
+                binary(op, &self.eval(left)?, &self.eval(right)?)
+            }
+            ExprKind::Assign {
+                op: None, value, ..
+            } => self.eval(value),
             ExprKind::Cond { test, yes, no } => match self.eval(test)?.is_truthy() {
                 true => self.eval(yes),
                 false => self.eval(no),
@@ -186,12 +212,19 @@ impl<'a> Evaluator<'a> {
             return Err(Stop::NotStatic);
         }
         // What only an assignment in JavaScript declares is not declared as far as ESLint is concerned.
-        let is_declared = |symbol: &Symbol<'a>| symbol.declarations().any(|it| !matches!(it, Declaration::Other));
+        let is_declared = |symbol: &Symbol<'a>| {
+            symbol
+                .declarations()
+                .any(|it| !matches!(it, Declaration::Other))
+        };
         let Some(symbol) = e.symbol().filter(is_declared) else {
             let name = e.as_ident().map_or(&b""[..], |name| name.bytes());
             // Upstream looks the name up, and finds a type of that name as well.
             return match global_value(name) {
-                Some(value) if e.file().global(name).is_some() && Node::Expr(e).scope().resolve_bytes(name).is_none() => {
+                Some(value)
+                    if e.file().global(name).is_some()
+                        && Node::Expr(e).scope().resolve_bytes(name).is_none() =>
+                {
                     Ok(value)
                 }
                 _ => Err(Stop::NotStatic),
@@ -204,8 +237,10 @@ impl<'a> Evaluator<'a> {
         let Node::VarDecl(declaration) = pat.parent() else {
             return Err(Stop::NotStatic);
         };
-        if !matches!(declaration.parent().as_stmt().map(Stmt::kind), Some(StmtKind::Var(_)))
-            || (declaration.var_kind() != VarKind::Const && !is_effectively_const(symbol))
+        if !matches!(
+            declaration.parent().as_stmt().map(Stmt::kind),
+            Some(StmtKind::Var(_))
+        ) || (declaration.var_kind() != VarKind::Const && !is_effectively_const(symbol))
         {
             return Err(Stop::NotStatic);
         }
@@ -216,7 +251,10 @@ impl<'a> Evaluator<'a> {
         }
         self.symbols.push(symbol);
         let result = self.eval(init).and_then(|value| {
-            match value.type_of() == "object" && value != StaticValue::Null && self.has_mutation_in_property(symbol)? {
+            match value.type_of() == "object"
+                && value != StaticValue::Null
+                && self.has_mutation_in_property(symbol)?
+            {
                 true => Err(Stop::NotStatic),
                 false => Ok(value),
             }
@@ -241,7 +279,11 @@ impl<'a> Evaluator<'a> {
                 continue;
             };
             match parent.kind() {
-                ExprKind::Assign { target, .. } if target == node && !is_assignment_target(parent) => return Ok(true),
+                ExprKind::Assign { target, .. }
+                    if target == node && !is_assignment_target(parent) =>
+                {
+                    return Ok(true);
+                }
                 ExprKind::Unary {
                     op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                     ..
@@ -255,7 +297,14 @@ impl<'a> Evaluator<'a> {
                     if matches!(
                         name.as_str(),
                         Some(
-                            b"copyWithin" | b"fill" | b"pop" | b"push" | b"reverse" | b"shift" | b"sort" | b"splice"
+                            b"copyWithin"
+                                | b"fill"
+                                | b"pop"
+                                | b"push"
+                                | b"reverse"
+                                | b"shift"
+                                | b"sort"
+                                | b"splice"
                                 | b"unshift"
                         )
                     ) {
@@ -271,7 +320,9 @@ impl<'a> Evaluator<'a> {
     /// Upstream's `getStaticPropertyNameValue` for a member access.
     fn member_name(&mut self, member: Expr<'a>) -> Eval<StaticValue<'a>> {
         match member.kind() {
-            ExprKind::Dot { name, .. } if !name.bytes().starts_with(b"#") => Ok(StaticValue::string(name.bytes())),
+            ExprKind::Dot { name, .. } if !name.bytes().starts_with(b"#") => {
+                Ok(StaticValue::string(name.bytes()))
+            }
             ExprKind::Index { index, .. } => self.eval(index),
             _ => Err(Stop::NotStatic),
         }
@@ -282,7 +333,9 @@ impl<'a> Evaluator<'a> {
         match key.kind() {
             KeyKind::Computed(e) => self.eval(e)?.to_property_key(),
             KeyKind::Private(_) => Err(Stop::NotStatic),
-            _ => Ok(PropertyKey::String(Cow::Borrowed(key.name().ok_or(Stop::NotStatic)?.bytes()))),
+            _ => Ok(PropertyKey::String(Cow::Borrowed(
+                key.name().ok_or(Stop::NotStatic)?.bytes(),
+            ))),
         }
     }
 
@@ -305,7 +358,8 @@ impl<'a> Evaluator<'a> {
         let is_chain = callee.is_parenthesized() && callee.chain() != Chain::No;
         let (function, this) = match callee.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if !is_chain => {
-                if matches!(callee.kind(), ExprKind::Dot { name, .. } if name.bytes().starts_with(b"#")) {
+                if matches!(callee.kind(), ExprKind::Dot { name, .. } if name.bytes().starts_with(b"#"))
+                {
                     return Err(Stop::NotStatic);
                 }
                 let (object, is_optional) = self.eval_object(obj)?;
@@ -328,7 +382,10 @@ impl<'a> Evaluator<'a> {
         };
         match function.member() {
             Member::Call => Ok((call(function, &this, &args)?, false)),
-            Member::PassThrough => Ok((args.into_iter().next().unwrap_or(StaticValue::Undefined), false)),
+            Member::PassThrough => Ok((
+                args.into_iter().next().unwrap_or(StaticValue::Undefined),
+                false,
+            )),
             _ => Err(Stop::NotStatic),
         }
     }
@@ -379,7 +436,9 @@ impl<'a> Evaluator<'a> {
         if !matches!(tag, StaticValue::Builtin(function) if function.name() == "String.raw") {
             return Err(Stop::NotStatic);
         }
-        let raw: Vec<Cow<'a, [u8]>> = (0..template.quasi_count()).map(|i| normalize_line_breaks(template.raw(i))).collect();
+        let raw: Vec<Cow<'a, [u8]>> = (0..template.quasi_count())
+            .map(|i| normalize_line_breaks(template.raw(i)))
+            .collect();
         string_raw(&raw, &values)
     }
 }
@@ -402,7 +461,6 @@ fn normalize_line_breaks(raw: &[u8]) -> Cow<'_, [u8]> {
     }
     Cow::Owned(text)
 }
-
 
 /// Upstream's `isEffectivelyConst`: the variable is only written by its initializer.
 fn is_effectively_const(symbol: Symbol<'_>) -> bool {

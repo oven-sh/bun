@@ -16,9 +16,15 @@ pub(super) fn to_utf16(text: &[u8]) -> Vec<u16> {
         let (code_point, len) = match first {
             0..0x80 => (u32::from(first), 1),
             0x80..0xE0 => ((u32::from(first & 0x1F) << 6) | continuation(1), 2),
-            0xE0..0xF0 => ((u32::from(first & 0x0F) << 12) | (continuation(1) << 6) | continuation(2), 3),
+            0xE0..0xF0 => (
+                (u32::from(first & 0x0F) << 12) | (continuation(1) << 6) | continuation(2),
+                3,
+            ),
             _ => (
-                (u32::from(first & 0x07) << 18) | (continuation(1) << 12) | (continuation(2) << 6) | continuation(3),
+                (u32::from(first & 0x07) << 18)
+                    | (continuation(1) << 12)
+                    | (continuation(2) << 6)
+                    | continuation(3),
                 4,
             ),
         };
@@ -97,7 +103,9 @@ pub(super) fn concat<'a>(a: Cow<'a, [u8]>, b: Cow<'a, [u8]>) -> Cow<'a, [u8]> {
 
 /// `text += more`
 pub(super) fn push_str(text: &mut Vec<u8>, more: &[u8]) {
-    if let ([.., 0xED, high1 @ 0xA0..0xB0, high2], [0xED, low1 @ 0xB0..0xC0, low2, rest @ ..]) = (&text[..], more) {
+    if let ([.., 0xED, high1 @ 0xA0..0xB0, high2], [0xED, low1 @ 0xB0..0xC0, low2, rest @ ..]) =
+        (&text[..], more)
+    {
         let high = (u32::from(high1 & 0x0F) << 6) | u32::from(high2 & 0x3F);
         let low = (u32::from(low1 & 0x0F) << 6) | u32::from(low2 & 0x3F);
         text.truncate(text.len() - 3);
@@ -125,5 +133,7 @@ pub(super) fn index_of(units: &[u16], needle: &[u16], from: usize) -> Option<usi
 /// The last index at or before `from` where `needle` is in `units`.
 pub(super) fn last_index_of(units: &[u16], needle: &[u16], from: usize) -> Option<usize> {
     let last = units.len().checked_sub(needle.len())?;
-    (0..=last.min(from)).rev().find(|&at| units[at..].starts_with(needle))
+    (0..=last.min(from))
+        .rev()
+        .find(|&at| units[at..].starts_with(needle))
 }

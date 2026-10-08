@@ -19,7 +19,9 @@ pub(super) fn is_pattern(e: Expr<'_>) -> bool {
             },
             Node::Prop(prop) => {
                 // The `a = 1` of `{ a = 1 }` is an `AssignmentPattern` wherever the object is.
-                if prop.kind() == PropKind::Shorthand && matches!(at.kind(), ExprKind::Assign { .. }) {
+                if prop.kind() == PropKind::Shorthand
+                    && matches!(at.kind(), ExprKind::Assign { .. })
+                {
                     return true;
                 }
                 match prop.parent() {

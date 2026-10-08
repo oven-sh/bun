@@ -61,7 +61,10 @@ pub fn get_function_name_with_kind(func: Func<'_>, with_key_text: bool) -> Vec<u
                 MemberKind::Setter => property = Some((member.key(), "setter")),
                 // `"constructor"<T>() {}`
                 MemberKind::Method
-                    if !is_static && member.key().is_some_and(|key| !key.is_computed() && key.is("constructor")) =>
+                    if !is_static
+                        && member
+                            .key()
+                            .is_some_and(|key| !key.is_computed() && key.is("constructor")) =>
                 {
                     return b"constructor".to_vec();
                 }
@@ -136,7 +139,10 @@ pub fn get_function_name_with_kind(func: Func<'_>, with_key_text: bool) -> Vec<u
     } else if let Node::Expr(e) = owner {
         if let Some(name) = assigned_name(e) {
             word(&[b"'", name.bytes(), b"'"]);
-        } else if matches!(e.parent().as_stmt().map(|it| it.kind()), Some(StmtKind::ExportDefault(_))) {
+        } else if matches!(
+            e.parent().as_stmt().map(|it| it.kind()),
+            Some(StmtKind::ExportDefault(_))
+        ) {
             word(&[b"'default'"]);
         }
     } else if matches!(owner, Node::Stmt(statement) if statement.flags().contains(Flags::DEFAULT)) {

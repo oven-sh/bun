@@ -43,7 +43,11 @@ fn is_literal(e: Expr<'_>) -> bool {
 }
 
 /// Whether `key` is computed and not a `Literal`.
-fn converts_key<'a>(key: Option<Key<'a>>, file: &'a File<'a>, options: HasSideEffectOptions) -> bool {
+fn converts_key<'a>(
+    key: Option<Key<'a>>,
+    file: &'a File<'a>,
+    options: HasSideEffectOptions,
+) -> bool {
     if !options.consider_implicit_type_conversion {
         return false;
     }
@@ -56,7 +60,10 @@ fn converts_key<'a>(key: Option<Key<'a>>, file: &'a File<'a>, options: HasSideEf
             while file.text().get(at as usize) == Some(&b'(') {
                 at = skip_trivia(file.text(), at + 1);
             }
-            !matches!(file.text().get(at as usize), Some(b'"' | b'\'' | b'.' | b'0'..=b'9'))
+            !matches!(
+                file.text().get(at as usize),
+                Some(b'"' | b'\'' | b'.' | b'0'..=b'9')
+            )
         }
         _ => false,
     }
@@ -68,20 +75,28 @@ fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
         // ESTree's `TSQualifiedName` is no member access.
         Node::Type(ty) if matches!(ty.kind(), TypeKind::Typeof { .. }) => {
             let mut found = false;
-            node.for_each_child(|child| found = found || (!matches!(child, Node::Expr(_)) && visit(child, options)));
+            node.for_each_child(|child| {
+                found = found || (!matches!(child, Node::Expr(_)) && visit(child, options))
+            });
             found
         }
         Node::Func(func) => {
-            matches!(func.kind(), FnKind::Decl | FnKind::StaticBlock) && visit_children(node, options)
+            matches!(func.kind(), FnKind::Decl | FnKind::StaticBlock)
+                && visit_children(node, options)
         }
         // ESTree's `MethodDefinition` and `PropertyDefinition`
         Node::Member(member)
-            if matches!(member.parent(), Node::Class(_)) && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR) =>
+            if matches!(member.parent(), Node::Class(_))
+                && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR) =>
         {
             converts_key(member.key(), node.file(), options) || visit_children(node, options)
         }
-        Node::Prop(prop) => converts_key(prop.key(), node.file(), options) || visit_children(node, options),
-        Node::PatProp(prop) => converts_key(prop.key(), node.file(), options) || visit_children(node, options),
+        Node::Prop(prop) => {
+            converts_key(prop.key(), node.file(), options) || visit_children(node, options)
+        }
+        Node::PatProp(prop) => {
+            converts_key(prop.key(), node.file(), options) || visit_children(node, options)
+        }
         Node::Expr(e) => match e.kind() {
             // ESTree's `AssignmentPattern`
             ExprKind::Assign { .. } if is_assignment_target(e) => visit_children(node, options),
@@ -120,7 +135,9 @@ fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
             ExprKind::Jsx(jsx) => {
                 let mut found = false;
                 node.for_each_child(|child| {
-                    let is_name = child.as_expr().is_some_and(|child| Some(child) == jsx.tag() || Some(child) == jsx.close_tag());
+                    let is_name = child.as_expr().is_some_and(|child| {
+                        Some(child) == jsx.tag() || Some(child) == jsx.close_tag()
+                    });
                     found = found || (!is_name && visit(child, options));
                 });
                 found

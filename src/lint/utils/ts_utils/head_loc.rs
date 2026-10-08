@@ -80,14 +80,18 @@ pub fn get_function_head_loc(func: Func<'_>) -> Span {
     let text = func.file().text();
     let owner = func.owner();
     let member_or_property_start = match owner {
-        Node::Member(member) if is_method_or_property_definition(member) => {
-            Some(start_after_decorators(member.modifiers(), text, member.span().start))
-        }
+        Node::Member(member) if is_method_or_property_definition(member) => Some(
+            start_after_decorators(member.modifiers(), text, member.span().start),
+        ),
         Node::Expr(e) => match e.parent() {
             Node::Member(member)
                 if is_method_or_property_definition(member) && is_value_or_key(member, e) =>
             {
-                Some(start_after_decorators(member.modifiers(), text, member.span().start))
+                Some(start_after_decorators(
+                    member.modifiers(),
+                    text,
+                    member.span().start,
+                ))
             }
             Node::Prop(prop) if prop.kind() != PropKind::Spread && !prop.is_jsx_attribute() => {
                 Some(prop.span().start)
@@ -101,9 +105,10 @@ pub fn get_function_head_loc(func: Func<'_>) -> Span {
     match (member_or_property_start, func.arrow_span()) {
         (Some(start), _) => Span::new(start, opening_paren_of_params(func)),
         (None, Some(arrow)) => arrow,
-        (None, None) => {
-            Span::new(estree_span(Node::Func(func)).start, opening_paren_of_params(func))
-        }
+        (None, None) => Span::new(
+            estree_span(Node::Func(func)).start,
+            opening_paren_of_params(func),
+        ),
     }
 }
 
@@ -134,7 +139,9 @@ pub fn get_parameter_property_head_loc(param: Param<'_>, node_name: &[u8]) -> Sp
 pub fn get_for_statement_head_loc(statement: Stmt<'_>) -> Span {
     let whole = statement.span();
     match statement.kind() {
-        StmtKind::For { body, .. } | StmtKind::ForIn { body, .. } | StmtKind::ForOf { body, .. } => {
+        StmtKind::For { body, .. }
+        | StmtKind::ForIn { body, .. }
+        | StmtKind::ForOf { body, .. } => {
             let text = statement.file().text();
             Span::new(whole.start, skip_trivia_back(text, body.span().start))
         }

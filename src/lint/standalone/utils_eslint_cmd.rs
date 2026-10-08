@@ -12,9 +12,10 @@ use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind};
 use bun_lint::language::{Global, LanguageOptions, SourceType};
 use bun_lint::options::{Json, Object};
 use bun_lint::utils::eslint_utils::{
-    HasSideEffectOptions, IteratorKind, Mode, PatternMatcher, PropertyKey, ReferenceKind, ReferenceTracker, StaticSymbol, StaticValue,
-    TraceMap, TrackedReference, get_function_head_location, get_function_name_with_kind, get_property_name,
-    get_static_value, get_string_if_constant, has_side_effect, is_parenthesized_times,
+    HasSideEffectOptions, IteratorKind, Mode, PatternMatcher, PropertyKey, ReferenceKind,
+    ReferenceTracker, StaticSymbol, StaticValue, TraceMap, TrackedReference,
+    get_function_head_location, get_function_name_with_kind, get_property_name, get_static_value,
+    get_string_if_constant, has_side_effect, is_parenthesized_times,
 };
 use bun_lint::utils::{self, text};
 use std::fmt::Write;
@@ -28,15 +29,26 @@ fn quote(text: &[u8], out: &mut String) {
         let (c, len) = match first {
             0..0x80 => (u32::from(first), 1),
             0x80..0xE0 => ((u32::from(first & 0x1F) << 6) | next(1), 2),
-            0xE0..0xF0 => ((u32::from(first & 0x0F) << 12) | (next(1) << 6) | next(2), 3),
-            _ => ((u32::from(first & 0x07) << 18) | (next(1) << 12) | (next(2) << 6) | next(3), 4),
+            0xE0..0xF0 => (
+                (u32::from(first & 0x0F) << 12) | (next(1) << 6) | next(2),
+                3,
+            ),
+            _ => (
+                (u32::from(first & 0x07) << 18) | (next(1) << 12) | (next(2) << 6) | next(3),
+                4,
+            ),
         };
         at += len;
         match c {
             0x20 | 0x21 | 0x23..=0x5B | 0x5D..=0x7E => out.push(c as u8 as char),
             0x10000.. => {
                 let c = c - 0x10000;
-                _ = write!(out, "\\u{:04x}\\u{:04x}", 0xD800 | (c >> 10), 0xDC00 | (c & 0x3FF));
+                _ = write!(
+                    out,
+                    "\\u{:04x}\\u{:04x}",
+                    0xD800 | (c >> 10),
+                    0xDC00 | (c & 0x3FF)
+                );
             }
             _ => _ = write!(out, "\\u{c:04x}"),
         }
@@ -79,7 +91,9 @@ fn show(value: &StaticValue<'_>, out: &mut String) {
         StaticValue::Null => out.push_str("null"),
         StaticValue::Bool(b) => _ = write!(out, "{b}"),
         StaticValue::Number(n) if *n == 0.0 && n.is_sign_negative() => out.push_str("-0"),
-        StaticValue::Number(n) => out.push_str(&String::from_utf8_lossy(&text::number_to_string(*n))),
+        StaticValue::Number(n) => {
+            out.push_str(&String::from_utf8_lossy(&text::number_to_string(*n)))
+        }
         StaticValue::String(text) => quote(text, out),
         StaticValue::BigInt(n) => _ = write!(out, "{n}n"),
         StaticValue::Symbol(symbol) => show_symbol(symbol, out),
@@ -157,7 +171,8 @@ impl<'a> Facts<'a> {
     fn add(&mut self, name: &str, node: Node<'a>, value: impl std::fmt::Display) {
         let span = utils::estree_span(node);
         let kind = utils::estree_type_name(node);
-        self.out.push(format!("{name}|{kind}|{}|{}|{value}", span.start, span.end));
+        self.out
+            .push(format!("{name}|{kind}|{}|{}|{value}", span.start, span.end));
     }
 
     fn common(&mut self, node: Node<'a>) {
@@ -167,12 +182,23 @@ impl<'a> Facts<'a> {
                     consider_getters: bits & 1 != 0,
                     consider_implicit_type_conversion: bits & 2 != 0,
                 };
-                if has_side_effect(node, options) { '1' } else { '0' }
+                if has_side_effect(node, options) {
+                    '1'
+                } else {
+                    '0'
+                }
             })
             .collect();
         self.add("sideEffect", node, effects);
-        let parentheses: String =
-            (1..=3).map(|times| if is_parenthesized_times(times, node) { '1' } else { '0' }).collect();
+        let parentheses: String = (1..=3)
+            .map(|times| {
+                if is_parenthesized_times(times, node) {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
+            .collect();
         self.add("parenthesized", node, parentheses);
     }
 
@@ -192,14 +218,21 @@ impl<'a> Facts<'a> {
         if e.is_missing()
             || (matches!(e.kind(), ExprKind::Binary { .. }) && utils::sequence_root(e) != e)
             || matches!(e.kind(), ExprKind::Fn(_) | ExprKind::Class(_))
-            || matches!(utils::estree_type_name(node), "TSQualifiedName" | "JSXMemberExpression")
+            || matches!(
+                utils::estree_type_name(node),
+                "TSQualifiedName" | "JSXMemberExpression"
+            )
         {
             return;
         }
         let scope = self.file.scope();
         self.add("static", node, shown(get_static_value(e, Some(scope))));
         self.add("staticNoScope", node, shown(get_static_value(e, None)));
-        self.add("string", node, quoted(get_string_if_constant(e, Some(scope))));
+        self.add(
+            "string",
+            node,
+            quoted(get_string_if_constant(e, Some(scope))),
+        );
         self.common(node);
         if matches!(e.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. }) {
             self.property_name(node);
@@ -231,7 +264,8 @@ impl<'a> Facts<'a> {
                 self.property_name(node);
             }
             Node::Func(_) => {}
-            Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Fn(_) | StmtKind::Class(_)) => {}
+            Node::Stmt(statement)
+                if matches!(statement.kind(), StmtKind::Fn(_) | StmtKind::Class(_)) => {}
             _ => self.common(node),
         }
         node.for_each_child(|child| self.visit(child));
@@ -245,11 +279,19 @@ impl<'a> Facts<'a> {
                 ReferenceKind::Call => "call",
                 ReferenceKind::Construct => "construct",
             };
-            let is_import = matches!(reference.node.as_stmt().map(|it| it.kind()), Some(StmtKind::Import(_)));
-            let (ty, span) = match reference.span != reference.node.span() || matches!(reference.node, Node::Type(_)) {
+            let is_import = matches!(
+                reference.node.as_stmt().map(|it| it.kind()),
+                Some(StmtKind::Import(_))
+            );
+            let (ty, span) = match reference.span != reference.node.span()
+                || matches!(reference.node, Node::Type(_))
+            {
                 true if is_import => ("ImportDefaultSpecifier", reference.span),
                 true => ("Identifier", reference.span),
-                false => (utils::estree_type_name(reference.node), utils::estree_span(reference.node)),
+                false => (
+                    utils::estree_type_name(reference.node),
+                    utils::estree_span(reference.node),
+                ),
             };
             let key = format!("{ty}|{}|{}", span.start, span.end);
             let value = format!("{kind} {}", reference.path.join("."));
@@ -266,15 +308,23 @@ impl<'a> Facts<'a> {
 }
 
 /// Every name, with every kind of use, and `next` as its members.
-fn level<'m>(names: &[&'m str], next: &'m [(&'m str, TraceMap<'m, ()>)]) -> Vec<(&'m str, TraceMap<'m, ()>)> {
-    names.iter().map(|&name| (name, TraceMap::new(next).read(()).call(()).construct(()))).collect()
+fn level<'m>(
+    names: &[&'m str],
+    next: &'m [(&'m str, TraceMap<'m, ()>)],
+) -> Vec<(&'m str, TraceMap<'m, ()>)> {
+    names
+        .iter()
+        .map(|&name| (name, TraceMap::new(next).read(()).call(()).construct(())))
+        .collect()
 }
 
 fn dump(case: Object<'_>) -> String {
     let id = case.number("id").unwrap_or(-1.0);
     let names = case.strings("names");
-    let mut globals: Vec<(Box<[u8]>, Global)> =
-        names.iter().map(|name| (name.as_bytes().into(), Global::Readonly)).collect();
+    let mut globals: Vec<(Box<[u8]>, Global)> = names
+        .iter()
+        .map(|name| (name.as_bytes().into(), Global::Readonly))
+        .collect();
     globals.sort_by(|a, b| a.0.cmp(&b.0));
     let language = LanguageOptions {
         source_type: match case.str("sourceType") {
@@ -282,49 +332,64 @@ fn dump(case: Object<'_>) -> String {
             Some("commonjs") => SourceType::CommonJs,
             _ => SourceType::Module,
         },
-        ecma_version: case.number("ecmaVersion").map_or(LanguageOptions::LATEST_ECMA_VERSION, |it| it as u32),
+        ecma_version: case
+            .number("ecmaVersion")
+            .map_or(LanguageOptions::LATEST_ECMA_VERSION, |it| it as u32),
         globals,
         ..LanguageOptions::default()
     };
     let code = case.get("code").and_then(Json::as_str).unwrap_or_default();
-    crate::with_file(case.str("filename").unwrap_or("file.js"), code, &language, |file| {
-        if file.has_parse_errors() {
-            return format!("{{\"id\":{id},\"error\":true}}");
-        }
-        let mut facts = Facts {
-            file,
-            out: Vec::new(),
-        };
-        facts.visit(Node::File(file));
-
-        let third = level(&names, &[]);
-        let second = level(&names, &third);
-        let first = level(&names, &second);
-        let modules: Vec<_> = first.iter().map(|&(name, map)| (name, map.esm())).collect();
-        let (map, esm) = (TraceMap::new(&first), TraceMap::new(&modules));
-        let tracker = ReferenceTracker::new(file);
-        facts.track("trackGlobal", tracker.iterate_global_references(&map));
-        facts.track("trackCjs", tracker.iterate_cjs_references(&map));
-        facts.track("trackEsmStrict", tracker.iterate_esm_references(&map));
-        facts.track("trackEsmLegacy", tracker.with_mode(Mode::Legacy).iterate_esm_references(&map));
-        facts.track("trackEsm", tracker.iterate_esm_references(&esm));
-
-        let mut line = format!("{{\"id\":{id},\"facts\":[");
-        for (i, fact) in facts.out.iter().enumerate() {
-            if i > 0 {
-                line.push(',');
+    crate::with_file(
+        case.str("filename").unwrap_or("file.js"),
+        code,
+        &language,
+        |file| {
+            if file.has_parse_errors() {
+                return format!("{{\"id\":{id},\"error\":true}}");
             }
-            line.push_str(&String::from_utf8_lossy(&text::json_stringify(fact.as_bytes())));
-        }
-        line.push_str("]}");
-        line
-    })
+            let mut facts = Facts {
+                file,
+                out: Vec::new(),
+            };
+            facts.visit(Node::File(file));
+
+            let third = level(&names, &[]);
+            let second = level(&names, &third);
+            let first = level(&names, &second);
+            let modules: Vec<_> = first.iter().map(|&(name, map)| (name, map.esm())).collect();
+            let (map, esm) = (TraceMap::new(&first), TraceMap::new(&modules));
+            let tracker = ReferenceTracker::new(file);
+            facts.track("trackGlobal", tracker.iterate_global_references(&map));
+            facts.track("trackCjs", tracker.iterate_cjs_references(&map));
+            facts.track("trackEsmStrict", tracker.iterate_esm_references(&map));
+            facts.track(
+                "trackEsmLegacy",
+                tracker.with_mode(Mode::Legacy).iterate_esm_references(&map),
+            );
+            facts.track("trackEsm", tracker.iterate_esm_references(&esm));
+
+            let mut line = format!("{{\"id\":{id},\"facts\":[");
+            for (i, fact) in facts.out.iter().enumerate() {
+                if i > 0 {
+                    line.push(',');
+                }
+                line.push_str(&String::from_utf8_lossy(&text::json_stringify(
+                    fact.as_bytes(),
+                )));
+            }
+            line.push_str("]}");
+            line
+        },
+    )
 }
 
 /// What a `PatternMatcher` finds: `{ pattern, flags, escaped, text, replacement }`.
 fn pattern(case: Object<'_>) -> String {
     let text = |key: &str| case.get(key).and_then(Json::as_str).unwrap_or_default();
-    let (pattern, flags) = (case.str("pattern").unwrap_or_default(), case.str("flags").unwrap_or_default());
+    let (pattern, flags) = (
+        case.str("pattern").unwrap_or_default(),
+        case.str("flags").unwrap_or_default(),
+    );
     let Ok(matcher) = PatternMatcher::new(pattern, flags, case.bool_or("escaped", false)) else {
         return "error".to_owned();
     };
@@ -337,12 +402,17 @@ fn pattern(case: Object<'_>) -> String {
         out.push(' ');
     }
     _ = write!(out, "{} ", matcher.test(text("text")));
-    quote(&matcher.replace(text("text"), text("replacement")), &mut out);
+    quote(
+        &matcher.replace(text("text"), text("replacement")),
+        &mut out,
+    );
     out
 }
 
 pub(crate) fn run(args: &[String]) {
-    let (Some(mode @ ("dump" | "pattern")), Some(path)) = (args.first().map(String::as_str), args.get(1)) else {
+    let (Some(mode @ ("dump" | "pattern")), Some(path)) =
+        (args.first().map(String::as_str), args.get(1))
+    else {
         println!("usage: bun-lint utils-eslint dump <cases.jsonl> | pattern <cases.jsonl>");
         return;
     };
@@ -353,7 +423,14 @@ pub(crate) fn run(args: &[String]) {
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         if let Some(json) = bun_lint::json::parse(line) {
             let case = Object::of(Some(&json));
-            println!("{}", if mode == "dump" { dump(case) } else { pattern(case) });
+            println!(
+                "{}",
+                if mode == "dump" {
+                    dump(case)
+                } else {
+                    pattern(case)
+                }
+            );
         }
     }
 }

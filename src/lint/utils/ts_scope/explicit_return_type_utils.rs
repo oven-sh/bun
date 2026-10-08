@@ -82,7 +82,9 @@ fn parent_of_expr(e: Expr<'_>) -> Parent<'_> {
         Node::Param(param) if param.default() == Some(e) => Parent::AssignmentPattern {
             is_typed: param.ty().is_some(),
         },
-        Node::Member(member) if member.decorators().any(|decorator| decorator == e) => Parent::Other,
+        Node::Member(member) if member.decorators().any(|decorator| decorator == e) => {
+            Parent::Other
+        }
         Node::Member(member) if is_property_definition(member) => Parent::PropertyDefinition {
             is_typed: member.ty().is_some(),
         },

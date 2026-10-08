@@ -5,7 +5,13 @@ use crate::regex::{Captures, Match, Regex, SyntaxError};
 /// Upstream's `isEscaped`: whether an odd number of backslashes precede `index`.
 fn is_escaped(text: &[u8], index: usize) -> bool {
     let before = text.get(..index).unwrap_or_default();
-    before.iter().rev().take_while(|&&byte| byte == b'\\').count() % 2 == 1
+    before
+        .iter()
+        .rev()
+        .take_while(|&&byte| byte == b'\\')
+        .count()
+        % 2
+        == 1
 }
 
 /// eslint-utils' `PatternMatcher`: finds a pattern in text in which a backslash escapes what
@@ -43,7 +49,11 @@ impl PatternMatcher {
 
     /// eslint-utils' `[Symbol.replace]` with a function: `text.replace(matcher, replacer)`.
     /// `replacer` appends what replaces the match.
-    pub fn replace_with<'t>(&self, text: &'t [u8], mut replacer: impl FnMut(&Captures<'_, 't>, &mut Vec<u8>)) -> Vec<u8> {
+    pub fn replace_with<'t>(
+        &self,
+        text: &'t [u8],
+        mut replacer: impl FnMut(&Captures<'_, 't>, &mut Vec<u8>),
+    ) -> Vec<u8> {
         let mut replaced = Vec::with_capacity(text.len());
         let mut at = 0;
         for found in self.exec_all(text) {
@@ -73,13 +83,18 @@ impl PatternMatcher {
                     [b'1'..=b'9', ..] => 1,
                     _ => 0,
                 };
-                let group = after[..digits].iter().fold(0, |group, digit| group * 10 + usize::from(digit - b'0'));
+                let group = after[..digits]
+                    .iter()
+                    .fold(0, |group, digit| group * 10 + usize::from(digit - b'0'));
                 let (placeholder, len): (&[u8], usize) = match after {
                     [b'$', ..] => (b"$", 1),
                     [b'&', ..] => (found.as_bytes(), 1),
                     [b'`', ..] => (text.get(..found.start()).unwrap_or_default(), 1),
                     [b'\'', ..] => (text.get(found.end()..).unwrap_or_default(), 1),
-                    _ if digits > 0 && group < found.len() => (found.get(group).map_or(b"undefined", Match::as_bytes), digits),
+                    _ if digits > 0 && group < found.len() => (
+                        found.get(group).map_or(b"undefined", Match::as_bytes),
+                        digits,
+                    ),
                     // It stays as it is written.
                     _ => (b"$", 0),
                 };

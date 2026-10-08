@@ -66,7 +66,9 @@ impl PropertyKey<'_> {
         if !is_canonical || !digits.iter().all(u8::is_ascii_digit) {
             return None;
         }
-        let index = digits.iter().fold(0u64, |index, digit| index * 10 + u64::from(digit - b'0'));
+        let index = digits
+            .iter()
+            .fold(0u64, |index, digit| index * 10 + u64::from(digit - b'0'));
         (index < u64::from(u32::MAX)).then_some(index as usize)
     }
 }
@@ -172,7 +174,10 @@ impl<'a> StaticValue<'a> {
     /// `value == null`
     #[inline]
     pub fn is_nullish(&self) -> bool {
-        matches!(self, StaticValue::Undefined | StaticValue::Null | StaticValue::Hole)
+        matches!(
+            self,
+            StaticValue::Undefined | StaticValue::Null | StaticValue::Hole
+        )
     }
 
     /// `Boolean(value)`
@@ -219,9 +224,9 @@ impl<'a> StaticValue<'a> {
     /// `String(value)`. `None` if that throws.
     pub fn to_js_string(&self) -> Option<Cow<'a, [u8]>> {
         match self {
-            StaticValue::Symbol(symbol) => {
-                Some(Cow::Owned([b"Symbol(", &*symbol.description(), b")"].concat()))
-            }
+            StaticValue::Symbol(symbol) => Some(Cow::Owned(
+                [b"Symbol(", &*symbol.description(), b")"].concat(),
+            )),
             _ => self.to_string().ok(),
         }
     }
@@ -248,13 +253,18 @@ impl<'a> StaticValue<'a> {
             StaticValue::Wrapper(primitive) => return Ok((**primitive).clone()),
             StaticValue::Array(items) => return Ok(StaticValue::string(join(items, b",")?)),
             StaticValue::Regex { pattern, flags } => {
-                return Ok(StaticValue::string([b"/", &**pattern, b"/", &**flags].concat()));
+                return Ok(StaticValue::string(
+                    [b"/", &**pattern, b"/", &**flags].concat(),
+                ));
             }
             StaticValue::Object(properties) => {
                 let changes_conversion = |key: &PropertyKey| match key {
                     PropertyKey::String(name) => matches!(&**name, b"toString" | b"valueOf"),
                     PropertyKey::Symbol(symbol) => {
-                        matches!(symbol, StaticSymbol::WellKnown("toPrimitive" | "toStringTag"))
+                        matches!(
+                            symbol,
+                            StaticSymbol::WellKnown("toPrimitive" | "toStringTag")
+                        )
                     }
                 };
                 if properties.iter().any(|(key, _)| changes_conversion(key)) {
@@ -270,12 +280,17 @@ impl<'a> StaticValue<'a> {
             // As V8 prints it.
             StaticValue::Builtin(builtin) if builtin.is_callable() => {
                 let name = builtin.name().as_bytes();
-                let name = strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot + 1..]);
-                return Ok(StaticValue::string([b"function ", name, b"() { [native code] }"].concat()));
+                let name =
+                    strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot + 1..]);
+                return Ok(StaticValue::string(
+                    [b"function ", name, b"() { [native code] }"].concat(),
+                ));
             }
             StaticValue::Builtin(builtin) if builtin.is_prototype() => return Err(Stop::Abort),
             StaticValue::Builtin(builtin) => {
-                return Ok(StaticValue::string([b"[object ", builtin.name().as_bytes(), b"]"].concat()));
+                return Ok(StaticValue::string(
+                    [b"[object ", builtin.name().as_bytes(), b"]"].concat(),
+                ));
             }
             primitive => return Ok(primitive.clone()),
         };
@@ -346,7 +361,9 @@ impl<'a> StaticValue<'a> {
     /// `SameValueZero`
     pub(super) fn same_value_zero(&self, other: &StaticValue<'a>) -> Eval<bool> {
         match (self, other) {
-            (StaticValue::Number(a), StaticValue::Number(b)) if a.is_nan() && b.is_nan() => Ok(true),
+            (StaticValue::Number(a), StaticValue::Number(b)) if a.is_nan() && b.is_nan() => {
+                Ok(true)
+            }
             _ => self.strict_equals(other),
         }
     }
@@ -409,7 +426,11 @@ fn compare_bigint_with_number(a: i128, b: f64) -> Option<Ordering> {
         return Some(Ordering::Greater);
     }
     let floor = b.floor();
-    Some(a.cmp(&(floor as i128)).then(if b > floor { Ordering::Less } else { Ordering::Equal }))
+    Some(a.cmp(&(floor as i128)).then(if b > floor {
+        Ordering::Less
+    } else {
+        Ordering::Equal
+    }))
 }
 
 /// The value of the digits of a `bigint` literal, or of what `BigInt(text)` takes, without a sign.
@@ -440,7 +461,9 @@ pub(super) fn parse_bigint_digits(text: &[u8]) -> Eval<Option<i128>> {
 pub(super) fn string_to_bigint(text: &[u8]) -> Eval<Option<i128>> {
     match trim(text) {
         [] => Ok(Some(0)),
-        [b'-', digits @ ..] if digits.first().is_some_and(u8::is_ascii_digit) && !is_prefixed(digits) => {
+        [b'-', digits @ ..]
+            if digits.first().is_some_and(u8::is_ascii_digit) && !is_prefixed(digits) =>
+        {
             Ok(parse_bigint_digits(digits)?.map(|value| -value))
         }
         [b'+', digits @ ..] if !is_prefixed(digits) => parse_bigint_digits(digits),
@@ -456,7 +479,11 @@ fn is_prefixed(digits: &[u8]) -> bool {
 /// `items.join(separator)`
 pub(super) fn join<'a>(items: &[StaticValue<'a>], separator: &[u8]) -> Eval<Cow<'a, [u8]>> {
     if let [only] = items {
-        return if only.is_nullish() { Ok(Cow::Borrowed(b"")) } else { only.to_string() };
+        return if only.is_nullish() {
+            Ok(Cow::Borrowed(b""))
+        } else {
+            only.to_string()
+        };
     }
     let mut text = Vec::new();
     for (i, item) in items.iter().enumerate() {

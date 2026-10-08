@@ -67,9 +67,14 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     let mut previous_node = get_node_by_range_index(file, previous.start());
     // In `@d export class C {}` the `ExportNamedDeclaration` starts at the `export`, so nothing
     // in it is found for a position in the decorator.
-    let exported = previous_node.ancestors().filter_map(Node::as_stmt).find(|statement| {
-        statement.export_span().is_some_and(|export| previous.start() < export.start)
-    });
+    let exported = previous_node
+        .ancestors()
+        .filter_map(Node::as_stmt)
+        .find(|statement| {
+            statement
+                .export_span()
+                .is_some_and(|export| previous.start() < export.start)
+        });
     if let Some(statement) = exported {
         previous_node = statement.parent();
     }
@@ -93,7 +98,8 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
             // The `BlockStatement` of a `FunctionExpression` that is not the value of a
             // `MethodDefinition`.
             Node::Func(func) => {
-                func.body_span().is_some_and(|body| body.end == previous.end())
+                func.body_span()
+                    .is_some_and(|body| body.end == previous.end())
                     && match func.kind() {
                         FnKind::Expr => true,
                         FnKind::Method | FnKind::Getter | FnKind::Setter => {
@@ -116,7 +122,11 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     if matches!(previous.kind(), TokenKind::Identifier | TokenKind::Keyword) {
         return match (previous.text(), previous_node) {
             // The keyword, or the label.
-            _ if matches!(previous_statement, Some(StmtKind::Break(_) | StmtKind::Continue(_))) => {
+            _ if matches!(
+                previous_statement,
+                Some(StmtKind::Break(_) | StmtKind::Continue(_))
+            ) =>
+            {
                 false
             }
             (b"debugger", _) => !matches!(previous_statement, Some(StmtKind::Debugger)),

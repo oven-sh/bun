@@ -2,11 +2,13 @@
 
 use super::builtins::{Builtin, Member, get_member, set_property};
 use super::js_number::{
-    parse_float, parse_int, to_exponential, to_fixed, to_int32, to_precision, to_radix_string, to_uint32,
+    parse_float, parse_int, to_exponential, to_fixed, to_int32, to_precision, to_radix_string,
+    to_uint32,
 };
 use super::js_string::{self, from_utf16, to_utf16};
 use super::static_value::{
-    Eval, IteratorKind, MAX_LEN, PropertyKey, StaticSymbol, StaticValue, Stop, join, string_to_bigint,
+    Eval, IteratorKind, MAX_LEN, PropertyKey, StaticSymbol, StaticValue, Stop, join,
+    string_to_bigint,
 };
 use crate::regex::{Ignore, Mode, Options, validate_pattern};
 use crate::utils::text;
@@ -59,7 +61,11 @@ fn clamped_index(value: &StaticValue<'_>, len: usize) -> Eval<usize> {
 /// The index that `at(index)` is about.
 fn at_index(index: &StaticValue<'_>, len: usize) -> Eval<Option<usize>> {
     let index = index.to_integer()?;
-    let index = if index < 0.0 { len as f64 + index } else { index };
+    let index = if index < 0.0 {
+        len as f64 + index
+    } else {
+        index
+    };
     Ok((index >= 0.0 && index < len as f64).then_some(index as usize))
 }
 
@@ -81,7 +87,10 @@ pub(super) fn iterate<'a>(value: &StaticValue<'a>) -> Eval<Vec<StaticValue<'a>>>
         StaticValue::Array(items) => items.iter().map(element).collect(),
         StaticValue::Set(items) | StaticValue::Iterator(_, items) => items.clone(),
         StaticValue::Wrapper(primitive) => return iterate(primitive),
-        StaticValue::Map(entries) => entries.iter().map(|(key, value)| pair(key.clone(), value.clone())).collect(),
+        StaticValue::Map(entries) => entries
+            .iter()
+            .map(|(key, value)| pair(key.clone(), value.clone()))
+            .collect(),
         StaticValue::String(text) => js_string::code_points_of(&to_utf16(text))
             .map(|c| {
                 let mut text = Vec::with_capacity(4);
@@ -94,7 +103,9 @@ pub(super) fn iterate<'a>(value: &StaticValue<'a>) -> Eval<Vec<StaticValue<'a>>>
 }
 
 /// The own enumerable properties of `ToObject(value)` that are named by strings.
-pub(super) fn own_enumerable<'a>(value: &StaticValue<'a>) -> Eval<Vec<(Cow<'a, [u8]>, StaticValue<'a>)>> {
+pub(super) fn own_enumerable<'a>(
+    value: &StaticValue<'a>,
+) -> Eval<Vec<(Cow<'a, [u8]>, StaticValue<'a>)>> {
     let index = |i: usize| Cow::Owned(i.to_string().into_bytes());
     Ok(match value {
         StaticValue::Undefined | StaticValue::Null | StaticValue::Hole => return Err(Stop::Abort),
@@ -117,7 +128,10 @@ pub(super) fn own_enumerable<'a>(value: &StaticValue<'a>) -> Eval<Vec<(Cow<'a, [
 }
 
 /// `String.raw({ raw }, ...substitutions)`
-pub(super) fn string_raw<'a>(raw: &[Cow<'a, [u8]>], substitutions: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+pub(super) fn string_raw<'a>(
+    raw: &[Cow<'a, [u8]>],
+    substitutions: Args<'_, 'a>,
+) -> Eval<StaticValue<'a>> {
     let mut text = Vec::new();
     for (i, piece) in raw.iter().enumerate() {
         js_string::push_str(&mut text, piece);
@@ -135,10 +149,18 @@ pub(super) fn string_raw<'a>(raw: &[Cow<'a, [u8]>], substitutions: Args<'_, 'a>)
 
 /// `function.call(this, ...args)` for any value of `function`, as the standard library calls a
 /// callback.
-fn call_value<'a>(function: &StaticValue<'a>, this: &StaticValue<'a>, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+fn call_value<'a>(
+    function: &StaticValue<'a>,
+    this: &StaticValue<'a>,
+    args: Args<'_, 'a>,
+) -> Eval<StaticValue<'a>> {
     match function {
-        StaticValue::Builtin(builtin) if builtin.member() == Member::Call => call(*builtin, this, args),
-        StaticValue::Builtin(builtin) if builtin.member() == Member::PassThrough => Ok(arg(args, 0).clone()),
+        StaticValue::Builtin(builtin) if builtin.member() == Member::Call => {
+            call(*builtin, this, args)
+        }
+        StaticValue::Builtin(builtin) if builtin.member() == Member::PassThrough => {
+            Ok(arg(args, 0).clone())
+        }
         _ => Err(Stop::Abort),
     }
 }
@@ -155,7 +177,11 @@ fn has_prototype(values: &[StaticValue<'_>]) -> bool {
 }
 
 /// `function.call(this, ...args)` for a function in `callAllowed`.
-pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+pub(super) fn call<'a>(
+    function: Builtin,
+    this: &StaticValue<'a>,
+    args: Args<'_, 'a>,
+) -> Eval<StaticValue<'a>> {
     if has_prototype(args) || has_prototype(std::slice::from_ref(this)) {
         return Err(Stop::Abort);
     }
@@ -170,7 +196,9 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
         };
         return match (owner, this) {
             (b"String", StaticValue::String(text)) => string_method(name, text, args),
-            (b"String", this) if !this.is_nullish() && name != b"toString" => string_method(name, &this.to_string()?, args),
+            (b"String", this) if !this.is_nullish() && name != b"toString" => {
+                string_method(name, &this.to_string()?, args)
+            }
             (b"Number", StaticValue::Number(n)) => number_method(name, *n, args),
             (b"Array", StaticValue::Array(items)) => array_method(name, items, args),
             (b"Map", StaticValue::Map(entries)) => map_method(name, entries, args),
@@ -190,12 +218,22 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
         "Number.isNaN" => boolean(first.as_number().is_some_and(f64::is_nan)),
         "Object" => construct(function, args),
         "Object.entries" => Ok(StaticValue::Array(
-            (own_enumerable(first)?.into_iter()).map(|(key, value)| pair(StaticValue::String(key), value)).collect(),
+            (own_enumerable(first)?.into_iter())
+                .map(|(key, value)| pair(StaticValue::String(key), value))
+                .collect(),
         )),
         "Object.keys" => Ok(StaticValue::Array(
-            own_enumerable(first)?.into_iter().map(|(key, _)| StaticValue::String(key)).collect(),
+            own_enumerable(first)?
+                .into_iter()
+                .map(|(key, _)| StaticValue::String(key))
+                .collect(),
         )),
-        "Object.values" => Ok(StaticValue::Array(own_enumerable(first)?.into_iter().map(|(_, value)| value).collect())),
+        "Object.values" => Ok(StaticValue::Array(
+            own_enumerable(first)?
+                .into_iter()
+                .map(|(_, value)| value)
+                .collect(),
+        )),
         "Object.is" => boolean(first.same_value(arg(args, 1))?),
         // Nothing here is frozen: `Object.freeze(a)` has the value of `a`.
         "Object.isExtensible" => boolean(first.is_object()),
@@ -203,10 +241,16 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
         "RegExp" => construct(function, args),
         "String" => match args.is_empty() {
             true => Ok(StaticValue::string(&b""[..])),
-            false => first.to_js_string().map(StaticValue::String).ok_or(Stop::Abort),
+            false => first
+                .to_js_string()
+                .map(StaticValue::String)
+                .ok_or(Stop::Abort),
         },
         "String.fromCharCode" => {
-            let units: Eval<Vec<u16>> = args.iter().map(|it| Ok(to_uint32(it.to_number()?) as u16)).collect();
+            let units: Eval<Vec<u16>> = args
+                .iter()
+                .map(|it| Ok(to_uint32(it.to_number()?) as u16))
+                .collect();
             text_of_units(&units?)
         }
         "String.fromCodePoint" => {
@@ -226,14 +270,21 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
             let raw = get_member(first, &PropertyKey::String(Cow::Borrowed(b"raw")))?;
             let pieces: Eval<Vec<_>> = match &raw {
                 StaticValue::Array(items) => items.iter().map(StaticValue::to_string).collect(),
-                StaticValue::String(text) => to_utf16(text).iter().map(|&unit| Ok(Cow::Owned(from_utf16(&[unit])))).collect(),
+                StaticValue::String(text) => to_utf16(text)
+                    .iter()
+                    .map(|&unit| Ok(Cow::Owned(from_utf16(&[unit]))))
+                    .collect(),
                 _ => return Err(Stop::Abort),
             };
             string_raw(&pieces?, args.get(1..).unwrap_or_default())
         }
-        "Symbol.for" => Ok(StaticValue::Symbol(StaticSymbol::Registered(first.to_string()?))),
+        "Symbol.for" => Ok(StaticValue::Symbol(StaticSymbol::Registered(
+            first.to_string()?,
+        ))),
         "Symbol.keyFor" => match first {
-            StaticValue::Symbol(StaticSymbol::Registered(key)) => Ok(StaticValue::String(key.clone())),
+            StaticValue::Symbol(StaticSymbol::Registered(key)) => {
+                Ok(StaticValue::String(key.clone()))
+            }
             StaticValue::Symbol(StaticSymbol::WellKnown(_)) => Ok(StaticValue::Undefined),
             _ => Err(Stop::Abort),
         },
@@ -246,7 +297,10 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
         "isFinite" => boolean(first.to_number()?.is_finite()),
         "isNaN" => boolean(first.to_number()?.is_nan()),
         // Nothing that is made by evaluating an expression is the prototype of anything.
-        "isPrototypeOf" if !first.is_object() || (this.is_object() && !matches!(this, StaticValue::Builtin(_))) => {
+        "isPrototypeOf"
+            if !first.is_object()
+                || (this.is_object() && !matches!(this, StaticValue::Builtin(_))) =>
+        {
             boolean(false)
         }
         "parseFloat" => number(parse_float(&first.to_string()?)),
@@ -275,7 +329,9 @@ pub(super) fn construct<'a>(function: Builtin, args: Args<'_, 'a>) -> Eval<Stati
                 if !entry.is_object() {
                     return Err(Stop::Abort);
                 }
-                let part = |name: &'static [u8]| get_member(&entry, &PropertyKey::String(Cow::Borrowed(name)));
+                let part = |name: &'static [u8]| {
+                    get_member(&entry, &PropertyKey::String(Cow::Borrowed(name)))
+                };
                 let (key, value) = (without_negative_zero(part(b"0")?), part(b"1")?);
                 match find_same(entries.iter().map(|entry| &entry.0), &key)? {
                     Some(at) => entries[at].1 = value,
@@ -301,16 +357,24 @@ pub(super) fn construct<'a>(function: Builtin, args: Args<'_, 'a>) -> Eval<Stati
             _ if first.is_object() => Ok(first.clone()),
             _ => Ok(StaticValue::Wrapper(Box::new(first.clone()))),
         },
-        "Boolean" | "Number" => Ok(StaticValue::Wrapper(Box::new(call(function, &StaticValue::Undefined, args)?))),
-        "String" => Ok(StaticValue::Wrapper(Box::new(StaticValue::String(match args.is_empty() {
-            true => Cow::Borrowed(b""),
-            false => first.to_string()?,
-        })))),
+        "Boolean" | "Number" => Ok(StaticValue::Wrapper(Box::new(call(
+            function,
+            &StaticValue::Undefined,
+            args,
+        )?))),
+        "String" => Ok(StaticValue::Wrapper(Box::new(StaticValue::String(
+            match args.is_empty() {
+                true => Cow::Borrowed(b""),
+                false => first.to_string()?,
+            },
+        )))),
         "RegExp" => {
             let flags = arg(args, 1);
             let (pattern, flags) = match (first, flags) {
                 (StaticValue::Regex { .. }, StaticValue::Undefined) => return Ok(first.clone()),
-                (StaticValue::Regex { pattern, .. }, flags) => (pattern.clone(), flags.to_string()?),
+                (StaticValue::Regex { pattern, .. }, flags) => {
+                    (pattern.clone(), flags.to_string()?)
+                }
                 (pattern, flags) => {
                     let text_or_empty = |value: &StaticValue<'a>| match value {
                         StaticValue::Undefined => Ok(Cow::Borrowed(&b""[..])),
@@ -329,17 +393,33 @@ pub(super) fn construct<'a>(function: Builtin, args: Args<'_, 'a>) -> Eval<Stati
 /// `regex.flags` for a regular expression that is made with `flags`. `None` if they are not valid.
 pub(super) fn sorted_flags(flags: &[u8]) -> Option<Cow<'_, [u8]>> {
     const ORDER: &[u8] = b"dgimsuvy";
-    let sorted: Vec<u8> = ORDER.iter().copied().filter(|&flag| strings::contains_char(flags, flag)).collect();
-    if sorted.len() != flags.len() || (strings::contains_char(flags, b'u') && strings::contains_char(flags, b'v')) {
+    let sorted: Vec<u8> = ORDER
+        .iter()
+        .copied()
+        .filter(|&flag| strings::contains_char(flags, flag))
+        .collect();
+    if sorted.len() != flags.len()
+        || (strings::contains_char(flags, b'u') && strings::contains_char(flags, b'v'))
+    {
         return None;
     }
-    Some(if sorted == flags { Cow::Borrowed(flags) } else { Cow::Owned(sorted) })
+    Some(if sorted == flags {
+        Cow::Borrowed(flags)
+    } else {
+        Cow::Owned(sorted)
+    })
 }
 
 /// `new RegExp(pattern, flags)`. `None` if that throws.
 fn new_regex<'a>(pattern: Cow<'a, [u8]>, flags: &[u8]) -> Option<StaticValue<'a>> {
     let flags: Cow<'a, [u8]> = Cow::Owned(sorted_flags(flags)?.into_owned());
-    validate_pattern(&pattern, Mode::of_flags(&flags), Options::default(), &mut Ignore).ok()?;
+    validate_pattern(
+        &pattern,
+        Mode::of_flags(&flags),
+        Options::default(),
+        &mut Ignore,
+    )
+    .ok()?;
     Some(StaticValue::Regex {
         pattern: escape_regex_source(pattern),
         flags,
@@ -421,7 +501,11 @@ fn to_bigint<'a>(value: &StaticValue<'a>) -> Eval<StaticValue<'a>> {
     }))
 }
 
-fn string_method<'a>(name: &[u8], text: &Cow<'a, [u8]>, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+fn string_method<'a>(
+    name: &[u8],
+    text: &Cow<'a, [u8]>,
+    args: Args<'_, 'a>,
+) -> Eval<StaticValue<'a>> {
     let (first, second) = (arg(args, 0), arg(args, 1));
     // The part of `text` that `part` returns.
     let borrowed = |part: fn(&[u8]) -> &[u8]| {
@@ -487,12 +571,26 @@ fn string_method<'a>(name: &[u8], text: &Cow<'a, [u8]>, args: Args<'_, 'a>) -> E
         }
         b"charCodeAt" => {
             let index = first.to_integer()?;
-            number(if index >= 0.0 { units.get(index as usize).map_or(f64::NAN, |&unit| f64::from(unit)) } else { f64::NAN })
+            number(if index >= 0.0 {
+                units
+                    .get(index as usize)
+                    .map_or(f64::NAN, |&unit| f64::from(unit))
+            } else {
+                f64::NAN
+            })
         }
         b"codePointAt" => {
             let index = first.to_integer()?;
-            let rest = if index >= 0.0 { units.get(index as usize..).unwrap_or_default() } else { &[] };
-            Ok(js_string::code_points_of(rest).next().map_or(StaticValue::Undefined, |c| StaticValue::Number(f64::from(c))))
+            let rest = if index >= 0.0 {
+                units.get(index as usize..).unwrap_or_default()
+            } else {
+                &[]
+            };
+            Ok(js_string::code_points_of(rest)
+                .next()
+                .map_or(StaticValue::Undefined, |c| {
+                    StaticValue::Number(f64::from(c))
+                }))
         }
         b"endsWith" => {
             let search = search_text()?;
@@ -512,12 +610,20 @@ fn string_method<'a>(name: &[u8], text: &Cow<'a, [u8]>, args: Args<'_, 'a>) -> E
         }
         b"indexOf" => {
             let search = to_utf16(&first.to_string()?);
-            index_or_minus_one(js_string::index_of(&units, &search, clamped_index(second, len)?))
+            index_or_minus_one(js_string::index_of(
+                &units,
+                &search,
+                clamped_index(second, len)?,
+            ))
         }
         b"lastIndexOf" => {
             let search = to_utf16(&first.to_string()?);
             let position = second.to_number()?;
-            let from = if position.is_nan() { len } else { position.trunc().clamp(0.0, len as f64) as usize };
+            let from = if position.is_nan() {
+                len
+            } else {
+                position.trunc().clamp(0.0, len as f64) as usize
+            };
             index_or_minus_one(js_string::last_index_of(&units, &search, from))
         }
         b"padEnd" | b"padStart" => {
@@ -540,7 +646,10 @@ fn string_method<'a>(name: &[u8], text: &Cow<'a, [u8]>, args: Args<'_, 'a>) -> E
             text_of_units(&padded)
         }
         b"slice" => {
-            let (from, to) = (relative_arg(first, len, 0)?, relative_arg(second, len, len)?);
+            let (from, to) = (
+                relative_arg(first, len, 0)?,
+                relative_arg(second, len, len)?,
+            );
             text_of_units(units.get(from..to).unwrap_or_default())
         }
         b"substr" => {
@@ -570,7 +679,9 @@ fn number_method<'a>(name: &[u8], n: f64, args: Args<'_, 'a>) -> Eval<StaticValu
     let is_given = *first != StaticValue::Undefined;
     let text = match name {
         b"toExponential" if !n.is_finite() => text::number_to_string(n),
-        b"toExponential" if (0.0..=100.0).contains(&digits) => to_exponential(n, is_given.then_some(digits as usize)),
+        b"toExponential" if (0.0..=100.0).contains(&digits) => {
+            to_exponential(n, is_given.then_some(digits as usize))
+        }
         b"toFixed" if (0.0..=100.0).contains(&digits) => to_fixed(n, digits as usize),
         b"toPrecision" if !is_given || !n.is_finite() => text::number_to_string(n),
         b"toPrecision" if (1.0..=100.0).contains(&digits) => to_precision(n, digits as usize),
@@ -581,31 +692,51 @@ fn number_method<'a>(name: &[u8], n: f64, args: Args<'_, 'a>) -> Eval<StaticValu
     Ok(StaticValue::string(text))
 }
 
-fn array_method<'a>(name: &[u8], items: &[StaticValue<'a>], args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+fn array_method<'a>(
+    name: &[u8],
+    items: &[StaticValue<'a>],
+    args: Args<'_, 'a>,
+) -> Eval<StaticValue<'a>> {
     let (first, second) = (arg(args, 0), arg(args, 1));
     let len = items.len();
     // Whether the callback accepts the element at `i`.
     let test = |i: usize, item: &StaticValue<'a>| -> Eval<bool> {
-        let args = [element(item), StaticValue::Number(i as f64), StaticValue::Array(items.to_vec())];
+        let args = [
+            element(item),
+            StaticValue::Number(i as f64),
+            StaticValue::Array(items.to_vec()),
+        ];
         Ok(call_value(first, second, &args)?.is_truthy())
     };
-    let present = || items.iter().enumerate().filter(|(_, item)| **item != StaticValue::Hole);
-    let iterator = |items: Vec<StaticValue<'a>>| Ok(StaticValue::Iterator(IteratorKind::Array, items));
+    let present = || {
+        items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| **item != StaticValue::Hole)
+    };
+    let iterator =
+        |items: Vec<StaticValue<'a>>| Ok(StaticValue::Iterator(IteratorKind::Array, items));
     // An array without elements still requires a function.
-    if matches!(name, b"every" | b"some" | b"filter" | b"find" | b"findIndex")
-        && !matches!(first, StaticValue::Builtin(builtin) if builtin.is_callable())
+    if matches!(
+        name,
+        b"every" | b"some" | b"filter" | b"find" | b"findIndex"
+    ) && !matches!(first, StaticValue::Builtin(builtin) if builtin.is_callable())
     {
         return Err(Stop::Abort);
     }
     match name {
-        b"at" => Ok(at_index(first, len)?.map_or(StaticValue::Undefined, |index| element(&items[index]))),
+        b"at" => Ok(
+            at_index(first, len)?.map_or(StaticValue::Undefined, |index| element(&items[index]))
+        ),
         b"concat" => {
             let mut all = items.to_vec();
             for more in args {
                 match more {
                     StaticValue::Array(more) => all.extend_from_slice(more),
                     // It may have a `Symbol.isConcatSpreadable`.
-                    StaticValue::Object(properties) if properties.iter().any(|it| it.0.as_str().is_none()) => {
+                    StaticValue::Object(properties)
+                        if properties.iter().any(|it| it.0.as_str().is_none()) =>
+                    {
                         return Err(Stop::Abort);
                     }
                     more => all.push(more.clone()),
@@ -617,7 +748,9 @@ fn array_method<'a>(name: &[u8], items: &[StaticValue<'a>], args: Args<'_, 'a>) 
             Ok(StaticValue::Array(all))
         }
         b"entries" => iterator(
-            (items.iter().enumerate()).map(|(i, item)| pair(StaticValue::Number(i as f64), element(item))).collect(),
+            (items.iter().enumerate())
+                .map(|(i, item)| pair(StaticValue::Number(i as f64), element(item)))
+                .collect(),
         ),
         b"keys" => iterator((0..len).map(|i| StaticValue::Number(i as f64)).collect()),
         b"values" => iterator(items.iter().map(element).collect()),
@@ -649,10 +782,18 @@ fn array_method<'a>(name: &[u8], items: &[StaticValue<'a>], args: Args<'_, 'a>) 
         b"find" | b"findIndex" => {
             for (i, item) in items.iter().enumerate() {
                 if test(i, item)? {
-                    return if name == b"find" { Ok(element(item)) } else { number(i as f64) };
+                    return if name == b"find" {
+                        Ok(element(item))
+                    } else {
+                        number(i as f64)
+                    };
                 }
             }
-            if name == b"find" { Ok(StaticValue::Undefined) } else { number(-1.0) }
+            if name == b"find" {
+                Ok(StaticValue::Undefined)
+            } else {
+                number(-1.0)
+            }
         }
         b"flat" => {
             let depth = match first {
@@ -697,8 +838,13 @@ fn array_method<'a>(name: &[u8], items: &[StaticValue<'a>], args: Args<'_, 'a>) 
         },
         b"toString" => Ok(StaticValue::String(join(items, b",")?)),
         b"slice" => {
-            let (from, to) = (relative_arg(first, len, 0)?, relative_arg(second, len, len)?);
-            Ok(StaticValue::Array(items.get(from..to).unwrap_or_default().to_vec()))
+            let (from, to) = (
+                relative_arg(first, len, 0)?,
+                relative_arg(second, len, len)?,
+            );
+            Ok(StaticValue::Array(
+                items.get(from..to).unwrap_or_default().to_vec(),
+            ))
         }
         _ => Err(Stop::Abort),
     }
@@ -720,23 +866,36 @@ fn map_method<'a>(
     args: Args<'_, 'a>,
 ) -> Eval<StaticValue<'a>> {
     let found = || find_same(entries.iter().map(|entry| &entry.0), arg(args, 0));
-    let iterator = |items: Vec<StaticValue<'a>>| Ok(StaticValue::Iterator(IteratorKind::Map, items));
+    let iterator =
+        |items: Vec<StaticValue<'a>>| Ok(StaticValue::Iterator(IteratorKind::Map, items));
     match name {
         b"get" => Ok(found()?.map_or(StaticValue::Undefined, |at| entries[at].1.clone())),
         b"has" => boolean(found()?.is_some()),
-        b"entries" => iterator(entries.iter().map(|(key, value)| pair(key.clone(), value.clone())).collect()),
+        b"entries" => iterator(
+            entries
+                .iter()
+                .map(|(key, value)| pair(key.clone(), value.clone()))
+                .collect(),
+        ),
         b"keys" => iterator(entries.iter().map(|entry| entry.0.clone()).collect()),
         b"values" => iterator(entries.iter().map(|entry| entry.1.clone()).collect()),
         _ => Err(Stop::Abort),
     }
 }
 
-fn set_method<'a>(name: &[u8], items: &[StaticValue<'a>], args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
+fn set_method<'a>(
+    name: &[u8],
+    items: &[StaticValue<'a>],
+    args: Args<'_, 'a>,
+) -> Eval<StaticValue<'a>> {
     match name {
         b"has" => boolean(find_same(items.iter(), arg(args, 0))?.is_some()),
         b"entries" => Ok(StaticValue::Iterator(
             IteratorKind::Set,
-            items.iter().map(|item| pair(item.clone(), item.clone())).collect(),
+            items
+                .iter()
+                .map(|item| pair(item.clone(), item.clone()))
+                .collect(),
         )),
         b"values" => Ok(StaticValue::Iterator(IteratorKind::Set, items.to_vec())),
         _ => Err(Stop::Abort),
@@ -759,13 +918,20 @@ fn round_to_half_precision(x: f64) -> f64 {
     let exponent = (((x.to_bits() >> 52) & 0x7FF) as i32 - 1023).max(-14);
     let unit = 2f64.powi(exponent - 10);
     let rounded = (x / unit).round_ties_even() * unit;
-    if rounded.abs() > 65504.0 { f64::INFINITY.copysign(x) } else { rounded }
+    if rounded.abs() > 65504.0 {
+        f64::INFINITY.copysign(x)
+    } else {
+        rounded
+    }
 }
 
 /// `Math[name](...args)`. The last digit of what is not rounded correctly by every implementation,
 /// such as `Math.sin`, can differ from that of a JavaScript engine.
 fn math<'a>(name: &str, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
-    let numbers: Vec<f64> = args.iter().map(StaticValue::to_number).collect::<Eval<_>>()?;
+    let numbers: Vec<f64> = args
+        .iter()
+        .map(StaticValue::to_number)
+        .collect::<Eval<_>>()?;
     let x = numbers.first().copied().unwrap_or(f64::NAN);
     let y = numbers.get(1).copied().unwrap_or(f64::NAN);
     let has_nan = numbers.iter().any(|n| n.is_nan());
@@ -789,7 +955,9 @@ fn math<'a>(name: &str, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
         "f16round" => round_to_half_precision(x),
         "fround" => f64::from(x as f32),
         "hypot" => {
-            let largest = numbers.iter().fold(0.0, |largest: f64, n| largest.max(n.abs()));
+            let largest = numbers
+                .iter()
+                .fold(0.0, |largest: f64, n| largest.max(n.abs()));
             if largest.is_infinite() {
                 f64::INFINITY
             } else if has_nan {
@@ -816,10 +984,18 @@ fn math<'a>(name: &str, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
         "max" | "min" if has_nan => f64::NAN,
         // `0 > -0`
         "max" => numbers.iter().fold(f64::NEG_INFINITY, |max, &n| {
-            if n > max || (n == 0.0 && max == 0.0 && max.is_sign_negative()) { n } else { max }
+            if n > max || (n == 0.0 && max == 0.0 && max.is_sign_negative()) {
+                n
+            } else {
+                max
+            }
         }),
         "min" => numbers.iter().fold(f64::INFINITY, |min, &n| {
-            if n < min || (n == 0.0 && min == 0.0 && n.is_sign_negative()) { n } else { min }
+            if n < min || (n == 0.0 && min == 0.0 && n.is_sign_negative()) {
+                n
+            } else {
+                min
+            }
         }),
         "pow" => pow(x, y),
         "round" => {
@@ -865,14 +1041,18 @@ fn encode_uri<'a>(text: &[u8], unescaped: &[u8]) -> Eval<StaticValue<'a>> {
 }
 
 fn hex_value(digits: &[u16]) -> Option<u32> {
-    digits.iter().try_fold(0u32, |value, &digit| Some((value << 4) | char::from_u32(u32::from(digit))?.to_digit(16)?))
+    digits.iter().try_fold(0u32, |value, &digit| {
+        Some((value << 4) | char::from_u32(u32::from(digit))?.to_digit(16)?)
+    })
 }
 
 /// `Decode`: `decodeURI` and `decodeURIComponent`. The escapes of the characters in `preserved`
 /// stay. It throws for an escape that is incomplete or is not UTF-8.
 fn decode_uri<'a>(text: &[u8], preserved: &[u8]) -> Eval<StaticValue<'a>> {
     let byte_at = |at: usize| match text.get(at..at + 3) {
-        Some(&[b'%', high, low]) => hex_value(&[u16::from(high), u16::from(low)]).map(|byte| byte as u8),
+        Some(&[b'%', high, low]) => {
+            hex_value(&[u16::from(high), u16::from(low)]).map(|byte| byte as u8)
+        }
         _ => None,
     };
     let mut decoded = Vec::with_capacity(text.len());
@@ -909,7 +1089,11 @@ fn escape<'a>(text: &[u8]) -> StaticValue<'a> {
     let mut escaped = Vec::with_capacity(text.len());
     for unit in to_utf16(text) {
         match u8::try_from(unit) {
-            Ok(byte) if byte.is_ascii_alphanumeric() || strings::contains_char(b"@*_+-./", byte) => escaped.push(byte),
+            Ok(byte)
+                if byte.is_ascii_alphanumeric() || strings::contains_char(b"@*_+-./", byte) =>
+            {
+                escaped.push(byte)
+            }
             Ok(byte) => push_percent_escape(&mut escaped, byte),
             Err(_) => {
                 escaped.extend_from_slice(b"%u");
@@ -927,7 +1111,9 @@ fn unescape(units: &[u16]) -> Vec<u16> {
     while let [unit, after @ ..] = rest {
         let escape = match after {
             _ if *unit != u16::from(b'%') => None,
-            [u, digits @ ..] if *u == u16::from(b'u') => digits.get(..4).and_then(hex_value).map(|value| (value, 5)),
+            [u, digits @ ..] if *u == u16::from(b'u') => {
+                digits.get(..4).and_then(hex_value).map(|value| (value, 5))
+            }
             digits => digits.get(..2).and_then(hex_value).map(|value| (value, 2)),
         };
         match escape {
@@ -953,7 +1139,9 @@ pub(super) fn assign<'a>(
         return Ok(());
     }
     if let StaticValue::Object(source) = value {
-        return (source.iter()).try_for_each(|(key, value)| set_property(properties, key.clone(), value.clone()));
+        return (source.iter())
+            .try_for_each(|(key, value)| set_property(properties, key.clone(), value.clone()));
     }
-    (own_enumerable(value)?.into_iter()).try_for_each(|(key, value)| set_property(properties, PropertyKey::String(key), value))
+    (own_enumerable(value)?.into_iter())
+        .try_for_each(|(key, value)| set_property(properties, PropertyKey::String(key), value))
 }

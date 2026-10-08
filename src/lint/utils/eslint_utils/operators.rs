@@ -86,7 +86,11 @@ fn bigint_operation(op: BinOp, a: i128, b: i128) -> Option<i128> {
 
 /// `left op right`, for the operators that ESTree calls a `BinaryExpression`, but for `in` and
 /// `instanceof`.
-pub(super) fn binary<'a>(op: BinOp, left: &StaticValue<'a>, right: &StaticValue<'a>) -> Eval<StaticValue<'a>> {
+pub(super) fn binary<'a>(
+    op: BinOp,
+    left: &StaticValue<'a>,
+    right: &StaticValue<'a>,
+) -> Eval<StaticValue<'a>> {
     let is = |accepts: fn(Ordering) -> bool| -> Eval<StaticValue<'a>> {
         Ok(StaticValue::Bool(left.compare(right)?.is_some_and(accepts)))
     };
@@ -103,14 +107,22 @@ pub(super) fn binary<'a>(op: BinOp, left: &StaticValue<'a>, right: &StaticValue<
             let (left, right) = (left.to_primitive()?, right.to_primitive()?);
             if matches!(left, StaticValue::String(_)) || matches!(right, StaticValue::String(_)) {
                 let text = js_string::concat(left.to_string()?, right.to_string()?);
-                return if text.len() > MAX_LEN { Err(Stop::Abort) } else { Ok(StaticValue::String(text)) };
+                return if text.len() > MAX_LEN {
+                    Err(Stop::Abort)
+                } else {
+                    Ok(StaticValue::String(text))
+                };
             }
         }
         _ => {}
     }
     match (to_numeric(left)?, to_numeric(right)?) {
-        (Numeric::Number(a), Numeric::Number(b)) => Ok(StaticValue::Number(number_operation(op, a, b)?)),
-        (Numeric::BigInt(a), Numeric::BigInt(b)) => Ok(StaticValue::BigInt(bigint_operation(op, a, b).ok_or(Stop::Abort)?)),
+        (Numeric::Number(a), Numeric::Number(b)) => {
+            Ok(StaticValue::Number(number_operation(op, a, b)?))
+        }
+        (Numeric::BigInt(a), Numeric::BigInt(b)) => Ok(StaticValue::BigInt(
+            bigint_operation(op, a, b).ok_or(Stop::Abort)?,
+        )),
         _ => Err(Stop::Abort),
     }
 }

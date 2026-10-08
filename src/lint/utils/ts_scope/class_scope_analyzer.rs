@@ -42,7 +42,7 @@ fn extract_computed_name(computed_name: Expr<'_>) -> Option<ExtractedName<'_>> {
         ExprKind::BigInt(value) => {
             let digits = value.bytes();
             Cow::Borrowed(digits.strip_suffix(b"n").unwrap_or(digits))
-        },
+        }
         ExprKind::True => Cow::Borrowed(&b"true"[..]),
         ExprKind::False => Cow::Borrowed(&b"false"[..]),
         ExprKind::Null => Cow::Borrowed(&b"null"[..]),
@@ -66,7 +66,10 @@ fn extract_name_for_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Extracte
         KeyKind::ComputedString(name) | KeyKind::ComputedNumber(name) => {
             let text = file.text();
             let start = skip_trivia(text, whole.start + 1);
-            (name, Span::new(start, skip_trivia_back(text, whole.end.saturating_sub(1))))
+            (
+                name,
+                Span::new(start, skip_trivia_back(text, whole.end.saturating_sub(1))),
+            )
         }
         KeyKind::Ident(name)
         | KeyKind::String(name)
@@ -88,7 +91,10 @@ pub fn extract_name_for_member(node: MemberNode<'_>) -> Option<ExtractedName<'_>
         MemberNode::Member(member) if member.kind() == MemberKind::Constructor => {
             let text = member.file().text();
             let start = member.span().start;
-            let start = skip_trivia(text, member.modifiers().last().map_or(start, |it| it.span().end));
+            let start = skip_trivia(
+                text,
+                member.modifiers().last().map_or(start, |it| it.span().end),
+            );
             let len = token_len(text.get(start as usize..).unwrap_or_default());
             Some(ExtractedName {
                 code_name: Cow::Borrowed(b"constructor"),
@@ -226,7 +232,9 @@ impl<'a> ClassMemberUsage<'a> {
     /// [`ClassMember::is_static`]. Of the members with the same name, only the last is one.
     pub fn members_of(&self, class: &ClassScopeResult<'a>) -> &[ClassMember<'a>] {
         let first = class.first_member as usize;
-        self.members.get(first..first + class.member_count as usize).unwrap_or_default()
+        self.members
+            .get(first..first + class.member_count as usize)
+            .unwrap_or_default()
     }
 
     /// The members of all the classes.
@@ -253,11 +261,16 @@ impl<'a> ClassMemberUsage<'a> {
             let Some(member) = ClassMember::create(node) else {
                 return;
             };
-            let same = self.members.get_mut(first..).unwrap_or_default().iter_mut().find(|it| {
-                it.name.is_private == member.name.is_private
-                    && it.name.code_name == member.name.code_name
-                    && it.is_static() == member.is_static()
-            });
+            let same = self
+                .members
+                .get_mut(first..)
+                .unwrap_or_default()
+                .iter_mut()
+                .find(|it| {
+                    it.name.is_private == member.name.is_private
+                        && it.name.code_name == member.name.code_name
+                        && it.is_static() == member.is_static()
+                });
             match same {
                 Some(same) => *same = member,
                 None => self.members.push(member),
@@ -301,11 +314,21 @@ impl<'a> ClassMemberUsage<'a> {
 /// What upstream's `countReference` counts as a write: `node`, the access to the member, is only
 /// assigned to. `a.b += 1` and `a.b++` are writes if nothing takes their value.
 fn is_write_only_usage(node: Expr) -> bool {
-    let is_statement = |e: Expr| matches!(e.parent(), Node::Stmt(it) if is_expression_statement(it));
-    match node.parent().as_expr().map(|parent| (parent, parent.kind())) {
-        Some((parent, ExprKind::Assign { op: Some(_), target, .. })) if target == node => {
-            is_statement(parent)
-        }
+    let is_statement =
+        |e: Expr| matches!(e.parent(), Node::Stmt(it) if is_expression_statement(it));
+    match node
+        .parent()
+        .as_expr()
+        .map(|parent| (parent, parent.kind()))
+    {
+        Some((
+            parent,
+            ExprKind::Assign {
+                op: Some(_),
+                target,
+                ..
+            },
+        )) if target == node => is_statement(parent),
         Some((
             parent,
             ExprKind::Unary {
@@ -339,13 +362,19 @@ impl<'a> Analyzer<'a> {
     fn find_class_scope_with_name(&self, name: Name<'a>) -> Option<u32> {
         let classes = self.scopes.iter().rev().map(|scope| scope.class);
         classes.filter(|&class| class != NONE).find(|&class| {
-            self.usage.classes.get(class as usize).is_some_and(|it| it.class_name == Some(name))
+            self.usage
+                .classes
+                .get(class as usize)
+                .is_some_and(|it| it.class_name == Some(name))
         })
     }
 
     /// The class that `this` belongs to here, and whether it is the class itself.
     fn this_class(&self) -> Option<(u32, bool)> {
-        let scope = self.scopes.last().filter(|scope| scope.this_context != NONE)?;
+        let scope = self
+            .scopes
+            .last()
+            .filter(|scope| scope.this_context != NONE)?;
         Some((scope.this_context, scope.is_static_this_context))
     }
 
@@ -353,9 +382,10 @@ impl<'a> Analyzer<'a> {
     /// itself.
     fn class_of_annotation(&self, ty: TypeNode<'a>) -> Option<(u32, bool)> {
         match ty.kind() {
-            TypeKind::Ref { name, .. } => {
-                Some((self.find_class_scope_with_name(name.as_ident()?.name())?, false))
-            }
+            TypeKind::Ref { name, .. } => Some((
+                self.find_class_scope_with_name(name.as_ident()?.name())?,
+                false,
+            )),
             TypeKind::Typeof { expr, .. } => {
                 Some((self.find_class_scope_with_name(expr.as_ident()?)?, true))
             }
@@ -564,7 +594,9 @@ impl<'a> Analyzer<'a> {
                 self.visit_children(Node::Expr(e));
                 self.member_expression(e, obj);
             }
-            ExprKind::PrivateIdentifier(name) => self.private_identifier(name, e.parent().as_expr()),
+            ExprKind::PrivateIdentifier(name) => {
+                self.private_identifier(name, e.parent().as_expr())
+            }
             ExprKind::Assign { target, value, .. } => {
                 self.visit_children(Node::Expr(e));
                 if value.tag() == ExprTag::This
@@ -578,7 +610,9 @@ impl<'a> Analyzer<'a> {
             ExprKind::Jsx(jsx) => {
                 self.visit_all(jsx.type_args());
                 jsx.attrs().iter().for_each(|it| self.visit(Node::Prop(it)));
-                jsx.children().iter().for_each(|it| self.visit(Node::Expr(it)));
+                jsx.children()
+                    .iter()
+                    .for_each(|it| self.visit(Node::Expr(it)));
             }
             _ => self.visit_children(Node::Expr(e)),
         }

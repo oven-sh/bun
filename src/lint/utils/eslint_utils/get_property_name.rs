@@ -37,7 +37,9 @@ pub fn get_property_name<'a>(
         },
         Node::Prop(prop) => property_name_of_key(prop.key()?, scope),
         Node::PatProp(prop) => property_name_of_key(prop.key()?, scope),
-        Node::Member(member) if member.kind() == MemberKind::Constructor => Some(Cow::Borrowed(b"constructor")),
+        Node::Member(member) if member.kind() == MemberKind::Constructor => {
+            Some(Cow::Borrowed(b"constructor"))
+        }
         Node::Member(member) => property_name_of_key(member.key()?, scope),
         _ => None,
     }

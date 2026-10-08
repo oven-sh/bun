@@ -27,7 +27,11 @@ fn inner_codes<'a>(
     is_in_chain_expression: bool,
 ) -> SmallVec<[Cow<'a, [u8]>; 2]> {
     let itself = [node];
-    let inner_nodes: &[Expr<'a>] = if inner_nodes.is_empty() { &itself } else { inner_nodes };
+    let inner_nodes: &[Expr<'a>] = if inner_nodes.is_empty() {
+        &itself
+    } else {
+        inner_nodes
+    };
     inner_nodes
         .iter()
         .map(|&inner| {
@@ -264,7 +268,10 @@ pub fn is_left_hand_side(node: Expr<'_>) -> bool {
     };
     match parent.kind() {
         ExprKind::Unary { op, .. } => {
-            matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec)
+            matches!(
+                op,
+                UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+            )
         }
         ExprKind::Binary { op, left, .. } => op != BinOp::Comma && left == node,
         ExprKind::Assign { target, .. } => target == node,

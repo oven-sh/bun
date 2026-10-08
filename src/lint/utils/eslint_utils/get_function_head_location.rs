@@ -20,7 +20,12 @@ fn opening_paren(func: Func<'_>) -> Option<u32> {
         return Some(paren);
     };
     let type_params = Span::new(first.span().start, paren);
-    Some(func.file().tokens_in(type_params).find(is_opening_paren_token).map_or(paren, |token| token.start()))
+    Some(
+        func.file()
+            .tokens_in(type_params)
+            .find(is_opening_paren_token)
+            .map_or(paren, |token| token.start()),
+    )
 }
 
 /// eslint-utils' `getFunctionHeadLocation`: what to report for a function.

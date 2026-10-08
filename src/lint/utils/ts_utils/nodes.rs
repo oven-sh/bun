@@ -65,13 +65,27 @@ pub fn is_node_equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
             | (ExprKind::String(a), ExprKind::String(b))
             | (ExprKind::BigInt(a), ExprKind::BigInt(b)) => return a == b,
             (ExprKind::Number(a), ExprKind::Number(b)) => return a == b,
-            (ExprKind::Dot { obj: a, name, .. }, ExprKind::Dot { obj: b, name: other, .. }) => {
+            (
+                ExprKind::Dot { obj: a, name, .. },
+                ExprKind::Dot {
+                    obj: b,
+                    name: other,
+                    ..
+                },
+            ) => {
                 if is_private(name) || is_private(other) || name.name() != other.name() {
                     return false;
                 }
                 (a, b)
             }
-            (ExprKind::Index { obj: a, index, .. }, ExprKind::Index { obj: b, index: other, .. }) => {
+            (
+                ExprKind::Index { obj: a, index, .. },
+                ExprKind::Index {
+                    obj: b,
+                    index: other,
+                    ..
+                },
+            ) => {
                 if !is_node_equal(index, other) {
                     return false;
                 }
@@ -162,15 +176,18 @@ pub fn is_conditional_test(e: Expr<'_>) -> bool {
     loop {
         node = match node.parent() {
             Node::Expr(parent) => match parent.kind() {
-                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    ..
+                }
                 | ExprKind::Unary { op: UnOp::Not, .. } => parent,
                 ExprKind::Cond { test, .. } if test == node => return true,
                 ExprKind::Cond { .. } => parent,
-                ExprKind::Binary { op: BinOp::Comma, right, .. }
-                    if right == node && is_sequence_root(parent) =>
-                {
-                    parent
-                }
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } if right == node && is_sequence_root(parent) => parent,
                 _ => return false,
             },
             Node::Stmt(parent) => {
@@ -190,13 +207,16 @@ pub fn is_conditional_test(e: Expr<'_>) -> bool {
 /// typescript-eslint's `getParentFunctionNode`: the innermost function around the node, not the
 /// node itself. Static blocks, signatures and function types do not count.
 pub fn get_parent_function_node<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
-    node.into().ancestors().find_map(|it| it.as_func().and_then(|func| as_function(func)))
+    node.into()
+        .ancestors()
+        .find_map(|it| it.as_func().and_then(|func| as_function(func)))
 }
 
 /// typescript-eslint's `getTextWithParentheses`: the text of `e` with the innermost pair of
 /// parentheses around it, if there is one.
 pub fn get_text_with_parentheses(e: Expr<'_>) -> &[u8] {
-    e.file().slice(e.parens().next().unwrap_or_else(|| e.span()))
+    e.file()
+        .slice(e.parens().next().unwrap_or_else(|| e.span()))
 }
 
 /// typescript-eslint's `getAwaitTokenRemovalRange`: from the start of the `await` token to the

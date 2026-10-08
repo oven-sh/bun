@@ -49,7 +49,9 @@ impl SymbolSet {
 
     pub fn contains(&self, symbol: Symbol) -> bool {
         let at = symbol.id().idx();
-        self.words.get(at / 64).is_some_and(|word| word & (1 << (at % 64)) != 0)
+        self.words
+            .get(at / 64)
+            .is_some_and(|word| word & (1 << (at % 64)) != 0)
     }
 }
 
@@ -232,13 +234,20 @@ impl<'a> Variable<'a> {
     pub fn defs(self) -> impl Iterator<Item = Declaration<'a>> + 'a {
         let own = self.class.map(Declaration::Class);
         let declarations = own.is_none().then(|| self.symbol.declarations());
-        own.into_iter().chain(declarations.into_iter().flatten().filter(|it| is_definition(*it)))
+        own.into_iter().chain(
+            declarations
+                .into_iter()
+                .flatten()
+                .filter(|it| is_definition(*it)),
+        )
     }
 
     /// `variable.references`
     pub fn references(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let is_class = self.symbol.flags().contains(SymFlags::CLASS);
-        self.symbol.references().filter(move |it| !is_class || self.has_reference_at(it.span()))
+        self.symbol
+            .references()
+            .filter(move |it| !is_class || self.has_reference_at(it.span()))
     }
 
     fn has_reference_at(self, span: Span) -> bool {
@@ -265,7 +274,8 @@ impl<'a> Variable<'a> {
 
 /// The head of `for (x in y) return;` or `for (x of y) { return; }`, if `statement` is such a loop.
 fn head_of_loop_that_only_returns(statement: Stmt<'_>) -> Option<Stmt<'_>> {
-    let (StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. }) = statement.kind()
+    let (StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. }) =
+        statement.kind()
     else {
         return None;
     };
@@ -274,7 +284,8 @@ fn head_of_loop_that_only_returns(statement: Stmt<'_>) -> Option<Stmt<'_>> {
         Some(_) => None,
         None => Some(body),
     };
-    only.is_some_and(|it| it.tag() == StmtTag::Return).then_some(left)
+    only.is_some_and(|it| it.tag() == StmtTag::Return)
+        .then_some(left)
 }
 
 /// Whether `pat` is the first name that the head of such a loop declares.
@@ -285,7 +296,12 @@ fn is_declared_by_loop_that_only_returns<'a>(pat: Pat<'a>, declaration: Declarat
     let Node::Stmt(head) = declarator.parent() else {
         return false;
     };
-    if head.parent().as_stmt().and_then(head_of_loop_that_only_returns) != Some(head) {
+    if head
+        .parent()
+        .as_stmt()
+        .and_then(head_of_loop_that_only_returns)
+        != Some(head)
+    {
         return false;
     }
     let mut first = None;
@@ -320,13 +336,18 @@ fn is_assigned_by_loop_that_only_returns(reference: Reference) -> bool {
     let Some(id) = reference.expr() else {
         return false;
     };
-    let head = id.parent().as_stmt().and_then(head_of_loop_that_only_returns);
+    let head = id
+        .parent()
+        .as_stmt()
+        .and_then(head_of_loop_that_only_returns);
     matches!(head.map(Stmt::kind), Some(StmtKind::Expr(target)) if target == id)
 }
 
 fn is_marked_as_used(variable: Variable) -> bool {
     variable.defs().any(is_declaration_marked_as_used)
-        || variable.references().any(is_assigned_by_loop_that_only_returns)
+        || variable
+            .references()
+            .any(is_assigned_by_loop_that_only_returns)
 }
 
 /// `declare global {}` marks what `global` means around it.
@@ -382,9 +403,15 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut UsedMarks) {
             }
             // The names of the tags are `JSXIdentifier`s.
             ExprKind::Jsx(jsx) => {
-                jsx.type_args().iter().for_each(|it| mark_identifiers(Node::Type(it), marks));
-                jsx.attrs().iter().for_each(|it| mark_identifiers(Node::Prop(it), marks));
-                jsx.children().iter().for_each(|it| mark_identifiers(Node::Expr(it), marks));
+                jsx.type_args()
+                    .iter()
+                    .for_each(|it| mark_identifiers(Node::Type(it), marks));
+                jsx.attrs()
+                    .iter()
+                    .for_each(|it| mark_identifiers(Node::Prop(it), marks));
+                jsx.children()
+                    .iter()
+                    .for_each(|it| mark_identifiers(Node::Expr(it), marks));
                 return;
             }
             _ => {}
@@ -420,7 +447,8 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut UsedMarks) {
         }
         Node::Type(ty) => match ty.kind() {
             TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } => {
-                name.parts().for_each(|part| mark_identifier(part.name(), node, marks));
+                name.parts()
+                    .for_each(|part| mark_identifier(part.name(), node, marks));
             }
             TypeKind::Predicate { param, .. } if !param.is("this") => {
                 mark_identifier(param, node, marks);
@@ -451,7 +479,10 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut UsedMarks) {
 fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
     for id in 0..file.hir.fns.len() {
         let func = Func::new(file, hir::FnId(id as u32));
-        if has_marked_parameters(func) && !matches!(func.owner(), Node::File(_)) && !func.is_synthetic() {
+        if has_marked_parameters(func)
+            && !matches!(func.owner(), Node::File(_))
+            && !func.is_synthetic()
+        {
             for param in func.this_param().into_iter().chain(func.params()) {
                 mark_identifiers(Node::Param(param), marks);
             }
@@ -475,23 +506,27 @@ fn exported_statement(declaration: Declaration<'_>) -> Option<Stmt<'_>> {
         | Declaration::ImportEquals(_) => declaration.node()?,
         _ => return None,
     };
-    statement.as_stmt().filter(|statement| statement.is_exported())
+    statement
+        .as_stmt()
+        .filter(|statement| statement.is_exported())
 }
 
 /// typescript-eslint's `isMergedTypeDeclaration`: an interface or a type alias whose name is also
 /// that of a value.
 fn is_merged_type_declaration(variable: Variable, declaration: Declaration) -> bool {
-    matches!(declaration, Declaration::Interface(_) | Declaration::TypeAlias(_))
-        && variable.is_type_variable()
+    matches!(
+        declaration,
+        Declaration::Interface(_) | Declaration::TypeAlias(_)
+    ) && variable.is_type_variable()
         && variable.is_value_variable()
 }
 
 /// typescript-eslint's `isExported` of `collectUnusedVariables`: one of the declarations starts
 /// with `export`. `export { a }` is a reference instead.
 pub fn is_exported(variable: Variable) -> bool {
-    variable.defs().any(|it| {
-        exported_statement(it).is_some() && !is_merged_type_declaration(variable, it)
-    })
+    variable
+        .defs()
+        .any(|it| exported_statement(it).is_some() && !is_merged_type_declaration(variable, it))
 }
 
 /// typescript-eslint's `isMergeableExported` (`isMergableExported`): the first declaration that is
@@ -512,7 +547,10 @@ pub fn is_mergeable_exported(variable: Variable) -> bool {
                 is_mergeable(*it) || statement.flags().contains(Flags::DEFAULT)
             })
     };
-    variable.defs().find(decides).is_some_and(|it| !is_merged_type_declaration(variable, it))
+    variable
+        .defs()
+        .find(decides)
+        .is_some_and(|it| !is_merged_type_declaration(variable, it))
 }
 
 // ───────────────────────────── uses ─────────────────────────────
@@ -543,7 +581,8 @@ pub fn is_unused_expression(mut e: Expr) -> bool {
 /// ESTree's `ArrowFunctionExpression`, `FunctionExpression` and `FunctionDeclaration`. A static
 /// block is none.
 fn as_estree_function(node: Node<'_>) -> Option<Func<'_>> {
-    node.as_func().filter(|func| func.has_body() && func.kind() != FnKind::StaticBlock)
+    node.as_func()
+        .filter(|func| func.has_body() && func.kind() != FnKind::StaticBlock)
 }
 
 /// ESLint's `isInLoop`: there is a loop around `node` in its function.
@@ -626,9 +665,11 @@ pub fn is_storable_function<'a>(func_node: Func<'a>, rhs_node: Expr<'a>) -> bool
 /// ESLint's and typescript-eslint's `isInsideOfStorableFunction`: `id` is in a function inside
 /// `rhs_node` that can be called later.
 pub fn is_inside_of_storable_function<'a>(id: Node<'a>, rhs_node: Expr<'a>) -> bool {
-    id.ancestors().find_map(as_estree_function).is_some_and(|func| {
-        rhs_node.span().contains(func.owner().span()) && is_storable_function(func, rhs_node)
-    })
+    id.ancestors()
+        .find_map(as_estree_function)
+        .is_some_and(|func| {
+            rhs_node.span().contains(func.owner().span()) && is_storable_function(func, rhs_node)
+        })
 }
 
 /// ESLint's and typescript-eslint's `isReadForItself`: the variable is read only to compute its
@@ -638,7 +679,9 @@ pub fn is_read_for_itself<'a>(reference: Reference<'a>, rhs_node: Option<Expr<'a
     if !reference.is_read() {
         return false;
     }
-    let parent = reference.expr().and_then(|id| Some((id, id.parent().as_expr()?)));
+    let parent = reference
+        .expr()
+        .and_then(|id| Some((id, id.parent().as_expr()?)));
     let is_self_update = parent.is_some_and(|(id, parent)| match parent.kind() {
         ExprKind::Assign { op, target, .. } => {
             target == id
@@ -646,8 +689,10 @@ pub fn is_read_for_itself<'a>(reference: Reference<'a>, rhs_node: Option<Expr<'a
                 && is_unused_expression(parent)
         }
         ExprKind::Unary { op, .. } => {
-            matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec)
-                && is_unused_expression(parent)
+            matches!(
+                op,
+                UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+            ) && is_unused_expression(parent)
         }
         _ => false,
     });
@@ -719,7 +764,11 @@ pub fn is_used_variable(variable: Variable) -> bool {
 /// declare, which is no [`Symbol`]: one that a `/* global name */` comment or the configuration
 /// defines.
 pub fn is_used_global_variable<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
-    has_use(file.unresolved_references().filter(|reference| reference.name() == name), |_| true)
+    has_use(
+        file.unresolved_references()
+            .filter(|reference| reference.name() == name),
+        |_| true,
+    )
 }
 
 // ───────────────────────────── the analysis ─────────────────────────────
@@ -793,7 +842,9 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
         // In a script, `var Array` is one more definition of an `ImplicitLibVariable`.
         if declares_globals
             && symbol.scope().kind() == ScopeKind::Global
-            && file.global(symbol.name().bytes()).is_some_and(|it| it.is_in_lib)
+            && file
+                .global(symbol.name().bytes())
+                .is_some_and(|it| it.is_in_lib)
         {
             continue;
         }
@@ -866,9 +917,15 @@ pub fn has_rest_sibling(id: Node<'_>) -> bool {
             property.default() != Some(key) && is_followed_by_rest(property)
         }
         (Node::Expr(_), Node::Prop(property)) if property.kind() != PropKind::Spread => {
-            match property.parent().as_expr().map(|object| (object, object.kind())) {
+            match property
+                .parent()
+                .as_expr()
+                .map(|object| (object, object.kind()))
+            {
                 Some((object, ExprKind::Object(properties))) => {
-                    properties.last().is_some_and(|last| last.kind() == PropKind::Spread)
+                    properties
+                        .last()
+                        .is_some_and(|last| last.kind() == PropKind::Spread)
                         && is_assignment_target(object)
                 }
                 _ => false,

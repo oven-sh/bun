@@ -56,5 +56,8 @@ fn is_catch_parameter(node: Node<'_>) -> bool {
         _ => node,
     };
     matches!(declaration, Node::VarDecl(_))
-        && matches!(declaration.parent().as_stmt().map(|it| it.kind()), Some(StmtKind::Try { .. }))
+        && matches!(
+            declaration.parent().as_stmt().map(|it| it.kind()),
+            Some(StmtKind::Try { .. })
+        )
 }

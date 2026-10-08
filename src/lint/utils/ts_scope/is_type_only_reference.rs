@@ -62,5 +62,8 @@ pub fn is_type_only_reference(variable: Symbol, reference: Reference) -> bool {
     if reference_contains_type_query(reference) || reference_contains_type_predicate(reference) {
         return true;
     }
-    !reference.is_value() && variable.declarations().any(is_variable_declarator_definition)
+    !reference.is_value()
+        && variable
+            .declarations()
+            .any(is_variable_declarator_definition)
 }

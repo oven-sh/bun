@@ -266,9 +266,11 @@ fn constant(path: &str) -> f64 {
 fn value_of(at: usize) -> Eval<StaticValue<'static>> {
     let entry = ENTRIES.get(at).ok_or(Stop::Abort)?;
     match entry.member {
-        Member::Call | Member::PassThrough | Member::Function | Member::Namespace | Member::Prototype => {
-            Ok(StaticValue::Builtin(Builtin(at as u16)))
-        }
+        Member::Call
+        | Member::PassThrough
+        | Member::Function
+        | Member::Namespace
+        | Member::Prototype => Ok(StaticValue::Builtin(Builtin(at as u16))),
         Member::Alias => {
             let (owner, name) = match entry.path {
                 "Number.parseFloat" => ("", "parseFloat"),
@@ -290,7 +292,11 @@ fn value_of(at: usize) -> Eval<StaticValue<'static>> {
 
 /// The property `name` of an object whose own properties do not include it, whose prototype is
 /// `constructor.prototype`, and the prototype of that `Object.prototype`.
-fn inherited(constructor: &'static str, prototype: &'static str, name: &[u8]) -> Eval<StaticValue<'static>> {
+fn inherited(
+    constructor: &'static str,
+    prototype: &'static str,
+    name: &[u8],
+) -> Eval<StaticValue<'static>> {
     if name == b"constructor" {
         return value_of(find("", constructor.as_bytes()).ok_or(Stop::Abort)?);
     }
@@ -301,13 +307,20 @@ fn inherited(constructor: &'static str, prototype: &'static str, name: &[u8]) ->
 }
 
 /// `object[key]`, where upstream allows it: a getter that is not in `getterAllowed` is not run.
-pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) -> Eval<StaticValue<'a>> {
+pub(super) fn get_member<'a>(
+    object: &StaticValue<'a>,
+    key: &PropertyKey<'a>,
+) -> Eval<StaticValue<'a>> {
     let name = match key {
         PropertyKey::String(name) => &**name,
         PropertyKey::Symbol(symbol) => {
             return match (object, symbol) {
-                (StaticValue::Undefined | StaticValue::Null | StaticValue::Hole, _) => Err(Stop::Abort),
-                (StaticValue::Object(properties), _) => Ok(own_property(properties, key).unwrap_or(StaticValue::Undefined)),
+                (StaticValue::Undefined | StaticValue::Null | StaticValue::Hole, _) => {
+                    Err(Stop::Abort)
+                }
+                (StaticValue::Object(properties), _) => {
+                    Ok(own_property(properties, key).unwrap_or(StaticValue::Undefined))
+                }
                 (StaticValue::Wrapper(primitive), _) => get_member(primitive, key),
                 (_, StaticSymbol::Registered(_)) => Ok(StaticValue::Undefined),
                 // The prototypes and the constructors have properties that are named by these.
@@ -317,9 +330,16 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
     };
     let flag = |flags: &[u8], flag: u8| Ok(StaticValue::Bool(strings::contains_char(flags, flag)));
     match object {
-        StaticValue::Undefined | StaticValue::Null | StaticValue::Hole | StaticValue::Iterator(..) => Err(Stop::Abort),
+        StaticValue::Undefined
+        | StaticValue::Null
+        | StaticValue::Hole
+        | StaticValue::Iterator(..) => Err(Stop::Abort),
         // On an object it is seen to be a getter.
-        StaticValue::Wrapper(primitive) if name == b"description" && primitive.as_symbol().is_some() => Err(Stop::NotStatic),
+        StaticValue::Wrapper(primitive)
+            if name == b"description" && primitive.as_symbol().is_some() =>
+        {
+            Err(Stop::NotStatic)
+        }
         StaticValue::Wrapper(primitive) => get_member(primitive, key),
         StaticValue::Bool(_) => inherited("Boolean", "Boolean.prototype", name),
         StaticValue::Number(_) => inherited("Number", "Number.prototype", name),
@@ -386,7 +406,9 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
                 return Err(Stop::NotStatic);
             }
             if name == b"name" && builtin.is_callable() {
-                return Ok(StaticValue::string(builtin.entry().map_or("", |entry| entry.name).as_bytes()));
+                return Ok(StaticValue::string(
+                    builtin.entry().map_or("", |entry| entry.name).as_bytes(),
+                ));
             }
             // Only constructors have one.
             let is_constructor = path != "Proxy"
@@ -399,7 +421,9 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
                 let constructor = path.strip_suffix(".prototype").unwrap_or(path);
                 return match name {
                     // An array and a string, which are empty.
-                    b"length" if matches!(constructor, "Array" | "String") => Ok(StaticValue::Number(0.0)),
+                    b"length" if matches!(constructor, "Array" | "String") => {
+                        Ok(StaticValue::Number(0.0))
+                    }
                     _ => inherited(constructor, "Object.prototype", name),
                 };
             }
@@ -408,7 +432,14 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
                 || builtin.member() != Member::Function
                 || matches!(
                     path,
-                    "Array" | "ArrayBuffer" | "DataView" | "Function" | "Promise" | "Symbol" | "WeakMap" | "WeakSet"
+                    "Array"
+                        | "ArrayBuffer"
+                        | "DataView"
+                        | "Function"
+                        | "Promise"
+                        | "Symbol"
+                        | "WeakMap"
+                        | "WeakSet"
                 );
             match (is_known, builtin.is_callable()) {
                 (false, _) => Err(Stop::Abort),
@@ -423,7 +454,10 @@ fn own_property<'a>(
     properties: &[(PropertyKey<'a>, StaticValue<'a>)],
     key: &PropertyKey<'a>,
 ) -> Option<StaticValue<'a>> {
-    properties.iter().find(|property| property.0 == *key).map(|property| property.1.clone())
+    properties
+        .iter()
+        .find(|property| property.0 == *key)
+        .map(|property| property.1.clone())
 }
 
 /// `object[key] = value` on a plain object.
@@ -434,7 +468,11 @@ pub(super) fn set_property<'a>(
 ) -> Eval<()> {
     // It sets the prototype, to an object or to `null`.
     if key.as_str() == Some(b"__proto__") {
-        return if value.is_object() || value == StaticValue::Null { Err(Stop::Abort) } else { Ok(()) };
+        return if value.is_object() || value == StaticValue::Null {
+            Err(Stop::Abort)
+        } else {
+            Ok(())
+        };
     }
     if let Some(property) = properties.iter_mut().find(|property| property.0 == key) {
         property.1 = value;

@@ -12,7 +12,8 @@ pub fn reference_contains_type_query(reference: Reference) -> bool {
     loop {
         match name.parent() {
             Node::Type(ty) => return ty.tag() == TypeTag::Typeof,
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == name) => {
+            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == name) =>
+            {
                 name = parent;
             }
             _ => return false,

@@ -15,7 +15,10 @@ pub fn is_definition_file(file_name: &[u8]) -> bool {
     let ends_with = |text: &[u8], suffix: &[u8]| {
         text.len() >= suffix.len() && text[text.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
     };
-    if [b".d.ts".as_slice(), b".d.cts", b".d.mts"].iter().any(|it| ends_with(file_name, it)) {
+    if [b".d.ts".as_slice(), b".d.cts", b".d.mts"]
+        .iter()
+        .any(|it| ends_with(file_name, it))
+    {
         return true;
     }
     // `/\.d\..*\.ts$/`
@@ -76,7 +79,10 @@ pub fn get_name_from_index_signature<'a>(member: Member<'a>) -> &'a [u8] {
         true => None,
         false => param.pat().as_ident(),
     };
-    match member.func().and_then(|func| func.params().iter().find_map(name_of)) {
+    match member
+        .func()
+        .and_then(|func| func.params().iter().find_map(name_of))
+    {
         Some(name) => name.bytes(),
         None => b"(index signature)",
     }
@@ -236,7 +242,10 @@ pub fn requires_quoting(name: &[u8]) -> bool {
     // U+30FB and U+FF65 are `ID_Continue` since Unicode 15.1.
     let is_part = |c: u32| c <= 0xFFFF && (is_identifier_part(c) || matches!(c, 0x30FB | 0xFF65));
     let mut points = code_points(name).map(|it| it.1);
-    !points.next().is_some_and(|c| c <= 0xFFFF && is_identifier_start(c)) || !points.all(is_part)
+    !points
+        .next()
+        .is_some_and(|c| c <= 0xFFFF && is_identifier_start(c))
+        || !points.all(is_part)
 }
 
 /// typescript-eslint's `formatWordList`: `a`, `a and b`, `a, b and c`.

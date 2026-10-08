@@ -24,6 +24,7 @@
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
 //! | a `Literal` / `TemplateLiteral` listener that looks at strings: keys, module specifiers and literal types are not expressions here | [`string_literals`] | `impl StringLiterals for MyRule`, `on_string_literals(on)` beside `on.exprs([ExprTag::String, ExprTag::Template], ..)` |
+//! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::to_precision(n, p)`, `js_number::decimal_digits(n, p)`, .. |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
 //!
 //! A function that takes two handles has one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`:
@@ -99,10 +100,11 @@ pub mod ts_utils;
 pub mod unicode;
 
 pub use array::array_sort_by;
-pub use estree_type_at::estree_type_at;
 pub use estree_compat::{
     Target, TargetElement, TargetKind, catch_clause_span, chain_root, estree_ancestors,
     estree_parent, estree_span, estree_type_name, get_node_by_range_index, is_assignment_target,
-    is_chain_root, is_expression_statement, is_for_init, is_in_optional_chain, is_in_type_query, is_sequence_root, last_sequence_expression, normalize,
-    sequence_expressions, sequence_root, type_annotation_span,
+    is_chain_root, is_expression_statement, is_for_init, is_in_optional_chain, is_in_type_query,
+    is_sequence_root, last_sequence_expression, normalize, sequence_expressions, sequence_root,
+    type_annotation_span,
 };
+pub use estree_type_at::estree_type_at;

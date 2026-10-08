@@ -90,11 +90,9 @@ pub fn is_function_type<'a>(node: impl Into<Node<'a>>) -> bool {
         | FnKind::ConstructSignature
         | FnKind::FunctionType
         | FnKind::ConstructorType => true,
-        FnKind::Decl
-        | FnKind::Method
-        | FnKind::Getter
-        | FnKind::Setter
-        | FnKind::Constructor => !func.has_body(),
+        FnKind::Decl | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
+            !func.has_body()
+        }
         FnKind::Expr | FnKind::Arrow | FnKind::StaticBlock | FnKind::IndexSignature => false,
     })
 }

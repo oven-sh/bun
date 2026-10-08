@@ -2060,9 +2060,12 @@ pub mod bv2_impl {
         pub(crate) split_require: bool,
         pub(crate) all_exports_kinds: &'a [ExportsKind],
         pub(crate) all_targets: &'a [Target],
-        /// Files which are Server Component Boundaries
+        /// The files of Server Component Boundaries that an import record can name: the
+        /// original file and its reference.
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub(crate) scb_list: server_component_boundary::Slice<'a>,
+        /// Reference source index to the row in `scb_list`.
+        pub(crate) scb_rows_by_reference: ArrayHashMap<IndexInt, u32>,
 
         /// Files which are imported by JS and inlined in CSS
         pub(crate) additional_files_imported_by_js_and_inlined_in_css:
@@ -2147,22 +2150,24 @@ pub mod bv2_impl {
 
                 if let Some(scb_bitset) = &self.scb_bitset {
                     if scb_bitset.is_set(source_index.get() as usize) {
-                        let scb_index = self
-                            .scb_list
-                            .get_index(source_index.get())
-                            .expect("unreachable");
-                        self.stack.push(ReachFrame::Enter {
-                            source_index: Index::init(
-                                self.scb_list.list.items_reference_source_index()[scb_index],
-                            ),
-                            was_dynamic_import: false,
-                        });
-                        self.stack.push(ReachFrame::Enter {
-                            source_index: Index::init(
-                                self.scb_list.list.items_ssr_source_index()[scb_index],
-                            ),
-                            was_dynamic_import: false,
-                        });
+                        // One file of a boundary is reached: the boundary needs all of them.
+                        let scb_index = match self.scb_list.get_index(source_index.get()) {
+                            Some(scb_index) => scb_index,
+                            None => *self
+                                .scb_rows_by_reference
+                                .get(&source_index.get())
+                                .expect("unreachable") as usize,
+                        };
+                        for member in [
+                            self.scb_list.list.items_source_index()[scb_index],
+                            self.scb_list.list.items_reference_source_index()[scb_index],
+                            self.scb_list.list.items_ssr_source_index()[scb_index],
+                        ] {
+                            self.stack.push(ReachFrame::Enter {
+                                source_index: Index::init(member),
+                                was_dynamic_import: false,
+                            });
+                        }
                     }
                 }
 
@@ -2309,15 +2314,23 @@ pub mod bv2_impl {
             // RAII guard — `Ctx` ends the span on Drop.
             let _trace = crate::perf::trace("Bundler.findReachableFiles");
 
-            // Create a quick index for server-component boundaries.
-            // We need to mark the generated files as reachable, or else many files will appear missing.
+            // Create a quick index for server-component boundaries. An import record names the
+            // original file or its reference. The other files of the boundary have no importer,
+            // so they must be marked reachable here, or else many files will appear missing.
+            let mut scb_rows_by_reference: ArrayHashMap<IndexInt, u32> = ArrayHashMap::new();
             let scb_bitset = if self.graph.server_component_boundaries.list.len() > 0 {
-                Some(
-                    self.graph
-                        .server_component_boundaries
-                        .slice()
-                        .bit_set(self.graph.input_files.len())?,
-                )
+                let scbs = self.graph.server_component_boundaries.slice();
+                let mut bitset = scbs.bit_set(self.graph.input_files.len())?;
+                for (row, &reference) in scbs
+                    .list
+                    .items_reference_source_index()
+                    .iter()
+                    .enumerate()
+                {
+                    bitset.set(reference as usize);
+                    scb_rows_by_reference.put(reference, row as u32)?;
+                }
+                Some(bitset)
             } else {
                 None
             };
@@ -2362,6 +2375,7 @@ pub mod bv2_impl {
                 all_targets,
                 scb_bitset,
                 scb_list,
+                scb_rows_by_reference,
                 additional_files_imported_by_js_and_inlined_in_css:
                     &mut additional_files_imported_by_js_and_inlined_in_css,
                 additional_files_imported_by_css_and_inlined:

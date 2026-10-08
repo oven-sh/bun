@@ -2950,26 +2950,26 @@ describe("prepared statements refresh cached column names after a schema change"
   it("a join with duplicate column names", () => {
     using db = new Database(":memory:");
     db.run("CREATE TABLE t (id INT, name TEXT); INSERT INTO t VALUES (1, 't')");
-    db.run("CREATE TABLE u (id INT, name TEXT, extra TEXT); INSERT INTO u VALUES (1, 'u', 'e')");
-    using q = db.prepare("SELECT * FROM t JOIN u ON u.id = t.id LIMIT ?");
+    db.run("CREATE TABLE u (id INT, name TEXT, extra TEXT); INSERT INTO u VALUES (2, 'u', 'e')");
+    using q = db.prepare("SELECT * FROM t, u LIMIT ?");
     // Of the columns that share a name, the last one owns the property.
     expect([q.get(1), q.get(1)]).toEqual([
-      { id: 1, name: "u", extra: "e" },
-      { id: 1, name: "u", extra: "e" },
+      { id: 2, name: "u", extra: "e" },
+      { id: 2, name: "u", extra: "e" },
     ]);
 
     // One duplicate fewer.
     db.run("ALTER TABLE u RENAME COLUMN name TO label");
-    expect(q.get(1)).toEqual({ name: "t", id: 1, label: "u", extra: "e" });
+    expect(q.get(1)).toEqual({ name: "t", id: 2, label: "u", extra: "e" });
     expect(Object.keys(q.get(1))).toEqual(["name", "id", "label", "extra"]);
 
-    // The same number of properties, owned by other columns.
+    // The same number of properties as at the start, owned by other columns.
     db.run("ALTER TABLE t RENAME COLUMN name TO extra");
-    expect(q.get(1)).toEqual({ id: 1, label: "u", extra: "e" });
+    expect(q.get(1)).toEqual({ id: 2, label: "u", extra: "e" });
 
     // A duplicate column gets a name that no later column has.
     db.run("ALTER TABLE t RENAME COLUMN id TO tid");
-    expect(q.all(1)).toEqual([{ tid: 1, id: 1, label: "u", extra: "e" }]);
+    expect(q.all(1)).toEqual([{ tid: 1, id: 2, label: "u", extra: "e" }]);
   });
 
   it("column names that are not ASCII, or empty", () => {

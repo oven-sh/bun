@@ -11,10 +11,7 @@
 //
 // Env: TLS_CERT_PATH, TLS_KEY_PATH - paths to (large) PEM files
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 const certPath = process.env.TLS_CERT_PATH;
 const keyPath = process.env.TLS_KEY_PATH;
 const iterations = parseInt(process.env.ITERATIONS || "100", 10);

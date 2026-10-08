@@ -1727,9 +1727,10 @@ test.concurrent("late keep-alive request to a node:http server after close() sti
   );
 });
 
-test("node:http close() drops the loop ref once in-flight requests finish, without waiting for the surviving connection", async () => {
+test("node:http close() holds the loop ref while the connection that survived it is open, and drops it when that connection closes", async () => {
+  // Node.js prints the same. A server that dropped the loop ref with the connection open would print true.
   expect(await bunRun(path.join(import.meta.dir, "node-http-close-unref-fixture.ts"))).toSpawn(
-    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: true }),
+    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: false }),
   );
 });
 
@@ -2133,6 +2134,62 @@ test.concurrent("should be able to abrubtly close a upload request", async () =>
   await aborted.promise;
   // The body iterator saw exactly the one chunk, then the truncated upload aborted it.
   expect(await handlerDone.promise).toEqual({ error: "AbortError", received: chunk.byteLength });
+});
+
+// Same failure, but delivered while nothing is reading: the handler takes
+// req.body (which creates the native stream) and only starts reading after the
+// client has gone away. The stored abort must surface from the first read; it
+// used to come out as a clean `{ done: true }`, indistinguishable from a
+// complete upload.
+test("reading an upload whose client went away before the first read rejects", async () => {
+  const bodyTaken = Promise.withResolvers<void>();
+  const clientClosed = Promise.withResolvers<void>();
+  const outcome = Promise.withResolvers<string>();
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const body = req.body!;
+      bodyTaken.resolve();
+      await clientClosed.promise;
+      try {
+        // The abort reaches the body on a later event-loop turn. Bun.inspect(req)
+        // lists the body stream while the body is still pending and stops listing
+        // it once the body holds the error; reading it to find out is the very
+        // thing under test.
+        const deadline = Date.now() + 10_000;
+        while (Bun.inspect(req).includes("ReadableStream")) {
+          if (Date.now() > deadline) throw new Error("the abort never reached the idle body");
+          await Bun.sleep(1);
+        }
+        outcome.resolve(
+          await body
+            .getReader()
+            .read()
+            .then(
+              result => `resolved: ${JSON.stringify(result)}`,
+              error => `rejected: ${(error as Error).name}`,
+            ),
+        );
+      } catch (error) {
+        outcome.reject(error);
+      }
+      return new Response("unreachable by the client");
+    },
+  });
+  const socket = await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial");
+      },
+      data() {},
+      close: () => clientClosed.resolve(),
+    },
+  });
+  await bodyTaken.promise;
+  socket.end();
+  expect(await outcome.promise).toBe("rejected: AbortError");
 });
 
 // This test is disabled because it can OOM the CI

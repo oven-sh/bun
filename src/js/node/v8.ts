@@ -17,16 +17,20 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const Uint8ArrayCtor = Uint8Array;
 const BufferAllocUnsafe = Buffer.allocUnsafe;
 const TypedArrayProto = Object.getPrototypeOf(Uint8ArrayCtor.prototype);
-const TypedArrayPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "buffer").get);
-const TypedArrayPrototypeGetByteOffset = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteOffset").get);
-const TypedArrayPrototypeGetByteLength = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteLength").get);
+const TypedArrayPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(TypedArrayProto, "buffer")!.get);
+const TypedArrayPrototypeGetByteOffset = uncurryThis(
+  ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteOffset")!.get,
+);
+const TypedArrayPrototypeGetByteLength = uncurryThis(
+  ObjectGetOwnPropertyDescriptor(TypedArrayProto, "byteLength")!.get,
+);
 const TypedArrayPrototypeSet = uncurryThis(TypedArrayProto.set);
-const DataViewPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(DataView.prototype, "buffer").get);
+const DataViewPrototypeGetBuffer = uncurryThis(ObjectGetOwnPropertyDescriptor(DataView.prototype, "buffer")!.get);
 const DataViewPrototypeGetByteOffset = uncurryThis(
-  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteOffset").get,
+  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteOffset")!.get,
 );
 const DataViewPrototypeGetByteLength = uncurryThis(
-  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
+  ObjectGetOwnPropertyDescriptor(DataView.prototype, "byteLength")!.get,
 );
 const Uint8ArrayPrototypeSubarray = uncurryThis(Uint8ArrayCtor.prototype.subarray);
 

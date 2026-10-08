@@ -1,10 +1,13 @@
 // Developer tooling on a `bun build --compile --bytecode` executable: functions decoded
 // from the embedded bytecode cache must still be fully usable by the debugger, by
 // Function.prototype introspection, by the sampling profiler and by heap snapshots,
-// including functions that have never been called when the tool first looks at them.
+// including functions that have never been called when the tool first looks at them. And
+// Bun.shrink() (like attaching a debugger, or a Worker going away) drops the code decoded from
+// the cache, to be decoded again when it next runs: it has to come back the same.
 import { spawn, type Subprocess } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SocketFramer } from "./socket-framer";
 
@@ -22,8 +25,50 @@ export function hotWork(n) {
   return s;
 }
 `,
+  "c.ts": `
+export function calledBefore(a, b) {
+  const k = a * 3;
+  return function inner(c) {
+    return k + b + c;
+  };
+}
+export function neverCalled(x) {
+  let t = 0;
+  for (const v of [x, x + 1, x + 2]) t += v * v;
+  return { t, tag: "n" + x };
+}
+export class Counter {
+  #n;
+  constructor(n) {
+    this.#n = n;
+  }
+  bump(by = 1) {
+    this.#n += by;
+    return this.#n;
+  }
+  static make(n) {
+    return new Counter(n);
+  }
+}
+export function* steps(seed) {
+  let acc = seed;
+  const label = "s" + seed;
+  for (let i = 1; ; i++) {
+    const got = yield label + ":" + acc;
+    acc += (got ?? 0) * i;
+  }
+}
+export async function slow(gate, tag) {
+  const before = tag + ":before";
+  const v = await gate;
+  const after = [before, v, tag.length];
+  await null;
+  return after.join("|");
+}
+`,
   "entry.ts": `
 import { neverCalledUntilAsked, named, hotWork } from "./b.ts";
+import * as c from "./c.ts";
 import inspector from "node:inspector";
 const jsc = require("bun:jsc");
 
@@ -69,23 +114,60 @@ if (mode === "profile") {
   );
 } else if (mode === "heap") {
   // (5) heap snapshots taken while neverCalledUntilAsked has still never been called.
-  const snapshot = jsc.generateHeapSnapshotForDebugging();
-  // GCDebugging snapshots: nodes are <id, size, classNameIndex, flags, labelIndex, cell, wrapped>.
-  const stride = snapshot.type === "GCDebugging" ? 7 : 4;
-  const functionLabels = new Set();
-  for (let i = 0; i < snapshot.nodes.length; i += stride) {
-    if (snapshot.nodeClassNames[snapshot.nodes[i + 2]] === "Function") {
-      functionLabels.add(snapshot.labels[snapshot.nodes[i + 4]]);
+  const functionLabels = () => {
+    const snapshot = jsc.generateHeapSnapshotForDebugging();
+    // GCDebugging snapshots: nodes are <id, size, classNameIndex, flags, labelIndex, cell, wrapped>.
+    const stride = snapshot.type === "GCDebugging" ? 7 : 4;
+    const labels = new Set();
+    for (let i = 0; i < snapshot.nodes.length; i += stride) {
+      if (snapshot.nodeClassNames[snapshot.nodes[i + 2]] === "Function") {
+        labels.add(snapshot.labels[snapshot.nodes[i + 4]]);
+      }
     }
-  }
+    return labels;
+  };
+  // A module's function declaration becomes a function object when its binding is first read, and nothing in this mode
+  // has read hotWork's yet.
+  const unread = functionLabels();
+  globalThis.hotWorkForSnapshot = hotWork;
+  const read = functionLabels();
   const v8 = JSON.parse(Bun.generateHeapSnapshot("v8"));
   console.log(
     "heap " +
       JSON.stringify({
-        jscFunctionNeverCalled: functionLabels.has("neverCalledUntilAsked"),
-        jscFunctionNamed: functionLabels.has("named"),
-        jscFunctionHotWork: functionLabels.has("hotWork"),
+        jscFunctionNeverCalled: read.has("neverCalledUntilAsked"),
+        jscFunctionNamed: read.has("named"),
+        jscFunctionHotWorkUnread: unread.has("hotWork"),
+        jscFunctionHotWork: read.has("hotWork"),
         v8MentionsNeverCalled: v8.strings.includes("neverCalledUntilAsked"),
+      }),
+  );
+} else if (mode === "shrink") {
+  // (6) code that was decoded from the cache, dropped by Bun.shrink() and decoded again: a function that had run, one
+  // that had not, a class method, a generator and an async function suspended across it with their captured locals.
+  const inner = c.calledBefore(2, 5);
+  const before = [inner(1), c.Counter.make(10).bump(5)];
+  const counter = new c.Counter(1);
+  const gen = c.steps(3);
+  const yielded = [gen.next().value, gen.next(2).value];
+  let open;
+  const pending = c.slow(new Promise(resolve => (open = resolve)), "tag");
+  for (let round = 0; round < 3; round++) {
+    Bun.shrink();
+    await new Promise(resolve => setTimeout(resolve, 1));
+    Bun.gc(true);
+  }
+  yielded.push(gen.next(4).value, gen.next(1).value);
+  open("opened");
+  console.log(
+    "shrink " +
+      JSON.stringify({
+        before,
+        after: [inner(1), c.calledBefore(1, 1)(1), c.Counter.make(10).bump(5), counter.bump()],
+        neverCalled: c.neverCalled(2),
+        yielded,
+        awaited: await pending,
+        hotWork: hotWork(1000),
       }),
   );
 } else if (mode === "debug-env") {
@@ -125,10 +207,10 @@ beforeAll(async () => {
 }, 60_000);
 
 /** Runs the compiled executable and returns its stdout split into `tag -> parsed JSON` lines. */
-async function run(mode: string): Promise<Record<string, any>> {
+async function run(mode: string, cmd = [exe], env = bunEnv): Promise<Record<string, any>> {
   await using proc = spawn({
-    cmd: [exe, mode],
-    env: bunEnv,
+    cmd: [...cmd, mode],
+    env,
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -353,9 +435,30 @@ describe("bun build --compile --bytecode executable", () => {
     expect(heap).toEqual({
       jscFunctionNeverCalled: true,
       jscFunctionNamed: true,
+      // An unread module function declaration is not an object yet; a read one is.
+      jscFunctionHotWorkUnread: false,
       jscFunctionHotWork: true,
       v8MentionsNeverCalled: true,
     });
+  });
+
+  test("code dropped by Bun.shrink() is decoded again and runs the same", async () => {
+    const expected = {
+      before: [12, 15],
+      after: [12, 5, 15, 2],
+      neverCalled: { t: 29, tag: "n2" },
+      yielded: ["s3:3", "s3:5", "s3:13", "s3:16"],
+      awaited: "tag:before|opened|3",
+    };
+    const source = [bunExe(), join(dir, "entry.ts")];
+    // Not from a cache at all, from the executable's embedded cache, and from NODE_COMPILE_CACHE on its second run.
+    const uncompiled = (await run("shrink", source)).shrink;
+    expect(uncompiled).toMatchObject(expected);
+    expect((await run("shrink")).shrink).toEqual(uncompiled);
+    const cached = { ...bunEnv, NODE_COMPILE_CACHE: join(dir, "compile-cache") };
+    expect((await run("shrink", source, cached)).shrink).toEqual(uncompiled);
+    expect(readdirSync(cached.NODE_COMPILE_CACHE, { recursive: true }).length).toBeGreaterThan(3);
+    expect((await run("shrink", source, cached)).shrink).toEqual(uncompiled);
   });
 
   // A compiled executable has no --inspect flag of its own; editor extensions attach by

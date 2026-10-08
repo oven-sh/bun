@@ -21,6 +21,7 @@ FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-abstract-class
 FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-interface.ts
 FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-module.ts
 FAIL rejected typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts
+FAIL format markdown/code/0-indent-js.md proseWrap=always
 FAIL format misc/front-matter/with-plugins/snippet: #0
 FAIL format misc/front-matter/with-plugins/snippet: #1
 css: format 162/162 (0 syntax errors), rejected 2/2, second format 136/136, CRLF 162/162, CR 162/162, BOM 161/161
@@ -29,13 +30,14 @@ js: format 1336/1336 (0 syntax errors), rejected 39/58, second format 1045/1045,
 json: format 785/785 (0 syntax errors), rejected 0/0, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
 jsx: format 186/186 (0 syntax errors), rejected 0/0, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
-misc: format 313/315 (0 syntax errors), rejected 0/0, second format 270/270, CRLF 43/43, CR 43/43, BOM 312/312
+markdown: format 1564/1565 (0 syntax errors), rejected 0/0, second format 945/945, CRLF 1560/1560, CR 1560/1560, BOM 1564/1564
+misc: format 335/337 (0 syntax errors), rejected 0/0, second format 291/291, CRLF 43/43, CR 43/43, BOM 334/334
 scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
 typescript: format 746/746 (0 syntax errors), rejected 24/28, second format 599/599, CRLF 745/745, CR 745/745, BOM 733/733
 yaml: format 1623/1623 (0 syntax errors), rejected 3/3, second format 1118/1118, CRLF 1616/1616, CR 1616/1616, BOM 1622/1622
-format: 5629/5631 (99.96%)
-all checks: 26410/26435 (99.91%)
+format: 7215/7218 (99.96%)
+all checks: 33668/33694 (99.92%)
 not run: 17: Flow's type syntax
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
-not run: 42: embedded HTML or Markdown, which needs a formatter for that language
+not run: 49: embedded HTML or Markdown, which needs a formatter for that language
 not run: 66: syntax of a proposal at stage 2 or below, which only Babel parses

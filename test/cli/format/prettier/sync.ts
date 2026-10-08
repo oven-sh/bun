@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { collect, extract, writeBundle } from "../bundle.ts";
 
-const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "misc"];
+const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "misc"];
 
 /**
  * A few `format.test.js` have the expected output next to the input, so it is in no snapshot. They are run here with a `runFormatTest` that
@@ -19,7 +19,7 @@ async function addInlineOutputs(root: string, files: Map<string, Uint8Array>) {
     const indentation = /^[ \t]*/.exec(strings[0].replace(/^\n/, ""))![0];
     return text.replaceAll(new RegExp(`^${indentation}`, "gm"), "");
   };
-  const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml"];
+  const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown"];
   const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: ours.map(value => ({ value })) }] }) };
   const separator = (title: string) => "=".repeat(Math.floor((80 - title.length) / 2)) + title + "=".repeat(Math.ceil((80 - title.length) / 2));
   const escape = (text: string) => text.replace(/[\\`]|\$\{/g, "\\$&");
@@ -33,7 +33,7 @@ async function addInlineOutputs(root: string, files: Map<string, Uint8Array>) {
       fixtures.snippets.forEach((snippet, index) => {
         if (typeof snippet === "string" || snippet.output === undefined) return;
         // The output is the same for all of them. The first of each language stands for the others.
-        const families = new Map(parsers.filter(it => ours.includes(it)).map(it => [/^json|^css|^less|^scss|^graphql|^yaml/.test(it) ? it : "js", it]).reverse());
+        const families = new Map(parsers.filter(it => ours.includes(it)).map(it => [/^json|^css|^less|^scss|^graphql|^yaml|^markdown/.test(it) ? it : "js", it]).reverse());
         for (const parser of [...families.values()].reverse()) {
           const title = `snippet: ${snippet.name ?? `#${index}`}${Object.keys(options).length ? ` - ${JSON.stringify(options)}` : ""} format`;
           counts.set(title, (counts.get(title) ?? 0) + 1);

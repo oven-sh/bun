@@ -259,7 +259,7 @@ const ENTITIES: [(&str, u32); 253] = [
 
 /// typescript-estree's `unescapeStringLiteralText`: `text` with `&name;`, `&#10;` and `&#xA;`
 /// replaced by what they stand for. What is not a known reference stays as it is.
-pub(crate) fn unescape(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+pub(super) fn unescape(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     use bun_core::strings::index_of_char_usize;
     let Some(first) = index_of_char_usize(text, b'&') else {
         return text.into();

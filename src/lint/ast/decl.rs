@@ -1261,9 +1261,7 @@ impl<'a> Module<'a> {
     pub fn nested(self) -> Option<Module<'a>> {
         let only = self.body().first().filter(|_| self.body().len() == 1)?;
         match only.kind() {
-            super::StmtKind::Module(nested) if only.span().start == nested.raw().name_pos => {
-                Some(nested)
-            }
+            super::StmtKind::Module(nested) if self.file.is_nested_namespace(only.id()) => Some(nested),
             _ => None,
         }
     }

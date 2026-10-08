@@ -13,7 +13,7 @@
 //! - [`Node`] is any handle, for what applies to all of them: `parent()`, `ancestors()`, reports.
 
 mod decl;
-pub(crate) mod entities;
+mod entities;
 mod expr;
 mod list;
 mod name;

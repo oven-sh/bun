@@ -235,6 +235,12 @@ impl<'a> Expr<'a> {
         self.file.is_jsx_text(self.id)
     }
 
+    /// ESLint's `value` of a `JSXText`: the text as it is written, all whitespace included, with
+    /// what `&amp;` and the like stand for. `None` if it is not [JSX text](Expr::is_jsx_text).
+    pub fn jsx_text_value(self) -> Option<std::borrow::Cow<'a, [u8]>> {
+        self.is_jsx_text().then(|| super::entities::unescape(self.text()))
+    }
+
     /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`
     /// of `<a.b.c>`. ESLint has a `JSXIdentifier`, a `JSXMemberExpression` or a `JSXNamespacedName`
     /// there, not an `Identifier` or a `MemberExpression`.
@@ -326,9 +332,19 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn is_parenthesized(self) -> bool {
         let parens = self.file.hir.parens;
-        !parens.is_empty()
-            && (parens.binary_search_by_key(&self.id.0, |p| p.0.0).is_ok()
-                || self.file.jsdoc_cast_around(self.id).is_some())
+        if parens.is_empty() {
+            return false;
+        }
+        let mut id = self.id;
+        loop {
+            if parens.binary_search_by_key(&id.0, |p| p.0.0).is_ok() {
+                return true;
+            }
+            match self.file.jsdoc_cast_around(id) {
+                Some(cast) => id = cast,
+                None => return false,
+            }
+        }
     }
 
     /// With all the parentheses around it.

@@ -4,7 +4,6 @@ use super::Converter;
 use crate::ast::{Expr, ExprKind, Jsx, JsxChild, KeyKind, Prop, PropKind};
 use crate::estree::NodeType::*;
 use crate::estree::Sink;
-use crate::ast::entities::unescape;
 use crate::span::Span;
 
 impl<'a, S: Sink> Converter<'a, '_, S> {
@@ -117,18 +116,17 @@ impl<'a, S: Sink> Converter<'a, '_, S> {
     }
 
     fn jsx_child(&mut self, child: JsxChild<'a>) {
-        let text = match child {
-            JsxChild::Whitespace(span) => span,
-            JsxChild::Expr(child) => match child.jsx_container_span() {
-                Some(braces) => return self.jsx_container(braces, child),
-                None if child.is_jsx_text() => child.span(),
-                None => return self.expr(child),
+        let (span, value) = match child {
+            JsxChild::Whitespace(span) => (span, self.file.slice(span).into()),
+            JsxChild::Expr(child) => match (child.jsx_container_span(), child.jsx_text_value()) {
+                (Some(braces), _) => return self.jsx_container(braces, child),
+                (None, Some(value)) => (child.span(), value),
+                (None, None) => return self.expr(child),
             },
         };
-        let raw = self.file.slice(text);
-        self.open(JSXText, text);
-        self.text("raw", raw);
-        self.text("value", &unescape(raw));
+        self.open(JSXText, span);
+        self.text("raw", self.file.slice(span));
+        self.text("value", &value);
         self.close();
     }
 }

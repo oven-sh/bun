@@ -70,7 +70,9 @@ impl File<'_> {
     pub(crate) fn is_nested_namespace(&self, id: hir::StmtId) -> bool {
         match self.hir.stmts.get(id.idx()) {
             Some(&hir::Stmt { kind: hir::StmtKind::Module(m), start, .. }) => {
-                self.hir.modules.get(m.idx()).is_some_and(|it| it.name_pos == start)
+                let is_name = |it: &hir::Module| it.name_pos == start && matches!(it.name, hir::ModuleName::Ident(_));
+                self.hir.modules.get(m.idx()).is_some_and(is_name)
+                    && matches!(self.bound.stmt_parent.get(id.idx()), Some(Parent::Module(_)))
             }
             _ => false,
         }

@@ -38,6 +38,10 @@ fn check<'a>(spread: Node<'a>, argument: Expr<'a>, cx: &Cx<'a, NoAccumulatingSpr
     if argument.tag() != ExprTag::Ident || argument.is_parenthesized() {
         return;
     }
+    // Before anything is asked about variables.
+    if !spread.ancestors().any(|it| is_call_of_reduce(it) || matches!(it, Node::Stmt(stmt) if stmt.is_loop())) {
+        return;
+    }
     let Some(symbol) = argument.symbol() else {
         return;
     };

@@ -98,22 +98,56 @@ impl Unsupported {
         }
     }
 
-    fn has(&self, map: &Map, seen: &mut Vec<*const (&'static str, Map)>) -> bool {
-        if [map.read, map.call, map.construct].into_iter().flatten().any(|info| self.message[info as usize].is_some()) {
-            return true;
-        }
+    fn is_reported(&self, map: &Map) -> bool {
+        [map.read, map.call, map.construct].into_iter().flatten().any(|info| self.message[info as usize].is_some())
+    }
+
+    /// Adds the names of the members of `map`, and of theirs, that are reported.
+    fn add_reported(&self, map: &Map, seen: &mut Vec<*const (&'static str, Map)>, names: &mut Vec<&'static str>) {
         // Some refer to themselves.
         if map.members.is_empty() || seen.contains(&map.members.as_ptr()) {
-            return false;
+            return;
         }
         seen.push(map.members.as_ptr());
-        map.members.iter().any(|it| self.has(&it.1, seen))
+        for (name, member) in map.members {
+            if self.is_reported(member) && !names.contains(name) {
+                names.push(name);
+            }
+            self.add_reported(member, seen, names);
+        }
     }
 
     /// Those of `members` in which something is reported.
-    fn filter(&self, members: Members) -> Vec<(&'static str, Map)> {
-        members.iter().filter(|it| self.has(&it.1, &mut Vec::new())).copied().collect()
+    fn filter(&self, members: Members) -> Vec<Entry> {
+        let entries = members.iter().map(|&(name, map)| {
+            let mut reported = Vec::new();
+            self.add_reported(&map, &mut Vec::new(), &mut reported);
+            Entry {
+                name,
+                map,
+                is_reported: self.is_reported(&map),
+                reported,
+            }
+        });
+        entries.filter(|it| it.is_reported || !it.reported.is_empty()).collect()
     }
+}
+
+/// A global variable or a module.
+struct Entry {
+    name: &'static str,
+    map: Map,
+    /// To refer to it is reported.
+    is_reported: bool,
+    /// The names of what is reported in it.
+    reported: Vec<&'static str>,
+}
+
+/// Those that the text of the file names, with something in them that is reported. References, which cost far more than a look at
+/// the text, are only looked at for these.
+fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Vec<(&'static str, Map)> {
+    let is_named = |it: &&Entry| file.mentions(it.name.strip_prefix("node:").unwrap_or(it.name)) && (it.is_reported || file.mentions_any(&it.reported));
+    entries.iter().filter(is_named).map(|it| (it.name, it.map)).collect()
 }
 
 /// The options of a rule, and what follows from them.
@@ -130,9 +164,9 @@ pub(crate) struct Builtins {
 
 struct Tables {
     unsupported: Unsupported,
-    globals: Vec<(&'static str, Map)>,
-    modules: Vec<(&'static str, Map)>,
-    import_meta: Vec<(&'static str, Map)>,
+    globals: Vec<Entry>,
+    modules: Vec<Entry>,
+    import_meta: Vec<Entry>,
 }
 
 impl Builtins {
@@ -200,8 +234,9 @@ impl Builtins {
         let file = cx.file();
         self.with_tables(file, |tables| {
             let tracker = ReferenceTracker::new(file).with_mode(Mode::Legacy);
-            if !tables.modules.is_empty() {
-                let modules = TraceMap::new(&tables.modules);
+            let modules = named_in(file, &tables.modules);
+            if !modules.is_empty() {
+                let modules = TraceMap::new(&modules);
                 if file.mentions("require") {
                     self.report(tables, &[], &tracker.iterate_cjs_references(&modules), cx);
                 }
@@ -216,7 +251,7 @@ impl Builtins {
                     let Some(key) = call.args().first().and_then(|it| get_string_if_constant(it, None)) else {
                         continue;
                     };
-                    let Some((key, next)) = tables.modules.iter().find(|it| it.0.as_bytes() == &key[..]) else {
+                    let Some((key, next)) = modules.members.iter().find(|it| it.0.as_bytes() == &key[..]) else {
                         continue;
                     };
                     if let Some(info) = next.read {
@@ -233,12 +268,13 @@ impl Builtins {
                 }
                 self.report(tables, &[], &tracker.iterate_esm_references(&modules), cx);
             }
-            let globals: Vec<(&'static str, Map)> = tables.globals.iter().filter(|it| file.mentions(it.0)).copied().collect();
+            let globals = named_in(file, &tables.globals);
             if !globals.is_empty() {
                 self.report(tables, &[], &tracker.iterate_global_references(&TraceMap::new(&globals)), cx);
             }
-            if !tables.import_meta.is_empty() {
-                let (tracker, map) = (ReferenceTracker::new(file), TraceMap::new(&tables.import_meta));
+            let import_meta = if file.mentions("meta") { named_in(file, &tables.import_meta) } else { Vec::new() };
+            if !import_meta.is_empty() {
+                let (tracker, map) = (ReferenceTracker::new(file), TraceMap::new(&import_meta));
                 for e in file.exprs_of_kind(ExprTag::ImportMeta) {
                     self.report(tables, &["import.meta"], &tracker.iterate_property_references(e, &map), cx);
                 }

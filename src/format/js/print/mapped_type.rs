@@ -1,7 +1,7 @@
 use super::semicolon::OptionalSemicolon;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 
 /// `{ readonly [K in T as N]?: V }`
 pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: &mut Formatter<'a>) {
@@ -11,7 +11,8 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
         return write!(f, FormatSuppressedNode(ty.span()));
     }
     // One that has a line break after its `{` in the source stays broken.
-    let should_expand = f.source_text().has_line_terminator_after_skipping_comments(ty.span().start + 1);
+    let should_expand = f.options().expand == Expand::Auto
+        && f.source_text().has_line_terminator_after_skipping_comments(ty.span().start + 1);
 
     let format_inner = format_with(|f| {
         if should_expand && !f.is_quiet() {
@@ -22,18 +23,10 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
             write!(f, FormatLeadingComments::Comments(comments));
         }
 
-        match mapped.readonly() {
-            MappedModifier::None => {}
-            MappedModifier::Add => write!(f, [mapped.is_readonly_with_plus().then_some("+"), "readonly", space()]),
-            MappedModifier::Remove => write!(f, ["-", "readonly", space()]),
-        }
-
-        let format_inner_inner = format_with(|f| {
-            write!(f, "[");
+        let format_key = format_with(|f| {
             // The comments after the key are written before the `]`.
             format_leading_comments(key.span()).fmt(f);
-            write!(f, source_text(key.span()));
-            write!(f, [space(), "in", space(), param.constraint()]);
+            write!(f, [source_text(key.span()), space(), "in", space(), param.constraint()]);
             if let Some(name_type) = mapped.name_type() {
                 write!(f, [space(), "as", space(), name_type]);
             }
@@ -41,18 +34,24 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
                 let comments = f.comments().comments_before_character(key.span().end, b']');
                 write!(f, FormatTrailingComments::Comments(comments));
             }
-            write!(f, "]");
+        });
+        let format_member = format_with(|f| {
+            match mapped.readonly() {
+                MappedModifier::None => {}
+                MappedModifier::Add => write!(f, [mapped.is_readonly_with_plus().then_some("+"), "readonly", space()]),
+                MappedModifier::Remove => write!(f, ["-", "readonly", space()]),
+            }
+            write!(f, group(&format_args!("[", soft_block_indent(&format_key), "]")));
             match mapped.optional() {
                 MappedModifier::None => {}
                 MappedModifier::Add => write!(f, [mapped.is_optional_with_plus().then_some("+"), "?"]),
                 MappedModifier::Remove => write!(f, "-?"),
             }
+            if let Some(type_annotation) = mapped.ty() {
+                write!(f, [":", space(), type_annotation]);
+            }
         });
-
-        write!(f, group(&format_inner_inner));
-        if let Some(type_annotation) = mapped.ty() {
-            write!(f, [":", space(), type_annotation]);
-        }
+        write!(f, group(&format_member));
         write!(f, if_group_breaks(&OptionalSemicolon));
     });
 

@@ -395,24 +395,6 @@ fn can_group_arrow_function_expression_argument<'a>(
     is_arrow_recursion: bool,
     f: &Formatter<'a>,
 ) -> bool {
-    //     app.get("/", (req, res): void => {
-    //       res.send("Hello World!");
-    //     });
-    //
-    // With a return type that is a name, only if the body is a block that is not empty.
-    let can_group_type = arrow_function.return_type().is_none_or(|ty| match ty.kind() {
-        TypeKind::Ref { .. } => match arrow_function.body() {
-            FnBody::Block(statements) => {
-                !statements.is_empty() || f.comments().has_comment_before(arrow_function.span().end)
-            }
-            _ => false,
-        },
-        _ => true,
-    });
-    if !can_group_type {
-        return false;
-    }
-
     let FnBody::Expr(expression) = arrow_function.body() else {
         return true;
     };

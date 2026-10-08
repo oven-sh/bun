@@ -118,18 +118,34 @@ pub(crate) fn write_arrow_function_expression<'a>(
                 if !f.comments().has_comment_in_range(e.span().end, container.span().end)
         );
 
-    write!(
-        f,
-        group(&format_args!(
-            soft_line_indent_or_space(&format_args!(
-                should_add_parens.then_some(if_group_fits_on_line(&"(")),
-                format_body,
-                should_add_parens.then_some(if_group_fits_on_line(&")"))
-            )),
-            is_last_call_arg.then_some(FormatTrailingCommas::All),
-            should_add_soft_line.then_some(soft_line_break())
-        ))
-    );
+    let trailing_comma = is_last_call_arg.then_some(FormatTrailingCommas::All);
+    let trailing_line = should_add_soft_line.then_some(soft_line_break());
+    let has_own_line_comment =
+        arrow_expression.is_some_and(|it| f.comments().has_leading_own_line_comment(it.span().start));
+    if should_add_parens && !has_own_line_comment {
+        write!(f, [space(), FormatConditionalBody(&format_body, trailing_comma, trailing_line)]);
+    } else {
+        write!(f, group(&format_args!(soft_line_indent_or_space(&format_body), trailing_comma, trailing_line)));
+    }
+}
+
+/// A body that is a conditional expression: `a => (b ? c : d)`, so that it is not mistaken for
+/// `a <= b ? c : d`. If it breaks, it goes on the next line without the parentheses.
+struct FormatConditionalBody<'b, T>(&'b T, Option<FormatTrailingCommas>, Option<Line>);
+
+impl<'a, T: Format<'a>> Format<'a> for FormatConditionalBody<'_, T> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        write!(
+            f,
+            group(&format_args!(
+                if_group_fits_on_line(&"("),
+                indent(&format_args!(soft_line_break(), self.0)),
+                if_group_fits_on_line(&")"),
+                self.1,
+                self.2
+            ))
+        );
+    }
 }
 
 enum ArrowFunctionLayout<'a> {
@@ -236,10 +252,14 @@ impl<'a> Format<'a> for ArrowChain<'a> {
 
         // A block, an array, an object and a sequence in parentheses start right after the last
         // `=>`. Anything else goes on a line of its own if it does not fit.
-        let body_on_separate_line = !get_expression(tail).is_none_or(|expression| {
-            matches!(expression.kind(), ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_))
-                || is_sequence(expression)
-        });
+        let is_conditional_on_same_line = !expand_signatures
+            && should_add_parens(tail)
+            && !get_expression(tail).is_some_and(|it| f.comments().has_leading_own_line_comment(it.span().start));
+        let body_on_separate_line = !is_conditional_on_same_line
+            && !get_expression(tail).is_none_or(|expression| {
+                matches!(expression.kind(), ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_))
+                    || is_sequence(expression)
+            });
 
         let break_signatures = (is_callee && body_on_separate_line)
             || self.options.assignment_layout == Some(AssignmentLikeLayout::ChainTailArrowFunction);
@@ -307,8 +327,8 @@ impl<'a> Format<'a> for ArrowChain<'a> {
                     Some(format_sequence) => write!(f, format_sequence),
                     None => write!(f, ["(", format_tail_body, ")"]),
                 }
-            } else if should_add_parens(tail) {
-                write!(f, [if_group_fits_on_line(&"("), format_tail_body, if_group_fits_on_line(&")")]);
+            } else if is_conditional_on_same_line {
+                write!(f, FormatConditionalBody(&format_tail_body, None, None));
             } else {
                 write!(f, format_tail_body);
             }
@@ -366,11 +386,7 @@ fn should_add_parens(arrow: Func<'_>) -> bool {
         return false;
     };
     matches!(expression.kind(), ExprKind::Cond { .. })
-        && match ExpressionLeftSide::leftmost(expression).kind() {
-            ExprKind::Object(_) | ExprKind::Class(_) => false,
-            ExprKind::Fn(func) => func.is_arrow(),
-            _ => true,
-        }
+        && !matches!(ExpressionLeftSide::leftmost(expression).kind(), ExprKind::Object(_))
 }
 
 /// `async`, the type parameters, the parameters and the return type. In a grouped argument of a

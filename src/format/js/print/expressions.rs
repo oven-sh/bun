@@ -6,7 +6,6 @@ use super::object_like::ObjectLike;
 use super::object_pattern_like::ObjectPatternLike;
 use super::return_or_throw_statement::FormatAdjacentArgument;
 use crate::js::format::FormatExpr;
-use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
@@ -178,28 +177,16 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
         return write!(f, format_inner);
     }
 
-    // `(await a).b`: the outermost `await` of the statement that it is in.
-    let mut await_expression = None;
-    for ancestor in parent.ancestors() {
-        match ancestor {
-            AstNodes::BlockStatement(_)
-            | AstNodes::FunctionBody(_)
-            | AstNodes::SwitchCase(_)
-            | AstNodes::Program(_)
-            | AstNodes::TSModuleBlock(_) => break,
-            AstNodes::AwaitExpression(outer) => await_expression = Some(outer),
-            _ => {}
-        }
-    }
-
+    // `await (await a).b`: the parentheses break along with what the outer `await` is in.
+    let enclosing_await = parent.ancestors().find_map(|ancestor| match ancestor {
+        AstNodes::BlockStatement(_) | AstNodes::Program(_) => Some(None),
+        AstNodes::FunctionBody(func) if !matches!(func.body(), FnBody::Expr(_)) => Some(None),
+        AstNodes::AwaitExpression(outer) => Some(Some(outer)),
+        _ => None,
+    });
     let indented = soft_block_indent(&format_inner);
-    match await_expression {
-        Some(outer)
-            if needs_parentheses(outer, f)
-                || outer.argument().is_some_and(|it| ExpressionLeftSide::leftmost(it) == e) =>
-        {
-            write!(f, indented);
-        }
+    match enclosing_await.flatten() {
+        Some(outer) if outer.argument().is_some_and(|it| ExpressionLeftSide::leftmost(it) == e) => write!(f, indented),
         _ => write!(f, group(&indented)),
     }
 }

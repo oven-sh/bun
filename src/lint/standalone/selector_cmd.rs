@@ -157,7 +157,7 @@ fn match_cases(path: &str) {
     std::panic::set_hook(Box::new(|_| {}));
     let input = std::fs::read(path).expect("the cases");
     let mut stdout = std::io::BufWriter::new(std::io::stdout().lock());
-    for line in input.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         let Some(case) = bun_lint::json::parse(line) else {
             continue;
         };

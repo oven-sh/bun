@@ -5125,6 +5125,17 @@ pub(crate) mod testing_apis {
         Ok(JSValue::js_number(count as f64))
     }
 
+    /// `runSocketTimeoutSweepSoon` in `bun:internal-for-testing`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_run_socket_timeout_sweep_soon(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        // SAFETY: this thread's loop; the call only moves its sweep deadline.
+        unsafe { bun_uws_sys::loop_::us_internal_sweep_soon(bun_uws_sys::Loop::get()) };
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn js_clear_socket_faults(
         global: &JSGlobalObject,

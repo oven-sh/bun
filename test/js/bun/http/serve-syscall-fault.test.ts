@@ -1,6 +1,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import net from "node:net";
 
 const skip = !fault.available() || isWindows;
 
@@ -112,6 +113,50 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       const res = await fetch(`https://127.0.0.1:${port}/`, { tls: { ca: certs.cert } });
       const buf = await res.arrayBuffer();
       expect({ status: res.status, length: buf.byteLength }).toEqual({ status: 200, length: 8192 });
+    } finally {
+      proc.kill("SIGTERM");
+      await proc.exited;
+    }
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test("server.timeout(req, N) holds when the socket takes none of a response that ended in the cork buffer", async () => {
+    const { proc, port } = await spawnServer(/* js */ `
+      const { socketFaultInjection: fault, runSocketTimeoutSweepSoon } = require("bun:internal-for-testing");
+      const s = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 1,
+        fetch(req, server) {
+          server.timeout(req, 60);
+          // The response ends with all of its bytes in the cork buffer, and no send moves one.
+          fault.set({ syscall: "send", action: "zero", repeat: -1 });
+          fault.set({ syscall: "writev", action: "zero", repeat: -1 });
+          // One idle sweep runs over the connection, then the sends work again.
+          setImmediate(() => {
+            runSocketTimeoutSweepSoon();
+            setImmediate(() => setImmediate(() => fault.clear()));
+          });
+          return new Response("tail");
+        } });
+      console.log(s.port);
+      process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+    `);
+    try {
+      // The wire up to the end of the response, or up to the close if the server cut it.
+      const wire = Promise.withResolvers<string>();
+      const socket = net.connect(port, "127.0.0.1");
+      let received = "";
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        received += chunk;
+        if (received.endsWith("\r\n\r\ntail")) wire.resolve(received);
+      });
+      socket.on("close", () => wire.resolve(received));
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      try {
+        expect(await wire.promise).toEndWith("\r\n\r\ntail");
+      } finally {
+        socket.destroy();
+      }
     } finally {
       proc.kill("SIGTERM");
       await proc.exited;

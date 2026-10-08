@@ -67,11 +67,13 @@ public:
 
     /* A setTimeout() override ends when its response is complete and
      * hasFullyDrained(): a response that ended under backpressure keeps it
-     * until onWritable has drained the tail. Bytes still in the cork buffer
-     * do not count. Does not arm. */
+     * until onWritable has drained the tail. Does not arm. */
     void endTimeoutOverrideIfDrained() {
         auto* data = getHttpResponseData();
         if ((data->state & (HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) == HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN) [[unlikely]] {
+            /* The cork buffer can hold the end of the response. Send it
+             * first: a tail the socket does not take is backpressure too. */
+            Super::sendCorked();
             if (Super::hasFullyDrained()) {
                 data->state &= ~HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
                 data->idleTimeoutInForce = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->idleTimeout;

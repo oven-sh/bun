@@ -301,10 +301,6 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       await Bun.sleep(Number(url.searchParams.get("ms")));
       return new Response("t" + s);
     }
-    // server.timeout(req, 0), then the file at ?path= as the body.
-    case "/file-no-timeout":
-      server.timeout(req, 0);
-      return new Response(Bun.file(url.searchParams.get("path")!));
   }
   return new Response("not found: " + url.pathname, { status: 404 });
 }

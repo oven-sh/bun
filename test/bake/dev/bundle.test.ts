@@ -412,6 +412,259 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// Counts the loads of each file that `filter` matches. A load for the client graph gets its own key.
+const countLoads = (filter: string, setup = "") => `
+  import { basename } from "node:path";
+  export default [
+    {
+      name: "count-loads",
+      setup(build) {
+        ${setup}
+        build.onLoad({ filter: /${filter}/ }, args => {
+          const loads = (globalThis.loads ??= {});
+          const file = basename(args.path) + (args.side === "client" ? " (client)" : "");
+          loads[file] = (loads[file] ?? 0) + 1;
+        });
+      },
+    },
+  ];
+`;
+// `#name` resolves to `name-rsc.ts` in a graph that has the "react-server" condition, else to `name-ssr.ts`.
+const conditionalImport = (name: string) => ({
+  "package.json": JSON.stringify({
+    imports: { [`#${name}`]: { "react-server": `./${name}-rsc.ts`, "default": `./${name}-ssr.ts` } },
+  }),
+  [`${name}-rsc.ts`]: `export const which = "rsc";`,
+  [`${name}-ssr.ts`]: `export const which = "ssr";`,
+});
+const oneServerGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: false };
+const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: true };
+// A failed import belongs to the graph of the file that has the import.
+// `#cond` shows which graphs bundle the page.
+{
+  const page = `
+    import { which } from "#cond";
+    export default function () {
+      return Response.json({ which, loads: globalThis.loads });
+    }
+  `;
+  for (const { name, serverComponents, failedImport, which, create, setup } of [
+    { name: "no server components", serverComponents: undefined, failedImport: `import "./missing";`, which: "ssr" },
+    {
+      name: "no server components, a plugin sees the import",
+      serverComponents: undefined,
+      failedImport: `import "./missing";`,
+      which: "ssr",
+      setup: `build.onResolve({ filter: /missing/ }, () => undefined);`,
+    },
+    { name: "one server graph", serverComponents: oneServerGraph, failedImport: `import "./missing";`, which: "rsc" },
+    {
+      name: "separate SSR graph",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "./missing";`,
+      which: "rsc",
+    },
+    {
+      name: "separate SSR graph, the missing file is created",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "../missing";`,
+      which: "rsc",
+      create: "missing.ts",
+    },
+    {
+      name: "bunBakeGraph attribute without an SSR graph",
+      serverComponents: oneServerGraph,
+      failedImport: `import "../other.ts" with { bunBakeGraph: "ssr" };`,
+      which: "rsc",
+    },
+    {
+      name: "bunBakeGraph attribute on a missing file",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "./missing" with { bunBakeGraph: "ssr" };`,
+      which: "rsc",
+    },
+    {
+      name: "bunBakeGraph attribute on an html file",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "../page.html" with { bunBakeGraph: "ssr" };`,
+      which: "rsc",
+    },
+  ]) {
+    devTest(`a page is bundled once per save after a failed import (${name})`, {
+      framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes, serverComponents },
+      pluginFile: countLoads("(routes.index|cond-(rsc|ssr))[.]ts$", setup),
+      files: {
+        ...conditionalImport("cond"),
+        "other.ts": `export default 1;`,
+        "page.html": `<!DOCTYPE html>`,
+        "routes/index.ts": failedImport + page,
+      },
+      htmlFiles: [],
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        if (create) await dev.write(create, `export {};`);
+        else await dev.write("routes/index.ts", page);
+        expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 2, [`cond-${which}.ts`]: 1 } });
+        await dev.write("routes/index.ts", page + "// saved again");
+        expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 3, [`cond-${which}.ts`]: 1 } });
+        // The page still depends on the file that its own graph resolved.
+        await dev.write(`cond-${which}.ts`, `export const which = ;`);
+        expect((await dev.fetch("/")).status).toBe(500);
+      },
+    });
+  }
+}
+// The other direction: a file stays in the graphs that bundle it. shared.ts is in
+// the server graph and in the SSR graph, ssr-only.ts is in the SSR graph only.
+{
+  const files = {
+    ...conditionalImport("only"),
+    "routes/index.ts": `
+      import "../shared";
+      import "../Comp";
+      export default function () {
+        return Response.json(globalThis.loads);
+      }
+    `,
+    "Comp.ts": `
+      "use client";
+      import "./shared";
+      import "./ssr-only";
+      export const marker = 1;
+    `,
+  };
+  const shared = (n: number) => `export const shared = ${n};`;
+  const ssrOnly = (n: number) => `import "#only"; export const ssrOnly = ${n};`;
+  const oncePerGraph = { "shared.ts": 2, "shared.ts (client)": 1, "ssr-only.ts": 1, "ssr-only.ts (client)": 1 };
+  const difference = (before: Record<string, number>, after: Record<string, number>) =>
+    Object.fromEntries(
+      Object.keys(after)
+        .filter(file => after[file] !== before[file])
+        .map(file => [file, after[file] - (before[file] ?? 0)]),
+    );
+  for (const [name, broken] of [
+    ["a failed import", `import "./missing";`],
+    ["a syntax error", `export const broken = () => {`],
+  ] as const) {
+    devTest(`a file is bundled once per graph per save after ${name}`, {
+      framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+      pluginFile: countLoads("(shared|ssr-only|only-rsc|only-ssr)[.]ts$"),
+      files: { ...files, "shared.ts": broken, "ssr-only.ts": broken },
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        await dev.write("shared.ts", shared(1));
+        await dev.write("ssr-only.ts", ssrOnly(1));
+        const repaired = await dev.fetch("/").json();
+        expect(repaired).toEqual({
+          "shared.ts": 4,
+          "shared.ts (client)": 2,
+          "ssr-only.ts": 2,
+          "ssr-only.ts (client)": 2,
+          "only-ssr.ts": 1,
+          "only-ssr.ts (client)": 1,
+        });
+        await dev.write("shared.ts", shared(2));
+        await dev.write("ssr-only.ts", ssrOnly(2));
+        expect(difference(repaired, await dev.fetch("/").json())).toEqual(oncePerGraph);
+      },
+    });
+  }
+  devTest("a file is bundled once per graph per save after its import is deleted and restored", {
+    skip: [
+      "win32", // unlinkSync is having weird behavior
+    ],
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    pluginFile: countLoads("(shared|ssr-only|only-rsc|only-ssr)[.]ts$"),
+    files: {
+      ...files,
+      "shared.ts": `import "./leaf"; ${shared(1)}`,
+      "ssr-only.ts": `import "./leaf"; ${ssrOnly(1)}`,
+      "leaf.ts": `export const leaf = 1;`,
+    },
+    async test(dev) {
+      await dev.fetch("/");
+      await dev.delete("leaf.ts", { errors: null });
+      await dev.write("leaf.ts", `export const leaf = 2;`);
+      const restored = await dev.fetch("/").json();
+      expect(restored).toEqual({
+        "shared.ts": 6,
+        "shared.ts (client)": 3,
+        "ssr-only.ts": 3,
+        "ssr-only.ts (client)": 3,
+        "only-ssr.ts": 1,
+        "only-ssr.ts (client)": 1,
+      });
+      await dev.write("shared.ts", `import "./leaf"; ${shared(2)}`);
+      await dev.write("ssr-only.ts", `import "./leaf"; ${ssrOnly(2)}`);
+      expect(difference(restored, await dev.fetch("/").json())).toEqual(oncePerGraph);
+    },
+  });
+  devTest("a module that once failed an import is bundled for the SSR graph when a second route imports it there", {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      "shared.ts": `
+        import "./missing";
+        export const shared = "shared";
+      `,
+      "routes/index.ts": `
+        import { shared } from "../shared";
+        export default function () {
+          return new Response("index " + shared);
+        }
+      `,
+      "routes/other.ts": `
+        import { shared } from "../shared" with { bunBakeGraph: "ssr" };
+        export default function () {
+          return new Response("other " + shared);
+        }
+      `,
+    },
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("shared.ts", `export const shared = "shared";`);
+      await dev.fetch("/").equals("index shared");
+      await dev.fetch("/other").equals("other shared");
+    },
+  });
+}
+devTest("a stylesheet with a failed @import does not stop a dev server without server components", {
+  framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes },
+  files: {
+    "routes/index.ts": `
+      import "../style.css";
+      export default function () {
+        return new Response("index");
+      }
+    `,
+    "style.css": `
+      @import "./missing.css";
+      body {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "style.css",
+      `
+        body {
+          color: red;
+        }
+      `,
+    );
+    await dev.write(
+      "routes/index.ts",
+      `
+        import "../style.css";
+        export default function () {
+          return new Response("saved");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("saved");
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

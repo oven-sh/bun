@@ -6721,13 +6721,14 @@ pub mod bv2_impl {
                 // backrefs valid for `'a` (see `init`). Compute the raw ptr first, then
                 // deref once, so the `&mut self` borrow doesn't span the rest of the loop
                 // body.
+                // `bake_graph` is where the import goes. A failure is filed under the importer's graph.
                 let (transpiler_ptr, bake_graph, target): (
                     *mut Transpiler<'a>,
                     bake::Graph,
                     options::Target,
                 ) = if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
-                        self.log_for_resolution_failures(source.path.text, bake::Graph::Ssr).add_error_fmt(
+                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle"),
@@ -6745,7 +6746,7 @@ pub mod bv2_impl {
                             .unwrap()
                             .separate_ssr_graph;
                     if !is_supported {
-                        self.log_for_resolution_failures(source.path.text, bake::Graph::Ssr).add_error_fmt(
+                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("Framework does not have a separate SSR graph to put this import into"),
@@ -6850,7 +6851,10 @@ pub mod bv2_impl {
                             // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
-                                    self.log_for_resolution_failures(source.path.text, bake_graph),
+                                    self.log_for_resolution_failures(
+                                        source.path.text,
+                                        ctx.target.bake_graph(),
+                                    ),
                                 )
                             };
 
@@ -7070,8 +7074,10 @@ pub mod bv2_impl {
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the
                             // route definition.
-                            let log =
-                                self.log_for_resolution_failures(source.path.text, bake_graph);
+                            let log = self.log_for_resolution_failures(
+                                source.path.text,
+                                ctx.target.bake_graph(),
+                            );
                             log.add_range_error_fmt(
                                 Some(source),
                                 import_record.range,

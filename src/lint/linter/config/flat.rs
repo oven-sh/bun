@@ -28,6 +28,8 @@ pub(super) struct Reader<'r> {
     pub(super) objects: Vec<ConfigObject>,
     pub(super) notes: Vec<Vec<u8>>,
     pub(super) unknown_rules: Vec<Box<[u8]>>,
+    /// How many of the objects are ESLint's own.
+    pub(super) defaults: usize,
 }
 
 fn is_typescript_plugin(name: &[u8]) -> bool {
@@ -43,6 +45,88 @@ fn is_typescript_plugin(name: &[u8]) -> bool {
 
 const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
 
+/// `Config "name": ` or `Config (unnamed): `, which the message of a `ConfigError` starts with.
+fn config_name(json: &Json) -> Vec<u8> {
+    match json.get(b"name").and_then(Json::as_str) {
+        Some(name) if !name.is_empty() => [b"Config \"", name, b"\": "].concat(),
+        _ => b"Config (unnamed): ".to_vec(),
+    }
+}
+
+/// `ValidationStrategy.object`
+fn is_object(value: &Json) -> bool {
+    matches!(value, Json::Object(_) | Json::Array(_))
+}
+
+/// How `flatConfigSchema` validates `linterOptions`.
+fn validate_linter_options(value: &Json) -> Option<Vec<u8>> {
+    if !is_object(value) {
+        return Some(b"Expected an object.".to_vec());
+    }
+    let is_severity = |it: &Json| crate::linter::severity_of(it).is_some();
+    for (key, value) in value.as_object().unwrap_or_default() {
+        let problem: Option<&[u8]> = match &key[..] {
+            b"noInlineConfig" => value.as_bool().is_none().then_some(b"Expected a boolean."),
+            b"reportUnusedDisableDirectives" => (!is_severity(value) && value.as_bool().is_none())
+                .then_some(
+                    b"Expected one of: \"error\", \"warn\", \"off\", 0, 1, 2, or a boolean.",
+                ),
+            b"reportUnusedInlineConfigs" => (!is_severity(value))
+                .then_some(b"Expected one of: \"error\", \"warn\", \"off\", 0, 1, or 2."),
+            _ => return Some([b"Unexpected key \"", &key[..], b"\" found."].concat()),
+        };
+        if let Some(problem) = problem {
+            return Some([b"Key \"", &key[..], b"\": ", problem].concat());
+        }
+    }
+    None
+}
+
+/// `ObjectSchema.validate` with `flatConfigSchema`: what is wrong with a configuration object. ESLint
+/// finds out when the object is merged, so only if it matches a file.
+fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
+    let expected_object = || Some(b"Expected an object.".to_vec());
+    for (key, value) in entries {
+        let problem: Option<Vec<u8>> = match &key[..] {
+            b"basePath" | b"files" | b"ignores" | b"language" | b"processor" => None,
+            b"name" if value.as_str().is_none() => Some(b"Property must be a string.".to_vec()),
+            b"name" => None,
+            b"settings" | b"languageOptions" if !is_object(value) => expected_object(),
+            b"settings" | b"languageOptions" => None,
+            b"linterOptions" => validate_linter_options(value),
+            b"plugins" => match value {
+                Json::Object(_) => None,
+                Json::Array(_) => Some(
+                    b"This appears to be in eslintrc format (array of strings) rather than flat config format (object)."
+                        .to_vec(),
+                ),
+                _ => expected_object(),
+            },
+            b"rules" if !is_object(value) => expected_object(),
+            b"rules" => (value.as_object().unwrap_or_default().iter())
+                .find(|it| it.0 != b"__proto__" && RuleSetting::new(&it.0, &it.1).is_none())
+                .map(|(id, _)| {
+                    [
+                        b"Key \"",
+                        &id[..],
+                        b"\": Expected severity of \"off\", 0, \"warn\", 1, \"error\", or 2.",
+                    ]
+                    .concat()
+                }),
+            b"env" | b"extends" | b"globals" | b"ignorePatterns" | b"noInlineConfig"
+            | b"overrides" | b"parser" | b"parserOptions" | b"reportUnusedDisableDirectives"
+            | b"root" => Some(
+                b"This appears to be in eslintrc format rather than flat config format.".to_vec(),
+            ),
+            _ => return Some([b"Unexpected key \"", &key[..], b"\" found."].concat()),
+        };
+        if let Some(problem) = problem {
+            return Some([b"Key \"", &key[..], b"\": ", &problem].concat());
+        }
+    }
+    None
+}
+
 impl Reader<'_> {
     pub(super) fn note(&mut self, parts: &[&[u8]]) {
         let note = parts.concat();
@@ -51,12 +135,13 @@ impl Reader<'_> {
         }
     }
 
-    fn patterns(&mut self, key: &str, items: &[Json]) -> Result<Vec<Pattern>, ConfigError> {
+    /// The patterns in `items`, which are validated already.
+    fn patterns(&mut self, key: &str, items: &[Json]) -> Vec<Pattern> {
         let mut patterns = Vec::with_capacity(items.len());
         for item in items {
             match item {
                 Json::String(pattern) => patterns.push(Pattern::new(pattern)),
-                Json::Object(_) if item.get(b"$unserializable").is_some() => {
+                _ => {
                     self.note(&[
                         b"A function in \"",
                         key.as_bytes(),
@@ -65,14 +150,9 @@ impl Reader<'_> {
                     // An empty pattern matches the empty path only.
                     patterns.push(Pattern::new(b""));
                 }
-                _ => {
-                    return Err(ConfigError::new(&[
-                        b"Expected array to only contain strings and functions.",
-                    ]));
-                }
             }
         }
-        Ok(patterns)
+        patterns
     }
 
     /// The rules of an object. `typescript_prefixes`: other names under which the plugin of
@@ -103,6 +183,9 @@ impl Reader<'_> {
                     b"\": Expected severity of \"off\", 0, \"warn\", 1, \"error\", or 2.",
                 ]));
             };
+            if !matches!(prefix, b"eslint" | b"typescript" | b"typescript-eslint") {
+                setting.plugin = parse_rule_id(id).0.into();
+            }
             match self
                 .registry
                 .find_preferring(id, self.prefers_typescript_rules)
@@ -110,12 +193,11 @@ impl Reader<'_> {
                 Some(entry) => {
                     setting.id = crate::linter::RuleId::Known(entry.meta).to_vec().into()
                 }
-                None if setting.severity == Severity::Off => continue,
                 None => {
-                    if !self.unknown_rules.iter().any(|it| **it == *id) {
+                    let is_new = !self.unknown_rules.iter().any(|it| **it == *id);
+                    if setting.severity != Severity::Off && is_new {
                         self.unknown_rules.push(id.into());
                     }
-                    continue;
                 }
             }
             settings.push(setting);
@@ -123,50 +205,86 @@ impl Reader<'_> {
         Ok(settings)
     }
 
+    /// `assertValidBaseConfig`, with what `wrapConfigErrorWithDetails` adds.
+    fn validate_base(&self, json: &Json) -> Result<(), ConfigError> {
+        let is_matcher = |it: &Json| it.as_str().is_some() || it.get(b"$unserializable").is_some();
+        let only_matchers: &[u8] = b"Expected array to only contain strings and functions";
+        let problem: Option<(&[u8], &[u8])> = match json {
+            Json::Null => Some((b"", b"Unexpected null config")),
+            Json::Object(_) => None,
+            _ => Some((b"", b"Unexpected non-object config")),
+        };
+        let problem = problem.or_else(|| {
+            let base_path = json.get(b"basePath")?;
+            (base_path.as_str().is_none())
+                .then_some((&b"basePath"[..], &b"Expected value to be a string"[..]))
+        });
+        let problem = problem.or_else(|| {
+            let Some(files) = json.get(b"files")?.as_array().filter(|it| !it.is_empty()) else {
+                return Some((b"files", b"Expected value to be a non-empty array"));
+            };
+            files.iter().find_map(|item| match item {
+                Json::Array(all) if all.iter().all(is_matcher) => None,
+                Json::Array(_) => Some((&b"files"[..], only_matchers)),
+                item if is_matcher(item) => None,
+                _ => Some((
+                    b"files",
+                    b"Items must be a string, a function, or an array of strings and functions",
+                )),
+            })
+        });
+        let problem = problem.or_else(|| match json.get(b"ignores")?.as_array() {
+            None => Some((&b"ignores"[..], &b"Expected value to be an array"[..])),
+            Some(all) if all.iter().all(is_matcher) => None,
+            Some(_) => Some((b"ignores", only_matchers)),
+        });
+        let Some((key, message)) = problem else {
+            return Ok(());
+        };
+        let key = match key {
+            b"" => Vec::new(),
+            key => [b"Key \"", key, b"\": "].concat(),
+        };
+        let index = self.objects.len().saturating_sub(self.defaults).to_string();
+        Err(ConfigError::new(&[
+            &config_name(json),
+            &key,
+            message,
+            b" at user-defined index ",
+            index.as_bytes(),
+            b".",
+        ]))
+    }
+
     /// One object of a flat configuration, without its `extends`.
     pub(super) fn object(&mut self, json: &Json) -> Result<ConfigObject, ConfigError> {
-        let Some(entries) = json.as_object() else {
-            return Err(ConfigError::new(&[match json {
-                Json::Null => b"Unexpected null config.",
-                _ => &b"Unexpected non-object config."[..],
-            }]));
-        };
+        self.validate_base(json)?;
+        let entries = json.as_object().unwrap_or_default();
         let mut object = ConfigObject::default();
-        if let Some(base_path) = json.get(b"basePath") {
-            let Some(base_path) = base_path.as_str() else {
-                return Err(ConfigError::new(&[
-                    b"Key \"basePath\": Expected value to be a string.",
-                ]));
-            };
+        if let Some(base_path) = json.get(b"basePath").and_then(Json::as_str) {
             object.base_path = Some(path::resolve(&self.base_path, base_path));
         }
-        if let Some(files) = json.get(b"files") {
-            let Some(files) = files.as_array().filter(|it| !it.is_empty()) else {
-                return Err(ConfigError::new(&[
-                    b"Key \"files\": Expected value to be a non-empty array.",
-                ]));
-            };
+        if let Some(files) = json.get(b"files").and_then(Json::as_array) {
             let mut alternatives = Vec::with_capacity(files.len());
             for item in files {
                 alternatives.push(match item {
-                    Json::Array(all) => self.patterns("files", all)?,
-                    item => self.patterns("files", std::slice::from_ref(item))?,
+                    Json::Array(all) => self.patterns("files", all),
+                    item => self.patterns("files", std::slice::from_ref(item)),
                 });
             }
             object.files = Some(alternatives);
         }
-        if let Some(ignores) = json.get(b"ignores") {
-            let Some(ignores) = ignores.as_array() else {
-                return Err(ConfigError::new(&[
-                    b"Key \"ignores\": Expected value to be an array.",
-                ]));
-            };
-            object.ignores = Some(self.patterns("ignores", ignores)?);
+        if let Some(ignores) = json.get(b"ignores").and_then(Json::as_array) {
+            object.ignores = Some(self.patterns("ignores", ignores));
             object.is_global_ignores = entries
                 .iter()
                 .filter(|it| !META_KEYS.contains(&&it.0[..]))
                 .count()
                 == 1;
+        }
+        if let Some(message) = validate_object(entries) {
+            object.error = Some([&config_name(json)[..], &message].concat());
+            return Ok(object);
         }
         let mut typescript_prefixes: Vec<&[u8]> = Vec::new();
         for (prefix, name) in json
@@ -175,8 +293,13 @@ impl Reader<'_> {
             .unwrap_or_default()
         {
             match name.as_str() {
-                _ if matches!(&prefix[..], b"@" | b"@typescript-eslint") => {}
-                Some(name) if is_typescript_plugin(name) => typescript_prefixes.push(prefix),
+                _ if matches!(&prefix[..], b"@" | b"@typescript-eslint") => {
+                    object.plugins.push(prefix[..].into());
+                }
+                Some(name) if is_typescript_plugin(name) => {
+                    typescript_prefixes.push(prefix);
+                    object.plugins.push(b"@typescript-eslint"[..].into());
+                }
                 _ => object.foreign_plugins.push(prefix[..].into()),
             }
         }
@@ -347,11 +470,13 @@ impl Config {
             objects: Vec::new(),
             notes: Vec::new(),
             unknown_rules: Vec::new(),
+            defaults: 0,
         };
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
             reader.object_with_extends(object)?;
         }
+        reader.defaults = reader.objects.len();
         fn read(reader: &mut Reader, json: &Json, depth: usize) -> Result<(), ConfigError> {
             match json {
                 Json::Array(items) if depth < 64 => items

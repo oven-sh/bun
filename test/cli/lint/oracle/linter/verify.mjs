@@ -90,6 +90,11 @@ function generated() {
   ];
   const invalidConfigs = [
     { rules: { eqeqeq: [2, "sometimes"] } },
+    { rules: { "foo/bar": 2 } }, { rules: { "foo/bar": 0 } }, { rules: { "no-comma-dangle": 1 } }, { rules: { "space-in-brackets": 2 } }, { rules: { "@scope/foo/bar": [2] } },
+    { foo: 1 }, { name: "named", foo: 1 }, { env: {} }, { rules: { eqeqeq: "bad" } }, { rules: { eqeqeq: [] } }, { rules: { eqeqeq: {} } }, { rules: [] }, { rules: null },
+    { linterOptions: { noInlineConfig: 1 } }, { linterOptions: { reportUnusedDisableDirectives: "x" } }, { linterOptions: { reportUnusedInlineConfigs: true } }, { linterOptions: { foo: 1 } },
+    { linterOptions: 1 }, { settings: 1 }, { settings: [] }, { languageOptions: 1 }, { languageOptions: [] }, { plugins: ["a"] }, { plugins: 1 }, { name: 1 }, { name: "" , bar: 1 }, { files: [] }, { files: "a" },
+    { files: [1] }, { files: [["a", 1]] }, { ignores: "a" }, { ignores: [1] }, { basePath: 1 }, { root: true }, { parserOptions: {} }, { name: "n", files: [] }, { overrides: [] },
     { rules: { "no-debugger": [2, {}] }, languageOptions: { ecmaVersion: "2020" } },
     ...[{ ecmaVersion: null }, { sourceType: "esm" }, { sourceType: 1 }, { globals: [] }, { globals: null }, { globals: { " a": true } }, { globals: { a: "yes" } }, { globals: { a: 1 } },
       { parserOptions: [] }, { parserOptions: null }, { parserOptions: "x" }, { env: {} }, { foo: 1, bar: 2 }, { ecmaVersion: 2.5, sourceType: "script" }, { ecmaVersion: 1e9 },
@@ -202,7 +207,9 @@ function eslintAnswer({ code, filename, config, options }) {
   const { quiet, fix, ...rest } = options;
   const own = structuredClone(config);
   if (own.languageOptions?.parser === "typescript") own.languageOptions.parser = typescriptParser;
-  const configs = new FlatConfigArray([own], { baseConfig, basePath: "/" });
+  // As the command line does it, which shows in the messages about an invalid configuration.
+  const configs = new FlatConfigArray([], { baseConfig, basePath: "/" });
+  configs.push({}, own); // The harness has an object of its own before it.
   configs.normalizeSync();
   // `oxlint-disable` means `eslint-disable` here, and nothing to ESLint.
   if (fix) {
@@ -234,8 +241,8 @@ for (const [name, make] of Object.entries({ generated, upstream, aliases })) {
       expected.push(normalize(eslintAnswer(it)));
       cases.push(it);
     } catch (error) {
-      // The configuration is invalid. What is said about the options of a rule and about `languageOptions` is compared.
-      if (!error.message.includes("\tValue ") && !error.message.startsWith('Key "languageOptions"')) {
+      // The configuration is invalid. A rule that ESLint does not have may be one that is not implemented yet.
+      if (/Could not find "/.test(error.message)) {
         invalid++;
         continue;
       }

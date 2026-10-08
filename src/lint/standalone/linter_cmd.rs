@@ -155,12 +155,30 @@ fn verify(args: &[String]) {
             .unwrap_or(b"file.js");
         let filename = String::from_utf8_lossy(filename).into_owned();
         let null = Json::Null;
-        let mut unknown = Vec::new();
-        let config = ResolvedConfig::from_json(
-            linter().registry(),
-            case.get(b"config").unwrap_or(&null),
-            &mut unknown,
-        );
+        if i > 0 {
+            out.extend_from_slice(b",\n");
+        }
+        // As the oracle configures ESLint: every file is linted, and the plugin is there.
+        let base = br#"{ "files": ["**"], "plugins": { "@typescript-eslint": "@typescript-eslint/eslint-plugin" } }"#;
+        let objects = Json::Array(vec![
+            bun_lint::json::parse(base).unwrap_or(Json::Null),
+            case.get(b"config").cloned().unwrap_or(Json::Null),
+        ]);
+        let path = format!("/{filename}");
+        let config = Config::from_flat_json(linter().registry(), b"/", &objects)
+            .map(|config| config.get(linter().registry(), path.as_bytes()));
+        let config = match config {
+            Ok(FileConfig::Matched(config)) => config,
+            Ok(_) => {
+                out.extend_from_slice(b"null");
+                continue;
+            }
+            Err(error) => {
+                let error = Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]);
+                testing::write_json(&mut out, &error);
+                continue;
+            }
+        };
         let given = case.get(b"options").unwrap_or(&null);
         let only_errors = |_: &RuleId, severity: Severity| severity == Severity::Error;
         let options = LintOptions {
@@ -181,9 +199,6 @@ fn verify(args: &[String]) {
                 _ => None,
             },
         };
-        if i > 0 {
-            out.extend_from_slice(b",\n");
-        }
         if let Some(error) = &config.error {
             testing::write_json(
                 &mut out,

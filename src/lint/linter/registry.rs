@@ -129,6 +129,14 @@ impl Registry {
     }
 }
 
+/// What replaces a rule that ESLint has removed, separated by `, `.
+pub(crate) fn replacement_of(id: &[u8]) -> Option<&'static str> {
+    REPLACEMENTS
+        .iter()
+        .find(|it| it.0.as_bytes() == id)
+        .map(|it| it.1)
+}
+
 /// ESLint's `createMissingRuleMessage`.
 pub(crate) fn missing_rule_message(id: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(id.len() + 40);

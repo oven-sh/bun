@@ -359,6 +359,7 @@ impl Rc<'_, '_> {
                     };
                     settings.push(RuleSetting {
                         id: crate::linter::RuleId::Known(entry.meta).to_vec().into(),
+                        plugin: Box::default(),
                         severity: *severity,
                         options: Vec::new(),
                         has_only_severity: true,
@@ -393,6 +394,7 @@ impl Config {
                 objects: Vec::new(),
                 notes: Vec::new(),
                 unknown_rules: Vec::new(),
+                defaults: 0,
             },
             flavor,
             load,

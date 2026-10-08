@@ -39,6 +39,9 @@ pub(crate) fn deep_merge_into(first: &mut Json, second: &Json) {
 #[derive(Clone, Debug)]
 pub(crate) struct RuleSetting {
     pub(crate) id: Box<[u8]>,
+    /// The plugin that ESLint takes the rule from, as it is written. Empty for a rule of ESLint
+    /// itself, and for the names that only oxlint has.
+    pub(crate) plugin: Box<[u8]>,
     pub(crate) severity: Severity,
     pub(crate) options: Vec<Json>,
     /// It has no options of its own, so it keeps those of the setting that it overrides.
@@ -54,6 +57,7 @@ impl RuleSetting {
         };
         Some(RuleSetting {
             id: id.into(),
+            plugin: Box::default(),
             severity: severity_of(value.first()?)?,
             options: value[1..].to_vec(),
             has_only_severity: value.len() == 1,

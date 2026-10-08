@@ -113,8 +113,12 @@ struct ConfigObject {
     linter_options: Json,
     settings: Json,
     rules: Vec<RuleSetting>,
+    /// The prefixes of the plugins that are implemented here.
+    plugins: Vec<Box<[u8]>>,
     /// The prefixes of the plugins that are not implemented here.
     foreign_plugins: Vec<Box<[u8]>>,
+    /// The object is invalid: the message of ESLint, which it gives when the object is merged.
+    error: Option<Vec<u8>>,
     language: Option<Box<[u8]>>,
     processor: Option<Box<[u8]>>,
 }
@@ -130,7 +134,9 @@ impl Default for ConfigObject {
             linter_options: Json::Null,
             settings: Json::Null,
             rules: Vec::new(),
+            plugins: Vec::new(),
             foreign_plugins: Vec::new(),
+            error: None,
             language: None,
             processor: None,
         }
@@ -312,10 +318,16 @@ impl Config {
             prefers_typescript_rules: self.prefers_typescript_rules,
             ..ResolvedConfig::default()
         };
+        let mut plugins: Vec<&Box<[u8]>> = Vec::new();
         for object in indices
             .iter()
             .filter_map(|index| self.objects.get(*index as usize))
         {
+            if object.error.is_some() {
+                config.error.clone_from(&object.error);
+                return config;
+            }
+            plugins.extend(object.plugins.iter().chain(&object.foreign_plugins));
             merge::deep_merge_into(&mut language_options, &object.language_options);
             merge::deep_merge_into(&mut settings, &object.settings);
             linter.merge_json(&object.linter_options);
@@ -336,6 +348,35 @@ impl Config {
         config.language = LanguageOptions::from_json(&language_options, &settings);
         config.linter = linter;
         for setting in rules {
+            // ESLint's `throwRuleNotFoundError`, where it can be known that ESLint has no such rule.
+            if setting.severity != Severity::Off
+                && !self.accepts_all_plugins
+                && config.error.is_none()
+            {
+                let problem = match &setting.plugin[..] {
+                    b"" => super::registry::replacement_of(&setting.id).map(|replacement| {
+                        let by =
+                            bun_core::strings::replace_owned(replacement.as_bytes(), b", ", b",");
+                        [
+                            b"Rule \"",
+                            &setting.id[..],
+                            b"\" was removed and replaced by \"",
+                            &by,
+                            b"\".",
+                        ]
+                        .concat()
+                    }),
+                    plugin if plugins.iter().any(|it| ***it == *plugin) => None,
+                    plugin => Some(
+                        [b"Could not find plugin \"", plugin, b"\" in configuration."].concat(),
+                    ),
+                };
+                if let Some(problem) = problem {
+                    config.error = Some(
+                        [b"Key \"rules\": Key \"", &setting.id[..], b"\": ", &problem].concat(),
+                    );
+                }
+            }
             let Some(entry) = config.find_rule(registry, &setting.id) else {
                 continue;
             };

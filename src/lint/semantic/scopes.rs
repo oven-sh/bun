@@ -64,6 +64,10 @@ pub(crate) struct ScopeTree {
     pub(crate) of_fn: Vec<u32>,
     /// By `ClassId`.
     pub(crate) of_class: Vec<u32>,
+    /// The `export as namespace N` statements.
+    pub(crate) namespace_exports: Vec<hir::StmtId>,
+    /// The types of the parameters of `catch` clauses, which typescript-eslint does not visit.
+    pub(crate) unvisited: Vec<(u32, u32)>,
 }
 
 #[derive(Copy, Clone)]
@@ -156,7 +160,8 @@ fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) ->
 
 impl ScopeTree {
     pub(crate) fn new<'a>(file: &'a File<'a>) -> ScopeTree {
-        let protos = collect(file);
+        let (mut namespace_exports, mut unvisited) = (Vec::new(), Vec::new());
+        let protos = collect(file, &mut namespace_exports, &mut unvisited);
         // By start. Of two that start together, the one that ends later contains the other.
         let mut order: Vec<(u64, u64)> = (protos.iter().enumerate())
             .map(|(i, it)| {
@@ -173,6 +178,8 @@ impl ScopeTree {
             regions: Vec::with_capacity(protos.len()),
             of_fn: vec![NONE; file.hir.fns.len()],
             of_class: vec![NONE; file.hir.classes.len()],
+            namespace_exports,
+            unvisited,
         };
         let mut scope_of_proto = vec![NONE; protos.len()];
         let mut outside: Vec<(u32, u32)> = Vec::new();
@@ -383,7 +390,7 @@ impl Cursor<'_> {
 
 /// Every scope of the file, and the parts of the nodes that create them that are outside them, in
 /// no particular order.
-fn collect(file: &File) -> Vec<Proto> {
+fn collect(file: &File, namespace_exports: &mut Vec<hir::StmtId>, unvisited: &mut Vec<(u32, u32)>) -> Vec<Proto> {
     let (hir, bound) = (&file.hir, &file.bound);
     let is_javascript = is_javascript_mode(file);
     // Before ES2015 only functions, `catch` and `with` create scopes.
@@ -442,6 +449,7 @@ fn collect(file: &File) -> Vec<Proto> {
                 | StmtKind::ForOf { .. }
                 | StmtKind::Switch { .. }
                 | StmtKind::Try { .. }
+                | StmtKind::ExportAsNamespace(_)
         );
         if !is_scope || matches!(bound.stmt_parent.get(i), None | Some(Parent::None)) {
             continue;
@@ -467,13 +475,17 @@ fn collect(file: &File) -> Vec<Proto> {
             }
             StmtKind::Try {
                 block: tried,
+                param,
                 handler,
                 ..
             } => {
                 if let (Some(tried), Some(handler)) = (hir.stmts.get(tried.idx()), hir.stmts.get(handler.idx())) {
                     protos.push(scope(ScopeKind::Catch, block, tried.loc.end, handler.loc.end));
                 }
+                let ty = hir.var_decls.get(param.idx()).and_then(|it| hir.types.get(it.ty.idx()));
+                unvisited.extend(ty.map(|it| (it.pos, it.end)));
             }
+            StmtKind::ExportAsNamespace(_) => namespace_exports.push(hir::StmtId(i as u32)),
             _ => {}
         }
     }

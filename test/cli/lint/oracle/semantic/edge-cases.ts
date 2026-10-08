@@ -34,6 +34,15 @@ export const javascript = [
   "for (var i = 0, j = i; i < j; i++) { let i; } for (let i = 0; i; i++) { var k; (() => i); }",
   "class A { static #p = 1; #q() { return #p in A } a = this.#q; }",
   "<A><a.b.c/><B.C></B.C><d e={f} {...g}>{h}</d><_x/><$y/></A>;",
+  "let b; [a.x = (b = 1), b] = x;",
+  "let b; ({ x: a.x = (b = 1), b } = x);",
+  "let b; ({ [b = 1]: b } = x);",
+  "var [b, c = (b = 1), { [b = 2]: b = (b = 3) }] = (b = 4);",
+  "function f(b, [c = (b = 1), b] = (b = 2), d = (b = 3)) {}",
+  "for (var [b, x = (b = 1)] of y); for ([c, z = (c = 1), c] of (c = 2)); for (let [d = (d = 1), d2] in d);",
+  "try {} catch ([b = (c = 1), c]) {}",
+  "let b; [a = ([b = (b = 1), b] = (b = 2)), b] = (b = 3);",
+  "let b; [b[b = 1], b] = x; [(b = 2).c, b] = x;",
 ];
 
 export const typescript = [
@@ -76,6 +85,16 @@ export const typescript = [
   "let v = function <T>(this: T) {}; let u = async <T,>(a: T): Promise<T> => a;",
   "class P { constructor(readonly a = 1, protected b?: typeof a) { a; b } }",
   "interface J extends K.L<M>, N {} class O implements K.L<M> {} class Q extends K.L<M> {}",
+  "function g<T extends typeof g>(g: T): number { return 1; }",
+  "const h = function h<T extends typeof h, U = typeof a>(a: T): typeof a { var a2; }; class K { m<T extends typeof p>(p: T) {} }",
+  "type Fn = <T extends typeof p>(p: T) => typeof p; declare function d<T extends typeof q>(q: T): void;",
+  "let a; ([a]) = x; let b, r; ({ b, ...r }) = x; r; [([c])] = x; [({ d, ...e })] = x; (f) = x; ([g = 1]) = x;",
+  "function f<T>(T) {} const g = function <T>(T) {}; class A { m<T>(T) {} } function h<T>() { var T; } function i<T, T>() {} const j = <T,>(T) => T; type K = <T>(T) => T;",
+  "import NaN from 'a'; interface NaN {} NaN; let n: NaN;",
+  "import { X } from 'a'; namespace X {} type Y = X; import Z = require('z'); interface Z {} class W {} interface W {} namespace W {}",
+  "declare module 'x' { export as namespace a; } declare module 'y' { const b: 1; export as namespace b; } namespace N { export as namespace c; } export as namespace d;",
+  "try {} catch (e: A) {} try {} catch (e: typeof b) {} try {} catch ({a = b}: A) {}",
+  "var a, a, b, a; function f(c, c, d) {} import { g, h } from 'x';",
 ];
 
 export const tsx = [

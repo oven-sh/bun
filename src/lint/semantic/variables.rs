@@ -303,6 +303,10 @@ impl Variables {
                     }
                     flags |= entry(i).flags;
                 }
+                // `Referencer.visitFunction` defines the parameters before the type parameters.
+                if data.kind == ScopeKind::Function && flags == VALUE | TYPE {
+                    declarations[start..].sort_by_key(|it| !matches!(it, Decl::Param(_)));
+                }
                 let mut symbol = binder;
                 if of_symbol.get(binder.idx()).is_some_and(|it| *it != NONE) {
                     symbol = SymbolId((first_further + further.len()) as u32);
@@ -371,6 +375,11 @@ impl Variables {
         let scope = tree.of_fn.get(function).copied().unwrap_or(1);
         let index = *self.starts.get(scope as usize)?;
         (self.list.get(index as usize)?.symbol == symbol).then_some(index)
+    }
+
+    /// More than what identifies any variable.
+    pub(crate) fn key_limit(&self) -> usize {
+        self.of_symbol.len() + self.function_count + 1 + self.further.len()
     }
 
     /// The variable that the declaration of the binder's `symbol` whose name is at `pos` declares.

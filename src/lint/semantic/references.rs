@@ -55,17 +55,20 @@ pub(crate) struct RawReference {
 pub(crate) struct References {
     /// In source order.
     pub(crate) all: Vec<RawReference>,
-    /// Indices into `all`, variable by variable, in source order. After the last variable: what
+    /// Indices into `all` in the order ESLint makes the references. Empty if that is the source
+    /// order.
+    visiting_order: Vec<u32>,
+    /// Indices into `all`, variable by variable, in that order. After the last variable: what
     /// resolves to nothing.
     by_variable: Vec<u32>,
     /// For each variable, where its references start in `by_variable`. Two more than there are
     /// variables.
     variable_starts: Vec<u32>,
-    /// Indices into `all`, scope by scope, in source order, and where those of each scope start.
+    /// Indices into `all`, scope by scope, in that order, and where those of each scope start.
     /// Computed on demand.
     by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
     scope_count: usize,
-    /// What resolves to nothing, by name and then in source order. Computed on demand.
+    /// What resolves to nothing, by name and then in that order. Computed on demand.
     unresolved_by_name: OnceCell<Vec<u32>>,
 }
 
@@ -77,9 +80,14 @@ enum Access {
     Read,
     /// `a += value`, `a++`
     ReadWrite(ExprId),
-    /// The values that are assigned to it are listed, in the order of ESLint's references.
-    Write,
+    /// The values that are assigned to it are listed, in the order of ESLint's references. Where
+    /// the pattern that it is part of starts.
+    Write(u32),
 }
+
+/// `RawReference::variable` of a reference that the binder's answer is not asked for, until it is
+/// resolved.
+const BY_NAME: u32 = NONE - 1;
 
 struct Collector<'f, 'a> {
     file: &'f File<'a>,
@@ -89,12 +97,19 @@ struct Collector<'f, 'a> {
 
 impl Collector<'_, '_> {
     fn push(&mut self, site: ReferenceSite, pos: u32, name: Atom, flags: ReferenceFlags, write: ExprId) {
+        self.push_write(site, (pos, pos), name, flags, write);
+    }
+
+    /// `Referencer.visitPattern` makes the references of all the names of a pattern before it
+    /// visits the defaults and the computed keys in it. `at`: where the name is, and the position
+    /// that it is visited at. That is kept in `from` until the references are in order.
+    fn push_write(&mut self, site: ReferenceSite, at: (u32, u32), name: Atom, flags: ReferenceFlags, write: ExprId) {
         self.found.push(RawReference {
             site,
-            pos,
+            pos: at.0,
             name,
             variable: NONE,
-            from: NONE,
+            from: at.1,
             write: self.without_casts(write),
             flags,
         });
@@ -134,6 +149,8 @@ impl Collector<'_, '_> {
         // A bit for each of `values`: the assignment can be one of its own. Any can be a default
         // in a pattern.
         let mut is_assignment = 0u32;
+        // What each of `values` is assigned to.
+        let mut targets: SmallVec<[ExprId; 4]> = SmallVec::new();
         let mut iterated = None;
         loop {
             match bound.expr_parent.get(at.idx()) {
@@ -143,11 +160,19 @@ impl Collector<'_, '_> {
                         target,
                         value,
                     }) if target == at => {
+                        // typescript-estree makes no pattern of a literal in parentheses.
+                        let is_literal_in_parentheses = !self.is_javascript
+                            && matches!(
+                                hir.exprs.get(at.idx()).map(|it| it.kind),
+                                Some(ExprKind::Array(_) | ExprKind::Object(_))
+                            )
+                            && hir.parens.binary_search_by_key(&at.0, |it| it.0.0).is_ok();
                         // `visitExpressionTarget` looks through one.
-                        if wrappers <= 1 && !has_satisfies && values.len() < 32 {
+                        if wrappers <= 1 && !has_satisfies && !is_literal_in_parentheses && values.len() < 32 {
                             is_assignment |= 1 << values.len();
                         }
                         values.push(value);
+                        targets.push(at);
                         (at, wrappers, has_satisfies) = (parent, 0, false);
                     }
                     Some(ExprKind::Assign {
@@ -199,7 +224,10 @@ impl Collector<'_, '_> {
             && (last >= 32 || is_assignment & (1 << last) == 0)
         {
             values.pop();
+            targets.pop();
         }
+        let pattern = if iterated.is_some() { Some(&at) } else { targets.last() };
+        let start = pattern.and_then(|it| hir.exprs.get(it.idx())).map_or(0, |it| it.pos);
         // The values so far are innermost first. All but the outermost are defaults, which ESLint
         // lists outermost first, before the value itself.
         match (iterated, values.len()) {
@@ -212,7 +240,7 @@ impl Collector<'_, '_> {
                 values[..len - 1].reverse();
             }
         }
-        Access::Write
+        Access::Write(start)
     }
 
     /// Whether `at` is `e`, or `e` in what `visitExpressionTarget` looks through.
@@ -293,11 +321,22 @@ impl Collector<'_, '_> {
             match access {
                 Access::Read => self.push(site, e.pos, name, flags, ExprId::NONE),
                 Access::ReadWrite(value) => self.push(site, e.pos, name, READ | WRITE, value),
-                Access::Write => {
+                Access::Write(start) => {
                     for &value in &values {
-                        self.push(site, e.pos, name, WRITE, value);
+                        self.push_write(site, (e.pos, start), name, WRITE, value);
                     }
                 }
+            }
+        }
+        // From the type parameters of a function the binder does not see its parameters, as in
+        // TypeScript. ESLint does.
+        for operand in bound.type_query_operands {
+            let site_of = |it: &RawReference| match it.site {
+                ReferenceSite::Expr(e) => e,
+                _ => ExprId::NONE,
+            };
+            if let Ok(at) = self.found.binary_search_by_key(operand, site_of) {
+                self.found[at].variable = BY_NAME;
             }
         }
     }
@@ -345,24 +384,30 @@ impl Collector<'_, '_> {
                     if scope.is_none_or(|it| it.kind != ScopeKind::Function) {
                         continue;
                     }
-                    values.extend(hir.params.get(p.idx()).and_then(|it| it.default.some()));
+                    // typescript-estree drops the initializer of a rest parameter, which is an error.
+                    let param = hir.params.get(p.idx()).filter(|it| !it.flags.contains(hir::Flags::REST));
+                    values.extend(param.and_then(|it| it.default.some()));
                     values.reverse();
                 }
                 _ => continue,
             }
-            values.extend(last.some());
-            if values.is_empty() || (file.has_synthetic_nodes() && file.is_in_jsdoc(pat.pos)) {
+            if file.has_synthetic_nodes() && file.is_in_jsdoc(pat.pos) {
                 continue;
             }
+            let (site, flags) = (ReferenceSite::Pat(hir::PatId(i as u32)), WRITE | ReferenceFlags::INIT);
+            let (start, end) = hir.pats.get(at.idx()).map_or((pat.pos, pat.pos), |it| (it.pos, it.end));
             for &value in &values {
-                let site = ReferenceSite::Pat(hir::PatId(i as u32));
-                self.push(site, pat.pos, name, WRITE | ReferenceFlags::INIT, value);
+                self.push_write(site, (pat.pos, start), name, flags, value);
+            }
+            // `visitForIn` visits the declaration first, and then its names once more.
+            if last.is_some() {
+                self.push_write(site, (pat.pos, end.max(pat.pos)), name, flags, last);
             }
         }
     }
 
     /// `TypeVisitor`
-    fn types(&mut self, top_level: impl Iterator<Item = hir::StmtId>) {
+    fn types(&mut self, tree: &ScopeTree) {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         let start = self.found.len();
@@ -390,7 +435,7 @@ impl Collector<'_, '_> {
         }
         // A type is stored after its parts.
         self.found[start..].sort_unstable_by_key(|it| it.pos);
-        for id in top_level {
+        for &id in &tree.namespace_exports {
             if let Some(stmt) = hir.stmts.get(id.idx())
                 && let StmtKind::ExportAsNamespace(name) = stmt.kind
             {
@@ -532,8 +577,14 @@ fn is_component_name(name: &[u8]) -> bool {
 }
 
 /// The groups of `all` by `key`, which is less than `count`: the indices group by group, and where
-/// each group starts.
-fn group_by(all: &[RawReference], count: usize, key: impl Fn(&RawReference) -> usize) -> (Vec<u32>, Vec<u32>) {
+/// each group starts. Within a group they are in `order`, which is empty if that is the order of
+/// `all`.
+fn group_by(
+    all: &[RawReference],
+    order: &[u32],
+    count: usize,
+    key: impl Fn(&RawReference) -> usize,
+) -> (Vec<u32>, Vec<u32>) {
     let mut starts = vec![0u32; count + 1];
     for it in all {
         starts[key(it) + 1] += 1;
@@ -543,8 +594,9 @@ fn group_by(all: &[RawReference], count: usize, key: impl Fn(&RawReference) -> u
     }
     let mut next = starts.clone();
     let mut indices = vec![0u32; all.len()];
-    for (i, it) in all.iter().enumerate() {
-        let slot = &mut next[key(it)];
+    for i in 0..all.len() {
+        let i = order.get(i).map_or(i, |&it| it as usize);
+        let slot = &mut next[key(&all[i])];
         indices[*slot as usize] = i as u32;
         *slot += 1;
     }
@@ -567,14 +619,24 @@ impl References {
             collector.jsx_names();
         }
         if !is_javascript {
-            collector.types(file.body().iter().map(|it| it.id()));
+            collector.types(tree);
             if !hir.jsx.is_empty() {
                 collector.jsx_pragmas(tree, variables);
             }
         }
         let mut all = collector.found;
+        if !is_javascript && !tree.unvisited.is_empty() {
+            all.retain(|it| !tree.unvisited.iter().any(|range| (range.0..range.1).contains(&it.pos)));
+        }
         // Each part is nearly in order already. References at the same place keep their order.
         all.sort_by_key(|it| it.pos);
+        let mut visited_at = 0;
+        let is_visiting_order = all.iter().all(|it| std::mem::replace(&mut visited_at, it.from) <= it.from);
+        let mut visiting_order: Vec<u32> = Vec::new();
+        if !is_visiting_order {
+            visiting_order.extend(0..all.len() as u32);
+            visiting_order.sort_by_key(|&it| all[it as usize].from);
+        }
 
         let hazards = &variables.hazards;
         let mut cursor = tree.cursor();
@@ -583,7 +645,9 @@ impl References {
             let wants = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
                 + u8::from(it.flags.contains(ReferenceFlags::TYPE)) * TYPE;
             let bound_to = match it.site {
-                ReferenceSite::Expr(e) if wants == VALUE => bound.expr_symbol.get(e.idx()).copied(),
+                ReferenceSite::Expr(e) if wants == VALUE && it.variable != BY_NAME => {
+                    bound.expr_symbol.get(e.idx()).copied()
+                }
                 ReferenceSite::Pat(p) => bound.pat_symbol.get(p.idx()).copied(),
                 ReferenceSite::Declaration(index) => {
                     it.from = variables.list[index as usize].scope;
@@ -615,9 +679,11 @@ impl References {
         }
 
         let unresolved = variables.list.len();
-        let (by_variable, variable_starts) = group_by(&all, unresolved + 1, |it| (it.variable as usize).min(unresolved));
+        let variable_of = |it: &RawReference| (it.variable as usize).min(unresolved);
+        let (by_variable, variable_starts) = group_by(&all, &visiting_order, unresolved + 1, variable_of);
         References {
             all,
+            visiting_order,
             by_variable,
             variable_starts,
             by_scope: OnceCell::new(),
@@ -660,7 +726,8 @@ impl References {
     /// The references that are written in the scopes `first..=last`.
     #[inline]
     pub(crate) fn in_scopes(&self, first: u32, last: u32) -> &[u32] {
-        let (by_scope, starts) = self.by_scope.get_or_init(|| group_by(&self.all, self.scope_count, |it| it.from as usize));
+        let compute = || group_by(&self.all, &self.visiting_order, self.scope_count, |it| it.from as usize);
+        let (by_scope, starts) = self.by_scope.get_or_init(compute);
         Self::group(by_scope, starts, first as usize, last as usize)
     }
 

@@ -2,14 +2,16 @@
 //!
 //! - `dump <file>`: the scopes, variables and references of a file, as JSON.
 //! - `dump --batch <cases.jsonl>`: the same for each case of `test/cli/lint/oracle/semantic/cases.ts`, a line for each, to
-//!   compare with what `dump.ts` there prints. With `--nodes` also the scope of every node.
+//!   compare with what `dump.ts` there prints. With `--nodes` also the scope of every node. With `--typed=<directory>` each
+//!   case is a file of the project in that directory, which has a `tsconfig.json`, after the program is checked
+//!   (`BUN_SEMA_TS_LIB` as for `bun-lint types`).
 //! - `bench <paths..> [--repeat=n]`: how long it takes to derive each part.
 //! - `fuzz <cases.jsonl> [--rounds=n]`: looks for panics on code with syntax errors.
 
 use bun_lint::ast::{File, Node, StmtKind, TypeKind};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
-use bun_lint::semantic::{DeclarationKind, Reference, Scope, ScopeKind, Symbol};
+use bun_lint::semantic::{Declaration, DeclarationKind, Reference, Scope, ScopeKind, Symbol};
 
 fn string(text: impl AsRef<[u8]>) -> Json {
     Json::String(text.as_ref().to_vec())
@@ -138,6 +140,14 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
                 scope_key(scope, offsets),
                 Json::Array(names.map(|it| number(offsets.of(it.start))).collect()),
                 Json::Array(symbol.declarations().map(|it| string(declaration_kind_name(it.kind()))).collect()),
+                // The order of the writes. ESLint has those of a class declaration in two variables.
+                match symbol.declarations().any(|it| matches!(it, Declaration::Class(c) if matches!(c.owner(), Node::Stmt(_)))) {
+                    true => Json::Null,
+                    false => {
+                        let writes = symbol.references().filter(|it| it.is_write());
+                        Json::Array(writes.map(|it| number(offsets.of(it.span().start))).collect())
+                    }
+                },
             ]));
         }
     }
@@ -294,9 +304,35 @@ fn dump_code(
     }
 }
 
+/// The same for the code as a file of the project in `root`, after the program is checked.
+fn dump_typed(root: &str, path: &str, code: &[u8], language: &LanguageOptions, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
+    let files = [format!("{root}/{path}")];
+    let config = format!("{root}/tsconfig.json");
+    let dumped = std::panic::catch_unwind(|| {
+        let project = crate::types_cmd::Project {
+            cwd: root,
+            config: Some(&config),
+            files: &files,
+            overlay: vec![(files[0].clone(), code.to_vec())],
+            threads: 1,
+        };
+        fn for_any_file<R, F: for<'a> Fn(&'a File<'a>) -> R>(then: F) -> F {
+            then
+        }
+        let then = for_any_file(|file| (!file.has_parse_errors()).then(|| dump(file, with_nodes)));
+        crate::types_cmd::lint_project(project, language, &then).pop().and_then(|it| it.1)
+    });
+    match dumped {
+        Ok(Some(fields)) => fields,
+        Ok(None) => vec![(b"error".to_vec(), string("the parser rejects the code"))],
+        Err(_) => vec![(b"error".to_vec(), string("panicked"))],
+    }
+}
+
 fn dump_command(args: &[String]) {
     let with_nodes = args.iter().any(|it| it == "--nodes");
-    let args: Vec<&String> = args.iter().filter(|it| *it != "--nodes").collect();
+    let typed = args.iter().find_map(|it| it.strip_prefix("--typed="));
+    let args: Vec<&String> = args.iter().filter(|it| *it == "--batch" || !it.starts_with("--")).collect();
     match args[..] {
         [batch, cases] if batch == "--batch" => {
             std::panic::set_hook(Box::new(|_| {}));
@@ -306,7 +342,11 @@ fn dump_command(args: &[String]) {
                 let path = path_of(&case);
                 let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
                 let mut fields = vec![(b"id".to_vec(), case.get(b"id").cloned().unwrap_or(Json::Null))];
-                fields.extend(dump_case(path, code, &language_of(&case, path), with_nodes));
+                let language = language_of(&case, path);
+                fields.extend(match typed {
+                    Some(root) => dump_typed(root, path, code, &language, with_nodes),
+                    None => dump_case(path, code, &language, with_nodes),
+                });
                 print(fields);
             }
         }

@@ -178,6 +178,10 @@ function dump(it: Case) {
         scopeKey(scope),
         variable.defs.map((def: any) => def.name.range[0]),
         variable.defs.map((def: any) => def.type),
+        // The order of the writes is significant. Those of a class declaration are in two variables.
+        variable.defs.some((def: any) => def.node.type === "ClassDeclaration")
+          ? null
+          : variable.references.filter((it: any) => it.isWrite()).map((it: any) => it.identifier.range[0]),
       ]);
     }
     for (const reference of scope.references) {

@@ -56,9 +56,11 @@
 //!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
 //!   ESLint.
 //! - `x as const` has no reference to a type `const`.
-//! - Declarations and references are in source order. ESLint has them in the order it visits
-//!   them: the type parameters of a function after its parameters, the type of a variable after
-//!   its initializer, the decorators of a member after the member.
+//! - References are in source order, but for the names of a destructuring pattern, which come
+//!   before what is in its defaults and computed keys, as in ESLint. ESLint has them in the order
+//!   it visits them, which also differs from the source in this: the type parameters of a function
+//!   after its parameters and its return type, the type of a variable after its initializer, the
+//!   decorators of a member after the member, the index of `a[b]` in a pattern before `a`.
 //! - Where TypeScript merges declarations that are in different scopes, there is a [`Symbol`] in
 //!   each scope, as in ESLint, and they have the same [`Symbol::id`]: the type parameters of
 //!   `interface I<T> {} interface I<T> {}`, what the bodies of `namespace N {} namespace N {}`
@@ -91,8 +93,8 @@ pub(crate) trait Binding {
     fn symbol(&self, id: SymbolId) -> Option<RawSymbol>;
     fn declarations(&self, id: SymbolId) -> &[Decl];
     /// The symbol that stands for `id` here: of the two symbols of an exported declaration, the
-    /// one that is exported. And whether there are `refused_declarations`. `None` if there is no
-    /// `id`.
+    /// one that is exported. And whether that may not be all: there are `refused_declarations`,
+    /// or nothing declares it. `None` if there is no `id`.
     fn canonical(&self, id: SymbolId) -> Option<(SymbolId, bool)>;
     /// Every declaration of something that a name can refer to, with its canonical symbol.
     fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, Decl)>);
@@ -122,8 +124,9 @@ impl Binding for bind::Bound<'_> {
         self.symbols.get(id.idx()).map_or(&[], |symbol| symbol.decls.as_slice())
     }
     fn canonical(&self, id: SymbolId) -> Option<(SymbolId, bool)> {
-        let exported = self.symbols.get(id.idx())?.export_symbol;
-        Some((if exported.is_some() { exported } else { id }, !self.redeclarations.is_empty()))
+        let symbol = self.symbols.get(id.idx())?;
+        let is_special = !self.redeclarations.is_empty() || symbol.decls.is_empty();
+        Some((if symbol.export_symbol.is_some() { symbol.export_symbol } else { id }, is_special))
     }
     fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, Decl)>) {
         for (i, symbol) in self.symbols.iter().enumerate() {
@@ -231,11 +234,16 @@ impl<'a> Symbol<'a> {
     /// The symbol that the binder's `id` is, or is one declaration of.
     #[inline]
     pub(crate) fn some(file: &'a File<'a>, id: SymbolId) -> Option<Self> {
-        let (id, has_refused_declarations) = file.binding.canonical(id)?;
-        if has_refused_declarations
-            && let Some(index) = file.variables().of_symbol(file.scope_tree(), id)
-        {
-            return Some(Symbol::at(file, index));
+        let (id, is_special) = file.binding.canonical(id)?;
+        if is_special {
+            if let Some(index) = file.variables().of_symbol(file.scope_tree(), id) {
+                return Some(Symbol::at(file, index));
+            }
+            // In a program, a name at the top level of a script that clashes with a global of
+            // another file resolves to a symbol that stands for that global.
+            if file.binding.declarations(id).is_empty() {
+                return file.top_level_scope().get_atom(file.binding.symbol(id)?.name);
+            }
         }
         Some(Symbol { file, id })
     }
@@ -272,13 +280,20 @@ impl<'a> Symbol<'a> {
 
     /// The symbol of the binder, which with the file is what the type checker takes. `NONE` for
     /// an [implicit `arguments`](Symbol::is_implicit_arguments). Different symbols can have the
-    /// same: see the [differences from ESLint's model](self).
+    /// same: see the [differences from ESLint's model](self). To tell symbols apart: [`Symbol::key`].
     #[inline]
     pub fn id(self) -> SymbolId {
         match self.id.idx() < self.file.binding.symbol_count() {
             true => self.id,
             false => self.variable().map_or(SymbolId::NONE, |it| it.binder),
         }
+    }
+
+    /// A number that no other symbol of the file has, to key a set or a map by. This is what `==`
+    /// compares. The numbers are not contiguous, and less than [`File::symbol_key_limit`].
+    #[inline]
+    pub fn key(self) -> usize {
+        self.id.idx()
     }
 
     #[inline]
@@ -347,7 +362,8 @@ impl<'a> Symbol<'a> {
         self.id.idx() >= self.file.binding.symbol_count() && self.id().is_none()
     }
 
-    /// In the order they are written. What ESLint takes for one variable is one symbol:
+    /// In the order they are written, but for the parameters of a function, which come before its
+    /// type parameters, as in ESLint. What ESLint takes for one variable is one symbol:
     /// `function f() {} var f;` has two declarations.
     pub fn declarations(self) -> impl DoubleEndedIterator<Item = Declaration<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
@@ -360,7 +376,8 @@ impl<'a> Symbol<'a> {
         all.iter().map(move |&decl| Declaration::new(file, decl))
     }
 
-    /// Everything in the file that refers to it, in source order. A declaration is not a
+    /// Everything in the file that refers to it, in [ESLint's order](self), which is the source
+    /// order but for the names of destructuring patterns with defaults. A declaration is not a
     /// reference, but one that gives its name a value makes a write reference of the name, as in
     /// ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
     pub fn references(self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
@@ -524,7 +541,8 @@ impl<'a> Declaration<'a> {
         }
     }
 
-    /// Where the name is written: ESLint's `def.name`.
+    /// Where the name is written: ESLint's `def.name` without a type annotation. See
+    /// [`Declaration::identifier_span`].
     pub fn name_span(self) -> Option<Span> {
         Some(match self {
             Declaration::Var(pat) | Declaration::Param(pat) => pat.span(),
@@ -545,6 +563,15 @@ impl<'a> Declaration<'a> {
             Declaration::ImportEquals(it) => it.name().span(),
             Declaration::Other => return None,
         })
+    }
+
+    /// The range of ESLint's `def.name`, which for a variable or a parameter with a type
+    /// annotation includes the `?` and the annotation: `a?: T`.
+    pub fn identifier_span(self) -> Option<Span> {
+        match self {
+            Declaration::Var(pat) | Declaration::Param(pat) => Some(crate::utils::estree_span(Node::Pat(pat))),
+            _ => self.name_span(),
+        }
     }
 
     /// The node that declares it: ESLint's `def.node`. For a `Var` the `VarDecl`, also for the
@@ -1105,6 +1132,11 @@ impl<'a> File<'a> {
         })
     }
 
+    /// More than every [`Symbol::key`] of the file.
+    pub fn symbol_key_limit(&'a self) -> usize {
+        self.variables().key_limit()
+    }
+
     /// Every reference, in source order.
     pub fn references(&'a self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
         (0..self.reference_list().all.len() as u32).map(move |index| Reference { file: self, index })
@@ -1286,13 +1318,7 @@ impl<'a> Node<'a> {
     pub fn declared_symbols(self) -> Vec<Symbol<'a>> {
         let file = self.file();
         let mut found: Vec<Symbol<'a>> = Vec::new();
-        let mut add = |symbol: Option<Symbol<'a>>| {
-            if let Some(symbol) = symbol.filter(|it| it.index().is_some())
-                && !found.contains(&symbol)
-            {
-                found.push(symbol);
-            }
-        };
+        let mut add = |symbol: Option<Symbol<'a>>| found.extend(symbol.filter(|it| it.index().is_some()));
         let of = |symbols: &[SymbolId], index: usize, name: Option<Span>| {
             Symbol::declared(file, *symbols.get(index)?, name?.start)
         };
@@ -1346,6 +1372,14 @@ impl<'a> Node<'a> {
                 _ => {}
             },
             _ => {}
+        }
+        // Each once, where it is first: `var a, a`, `function f(a, a) {}`.
+        let mut first: Vec<(SymbolId, usize)> = found.iter().enumerate().map(|(i, it)| (it.id, i)).collect();
+        first.sort_unstable();
+        first.dedup_by_key(|it| it.0);
+        if first.len() < found.len() {
+            first.sort_unstable_by_key(|it| it.1);
+            found = first.iter().map(|it| found[it.1]).collect();
         }
         found
     }

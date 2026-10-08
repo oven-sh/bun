@@ -6,7 +6,7 @@ A formatter for JavaScript, JSX, TypeScript, JSON, CSS, Less, SCSS, GraphQL, YAM
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
 - **There is no AST of its own**. It prints straight from the type checker's HIR through the handles of `bun_lint::ast` (`src/lint/CLAUDE.md` has the table ESTree → handles).
 
-Not there: HTML and Markdown in templates (they are printed as they are. CSS and GraphQL in templates are formatted: `css/embed.rs`, `graphql/embed.rs`), JSDoc formatting, Tailwind class sorting, Vue/Svelte/Angular, Flow, Babel-only proposals, plugins.
+Not there: HTML in templates (it is printed as it is. CSS, GraphQL and Markdown in templates are formatted: `css/embed.rs`, `graphql/embed.rs`, `markdown/embed.rs`), MDX unless it is asked for with `--parser mdx`, Tailwind class sorting, Vue/Svelte/Angular, Flow, Babel-only proposals, plugins.
 
 ## The pipeline
 
@@ -39,9 +39,22 @@ What a caller does with a file, in this order, is `format_text` in `src/lint/sta
 | `json/`, `css/`, `graphql/` | JSON (`json`, `json5`, `jsonc`, `json-stringify`), style sheets (`css`, `less`, `scss`) and GraphQL, each with a parser of its own. `embed.rs` in the last two: the same in the templates of JavaScript | |
 | `yaml/` | YAML: ports of `yaml` (lexer, CST, composer with its errors), of `yaml-unist-parser` and of `language-yaml`. Prints with `css/doc.rs`. Also the front matter of style sheets and of Markdown | |
 | `markdown/` | Markdown: a parser whose tree is that of micromark and remark, and `language-markdown`. Prints with `css/doc.rs`. Code blocks go to the other formatters. For JavaScript the caller sets `FormatOptions::format_javascript`, since this crate does not parse it | |
+| `js/jsdoc/` | oxfmt's option `jsdoc`: JSDoc comments are formatted as prettier-plugin-jsdoc does. Off unless `.oxfmtrc.json` sets it. A comment whose formatted text would have `*/` in it stays as it is | `formatter/jsdoc/` |
 | `conformance/` | the crate `bun_format_conformance`: runs the tests of Prettier and of oxfmt | |
 | `pragma.rs`, `range.rs`, `cursor.rs` | `insertPragma`/`requirePragma`/`checkIgnorePragma`, `rangeStart`/`rangeEnd`, `cursorOffset`: Prettier's `src/main/core.js` | |
 | `verify.rs`, `verify/` | a check that formatting did not change the program: the trees and the comments before and after | `detect_code_removal` (different) |
+
+## Style sheets, YAML, Markdown: the other printer
+
+These three are ports of Prettier's own printers, which count on what `printDocToString` does step by step (two line breaks in a row are an empty line, `dedentToRoot`, how a `fill` measures), so they do not print with `ir/`. `css/doc.rs` has `Elements`, the parts of a document one after the other in one list, and `printDocToString`, `fits` and `fill` on it. `Doc` is the tree, for who takes documents apart (Markdown, embedded code). `doc::print` writes it to `Elements`. There is one printer.
+
+The printer for style sheets returns no documents. It writes operations (text, lines, start and end of a group, indentation, items of a `fill`) to `css/sink.rs`. **There is one implementation of every rule, and two ways to take what it writes.** At first the sink writes straight to the output: outside of groups a line is a line break, inside everything is on one line. That is what Prettier prints if the line fits as a whole. If it does not, or a group has something in it that is more than its content on one line (a forced break, a line suffix), `Sink::end_unit` says so, what has been written of the statement is taken back, and the printer writes the statement again, to `Elements`. So writing a statement must have no effect but what it writes.
+
+`css/memo.rs` keeps, per thread and up to 1 MB, what a declaration was printed as on one line, and writes that again for the same declaration. Half of the declarations of a style sheet are repeats. A mistake here makes the output of a file depend on the files that the thread has formatted before, which no fixture shows. Therefore:
+
+- **The key has to hold everything that the printed line depends on**: the text of the declaration, all of it (`Printer::memo_text`), and `Printer::memo_context`: the syntax, `singleQuote`, `trailingComma`, the flavor, the name of the at-rule around it, and whether it is in an ICSS rule, a Less variable, a nested property of SCSS. **Whoever makes the printing of a declaration look at one more thing (an option, an ancestor, a sibling, text outside of it) adds that to the key, or keeps such declarations out of the memo.** The width is not in the key: a hit is measured at the end of its line like everything else.
+- Nothing is kept of a declaration with a comment, a line break or a block, of one that failed, or of embedded style sheets.
+- After any change to how declarations are printed: `test/cli/format/oracle/fuzz/css-memo-orders.py` (all style sheets on one thread in three shuffled orders and once without the memo) and `css-memo-surroundings.py` (the same declarations in many surroundings). The first has found a key that was too short.
 
 ## oxc file → our file
 
@@ -203,6 +216,8 @@ $B format oxfmt-fixtures <(zstd -dc test/cli/format/oxfmt/bundle.zst)   # oxfmt'
 ```
 
 `conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `src/format/conformance/prettier.rs` is all that it leaves out, with the reason. `test/cli/format/{prettier,oxfmt}/expected.txt` is what the two commands print: write them again in the commit that makes one more case pass.
+
+`test/cli/format/own/cases` has small inputs of our own for what only real code or a fuzzer has shown, with what Prettier and oxfmt print. **A fix of that kind comes with its input**, in the same commit. None of them fails, so there is no list of expected failures: see its README.
 
 Fixtures show a fraction of what differs. What found the rest: real code through `compare.ts`, and fuzzers that put every kind of expression into every kind of parent, a comment of every form into every gap of a statement, and random JSX children at narrow widths, each against the npm package.
 

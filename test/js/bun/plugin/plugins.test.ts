@@ -1721,7 +1721,9 @@ describe("namespace validation", () => {
   it("gives every thread the right answer while four threads register plugins at once", async () => {
     using dir = tempDir("plugin-namespace-threads", {
       "entry.js": `
-        const namespaces = ["abc", "abc-def", "a/b", "@scope/pkg", "A_Z-0/9", "x"];
+        // Long, so that a thread is in the namespace check for most of the time it runs.
+        const long = Buffer.alloc(16384, "a").toString();
+        const namespaces = ["abc", "abc-def", "a/b", "@scope/pkg", "A_Z-0/9", "x"].map(name => long + name);
         const rejection = "namespace can only contain letters, numbers, dashes, or underscores";
         const filter = /.*/;
         const callback = () => undefined;
@@ -1731,11 +1733,11 @@ describe("namespace validation", () => {
             Bun.plugin({
               name: "thread " + thread,
               setup(build) {
-                // No thread stops before all four have done 50 rounds, so their work overlaps.
-                while (Math.min(...progress) < 50) {
+                // No thread stops before all four have done 20 rounds, so their work overlaps.
+                while (Math.min(...progress) < 20) {
                   for (const namespace of namespaces) {
                     build.onLoad({ filter, namespace }, callback);
-                    for (let i = 0; i < 20; i++) build.onResolve({ filter, namespace }, callback);
+                    build.onResolve({ filter, namespace }, callback);
                   }
 
                   let message;

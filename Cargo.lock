@@ -1034,6 +1034,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lint_graph"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_js_parser",
+ "bun_lint",
+ "bun_sema",
+ "bun_sema_driver",
+ "bun_threading",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_lint_plugins"
 version = "0.0.0"
 dependencies = [
@@ -1055,6 +1068,7 @@ dependencies = [
  "bun_lint",
  "bun_lint_driver",
  "bun_lint_eslint",
+ "bun_lint_graph",
  "bun_lint_plugins",
  "bun_lint_typescript",
  "bun_sema",

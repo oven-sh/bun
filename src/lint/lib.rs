@@ -21,6 +21,7 @@ pub mod json;
 pub mod language;
 pub mod linter;
 pub mod literal;
+pub mod modules;
 pub mod options;
 pub mod regex;
 pub mod rule;

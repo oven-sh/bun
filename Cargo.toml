@@ -28,6 +28,7 @@ members = [
   "src/lint/eslint",
   "src/lint/typescript",
   "src/lint/plugins",
+  "src/lint/graph",
   "src/lint/standalone",
   "src/lint/driver",
   "src/format",
@@ -383,6 +384,7 @@ bun_lint = { path = "src/lint" }
 bun_lint_eslint = { path = "src/lint/eslint" }
 bun_lint_typescript = { path = "src/lint/typescript" }
 bun_lint_plugins = { path = "src/lint/plugins" }
+bun_lint_graph = { path = "src/lint/graph" }
 bun_format = { path = "src/format" }
 bun_lint_driver = { path = "src/lint/driver" }
 bun_semver = { path = "src/semver" }

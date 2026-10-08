@@ -190,6 +190,7 @@ pub struct File<'a> {
     pub(crate) lazy: Lazy,
     pub(crate) types: Option<crate::types::Checker<'a>>,
     pub(crate) sink: crate::context::Sink,
+    pub(crate) modules: std::cell::Cell<Option<&'a dyn crate::modules::Modules>>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
@@ -230,6 +231,7 @@ impl<'a> File<'a> {
             lazy: Lazy::default(),
             types,
             sink: crate::context::Sink::default(),
+            modules: std::cell::Cell::new(None),
             path,
         }
     }

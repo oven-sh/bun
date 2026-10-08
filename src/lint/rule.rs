@@ -160,6 +160,8 @@ pub struct Meta {
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
+    /// It is about several files: see [`modules`](crate::modules).
+    pub needs_modules: bool,
 }
 
 impl Meta {
@@ -174,6 +176,7 @@ impl Meta {
             requires_types: false,
             is_deprecated: false,
             extends_base_rule: None,
+            needs_modules: false,
         }
     }
 
@@ -212,6 +215,11 @@ impl Meta {
 
     pub const fn requires_types(mut self) -> Meta {
         self.requires_types = true;
+        self
+    }
+
+    pub const fn needs_modules(mut self) -> Meta {
+        self.needs_modules = true;
         self
     }
 

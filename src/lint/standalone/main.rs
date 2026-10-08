@@ -11,6 +11,7 @@ mod driver_cmd;
 mod format_cmd;
 mod js_plugin_cmd;
 mod linter_cmd;
+mod plugins_cmd;
 mod parser_cmd;
 mod regex_cmd;
 mod selector_cmd;
@@ -101,7 +102,8 @@ fn lint(
     language_options: &Json,
     settings: &Json,
 ) -> Outcome {
-    outcome_of(entry, code, linter_cmd::lint_case(entry, code, path, options, language_options, settings))
+    let lint_case = if entry.meta.needs_modules { plugins_cmd::lint_case } else { linter_cmd::lint_case };
+    outcome_of(entry, code, lint_case(entry, code, path, options, language_options, settings))
 }
 
 fn outcome_of(entry: &'static RuleEntry, code: &[u8], outcome: linter_cmd::CaseOutcome) -> Outcome {
@@ -276,6 +278,7 @@ fn conformance(args: &[String]) {
     let (only_plugin, only_rule, report) = (flag("--plugin="), flag("--rule="), flag("--report="));
     let is_verbose = args.iter().any(|a| a == "--verbose");
     std::panic::set_hook(Box::new(|_| {}));
+    plugins_cmd::set_fixtures(root);
     let mut total = Tally::default();
     let (mut implemented, mut perfect, mut missing) = (0, 0, Vec::new());
     let plugins = [
@@ -471,6 +474,7 @@ fn main() {
         Some("format") => format_cmd::run(&args[1..]),
         Some("cli") => driver_cmd::run(&args[1..]),
         Some("selector") => selector_cmd::run(&args[1..]),
+        Some("plugins") => plugins_cmd::run(&args[1..]),
         Some("js_plugin") => js_plugin_cmd::run(&args[1..]),
         Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),
         Some("utils-tsscope") => utils_tsscope_cmd::run(&args[1..]),

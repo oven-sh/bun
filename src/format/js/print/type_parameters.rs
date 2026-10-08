@@ -54,7 +54,7 @@ fn should_force_trailing_comma_for_arrow_function<'a>(
     params.len() == 1
         && matches!(owner, Node::Func(func) if func.is_arrow())
         && !params.first().is_some_and(|param| param.constraint().is_some())
-        && !f.file().path().ends_with(b".ts")
+        && !f.filepath().ends_with(b".ts")
 }
 
 #[derive(Default, Copy, Clone)]

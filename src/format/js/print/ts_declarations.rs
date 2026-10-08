@@ -9,7 +9,6 @@ use super::ts_types::{entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::write_ts_union_type_in;
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
-use crate::js::trivia::is_alignable_comment;
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::{FormatKey, format_property_key, should_preserve_quote};
@@ -193,10 +192,10 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
         TypeKind::Cond { check, extends, .. } if is_generic(check) || is_generic(extends) => true,
         _ => {
             !f.is_quiet()
-                && f.comments().comments_before_iter(ty.span().start).any(|comment| {
-                    comment.followed_by_newline()
-                        || (comment.is_multiline_block() && is_alignable_comment(f.source_text().text_for(comment)))
-                })
+                && f
+                    .comments()
+                    .comments_before_iter(ty.span().start)
+                    .any(|comment| comment.followed_by_newline() || comment.is_indentable_block())
         }
     };
     if should_break_after_operator {

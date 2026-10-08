@@ -188,8 +188,10 @@ impl Rule for NoExtraBooleanCast {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Unary], Self::check_negation);
-        on.exprs([ExprTag::Call], Self::check_call);
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        on.unaries([UnOp::Not], Self::check_negation);
+        if file.has_expr_named("Boolean") {
+            on.exprs([ExprTag::Call], Self::check_call);
+        }
     }
 }

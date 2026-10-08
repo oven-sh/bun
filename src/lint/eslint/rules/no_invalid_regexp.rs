@@ -93,7 +93,9 @@ impl Rule for NoInvalidRegexp {
         NoInvalidRegexp { allowed_flags }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check);
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if file.has_expr_named("RegExp") {
+            on.exprs([ExprTag::Call, ExprTag::New], Self::check);
+        }
     }
 }

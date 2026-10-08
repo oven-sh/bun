@@ -33,23 +33,25 @@ impl Rule for NoIterator {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Dot], |_, e, cx| {
-            if let ExprKind::Dot { name, .. } = e.kind()
-                && name.name().is("__iterator__")
-                && is_member_expression(e)
-            {
-                cx.report(e, NO_ITERATOR);
-            }
-        });
-        on.exprs([ExprTag::Index], |_, e, cx| {
-            if let ExprKind::Index { index, .. } = e.kind()
-                && matches!(index.tag(), ExprTag::String | ExprTag::Template)
-                && get_static_string_value(index).is_some_and(|name| &*name == b"__iterator__")
-            {
-                cx.report(e, NO_ITERATOR);
-            }
-        });
-        if file.is_javascript() {
+        if file.has_expr_named("__iterator__") {
+            on.exprs([ExprTag::Dot], |_, e, cx| {
+                if let ExprKind::Dot { name, .. } = e.kind()
+                    && name.name().is("__iterator__")
+                    && is_member_expression(e)
+                {
+                    cx.report(e, NO_ITERATOR);
+                }
+            });
+            on.exprs([ExprTag::Index], |_, e, cx| {
+                if let ExprKind::Index { index, .. } = e.kind()
+                    && matches!(index.tag(), ExprTag::String | ExprTag::Template)
+                    && get_static_string_value(index).is_some_and(|name| &*name == b"__iterator__")
+                {
+                    cx.report(e, NO_ITERATOR);
+                }
+            });
+        }
+        if file.is_javascript() || !file.has_entity_named("__iterator__") {
             return;
         }
         // `interface I extends a.b`, `class C implements a.b`: typescript-eslint has the name as

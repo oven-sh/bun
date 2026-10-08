@@ -146,10 +146,8 @@ impl Rule for NoUnsafeOptionalChaining {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs(
-            [ExprTag::Dot, ExprTag::Index, ExprTag::Call, ExprTag::NonNull],
-            Self::check,
-        );
+        on.optional_chains(Self::check);
+        on.exprs([ExprTag::NonNull], Self::check);
         FxHashMap::default()
     }
 }

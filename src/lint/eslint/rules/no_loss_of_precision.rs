@@ -102,6 +102,11 @@ fn base_ten_loses_precision(raw: &[u8]) -> bool {
 
 /// Whether the number literal `raw` is not the number that it is at run time.
 fn loses_precision(raw: &[u8]) -> bool {
+    // At most 15 decimal digits, or 13 digits of 4 bits, and no exponent.
+    let has_radix = matches!(raw, [b'0', b'x' | b'X' | b'o' | b'O' | b'b' | b'B', ..]);
+    if raw.len() <= f64::DIGITS as usize && (has_radix || strings::index_of_any(raw, b"eE").is_none()) {
+        return false;
+    }
     match raw {
         [b'0', b'x' | b'X', digits @ ..] => not_base_ten_loses_precision(digits, 4),
         [b'0', b'o' | b'O', digits @ ..] => not_base_ten_loses_precision(digits, 3),
@@ -145,7 +150,13 @@ pub fn register<R: Rule>(on: &mut Listeners<'_, R>) {
             check_key(member.key(), cx);
         }
     });
-    on.props(|_, property, cx| check_key(property.key(), cx));
+    on.props(|_, property, cx| {
+        // A property that is not a method starts with its key.
+        let first = cx.text().get(property.span().start as usize);
+        if property.kind() != PropKind::Init || matches!(first, Some(b'0'..=b'9' | b'.' | b'[')) {
+            check_key(property.key(), cx);
+        }
+    });
     on.pats([PatTag::Object], |_, pattern, cx| {
         if let PatKind::Object(properties) = pattern.kind() {
             for property in properties {

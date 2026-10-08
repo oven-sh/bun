@@ -2,6 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::get_static_key_name;
 use bun_lint::utils::is_assignment_target;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
 /// Disallow duplicate keys in object literals.
@@ -12,12 +13,37 @@ const UNEXPECTED: Message = Message::new("unexpected", "Duplicate key '{{name}}'
 const GET: u8 = 1 << 0;
 const SET: u8 = 1 << 1;
 
+/// Whether two of `props` may have the same name. Names that are known without looking at an expression compare as numbers.
+fn may_have_same_name<'a>(props: List<'a, Prop<'a>>) -> bool {
+    let mut names: SmallVec<[Name<'a>; 16]> = SmallVec::new();
+    for prop in props {
+        match prop.key().map(Key::kind) {
+            Some(KeyKind::Computed(_)) => return true,
+            Some(KeyKind::Private(_)) | None => {}
+            Some(_) if names.len() == names.inline_size() => return true,
+            Some(
+                KeyKind::Ident(name)
+                | KeyKind::String(name)
+                | KeyKind::Number(name)
+                | KeyKind::ComputedString(name)
+                | KeyKind::ComputedNumber(name),
+            ) => {
+                if names.contains(&name) {
+                    return true;
+                }
+                names.push(name);
+            }
+        }
+    }
+    false
+}
+
 impl NoDupeKeys {
     fn check<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(props) = object.kind() else {
             return;
         };
-        if props.len() < 2 {
+        if props.len() < 2 || !may_have_same_name(props) {
             return;
         }
         cx.state.clear();

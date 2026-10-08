@@ -1,13 +1,14 @@
 //! Runs rules on a file.
 
 use crate::ast::{
-    BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle, ImportSpec, Member,
+    BinOp, Case, Chain, NOT_IN_TREE, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle, ImportSpec, Member,
     Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
+use bun_sema::atom::Atom;
 use bun_sema::hir;
 use std::cell::OnceCell;
 
@@ -21,20 +22,28 @@ pub(crate) struct Grouped<const KINDS: usize> {
     starts: [u32; MOST_KINDS + 2],
 }
 
-const MOST_KINDS: usize = 40;
+const MOST_KINDS: usize = 2 * ExprTag::COUNT;
 
 impl<const KINDS: usize> Grouped<KINDS> {
-    /// `kind_of(i)`: the kind of the node at `i`, or `None` to leave it out.
-    fn new(len: usize, kind_of: impl Fn(usize) -> Option<usize>) -> Self {
-        Grouped::of_ids(0..len as u32, |id| kind_of(id as usize))
+    /// `tags`: writes the kind of each node of a vector of the HIR, `NOT_IN_TREE` to leave it out.
+    fn new(tags: impl FnOnce(&mut Vec<u8>)) -> Self {
+        let mut kinds = Vec::new();
+        tags(&mut kinds);
+        kinds.iter_mut().for_each(|kind| *kind = (*kind).min(KINDS as u8));
+        Grouped::of_kinds(0..kinds.len() as u32, &kinds)
     }
 
-    /// The same for the nodes `all`.
+    /// `kind_of(id)`: the kind of the node `id`, which is one of `all`, or `None` to leave it out.
     fn of_ids(all: impl ExactSizeIterator<Item = u32> + Clone, kind_of: impl Fn(u32) -> Option<usize>) -> Self {
+        let kinds: Vec<u8> = all.clone().map(|id| kind_of(id).map_or(KINDS, |kind| kind.min(KINDS)) as u8).collect();
+        Grouped::of_kinds(all, &kinds)
+    }
+
+    /// `kinds`: the kind of each of `all`, `KINDS` to leave it out.
+    fn of_kinds(all: impl Iterator<Item = u32>, kinds: &[u8]) -> Self {
         const { assert!(KINDS <= MOST_KINDS) };
         let mut starts = [0u32; MOST_KINDS + 2];
-        let kinds: Vec<u8> = all.clone().map(|id| kind_of(id).map_or(KINDS, |kind| kind.min(KINDS)) as u8).collect();
-        for &kind in &kinds {
+        for &kind in kinds {
             starts[kind as usize + 1] += 1;
         }
         for kind in 0..=KINDS {
@@ -42,7 +51,7 @@ impl<const KINDS: usize> Grouped<KINDS> {
         }
         let mut next = starts;
         let mut ids = vec![0u32; kinds.len()];
-        for (id, &kind) in all.zip(&kinds) {
+        for (id, &kind) in all.zip(kinds) {
             let at = &mut next[kind as usize];
             if let Some(place) = ids.get_mut(*at as usize) {
                 *place = id;
@@ -58,12 +67,69 @@ impl<const KINDS: usize> Grouped<KINDS> {
     }
 }
 
+/// The expressions of a file.
+struct Exprs {
+    /// Each kind in two parts: first what is not part of an optional chain, then what is.
+    grouped: Grouped<{ 2 * ExprTag::COUNT }>,
+    names: Names,
+}
+
+/// A set of names that may have more in it than was put in.
+struct Names(Box<[u64; Names::BITS / 64]>);
+
+impl Names {
+    const BITS: usize = 1 << 14;
+
+    #[inline]
+    fn add(&mut self, name: Atom) {
+        self.0[name.0 as usize % Names::BITS / 64] |= 1 << (name.0 % 64);
+    }
+
+    #[inline]
+    fn may_have(&self, name: Atom) -> bool {
+        self.0[name.0 as usize % Names::BITS / 64] & (1 << (name.0 % 64)) != 0
+    }
+}
+
+impl Exprs {
+    fn new(file: &File) -> Exprs {
+        const LEFT_OUT: u8 = 2 * ExprTag::COUNT as u8;
+        let mut names = Names(Box::new([0; Names::BITS / 64]));
+        let mut kinds = Vec::new();
+        file.expr_tags_in_tree(&mut kinds);
+        for (kind, raw) in kinds.iter_mut().zip(file.hir.exprs) {
+            if *kind == NOT_IN_TREE {
+                *kind = LEFT_OUT;
+                continue;
+            }
+            let chain = match raw.kind {
+                hir::ExprKind::Ident(name) | hir::ExprKind::PrivateIdentifier(name) | hir::ExprKind::String(name) => {
+                    names.add(name);
+                    Chain::No
+                }
+                hir::ExprKind::Dot { name, chain, .. } => {
+                    names.add(name);
+                    chain
+                }
+                hir::ExprKind::Index { chain, .. } => chain,
+                hir::ExprKind::Call(call) => file.hir.calls.get(call.idx()).map_or(Chain::No, |call| call.chain),
+                _ => Chain::No,
+            };
+            *kind = 2 * *kind + u8::from(chain != Chain::No);
+        }
+        Exprs {
+            grouped: Grouped::of_kinds(0..kinds.len() as u32, &kinds),
+            names,
+        }
+    }
+}
+
 /// The expressions, statements, types and patterns of a file by kind, each grouped the first time a rule listens for one. Left
 /// out are the nodes that are not part of the tree, which the parser leaves behind where it has backtracked, and those that are
 /// synthesized from JSDoc comments.
 #[derive(Default)]
 pub(crate) struct ByKind {
-    exprs: OnceCell<Grouped<{ ExprTag::COUNT }>>,
+    exprs: OnceCell<Exprs>,
     stmts: OnceCell<Grouped<{ StmtTag::COUNT }>>,
     types: OnceCell<Grouped<{ TypeTag::COUNT }>>,
     pats: OnceCell<Grouped<{ PatTag::COUNT }>>,
@@ -81,6 +147,8 @@ pub(crate) struct ByKind {
     enum_members: OnceCell<Vec<u32>>,
     import_specs: OnceCell<Vec<u32>>,
     export_specs: OnceCell<Vec<u32>>,
+    entity_names: OnceCell<Names>,
+    pub(crate) string_literals: OnceCell<Vec<crate::literal::RawLiteral>>,
     /// See [`File::mentions`].
     pub(crate) has_other_spellings: OnceCell<bool>,
 }
@@ -91,21 +159,61 @@ impl File<'_> {
         self.lazy.by_kind.get_or_init(ByKind::default)
     }
 
+    #[inline]
+    fn exprs(&self) -> &Exprs {
+        self.by_kind().exprs.get_or_init(|| Exprs::new(self))
+    }
+
     fn exprs_of(&self, tag: ExprTag) -> &[u32] {
-        let grouped = (self.by_kind().exprs)
-            .get_or_init(|| Grouped::new(self.hir.exprs.len(), |i| self.expr_in_tree(i).map(|tag| tag as usize)));
-        grouped.of(tag as usize)
+        let grouped = &self.exprs().grouped;
+        &grouped.ids[grouped.starts[2 * tag as usize] as usize..grouped.starts[2 * tag as usize + 2] as usize]
+    }
+
+    /// Those of `exprs_of` that are part of an optional chain.
+    pub(crate) fn chained_exprs_of(&self, tag: ExprTag) -> &[u32] {
+        self.exprs().grouped.of(2 * tag as usize + 1)
+    }
+
+    /// Whether an expression of the file may be the identifier `text`, the member access `a.text`, or the string or the template
+    /// without substitutions `"text"`, however it is spelled. `false` is certain, `true` is not. Not for private names.
+    ///
+    /// For [`Rule::register`]: a rule that is about `eval` or `a.hasOwnProperty` has nothing to listen for in a file in which
+    /// no expression has that name. That costs next to nothing, unlike a listener that is called with every call or every member
+    /// access of the file. It says nothing about names that are not expressions: keys, bindings, names in types, imports.
+    pub fn has_expr_named(&self, text: &str) -> bool {
+        self.exprs().names.may_have(self.atoms.intern(text.as_bytes()))
+    }
+
+    /// Whether [`File::has_expr_named`] holds for one of `texts`.
+    pub fn has_expr_named_any(&self, texts: &[&str]) -> bool {
+        texts.iter().any(|text| self.has_expr_named(text))
+    }
+
+    /// The same for the names of which an [`EntityName`](crate::ast::EntityName) consists: whether `text` may be the `A`, the `B`
+    /// or the `C` of an `A.B.C` in a type, in a heritage clause or in `import x = A.B.C`.
+    pub fn has_entity_named(&self, text: &str) -> bool {
+        let names = self.by_kind().entity_names.get_or_init(|| {
+            let mut names = Names(Box::new([0; Names::BITS / 64]));
+            self.hir.names.iter().for_each(|name| names.add(name.text));
+            names
+        });
+        names.may_have(self.atoms.intern(text.as_bytes()))
+    }
+
+    /// Whether [`File::has_entity_named`] holds for one of `texts`.
+    pub fn has_entity_named_any(&self, texts: &[&str]) -> bool {
+        texts.iter().any(|text| self.has_entity_named(text))
     }
 
     fn stmts_of(&self, tag: StmtTag) -> &[u32] {
         let grouped = (self.by_kind().stmts)
-            .get_or_init(|| Grouped::new(self.hir.stmts.len(), |i| self.stmt_in_tree(i).map(|tag| tag as usize)));
+            .get_or_init(|| Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)));
         grouped.of(tag as usize)
     }
 
     pub(crate) fn types_of(&self, tag: TypeTag) -> &[u32] {
         let grouped = (self.by_kind().types)
-            .get_or_init(|| Grouped::new(self.hir.types.len(), |i| self.type_in_tree(i).map(|tag| tag as usize)));
+            .get_or_init(|| Grouped::new(|kinds| self.type_tags_in_tree(kinds)));
         grouped.of(tag as usize)
     }
 
@@ -147,24 +255,27 @@ impl File<'_> {
 
     pub(crate) fn pats_of(&self, tag: PatTag) -> &[u32] {
         let grouped = (self.by_kind().pats)
-            .get_or_init(|| Grouped::new(self.hir.pats.len(), |i| self.pat_in_tree(i).map(|tag| tag as usize)));
+            .get_or_init(|| Grouped::new(|kinds| self.pat_tags_in_tree(kinds)));
         grouped.of(tag as usize)
     }
 }
 
 /// Declares `File::$method`, which calls a function with every `$handle` of the file that is part of the tree. Which these are
-/// is found out once for all rules.
+/// is found out once for all rules, by `File::$list`.
 macro_rules! every {
-    ($($method:ident $handle:ident $field:ident;)*) => {
+    ($($method:ident $list:ident $handle:ident $field:ident;)*) => {
         impl<'a> File<'a> {
             $(
-                #[inline]
-                pub(crate) fn $method(&'a self, mut visit: impl FnMut($handle<'a>)) {
-                    let ids = self.by_kind().$field.get_or_init(|| {
+                fn $list(&'a self) -> &'a [u32] {
+                    self.by_kind().$field.get_or_init(|| {
                         let all = 0..self.hir.$field.len() as u32;
                         all.filter(|&id| <$handle as Handle>::from_raw(self, id).is_in_tree()).collect()
-                    });
-                    for &id in ids {
+                    })
+                }
+
+                #[inline]
+                pub(crate) fn $method(&'a self, mut visit: impl FnMut($handle<'a>)) {
+                    for &id in self.$list() {
                         visit(<$handle as Handle>::from_raw(self, id));
                     }
                 }
@@ -174,17 +285,17 @@ macro_rules! every {
 }
 
 every! {
-    every_func Func fns;
-    every_class Class classes;
-    every_member Member members;
-    every_prop Prop props;
-    every_param Param params;
-    every_type_param TypeParam type_params;
-    every_var_decl VarDecl var_decls;
-    every_case Case cases;
-    every_enum_member EnumMember enum_members;
-    every_import_spec ImportSpec import_specs;
-    every_export_spec ExportSpec export_specs;
+    every_func funcs_in_tree Func fns;
+    every_class classes_in_tree Class classes;
+    every_member members_in_tree Member members;
+    every_prop props_in_tree Prop props;
+    every_param params_in_tree Param params;
+    every_type_param type_params_in_tree TypeParam type_params;
+    every_var_decl var_decls_in_tree VarDecl var_decls;
+    every_case cases_in_tree Case cases;
+    every_enum_member enum_members_in_tree EnumMember enum_members;
+    every_import_spec import_specs_in_tree ImportSpec import_specs;
+    every_export_spec export_specs_in_tree ExportSpec export_specs;
 }
 
 impl<'a> File<'a> {
@@ -432,6 +543,11 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
                 Entry::Pats(tag, listener) => {
                     for &id in file.pats_of(tag) {
                         listener(rule, Pat::from_raw(file, id), cx);
+                    }
+                }
+                Entry::Chained(tag, listener) => {
+                    for &id in file.chained_exprs_of(tag) {
+                        listener(rule, Expr::from_raw(file, id), cx);
                     }
                 }
                 Entry::Binaries(op, listener) => {

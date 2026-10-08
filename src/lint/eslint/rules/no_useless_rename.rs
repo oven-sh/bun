@@ -69,16 +69,19 @@ impl NoUselessRename {
         if prop.kind() != PropKind::Init || prop.is_jsx_attribute() {
             return;
         }
-        let (Some(name), Some(value)) = (prop.key().and_then(name_of_key), prop.value()) else {
+        let Some(value) = prop.value() else {
             return;
         };
         let (left, has_default) = match value.kind() {
             ExprKind::Assign { op: None, target, .. } => (target, true),
             _ => (value, false),
         };
-        if left.as_ident() != Some(name) {
+        let Some(local) = left.as_ident() else {
             return;
-        }
+        };
+        let Some(name) = prop.key().and_then(name_of_key).filter(|&name| name == local) else {
+            return;
+        };
         let Node::Expr(object) = prop.parent() else {
             return;
         };

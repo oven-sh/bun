@@ -14,30 +14,31 @@ impl Rule for NoCaller {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("arguments") {
-            return;
+        if file.has_expr_named("arguments") {
+            on.exprs([ExprTag::Dot], |_, e, cx| {
+                let ExprKind::Dot { obj, name, .. } = e.kind() else {
+                    return;
+                };
+                // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
+                let prop = name.bytes();
+                let prop = prop.strip_prefix(b"#").unwrap_or(prop);
+                if matches!(prop, b"callee" | b"caller") && obj.is_ident("arguments") && ast_utils::is_member_expression(e) {
+                    cx.report(e, UNEXPECTED).data("prop", prop);
+                }
+            });
         }
-        on.exprs([ExprTag::Dot], |_, e, cx| {
-            let ExprKind::Dot { obj, name, .. } = e.kind() else {
-                return;
-            };
-            // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
-            let prop = name.bytes();
-            let prop = prop.strip_prefix(b"#").unwrap_or(prop);
-            if matches!(prop, b"callee" | b"caller") && obj.is_ident("arguments") && ast_utils::is_member_expression(e) {
-                cx.report(e, UNEXPECTED).data("prop", prop);
-            }
-        });
         // What a class implements and what an interface extends is a `MemberExpression` too.
-        on.types([TypeTag::Ref], |_, ty, cx| {
-            if let TypeKind::Ref { name, .. } = ty.kind()
-                && let (Some(object), Some(property)) = (name.get(0), name.get(1))
-                && object.name().is("arguments")
-                && property.name().is_any(&["callee", "caller"])
-                && utils::estree_type_name(Node::Type(ty)) != "TSTypeReference"
-            {
-                cx.report(object.span().to(property.span()), UNEXPECTED).data("prop", property.bytes());
-            }
-        });
+        if file.has_entity_named("arguments") {
+            on.types([TypeTag::Ref], |_, ty, cx| {
+                if let TypeKind::Ref { name, .. } = ty.kind()
+                    && let (Some(object), Some(property)) = (name.get(0), name.get(1))
+                    && object.name().is("arguments")
+                    && property.name().is_any(&["callee", "caller"])
+                    && utils::estree_type_name(Node::Type(ty)) != "TSTypeReference"
+                {
+                    cx.report(object.span().to(property.span()), UNEXPECTED).data("prop", property.bytes());
+                }
+            });
+        }
     }
 }

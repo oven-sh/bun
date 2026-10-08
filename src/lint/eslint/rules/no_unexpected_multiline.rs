@@ -25,6 +25,10 @@ const DIVISION: Message = Message::new(
 fn break_after(e: Expr) -> Option<Span> {
     let file = e.file();
     let end = e.outer_span().end;
+    // Nearly always the token follows at once.
+    if !matches!(file.text().get(end as usize), Some(b'\t'..=b'\r' | b' ' | b'/' | 0x80..)) {
+        return None;
+    }
     let open = skip_trivia(file.text(), end);
     text::has_line_break(file.slice(Span::new(end, open))).then(|| Span::new(open, open + 1))
 }
@@ -118,6 +122,6 @@ impl Rule for NoUnexpectedMultiline {
         on.exprs([ExprTag::Index], Self::check_index);
         on.exprs([ExprTag::Call], Self::check_call);
         on.exprs([ExprTag::TaggedTemplate], Self::check_tagged_template);
-        on.exprs([ExprTag::Binary], Self::check_division);
+        on.binaries([BinOp::Div], Self::check_division);
     }
 }

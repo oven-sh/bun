@@ -92,7 +92,7 @@ impl Rule for NoConsole {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("console") {
+        if file.has_expr_named("console") {
             on.exprs([ExprTag::Dot, ExprTag::Index], Self::check);
         }
     }

@@ -133,7 +133,7 @@ impl Rule for NoEval {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("eval") {
+        if !file.has_expr_named("eval") {
             return;
         }
         on.exprs([ExprTag::Call], Self::check_call);

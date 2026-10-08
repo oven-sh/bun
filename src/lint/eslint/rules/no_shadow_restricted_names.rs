@@ -28,18 +28,21 @@ fn name_span(declaration: Declaration) -> Option<Span> {
     }
 }
 
+pub struct State<'a> {
+    restricted: [Name<'a>; 6],
+    /// Where the names that have been reported start.
+    reported: Vec<u32>,
+}
+
 impl NoShadowRestrictedNames {
-    fn is_restricted(&self, name: Name) -> bool {
-        match name.bytes() {
-            b"undefined" | b"NaN" | b"Infinity" | b"arguments" | b"eval" => true,
-            b"globalThis" => self.report_global_this,
-            _ => false,
-        }
+    #[inline]
+    fn is_restricted<'a>(name: Name<'a>, cx: &Cx<'a, Self>) -> bool {
+        cx.state.restricted.contains(&name)
     }
 
     fn report_once<'a>(at: Span, name: Name<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.contains(&at.start) {
-            cx.state.push(at.start);
+        if !cx.state.reported.contains(&at.start) {
+            cx.state.reported.push(at.start);
             cx.report(at, SHADOWING_RESTRICTED_NAME).data("name", name);
         }
     }
@@ -59,7 +62,7 @@ impl NoShadowRestrictedNames {
     }
 
     fn check_pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(name) = pat.as_ident().filter(|name| self.is_restricted(*name)) else {
+        let Some(name) = pat.as_ident().filter(|name| Self::is_restricted(*name, cx)) else {
             return;
         };
         let owner = Node::Pat(pat).ancestors().find(|it| matches!(it, Node::VarDecl(_) | Node::Param(_)));
@@ -75,8 +78,7 @@ impl NoShadowRestrictedNames {
 
 impl Rule for NoShadowRestrictedNames {
     const META: Meta = Meta::eslint("no-shadow-restricted-names", Kind::Suggestion).recommended();
-    /// Where the names that have been reported start.
-    type State<'a> = Vec<u32>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoShadowRestrictedNames {
@@ -84,35 +86,39 @@ impl Rule for NoShadowRestrictedNames {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<u32> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         on.pats([PatTag::Ident], Self::check_pat);
-        on.funcs(|rule, func, cx| {
+        on.funcs(|_, func, cx| {
             if let Some(name) = func.name()
-                && rule.is_restricted(name.name())
+                && Self::is_restricted(name.name(), cx)
                 && func.has_body()
             {
                 Self::report(name.span(), name.name(), func.symbol(), cx);
             }
         });
-        on.classes(|rule, class, cx| {
+        on.classes(|_, class, cx| {
             if let Some(name) = class.name()
-                && rule.is_restricted(name.name())
+                && Self::is_restricted(name.name(), cx)
             {
                 Self::report(name.span(), name.name(), class.symbol(), cx);
             }
         });
-        on.stmts([StmtTag::Import], |rule, stmt, cx| {
+        on.stmts([StmtTag::Import], |_, stmt, cx| {
             let StmtKind::Import(import) = stmt.kind() else {
                 return;
             };
             let named = import.named().iter().map(ImportSpec::local);
             for local in import.default().into_iter().chain(import.namespace()).chain(named) {
-                if rule.is_restricted(local.name()) {
+                if Self::is_restricted(local.name(), cx) {
                     let symbol = Node::Stmt(stmt).scope().get_name(local.name());
                     Self::report(local.span(), local.name(), symbol, cx);
                 }
             }
         });
-        Vec::new()
+        let last = if self.report_global_this { "globalThis" } else { "eval" };
+        State {
+            restricted: ["undefined", "NaN", "Infinity", "arguments", "eval", last].map(|name| file.name_of(name)),
+            reported: Vec::new(),
+        }
     }
 }

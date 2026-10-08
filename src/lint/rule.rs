@@ -274,6 +274,7 @@ macro_rules! sorts {
             Stmts(StmtTag, Listener<'a, R, Stmt<'a>>),
             Types(TypeTag, Listener<'a, R, TypeNode<'a>>),
             Pats(PatTag, Listener<'a, R, Pat<'a>>),
+            Chained(ExprTag, Listener<'a, R, Expr<'a>>),
             Binaries(BinOp, Listener<'a, R, Expr<'a>>),
             Unaries(UnOp, Listener<'a, R, Expr<'a>>),
             $($variant(Listener<'a, R, $handle<'a>>),)*
@@ -356,6 +357,14 @@ impl<'a, R: Rule> Listeners<'a, R> {
     ) {
         let tags = tags.into_iter().filter(|&tag| self.file.has_exprs([tag]));
         self.entries.extend(tags.map(|tag| Entry::Exprs(tag, listener)));
+    }
+
+    /// Every `Dot`, `Index` and `Call` that is part of an optional chain ([`Expr::chain`] is not `Chain::No`), in no particular
+    /// order: in `a?.b.c()` that is `a?.b`, `a?.b.c` and `a?.b.c()`. Not the `!` in a chain.
+    pub fn optional_chains(&mut self, listener: Listener<'a, R, Expr<'a>>) {
+        let tags = [ExprTag::Dot, ExprTag::Index, ExprTag::Call].into_iter();
+        let tags = tags.filter(|&tag| !self.file.chained_exprs_of(tag).is_empty());
+        self.entries.extend(tags.map(|tag| Entry::Chained(tag, listener)));
     }
 
     /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators, in no particular order. A rule that

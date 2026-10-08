@@ -120,9 +120,17 @@ fn may_have_useless_escape(pattern: &[u8]) -> bool {
     false
 }
 
-/// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here.
-fn check_template_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoUselessEscape>) {
-    if let Some(key) = key
+/// Whether there is a `\` in `span`.
+#[inline]
+fn has_backslash(span: Span, cx: &Cx<'_, NoUselessEscape>) -> bool {
+    let next = cx.state.partition_point(|&at| at < span.start);
+    cx.state.get(next).is_some_and(|&at| at < span.end)
+}
+
+/// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here. `owner`: what has the key.
+fn check_template_key<'a>(owner: Span, key: impl FnOnce() -> Option<Key<'a>>, cx: &Cx<'a, NoUselessEscape>) {
+    if has_backslash(owner, cx)
+        && let Some(key) = key()
         && matches!(key.kind(), KeyKind::ComputedString(_))
     {
         let span = key.inner_span(cx.file());
@@ -134,7 +142,7 @@ fn check_template_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoUselessEscape>) {
 
 impl NoUselessEscape {
     fn check_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
-        if !strings::contains_char(literal.text(), b'\\') {
+        if !has_backslash(literal.span(), cx) {
             return;
         }
         let quoted = match literal.owner() {
@@ -149,7 +157,7 @@ impl NoUselessEscape {
     }
 
     fn check_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !strings::contains_char(e.text(), b'\\') {
+        if !has_backslash(e.span(), cx) {
             return;
         }
         let ExprKind::Template(template) = e.kind() else {
@@ -169,6 +177,9 @@ impl NoUselessEscape {
 
     /// ESLint's `validateRegExp`
     fn check_regex<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !has_backslash(e.span(), cx) {
+            return;
+        }
         let ExprKind::Regex(literal) = e.kind() else {
             return;
         };
@@ -260,6 +271,9 @@ impl NoUselessEscape {
 
     /// The templates among the types.
     fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if !has_backslash(ty.span(), cx) {
+            return;
+        }
         if let Some(template) = ty.as_template() {
             for i in 0..template.quasi_count() {
                 validate_string(template.quasi_span(i), Quoted::Template, cx);
@@ -274,7 +288,8 @@ impl Rule for NoUselessEscape {
     const META: Meta = Meta::eslint("no-useless-escape", Kind::Suggestion)
         .has_suggestions()
         .recommended();
-    type State<'a> = ();
+    /// Where the `\` of the file are, in order.
+    type State<'a> = Vec<u32>;
 
     fn new(options: &Options) -> Self {
         let allowed = options.object(0).strings("allowRegexCharacters");
@@ -283,23 +298,31 @@ impl Rule for NoUselessEscape {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !strings::contains_char(file.text(), b'\\') {
-            return;
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<u32> {
+        let (text, mut backslashes, mut at) = (file.text(), Vec::new(), 0);
+        while let Some(found) = text.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
+            backslashes.push((at + found) as u32);
+            at += found + 1;
+        }
+        if backslashes.is_empty() {
+            return backslashes;
         }
         on.string_literals(Self::check_literal);
         on.exprs([ExprTag::Template], Self::check_template);
         on.exprs([ExprTag::Regex], Self::check_regex);
-        if !strings::contains_char(file.text(), b'`') {
-            return;
+        if !strings::contains_char(text, b'`') {
+            return backslashes;
         }
         on.types([TypeTag::StringLit, TypeTag::Template], Self::check_type);
-        on.props(|_, prop, cx| check_template_key(prop.key(), cx));
-        on.members(|_, member, cx| check_template_key(member.key(), cx));
+        on.props(|_, prop, cx| check_template_key(prop.span(), || prop.key(), cx));
+        on.members(|_, member, cx| check_template_key(member.span(), || member.key(), cx));
         on.pats([PatTag::Object], |_, pat, cx| {
-            if let PatKind::Object(props) = pat.kind() {
-                props.iter().for_each(|prop| check_template_key(prop.key(), cx));
+            if has_backslash(pat.span(), cx)
+                && let PatKind::Object(props) = pat.kind()
+            {
+                props.iter().for_each(|prop| check_template_key(pat.span(), || prop.key(), cx));
             }
         });
+        backslashes
     }
 }

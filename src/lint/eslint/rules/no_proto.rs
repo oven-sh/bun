@@ -15,7 +15,7 @@ impl Rule for NoProto {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("__proto__") {
+        if !file.has_expr_named("__proto__") {
             return;
         }
         on.exprs([ExprTag::Dot, ExprTag::Index], |_, e, cx| {

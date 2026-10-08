@@ -66,24 +66,26 @@ impl Rule for NoControlRegex {
         NoControlRegex
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         on.exprs([ExprTag::Regex], |_, e, cx| {
             if let ExprKind::Regex(literal) = e.kind() {
                 check(e, literal.pattern(), literal.flags(), cx);
             }
         });
-        on.exprs([ExprTag::Call, ExprTag::New], |_, e, cx| {
-            let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
-                return;
-            };
-            if call.callee().is_ident("RegExp")
-                && let Some(first) = call.args().first()
-                && let Some(pattern) = first.as_string()
-                && ast_utils::is_global_reference(call.callee())
-            {
-                let flags = call.args().get(1).and_then(Expr::as_string);
-                check(first, pattern.bytes(), flags.map_or(&b""[..], Name::bytes), cx);
-            }
-        });
+        if file.has_expr_named("RegExp") {
+            on.exprs([ExprTag::Call, ExprTag::New], |_, e, cx| {
+                let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
+                    return;
+                };
+                if call.callee().is_ident("RegExp")
+                    && let Some(first) = call.args().first()
+                    && let Some(pattern) = first.as_string()
+                    && ast_utils::is_global_reference(call.callee())
+                {
+                    let flags = call.args().get(1).and_then(Expr::as_string);
+                    check(first, pattern.bytes(), flags.map_or(&b""[..], Name::bytes), cx);
+                }
+            });
+        }
     }
 }

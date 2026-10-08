@@ -1,7 +1,7 @@
 //! ESTree's `Literal`s that are a string or a number, wherever they are.
 
 use crate::ast::{
-    ExprTag, File, ImportAttributes, Key, KeyKind, Node, PatTag, StmtKind, StmtTag, TypeTag,
+    ExprTag, File, Handle, ImportAttributes, Key, KeyKind, Node, PatTag, StmtKind, StmtTag, TypeTag,
 };
 use crate::span::{Span, Spanned};
 use crate::tokens::skip_trivia;
@@ -48,8 +48,80 @@ impl Spanned for Literal<'_> {
     }
 }
 
+/// A [`Literal`] without the reference to the file.
+#[derive(Copy, Clone)]
+pub(crate) struct RawLiteral {
+    span: Span,
+    owner: u32,
+    sort: Sort,
+}
+
+/// Which vector of the HIR the owner of a literal is in.
+#[derive(Copy, Clone)]
+enum Sort {
+    Expr,
+    Stmt,
+    Type,
+    Prop,
+    Member,
+    EnumMember,
+    PatProp,
+    ImportSpec,
+    ExportSpec,
+}
+
+impl RawLiteral {
+    fn of(literal: Literal) -> Option<RawLiteral> {
+        let (sort, owner) = match literal.owner {
+            Node::Expr(it) => (Sort::Expr, it.id().0),
+            Node::Stmt(it) => (Sort::Stmt, it.id().0),
+            Node::Type(it) => (Sort::Type, it.id().0),
+            Node::Prop(it) => (Sort::Prop, it.id().0),
+            Node::Member(it) => (Sort::Member, it.id().0),
+            Node::EnumMember(it) => (Sort::EnumMember, it.id().0),
+            Node::PatProp(it) => (Sort::PatProp, it.id().0),
+            Node::ImportSpec(it) => (Sort::ImportSpec, it.id().0),
+            Node::ExportSpec(it) => (Sort::ExportSpec, it.id().0),
+            _ => return None,
+        };
+        Some(RawLiteral { span: literal.span, owner, sort })
+    }
+
+    #[inline]
+    fn literal<'a>(self, file: &'a File<'a>) -> Literal<'a> {
+        let owner = match self.sort {
+            Sort::Expr => Node::Expr(Handle::from_raw(file, self.owner)),
+            Sort::Stmt => Node::Stmt(Handle::from_raw(file, self.owner)),
+            Sort::Type => Node::Type(Handle::from_raw(file, self.owner)),
+            Sort::Prop => Node::Prop(Handle::from_raw(file, self.owner)),
+            Sort::Member => Node::Member(Handle::from_raw(file, self.owner)),
+            Sort::EnumMember => Node::EnumMember(Handle::from_raw(file, self.owner)),
+            Sort::PatProp => Node::PatProp(Handle::from_raw(file, self.owner)),
+            Sort::ImportSpec => Node::ImportSpec(Handle::from_raw(file, self.owner)),
+            Sort::ExportSpec => Node::ExportSpec(Handle::from_raw(file, self.owner)),
+        };
+        Literal { span: self.span, owner }
+    }
+}
+
 impl<'a> File<'a> {
+    /// They are looked for once for all rules.
+    fn string_literals(&'a self) -> &'a [RawLiteral] {
+        self.by_kind().string_literals.get_or_init(|| {
+            let mut all = Vec::new();
+            self.find_string_literals(|literal| all.extend(RawLiteral::of(literal)));
+            all
+        })
+    }
+
+    #[inline]
     pub(crate) fn every_string_literal(&'a self, mut visit: impl FnMut(Literal<'a>)) {
+        for raw in self.string_literals() {
+            visit(raw.literal(self));
+        }
+    }
+
+    fn find_string_literals(&'a self, mut visit: impl FnMut(Literal<'a>)) {
         let is_quoted = |span: Span| matches!(self.text().get(span.start as usize), Some(b'"' | b'\''));
         // What may be a name as well as a string.
         let mut name = |span: Span, owner: Node<'a>| {

@@ -10,12 +10,6 @@ const UNNECESSARY_ASSIGN: Message = Message::new(
     "This assignment is unnecessary since it is already assigned by a parameter property.",
 );
 
-#[derive(Default)]
-pub struct State<'a> {
-    has_parameter_properties: bool,
-    /// The assignments to a variable or to a property of `this`.
-    assignments: Vec<Expr<'a>>,
-}
 
 /// What is known about the body of a class.
 #[derive(Default)]
@@ -141,18 +135,28 @@ fn is_in_field_initializer<'a>(e: Expr<'a>, function: Option<Func<'a>>) -> bool 
 }
 
 impl NoUnnecessaryParameterPropertyAssignment {
-    fn collect<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.state.has_parameter_properties
-            && let ExprKind::Assign { target, .. } = e.kind()
-            && (target.tag() == ExprTag::Ident || is_this_member_expression(target))
-            && !utils::is_assignment_target(e)
+    /// Notes whether `e` is a `this.x = x`. Without one there is nothing to report.
+    fn look_for_copy<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.state
+            && let ExprKind::Assign { target, value, .. } = e.kind()
+            && let Some((_, right_name)) = get_identifier(value)
+            && get_property_name(target).is_some_and(|left_name| right_name.bytes() == &*left_name)
         {
-            cx.state.assignments.push(e);
+            cx.state = true;
         }
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mut assignments = std::mem::take(&mut cx.state.assignments);
+        if !cx.state {
+            return;
+        }
+        // The assignments to a variable or to a property of `this`.
+        let is_relevant = |e: &Expr<'a>| {
+            matches!(e.kind(), ExprKind::Assign { target, .. }
+                if target.tag() == ExprTag::Ident || is_this_member_expression(target))
+                && !utils::is_assignment_target(*e)
+        };
+        let mut assignments: Vec<Expr<'a>> = cx.file().exprs_of_kind(ExprTag::Assign).filter(is_relevant).collect();
         assignments.sort_by_key(|it| (it.span().start, Reverse(it.span().end)));
 
         let mut infos: Vec<(Class<'a>, ReportInfo<'a>)> = Vec::new();
@@ -198,23 +202,18 @@ impl NoUnnecessaryParameterPropertyAssignment {
 impl Rule for NoUnnecessaryParameterPropertyAssignment {
     const META: Meta =
         Meta::typescript("no-unnecessary-parameter-property-assignment", Kind::Suggestion);
-    type State<'a> = State<'a>;
+    /// Whether there is a `this.x = x`.
+    type State<'a> = bool;
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryParameterPropertyAssignment
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if file.has_classes() {
-            // Listeners run in the order they are registered in.
-            on.params(|_, param, cx| {
-                if param.is_parameter_property() {
-                    cx.state.has_parameter_properties = true;
-                }
-            });
-            on.exprs([ExprTag::Assign], Self::collect);
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
+        if file.has_classes() && file.has_exprs([ExprTag::Assign]) {
+            on.exprs([ExprTag::Assign], Self::look_for_copy);
             on.finish(Self::finish);
         }
-        State::default()
+        false
     }
 }

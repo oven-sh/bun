@@ -16,7 +16,14 @@ const ESCAPE_BACKSLASH: Message = Message::new(
 );
 
 fn has_decimal_escape(text: &[u8]) -> bool {
-    strings::contains(text, b"\\8") || strings::contains(text, b"\\9")
+    let mut at = 0;
+    while let Some(found) = text.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
+        at += found + 1;
+        if matches!(text.get(at), Some(b'8' | b'9')) {
+            return true;
+        }
+    }
+    false
 }
 
 /// `escape`: the `\8` or the `\9`. `follows_null_escape`: a `\0` is directly before it.

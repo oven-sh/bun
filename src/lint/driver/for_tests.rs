@@ -55,6 +55,7 @@ impl Host for Tester<'_> {
             modules: &Graph::new(&store),
             timing: &timing,
             atoms: &Interner::new_in(&names),
+            memory: &names,
         };
         let config = Arc::new(case.config.clone());
         match case.place {

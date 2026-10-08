@@ -38,6 +38,9 @@ pub(crate) struct Context<'c, 'm> {
     /// The names in all files that are linted without types. They are freed when the run ends: what
     /// they take is bounded by the distinct names and strings of the project.
     pub(crate) atoms: &'c dyn Intern,
+    /// Where the lists of a file are while it is linted. They are freed one by one when the file is
+    /// done with: a heap for each file would start with fresh pages every time.
+    pub(crate) memory: &'c Session,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -156,12 +159,12 @@ impl Context<'_, '_> {
 
     fn verify_or_again(&self, path: &[u8], text: &[u8], config: &ResolvedConfig, again: Option<Again>) -> LintResult {
         let started = self.timing.now();
-        let session = Session::new();
+        let session = self.memory;
         let arena = session.arena();
         let how = config.language.parse_options(path);
         bun_js_parser::sema::with_summary(
             how.dialect,
-            (arena, &session),
+            (arena, session),
             path,
             how.script_kind,
             text,

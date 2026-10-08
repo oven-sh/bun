@@ -466,7 +466,9 @@ impl Run<'_> {
             .map(|_| bun_sema::session::Session::new())
             .collect();
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
+        let memory = bun_sema::session::Session::new();
         let context = Context {
+            memory: &memory,
             atoms: &atoms,
             linter: &linter,
             options,

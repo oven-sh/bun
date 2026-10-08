@@ -598,6 +598,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     const visited = new Set<HMRModule>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
+    // The importer each module was reached from, back towards `existing`: the
+    // modules between the changed one and an accepting importer are loaded again
+    // too, or that importer would be handed a module still importing the old one.
+    const reachedFrom = new Map<HMRModule, HMRModule>();
     while (true) {
       const mod = queue.shift();
       if (!mod) break;
@@ -631,12 +635,16 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       }
 
       for (const importer of mod.importers) {
-        const cb = importer.depAccepts?.[key];
+        // An importer accepts the module it imports (`mod`), which is the changed
+        // one only when that is a direct dependency.
+        const cb = importer.depAccepts?.[mod.id];
         if (cb) {
-          toAccept.push({ cb, key });
+          toAccept.push({ cb, key: mod.id });
+          for (let m: HMRModule | undefined = mod; m && m !== existing; m = reachedFrom.get(m)) toReload.add(m);
         } else if (hadSelfAccept) {
           if (visited.has(importer)) continue;
           visited.add(importer);
+          reachedFrom.set(importer, mod);
           queue.push(importer);
         }
       }

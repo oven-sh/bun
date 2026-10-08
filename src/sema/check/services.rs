@@ -210,8 +210,49 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             is_declaration_file: module.hir.kind == FileKind::Declaration,
             is_javascript: module.hir.is_js,
             is_external_module: module.is_module(),
-            package_name: package_name_of_path(module.file_name()),
+            package_name: match path_in_node_modules(module.file_name()) {
+                Some(path) => Some(path),
+                None if module.is_from_external_library => self.package_names_of_linked_files().get(&file).map(Vec::as_slice),
+                None => None,
+            },
         }
+    }
+
+    /// `sourceFileToPackageName` of the files that a link in a `node_modules` leads to, as in a
+    /// workspace. Their paths do not tell: what tells is that something imports them as a package.
+    fn package_names_of_linked_files(&self) -> &'p FxHashMap<FileId, Vec<u8>> {
+        let program = self.c.p;
+        program.package_names_of_linked_files.get_or_init(|| {
+            let (files, mut names) = (program.files, FxHashMap::<FileId, Vec<u8>>::default());
+            for importer in files.modules.iter() {
+                for (&(specifier, _), &file) in importer.imports.iter() {
+                    let module = files.module(file);
+                    if !module.is_from_external_library || module.package_json_directory.is_none() {
+                        continue;
+                    }
+                    let directory = files.atoms.bytes(module.package_json_directory);
+                    let in_package = module.file_name().strip_prefix(directory).and_then(|it| it.strip_prefix(b"/"));
+                    let (Some(package), Some(in_package)) = (package_of_specifier(files.atoms.bytes(specifier)), in_package) else {
+                        continue;
+                    };
+                    if path_in_node_modules(module.file_name()).is_some() {
+                        continue;
+                    }
+                    let name = cat!(package, b"/", in_package);
+                    // Whatever the order of the imports.
+                    match names.entry(file) {
+                        std::collections::hash_map::Entry::Occupied(mut known) if name < *known.get() => {
+                            known.insert(name);
+                        }
+                        std::collections::hash_map::Entry::Occupied(_) => {}
+                        std::collections::hash_map::Entry::Vacant(place) => {
+                            place.insert(name);
+                        }
+                    }
+                }
+            }
+            names
+        })
     }
 
     pub fn source_file(&mut self, file_name: &[u8]) -> Option<FileId> {
@@ -747,16 +788,27 @@ fn flags_of_var_kind(kind: VarKind) -> NodeFlags {
     }
 }
 
-/// `getPackageNameFromTypesPackageName` is not applied: `node_modules/@types/a/index.d.ts` is in
-/// `@types/a`.
-fn package_name_of_path(path: &[u8]) -> Option<&[u8]> {
+/// `packageIdToPackageName`: the name of the package and the path in it, which is what follows the
+/// last `node_modules`. `getPackageNameFromTypesPackageName` is not applied.
+fn path_in_node_modules(path: &[u8]) -> Option<&[u8]> {
     const NODE_MODULES: &[u8] = b"/node_modules/";
     let at = bun_core::strings::last_index_of(path, NODE_MODULES)?;
-    let rest = &path[at + NODE_MODULES.len()..];
-    let first = bun_core::strings::index_of_char_usize(rest, b'/')?;
-    if rest.first() != Some(&b'@') {
-        return Some(&rest[..first]);
+    Some(&path[at + NODE_MODULES.len()..])
+}
+
+/// `a` of `a/b`, `@a/b` of `@a/b/c`. `None` for a path.
+fn package_of_specifier(specifier: &[u8]) -> Option<&[u8]> {
+    if matches!(specifier.first(), None | Some(b'.' | b'/' | b'#')) {
+        return None;
     }
-    let second = bun_core::strings::index_of_char_usize(&rest[first + 1..], b'/')?;
-    Some(&rest[..first + 1 + second])
+    let Some(first) = bun_core::strings::index_of_char_usize(specifier, b'/') else {
+        return Some(specifier);
+    };
+    if specifier[0] != b'@' {
+        return Some(&specifier[..first]);
+    }
+    match bun_core::strings::index_of_char_usize(&specifier[first + 1..], b'/') {
+        Some(second) => Some(&specifier[..first + 1 + second]),
+        None => Some(specifier),
+    }
 }

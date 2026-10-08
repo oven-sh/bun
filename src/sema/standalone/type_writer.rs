@@ -13,8 +13,6 @@ pub struct TypeAtLocation {
     pub start: u32,
     pub end: u32,
     pub type_text: String,
-    /// For diagnosing the source of a difference.
-    pub kind: VisitedKind,
 }
 
 /// State carried from node to node during the type walk of a file.
@@ -97,7 +95,6 @@ impl Checker<'_, '_> {
             start: node.start,
             end,
             type_text: type_text.clone(),
-            kind: node.kind,
         }));
     }
 

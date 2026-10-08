@@ -7,7 +7,7 @@ use crate::node::{Kind, Node, NodeData, Part};
 
 /// The HIR counterpart of a visited node.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum VisitedKind {
+pub(in crate::check) enum VisitedKind {
     /// A HIR expression, without the enclosing parentheses.
     Expression(ExprId),
     /// A `ParenthesizedExpression` enclosing it, with its index counted from the outermost.

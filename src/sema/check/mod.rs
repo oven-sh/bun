@@ -200,6 +200,8 @@ pub struct Program<'s> {
     emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
+    /// See `Services::file_info`. Made when it is first asked for.
+    package_names_of_linked_files: std::sync::OnceLock<FxHashMap<FileId, Vec<u8>>>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -460,6 +462,7 @@ impl<'s> Program<'s> {
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
+            package_names_of_linked_files: Default::default(),
             types,
             expr_types: ByNode::new_in(&exprs, session),
             type_node_types: ByNode::new_in(&type_nodes, session),

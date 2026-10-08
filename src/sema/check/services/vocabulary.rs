@@ -675,7 +675,7 @@ pub enum Structure<'a> {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct TupleInfo<'a> {
     pub element_flags: &'a [ElementFlags],
-    /// The number of required elements.
+    /// The number of elements that are `REQUIRED` or `VARIADIC`.
     pub min_length: u32,
     /// The number of elements before the first that is `VARIABLE`.
     pub fixed_length: u32,

@@ -725,6 +725,22 @@ impl<'a> Types<'a> {
     }
 }
 
+/// The names of a program as they are written. The checker respells a `#x` so that it tells the
+/// class that declares it.
+struct WrittenNames<'i>(&'i dyn bun_sema::atom::Intern);
+
+impl bun_sema::atom::Intern for WrittenNames<'_> {
+    fn intern(&self, text: &[u8]) -> bun_sema::atom::Atom {
+        self.0.intern(text)
+    }
+    fn bytes(&self, atom: bun_sema::atom::Atom) -> &[u8] {
+        bun_sema::atom::written_name(self.0.bytes(atom))
+    }
+    fn number(&self) -> u64 {
+        self.0.number()
+    }
+}
+
 /// Calls `then` with `file` of the program that `checker` checks, with its types.
 ///
 /// To be called right after `checker` has checked the file (`Request::after_file` of
@@ -748,7 +764,7 @@ pub fn with_file<R>(
     if module.is_lib || hir.ran_out_of_stack || bound.ran_out_of_stack {
         return None;
     }
-    let (path, atoms) = (module.file_name(), &checker.p.files.atoms);
+    let (path, atoms) = (module.file_name(), &WrittenNames(&checker.p.files.atoms));
     Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
         then(&File::new(path, hir, bound, atoms, language, Some(types)))

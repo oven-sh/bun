@@ -74,26 +74,11 @@ fn config_of(entry: &'static RuleEntry, options: &[Json], language_options: &Jso
 /// What the rule `entry`, which is the one that `config` enables, reports for `file`.
 fn lint_file<'a>(entry: &'static RuleEntry, file: &'a File<'a>, code: &[u8], config: &ResolvedConfig) -> Outcome {
     let messages = linter().lint(file, config, &LintOptions::default()).messages;
-    let apply = |fix: &bun_lint::fix::Fix| bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec());
     let mut fixes: Vec<_> = messages.iter().filter_map(|it| it.fix.as_ref()).collect();
     Outcome {
         output: bun_lint::fix::apply_fixes(code, &mut fixes),
         has_parse_errors: messages.iter().any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
-        messages: (messages.iter())
-            .map(|it| Reported {
-                rule_id: match &it.rule_id {
-                    Some(id) if *id == RuleId::Known(entry.meta) => None,
-                    Some(id) => Some(text(&id.to_vec())),
-                    None => Some(String::new()),
-                },
-                message_id: it.message_id.unwrap_or_default().to_owned(),
-                message: text(&it.message),
-                line: it.line,
-                column: it.column,
-                end: it.end,
-                suggestions: it.suggestions.iter().map(|s| (s.message_id.to_owned(), text(&apply(&s.fix)))).collect(),
-            })
-            .collect(),
+        messages: messages.iter().map(|it| crate::reported(entry, code, it)).collect(),
     }
 }
 

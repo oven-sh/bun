@@ -759,31 +759,28 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn property_of_type(&mut self, ty: TypeId, name: &[u8]) -> Option<SymbolRef> {
-        let name = self.property_name(name)?;
+        let name = self.property_name(name);
         let (prop, mapper) = self.c.get_property_of_type(ty, name)?;
         Some(self.symbol_of_prop(prop, mapper))
     }
 
-    /// The atom of the name of a property, if any property can have that name. `__@iterator` is
-    /// the name of the property whose key is `Symbol.iterator`.
-    fn property_name(&self, name: &[u8]) -> Option<Atom> {
+    /// The atom of the name of a property. `__@iterator` is the name of the property whose key is
+    /// `Symbol.iterator`. The name of a late bound member is spelled nowhere before the members of
+    /// its type are resolved.
+    fn property_name(&self, name: &[u8]) -> Atom {
         match name.strip_prefix(b"__@") {
-            Some(symbol) => self.c.atoms().lookup(&cat!(crate::atom::SYMBOL_NAME_PREFIX, symbol)),
-            None => self.c.atoms().lookup(name),
+            Some(symbol) => self.c.atoms().symbol_name(symbol),
+            None => self.c.atoms().intern(name),
         }
     }
 
     pub fn type_of_property_of_type(&mut self, ty: TypeId, name: &[u8]) -> Option<TypeId> {
-        let name = self.property_name(name)?;
+        let name = self.property_name(name);
         self.c.type_of_property_of_type(ty, name)
     }
 
     pub fn type_of_property_or_index_signature_of_type(&mut self, ty: TypeId, name: &[u8]) -> Option<TypeId> {
-        // A name that nothing in the program spells can still be a key of an index signature.
-        let name = match name.strip_prefix(b"__@") {
-            Some(_) => self.property_name(name)?,
-            None => self.c.atoms().intern(name),
-        };
+        let name = self.property_name(name);
         self.c.type_of_property_or_index_signature_of_type(ty, name)
     }
 

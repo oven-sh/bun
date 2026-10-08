@@ -185,10 +185,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let element_flags: SmallVec<[ElementFlags; 8]> =
             flags.iter().map(|it| ElementFlags::from_bits_truncate(it.bits() as u8 & 15)).collect();
         let is_variable = |it: &ElementFlags| it.intersects(ElementFlags::VARIABLE);
-        // `createTupleTargetType`: up to the last element that is required.
-        let last_required = element_flags.iter().rposition(|it| it.intersects(ElementFlags::REQUIRED | ElementFlags::VARIADIC));
+        let is_required = |it: &&ElementFlags| it.intersects(ElementFlags::REQUIRED | ElementFlags::VARIADIC);
         Some(TupleInfo {
-            min_length: last_required.map_or(0, |at| at as u32 + 1),
+            min_length: element_flags.iter().filter(is_required).count() as u32,
             fixed_length: element_flags.iter().position(is_variable).unwrap_or(element_flags.len()) as u32,
             combined_flags: element_flags.iter().fold(ElementFlags::empty(), |all, &it| all | it),
             readonly: *readonly,

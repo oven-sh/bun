@@ -419,23 +419,23 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             depth += 1;
         }
         let mut flags = hir.flags(at);
-        // Only the modifier `declare` is `ModifierFlags.Ambient`.
-        if flags.contains(Flags::AMBIENT) && !self.has_declare_modifier(node.file, at) {
-            flags.remove(Flags::AMBIENT);
+        // Only the modifier `declare` is `ModifierFlags.Ambient`. That of a variable is on its
+        // statement.
+        if flags.contains(Flags::AMBIENT) {
+            let modified = match hir.kind(at) {
+                Kind::VariableDeclaration => hir.parent(hir.parent(at)),
+                _ => at,
+            };
+            let mut has_declare_modifier = false;
+            hir.for_each_child(modified, &mut |child| {
+                has_declare_modifier = hir.kind(child) == Kind::DeclareKeyword;
+                has_declare_modifier
+            });
+            if !has_declare_modifier {
+                flags.remove(Flags::AMBIENT);
+            }
         }
         ModifierFlags::from(flags)
-    }
-
-    fn has_declare_modifier(&self, file: FileId, node: Node) -> bool {
-        let hir = self.c.hir(file);
-        if hir.text.is_empty() {
-            return false;
-        }
-        let start = hir.start(node) as usize;
-        // `export declare`, `declare`
-        let text = hir.text.get(start..).unwrap_or_default();
-        let text = text.strip_prefix(b"export").map_or(text, |rest| rest.trim_ascii_start());
-        text.starts_with(b"declare") && !text.get(7).is_some_and(|&next| is_identifier_part(next))
     }
 
     /// `getCombinedNodeFlags`

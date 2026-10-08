@@ -60,6 +60,21 @@ struct Offsets<'t> {
     text: &'t [u8],
     /// Where each line starts.
     lines: Vec<usize>,
+    /// A byte is a UTF-16 code unit.
+    is_ascii: bool,
+    /// Of a text that is not ASCII and is valid UTF-8, for every `Offsets::STEP` bytes: where the next character starts, and how
+    /// many UTF-16 code units are before it.
+    marks: Vec<(usize, usize)>,
+}
+
+/// How many bytes and how many UTF-16 code units the character has that starts with `first`.
+fn sizes(first: u8) -> (usize, usize) {
+    match first {
+        0xF0.. => (4, 2),
+        0xE0.. => (3, 1),
+        0xC0.. => (2, 1),
+        _ => (1, 1),
+    }
 }
 
 impl<'t> Offsets<'t> {
@@ -80,25 +95,57 @@ impl<'t> Offsets<'t> {
             };
             lines.push(at);
         }
-        Offsets { text, lines }
+        let is_ascii = strings::first_non_ascii(text).is_none();
+        let mut marks = Vec::new();
+        if !is_ascii && std::str::from_utf8(text).is_ok() {
+            let (mut at, mut units) = (0, 0);
+            while at < text.len() {
+                if at >= marks.len() * Self::STEP {
+                    marks.push((at, units));
+                }
+                let (bytes, in_utf16) = sizes(text[at]);
+                at += bytes;
+                units += in_utf16;
+            }
+        }
+        Offsets { text, lines, is_ascii, marks }
+    }
+
+    const STEP: usize = 1024;
+
+    /// From `at`, which has `units` code units before it, to the first start of a character that has `wanted` or more.
+    fn forward(&self, (mut at, mut units): (usize, usize), wanted: usize) -> usize {
+        while units < wanted && at < self.text.len() {
+            let (bytes, in_utf16) = sizes(self.text[at]);
+            at += bytes;
+            units += in_utf16;
+        }
+        at.min(self.text.len())
     }
 
     /// The offset of a line from 1 and a column from 1 in UTF-16 code units, and the column from 1
     /// in bytes.
     fn at(&self, line: u32, column: u32) -> (usize, usize) {
         let start = (self.lines.get((line as usize).saturating_sub(1)).copied()).unwrap_or(self.text.len());
-        let (mut at, mut units) = (start, 1);
-        while units < column && at < self.text.len() {
-            let length = match self.text[at] {
-                0xF0.. => 4,
-                0xE0.. => 3,
-                0xC0.. => 2,
-                _ => 1,
-            };
-            units += if length == 4 { 2 } else { 1 };
-            at += length;
-        }
-        let at = at.min(self.text.len());
+        let after_start = (column as usize).saturating_sub(1);
+        let at = if self.is_ascii {
+            (start + after_start).min(self.text.len())
+        } else if let Some(&before) = self.marks.get(start / Self::STEP).filter(|it| it.0 <= start).or_else(|| {
+            // The mark is after the start of its step if a character goes across that.
+            self.marks.get((start / Self::STEP).checked_sub(1)?)
+        }) {
+            let (mut counted, mut units_before_line) = before;
+            while counted < start {
+                let (bytes, in_utf16) = sizes(self.text[counted]);
+                counted += bytes;
+                units_before_line += in_utf16;
+            }
+            let wanted = units_before_line + after_start;
+            let later = self.marks.partition_point(|it| it.1 <= wanted);
+            self.forward(later.checked_sub(1).map_or((start, units_before_line), |it| self.marks[it]).max((start, units_before_line)), wanted)
+        } else {
+            self.forward((start, 0), after_start)
+        };
         (at, at - start + 1)
     }
 }

@@ -53,11 +53,32 @@ fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     if relative.starts_with(b"../../") { path } else { relative }
 }
 
+/// Where [`lines`] has been, for the next problem, which is in the same file further down as a rule.
+#[derive(Default)]
+struct Place<'r> {
+    text: &'r [u8],
+    /// A line, counted from 1, and where it starts.
+    line: u32,
+    start: usize,
+    /// What was asked for last, and the answer.
+    last: (u32, u32, Vec<&'r [u8]>),
+}
+
 /// The lines `from..=to` of `text`, counted from 1 as ESLint counts them, without their ends.
-fn lines(text: &[u8], from: u32, to: u32) -> Vec<&[u8]> {
+fn lines<'r>(text: &'r [u8], from: u32, to: u32, place: &mut Place<'r>) -> Vec<&'r [u8]> {
     let text = strings::without_utf8_bom(text);
-    let (mut found, mut line, mut at) = (Vec::new(), 1, 0);
+    let is_same_text = std::ptr::eq(place.text, text);
+    if is_same_text && (place.last.0, place.last.1) == (from, to) {
+        return place.last.2.clone();
+    }
+    let (mut found, mut line, mut at) = match is_same_text && place.line <= from {
+        true => (Vec::new(), place.line, place.start),
+        false => (Vec::new(), 1, 0),
+    };
     while line <= to && at <= text.len() {
+        if line == from {
+            (place.text, place.line, place.start) = (text, line, at);
+        }
         let rest = &text[at..];
         let mut end = rest.len();
         let mut next = rest.len() + 1;
@@ -82,6 +103,9 @@ fn lines(text: &[u8], from: u32, to: u32) -> Vec<&[u8]> {
         }
         line += 1;
         at += next;
+    }
+    if std::ptr::eq(place.text, text) {
+        place.last = (from, to, found.clone());
     }
     found
 }
@@ -124,7 +148,7 @@ fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
     files
 }
 
-fn write_pretty_problem(out: &mut Vec<u8>, problem: Problem, meta: &Meta) {
+fn write_pretty_problem<'r>(out: &mut Vec<u8>, problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) {
     let Problem { result, message } = problem;
     let mut text = message.message.clone();
     let rule = problem.rule();
@@ -132,7 +156,7 @@ fn write_pretty_problem(out: &mut Vec<u8>, problem: Problem, meta: &Meta) {
         pretty!(&mut text, meta.color, "<r>  <d>{}", BStr::new(&rule));
     }
     let shown = match (&result.text, message.line) {
-        (Some(text), line @ 1..) => lines(text, line.saturating_sub(2).max(1), line),
+        (Some(text), line @ 1..) => lines(text, line.saturating_sub(2).max(1), line, place),
         _ => Vec::new(),
     };
     // Not lines that nobody has written, which fill the screen.
@@ -164,19 +188,20 @@ fn write_pretty_problem(out: &mut Vec<u8>, problem: Problem, meta: &Meta) {
 
 pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
+    let place = &mut Place::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
         for (i, problem) in problems.into_iter().enumerate() {
             if i > 0 {
                 out.push(b'\n');
             }
-            write_pretty_problem(out, problem, meta);
+            write_pretty_problem(out, problem, meta, place);
         }
         return;
     }
     let groups = grouped(&problems);
     let shown = groups.len().min(MAX_GROUPS);
     for group in &groups[..shown] {
-        write_pretty_problem(out, group[0], meta);
+        write_pretty_problem(out, group[0], meta, place);
         if group.len() > 1 {
             let files = by_file(group);
             pretty!(out, meta.color, "    <b><yellow>{} times<r><d> in {}<r>\n", group.len(), plural(files.len(), "file"));
@@ -214,7 +239,7 @@ fn attribute(text: &[u8]) -> Vec<u8> {
     out
 }
 
-fn write_agent_problem(out: &mut Vec<u8>, group: &[Problem], meta: &Meta) {
+fn write_agent_problem<'r>(out: &mut Vec<u8>, group: &[Problem<'r>], meta: &Meta, place: &mut Place<'r>) {
     let Some(&problem) = group.first() else {
         return;
     };
@@ -242,7 +267,7 @@ fn write_agent_problem(out: &mut Vec<u8>, group: &[Problem], meta: &Meta) {
     out.push(b'\n');
     if let (Some(text), line @ 1..) = (&result.text, message.line) {
         let first = line.saturating_sub(2).max(1);
-        let mut shown = lines(text, first, line + 1);
+        let mut shown = lines(text, first, line + 1, place);
         // A blank line after it says nothing.
         if shown.len() as u32 > line - first + 1 && shown.last().is_some_and(|it| it.trim_ascii().is_empty()) {
             shown.pop();
@@ -286,12 +311,13 @@ fn write_agent_problem(out: &mut Vec<u8>, group: &[Problem], meta: &Meta) {
 
 pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     let problems = all(results);
+    let place = &mut Place::default();
     if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
-        problems.iter().for_each(|problem| write_agent_problem(out, std::slice::from_ref(problem), meta));
+        problems.iter().for_each(|problem| write_agent_problem(out, std::slice::from_ref(problem), meta, place));
     } else {
         let groups = grouped(&problems);
         let shown = groups.len().min(MAX_GROUPS + MAX_COMPACT_GROUPS);
-        groups[..shown].iter().for_each(|group| write_agent_problem(out, group, meta));
+        groups[..shown].iter().for_each(|group| write_agent_problem(out, group, meta, place));
         let rest: usize = groups[shown..].iter().map(Vec::len).sum();
         if rest > 0 {
             let _ = writeln!(

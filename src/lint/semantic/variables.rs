@@ -21,36 +21,61 @@ pub(crate) struct Variable {
     pub(crate) symbol: SymbolId,
     /// The binder's symbol. `NONE` for the implicit `arguments`.
     pub(crate) binder: SymbolId,
+    /// The flags of the binder's symbol.
+    pub(crate) binder_flags: SymFlags,
     pub(crate) name: Atom,
     pub(crate) scope: u32,
     /// Where the name of its first declaration is. 0 for the implicit `arguments`.
     pub(crate) first_pos: u32,
-    /// Its range of `Variables::declarations`.
-    declarations: (u32, u32),
+    /// Its first declaration.
+    first: Decl,
+    /// How many declarations it has. None: it is the implicit `arguments`.
+    count: u32,
+    /// If it has several, where they start in `Variables::declarations`.
+    start: u32,
     pub(crate) flags: u8,
+}
+
+/// Where a variable can be referred to.
+#[derive(Copy, Clone)]
+pub(crate) struct Extent {
+    /// From the scopes with these numbers.
+    pub(crate) first_scope: u32,
+    pub(crate) last_scope: u32,
+    /// `ScopeData::body_start` of its scope.
+    pub(crate) body_start: u32,
+}
+
+impl Extent {
+    /// Whether what the binder resolves to the variable, from the scope `from` at `pos`, is what
+    /// ESLint resolves to it: it is declared around the reference, and not in the body of a
+    /// function whose parameters refer to it.
+    #[inline]
+    pub(crate) fn has(&self, from: u32, pos: u32) -> bool {
+        self.first_scope <= from && from <= self.last_scope && pos >= self.body_start
+    }
 }
 
 pub(crate) struct Variables {
     /// Sorted by scope, then by position.
     pub(crate) list: Vec<Variable>,
+    /// For each of `list`.
+    pub(crate) extents: Vec<Extent>,
     /// For each scope, where its variables start in `list`. One more than there are scopes.
     starts: Vec<u32>,
-    /// For each symbol of the binder, its index in `list`. Symbols that are one variable have the
-    /// same.
+    /// For each `Variable::symbol`, the index in `list`. First the symbols of the binder, of which
+    /// those that are one variable have the same index. Then the implicit `arguments`, one number
+    /// for each function and one for the file. Then `further`.
     of_symbol: Vec<u32>,
+    pub(crate) symbol_count: usize,
     /// The binder has one symbol for declarations that TypeScript merges across scopes: the type
     /// parameters of the declarations of an interface, what the bodies of a namespace export. ESLint
-    /// has a variable in each scope. The variables after the first of such a symbol, as indices
-    /// into `list`.
-    further: Vec<u32>,
-    function_count: usize,
-    /// The name and the index in `list` of each variable, sorted. So those of one name are sorted
-    /// by scope.
-    by_name: Vec<(u32, u32)>,
-    /// A Bloom filter with one hash function over the names in `by_name`: most names that are
-    /// looked up are globals. Its length is a power of two.
-    names: Vec<u64>,
-    /// In the order they are written, variable by variable.
+    /// has a variable in each scope. How many variables there are after the first of such a symbol.
+    further: usize,
+    names: NameTable,
+    /// The indices in `list` name by name. Those of one name are sorted, and so by scope.
+    by_name: Vec<u32>,
+    /// The declarations of the variables that have several, in the order they are written.
     declarations: Vec<Decl>,
     /// The names that the binder may resolve to something else than ESLint. Sorted.
     pub(crate) hazards: Vec<Atom>,
@@ -61,8 +86,54 @@ struct Entry {
     name: Atom,
     pos: u32,
     symbol: SymbolId,
+    binder_flags: SymFlags,
     decl: Decl,
     flags: u8,
+}
+
+#[derive(Copy, Clone)]
+struct NameSlot {
+    /// `NONE`: the slot is free.
+    name: Atom,
+    /// While the variables are made: the last one of that name. Then: how many of them are in
+    /// `by_name` so far.
+    last: u32,
+    /// How many variables have the name.
+    count: u32,
+    /// Where they start in `by_name`.
+    start: u32,
+}
+
+/// The names of the variables of a file: a hash table with open addressing, at most half full.
+struct NameTable {
+    /// A power of two of them.
+    slots: Vec<NameSlot>,
+}
+
+impl NameTable {
+    fn with_room_for(names: usize) -> NameTable {
+        let free = NameSlot {
+            name: Atom::NONE,
+            last: NONE,
+            count: 0,
+            start: NONE,
+        };
+        NameTable {
+            slots: vec![free; (names * 2 + 2).next_power_of_two()],
+        }
+    }
+
+    /// The index of the slot of `name`, or of the free slot where it belongs.
+    #[inline]
+    fn place(&self, name: Atom) -> usize {
+        let mask = self.slots.len() - 1;
+        // Atoms are numbered sequentially: Fibonacci hashing spreads them.
+        let mut at = (u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & mask;
+        while self.slots[at].name != name && self.slots[at].name.is_some() {
+            at = (at + 1) & mask;
+        }
+        at
+    }
 }
 
 /// The declaration or the parameter that the pattern `pat` is part of.
@@ -135,6 +206,69 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
     (name.is_some() && name != known::empty).then_some((name, pos))
 }
 
+/// The variables while they are made.
+struct Made {
+    list: Vec<Variable>,
+    names: NameTable,
+    /// The declarations after the first of a variable, with its index.
+    later: Vec<(u32, Decl)>,
+    /// The symbols of the binder that are part of a variable with another symbol, with its index.
+    parts: Vec<(SymbolId, u32)>,
+}
+
+impl Made {
+    /// Adds a declaration. All those of a scope are added in a row, in source order. `count`: 0 for
+    /// the implicit `arguments`, which comes first.
+    #[inline]
+    fn declare(&mut self, it: &Entry, count: u32) {
+        let at = self.names.place(it.name);
+        let slot = &mut self.names.slots[at];
+        // What the scope has declared under the name is the last variable of that name.
+        if let Some(variable) = self.list.get_mut(slot.last as usize)
+            && variable.scope == it.scope
+        {
+            if variable.count == 0 {
+                // ESLint has the `arguments` of a function first, declared or not.
+                (variable.symbol, variable.binder_flags, variable.flags) = (it.symbol, it.binder_flags, 0);
+                (variable.first_pos, variable.first) = (it.pos, it.decl);
+            }
+            if it.symbol != variable.symbol {
+                self.parts.push((it.symbol.max(variable.symbol), slot.last));
+                if it.symbol < variable.symbol {
+                    (variable.symbol, variable.binder_flags) = (it.symbol, it.binder_flags);
+                }
+            }
+            if variable.count > 0 {
+                // What is exported can be listed for both of its symbols.
+                if variable.start == it.pos {
+                    return;
+                }
+                self.later.push((slot.last, it.decl));
+            }
+            variable.count += 1;
+            variable.flags |= it.flags;
+            // Until all are added: where the last declaration is.
+            variable.start = it.pos;
+            return;
+        }
+        slot.name = it.name;
+        slot.last = self.list.len() as u32;
+        slot.count += 1;
+        self.list.push(Variable {
+            symbol: it.symbol,
+            binder: SymbolId::NONE,
+            binder_flags: it.binder_flags,
+            name: it.name,
+            scope: it.scope,
+            first_pos: it.pos,
+            first: it.decl,
+            count,
+            start: it.pos,
+            flags: it.flags,
+        });
+    }
+}
+
 impl Variables {
     pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree) -> Variables {
         let (hir, bound) = (&file.hir, &file.bound);
@@ -143,38 +277,41 @@ impl Variables {
         let symbol_count = file.binding.symbol_count();
         let mut hazards: Vec<Atom> = Vec::new();
 
-        let mut declared: Vec<(SymbolId, Decl)> = Vec::new();
+        let mut declared: Vec<(SymbolId, SymFlags, Decl)> = Vec::new();
         file.binding.declarations_in_scopes(&mut declared);
         let mut entries: Vec<Entry> = Vec::with_capacity(declared.len());
-        for &(symbol, decl) in &declared {
+        // The position and the index of each entry.
+        let mut in_order: Vec<u64> = Vec::with_capacity(declared.len());
+        for &(symbol, binder_flags, decl) in &declared {
             if let Some((name, pos)) = name_of_declaration(file, decl)
                 && !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
             {
+                in_order.push(u64::from(pos) << 32 | entries.len() as u64);
                 entries.push(Entry {
                     scope: NONE,
                     name,
                     pos,
                     symbol,
+                    binder_flags,
                     decl,
                     flags: 0,
                 });
             }
         }
-        // The scope that each name is written in. The binder declares nearly in source order.
-        let mut in_order: Vec<u64> =
-            (entries.iter().enumerate()).map(|(i, it)| u64::from(it.pos) << 32 | i as u64).collect();
-        in_order.sort_unstable();
+        // The binder declares nearly in source order.
+        in_order.sort();
+
+        // The scope that each is declared in, from the scope that its name is written in.
+        let scope_count = tree.scopes.len();
+        let mut entry_starts = vec![0u32; scope_count + 1];
         let mut cursor = tree.cursor();
-        for key in in_order {
-            entries[key as u32 as usize].scope = cursor.seek((key >> 32) as u32).from;
-        }
-        // The scope that each is declared in.
-        entries.retain_mut(|it| {
-            let (here, name) = (it.scope, it.name);
+        for &key in &in_order {
+            let it = &mut entries[key as u32 as usize];
+            let (here, name) = (cursor.seek(it.pos), it.name);
             (it.scope, it.flags) = match it.decl {
                 Decl::Var(p) | Decl::Require(p) => {
                     let PatParent::Var(d) = root_of_pattern(file, p) else {
-                        return false;
+                        continue;
                     };
                     let is_hoisted = hir.var_decls.get(d.idx()).is_some_and(|it| it.kind == VarKind::Var)
                         && !is_catch_parameter(file, d);
@@ -195,7 +332,7 @@ impl Variables {
                     }
                     // The binder does not visit the name of a `this` parameter.
                     _ if name == known::this => (here, VALUE),
-                    _ => return false,
+                    _ => continue,
                 },
                 Decl::Fn(f) => {
                     let is_in_block = || {
@@ -212,50 +349,45 @@ impl Variables {
                     _ => (here, VALUE | TYPE),
                 },
                 Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => (here, VALUE | TYPE),
-                _ if is_javascript => return false,
+                _ if is_javascript => continue,
                 Decl::Interface(_) | Decl::Alias(_) => (here, TYPE),
                 Decl::TypeParam(_) => (scope_of_type_parameter(file, tree, here, it.pos), TYPE),
                 Decl::Module(_) => {
                     // To the binder, a namespace without values is not a value.
-                    if !file.binding.symbol(it.symbol).is_some_and(|it| it.flags.intersects(SymFlags::VALUE)) {
+                    if !it.binder_flags.intersects(SymFlags::VALUE) {
                         hazards.push(name);
                     }
                     (here, VALUE | TYPE)
                 }
                 _ => (here, VALUE | TYPE),
             };
-            it.scope != NONE
-        });
-
-        // The entries scope by scope, as indices.
-        let scope_count = tree.scopes.len();
-        let mut entry_starts = vec![0u32; scope_count + 1];
-        for it in &entries {
-            entry_starts[it.scope as usize + 1] += 1;
+            if let Some(count) = entry_starts.get_mut(it.scope as usize + 1) {
+                *count += 1;
+            }
         }
+
+        // The entries scope by scope, and in each in source order, as indices.
         for i in 0..scope_count {
             entry_starts[i + 1] += entry_starts[i];
         }
         let mut next = entry_starts.clone();
-        let mut by_scope = vec![0u32; entries.len()];
-        for (i, it) in entries.iter().enumerate() {
-            let slot = &mut next[it.scope as usize];
-            by_scope[*slot as usize] = i as u32;
-            *slot += 1;
+        let mut by_scope = vec![0u32; entry_starts[scope_count] as usize];
+        for &key in &in_order {
+            if let Some(slot) = next.get_mut(entries[key as u32 as usize].scope as usize) {
+                by_scope[*slot as usize] = key as u32;
+                *slot += 1;
+            }
         }
 
-        let mut list: Vec<Variable> = Vec::with_capacity(entries.len() + hir.fns.len());
         let mut starts: Vec<u32> = Vec::with_capacity(scope_count + 1);
-        let mut of_symbol = vec![NONE; symbol_count];
-        let mut declarations: Vec<Decl> = Vec::with_capacity(entries.len());
-        let mut further: Vec<u32> = Vec::new();
-        let first_further = symbol_count + hir.fns.len() + 1;
-        // The position of the first declaration of each name in the scope, and its range of `here`.
-        let mut groups: Vec<(u32, u32, u32)> = Vec::new();
+        let mut made = Made {
+            list: Vec::with_capacity(by_scope.len() + hir.fns.len()),
+            names: NameTable::with_room_for(by_scope.len() + 1),
+            later: Vec::new(),
+            parts: Vec::new(),
+        };
         for (scope, data) in tree.scopes.iter().enumerate() {
-            starts.push(list.len() as u32);
-            let here = &mut by_scope[entry_starts[scope] as usize..entry_starts[scope + 1] as usize];
-            let entry = |i: u32| &entries[i as usize];
+            starts.push(made.list.len() as u32);
             // "NOTE Arrow functions never have an arguments objects."
             let arguments = match (data.kind, data.block) {
                 (ScopeKind::Function, Block::File) => Some(symbol_count + hir.fns.len()),
@@ -265,81 +397,76 @@ impl Variables {
                 }
                 _ => None,
             };
-            if let Some(symbol) = arguments
-                && !here.iter().any(|&i| entry(i).name == known::arguments)
-            {
-                list.push(Variable {
-                    symbol: SymbolId(symbol as u32),
-                    binder: SymbolId::NONE,
+            if let Some(symbol) = arguments {
+                let implicit = Entry {
+                    scope: scope as u32,
                     name: known::arguments,
-                    scope: scope as u32,
-                    first_pos: 0,
-                    declarations: (0, 0),
+                    pos: 0,
+                    symbol: SymbolId(symbol as u32),
+                    binder_flags: SymFlags::FUNCTION_SCOPED_VARIABLE,
+                    decl: Decl::File,
                     flags: VALUE | TYPE,
-                });
+                };
+                made.declare(&implicit, 0);
             }
-            if here.len() > 1 {
-                here.sort_unstable_by_key(|&i| (entry(i).name.0, entry(i).pos, entry(i).symbol.0));
-            }
-            groups.clear();
-            let mut at = 0;
-            while let Some(&first) = here.get(at) {
-                let len = here[at..].iter().take_while(|&&i| entry(i).name == entry(first).name).count();
-                groups.push((entry(first).pos, at as u32, len as u32));
-                at += len;
-            }
-            if groups.len() > 1 {
-                groups.sort_unstable();
-            }
-            for &(first_pos, at, len) in &groups {
-                let group = &here[at as usize..(at + len) as usize];
-                let index = list.len() as u32;
-                let binder = group.iter().map(|&i| entry(i).symbol).min().unwrap_or(SymbolId::NONE);
-                let (start, mut flags) = (declarations.len(), 0);
-                for &i in group {
-                    // What is exported is listed for both of its symbols.
-                    if declarations.get(start..).is_none_or(|them| them.last() != Some(&entry(i).decl)) {
-                        declarations.push(entry(i).decl);
-                    }
-                    flags |= entry(i).flags;
-                }
-                // `Referencer.visitFunction` defines the parameters before the type parameters.
-                if data.kind == ScopeKind::Function && flags == VALUE | TYPE {
-                    declarations[start..].sort_by_key(|it| !matches!(it, Decl::Param(_)));
-                }
-                let mut symbol = binder;
-                if of_symbol.get(binder.idx()).is_some_and(|it| *it != NONE) {
-                    symbol = SymbolId((first_further + further.len()) as u32);
-                    further.push(index);
-                }
-                for &i in group {
-                    if let Some(slot) = of_symbol.get_mut(entry(i).symbol.idx())
-                        && *slot == NONE
-                    {
-                        *slot = index;
-                    }
-                }
-                list.push(Variable {
-                    symbol,
-                    binder,
-                    name: entry(group[0]).name,
-                    scope: scope as u32,
-                    first_pos,
-                    declarations: (start as u32, (declarations.len() - start) as u32),
-                    flags,
-                });
+            for &i in &by_scope[entry_starts[scope] as usize..entry_starts[scope + 1] as usize] {
+                made.declare(&entries[i as usize], 1);
             }
         }
+        let Made {
+            mut list,
+            mut names,
+            mut later,
+            parts,
+        } = made;
         starts.push(list.len() as u32);
         if scopes::has_top_level_function(file) {
             hazards.push(known::arguments);
         }
-        let mut by_name: Vec<(u32, u32)> = (list.iter().enumerate()).map(|(i, it)| (it.name.0, i as u32)).collect();
-        by_name.sort_unstable();
-        let mut names = vec![0u64; (list.len() / 8 + 1).next_power_of_two()];
-        for it in &list {
-            let (word, bit) = place_in_filter(names.len(), it.name);
-            names[word] |= bit;
+
+        // What identifies each, and the variables name by name.
+        let first_further = symbol_count + hir.fns.len() + 1;
+        let mut of_symbol = vec![NONE; first_further];
+        let mut by_name = vec![0u32; list.len()];
+        let mut filled = 0;
+        for (index, variable) in list.iter_mut().enumerate() {
+            if variable.count > 0 {
+                variable.binder = variable.symbol;
+            }
+            match of_symbol.get_mut(variable.symbol.idx()) {
+                Some(slot) if *slot == NONE => *slot = index as u32,
+                _ => {
+                    variable.symbol = SymbolId(of_symbol.len() as u32);
+                    of_symbol.push(index as u32);
+                }
+            }
+            let at = names.place(variable.name);
+            let slot = &mut names.slots[at];
+            if slot.start == NONE {
+                (slot.start, slot.last) = (filled, 0);
+                filled += slot.count;
+            }
+            by_name[(slot.start + slot.last) as usize] = index as u32;
+            slot.last += 1;
+        }
+        for &(symbol, index) in &parts {
+            if let Some(slot) = of_symbol.get_mut(symbol.idx())
+                && *slot == NONE
+            {
+                *slot = index;
+            }
+        }
+        let mut declarations: Vec<Decl> = Vec::new();
+        later.sort_by_key(|it| it.0);
+        for of_one in later.chunk_by(|a, b| a.0 == b.0) {
+            let variable = &mut list[of_one[0].0 as usize];
+            variable.start = declarations.len() as u32;
+            declarations.push(variable.first);
+            declarations.extend(of_one.iter().map(|it| it.1));
+            // `Referencer.visitFunction` defines the parameters before the type parameters.
+            if tree.scopes[variable.scope as usize].kind == ScopeKind::Function && variable.flags == VALUE | TYPE {
+                declarations[variable.start as usize..].sort_by_key(|it| !matches!(it, Decl::Param(_)));
+            }
         }
 
         let mut refused: Vec<Decl> = Vec::new();
@@ -348,44 +475,44 @@ impl Variables {
         hazards.sort_unstable_by_key(|it| it.0);
         hazards.dedup();
 
+        let extent = |it: &Variable| {
+            let scope = &tree.scopes[it.scope as usize];
+            Extent {
+                first_scope: it.scope,
+                last_scope: scope.last,
+                body_start: scope.body_start,
+            }
+        };
         Variables {
+            extents: list.iter().map(extent).collect(),
             list,
             starts,
+            further: of_symbol.len() - first_further,
             of_symbol,
-            further,
-            function_count: hir.fns.len(),
-            by_name,
+            symbol_count,
             names,
+            by_name,
             declarations,
             hazards,
         }
     }
 
-    /// The index in `list` of the variable that `symbol` identifies. After the symbols of the
-    /// binder come the implicit `arguments`, one number for each function and one for the file,
-    /// and then `further`.
-    pub(crate) fn of_symbol(&self, tree: &ScopeTree, symbol: SymbolId) -> Option<u32> {
-        if let Some(&index) = self.of_symbol.get(symbol.idx()) {
-            return (index != NONE).then_some(index);
-        }
-        let function = symbol.idx() - self.of_symbol.len();
-        if function > self.function_count {
-            return self.further.get(function - self.function_count - 1).copied();
-        }
-        let scope = tree.of_fn.get(function).copied().unwrap_or(1);
-        let index = *self.starts.get(scope as usize)?;
-        (self.list.get(index as usize)?.symbol == symbol).then_some(index)
+    /// The index in `list` of the variable that `symbol` identifies.
+    #[inline]
+    pub(crate) fn of_symbol(&self, symbol: SymbolId) -> Option<u32> {
+        self.of_symbol.get(symbol.idx()).copied().filter(|it| *it != NONE)
     }
 
     /// More than what identifies any variable.
+    #[inline]
     pub(crate) fn key_limit(&self) -> usize {
-        self.of_symbol.len() + self.function_count + 1 + self.further.len()
+        self.of_symbol.len()
     }
 
     /// The variable that the declaration of the binder's `symbol` whose name is at `pos` declares.
-    pub(crate) fn of_declaration(&self, file: &File, tree: &ScopeTree, symbol: SymbolId, pos: u32) -> Option<u32> {
-        let first = self.of_symbol(tree, symbol)?;
-        if self.further.is_empty() {
+    pub(crate) fn of_declaration(&self, file: &File, symbol: SymbolId, pos: u32) -> Option<u32> {
+        let first = self.of_symbol(symbol)?;
+        if self.further == 0 {
             return Some(first);
         }
         let binder = self.list[first as usize].binder;
@@ -394,8 +521,8 @@ impl Variables {
             let mut declarations = self.declarations_of(it).iter();
             it.binder == binder && declarations.any(|&decl| name_of_declaration(file, decl).is_some_and(|it| it.1 == pos))
         };
-        let named = self.named(self.list[first as usize].name).iter().map(|it| it.1);
-        Some({ named }.find(is_declared_by).unwrap_or(first))
+        let mut named = self.named(self.list[first as usize].name).iter().copied();
+        Some(named.find(is_declared_by).unwrap_or(first))
     }
 
     #[inline]
@@ -407,32 +534,34 @@ impl Variables {
     }
 
     #[inline]
-    pub(crate) fn declarations_of(&self, variable: &Variable) -> &[Decl] {
-        let (start, len) = variable.declarations;
-        self.declarations.get(start as usize..(start + len) as usize).unwrap_or_default()
+    pub(crate) fn declarations_of<'t>(&'t self, variable: &'t Variable) -> &'t [Decl] {
+        match variable.count {
+            0 => &[],
+            1 => std::slice::from_ref(&variable.first),
+            count => self.declarations.get(variable.start as usize..(variable.start + count) as usize).unwrap_or_default(),
+        }
     }
 
     #[inline]
     pub(crate) fn is_implicit(variable: &Variable) -> bool {
-        variable.declarations.1 == 0
+        variable.count == 0
     }
 
     /// The variables named `name`, by scope.
-    fn named(&self, name: Atom) -> &[(u32, u32)] {
-        let (word, bit) = place_in_filter(self.names.len(), name);
-        if self.names[word] & bit == 0 {
-            return &[];
+    #[inline]
+    fn named(&self, name: Atom) -> &[u32] {
+        let slot = &self.names.slots[self.names.place(name)];
+        match slot.name.is_some() {
+            true => self.by_name.get(slot.start as usize..(slot.start + slot.count) as usize).unwrap_or_default(),
+            false => &[],
         }
-        let start = self.by_name.partition_point(|it| it.0 < name.0);
-        let len = self.by_name[start..].partition_point(|it| it.0 == name.0);
-        &self.by_name[start..start + len]
     }
 
     /// ESLint's `scope.set.get(name)`.
     pub(crate) fn get(&self, scope: u32, name: Atom) -> Option<u32> {
         let range = self.range_of_scope(scope);
         let named = self.named(name);
-        let found = named.get(named.partition_point(|it| (it.1 as usize) < range.start))?.1;
+        let found = *named.get(named.partition_point(|&it| (it as usize) < range.start))?;
         range.contains(&(found as usize)).then_some(found)
     }
 
@@ -452,9 +581,9 @@ impl Variables {
         };
         // The innermost scope has the highest number.
         let end = self.range_of_scope(from).end;
-        let before = named.partition_point(|it| (it.1 as usize) < end);
+        let before = named.partition_point(|&it| (it as usize) < end);
         const SCANNED: usize = 8;
-        for &(_, index) in named[..before].iter().rev().take(SCANNED) {
+        for &index in named[..before].iter().rev().take(SCANNED) {
             if tree.contains(self.list[index as usize].scope, from) && is_valid(index) {
                 return Some(index);
             }
@@ -473,14 +602,6 @@ impl Variables {
         }
         None
     }
-}
-
-/// The word and the bit for `name` in a filter of `words` words.
-#[inline]
-fn place_in_filter(words: usize, name: Atom) -> (usize, u64) {
-    // Atoms are numbered sequentially: Fibonacci hashing spreads them.
-    let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
-    ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
 }
 
 /// The scope that the type parameter at `pos`, in the scope `here`, is declared in.

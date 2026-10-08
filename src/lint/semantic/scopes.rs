@@ -163,10 +163,10 @@ impl ScopeTree {
         let (mut namespace_exports, mut unvisited) = (Vec::new(), Vec::new());
         let protos = collect(file, &mut namespace_exports, &mut unvisited);
         // By start. Of two that start together, the one that ends later contains the other.
-        let mut order: Vec<(u64, u64)> = (protos.iter().enumerate())
+        let mut order: Vec<u128> = (protos.iter().enumerate())
             .map(|(i, it)| {
-                let range = u64::from(it.start) << 32 | u64::from(u32::MAX - it.end);
-                (range, u64::from(it.rank) << 32 | i as u64)
+                let range = u128::from(it.start) << 32 | u128::from(u32::MAX - it.end);
+                range << 64 | u128::from(it.rank) << 32 | i as u128
             })
             .collect();
         order.sort_unstable();
@@ -184,8 +184,8 @@ impl ScopeTree {
         let mut scope_of_proto = vec![NONE; protos.len()];
         let mut outside: Vec<(u32, u32)> = Vec::new();
         let mut stack: Vec<u32> = Vec::new();
-        for &(_, index) in &order {
-            let index = index as u32;
+        for &key in &order {
+            let index = key as u32;
             let proto = protos[index as usize];
             while let Some(&top) = stack.last()
                 && tree.regions[top as usize].end <= proto.start
@@ -353,6 +353,8 @@ impl ScopeTree {
             regions: &self.regions,
             next: 1,
             at: 0,
+            from: 0,
+            until: 0,
         }
     }
 
@@ -367,12 +369,24 @@ pub(crate) struct Cursor<'t> {
     regions: &'t [Region],
     next: usize,
     at: usize,
+    /// `Region::from` of the region at `at`.
+    from: u32,
+    /// Up to here that is the innermost region.
+    until: u32,
 }
 
 impl Cursor<'_> {
-    /// The innermost region that contains `pos`, which is not less than in the call before.
+    /// `Region::from` of the innermost region that contains `pos`, which is not less than in the
+    /// call before.
     #[inline]
-    pub(crate) fn seek(&mut self, pos: u32) -> &Region {
+    pub(crate) fn seek(&mut self, pos: u32) -> u32 {
+        if pos >= self.until {
+            self.advance(pos);
+        }
+        self.from
+    }
+
+    fn advance(&mut self, pos: u32) {
         while self.regions[self.at].end <= pos && self.at != 0 {
             self.at = self.regions[self.at].parent as usize;
         }
@@ -384,7 +398,9 @@ impl Cursor<'_> {
             }
             self.next += 1;
         }
-        &self.regions[self.at]
+        let here = &self.regions[self.at];
+        self.from = here.from;
+        self.until = self.regions.get(self.next).map_or(here.end, |it| it.start.min(here.end));
     }
 }
 

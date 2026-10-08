@@ -4,12 +4,12 @@
 //! each is read or written, the scope it is in, the names in types and what they resolve to, and
 //! all of it grouped by variable and by scope.
 
-use super::scopes::{self, NONE, ScopeTree};
+use super::scopes::{self, Cursor, NONE, ScopeTree};
 use super::variables::{TYPE, VALUE, Variables};
 use super::{ReferenceFlags, ScopeKind};
 use crate::ast::File;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Parent, PatParent};
+use bun_sema::bind::{Parent, PatParent, SymbolId};
 use bun_sema::hir::{self, ExprId, ExprKind, PatKind, PropKind, StmtKind, TypeNodeKind, UnOp};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
@@ -64,6 +64,8 @@ pub(crate) struct References {
     /// For each variable, where its references start in `by_variable`. Two more than there are
     /// variables.
     variable_starts: Vec<u32>,
+    /// For each variable: `HAS_READ`, `HAS_WRITE`, `HAS_MODIFYING_WRITE`.
+    marks: Vec<u32>,
     /// Indices into `all`, scope by scope, in that order, and where those of each scope start.
     /// Computed on demand.
     by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
@@ -89,13 +91,182 @@ enum Access {
 /// resolved.
 const BY_NAME: u32 = NONE - 1;
 
+/// Some reference to the variable reads it.
+pub(crate) const HAS_READ: u32 = 1 << 29;
+/// Some reference writes it.
+pub(crate) const HAS_WRITE: u32 = 1 << 30;
+/// Some reference writes it, other than its declaration.
+pub(crate) const HAS_MODIFYING_WRITE: u32 = 1 << 31;
+const COUNT: u32 = HAS_READ - 1;
+
 struct Collector<'f, 'a> {
     file: &'f File<'a>,
     is_javascript: bool,
+    /// All but the identifiers that are expressions.
     found: Vec<RawReference>,
 }
 
-impl Collector<'_, '_> {
+/// Takes the references in source order, and finds the scope that each is in and what it resolves
+/// to.
+struct Resolver<'t> {
+    tree: &'t ScopeTree,
+    variables: &'t Variables,
+    expr_symbol: &'t [SymbolId],
+    pat_symbol: &'t [SymbolId],
+    /// Ranges of the text in which nothing is a reference.
+    unvisited: &'t [(u32, u32)],
+    cursor: Cursor<'t>,
+    all: Vec<RawReference>,
+    /// How many resolve to each variable, at the index after that of the variable. The last: to
+    /// nothing. In the highest bits: `HAS_READ`, `HAS_WRITE`, `HAS_MODIFYING_WRITE`.
+    counts: Vec<u32>,
+    /// There are no `unvisited`.
+    is_plain: bool,
+    /// Those of `all` that are not visited where they are: the index, and the position that it is
+    /// visited at.
+    moved: Vec<(u32, u32)>,
+    /// The last position among `moved`.
+    last_moved_to: u32,
+    /// So far the references are visited in the order of `all`.
+    is_visiting_order: bool,
+}
+
+impl<'t> Resolver<'t> {
+    fn new(file: &'t File, tree: &'t ScopeTree, variables: &'t Variables, capacity: usize) -> Resolver<'t> {
+        Resolver {
+            tree,
+            variables,
+            expr_symbol: file.bound.expr_symbol,
+            pat_symbol: file.bound.pat_symbol,
+            unvisited: if scopes::is_javascript_mode(file) { &[] } else { &tree.unvisited },
+            cursor: tree.cursor(),
+            all: Vec::with_capacity(capacity),
+            counts: vec![0; variables.list.len() + 2],
+            moved: Vec::new(),
+            last_moved_to: 0,
+            is_visiting_order: true,
+            is_plain: scopes::is_javascript_mode(file) || tree.unvisited.is_empty(),
+        }
+    }
+
+    /// `add` for an identifier that is an expression and is read.
+    #[inline]
+    fn add_read(&mut self, id: ExprId, pos: u32, name: Atom) {
+        let hazards = &self.variables.hazards;
+        if self.is_plain && (hazards.is_empty() || hazards.binary_search_by_key(&name.0, |it| it.0).is_err()) {
+            return self.add_simple_read(id, pos, name);
+        }
+        self.add(RawReference {
+            site: ReferenceSite::Expr(id),
+            pos,
+            name,
+            variable: NONE,
+            from: pos,
+            write: ExprId::NONE,
+            flags: READ,
+        });
+    }
+
+    /// The same where there is nothing `unvisited`, and the name is none of `Variables::hazards`.
+    #[inline(always)]
+    fn add_simple_read(&mut self, id: ExprId, pos: u32, name: Atom) {
+        self.is_visiting_order &= pos >= self.last_moved_to;
+        let from = self.cursor.seek(pos);
+        let symbol = self.expr_symbol.get(id.idx()).copied().unwrap_or(SymbolId::NONE);
+        let variable = match self.variables.of_symbol(symbol) {
+            Some(index) if self.variables.extents.get(index as usize).is_some_and(|it| it.has(from, pos)) => index,
+            _ => self.variables.resolve(self.tree, from, name, pos, VALUE).unwrap_or(NONE),
+        };
+        let it = RawReference {
+            site: ReferenceSite::Expr(id),
+            pos,
+            name,
+            variable,
+            from,
+            write: ExprId::NONE,
+            flags: READ,
+        };
+        self.count(&it);
+        self.all.push(it);
+    }
+
+    #[inline(always)]
+    fn count(&mut self, it: &RawReference) {
+        let is_modifying = it.flags.contains(ReferenceFlags::WRITE) && !it.flags.contains(ReferenceFlags::INIT);
+        let marks = u32::from(it.flags.contains(ReferenceFlags::READ)) * HAS_READ
+            | u32::from(it.flags.contains(ReferenceFlags::WRITE)) * HAS_WRITE
+            | u32::from(is_modifying) * HAS_MODIFYING_WRITE;
+        let count = &mut self.counts[(it.variable as usize).min(self.variables.list.len()) + 1];
+        *count = (*count + 1) | marks;
+    }
+
+    /// `it.from`: see `Collector::push_write`.
+    #[inline(never)]
+    fn add(&mut self, mut it: RawReference) {
+        let (tree, variables) = (self.tree, self.variables);
+        if !self.unvisited.is_empty() && self.unvisited.iter().any(|range| (range.0..range.1).contains(&it.pos)) {
+            return;
+        }
+        let last_visit = match self.moved.last() {
+            Some(&(index, visit)) if index as usize + 1 == self.all.len() => visit,
+            _ => self.all.last().map_or(0, |it| it.pos),
+        };
+        self.is_visiting_order &= it.from >= last_visit;
+        if it.from != it.pos {
+            self.moved.push((self.all.len() as u32, it.from));
+            self.last_moved_to = self.last_moved_to.max(it.from);
+        }
+        it.from = self.cursor.seek(it.pos);
+        let wants = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
+            + u8::from(it.flags.contains(ReferenceFlags::TYPE)) * TYPE;
+        let bound_to = match it.site {
+            ReferenceSite::Expr(e) if wants == VALUE && it.variable != BY_NAME => self.expr_symbol.get(e.idx()).copied(),
+            ReferenceSite::Pat(p) => self.pat_symbol.get(p.idx()).copied(),
+            ReferenceSite::Declaration(index) => {
+                it.from = variables.list[index as usize].scope;
+                None
+            }
+            _ => None,
+        };
+        let hazards = &variables.hazards;
+        let is_hazard = !hazards.is_empty() && hazards.binary_search_by_key(&it.name.0, |it| it.0).is_ok();
+        let trusted = match bound_to.filter(|_| !is_hazard) {
+            Some(symbol) if symbol.is_some() => {
+                // What the binder found is what ESLint finds if it is declared around the
+                // reference, and not in the body of a function whose parameters refer to it.
+                variables.of_symbol(symbol).filter(|&index| {
+                    let extent = &variables.extents[index as usize];
+                    extent.has(it.from, it.pos)
+                        // `catch (e) { var e = 1 }` writes the parameter.
+                        && (!matches!(it.site, ReferenceSite::Pat(_)) || extent.first_scope == it.from)
+                })
+            }
+            // What the binder finds no value for can be the `arguments` of a function, or a
+            // namespace without values.
+            _ => None,
+        };
+        it.variable = match trusted {
+            Some(index) => index,
+            None => variables.resolve(tree, it.from, it.name, it.pos, wants).unwrap_or(NONE),
+        };
+        self.count(&it);
+        self.all.push(it);
+    }
+}
+
+/// What `Collector::identifier` keeps from one identifier to the next.
+struct Merge<'t> {
+    into: Resolver<'t>,
+    /// How many of `Collector::found` have been passed on.
+    passed: usize,
+    /// Where the next of them is.
+    next_found: u32,
+    /// Where the last identifier is.
+    last: u32,
+    values: SmallVec<[ExprId; 4]>,
+}
+
+impl<'f> Collector<'f, '_> {
     fn push(&mut self, site: ReferenceSite, pos: u32, name: Atom, flags: ReferenceFlags, write: ExprId) {
         self.push_write(site, (pos, pos), name, flags, write);
     }
@@ -104,15 +275,21 @@ impl Collector<'_, '_> {
     /// visits the defaults and the computed keys in it. `at`: where the name is, and the position
     /// that it is visited at. That is kept in `from` until the references are in order.
     fn push_write(&mut self, site: ReferenceSite, at: (u32, u32), name: Atom, flags: ReferenceFlags, write: ExprId) {
-        self.found.push(RawReference {
+        let made = self.make(site, at, name, flags, write);
+        self.found.push(made);
+    }
+
+    #[inline]
+    fn make(&self, site: ReferenceSite, at: (u32, u32), name: Atom, flags: ReferenceFlags, write: ExprId) -> RawReference {
+        RawReference {
             site,
             pos: at.0,
             name,
             variable: NONE,
             from: at.1,
-            write: self.without_casts(write),
+            write: if write.is_some() { self.without_casts(write) } else { write },
             flags,
-        });
+        }
     }
 
     /// `/** @type {T} */ (e)` in JavaScript is `e` in parentheses to ESLint.
@@ -252,10 +429,9 @@ impl Collector<'_, '_> {
             )
     }
 
-    fn expressions(&mut self) {
-        let file = self.file;
-        let (hir, bound) = (&file.hir, &file.bound);
-        // `eslint-scope` does not visit closing elements.
+    /// The closing tags, which `eslint-scope` does not visit. Sorted.
+    fn unvisited_tags(&self) -> Vec<ExprId> {
+        let hir = &self.file.hir;
         let mut skipped: Vec<ExprId> = Vec::new();
         if self.is_javascript {
             for jsx in hir.jsx {
@@ -267,18 +443,31 @@ impl Collector<'_, '_> {
             }
             skipped.sort_unstable();
         }
-        let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
-        for (i, e) in hir.exprs.iter().enumerate() {
-            let ExprKind::Ident(name) = e.kind else {
-                continue;
-            };
-            let id = ExprId(i as u32);
-            let mut flags = READ;
-            let access = match bound.expr_parent.get(i) {
-                None | Some(Parent::None) => continue,
-                Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
-                    Some(
-                        ExprKind::Assign { .. }
+        skipped
+    }
+
+    /// Passes on those of `found` that are before `pos`.
+    #[inline(never)]
+    fn pass_on_before(&self, pos: u32, merge: &mut Merge) {
+        while let Some(before) = self.found.get(merge.passed)
+            && before.pos < pos
+        {
+            merge.into.add(*before);
+            merge.passed += 1;
+        }
+        merge.next_found = self.found.get(merge.passed).map_or(u32::MAX, |it| it.pos);
+    }
+
+    /// Whether the parent of an identifier is enough to tell that it is a reference that reads a
+    /// value.
+    #[inline(always)]
+    fn is_only_read(&self, id: ExprId) -> bool {
+        let (hir, bound) = (&self.file.hir, &self.file.bound);
+        match bound.expr_parent.get(id.idx()) {
+            Some(&Parent::Expr(parent)) => !matches!(
+                hir.exprs.get(parent.idx()).map(|it| it.kind),
+                None | Some(
+                    ExprKind::Assign { .. }
                         | ExprKind::Unary {
                             op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                             ..
@@ -288,57 +477,154 @@ impl Collector<'_, '_> {
                         | ExprKind::As { .. }
                         | ExprKind::AsConst(_)
                         | ExprKind::NonNull(_)
-                        | ExprKind::Satisfies { .. },
-                    ) => self.access(id, &mut values),
-                    Some(ExprKind::Jsx(jsx)) => {
-                        let is_tag = hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == id || it.close_tag == id);
-                        if is_tag && !is_component_name(file.atoms.bytes(name)) {
-                            continue;
-                        }
-                        Access::Read
+                        | ExprKind::Satisfies { .. }
+                        | ExprKind::Jsx(_)
+                )
+            ),
+            Some(&Parent::Stmt(s)) => !matches!(
+                hir.stmts.get(s.idx()).map(|it| it.kind),
+                None | Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) | StmtKind::Expr(_))
+            ),
+            None | Some(Parent::None | Parent::Prop(_)) => false,
+            Some(_) => true,
+        }
+    }
+
+    /// Passes on the references that the identifier `e` is, after those of `found`, which is
+    /// sorted, that are before it. `false`, and nothing is done: it is before the last identifier.
+    #[inline(never)]
+    fn identifier(&self, id: ExprId, e: &hir::Expr, name: Atom, skipped: &[ExprId], merge: &mut Merge) -> bool {
+        let file = self.file;
+        let (hir, bound) = (&file.hir, &file.bound);
+        let mut flags = READ;
+        let access = match bound.expr_parent.get(id.idx()) {
+            None | Some(Parent::None) => return true,
+            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+                Some(
+                    ExprKind::Assign { .. }
+                    | ExprKind::Unary {
+                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                        ..
                     }
-                    _ => Access::Read,
-                },
-                Some(Parent::Prop(_)) => self.access(id, &mut values),
-                Some(&Parent::Stmt(s)) => match hir.stmts.get(s.idx()).map(|it| it.kind) {
-                    // "this could be a type or a variable"
-                    Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)) if !self.is_javascript => {
-                        flags |= ReferenceFlags::TYPE;
-                        Access::Read
+                    | ExprKind::Array(_)
+                    | ExprKind::Spread(_)
+                    | ExprKind::As { .. }
+                    | ExprKind::AsConst(_)
+                    | ExprKind::NonNull(_)
+                    | ExprKind::Satisfies { .. },
+                ) => self.access(id, &mut merge.values),
+                Some(ExprKind::Jsx(jsx)) => {
+                    let is_tag = hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == id || it.close_tag == id);
+                    if is_tag && !is_component_name(file.atoms.bytes(name)) {
+                        return true;
                     }
-                    Some(StmtKind::Expr(_)) => self.access(id, &mut values),
-                    _ => Access::Read,
-                },
+                    Access::Read
+                }
                 _ => Access::Read,
-            };
-            if name == known::empty
-                || (!skipped.is_empty() && skipped.binary_search(&id).is_ok())
-                || (file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
-            {
-                continue;
+            },
+            Some(Parent::Prop(_)) => self.access(id, &mut merge.values),
+            Some(&Parent::Stmt(s)) => match hir.stmts.get(s.idx()).map(|it| it.kind) {
+                // "this could be a type or a variable"
+                Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)) if !self.is_javascript => {
+                    flags |= ReferenceFlags::TYPE;
+                    Access::Read
+                }
+                Some(StmtKind::Expr(_)) => self.access(id, &mut merge.values),
+                _ => Access::Read,
+            },
+            _ => Access::Read,
+        };
+        if name == known::empty
+            || (!skipped.is_empty() && skipped.binary_search(&id).is_ok())
+            || (file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
+        {
+            return true;
+        }
+        if e.pos < merge.last {
+            return false;
+        }
+        merge.last = e.pos;
+        self.pass_on_before(e.pos, merge);
+        let (site, here) = (ReferenceSite::Expr(id), (e.pos, e.pos));
+        match access {
+            Access::Read => {
+                // From the type parameters of a function the binder does not see its parameters,
+                // as in TypeScript. ESLint does.
+                let operands = bound.type_query_operands;
+                let is_operand = !operands.is_empty() && operands.binary_search(&id).is_ok();
+                if flags == READ && !is_operand {
+                    merge.into.add_read(id, e.pos, name);
+                } else {
+                    let mut read = self.make(site, here, name, flags, ExprId::NONE);
+                    read.variable = if is_operand { BY_NAME } else { NONE };
+                    merge.into.add(read);
+                }
             }
-            let site = ReferenceSite::Expr(id);
-            match access {
-                Access::Read => self.push(site, e.pos, name, flags, ExprId::NONE),
-                Access::ReadWrite(value) => self.push(site, e.pos, name, READ | WRITE, value),
-                Access::Write(start) => {
-                    for &value in &values {
-                        self.push_write(site, (e.pos, start), name, WRITE, value);
-                    }
+            Access::ReadWrite(value) => merge.into.add(self.make(site, here, name, READ | WRITE, value)),
+            Access::Write(start) => {
+                for &value in &merge.values {
+                    merge.into.add(self.make(site, (e.pos, start), name, WRITE, value));
                 }
             }
         }
-        // From the type parameters of a function the binder does not see its parameters, as in
-        // TypeScript. ESLint does.
-        for operand in bound.type_query_operands {
-            let site_of = |it: &RawReference| match it.site {
-                ReferenceSite::Expr(e) => e,
-                _ => ExprId::NONE,
+        true
+    }
+
+    /// All the references, in source order and resolved. `found` is sorted.
+    fn merge<'t>(&self, tree: &'t ScopeTree, variables: &'t Variables) -> Resolver<'t>
+    where
+        'f: 't,
+    {
+        let exprs = self.file.hir.exprs;
+        let exprs = if exprs.len() < COUNT as usize { exprs } else { &[] };
+        let skipped = self.unvisited_tags();
+        let start = || Merge {
+            into: Resolver::new(self.file, tree, variables, exprs.len() / 3 + self.found.len()),
+            passed: 0,
+            next_found: self.found.first().map_or(u32::MAX, |it| it.pos),
+            last: 0,
+            values: SmallVec::new(),
+        };
+        let mut merge = start();
+        // Whether an identifier is a reference, and what it resolves to, is as the binder says.
+        let is_simple = merge.into.is_plain
+            && variables.hazards.is_empty()
+            && skipped.is_empty()
+            && !self.file.has_synthetic_nodes()
+            && self.file.bound.type_query_operands.is_empty();
+        // The parser stores nearly every file in source order.
+        let is_in_order = exprs.iter().enumerate().all(|(i, e)| {
+            let ExprKind::Ident(name) = e.kind else {
+                return true;
             };
-            if let Ok(at) = self.found.binary_search_by_key(operand, site_of) {
-                self.found[at].variable = BY_NAME;
+            let id = ExprId(i as u32);
+            if is_simple && merge.last <= e.pos && name != known::empty && self.is_only_read(id) {
+                if merge.next_found < e.pos {
+                    self.pass_on_before(e.pos, &mut merge);
+                }
+                merge.last = e.pos;
+                merge.into.add_simple_read(id, e.pos, name);
+                return true;
+            }
+            self.identifier(id, e, name, &skipped, &mut merge)
+        });
+        if !is_in_order {
+            merge = start();
+            let identifiers = exprs.iter().enumerate().filter(|it| matches!(it.1.kind, ExprKind::Ident(_)));
+            let mut in_order: Vec<u64> = identifiers.map(|(i, e)| u64::from(e.pos) << 32 | i as u64).collect();
+            in_order.sort();
+            for key in in_order {
+                if let Some(e) = exprs.get(key as u32 as usize)
+                    && let ExprKind::Ident(name) = e.kind
+                {
+                    self.identifier(ExprId(key as u32), e, name, &skipped, &mut merge);
+                }
             }
         }
+        for after in self.found.get(merge.passed..).unwrap_or_default() {
+            merge.into.add(*after);
+        }
+        merge.into
     }
 
     /// `Referencer.VariableDeclaration`, `visitFunction`, `CatchClause`: a declaration writes the
@@ -351,6 +637,12 @@ impl Collector<'_, '_> {
             let PatKind::Ident(name) = pat.kind else {
                 continue;
             };
+            // Nothing is written to a plain parameter.
+            if let Some(&PatParent::Param(p)) = bound.pat_parent.get(i)
+                && hir.params.get(p.idx()).is_some_and(|it| it.default.is_none())
+            {
+                continue;
+            }
             values.clear();
             // Innermost first.
             let mut at = hir::PatId(i as u32);
@@ -576,43 +868,41 @@ fn is_component_name(name: &[u8]) -> bool {
     }
 }
 
-/// The groups of `all` by `key`, which is less than `count`: the indices group by group, and where
-/// each group starts. Within a group they are in `order`, which is empty if that is the order of
-/// `all`.
+/// The groups of `all` by `key`: the indices group by group, and where each group starts.
+/// `counts`: how many are in each group, at the index after its key. Within a group they are in
+/// `order`, which is empty if that is the order of `all`.
 fn group_by(
     all: &[RawReference],
     order: &[u32],
-    count: usize,
+    mut counts: Vec<u32>,
     key: impl Fn(&RawReference) -> usize,
 ) -> (Vec<u32>, Vec<u32>) {
-    let mut starts = vec![0u32; count + 1];
-    for it in all {
-        starts[key(it) + 1] += 1;
+    for i in 1..counts.len() {
+        counts[i] += counts[i - 1];
     }
-    for i in 0..count {
-        starts[i + 1] += starts[i];
-    }
-    let mut next = starts.clone();
+    let mut next = counts.clone();
     let mut indices = vec![0u32; all.len()];
-    for i in 0..all.len() {
-        let i = order.get(i).map_or(i, |&it| it as usize);
+    let mut place = |i: usize| {
         let slot = &mut next[key(&all[i])];
         indices[*slot as usize] = i as u32;
         *slot += 1;
+    };
+    match order.is_empty() {
+        true => (0..all.len()).for_each(&mut place),
+        false => order.iter().for_each(|&i| place(i as usize)),
     }
-    (indices, starts)
+    (indices, counts)
 }
 
 impl References {
     pub(crate) fn new<'a>(file: &'a File<'a>, tree: &ScopeTree, variables: &Variables) -> References {
-        let (hir, bound) = (&file.hir, &file.bound);
+        let hir = &file.hir;
         let is_javascript = scopes::is_javascript_mode(file);
         let mut collector = Collector {
             file,
             is_javascript,
-            found: Vec::with_capacity(hir.exprs.len() / 3),
+            found: Vec::with_capacity(hir.pats.len() / 2 + hir.types.len() / 2),
         };
-        collector.expressions();
         collector.patterns(tree);
         collector.export_specifiers();
         if !hir.jsx.is_empty() {
@@ -624,68 +914,38 @@ impl References {
                 collector.jsx_pragmas(tree, variables);
             }
         }
-        let mut all = collector.found;
-        if !is_javascript && !tree.unvisited.is_empty() {
-            all.retain(|it| !tree.unvisited.iter().any(|range| (range.0..range.1).contains(&it.pos)));
-        }
         // Each part is nearly in order already. References at the same place keep their order.
-        all.sort_by_key(|it| it.pos);
-        let mut visited_at = 0;
-        let is_visiting_order = all.iter().all(|it| std::mem::replace(&mut visited_at, it.from) <= it.from);
+        collector.found.sort_by_key(|it| it.pos);
+        // More would not fit beside the marks in `Resolver::counts`.
+        if hir.exprs.len() + collector.found.len() >= COUNT as usize {
+            collector.found.clear();
+        }
+        let Resolver {
+            all,
+            mut counts,
+            moved,
+            is_visiting_order,
+            ..
+        } = collector.merge(tree, variables);
+        let marks = counts.iter().skip(1).map(|it| it & !COUNT).collect();
+        counts.iter_mut().for_each(|it| *it &= COUNT);
         let mut visiting_order: Vec<u32> = Vec::new();
         if !is_visiting_order {
+            let mut visits: Vec<u32> = all.iter().map(|it| it.pos).collect();
+            moved.iter().for_each(|&(index, visit)| visits[index as usize] = visit);
             visiting_order.extend(0..all.len() as u32);
-            visiting_order.sort_by_key(|&it| all[it as usize].from);
-        }
-
-        let hazards = &variables.hazards;
-        let mut cursor = tree.cursor();
-        for it in &mut all {
-            it.from = cursor.seek(it.pos).from;
-            let wants = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
-                + u8::from(it.flags.contains(ReferenceFlags::TYPE)) * TYPE;
-            let bound_to = match it.site {
-                ReferenceSite::Expr(e) if wants == VALUE && it.variable != BY_NAME => {
-                    bound.expr_symbol.get(e.idx()).copied()
-                }
-                ReferenceSite::Pat(p) => bound.pat_symbol.get(p.idx()).copied(),
-                ReferenceSite::Declaration(index) => {
-                    it.from = variables.list[index as usize].scope;
-                    None
-                }
-                _ => None,
-            };
-            let is_hazard = !hazards.is_empty() && hazards.binary_search_by_key(&it.name.0, |it| it.0).is_ok();
-            let trusted = match bound_to.filter(|_| !is_hazard) {
-                Some(symbol) if symbol.is_some() => {
-                    // What the binder found is what ESLint finds if it is declared around the
-                    // reference, and not in the body of a function whose parameters refer to it.
-                    variables.of_symbol(tree, symbol).filter(|&index| {
-                        let scope = variables.list[index as usize].scope;
-                        tree.contains(scope, it.from)
-                            && it.pos >= tree.scopes[scope as usize].body_start
-                            // `catch (e) { var e = 1 }` writes the parameter.
-                            && (!matches!(it.site, ReferenceSite::Pat(_)) || scope == it.from)
-                    })
-                }
-                // What the binder finds no value for can be the `arguments` of a function, or a
-                // namespace without values.
-                _ => None,
-            };
-            it.variable = match trusted {
-                Some(index) => index,
-                None => variables.resolve(tree, it.from, it.name, it.pos, wants).unwrap_or(NONE),
-            };
+            visiting_order.sort_by_key(|&it| visits[it as usize]);
         }
 
         let unresolved = variables.list.len();
         let variable_of = |it: &RawReference| (it.variable as usize).min(unresolved);
-        let (by_variable, variable_starts) = group_by(&all, &visiting_order, unresolved + 1, variable_of);
+        let (by_variable, variable_starts) = group_by(&all, &visiting_order, counts, variable_of);
         References {
             all,
             visiting_order,
             by_variable,
             variable_starts,
+            marks,
             by_scope: OnceCell::new(),
             scope_count: tree.scopes.len(),
             unresolved_by_name: OnceCell::new(),
@@ -703,6 +963,19 @@ impl References {
     #[inline]
     pub(crate) fn of_variable(&self, index: u32) -> &[u32] {
         Self::group(&self.by_variable, &self.variable_starts, index as usize, index as usize)
+    }
+
+    /// Indices into `all` in the order ESLint makes the references. Empty if that is the order of
+    /// `all`.
+    #[inline]
+    pub(crate) fn visiting_order(&self) -> &[u32] {
+        &self.visiting_order
+    }
+
+    /// Whether the variable at `index` of `Variables::list` has one of `marks`.
+    #[inline]
+    pub(crate) fn has_mark(&self, index: u32, marks: u32) -> bool {
+        self.marks.get(index as usize).is_some_and(|it| it & marks != 0)
     }
 
     #[inline]
@@ -726,14 +999,17 @@ impl References {
     /// The references that are written in the scopes `first..=last`.
     #[inline]
     pub(crate) fn in_scopes(&self, first: u32, last: u32) -> &[u32] {
-        let compute = || group_by(&self.all, &self.visiting_order, self.scope_count, |it| it.from as usize);
+        let compute = || {
+            let mut counts = vec![0u32; self.scope_count + 1];
+            self.all.iter().for_each(|it| counts[it.from as usize + 1] += 1);
+            group_by(&self.all, &self.visiting_order, counts, |it| it.from as usize)
+        };
         let (by_scope, starts) = self.by_scope.get_or_init(compute);
         Self::group(by_scope, starts, first as usize, last as usize)
     }
 
     /// The first reference that is written at `pos`.
-    pub(crate) fn at(&self, pos: u32) -> Option<u32> {
-        let index = self.all.partition_point(|it| it.pos < pos);
-        (self.all.get(index)?.pos == pos).then_some(index as u32)
+    pub(crate) fn at(&self, pos: u32) -> Option<&RawReference> {
+        self.all.get(self.all.partition_point(|it| it.pos < pos)).filter(|it| it.pos == pos)
     }
 }

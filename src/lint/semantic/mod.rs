@@ -96,8 +96,9 @@ pub(crate) trait Binding {
     /// one that is exported. And whether that may not be all: there are `refused_declarations`,
     /// or nothing declares it. `None` if there is no `id`.
     fn canonical(&self, id: SymbolId) -> Option<(SymbolId, bool)>;
-    /// Every declaration of something that a name can refer to, with its canonical symbol.
-    fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, Decl)>);
+    /// Every declaration of something that a name can refer to, with its canonical symbol and the
+    /// flags of that.
+    fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, SymFlags, Decl)>);
     /// The declarations that conflict with an earlier one of the same name. Each has a symbol of
     /// its own.
     fn refused_declarations(&self, into: &mut Vec<Decl>);
@@ -128,14 +129,14 @@ impl Binding for bind::Bound<'_> {
         let is_special = !self.redeclarations.is_empty() || symbol.decls.is_empty();
         Some((if symbol.export_symbol.is_some() { symbol.export_symbol } else { id }, is_special))
     }
-    fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, Decl)>) {
+    fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, SymFlags, Decl)>) {
         for (i, symbol) in self.symbols.iter().enumerate() {
-            let id = match self.symbols.get(symbol.export_symbol.idx()) {
+            let (id, flags) = match self.symbols.get(symbol.export_symbol.idx()) {
                 // The two symbols of what is exported have the same declarations, unless not all
                 // of them are exported.
                 Some(exported) if exported.decls.len() == symbol.decls.len() => continue,
-                Some(_) => symbol.export_symbol,
-                None => SymbolId(i as u32),
+                Some(exported) => (symbol.export_symbol, exported.flags),
+                None => (SymbolId(i as u32), symbol.flags),
             };
             for &decl in symbol.decls.as_slice() {
                 if matches!(
@@ -156,7 +157,7 @@ impl Binding for bind::Bound<'_> {
                         | Decl::ImportSpec(_)
                         | Decl::ImportEquals(_)
                 ) {
-                    into.push((id, decl));
+                    into.push((id, flags, decl));
                 }
             }
         }
@@ -186,15 +187,45 @@ impl<'a> File<'a> {
         self.lazy.references.get_or_init(ReferenceIndex::default)
     }
 
+    #[inline]
     fn scope_tree(&'a self) -> &'a ScopeTree {
+        match self.semantic().scopes.get() {
+            Some(computed) => computed,
+            None => self.compute_scope_tree(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn compute_scope_tree(&'a self) -> &'a ScopeTree {
         self.semantic().scopes.get_or_init(|| ScopeTree::new(self))
     }
 
+    #[inline]
     fn variables(&'a self) -> &'a Variables {
+        match self.semantic().variables.get() {
+            Some(computed) => computed,
+            None => self.compute_variables(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn compute_variables(&'a self) -> &'a Variables {
         self.semantic().variables.get_or_init(|| Variables::new(self, self.scope_tree()))
     }
 
+    #[inline]
     fn reference_list(&'a self) -> &'a References {
+        match self.semantic().references.get() {
+            Some(computed) => computed,
+            None => self.compute_references(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn compute_references(&'a self) -> &'a References {
         let compute = || References::new(self, self.scope_tree(), self.variables());
         self.semantic().references.get_or_init(compute)
     }
@@ -236,7 +267,7 @@ impl<'a> Symbol<'a> {
     pub(crate) fn some(file: &'a File<'a>, id: SymbolId) -> Option<Self> {
         let (id, is_special) = file.binding.canonical(id)?;
         if is_special {
-            if let Some(index) = file.variables().of_symbol(file.scope_tree(), id) {
+            if let Some(index) = file.variables().of_symbol(id) {
                 return Some(Symbol::at(file, index));
             }
             // In a program, a name at the top level of a script that clashes with a global of
@@ -253,7 +284,7 @@ impl<'a> Symbol<'a> {
         let symbol = Symbol::some(file, id)?;
         // Declarations in different scopes can have one symbol in the binder.
         if file.binding.declarations(symbol.id).len() > 1
-            && let Some(index) = file.variables().of_declaration(file, file.scope_tree(), symbol.id, pos)
+            && let Some(index) = file.variables().of_declaration(file, symbol.id, pos)
         {
             return Some(Symbol::at(file, index));
         }
@@ -270,7 +301,7 @@ impl<'a> Symbol<'a> {
     /// Its index in `Variables::list`. `None`: no name can refer to it.
     #[inline]
     fn index(self) -> Option<u32> {
-        self.file.variables().of_symbol(self.file.scope_tree(), self.id)
+        self.file.variables().of_symbol(self.id)
     }
 
     #[inline]
@@ -283,9 +314,12 @@ impl<'a> Symbol<'a> {
     /// same: see the [differences from ESLint's model](self). To tell symbols apart: [`Symbol::key`].
     #[inline]
     pub fn id(self) -> SymbolId {
-        match self.id.idx() < self.file.binding.symbol_count() {
-            true => self.id,
-            false => self.variable().map_or(SymbolId::NONE, |it| it.binder),
+        // Only the variables, once they are computed, have other numbers than the binder.
+        match self.file.semantic().variables.get() {
+            Some(variables) if self.id.idx() >= variables.symbol_count => {
+                self.variable().map_or(SymbolId::NONE, |it| it.binder)
+            }
+            _ => self.id,
         }
     }
 
@@ -301,13 +335,28 @@ impl<'a> Symbol<'a> {
         self.file
     }
 
+    #[inline]
     fn raw(self) -> RawSymbol {
+        if let Some(variables) = self.file.semantic().variables.get()
+            && let Some(it) = variables.of_symbol(self.id).and_then(|it| variables.list.get(it as usize))
+            && it.symbol == self.id
+        {
+            return RawSymbol {
+                name: it.name,
+                flags: it.binder_flags,
+            };
+        }
+        self.raw_of_binder()
+    }
+
+    fn raw_of_binder(self) -> RawSymbol {
         self.file.binding.symbol(self.id()).unwrap_or(RawSymbol {
             name: known::arguments,
             flags: SymFlags::FUNCTION_SCOPED_VARIABLE,
         })
     }
 
+    #[inline]
     pub fn name(self) -> Name<'a> {
         let name = self.raw().name;
         // What is exported as the default has that name in the binder.
@@ -359,12 +408,13 @@ impl<'a> Symbol<'a> {
     /// scope of the function.
     #[inline]
     pub fn is_implicit_arguments(self) -> bool {
-        self.id.idx() >= self.file.binding.symbol_count() && self.id().is_none()
+        self.id().is_none()
     }
 
     /// In the order they are written, but for the parameters of a function, which come before its
     /// type parameters, as in ESLint. What ESLint takes for one variable is one symbol:
     /// `function f() {} var f;` has two declarations.
+    #[inline]
     pub fn declarations(self) -> impl DoubleEndedIterator<Item = Declaration<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
         // The binder lists functions first, leaves out a declaration that it refuses, and has two
@@ -380,13 +430,38 @@ impl<'a> Symbol<'a> {
     /// order but for the names of destructuring patterns with defaults. A declaration is not a
     /// reference, but one that gives its name a value makes a write reference of the name, as in
     /// ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
+    #[inline]
     pub fn references(self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        let file = self.file;
-        let references = self.index().map_or(&[][..], |it| file.reference_list().of_variable(it));
-        references.iter().map(move |&index| Reference { file, index })
+        let references = self.index().map_or(&[][..], |it| self.file.reference_list().of_variable(it));
+        Reference::all_at(self.file, references)
+    }
+
+    #[inline]
+    fn has_reference_mark(self, marks: u32) -> bool {
+        self.index().is_some_and(|it| self.file.reference_list().has_mark(it, marks))
+    }
+
+    /// Some of its [`references`](Symbol::references) reads it. This is one load.
+    #[inline]
+    pub fn has_reads(self) -> bool {
+        self.has_reference_mark(references::HAS_READ)
+    }
+
+    /// Some of its references writes it, which can be its declaration. This is one load.
+    #[inline]
+    pub fn has_writes(self) -> bool {
+        self.has_reference_mark(references::HAS_WRITE)
+    }
+
+    /// Some of its references writes it and is not [`is_init`](Reference::is_init): ESLint's
+    /// `getModifyingReferences(variable.references)` is not empty. This is one load.
+    #[inline]
+    pub fn has_modifying_references(self) -> bool {
+        self.has_reference_mark(references::HAS_MODIFYING_WRITE)
     }
 
     /// The scope it is declared in.
+    #[inline]
     pub fn scope(self) -> Scope<'a> {
         Scope::new(self.file, ScopeId(self.variable().map_or(0, |it| it.scope)))
     }
@@ -490,6 +565,7 @@ pub enum DeclarationKind {
 }
 
 impl<'a> Declaration<'a> {
+    #[inline]
     fn new(file: &'a File<'a>, decl: Decl) -> Self {
         match decl {
             Decl::Var(pat) | Decl::Require(pat) => Declaration::Var(Pat::new(file, pat)),
@@ -578,8 +654,14 @@ impl<'a> Declaration<'a> {
     /// parameter of a `catch`, where ESLint has the `CatchClause`. For a `Param` the `Func`.
     pub fn node(self) -> Option<Node<'a>> {
         Some(match self {
-            Declaration::Var(pat) => Node::Pat(pat).ancestors().find(|it| matches!(it, Node::VarDecl(_)))?,
-            Declaration::Param(pat) => Node::Func(Node::Pat(pat).enclosing_function()?),
+            Declaration::Var(pat) => match variables::root_of_pattern(pat.file(), pat.id()) {
+                bind::PatParent::Var(d) => Node::VarDecl(crate::ast::VarDecl::new(pat.file(), d)),
+                _ => return None,
+            },
+            Declaration::Param(pat) => match variables::root_of_pattern(pat.file(), pat.id()) {
+                bind::PatParent::Param(p) => Node::Func(crate::ast::Param::new(pat.file(), p).func()?),
+                _ => return None,
+            },
             Declaration::Fn(func) => Node::Func(func),
             Declaration::Class(class) => Node::Class(class),
             Declaration::Interface(it) => Node::Stmt(it.stmt()),
@@ -652,20 +734,20 @@ bitflags::bitflags! {
 pub struct Reference<'a> {
     file: &'a File<'a>,
     /// In `References::all`.
-    index: u32,
+    raw: &'a RawReference,
 }
 
 impl PartialEq for Reference<'_> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
+        std::ptr::eq(self.raw, other.raw)
     }
 }
 impl Eq for Reference<'_> {}
 impl std::hash::Hash for Reference<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.index.hash(state);
+        std::ptr::from_ref(self.raw).addr().hash(state);
     }
 }
 impl std::fmt::Debug for Reference<'_> {
@@ -677,7 +759,20 @@ impl std::fmt::Debug for Reference<'_> {
 impl<'a> Reference<'a> {
     #[inline]
     fn raw(self) -> &'a RawReference {
-        &self.file.reference_list().all[self.index as usize]
+        self.raw
+    }
+
+    /// The references at `indices` of `References::all`.
+    #[inline]
+    fn all_at(
+        file: &'a File<'a>,
+        indices: &'a [u32],
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let all = &file.reference_list().all[..];
+        indices.iter().map(move |&index| Reference {
+            file,
+            raw: &all[index as usize],
+        })
     }
 
     /// What it refers to. `None`: nothing in the file declares it, so it is a global or an error.
@@ -749,6 +844,7 @@ impl<'a> Reference<'a> {
     }
 
     /// The identifier, if it is an expression.
+    #[inline]
     pub fn expr(self) -> Option<Expr<'a>> {
         match self.raw().site {
             ReferenceSite::Expr(e) => Some(Expr::new(self.file, e)),
@@ -920,6 +1016,7 @@ impl<'a> Scope<'a> {
     }
 
     /// The scope around it. `None` for the global scope.
+    #[inline]
     pub fn parent(self) -> Option<Scope<'a>> {
         let parent = self.data().parent;
         (parent != scopes::NONE).then(|| Scope::new(self.file, ScopeId(parent)))
@@ -1078,9 +1175,7 @@ impl<'a> Scope<'a> {
     /// The references that are written directly in it, not in a scope inside it, in source order:
     /// ESLint's `scope.references`.
     pub fn references(self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        let file = self.file;
-        let references = file.reference_list().in_scopes(self.id.0, self.id.0);
-        references.iter().map(move |&index| Reference { file, index })
+        Reference::all_at(self.file, self.file.reference_list().in_scopes(self.id.0, self.id.0))
     }
 
     /// The references in it, and in the scopes inside it, to what is declared outside it or
@@ -1088,8 +1183,7 @@ impl<'a> Scope<'a> {
     pub fn through(self) -> impl Iterator<Item = Reference<'a>> + 'a {
         let (file, id) = (self.file, self.id.0);
         let (tree, variables) = (file.scope_tree(), file.variables());
-        let references = file.reference_list().in_scopes(id, self.data().last);
-        let all = references.iter().map(move |&index| Reference { file, index });
+        let all = Reference::all_at(file, file.reference_list().in_scopes(id, self.data().last));
         all.filter(move |it| match variables.list.get(it.raw().variable as usize) {
             Some(variable) => !tree.contains(id, variable.scope),
             None => true,
@@ -1139,13 +1233,23 @@ impl<'a> File<'a> {
 
     /// Every reference, in source order.
     pub fn references(&'a self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        (0..self.reference_list().all.len() as u32).map(move |index| Reference { file: self, index })
+        self.reference_list().all.iter().map(move |raw| Reference { file: self, raw })
+    }
+
+    /// Every reference, in [the order ESLint makes them](self).
+    pub fn references_as_visited(&'a self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let references = self.reference_list();
+        let (all, order) = (&references.all[..], references.visiting_order());
+        (0..all.len()).map(move |i| Reference {
+            file: self,
+            raw: &all[order.get(i).map_or(i, |&it| it as usize)],
+        })
     }
 
     /// The reference whose name starts at `offset`. The first, if it is [several](Reference).
     pub fn reference_at(&'a self, offset: u32) -> Option<Reference<'a>> {
-        let index = self.reference_list().at(offset)?;
-        Some(Reference { file: self, index })
+        let raw = self.reference_list().at(offset)?;
+        Some(Reference { file: self, raw })
     }
 
     /// The references to what the file does not declare, in source order: globals, and mistakes.
@@ -1153,8 +1257,7 @@ impl<'a> File<'a> {
     pub fn unresolved_references(
         &'a self,
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        let references = self.reference_list().unresolved().iter();
-        references.map(move |&index| Reference { file: self, index })
+        Reference::all_at(self, self.reference_list().unresolved())
     }
 
     /// The references to `name` among [`File::unresolved_references`], in source order: ESLint's
@@ -1163,8 +1266,7 @@ impl<'a> File<'a> {
         &'a self,
         name: &[u8],
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        let references = self.reference_list().unresolved_named(self.atoms.intern(name)).iter();
-        references.map(move |&index| Reference { file: self, index })
+        Reference::all_at(self, self.reference_list().unresolved_named(self.atoms.intern(name)))
     }
 
     /// The assignments outside strict mode to what nothing declares, each of which creates a
@@ -1197,8 +1299,8 @@ impl<'a> Expr<'a> {
     pub fn reference(self) -> Option<Reference<'a>> {
         let file = self.file();
         self.as_ident()?;
-        let index = file.reference_list().at(self.span().start)?;
-        let reference = Reference { file, index };
+        let raw = file.reference_list().at(self.span().start)?;
+        let reference = Reference { file, raw };
         (reference.raw().site == ReferenceSite::Expr(self.id())).then_some(reference)
     }
 }

@@ -20,7 +20,7 @@ mod sort_imports;
 
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
-use bun_lint::language::{LanguageOptions, Parser};
+use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, bind};
 use bun_sema::resolve::Dialect;
@@ -36,6 +36,7 @@ fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], then: impl for<'a> 
     let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
     let language = LanguageOptions {
         parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
+        source_type: if is_script { SourceType::Script } else { SourceType::Module },
         ..LanguageOptions::default()
     };
     let session = Session::new();
@@ -63,6 +64,21 @@ fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], then: impl for<'a> 
     then(&File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None))
 }
 
+/// Puts `<|>` where the cursor is, which is counted in UTF-16 code units.
+fn show_cursor(out: &mut Vec<u8>, cursor: Option<u32>) {
+    let Some(cursor) = cursor else {
+        return;
+    };
+    let mut units = 0;
+    let at = crate::text(out).char_indices().find_map(|(at, c)| {
+        let is_there = units >= cursor as usize;
+        units += c.len_utf16();
+        is_there.then_some(at)
+    });
+    let at = at.unwrap_or(out.len());
+    out.splice(at..at, *b"<|>");
+}
+
 fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
     fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
         if file.language().parser == Parser::TypeScript && bun_lint::linter::parse_error(file).is_some() {
@@ -72,17 +88,7 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
         // Where the cursor ends up is shown the way Prettier's snapshots show it.
         if options.cursor_offset.is_some() && options.range_start.is_none() && options.range_end.is_none() {
             let cursor = bun_format::cursor::format_with_cursor(file, options, &mut scratch, &mut out)?;
-            let Some(cursor) = cursor else {
-                return Ok(out);
-            };
-            let text = crate::text(&out);
-            let mut units = 0;
-            let at = text.char_indices().find(|(_, c)| {
-                let is_there = units >= cursor as usize;
-                units += c.len_utf16();
-                is_there
-            });
-            out.splice(at.map_or(out.len(), |it| it.0)..at.map_or(out.len(), |it| it.0), *b"<|>");
+            show_cursor(&mut out, cursor);
             return Ok(out);
         }
         let path = crate::text(file.path());
@@ -113,7 +119,11 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
         return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| out);
     }
     let code = match bun_format::pragma::before_parsing(code, options) {
-        bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok(code.to_vec()),
+        bun_format::pragma::BeforeParsing::LeaveAsItIs => {
+            let mut out = code.to_vec();
+            show_cursor(&mut out, options.cursor_offset);
+            return Ok(out);
+        }
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
     let format_as = |is_script: bool| {

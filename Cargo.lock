@@ -1373,7 +1373,6 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_sema_standalone",
- "bun_semver",
  "bun_threading",
  "bun_wyhash",
  "hashbrown 0.15.5",
@@ -1422,6 +1421,7 @@ dependencies = [
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
+ "bun_sys",
  "bun_threading",
  "libc",
 ]

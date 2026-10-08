@@ -49,6 +49,7 @@ impl Checker<'_, '_> {
                 hir.exprs[i].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
             ) || bound.is_unchecked(i)
+                || self.is_never_checked(hir.exprs[i].pos)
             {
                 continue;
             }
@@ -122,6 +123,10 @@ impl Checker<'_, '_> {
             self.chain_receiver(file, data.callee, data.chain).0
         };
         let called = self.check_non_null_callee(file, data.callee, called, is_new);
+        // `silentNeverSignature`
+        if called == TypeId::SILENT_NEVER {
+            return;
+        }
         let apparent = self.apparent_type(called);
         // `resolveErrorCall`
         if self.is_error_type(apparent) {
@@ -135,6 +140,10 @@ impl Checker<'_, '_> {
         let found_none = (self.p.calls_before_signatures)
             .get(&self.task, &(file, e))
             .is_some();
+        // The resolution around that one has gone on with the signatures.
+        if found_none {
+            self.report_call_resolution(file, e);
+        }
         let call_sigs = if found_none {
             List::default()
         } else {
@@ -280,6 +289,14 @@ impl Checker<'_, '_> {
         self.invocation_error(at, 2351, data.callee, apparent, (true, false), None);
     }
 
+    /// `getResolvedSignature(node) == silentNeverSignature`, for the call or the `new` expression
+    /// `e`: `resolveCallExpression` and `resolveNewExpression` have returned before they check an
+    /// argument.
+    pub(super) fn is_silent_never_signature(&mut self, file: FileId, e: ExprId) -> bool {
+        let resolved = self.resolved_signature(file, e);
+        resolved.sig.is_none() && resolved.ret == TypeId::SILENT_NEVER
+    }
+
     /// Error span of a callee: from the start of the (possibly parenthesized) expression to its error end.
     fn span_of_callee(&self, file: FileId, callee: ExprId) -> (FileId, u32, u32) {
         (
@@ -330,7 +347,8 @@ impl Checker<'_, '_> {
         // `invocationErrorDetails`
         if let Some(awaited) = self.awaited_or_none(apparent) {
             let awaited = self.reduced_apparent_type(awaited);
-            if !self.signatures(awaited, construct).is_empty() {
+            // `apparent` had none when the call was resolved.
+            if awaited != apparent && !self.signatures(awaited, construct).is_empty() {
                 related.push(here(2773));
             }
         }
@@ -375,11 +393,7 @@ impl Checker<'_, '_> {
                 Decl::ImportNamespace(i) => Some(i),
                 _ => None,
             })?;
-        let index = hir
-            .stmts
-            .iter()
-            .position(|s| matches!(s.kind, StmtKind::Import(i) if i == import))?;
-        let statement = StmtId(index as u32);
+        let statement = hir[import].stmt.some()?;
         let import = Reported::bare(
             (
                 file,
@@ -453,98 +467,22 @@ impl Checker<'_, '_> {
         }
         // `getOptionalCallSignature`: `void | undefined` after a `?.` that may short-circuit.
         let return_type = self.type_of_expr(file, e);
-        if self.flags(return_type) & tf::VOID == 0 || self.sig_predicate(sig).is_none() {
-            return;
-        }
-        let code = if !is_dotted_name(hir, data.callee) {
-            2776
-        } else if self.effects_signature(file, e).is_none() {
-            2775
-        } else {
-            return;
-        };
-        let related = match code {
-            2775 => self.name_in_need_of_a_type_annotation(file, data.callee),
-            _ => None,
-        };
-        let start = self.start_of(file, data.callee);
-        self.error_at(
-            (file, start, self.end_of_expr(file, data.callee)),
-            code,
-            &[],
-        )
-        .related_information
-        .extend(related);
-    }
-
-    /// `getTypeOfDottedName` with a diagnostic: the first name of `e` for which
-    /// `getExplicitTypeOfSymbol` has no type because it is a variable or a property without a type
-    /// annotation. 2782
-    fn name_in_need_of_a_type_annotation(&mut self, file: FileId, e: ExprId) -> Option<Reported> {
-        let hir = self.hir(file);
-        if hir.is_in_with(hir[e].pos) || self.explicit_type(file, e).is_some() {
-            return None;
-        }
-        match hir[e].kind {
-            ExprKind::Ident(name) => {
-                let sym = self.symbol_of_identifier(file, e, name)?;
-                self.symbol_in_need_of_a_type_annotation(sym)
-            }
-            ExprKind::Dot { obj, name, .. } => {
-                let Some(object) = self.explicit_type(file, obj) else {
-                    return self.name_in_need_of_a_type_annotation(file, obj);
-                };
-                let (prop, _) = self.get_property_of_type(object, name)?;
-                self.property_in_need_of_a_type_annotation(prop)
-            }
-            _ => None,
-        }
-    }
-
-    /// What `getExplicitTypeOfSymbol` adds to its diagnostic for `sym`, for which it has no type.
-    fn symbol_in_need_of_a_type_annotation(&mut self, sym: Sym) -> Option<Reported> {
-        let Some(sym) = self.files().resolve_alias_if_needed(sym) else {
-            // `resolveSymbol`: a target that is not in the symbol tables is a property.
-            let AliasTarget::Property(obj, name, _) = self.resolve_alias(sym) else {
-                return None;
-            };
-            let (prop, _) = self.get_property_of_type(obj, name)?;
-            return self.property_in_need_of_a_type_annotation(prop);
-        };
-        let variable_or_property = SymFlags::VARIABLE | SymFlags::PROPERTY;
-        if !self.files().flags(sym).intersects(variable_or_property) {
-            return None;
-        }
-        let (file, declaration) = self.files().value_declaration(sym)?;
-        let at = self.error_place_of_declaration(file, declaration)?;
-        let name = self.symbol_to_string(sym);
-        Some(self.new_diagnostic(at, 2782, &[sink::Arg::Bytes(&name)]))
-    }
-
-    /// The same for a property, which has a `Sym` only if it is declared as it is.
-    fn property_in_need_of_a_type_annotation(&mut self, prop: &Prop) -> Option<Reported> {
-        match &prop.source {
-            PropSource::Symbol(sym) if !self.is_member_symbol(*sym) => {
-                return self.symbol_in_need_of_a_type_annotation(*sym);
-            }
-            // `syntheticOrigin`. The mapped property itself has no `ValueDeclaration`.
-            PropSource::Mapped(..) => {
-                let origin = prop.declared_by_modifiers_property().first()?;
-                return self.property_in_need_of_a_type_annotation(origin);
-            }
-            _ => {}
-        }
-        // Neither is `SymbolFlagsProperty`.
-        if prop
-            .flags
-            .intersects(PropFlags::ACCESSOR | PropFlags::METHOD)
+        if self.flags(return_type) & tf::VOID == 0
+            || self.sig_predicate(sig).is_none()
+            // The initializer of a `for` and the object of a `with` are stored as statements too.
+            || hir.kind(hir.parent(hir.node(e))) != Kind::ExpressionStatement
         {
-            return None;
+            return;
         }
-        let (file, declaration) = self.value_declaration_of_prop(prop)?;
-        let at = self.error_place_of_declaration(file, declaration)?;
-        let name = self.prop_to_string(prop);
-        Some(self.new_diagnostic(at, 2782, &[sink::Arg::Bytes(&name)]))
+        let start = self.start_of(file, data.callee);
+        let at = (file, start, self.end_of_expr(file, data.callee));
+        if !is_dotted_name(hir, data.callee) {
+            self.error_at(at, 2776, &[]);
+        } else if self.effects_signature(file, e).is_none() {
+            let mut diagnostic = Reported::bare(at, 2775);
+            self.explicit_type(file, data.callee, Some(&mut diagnostic));
+            self.add_diagnostic(diagnostic);
+        }
     }
 
     /// `resolveCallExpression`, where the callee is `super`.
@@ -673,7 +611,10 @@ impl Checker<'_, '_> {
             PropSource::Symbol(sym) => {
                 (self.flags_of_property(*sym)).contains(SymFlags::GET_ACCESSOR)
             }
-            PropSource::Literal(f, p) => self.hir(*f)[*p].kind == PropKind::Getter,
+            // `SymbolFlagsProperty|member.Flags`
+            PropSource::Literal(f, p) => {
+                (self.flags_of_literal_member(*f, *p)).contains(SymFlags::GET_ACCESSOR)
+            }
             // `propFlags` of `createUnionOrIntersectionProperty`
             PropSource::Intersected(..) => {
                 prop.flags & (PropFlags::ACCESSOR | PropFlags::WRITE_ONLY) == PropFlags::ACCESSOR
@@ -875,21 +816,7 @@ impl Checker<'_, '_> {
             (s.candidate_for_type_argument_error, type_argument_list)
         {
             let type_params = self.sig_type_params(candidate);
-            if let Ok(Some((index, actual, constraint))) =
-                self.failing_type_argument(candidate, &type_params, type_args, true)
-            {
-                let node = hir.ids(list).nth(index).unwrap();
-                let end = self.end_of_type_node(file, node);
-                // 2344, or a more specific error.
-                self.report_not_assignable_with_end(
-                    file,
-                    actual,
-                    constraint,
-                    hir[node].pos,
-                    end,
-                    2344,
-                );
-            }
+            self.check_type_arguments(candidate, &type_params, type_args, Some((file, list)));
         } else {
             let mut fitting = Vec::new();
             for &sig in sigs {
@@ -960,17 +887,18 @@ impl Checker<'_, '_> {
         related
     }
 
-    /// `checkTypeArguments`: the first type argument that does not satisfy its constraint, and the
-    /// two types. `Err`: unknown. `with_this_argument`: false for `checkTypeArgumentConstraints`,
-    /// which compares with the constraint as it is.
-    pub(super) fn failing_type_argument(
+    /// `checkTypeArguments`: `typeArgumentTypes`, or `None` if one of `type_args` does not satisfy
+    /// its constraint. `error_nodes`: `typeArgumentNodes`, with `reportErrors`. A call that has a
+    /// `headMessage` has no type arguments.
+    pub(super) fn check_type_arguments(
         &mut self,
         sig: SigId,
         type_params: &[TypeId],
         type_args: &[TypeId],
-        with_this_argument: bool,
-    ) -> Result<Option<(usize, TypeId, TypeId)>, ()> {
-        let filled = self.fill_sig_type_args(sig, type_params, type_args);
+        error_nodes: Option<(FileId, IdList<TypeNodeId>)>,
+    ) -> Option<Vec<TypeId>> {
+        let is_js = (self.sig_decl(sig)).is_some_and(|(file, ..)| self.hir(file).is_js);
+        let filled = self.fill_sig_type_args_as(sig, type_params, type_args, is_js);
         let mapper = self.mapper_from(type_params, &filled);
         let outer = self.mapper_around_sig(sig);
         for i in 0..type_args.len().min(type_params.len()) {
@@ -979,16 +907,18 @@ impl Checker<'_, '_> {
             };
             let constraint = self.filled_in_around(type_params[i], constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
-            let constraint = if with_this_argument {
-                self.type_with_this_argument(constraint, filled[i])
-            } else {
-                constraint
-            };
-            if !self.is_assignable(filled[i], constraint) {
-                return Ok(Some((i, filled[i], constraint)));
+            let constraint = self.type_with_this_argument(constraint, filled[i]);
+            let error_node = error_nodes.map(|(file, nodes)| {
+                let hir = self.hir(file);
+                let node: TypeNodeId = hir.id_at(nodes, i);
+                let start = super::errors_type_nodes::start_of_type(hir, node);
+                (file, start, self.end_of_type_node_from(file, node, start))
+            });
+            if !self.check_type_assignable_to(filled[i], constraint, error_node, Some(2344)) {
+                return None;
             }
         }
-        Ok(None)
+        Some(filled)
     }
 
     /// `isSignatureApplicable`. Where something could not be determined the result is true, except
@@ -1040,8 +970,7 @@ impl Checker<'_, '_> {
                 return false;
             }
         }
-        // `getTypeAtPosition(signature, i)` for every argument.
-        let params = self.sig_params_up_to(sig, args.len());
+        let mut params = self.sig_params(sig);
         let rest = self.non_array_rest_type(&params);
         let count = if rest.is_some() {
             (self.parameter_count(&params) - 1).min(args.len())
@@ -1052,6 +981,11 @@ impl Checker<'_, '_> {
             let node = arg.node();
             if matches!(hir[node].kind, ExprKind::Missing) {
                 continue;
+            }
+            // `getTypeAtPosition(signature, i)`: a cycle through the type of a parameter is found
+            // here, and not for a parameter after the first argument that fails.
+            if let List::Own(_) = params {
+                params = self.sig_params_up_to(sig, i + 1);
             }
             let Some(expected) = self.param_type_at(&params, i) else {
                 continue;
@@ -1072,40 +1006,47 @@ impl Checker<'_, '_> {
             if self.related(actual, expected, relation) {
                 continue;
             }
-            let check_node = self.effective_check_node(file, node);
-            let inner = if matches!(arg, Arg::Expr(_)) {
-                check_node
-            } else {
-                ExprId::NONE
-            };
+            self.note_parameter_types_resolved(sig, &params, i + 1);
             if report {
-                let jsdoc_type_assertion = self.range_of_jsdoc_type_assertion(file, check_node);
-                let (at, end) = match (decorator, jsdoc_type_assertion) {
-                    (Some(written), _) => (written.start, written.end),
-                    (None, Some(range)) => range,
-                    (None, None) => (
-                        self.error_start_inside_parentheses(file, check_node),
-                        self.error_end_inside_parentheses(file, check_node),
-                    ),
+                let check_node = self.effective_check_node(file, node);
+                let error_node = match decorator {
+                    Some(written) => (file, written.start, written.end),
+                    None => self.place_of_effective_check_node(file, check_node),
+                };
+                let expr = match arg {
+                    Arg::Expr(_) => Some((file, check_node)),
+                    _ => None,
                 };
                 let reported = self.reported.len();
-                // `inner` is the result of `getEffectiveCheckNode`.
                 let mut diagnostics = Vec::new();
-                self.check_type_assignable_to_and_optionally_elaborate(
-                    actual,
-                    expected,
-                    Some((file, at, end)),
-                    inner.some().map(|inner| (file, inner)),
-                    true,
-                    Some(2345),
-                    Some(&mut diagnostics),
-                );
+                // `elaborateError` has no case for a `SyntheticExpression` or a `SpreadElement`.
+                let is_elaborated = expr.is_none()
+                    && !self.is_or_has_generic_conditional(expected)
+                    && self.elaborate_did_you_mean_to_call_or_construct(
+                        error_node,
+                        actual,
+                        expected,
+                        Some(2345),
+                        Some(&mut diagnostics),
+                    );
+                if !is_elaborated {
+                    self.check_type_assignable_to_and_optionally_elaborate(
+                        actual,
+                        expected,
+                        Some(error_node),
+                        expr,
+                        true,
+                        Some(2345),
+                        Some(&mut diagnostics),
+                    );
+                }
                 self.reported.extend(diagnostics);
                 let place = self.span_of_parenthesized_expr(file, node);
                 self.maybe_add_missing_await_info(place, actual, expected, reported);
             }
             return false;
         }
+        self.note_parameter_types_resolved(sig, &params, args.len());
         if let Some(rest) = rest {
             let actual = self.spread_argument_type(file, args, count, rest, None, check_mode);
             if !self.related(actual, rest, relation) {
@@ -1120,13 +1061,8 @@ impl Checker<'_, '_> {
                             ),
                             [only] => {
                                 let check_node = self.effective_check_node(file, only.node());
-                                match self.range_of_jsdoc_type_assertion(file, check_node) {
-                                    Some(range) => range,
-                                    None => (
-                                        self.error_start_inside_parentheses(file, check_node),
-                                        self.error_end_inside_parentheses(file, check_node),
-                                    ),
-                                }
+                                let place = self.place_of_effective_check_node(file, check_node);
+                                (place.1, place.2)
                             }
                             [first, .., last] => (
                                 self.start_of(file, first.node()),
@@ -1173,7 +1109,7 @@ impl Checker<'_, '_> {
 
     /// `getEffectiveCheckNode`: `e` with enclosing `satisfies` stripped. (Parentheses are not
     /// stored.)
-    fn effective_check_node(&self, file: FileId, mut e: ExprId) -> ExprId {
+    pub(super) fn effective_check_node(&self, file: FileId, mut e: ExprId) -> ExprId {
         while let ExprKind::Satisfies { expr, .. } = self.hir(file)[e].kind {
             e = expr;
         }
@@ -1355,7 +1291,7 @@ impl Checker<'_, '_> {
 
     /// `isPromiseResolveArityError`: the callee is the `resolve` of `new Promise((resolve) =>
     /// ...)`. Not if `resolve`, the function or `Promise` is parenthesized: parentheses are nodes.
-    fn is_promise_resolve_arity_error(&self, file: FileId, e: ExprId, c: CallId) -> bool {
+    fn is_promise_resolve_arity_error(&mut self, file: FileId, e: ExprId, c: CallId) -> bool {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let callee = hir[c].callee;
         let ExprKind::Ident(name) = hir[callee].kind else {
@@ -1465,7 +1401,7 @@ impl Checker<'_, '_> {
         }
         let end = self.end_of_type_argument_list(file, type_args);
         self.add_diagnostic(Reported::new(
-            (file, hir[first].pos, end),
+            (file, start_of_type(hir, first), end),
             code,
             held(counts),
         ));

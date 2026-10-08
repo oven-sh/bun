@@ -477,9 +477,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getFlowTypeOfReference` for the reference `e`, were it declared to hold `held`: what the tests and the assignments on the way to
-    /// `e` leave of that. `narrow_this` does it for any reference, and leaves the type of what is none as it is.
+    /// `e` leave of that. The type of what is no reference is left as it is.
     fn narrowed_at(&mut self, file: FileId, e: ExprId, held: TypeId) -> Option<TypeId> {
-        let narrowed = self.narrow_this(file, e, held);
+        let narrowed = self.flow_type_of_reference(file, e, held);
         self.telling(narrowed)
     }
 
@@ -780,7 +780,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The imports that the program calls or constructs, or a member of which it does, in the order of the files.
-    pub fn imports_that_are_called(&self) -> &'p [Sym] {
+    pub fn imports_that_are_called(&mut self) -> &'p [Sym] {
         self.p.aot.javascript.imports_that_are_called.get_or_init(|| {
             let mut imports = Vec::new();
             let mut seen = FxHashSet::default();
@@ -807,7 +807,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// For `a` or `a.name`, where `a` is an import: the import, and the name.
-    fn import_named_by(&self, file: FileId, e: ExprId) -> Option<(Sym, Option<Atom>)> {
+    fn import_named_by(&mut self, file: FileId, e: ExprId) -> Option<(Sym, Option<Atom>)> {
         let hir = self.hir(file);
         let (import, member) = match hir[e].kind {
             ExprKind::Dot { obj, name, .. } => (obj, Some(name)),

@@ -271,7 +271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let old_yield = self.fn_or_arrow_data_parse.allow_yield;
         self.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
         self.fn_or_arrow_data_parse.allow_yield = AwaitOrYield::AllowIdent;
-        let initializer = self.parse_expr(Level::Comma);
+        let initializer = self.parse_expr_allow_in(Level::Comma);
         self.fn_or_arrow_data_parse.allow_await = old_await;
         self.fn_or_arrow_data_parse.allow_yield = old_yield;
         initializer
@@ -280,15 +280,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// `parseComputedPropertyName`, between the brackets: any expression.
     /// `checkGrammarComputedPropertyName` reports a comma. `parsePropertyName` restores
     /// `statementHasAwaitIdentifier`, so `reparseTopLevelAwait` parses no statement again for an
-    /// `await` in a name: at the top level it is read outside the await context.
+    /// `await` in a name: at the top level it is read outside the await context, unless the
+    /// statement is parsed again for another `await`. One that comes after the name is only known
+    /// at the end of the statement (`statements_with_await_in_names`).
     #[cold]
     #[inline(never)]
-    fn parse_expression_of_computed_name(&mut self) -> crate::CrateResult<Expr> {
+    pub(crate) fn parse_expression_of_computed_name(&mut self) -> crate::CrateResult<Expr> {
         let old_await = self.fn_or_arrow_data_parse.allow_await;
-        if self.fn_or_arrow_data_parse.is_top_level && old_await == AwaitOrYield::AllowExpr {
+        if self.fn_or_arrow_data_parse.is_top_level
+            && old_await == AwaitOrYield::AllowExpr
+            && !self.lexer.await_name_seen
+        {
             self.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
         }
-        let expression = self.parse_expr(Level::Lowest);
+        let expression = self.parse_expr_allow_in(Level::Lowest);
         self.fn_or_arrow_data_parse.allow_await = old_await;
         expression
     }
@@ -306,7 +311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut kind = kind_;
         let mut errors = errors_;
         // `Lexer::escaped_word` of the word consumed last, until it is known to be a name.
-        let mut escaped_word: Option<bun_ast::Range> = None;
+        let mut escaped_word: Option<js_lexer::EscapedWord> = None;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             p.lexer.keyword_was_taken(escaped_word.take());
@@ -686,6 +691,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             p.pop_scope();
 
                             p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
+                            p.note_function_context(
+                                loc,
+                                AwaitOrYield::ForbidAll,
+                                AwaitOrYield::AllowIdent,
+                            );
                             // `parseClassStaticBlockBody` is `parseBlock`.
                             p.lexer.expect_closing(T::TCloseBrace, loc)?;
 
@@ -825,7 +835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             if p.lexer.token == T::TEquals {
                                 errors.invalid_expr_default_value = Some(p.lexer.range());
                                 p.lexer.next()?;
-                                initializer = Some(p.parse_expr(Level::Comma)?);
+                                initializer = Some(p.parse_expr_allow_in(Level::Comma)?);
                             }
                         }
 
@@ -1094,12 +1104,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 ..Default::default()
             };
 
+            // See `parse_expr_allow_in`.
+            let old_allow_in = p.allow_in;
+            if p.is_tolerant() {
+                p.allow_in = true;
+            }
             // `errors` is Option<&mut _>; reborrow via as_deref_mut so the caller's binding stays usable
             p.parse_expr_or_bindings(
                 Level::Comma,
                 errors.as_deref_mut(),
                 property.value.as_mut().unwrap(),
             )?;
+            if p.is_tolerant() {
+                p.allow_in = old_allow_in;
+            }
             return Ok(Some(property));
         }
     }
@@ -1112,11 +1130,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn is_uncommon_modifier(&mut self, word: &[u8], is_class: bool) -> bool {
         match word {
             // Without `permitConstAsModifier`, only before `enum`.
-            b"const" if !is_class => self.lexer.token == T::TEnum,
+            b"const" if !is_class => self.token() == T::TEnum,
             b"const" | b"in" | b"out" => !self.lexer.has_newline_before,
             b"default" => self.can_follow_default_keyword(),
             b"export" => {
-                let is_default = self.lexer.token == T::TDefault;
+                let is_default = self.token() == T::TDefault;
                 if !is_default && !self.lexer.is_contextual_keyword(b"type") {
                     return self.can_follow_export_modifier();
                 }
@@ -1151,7 +1169,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// `nextTokenCanFollowDefaultKeyword`, on the token after `default`.
     fn can_follow_default_keyword(&mut self) -> bool {
-        let expected = match self.lexer.token {
+        let expected = match self.token() {
             T::TClass | T::TFunction | T::TAt => return true,
             T::TIdentifier => match self.lexer.identifier {
                 b"interface" => return true,
@@ -1161,13 +1179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             },
             _ => return false,
         };
-        let here = self.lexer.snapshot();
-        self.lexer.is_log_disabled = true;
-        let found = self.lexer.next().is_ok()
-            && self.lexer.token == expected
-            && !self.lexer.has_newline_before;
-        self.lexer.restore(&here);
-        found
+        self.look_ahead(|p| p.step() && p.lexer.token == expected && !p.lexer.has_newline_before)
     }
 
     /// Whether `word` is a modifier of a member before the `{` or `...` the lexer is at. `canFollowModifier` accepts both,

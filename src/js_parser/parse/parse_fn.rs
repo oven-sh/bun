@@ -305,7 +305,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 )?;
             }
             // Skip over "this" type annotations
-            if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
+            if Self::IS_TYPESCRIPT_ENABLED
+                && (p.lexer.token == T::TThis || (takes_any_modifiers && p.token() == T::TThis))
+            {
                 if takes_any_modifiers {
                     let is_first = args.is_empty() && !has_this_parameter;
                     has_this_parameter = true;
@@ -377,10 +379,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let mut ts_metadata = bun_ast::ts::Metadata::default();
 
             // `parseNameOfParameter`: a modifier keyword that is neither a modifier nor a name is skipped.
-            if matches!(p.lexer.token, T::TConst | T::TDefault | T::TExport | T::TIn)
-                && p.is_tolerant()
+            if p.is_tolerant()
                 && modifiers.is_none()
                 && p.lexer.loc() == name_start
+                && p.is_modifier_kind()
             {
                 p.lexer.next()?;
             }
@@ -556,6 +558,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
+        let open_parens = p.real_loc(func.open_parens_loc);
+        p.note_function_context(open_parens, temp_opts.allow_await, temp_opts.allow_yield);
         if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
             func.flags.insert(Flags::Function::HasReactHooksSuppression);
             // next-line semantics: a suppression marks the enclosing top-level
@@ -643,22 +647,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// it.
     fn next_token_can_follow_modifier(&mut self) -> bool {
         let p = self;
-        let keyword = p.lexer.token;
+        let keyword = p.token();
         let mut is_after_default = keyword == T::TDefault;
         let is_static = p.lexer.is_contextual_keyword(b"static");
-        if p.lexer.next().is_err() {
+        if !p.step() {
             return false;
         }
         match keyword {
             T::TConst => return p.lexer.token == T::TEnum,
             T::TExport if p.lexer.token == T::TDefault => {
                 is_after_default = true;
-                if p.lexer.next().is_err() {
+                if !p.step() {
                     return false;
                 }
             }
             T::TExport => {
-                if p.lexer.is_contextual_keyword(b"type") && p.lexer.next().is_err() {
+                if p.lexer.is_contextual_keyword(b"type") && !p.step() {
                     return false;
                 }
                 // `canFollowExportModifier`
@@ -685,9 +689,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 },
                 _ => return false,
             };
-            return p.lexer.next().is_ok()
-                && p.lexer.token == expected
-                && !p.lexer.has_newline_before;
+            return p.step() && p.lexer.token == expected && !p.lexer.has_newline_before;
         }
         // `canFollowModifier`. Only "static" and "export" may be followed by a line break.
         (is_static || keyword == T::TExport || !p.lexer.has_newline_before)
@@ -872,7 +874,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;
         p.fn_or_arrow_data_parse = data.clone();
-        p.allow_in = true;
+        // `parseFunctionBlock` leaves the context as it is: see `parse_expr_allow_in`.
+        p.allow_in = old_allow_in || !p.is_tolerant();
 
         let loc = p.lexer.loc();
         let mut pushed_scope_for_function_body = false;
@@ -973,6 +976,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.parse_fn_body(data)?
             };
             p.note_loc(&mut body.loc, Mark::ArrowToken, arrow_token);
+            p.note_function_context(arrow_loc, data.allow_await, data.allow_yield);
             p.after_arrow_body_loc = p.lexer.loc();
             let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
                 || p.lexer.has_react_hooks_block_suppression;
@@ -1020,6 +1024,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+        p.note_function_context(arrow_loc, data.allow_await, data.allow_yield);
 
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
@@ -1057,7 +1062,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[inline(never)]
     fn is_arrow_body_missing_open_brace(&mut self) -> bool {
         !matches!(
-            self.lexer.token,
+            self.token(),
             T::TSemicolon | T::TFunction | T::TClass | T::TOpenBrace
         ) && self.is_start_of_statement()
             // `isStartOfExpressionStatement`
@@ -1074,9 +1079,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     ) -> Result<G::FnBody, Error> {
         let p = self;
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
-        let old_allow_in = p.allow_in;
         p.fn_or_arrow_data_parse = data.clone();
-        p.allow_in = true;
 
         let loc = p.lexer.loc();
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, loc)?;
@@ -1086,7 +1089,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.end_of_block(loc)?;
         p.pop_scope();
 
-        p.allow_in = old_allow_in;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
         Ok(G::FnBody {
             loc,

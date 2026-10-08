@@ -8,9 +8,11 @@
 // argv[3..]: "development" to run the server with development: true;
 //            "dev-server" to also give it an HTML route, which makes the
 //            development server run a bake dev server (the requests below
-//            still go to fetch())
+//            still go to fetch());
+//            "no-error-handler" to run the server without an error() callback
 //
-// Prints a single JSON object on stdout and exits 0.
+// Prints a single JSON object on stdout. Exits 0, except that a run without
+// error() reports the failure as unhandled, which makes Bun exit 1.
 import net from "node:net";
 import devServerPage from "./serve-stream-body-error-fixture.html";
 
@@ -18,6 +20,7 @@ const variant = process.argv[2];
 const flags = process.argv.slice(3);
 const development = flags.includes("development");
 const devServer = flags.includes("dev-server");
+const withErrorHandler = !flags.includes("no-error-handler");
 
 // Set by the mid-stream variants so they only error once their chunk has
 // provably reached the client socket, i.e. after the 200 response is committed
@@ -196,10 +199,33 @@ async function fetchFromFailingUpstream(firstWrite: string) {
   };
 }
 
-// Bodies Bun.serve streams natively (no JS ReadableStream pump) whose producer
-// fails after the status line is committed. error() can no longer answer, so
-// the failure is reported and the connection is closed without the terminating
-// chunk, whether or not a body byte went out first.
+// The upstream failure reaches the fetch() Response on a later event-loop turn.
+// Bun.inspect(res) lists the body stream while the body is still pending and
+// stops listing it once the body holds the error; reading the stream to find
+// out would consume the very state under test. By then the error has also been
+// pushed into the native stream `res.body` made.
+async function untilBodyFailed(res: Response) {
+  const deadline = Date.now() + 10_000;
+  while (Bun.inspect(res).includes("ReadableStream")) {
+    if (Date.now() > deadline) throw new Error("the upstream failure never reached the idle body");
+    await Bun.sleep(1);
+  }
+}
+
+// Lets an HTMLRewriter whose output nothing reads emit and fail: it works
+// across event-loop turns while its output is unobserved.
+async function turns() {
+  for (let i = 0; i < 8; i++) await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+const PARTIAL_BODY = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial";
+
+// Bodies Bun.serve streams natively (no JS ReadableStream pump). The first four
+// fail after the status line is committed: error() can no longer answer, so the
+// failure is reported and the connection is closed without the terminating
+// chunk, whether or not a body byte went out first. The `-before-render` ones
+// fail while nothing reads them: the native stream holds the error, with no JS
+// rejection anywhere, when Bun.serve renders the Response.
 const nativeBodies: Record<string, () => Response | Promise<Response>> = {
   "rewriter-mid-stream-throw": () =>
     rewriterResponse(() => {
@@ -228,6 +254,46 @@ const nativeBodies: Record<string, () => Response | Promise<Response>> = {
     promise.then(fail);
     return res;
   },
+  // The stream exists (res.body was taken) but nothing reads it when the
+  // upstream dies.
+  "native-errored-before-render": async () => {
+    const { res, fail } = await fetchFromFailingUpstream(PARTIAL_BODY);
+    const body = res.body!;
+    fail();
+    await untilBodyFailed(res);
+    return new Response(body);
+  },
+  // Same, one producer further away: the failing fetch() body feeds an
+  // HTMLRewriter and it is the rewriter's output stream that holds the error.
+  // (The rewriter is given a wrapper so `res` itself still tracks the failure.)
+  "native-rewriter-errored-before-render": async () => {
+    const { res, fail } = await fetchFromFailingUpstream(PARTIAL_BODY);
+    const input = new Response(res.body, { headers: { "content-type": "text/html" } });
+    const body = new HTMLRewriter().on("p", {}).transform(input).body!;
+    fail();
+    await untilBodyFailed(res);
+    return new Response(body);
+  },
+  // A consumer started the rewriter's output and let go of it without a read,
+  // so one pull view of the output sits in the stream's queue and the rest in
+  // the native stream, behind the count of bytes already taken. Then the
+  // rewrite fails.
+  "native-started-errored-before-render": async () => {
+    let input!: ReadableStreamDefaultController;
+    const res = new HTMLRewriter()
+      .on("p", {
+        element() {
+          throw new Error("boom");
+        },
+      })
+      .transform(new Response(new ReadableStream({ start: c => void (input = c) })));
+    res.body!.getReader().releaseLock();
+    input.enqueue(new TextEncoder().encode(`<b>${Buffer.alloc(400_000, "x").toString()}</b>`));
+    await turns();
+    input.enqueue(new TextEncoder().encode("<p>x</p>"));
+    await turns();
+    return res;
+  },
 };
 
 const source = sources[variant];
@@ -251,10 +317,14 @@ await using server = Bun.serve({
   port: 0,
   development,
   ...(devServer ? { routes: { "/dev-server-page": devServerPage } } : {}),
-  error() {
-    errorCb++;
-    return new Response("err-body", { status: 500 });
-  },
+  // The body names the error that reached error(), so the wire pins both the
+  // channel and the error's identity.
+  error: withErrorHandler
+    ? (error: Error & { code?: string }) => {
+        errorCb++;
+        return new Response(`err-body:${error.code ?? error.message}`, { status: 500 });
+      }
+    : undefined,
   fetch(req) {
     if (new URL(req.url).pathname === "/ok") {
       return new Response("ok");

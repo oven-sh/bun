@@ -1,7 +1,7 @@
 //! Statements, and checks of variable and property declarations.
 //!
 //! * `with`: 1101 1300 2410. Misplaced `return`: 1108 18041. `if (x);`: 1313. Statements in ambient
-//!   contexts: 1036.
+//!   contexts: 1036 1183.
 //! * Assignment targets of `for`-`in` and `for`-`of`: 2405 2406 2780, 2487 2781, 1106.
 //! * `catch`: 1196 1197 2492.
 //! * Where `await`, `for await` and `await using` are allowed: 1308 1375 1378 2524 18037, 1103 1431
@@ -116,6 +116,22 @@ pub(super) fn is_with_statement(hir: &File, s: StmtId) -> bool {
         && is_word_at(&hir.text, hir[s].start as usize, b"with")
 }
 
+/// The parts of `range` that are in none of `holes`.
+fn parts_outside(range: (u32, u32), mut holes: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
+    holes.sort_unstable();
+    let (mut from, mut parts) = (range.0, Vec::new());
+    for (start, end) in holes {
+        if from < start {
+            parts.push((from, start));
+        }
+        from = from.max(end);
+    }
+    if from < range.1 {
+        parts.push((from, range.1));
+    }
+    parts
+}
+
 /// The diagnostics of binder.go. The binder visits every node, whether or not the checker does. Not
 /// 1184: the binder only reports it for `export as namespace`, and wherever it is reported here it
 /// comes from the checker (`reportObviousModifierErrors`).
@@ -149,37 +165,57 @@ const HAS_REPORTED_STATEMENT_IN_AMBIENT_CONTEXT: u8 = 4;
 impl Checker<'_, '_> {
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// `checkGrammarStatementInAmbientContext`: 1036, once in each block.
+    /// `checkGrammarStatementInAmbientContext`
     #[inline]
     pub(super) fn check_grammar_statement_in_ambient_context(
         &mut self,
         file: FileId,
         s: StmtId,
     ) -> bool {
-        self.has_ambient_context && self.check_grammar_statement_in_ambient_file(file, s)
+        self.has_ambient_context
+            && self.check_grammar_statement_in_ambient_file(file, self.hir(file).node(s))
     }
 
-    /// The same, in a file in which something is ambient.
-    fn check_grammar_statement_in_ambient_file(&mut self, file: FileId, s: StmtId) -> bool {
+    /// The same for the block that is the body of `func`.
+    #[inline]
+    pub(super) fn check_grammar_function_body_in_ambient_context(
+        &mut self,
+        file: FileId,
+        func: FnId,
+    ) {
+        if self.has_ambient_context {
+            let hir = self.hir(file);
+            self.check_grammar_statement_in_ambient_file(file, hir.body(hir.node(func)));
+        }
+    }
+
+    /// The same, in a file in which something is ambient: 1183 for the body of a function, which
+    /// covers its statements, and 1036 once in every other block.
+    fn check_grammar_statement_in_ambient_file(&mut self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
-        let node = hir.node(s);
         if !hir.is_ambient(node) {
             return false;
         }
+        let has_reported = HAS_REPORTED_STATEMENT_IN_AMBIENT_CONTEXT;
         let parent = hir.parent(node);
-        if !matches!(
-            hir.kind(parent),
-            Kind::Block | Kind::ModuleBlock | Kind::SourceFile
-        )
-            // 1183 is reported on the body of a function, which covers its statements.
-            || hir.kind(hir.parent(parent)).is_function_like()
-            || self.has_node_check_flag(parent, HAS_REPORTED_STATEMENT_IN_AMBIENT_CONTEXT)
-            || !self.grammar_error_at((file, hir[s].start, 0), 1036, &[])
-        {
+        let parent_kind = hir.kind(parent);
+        let (links, code) =
+            if parent_kind.is_function_like() && !self.has_node_check_flag(node, has_reported) {
+                (node, 1183)
+            } else if matches!(
+                parent_kind,
+                Kind::Block | Kind::ModuleBlock | Kind::SourceFile
+            ) && !self.has_node_check_flag(parent, has_reported)
+            {
+                (parent, 1036)
+            } else {
+                return false;
+            };
+        // `grammarErrorOnFirstToken`
+        if !self.grammar_error_at(self.place_of_token(file, hir.start(node)), code, &[]) {
             return false;
         }
-        *self.node_check_flags.entry(parent).or_default() |=
-            HAS_REPORTED_STATEMENT_IN_AMBIENT_CONTEXT;
+        *self.node_check_flags.entry(links).or_default() |= has_reported;
         true
     }
 
@@ -286,6 +322,20 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// After `checkSourceFile`: `checkExternalImportOrExportDeclaration` reports 1141 for a module
+    /// specifier that is not a string literal, and returns.
+    pub(super) fn never_check_specifier_expressions(&self, file: FileId) {
+        let hir = self.hir(file);
+        let required = hir.import_equals.iter().map(|import| import.expression);
+        let specifiers = hir.specifier_expressions.iter().copied();
+        for specifier in specifiers.chain(required.filter(|e| e.is_some())) {
+            self.never_check(
+                self.start_of(file, specifier),
+                self.end_of_expr(file, specifier),
+            );
+        }
+    }
+
     /// `never_check` for `range`, the range of `node`, which `checkSourceFile` does not visit,
     /// without the nodes below `node` that a query has computed a type from
     /// (`checkDeclarationInitializer`, `getTypeFromTypeNode`, `getTypeOfSymbol`, the flow analysis).
@@ -297,16 +347,8 @@ impl Checker<'_, '_> {
     ) {
         let mut visited = Vec::new();
         self.ranges_visited_by_queries(file, node, &mut visited);
-        visited.sort_unstable();
-        let mut from = range.0;
-        for (visited_start, visited_end) in visited {
-            if from < visited_start {
-                self.never_check(from, visited_start);
-            }
-            from = from.max(visited_end);
-        }
-        if from < range.1 {
-            self.never_check(from, range.1);
+        for (from, to) in parts_outside(range, visited) {
+            self.never_check(from, to);
         }
     }
 
@@ -815,25 +857,55 @@ impl Checker<'_, '_> {
         self.check_type_assignable_to(source, target, Some(at), Some(2850 + u32::from(is_await)));
     }
 
+    /// The ranges of `expressions_cached_discarding`, where every check of `checkExpression` has
+    /// reported in vain, without the nodes that `checkDeferredNodes` has checked since.
+    fn ranges_checked_discarding(&self, file: FileId) -> Vec<(u32, u32)> {
+        let mut ranges = Vec::new();
+        for &e in &self.expressions_cached_discarding {
+            if !self.is_deferred_node.contains(&e) {
+                let mut deferred = Vec::new();
+                self.ranges_of_deferred_nodes(file, self.hir(file).node(e), &mut deferred);
+                let range = (self.start_of(file, e), self.end_of_expr(file, e));
+                ranges.extend(parts_outside(range, deferred));
+            }
+        }
+        ranges
+    }
+
+    /// The ranges of the outermost nodes below `node` that `checkNodeDeferred` was called with.
+    fn ranges_of_deferred_nodes(&self, file: FileId, node: Node, found: &mut Vec<(u32, u32)>) {
+        let hir = self.hir(file);
+        hir.for_each_child(node, &mut |child| {
+            let expression = match hir.data(child) {
+                NodeData::Expr(e) => e,
+                NodeData::Prop(p) => hir[p].value,
+                _ => ExprId::NONE,
+            };
+            if self.is_deferred_node.contains(&expression) {
+                found.push((hir.start(child), self.end_of_node(file, child)));
+            } else {
+                self.ranges_of_deferred_nodes(file, child, found);
+            }
+            false
+        });
+    }
+
     /// Removes the diagnostics reported inside ranges that `checkSourceFile` never visits. Parser and binder diagnostics stay. Runs
     /// after all passes.
     pub(super) fn remove_diagnostics_in_unchecked_ranges(&mut self, file: FileId) {
         let hir = self.hir(file);
-        // `checkExternalImportOrExportDeclaration` reports 1141 for a module specifier that is not
-        // a string literal, and returns.
-        for &specifier in &hir.specifier_expressions {
-            self.never_check(
-                self.start_of(file, specifier),
-                self.end_of_expr(file, specifier),
-            );
-        }
-        let never_checked = self.never_checked.borrow();
+        let discarded = self.ranges_checked_discarding(file);
+        let never_checked = [&self.never_checked.borrow()[..], &discarded[..]].concat();
         if !never_checked.is_empty() {
             self.reported.retain(|d| {
                 !(never_checked.iter()).any(|&(from, to)| (from..to).contains(&d.start))
                     || d.by_emit
-                    // Reported on the node that is not checked.
-                    || matches!(d.code, 1136 | 1141)
+                    || d.by_another_node
+                    // Reported on the node that is not checked, by the check of its parent only.
+                    || matches!(d.code, 1039 | 1136 | 1141 | 1254)
+                    // Likewise, on an element of a heritage clause. A class below it can have them.
+                    || matches!(d.code, 1174 | 2499 | 2500)
+                        && never_checked.iter().any(|&(from, _)| from == d.start)
                     || is_binder_diagnostic(d.code)
                     || hir.diagnostics.iter().any(|parsed| {
                         !matches!(

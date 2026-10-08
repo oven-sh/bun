@@ -8,10 +8,8 @@ import path from "node:path";
 // controller before assignToStream returns. This used to trip a debug
 // assertion that the signal was still live.
 //
-// Today the credential error is swallowed by ByteStream::on_start() returning
-// Start::Empty without checking pending.result, so write() resolves to 0.
-// Accept either outcome here so a future fix that surfaces the error does not
-// trip this test.
+// The credential error is stored in the ByteStream before anything reads it.
+// write() rejects with it, and nothing else reports it on stderr.
 test("Bun.file().write(S3 file) when the S3 stream closes synchronously", async () => {
   using dir = tempDir("s3-write-sync-close", {});
   const dest = path.join(String(dir), "out.bin");
@@ -54,7 +52,7 @@ test("Bun.file().write(S3 file) when the S3 stream closes synchronously", async 
     stderr: normalizeBunSnapshot(stderr),
     signalCode: proc.signalCode,
   }).toEqual({
-    stdout: expect.stringMatching(/^(resolved|rejected:ERR_S3_MISSING_CREDENTIALS)$/),
+    stdout: "rejected:ERR_S3_MISSING_CREDENTIALS",
     stderr: "",
     signalCode: null,
   });

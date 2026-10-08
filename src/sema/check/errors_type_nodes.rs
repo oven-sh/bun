@@ -75,7 +75,7 @@ pub(super) fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     loop {
         let end = skip_trivia_back(text, at);
         if !matches!(text[..end].last(), Some(b'(' | b'|' | b'&')) {
-            return at as u32;
+            return hir.skip_trivia_of_node_at(at as u32);
         }
         at = end - 1;
     }
@@ -188,8 +188,8 @@ impl Checker<'_, '_> {
             if flags.contains(ElemFlags::VARIADIC) {
                 let ty = self.type_from_node(file, elem.ty);
                 if !self.is_array_like(ty) {
-                    let at = (file, elem.start, self.end_of_tuple_elem(file, e));
-                    self.error_at(at, 2574, &[]);
+                    let start = hir.skip_trivia_of_node_at(elem.start);
+                    self.error_at((file, start, self.end_of_tuple_elem(file, e)), 2574, &[]);
                     break;
                 }
                 if self.is_array(ty)
@@ -214,8 +214,8 @@ impl Checker<'_, '_> {
             } else {
                 continue;
             };
-            let at = (file, elem.start, self.end_of_tuple_elem(file, e));
-            self.grammar_error_at(at, code, &[]);
+            let start = hir.skip_trivia_of_node_at(elem.start);
+            self.grammar_error_at((file, start, self.end_of_tuple_elem(file, e)), code, &[]);
             break;
         }
     }

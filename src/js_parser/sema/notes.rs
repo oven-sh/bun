@@ -18,7 +18,7 @@
 
 use super::{Mark, TypeSyntax};
 use crate::p::P;
-use crate::parser::{SkipTypeParameterResult, TypeParameterFlag};
+use crate::parser::{AwaitOrYield, SkipTypeParameterResult, TypeParameterFlag};
 use crate::sema::ts_syntax as ts;
 use bun_ast::{Expr, Loc};
 
@@ -59,10 +59,20 @@ pub(crate) struct Checkpoint {
     unclosed_literals: u32,
     type_stack: u32,
     name_stack: u32,
+    function_contexts: u32,
     rows: Rows,
     /// Index in `TypeSyntax::saved_results`. Not the results themselves: an ordinary build makes
     /// and copies checkpoints too.
     results: u32,
+}
+
+/// `P::note_function_context`
+#[derive(Copy, Clone)]
+pub(crate) struct FunctionContext {
+    pub(crate) start: Loc,
+    pub(crate) end: Loc,
+    pub(crate) allow_await: AwaitOrYield,
+    pub(crate) allow_yield: AwaitOrYield,
 }
 
 /// What `TypeSyntax` holds for the caller of the function that parsed it. A speculative parse
@@ -72,6 +82,7 @@ pub(crate) struct Checkpoint {
 pub(crate) struct Results {
     pending_type_arguments: Option<(u32, Loc)>,
     last_type: ts::TypeId,
+    last_type_lacks_parameters: bool,
     last_type_start: i32,
     last_type_args: Option<ts::Types>,
     last_binding: ts::PatternId,
@@ -799,6 +810,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.note_token_full_start(named_at, Mark::MemberEnd);
     }
 
+    /// `setContextFlags`: from `start` (the `(` of a function, the `=>` of an arrow function, the
+    /// `{` of a static block) to the end of the previous token, `allow_await` and `allow_yield`
+    /// were in effect. Those around it are in effect again. For the comments of a JavaScript file,
+    /// which are parsed after the file (`withJSDoc` parses them in the contexts of their place).
+    /// Nothing is recorded where neither context is on inside or around.
+    #[inline]
+    pub(crate) fn note_function_context(
+        &mut self,
+        start: Loc,
+        allow_await: AwaitOrYield,
+        allow_yield: AwaitOrYield,
+    ) {
+        if !SEMA {
+            return;
+        }
+        let end = self.lexer.full_start();
+        let (around, off) = (&self.fn_or_arrow_data_parse, AwaitOrYield::AllowIdent);
+        let is_on = allow_await != off
+            || allow_yield != off
+            || around.allow_yield != off
+            || (around.allow_await != off && !around.is_top_level);
+        if is_on
+            && let Some(syntax) = &mut self.type_syntax
+            && syntax.has_jsdoc
+        {
+            syntax.function_contexts.push(FunctionContext {
+                start,
+                end,
+                allow_await,
+                allow_yield,
+            });
+        }
+    }
+
     /// `mark`: pass the result to `rewind_type_syntax` if the parse from this point on is
     /// abandoned, and to `release_type_syntax_checkpoint` if it succeeds.
     #[inline]
@@ -813,6 +858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 unclosed_literals: syntax.unclosed_literals.len() as u32,
                 type_stack: syntax.type_stack.len() as u32,
                 name_stack: syntax.name_stack.len() as u32,
+                function_contexts: syntax.function_contexts.len() as u32,
                 rows: syntax.rows(),
                 results: syntax.save_results(),
             },
@@ -844,6 +890,7 @@ impl TypeSyntax<'_> {
         self.saved_results.push(Results {
             pending_type_arguments: self.pending_type_arguments,
             last_type: self.last_type,
+            last_type_lacks_parameters: self.last_type_lacks_parameters,
             last_type_start: self.last_type_start,
             last_type_args: self.last_type_args,
             last_binding: self.last_binding,
@@ -886,11 +933,14 @@ impl TypeSyntax<'_> {
             .truncate(snapshot.unclosed_literals as usize);
         self.type_stack.truncate(snapshot.type_stack as usize);
         self.name_stack.truncate(snapshot.name_stack as usize);
+        self.function_contexts
+            .truncate(snapshot.function_contexts as usize);
         self.rewind_rows(snapshot.rows);
         let results = self.saved_results[snapshot.results as usize];
         self.saved_results.truncate(snapshot.results as usize);
         self.pending_type_arguments = results.pending_type_arguments;
         self.last_type = results.last_type;
+        self.last_type_lacks_parameters = results.last_type_lacks_parameters;
         self.last_type_start = results.last_type_start;
         self.last_type_args = results.last_type_args;
         self.last_binding = results.last_binding;

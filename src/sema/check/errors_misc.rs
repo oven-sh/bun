@@ -68,14 +68,20 @@ impl Checker<'_, '_> {
         };
     }
 
-    /// `checkSwitchStatement` for one `case test:` of a `switch (expr)`: 2678.
-    pub(super) fn check_case_clause(&mut self, file: FileId, expr: ExprId, test: ExprId) {
-        let (subject, case) = (self.type_of_expr(file, expr), self.type_of_expr(file, test));
+    /// `checkSwitchStatement` for one `case test:`: 2678. `expression_type`: of the expression of
+    /// the `switch`, which is checked once, before the clauses.
+    pub(super) fn check_case_clause(
+        &mut self,
+        file: FileId,
+        expression_type: TypeId,
+        test: ExprId,
+    ) {
+        let case_type = self.type_of_expr(file, test);
         // `isTypeEqualityComparableTo`, then in the reverse direction.
-        let is_nullable = case.is_null() || case.is_undefined();
-        if !is_nullable && !self.is_comparable(subject, case) {
+        let is_nullable = case_type.is_null() || case_type.is_undefined();
+        if !is_nullable && !self.is_comparable(expression_type, case_type) {
             let at = self.span_of_parenthesized_expr(file, test);
-            self.check_type_comparable_to(case, subject, Some(at), None);
+            self.check_type_comparable_to(case_type, expression_type, Some(at), None);
         }
     }
 

@@ -188,7 +188,7 @@ impl Checker<'_, '_> {
             .some()
             .filter(|&f| {
                 hir[f].ret == node
-                    && (self.parenthesized_types_around(file, node, hir[f].start))
+                    && (self.parenthesized_types_around(file, node, 0))
                         .next()
                         .is_none()
                     && matches!(

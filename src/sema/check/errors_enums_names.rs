@@ -52,8 +52,8 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── `const` enums ─────────────────────────────
 
-    /// `checkConstEnumAccess` for `e` and for each parenthesized expression around it, which has
-    /// the same type.
+    /// `checkConstEnumAccess` for `e`, for the other `NonNullExpression`s of a run of `!` that it is,
+    /// and for each parenthesized expression and `JsxExpression` around it. They have the same type.
     pub(super) fn check_const_enum_access(&mut self, file: FileId, e: ExprId, ty: TypeId) {
         let (hir, files) = (self.hir(file), self.files());
         let TypeData::Anon {
@@ -80,6 +80,17 @@ impl Checker<'_, '_> {
         };
         let flag_name = super::errors_modules::isolated_modules_like_flag_name(files);
         let mut node = hir.node(e);
+        // The parent of each is a `NonNullExpression`.
+        for &(_, end) in non_null_ends_in(hir, e) {
+            let (start, _) = self.get_error_range_for_node(file, node);
+            self.error_at((file, start, end), 2475, &[]);
+            if files.options.isolated_modules_reported
+                && self.aliases_is_ambient_const_enum(symbol)
+                && !is_valid_type_only_alias_use_site(hir, node)
+            {
+                self.error_at((file, start, end), 2748, &[Arg::Bytes(flag_name)]);
+            }
+        }
         loop {
             let parent = hir.parent(node);
             // The other children of a `TypeQuery` are types.
@@ -101,7 +112,10 @@ impl Checker<'_, '_> {
             {
                 self.error(file, node, 2748, &[Arg::Bytes(flag_name)]);
             }
-            if hir.kind(parent) != Kind::ParenthesizedExpression {
+            if !matches!(
+                hir.kind(parent),
+                Kind::ParenthesizedExpression | Kind::JsxExpression
+            ) {
                 break;
             }
             node = parent;
@@ -122,6 +136,14 @@ impl Checker<'_, '_> {
         if !files.module(file).is_module()
             && let Some(symbol) = bound.lookup(bound.scopes[0].locals, known::globalThis)
         {
+            // The table has a placeholder for a symbol that `mergeSymbol` has refused
+            // (`Files::redirect_name_to`).
+            let is_local =
+                |part: &&Sym| part.file == file && bound.symbols[part.id.idx()].parent.is_none();
+            let refused = files.refused_merges.iter();
+            let refused = refused.filter(|it| it.target == files.global_this_symbol);
+            let refused = refused.flat_map(|it| it.source_parts).find(is_local);
+            let symbol = refused.map_or(symbol, |part| part.id);
             for &decl in bound.symbols[symbol.idx()].decls.iter() {
                 report(self, decl, known::globalThis);
             }
@@ -252,6 +274,7 @@ impl Checker<'_, '_> {
         for &(e, scope) in &bound.free_idents {
             if let ExprKind::Ident(name) = hir[e].kind
                 && !bound.is_unchecked(e.idx())
+                && !hir.is_in_jsdoc(hir[e].pos)
                 && resolves_to_umd_global(files, file, scope, name, SymFlags::VALUE)
             {
                 self.error_at((file, hir[e].pos, 0), 2686, &[Arg::Atom(name)]);
@@ -271,7 +294,7 @@ impl Checker<'_, '_> {
         // `getJsxNamespaceContainerForImplicitImport`
         let path = files.module(file).file_name();
         let implicit_import = crate::program::jsx_runtime_of(options, hir, &files.atoms)
-            .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
+            .filter(|_| crate::resolve::is_jsx_file_name(path))
             .and_then(|spec| files.module_of_specifier(file, self.atoms().intern(&spec)));
         if implicit_import.is_some() {
             return;
@@ -349,7 +372,9 @@ impl Checker<'_, '_> {
             return;
         }
         let name = files.symbol(result).name;
-        if resolves_to_umd_global(files, file, scope, name, meaning) {
+        if !hir.is_in_jsdoc(hir.start(error_location))
+            && resolves_to_umd_global(files, file, scope, name, meaning)
+        {
             self.error(file, error_location, 2686, &[Arg::Atom(name)]);
         }
         let associated_declaration =
@@ -379,6 +404,15 @@ impl Location {
             }
         }
     }
+
+    /// `hir`: of `file()`.
+    pub(super) fn node(self, hir: &hir::File) -> Node {
+        match self {
+            Location::Member(_, member) => hir.node(member),
+            Location::Variable(_, d) => hir.node(d),
+            Location::Expr(_, e) => hir.node(e),
+        }
+    }
 }
 
 pub(super) fn is_ambient_enum(hir: &hir::File, en: EnumId) -> bool {
@@ -390,17 +424,13 @@ pub(super) fn is_ambient_enum(hir: &hir::File, en: EnumId) -> bool {
 /// `isBlockScopedNameDeclaredBeforeUse`
 pub(super) fn is_declared_before_use(
     c: &mut Checker<'_, '_>,
-    declaration: Location,
+    (of, declaration): (FileId, Node),
     usage: Location,
 ) -> bool {
-    let (file, node) = (usage.file(), |location: Location| match location {
-        Location::Member(file, member) => c.hir(file).node(member),
-        Location::Variable(file, d) => c.hir(file).node(d),
-        Location::Expr(file, e) => c.hir(file).node(e),
-    });
-    let (declared, used) = (node(declaration), node(usage));
+    let file = usage.file();
+    let used = usage.node(c.hir(file));
     // The order across files is undetermined.
-    declaration.file() != file || c.is_block_scoped_name_declared_before_use(file, declared, used)
+    of != file || c.is_block_scoped_name_declared_before_use(file, declaration, used)
 }
 
 // ───────────────────────────── kinds of types and symbols ─────────────────────────────
@@ -417,11 +447,10 @@ pub(super) fn resolves_to_umd_global(
     !files.options.allow_umd_global_access
         && files.module(file).is_module()
         && umd_global(files, name).is_some_and(|global| {
-            // `getSymbol`: an alias is matched by the meaning of its target.
-            let flags = files.symbol_flags(global);
+            // `getSymbol`: an alias is matched by the meaning of its target, which is every meaning
+            // if it cannot be resolved.
             files.resolve_name(file, scope, name, meaning) == Some(global)
-                && flags != SymFlags::all()
-                && flags.intersects(meaning)
+                && files.symbol_flags(global).intersects(meaning)
         })
 }
 

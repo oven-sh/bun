@@ -52,6 +52,7 @@ pub enum T {
     TLessThan,
     TLessThanEquals,
     TLessThanLessThan,
+    TLessThanSlash, // scanned for the type checker only, in a file with JSX
     TMinus,
     TMinusMinus,
     TOpenBrace,
@@ -326,6 +327,7 @@ pub static TOKEN_TO_STRING: TokenEnumType = TokenEnumType({
     token_enums[T::TLessThan as usize] = b"\"<\"";
     token_enums[T::TLessThanEquals as usize] = b"\"<=\"";
     token_enums[T::TLessThanLessThan as usize] = b"\"<<\"";
+    token_enums[T::TLessThanSlash as usize] = b"\"</\"";
     token_enums[T::TMinus as usize] = b"\"-\"";
     token_enums[T::TMinusMinus as usize] = b"\"--\"";
     token_enums[T::TOpenBrace as usize] = b"\"{\"";

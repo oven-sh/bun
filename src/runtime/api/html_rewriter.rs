@@ -1009,7 +1009,7 @@ impl RewriterPipe {
     /// Output emitted but not yet taken by a reader.
     fn unread_output(&self) -> BlobSizeType {
         let staged = self.output_buffer.get().len();
-        let queued = self.output.get().map_or(0, |out| out.buffer.get().len());
+        let queued = self.output.get().map_or(0, |out| out.buffered.held_len());
         (staged + queued) as BlobSizeType
     }
 

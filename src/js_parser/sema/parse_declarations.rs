@@ -333,7 +333,8 @@ pub(crate) enum ModuleNameKind {
 /// functions parse it (`t_import`, `t_export`, `parse_specifiers_tolerant`, `parse_path_tolerant`)
 /// and record their current token here.
 pub(crate) struct ModuleSyntax {
-    is_in_ambient_module: bool,
+    /// `isInAppropriateContext` of `checkGrammarModuleElementContext`
+    is_in_appropriate_context: bool,
     /// Position of the token after `import`.
     clause_loc: Loc,
     /// End of the last token parsed of the import clause.
@@ -362,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     pub(crate) fn begin_module_syntax(&mut self, opts: &crate::parser::ParseStatementOptions) {
         if self.preserves_type_syntax() {
             self.type_syntax_mut().module_syntax.push(ModuleSyntax {
-                is_in_ambient_module: opts.scope.is_namespace() && opts.is_typescript_declare,
+                is_in_appropriate_context: opts.scope != crate::parser::StatementScope::Nested,
                 clause_loc: Loc::EMPTY,
                 clause_end: Loc::EMPTY,
                 is_type_only: false,
@@ -392,6 +393,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             return None;
         }
         self.type_syntax.as_mut()?.module_syntax.last_mut()
+    }
+
+    /// `isInAppropriateContext` of `checkGrammarModuleElementContext` for the declaration being
+    /// parsed: it is directly in the file or in the body of a module declaration.
+    pub(crate) fn is_in_appropriate_context(&self) -> bool {
+        let syntax = self.type_syntax.as_ref();
+        syntax
+            .and_then(|syntax| syntax.module_syntax.last())
+            .is_some_and(|kept| kept.is_in_appropriate_context)
     }
 
     /// `parseIdentifier`, before the token is consumed (`expect_identifier`). A missing name is
@@ -635,7 +645,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             namespace,
             specifiers: kept.specifiers,
             module,
-            is_in_ambient_module: kept.is_in_ambient_module,
         });
         self.emit_statement(ts::StatementData::Import(import), loc);
         self.type_script_statement(loc)
@@ -762,19 +771,14 @@ impl super::TypeSyntax<'_> {
             text: bun_ast::StoreStr::EMPTY,
             loc,
         };
-        let (name, is_type_only, is_in_ambient_module) = match self.module_syntax.last() {
-            Some(kept) => (
-                kept.default_name.unwrap_or(missing),
-                kept.is_type_only,
-                kept.is_in_ambient_module,
-            ),
-            None => (missing, false, false),
+        let (name, is_type_only) = match self.module_syntax.last() {
+            Some(kept) => (kept.default_name.unwrap_or(missing), kept.is_type_only),
+            None => (missing, false),
         };
         let import = self.b.ts.add_import_equals(ts::ImportEquals {
             name,
             is_type_only,
             reference,
-            is_in_ambient_module,
         });
         self.emit_statement(ts::StatementData::ImportEquals(import), loc);
     }

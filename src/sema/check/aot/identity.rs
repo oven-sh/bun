@@ -134,7 +134,7 @@ impl Records<'_, '_> {
         }
         let provenance = self.types.provenance(ty);
         it.plain(&provenance.is_some());
-        if let Some(Provenance { alias, origin, is_enum, stored_under, is_array_literal }) = provenance {
+        if let Some(Provenance { alias, origin, is_enum, stored_under, is_array_literal, is_array_pattern, has_other_instantiation }) = provenance {
             alias.visit(&mut it);
             match origin {
                 UnionOrigin::Union(types) => {
@@ -146,6 +146,8 @@ impl Records<'_, '_> {
             is_enum.visit(&mut it);
             stored_under.visit(&mut it);
             is_array_literal.visit(&mut it);
+            is_array_pattern.visit(&mut it);
+            has_other_instantiation.visit(&mut it);
         }
         let identity = it.lanes.0;
         known.types.insert(ty, identity);

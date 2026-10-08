@@ -801,7 +801,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether the expression is the name of the global object `name`, which a declaration file declares and nothing in the program does.
-    fn names_global_object(&self, file: FileId, e: ExprId, name: &[u8]) -> bool {
+    fn names_global_object(&mut self, file: FileId, e: ExprId, name: &[u8]) -> bool {
         let ExprKind::Ident(written) = self.hir(file)[e].kind else { return false };
         self.bound(file).expr_symbol[e.idx()].is_none()
             && self.atoms().bytes(written) == name

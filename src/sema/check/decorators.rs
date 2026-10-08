@@ -386,13 +386,9 @@ impl<'p, 's> Checker<'p, 's> {
                 let text = self.atoms().intern(self.written_name(name));
                 self.string_literal(text, false)
             }
-            // `getLiteralTypeFromPropertyName`, which has no text for a name that declares nothing.
-            _ => match self.literal_type_from_property_name(file, key, name_kind) {
-                Some(name_type) => name_type,
-                None => self
-                    .get_property_name_for_property_name_node(file, key, member.name_pos)
-                    .map_or(TypeId::NEVER, |text| self.string_literal(text, false)),
-            },
+            _ => self
+                .literal_type_from_property_name(file, key, name_kind, member.name_pos)
+                .unwrap_or(TypeId::NEVER),
         };
         let context: &[u8] = match member.kind {
             MemberKind::Method => b"ClassMethodDecoratorContext",

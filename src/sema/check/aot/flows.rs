@@ -506,7 +506,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn view_of_either(&mut self, union: TypeId) -> TypeId {
         let union = self.reduced(union);
         let parts: Vec<TypeId> = self.parts(union).iter().copied().filter(|&part| self.says_properties(part)).collect();
-        self.view_with_all_names(&parts, None)
+        self.view_with_all_names(&parts, (TypeId::NEVER, union))
     }
 
     /// What an object is looked at as of which nothing is known and that has been coerced to `target`: one of `target`, if it could be made
@@ -514,7 +514,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// stays what it is: a view that has only its members in its places.
     fn view_of_anything_as(&mut self, target: TypeId) -> TypeId {
         let parts: Vec<TypeId> = self.parts(target).to_vec();
-        self.view_with_all_names(&parts, Some(target))
+        self.view_with_all_names(&parts, (TypeId::UNKNOWN, target))
     }
 
     /// Whether the type is a `view_of_anything_as`.
@@ -522,9 +522,15 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && matches!(shape.spread_of, Some((TypeId::UNKNOWN, _))))
     }
 
-    /// `of_anything`: for `view_of_anything_as`, the type that is meant. It is kept where a spread keeps its operands, with a rank that no
-    /// spread has: that tells the type from every other, in every checker.
-    fn view_with_all_names(&mut self, parts: &[TypeId], of_anything: Option<TypeId>) -> TypeId {
+    /// Whether the type is a `view_of_anything_as` or a `view_of_either`: nobody has declared it, and no primitive is of it.
+    pub fn is_view_made_by_coercion(&self, ty: TypeId) -> bool {
+        matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && shape.spread_of.is_some())
+    }
+
+    /// `made_for`: `unknown` and the type that is meant, for `view_of_anything_as`; `never` and the union, for `view_of_either`. It is kept
+    /// where a spread keeps its operands, with a rank that no spread has: that tells the type from every other, in every checker.
+    fn view_with_all_names(&mut self, parts: &[TypeId], made_for: (TypeId, TypeId)) -> TypeId {
+        let is_of_anything = made_for.0 == TypeId::UNKNOWN;
         let mut of_parts = Vec::with_capacity(parts.len());
         for &part in parts {
             let apparent = self.apparent_type(part);
@@ -534,7 +540,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut seen: FxHashSet<Atom> = FxHashSet::default();
         for members in &of_parts {
             for prop in members.shape().props.iter().filter(|prop| seen.insert(prop.name)) {
-                let (mut types, mut is_optional, mut flags) = (Vec::new(), of_anything.is_some(), PropFlags::METHOD);
+                let (mut types, mut is_optional, mut flags) = (Vec::new(), is_of_anything, PropFlags::METHOD);
                 for other in &of_parts {
                     let Some(found) = other.resolved.prop(prop.name) else {
                         is_optional = true;
@@ -553,9 +559,7 @@ impl<'p, 's> Checker<'p, 's> {
                 shape.props.push(Prop { name: prop.name, flags, source: PropSource::Type(ty), mapper: MapperId::IDENTITY });
             }
         }
-        if let Some(target) = of_anything {
-            (shape.spread_of, shape.spread_rank) = (Some((TypeId::UNKNOWN, target)), u32::MAX);
-        }
+        (shape.spread_of, shape.spread_rank) = (Some(made_for), u32::MAX);
         let view = self.synth(shape);
         for &part in parts {
             let part = self.laid_out_as(part);
@@ -567,33 +571,60 @@ impl<'p, 's> Checker<'p, 's> {
     /// The type, as a fact, of what `e as T` yields, where `e` is of type `source` and `T` is `target`. `as` coerces, as `ToObject` does, and
     /// does not assert.
     ///
-    /// * A primitive becomes one of the primitives of `target`, by the conversions of the language. So those of `source` are gone.
+    /// * A primitive becomes one of the primitives of `target`, by the conversions of the language. So those of `source` are gone. Which
+    ///   string or number it is, is not looked at: `5 as 1 | 2` is a number.
     /// * An object stays the same object. It is made one of `target` if it can be: it is one, it was made as less and has what is
     ///   missing, it is plain data. Otherwise it is what it was. So the result is of `target` or of one of the object types of `source`.
-    /// * If nothing is known of `e`, it is of `target` or anything: `view_of_anything_as`. Where `target` has no type among its parts
-    ///   that says which properties an object has, `number[]`, `() => void`, there is no such view, and the cast asserts.
+    /// * If nothing is known of `e`, it is of `target` or anything: `view_of_anything_as` of the parts of `target` that say which properties
+    ///   an object has. An array, a function, an object of a class of the engine is what nothing can be made: those parts stay, and
+    ///   whoever emits the cast sees that there is no room for anything else and asserts.
     /// * If `target` has no objects, an object is converted as well.
     pub fn type_coerced(&mut self, source: TypeId, target: TypeId) -> TypeId {
         let (source, target) = (self.reduced(source), self.reduced(target));
-        if self.says_nothing(target) || self.parts(target).iter().all(|&part| self.has_primitive_flag(part)) || self.is_assignable(source, target) {
+        let is_untyped = self.is_untyped(source);
+        if self.says_nothing(target) || (!is_untyped && self.is_assignable(source, target)) {
             return target;
-        }
-        if !self.is_untyped(source) {
-            let mut parts = vec![target];
-            parts.extend(self.parts(source).iter().copied().filter(|&part| !self.has_primitive_flag(part)));
-            return self.union(&parts);
         }
         let (mut views, mut parts) = (Vec::new(), Vec::new());
         for &part in self.parts(target) {
-            let is_view = self.says_properties(part) && self.element_of_array_subtype(part).is_none() && self.built_in_extended_by(part).is_none();
-            if is_view { views.push(part) } else { parts.push(part) }
+            if self.has_primitive_flag(part) {
+                parts.push(self.base_of_literal(part));
+            } else if is_untyped && self.says_properties(part) && self.has_properties(part) && self.element_of_array_subtype(part).is_none() && self.built_in_that_is(part).is_none() {
+                views.push(part);
+            } else {
+                parts.push(part);
+            }
         }
-        if views.is_empty() {
-            return target;
+        if !views.is_empty() {
+            let views = self.union(&views);
+            parts.push(self.view_of_anything_as(views));
         }
-        let views = self.union(&views);
-        parts.push(self.view_of_anything_as(views));
+        if !is_untyped && parts.iter().any(|&part| !self.has_primitive_flag(part)) {
+            parts.extend(self.parts(source).iter().copied().filter(|&part| !self.has_primitive_flag(part)));
+        }
         self.union(&parts)
+    }
+
+    /// `(x as T).name`, `p.name` where `p` holds what a cast has yielded: the object need not be a `T`, so what is read need not be a
+    /// `T["name"]`. The read is a coercion itself, as if `x.name as T["name"]` were written. For such a read `e`: the type of what is found,
+    /// `unknown` where the object need not have the property, and the type it is coerced to. What the object has not is `undefined`.
+    pub fn property_read_of_coerced(&mut self, file: FileId, e: ExprId) -> Option<(TypeId, TypeId)> {
+        let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else { return None };
+        if matches!(self.hir(file)[obj].kind, ExprKind::Super) || !self.has_declared_type(file, e) {
+            return None;
+        }
+        let known = self.type_yielded_by(file, obj);
+        if known == self.type_of_expr(file, obj) || self.says_nothing(known) {
+            return None;
+        }
+        let object = self.non_nullable(known);
+        let is_of_anything = self.parts(object).iter().any(|&part| self.is_view_of_anything(part));
+        let found = if is_of_anything { None } else { self.type_of_property(object, name) };
+        let target = self.type_of_expr(file, e);
+        Some(match found {
+            Some(found) => (found, target),
+            None => (TypeId::UNKNOWN, self.union(&[target, TypeId::UNDEFINED])),
+        })
     }
 
     /// An object of which nothing is known is in a place of the view from here on. `source`: the checker's type of it.

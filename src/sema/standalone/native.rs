@@ -731,6 +731,42 @@ fn __bun_macro_context_get_remap(
     None
 }
 
+/// The digits of the mantissa of `text`, from the first that is not 0.
+fn mantissa_digits(text: &[u8]) -> impl Iterator<Item = u8> {
+    let end = bun_core::strings::index_of_char_usize(text, b'e').unwrap_or(text.len());
+    let digits = text[..end].iter().copied().filter(u8::is_ascii_digit);
+    digits.skip_while(|&digit| digit == b'0')
+}
+
+/// ECMA-262 `Number::toString`: of two shortest forms that are equally close to `number`, the one
+/// whose last digit is even. `text`: `number` as Rust writes it, which takes the upper one.
+fn round_tie_to_even(text: &mut [u8], number: f64) {
+    use std::io::Write;
+    let end = bun_core::strings::index_of_char_usize(text, b'e').unwrap_or(text.len());
+    let Some(last) = end.checked_sub(1) else {
+        return;
+    };
+    if !text[last].is_ascii_digit() || text[last].is_multiple_of(2) {
+        return;
+    }
+    text[last] -= 1;
+    let written = core::str::from_utf8(text).ok();
+    let lower: Option<f64> = written.and_then(|s| s.parse().ok());
+    // In a tie the exact value, which has at most 767 digits, is the lower form and a 5.
+    let mut exact: Vec<u8> = Vec::new();
+    if lower == Some(number) {
+        let _ = write!(exact, "{number:.766e}");
+    }
+    let is_tie = {
+        let mut rest = mantissa_digits(&exact);
+        let mut halfway = mantissa_digits(text).chain(*b"5");
+        halfway.all(|digit| rest.next() == Some(digit)) && rest.all(|digit| digit == b'0')
+    };
+    if !is_tie {
+        text[last] += 1;
+    }
+}
+
 /// `String(number)`, as `WTF::numberToString` writes it.
 #[unsafe(no_mangle)]
 extern "C" fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize {
@@ -748,6 +784,7 @@ extern "C" fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize {
         text.push(b'0');
     } else if number.abs() >= 1e21 || number.abs() < 1e-6 {
         let _ = write!(text, "{number:e}");
+        round_tie_to_even(&mut text, number);
         if let Some(e) = bun_core::strings::index_of_char_usize(&text, b'e')
             && text.get(e + 1) != Some(&b'-')
         {
@@ -755,6 +792,7 @@ extern "C" fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize {
         }
     } else {
         let _ = write!(text, "{number}");
+        round_tie_to_even(&mut text, number);
     }
     buf[..text.len()].copy_from_slice(&text);
     text.len()

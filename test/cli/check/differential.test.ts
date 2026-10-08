@@ -1466,11 +1466,12 @@ differential("what is not JSON in a configuration file", async () => {
   const root = String(dir);
   const results: { text: string; bun: string[]; tsc: string[] }[] = [];
   await inTurns([...cases.entries()], async ([i, text]) => {
-    // With `references`, `bun check` is `tsc -b`, which refuses `--skipLibCheck`.
-    const project = text.includes(`"references"`) ? ["-b", `c${i}`] : ["-p", `c${i}`, "--skipLibCheck"];
+    // `tsc -b` refuses `--skipLibCheck`.
+    const build = text.includes(`"references"`);
+    const project = [build ? "-b" : "-p", `c${i}`];
     const [bun, typescript] = await Promise.all([
-      linesOf([bunExe(), "check", "-p", `c${i}`, "--skipLibCheck"], root, root),
-      linesOf([tsc!, ...project, "--noEmit", "--pretty", "false"], root, root),
+      linesOf([bunExe(), "check", ...project, "--skipLibCheck"], root, root),
+      linesOf([tsc!, ...project, ...(build ? [] : ["--skipLibCheck"]), "--noEmit", "--pretty", "false"], root, root),
     ]);
     results.push({ text, bun, tsc: typescript });
   });
@@ -1528,7 +1529,7 @@ differential("the errors of the projects of a build", async () => {
   await inTurns([...combinations.keys()], async index => {
     const cwd = join(root, String(index));
     // In this order: `tsc -b` writes files.
-    const ours = await linesOf([bunExe(), "check"], cwd, root);
+    const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
     const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
     expect(theirs.length).toBeGreaterThan(0);
     if (!Bun.deepEquals(theirs, ours)) different[JSON.stringify(combinations[index])] = { theirs, ours };
@@ -1583,7 +1584,7 @@ differential("what a project with references imports, and whether it may", async
     async index => {
       const cwd = join(root, String(index));
       // In this order: `tsc -b` writes files.
-      const ours = await linesOf([bunExe(), "check"], cwd, root);
+      const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
       const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
       expect(theirs.length).toBeGreaterThan(0);
       if (!Bun.deepEquals(theirs, ours)) different[JSON.stringify(combinations[index])] = { theirs, ours };
@@ -1876,10 +1877,117 @@ aboutCase("project references that differ only in case", async () => {
   await inTurns([...combinations.keys()], async index => {
     const cwd = join(root, String(index), "app");
     // In this order: `tsc -b` writes files.
-    const ours = await linesOf([bunExe(), "check"], cwd, root);
+    const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
     const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
     expect(theirs.length).toBeGreaterThan(0);
     if (!Bun.deepEquals(theirs, ours)) different[combinations[index].join(" ")] = { theirs, ours };
   });
   expect(different).toEqual({});
+});
+
+// `bun check` can take the place of `tsc` in a script: with the same arguments, in the same directory, it checks the
+// same files. Where tsc checks nothing at all (it prints its help, or TS5112, TS6231 or TS6504 for a path beside a
+// configuration file, or the project has no files of its own), `bun check` is free to be of more use.
+differential("the files that are checked, by layout of the project and by command line", async () => {
+  const options = `"strict": true, "types": [], "lib": ["es2022"], "skipLibCheck": true`;
+  const config = (more: string, rest = "") => `{ "compilerOptions": { ${options}${more} }${rest} }\n`;
+  const wrong = (name: string) => `export const ${name}: number = "";\n`;
+  const library = {
+    "lib/tsconfig.json": config(`, "composite": true, "outDir": "dist"`, `, "include": ["src"]`),
+    "lib/src/index.ts": `export const one = 1;\n`,
+    "lib/src/index.test.ts": wrong("inTheLibrary"),
+    "app/tsconfig.json": config(`, "noEmit": true`, `, "include": ["src"], "references": [{ "path": "../lib" }]`),
+    "app/src/main.ts": `import { one } from "../../lib/src/index";\nexport const two: string = one;\n`,
+  };
+  // The directory to run in, a file in it, what is built first, and the files.
+  const layouts: Record<string, [string, string, string[], Record<string, string>]> = {
+    "a configuration file": [
+      ".",
+      "a.ts",
+      [],
+      { "tsconfig.json": config(`, "noEmit": true`), "a.ts": wrong("a"), "sub/b.ts": wrong("b") },
+    ],
+    "include and exclude": [
+      ".",
+      "src/a.ts",
+      [],
+      {
+        "tsconfig.json": config(`, "noEmit": true`, `, "include": ["src"], "exclude": ["**/*.test.ts"]`),
+        "src/a.ts": wrong("a"),
+        "src/a.test.ts": wrong("excluded"),
+        "tools/c.ts": wrong("notIncluded"),
+      },
+    ],
+    "extends": [
+      ".",
+      "src/a.ts",
+      [],
+      {
+        "base.json": config(`, "noEmit": true`),
+        "tsconfig.json": `{ "extends": "./base.json", "include": ["src"] }\n`,
+        "src/a.ts": wrong("a"),
+      },
+    ],
+    "another configuration file below": [
+      ".",
+      "src/a.ts",
+      [],
+      {
+        "tsconfig.json": config(`, "noEmit": true`, `, "include": ["src"]`),
+        "src/a.ts": wrong("a"),
+        "pkg/tsconfig.json": config(`, "noEmit": true`),
+        "pkg/p.ts": wrong("p"),
+      },
+    ],
+    "references, which are built": ["app", "src/main.ts", ["-b", "../lib"], library],
+    "a reference that is not there": [
+      "app",
+      "src/main.ts",
+      [],
+      { "app/tsconfig.json": library["app/tsconfig.json"], "app/src/main.ts": wrong("main") },
+    ],
+    "no configuration file": [".", "a.ts", [], { "a.ts": wrong("a") }],
+    "configuration files below, none here": [
+      ".",
+      "packages/a/a.ts",
+      [],
+      {
+        "packages/a/tsconfig.json": config(`, "noEmit": true`),
+        "packages/a/a.ts": wrong("a"),
+        "packages/b/tsconfig.json": config(`, "noEmit": true`),
+        "packages/b/b.ts": wrong("b"),
+      },
+    ],
+  };
+  const commandLines = [[], ["-p", "."], ["-p", "tsconfig.json"], ["--noEmit"], ["-b"], ["-b", "."], ["FILE"], ["."]];
+  const cells = Object.entries(layouts).flatMap(([layout, it]) => commandLines.map(args => ({ layout, it, args })));
+  const files: Record<string, string> = {};
+  // Each has its own copy: a build writes files.
+  for (const [index, { it }] of cells.entries())
+    for (const side of ["theirs", "ours"]) for (const path in it[3]) files[`${index}/${side}/${path}`] = it[3][path];
+  using dir = tempDir("bun-check-contract", files);
+  const outcomeOf = async (cmd: string[], cwd: string, root: string) => {
+    await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const lines = stdout.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "").split(/\r?\n/);
+    // tsc exits with 2 if it has written files in spite of errors.
+    return { lines: lines.filter(line => line.trim()), fails: exitCode !== 0 };
+  };
+  const different: Record<string, object> = {};
+  let compared = 0;
+  await inTurns([...cells.entries()], async ([index, { layout, it, args }]) => {
+    const [directory, file, before] = it;
+    const given = args.map(arg => (arg === "FILE" ? file : arg));
+    const [theirRoot, ourRoot] = ["theirs", "ours"].map(side => join(String(dir), `${index}`, side));
+    for (const root of before.length ? [theirRoot, ourRoot] : [])
+      await outcomeOf([tsc!, ...before], join(root, directory), root);
+    const theirs = await outcomeOf([tsc!, ...given, "--pretty", "false"], join(theirRoot, directory), theirRoot);
+    if (/^Version |error TS(5112|6231|6504):/.test(theirs.lines[0] ?? "")) return;
+    compared++;
+    const ours = await outcomeOf([bunExe(), "check", ...given], join(ourRoot, directory), ourRoot);
+    if (!Bun.deepEquals(theirs, ours)) different[`${layout}: ${args.join(" ")}`] = { theirs, ours };
+  });
+  expect(different).toEqual({});
+  // Most of them are about something.
+  expect(compared).toBeGreaterThan(cells.length / 2);
 });

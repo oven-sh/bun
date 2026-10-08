@@ -413,6 +413,10 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.hir(of)[func].ret.is_none()
                     && let (compiled, false) = self.result_of_fn(of, func)
                     && compiled != self.return_type_of_fn(of, func)
+                    // What comes out of a generic function is held to what the call puts in for its type parameters: there an object that
+                    // `createBaseNode<T>(kind)` has made as a `Node` becomes what it is.
+                    && self.return_type_of_fn(of, func) == self.sig_return(sig)
+                    && !self.is_result_of_call_annotated(file, e)
                 {
                     return self.union(&[own, compiled]);
                 }
@@ -430,9 +434,26 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(name) => {
                 let own = self.type_of_expr(file, e);
                 let sym = self.symbol_of_identifier(file, e, name).and_then(|sym| if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym) } else { Some(sym) });
-                return match sym {
-                    Some(sym) if matches!(self.declaration_of_variable(sym), Some((_, Decl::Var(_)))) && self.type_of_symbol(sym) == own => self.type_stored_to(sym),
-                    _ => own,
+                let Some(sym) = sym.filter(|&sym| matches!(self.declaration_of_variable(sym), Some((_, Decl::Var(_))))) else { return own };
+                // A test for nil says nothing of what the object is: `const p = n as Named | undefined; if (p) p.name`.
+                let declared = self.type_of_symbol(sym);
+                let gone: Vec<TypeId> = self.parts(declared).iter().copied().filter(|part| !self.parts(own).contains(part)).collect();
+                let is_only_nil_gone = gone.iter().all(|part| part.is_undefined() || part.is_null()) && self.parts(own).iter().all(|part| self.parts(declared).contains(part));
+                if !is_only_nil_gone {
+                    return own;
+                }
+                let stored = self.type_stored_to(sym);
+                return if gone.is_empty() { stored } else { self.filter(stored, |_, part| !gone.contains(&part)) };
+            }
+            // `!` asserts that there is something, and nothing of what it is.
+            ExprKind::NonNull(expr) => {
+                let yielded = self.type_yielded_by(file, expr);
+                return if yielded == self.type_of_expr(file, expr) { self.type_of_expr(file, e) } else { self.non_nullable(yielded) };
+            }
+            ExprKind::Dot { .. } => {
+                return match self.property_read_of_coerced(file, e) {
+                    Some((found, target)) => self.type_coerced(found, target),
+                    None => self.type_of_expr(file, e),
                 };
             }
             _ => return self.type_of_expr(file, e),
@@ -765,10 +786,10 @@ impl<'p, 's> Checker<'p, 's> {
                 // `(node as NamedDeclaration).name`: the object may be any node, and then there need be no such property.
                 let object = self.type_yielded_by(file, obj);
                 let mut object = self.non_nullable(object);
-                if self.is_union(object) && self.property_type(object, name, shape::Access::Read).is_none() {
+                if self.is_union(object) && self.property_type(object, object, name, shape::Access::Read).is_none() {
                     object = self.view_of_either(object);
                 }
-                let found = self.property_type(object, name, shape::Access::Read);
+                let found = self.property_type(object, object, name, shape::Access::Read);
                 let declared = found.map_or(TypeId::UNRESOLVED, |found| found.0);
                 let apparent = self.apparent_type(object);
                 let field = self.prop_ref(apparent, name).and_then(|(prop, _)| match prop.source {
@@ -930,7 +951,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the expression `e` of `file`, which refers to `sym`, may be evaluated while that is in its temporal dead zone. `NONE`: a
     /// reference that is not in the source.
-    pub fn may_be_in_dead_zone(&self, sym: Sym, file: FileId, e: ExprId) -> bool {
+    pub fn may_be_in_dead_zone(&mut self, sym: Sym, file: FileId, e: ExprId) -> bool {
         let Some((of, decl)) = self.declaration_of_variable(sym) else { return true };
         match decl {
             Decl::Fn(_) => false,
@@ -1148,7 +1169,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the `let`, the `const` or the class, declared at the top level of a module, is initialized before any code runs that
     /// could refer to it. Up to the end of its declaration the body of the module runs no code of the program and cannot throw, and the
     /// body runs before any code of the modules that get at the module: see `ModuleGraph::puts_first`.
-    pub fn is_initialized_before_any_code(&self, sym: Sym) -> bool {
+    pub fn is_initialized_before_any_code(&mut self, sym: Sym) -> bool {
         let Some((file, decl)) = self.declaration_of_variable(sym) else { return false };
         match self.dead_zone_of(file, decl) {
             Some((Site::File, end)) if end != 0 => end <= self.end_of_inert_prefix(file) && self.is_put_first(file),
@@ -1163,7 +1184,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Where in the text of the module the first statement of its top level, or the first declaration of a `const` or `let` statement,
     /// starts that is not inert: it may run code of the program, or throw.
-    fn end_of_inert_prefix(&self, file: FileId) -> u32 {
+    fn end_of_inert_prefix(&mut self, file: FileId) -> u32 {
         if let Some(&known) = self.aot.storage.inert_prefixes.borrow().get(&file) {
             return known;
         }
@@ -1193,7 +1214,7 @@ impl<'p, 's> Checker<'p, 's> {
         end
     }
 
-    fn is_inert_statement(&self, file: FileId, stmt: StmtId) -> bool {
+    fn is_inert_statement(&mut self, file: FileId, stmt: StmtId) -> bool {
         let hir = self.hir(file);
         match hir[stmt].kind {
             StmtKind::Empty
@@ -1212,14 +1233,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn has_primitive_members(&self, file: FileId, declared: EnumId) -> bool {
+    fn has_primitive_members(&mut self, file: FileId, declared: EnumId) -> bool {
         let hir = self.hir(file);
         hir[declared].members.iter().all(|member| hir[member].computed_name.is_none() && (hir[member].init.is_none() || self.yields_primitive(file, hir[member].init)))
     }
 
     /// The definition of the class runs nothing but the engine: no decorator, no computed key, no static block, and what it extends and
     /// what its static fields start as is inert.
-    fn is_inert_class(&self, file: FileId, class: ClassId) -> bool {
+    fn is_inert_class(&mut self, file: FileId, class: ClassId) -> bool {
         let hir = self.hir(file);
         let is_decorated = |modifiers: Span<ModifierId>| modifiers.iter().any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)));
         let extends = hir[class].extends;
@@ -1236,7 +1257,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether evaluating the expression, at the top level of its module, runs no code of the program and cannot throw. `NONE` is.
-    fn is_inert(&self, file: FileId, e: ExprId) -> bool {
+    fn is_inert(&mut self, file: FileId, e: ExprId) -> bool {
         if e.is_none() {
             return true;
         }
@@ -1275,7 +1296,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the expression is inert and yields a number, a string, a boolean, `null` or `undefined`, going by how it is written. An
     /// operator on such neither calls anything nor throws.
-    fn yields_primitive(&self, file: FileId, e: ExprId) -> bool {
+    fn yields_primitive(&mut self, file: FileId, e: ExprId) -> bool {
         if self.is_half_of_stack_in_use() {
             return false;
         }
@@ -1301,7 +1322,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What the name stands for, through imports.
-    fn symbol_named_by(&self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
+    fn symbol_named_by(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
         let sym = self.symbol_of_identifier(file, e, name)?;
         if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym) } else { Some(sym) }
     }
@@ -1312,14 +1333,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether the name is that of a global that a declaration file declares and nothing in the program does.
-    fn names_global(&self, file: FileId, e: ExprId, name: Atom) -> bool {
+    fn names_global(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
         self.bound(file).expr_symbol[e.idx()].is_none() && self.symbol_of_identifier(file, e, name).is_some_and(|found| self.hir(found.file).kind == FileKind::Declaration)
     }
 
     /// Whether a read of the name, at the top level of its module after nothing but inert code, finds it initialized: a function
     /// declaration, what the module has declared further up, or what another module has initialized before any code runs. What is
     /// declared `any` or `unknown` may fail to fit where it goes.
-    fn is_inert_name(&self, file: FileId, e: ExprId, name: Atom) -> bool {
+    fn is_inert_name(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
         let Some(sym) = self.symbol_named_by(file, e, name) else { return false };
         let Some((of, decl)) = self.declaration_of_variable(sym) else { return false };
         let hir = self.hir(of);
@@ -1346,8 +1367,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The initializer of the `const` that the name stands for.
-    fn constant_named_by(&self, file: FileId, e: ExprId, name: Atom) -> Option<(FileId, ExprId)> {
-        let (of, Decl::Var(pat)) = self.declaration_of_variable(self.symbol_named_by(file, e, name)?)? else { return None };
+    fn constant_named_by(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<(FileId, ExprId)> {
+        let sym = self.symbol_named_by(file, e, name)?;
+        let (of, Decl::Var(pat)) = self.declaration_of_variable(sym)? else { return None };
         let hir = self.hir(of);
         let PatParent::Var(d) = root_declaration(self.bound(of), pat) else { return None };
         (hir[d].kind == VarKind::Const && hir[d].pat == pat && hir[d].init.is_some()).then_some((of, hir[d].init))
@@ -1355,7 +1377,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `new Map()`, `new Int32Array(8)`: a class of the engine, with no argument or with a length that is written down and small enough
     /// for the allocation not to fail while anything else works.
-    fn makes_object_of_engine(&self, file: FileId, call: CallId) -> bool {
+    fn makes_object_of_engine(&mut self, file: FileId, call: CallId) -> bool {
         let hir = self.hir(file);
         let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return false };
         if !self.names_global(file, hir[call].callee, name) {

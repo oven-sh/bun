@@ -15,7 +15,7 @@ use crate::sema::ts_syntax::{
     StatementData, StatementId, TupleElement, TypeAlias, TypeId, TypeParam, TypeParams, Types,
 };
 use bun_ast::{Expr, Loc, StoreStr};
-use bun_sema::hir::{DiagnosticKind, JSDocTypeKind, PatKind, TypeNode, TypeNodeKind};
+use bun_sema::hir::{DiagnosticKind, ExprId, JSDocTypeKind, PatKind, TypeNode, TypeNodeKind};
 
 use super::TypeSyntax;
 use crate::lexer::{PropertyModifierKeyword, T};
@@ -59,13 +59,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     #[inline]
     pub(crate) fn clear_last_type(&mut self) {
-        self.type_syntax_mut().last_type = TypeId::NONE;
+        self.type_syntax_mut().set_last_type(TypeId::NONE);
     }
 
     #[inline]
     pub(crate) fn emit_type(&mut self, kind: TypeNodeKind, pos: u32) {
         let syntax = self.type_syntax_mut();
-        syntax.last_type = syntax.b.file.ty(kind, pos, 0);
+        let ty = syntax.b.file.ty(kind, pos, 0);
+        syntax.set_last_type(ty);
     }
 
     /// `finishNode` for the last parsed type, unless it is already finished: it ends at the end of
@@ -334,7 +335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if syntax.last_type.is_none() || syntax.last_type.idx() + 1 != syntax.b.file.types.len() {
             return None;
         }
-        syntax.last_type = TypeId::NONE;
+        syntax.set_last_type(TypeId::NONE);
         syntax.b.file.types.pop()
     }
 
@@ -521,7 +522,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if syntax.last_type.is_some() {
             // `checkNamedTupleMember`. The element is required (`getTupleElementFlags`).
             syntax.b.file.error(DiagnosticKind::Grammar, pos, end, 5087);
-            syntax.last_type = syntax.b.rest_element_type(syntax.last_type);
+            let ty = syntax.b.rest_element_type(syntax.last_type);
+            syntax.set_last_type(ty);
         }
     }
 
@@ -535,10 +537,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.emit_type(union, pos);
     }
 
-    /// `interface I extends expression`, `class C implements expression`. The checker reports it
-    /// (2499, 2500).
-    pub(crate) fn emit_heritage_expression(&mut self, expression: Expr, pos: u32) {
-        self.emit_type(TypeNodeKind::Error, pos);
+    /// `interface I extends expression<Args>`, `class C implements expression<Args>`. The checker
+    /// reports it (2499, 2500). `has_arguments`: type arguments follow the expression, and are the
+    /// last ones parsed.
+    pub(crate) fn emit_heritage_expression(
+        &mut self,
+        expression: Expr,
+        has_arguments: bool,
+        pos: u32,
+    ) {
+        let args = match has_arguments {
+            true => self.take_saved_type_argument_list(),
+            false => Types::EMPTY,
+        };
+        let expr = ExprId::NONE;
+        self.emit_type(TypeNodeKind::Heritage { expr, args }, pos);
         let node = self.last_type();
         let part = super::clone_types::PendingPart::HeritageExpression(node, expression);
         self.type_syntax_mut().b.pending.push(part);
@@ -619,7 +632,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
-    /// The current token as a property key, if it is an identifier, keyword, string or number.
+    /// The current token as a property key, if it is an identifier, keyword, string, number or
+    /// private name.
     pub(crate) fn simple_property_key(&mut self) -> PropertyKey {
         match self.lexer.token {
             T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => self
@@ -627,6 +641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 .map_or(PropertyKey::None, PropertyKey::Name),
             T::TNumericLiteral => PropertyKey::Number(self.lexer.number),
             T::TBigIntegerLiteral => PropertyKey::BigInt,
+            T::TPrivateIdentifier => PropertyKey::Private(StoreStr::new(self.lexer.identifier)),
             _ if self.lexer.is_identifier_or_keyword() => PropertyKey::Name(self.token_text()),
             _ => PropertyKey::None,
         }
@@ -725,11 +740,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     pub(crate) fn read_member_word(&mut self) -> MemberWord {
         MemberWord {
             token: self.lexer.token,
-            key: match self.lexer.token {
-                T::TPrivateIdentifier => PropertyKey::Private(StoreStr::new(self.lexer.identifier)),
-                _ => self.simple_property_key(),
-            },
+            key: self.simple_property_key(),
             pos: self.token_start(),
+        }
+    }
+
+    /// `createMissingIdentifier`, at a token that is not the name of a member.
+    pub(crate) fn missing_member_word(&self) -> MemberWord {
+        MemberWord {
+            token: T::TIdentifier,
+            key: PropertyKey::Name(StoreStr::EMPTY),
+            pos: self.lexer.token_full_start as u32,
         }
     }
 
@@ -754,12 +775,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             .filter(|accessor| kept.is_complete && accessor.signature.is_some())
         {
             let end = self.lexer.full_start();
-            self.type_syntax_mut().b.add_signature_body(
+            let syntax = self.type_syntax_mut();
+            // The modifiers of every declaration being parsed.
+            let mut around = syntax.statement_modifiers.iter();
+            let is_ambient = around.any(|modifier| modifier.flag == Flags::AMBIENT);
+            syntax.b.add_signature_body(
                 accessor.signature,
                 FunctionBody {
                     loc: body.loc,
                     end,
                     stmts: body.stmts,
+                    is_ambient,
                 },
             );
         }
@@ -781,8 +807,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 }
 
 impl TypeSyntax<'_> {
-    /// `typeHasArrowFunctionBlockingParseError`, for the last parsed type.
+    #[inline]
+    pub(crate) fn set_last_type(&mut self, ty: TypeId) {
+        self.last_type = ty;
+        self.last_type_lacks_parameters = false;
+    }
+
+    /// `typeHasArrowFunctionBlockingParseError`, for the last parsed type. A type in parentheses has no node of its own.
     pub(crate) fn last_type_blocks_arrow_function(&self) -> bool {
+        if self.last_type_lacks_parameters {
+            return true;
+        }
         let file = &self.b.file;
         let mut ty = self.last_type;
         while ty.is_some() {
@@ -812,7 +847,7 @@ impl TypeSyntax<'_> {
                 file.names.truncate(name.start as usize);
             }
         }
-        self.last_type = TypeId::NONE;
+        self.set_last_type(TypeId::NONE);
     }
 
     /// Pops the list that starts at `from` in `type_stack`. `None` if any item is missing.
@@ -851,7 +886,7 @@ impl TypeSyntax<'_> {
                 b.file.entity_name([(first, pos)].into_iter())
             }
             _ => {
-                self.last_type = TypeId::NONE;
+                self.set_last_type(TypeId::NONE);
                 return;
             }
         };
@@ -884,11 +919,11 @@ impl TypeSyntax<'_> {
     fn attach_type_args(&mut self, reference: Option<TypeNode>, has_arguments: bool) {
         let Some(mut node) = reference else {
             if has_arguments {
-                self.last_type = TypeId::NONE;
+                self.set_last_type(TypeId::NONE);
             }
             return;
         };
-        self.last_type = TypeId::NONE;
+        self.set_last_type(TypeId::NONE);
         if has_arguments {
             node.end = 0;
             match (&mut node.kind, self.last_type_args.take()) {
@@ -901,32 +936,22 @@ impl TypeSyntax<'_> {
                 _ => return,
             }
         }
-        self.last_type = self.b.file.add_type_node(node);
+        let ty = self.b.file.add_type_node(node);
+        self.set_last_type(ty);
     }
 
     /// Emits `typeof a.b.c<Args>` at `pos`. The names are in `name_stack` starting at `names_base`.
     fn emit_typeof_type(&mut self, names_base: usize, has_arguments: bool, pos: u32) {
-        let name_stack = &mut self.name_stack;
-        // `typeof a.`: the part before the last dot is still resolved (`parseRightSideOfDot`).
-        // `typeof` without a name has a single, missing name (`parseEntityName`). Any other missing
-        // name makes the type unusable.
-        let required = (name_stack.len() - names_base).saturating_sub(1);
-        let is_complete = name_stack[names_base..]
-            .iter()
-            .take(required)
-            .all(|name| !name.text.is_empty());
-        let names: smallvec::SmallVec<[Name; 4]> = name_stack.drain(names_base..).collect();
-        self.last_type = TypeId::NONE;
-        if !is_complete {
-            return;
-        }
+        let names: smallvec::SmallVec<[Name; 4]> = self.name_stack.drain(names_base..).collect();
+        self.set_last_type(TypeId::NONE);
         let args = match (has_arguments, self.last_type_args.take()) {
             (false, _) => Types::EMPTY,
             (true, Some(args)) => args,
             (true, None) => return,
         };
         let data = self.b.add_typeof(&names, args, has_arguments);
-        self.last_type = self.b.file.ty(data, pos, 0);
+        let ty = self.b.file.ty(data, pos, 0);
+        self.set_last_type(ty);
     }
 
     /// `GetResolutionModeOverride`, from the nodes of the object type parsed last.
@@ -1387,7 +1412,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// `ModifierToFlag`, of the modifier keyword at the current token (`is_modifier_kind`).
     pub(crate) fn modifier_flag_here(&self) -> Flags {
-        match self.lexer.token {
+        match self.token() {
             T::TConst => Flags::CONST,
             T::TDefault => Flags::DEFAULT,
             T::TExport => Flags::EXPORT,
@@ -1407,7 +1432,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
-    /// `modifiers` are those of the parameter whose name has the `loc` `loc`.
+    /// `modifiers` are those of the parameter whose name has the `loc` `loc`, or the keywords among
+    /// those of the class expression whose `class` has it.
     pub(crate) fn note_parameter_modifiers(&mut self, loc: &mut Loc, modifiers: &[Modifier]) {
         if self.should_save_types() && !modifiers.is_empty() {
             let list = self.type_syntax_mut().b.ts.add_modifiers(modifiers);

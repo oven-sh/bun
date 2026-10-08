@@ -84,12 +84,20 @@ impl Checker<'_, '_> {
         } else {
             self.type_text_of_visited_node(file, node, ty, walk)
         };
-        results.push(TypeAtLocation {
+        // The other `NonNullExpression`s of a run of `!`, which have the same type: the outermost first.
+        let inside = match node.kind {
+            VisitedKind::Expression(e) => non_null_ends_in(self.hir(file), e),
+            _ => &[],
+        };
+        let ends = [node.end]
+            .into_iter()
+            .chain(inside.iter().rev().map(|it| it.1));
+        results.extend(ends.map(|end| TypeAtLocation {
             start: node.start,
-            end: node.end,
-            type_text,
+            end,
+            type_text: type_text.clone(),
             kind: node.kind,
-        });
+        }));
     }
 
     fn type_text_of_visited_node(

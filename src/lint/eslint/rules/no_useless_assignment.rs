@@ -199,7 +199,8 @@ fn is_assignment_unused(index: usize, all: &[Assignment<'_>], read_references: &
 /// A place where the variable is used.
 #[derive(Copy, Clone)]
 struct Use {
-    span: Span,
+    /// Where the name starts.
+    start: u32,
     is_read: bool,
     is_write: bool,
 }
@@ -342,13 +343,13 @@ impl<'a> Uses<'a> {
     fn of(variable: Symbol<'a>) -> Self {
         let mut all: SmallVec<[Use; 8]> = (variable.references())
             .map(|it| Use {
-                span: it.span(),
+                start: it.ident().start(),
                 is_read: it.is_read(),
                 is_write: it.is_write(),
             })
             .collect();
-        if !all.is_sorted_by_key(|it| it.span.start) {
-            all.sort_unstable_by_key(|it| it.span.start);
+        if !all.is_sorted_by_key(|it| it.start) {
+            all.sort_unstable_by_key(|it| it.start);
         }
         Uses {
             all,
@@ -362,20 +363,20 @@ impl<'a> Uses<'a> {
         let all = &self.all[..];
         // Most variables are used a few times.
         if all.len() <= 8 {
-            let first = all.iter().take_while(|it| it.span.start < span.start).count();
-            let count = all[first..].iter().take_while(|it| it.span.start < span.end).count();
+            let first = all.iter().take_while(|it| it.start < span.start).count();
+            let count = all[first..].iter().take_while(|it| it.start < span.end).count();
             return &all[first..first + count];
         }
-        let first = all.partition_point(|it| it.span.start < span.start);
-        let end = first + all[first..].partition_point(|it| it.span.start < span.end);
+        let first = all.partition_point(|it| it.start < span.start);
+        let end = first + all[first..].partition_point(|it| it.start < span.end);
         &all[first..end]
     }
 
     /// Whether `written` and what it evaluates first are the only uses in `span`.
     fn is_alone_in(&self, written: &Written<'a>, span: Span) -> bool {
         self.within(span).iter().all(|it| {
-            it.span == written.identifier
-                || !it.is_write && written.expression.is_some_and(|expression| expression.contains(it.span))
+            it.start == written.identifier.start
+                || !it.is_write && written.expression.is_some_and(|expression| expression.contains_offset(it.start))
         })
     }
 
@@ -392,7 +393,8 @@ impl<'a> Uses<'a> {
                 read_or_unknown(!first.is_write || matches!(
                     e.kind(),
                     ExprKind::Assign { target, value, .. }
-                        if target.span() == first.span && rest.iter().all(|it| value.span().contains(it.span))
+                        if target.span().start == first.start
+                            && rest.iter().all(|it| value.span().contains_offset(it.start))
                 ))
             }
         }
@@ -443,7 +445,7 @@ impl<'a> Uses<'a> {
                     _ => Flow::Unknown,
                 };
             };
-            let at = index_at(list, next.span.start);
+            let at = index_at(list, next.start);
             let Some(statement) = list.get(at).filter(|_| is_reached(at)) else {
                 return Flow::Unknown;
             };
@@ -574,7 +576,7 @@ impl<'a> Uses<'a> {
         };
         for statement in block.as_block().into_iter().flatten() {
             match statement.kind() {
-                _ if statement.span().end <= first.span.start => {
+                _ if statement.span().end <= first.start => {
                     if !matches!(statement.tag(), StmtTag::Expr | StmtTag::Var) {
                         return false;
                     }
@@ -582,7 +584,7 @@ impl<'a> Uses<'a> {
                 StmtKind::Expr(e) => {
                     return match e.kind() {
                         ExprKind::Assign { target: it, .. } | ExprKind::Unary { operand: it, .. } => {
-                            it.tag() == ExprTag::Ident && it.span() == first.span
+                            it.tag() == ExprTag::Ident && it.span().start == first.start
                         }
                         _ => false,
                     };

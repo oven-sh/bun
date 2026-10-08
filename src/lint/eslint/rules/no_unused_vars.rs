@@ -937,7 +937,9 @@ impl NoUnusedVars {
             return;
         }
         let function = match def {
-            Declaration::Param(pat) => Node::Pat(pat).enclosing_function(),
+            Declaration::Param(pat) => {
+                def.node().and_then(Node::as_func).or_else(|| Node::Pat(pat).enclosing_function())
+            }
             _ => None,
         };
         match kind {

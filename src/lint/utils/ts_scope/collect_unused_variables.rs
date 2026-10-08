@@ -184,14 +184,9 @@ fn is_class(symbol: Symbol) -> bool {
 
 /// The `VarDecl` that `pat`, which a `var`, `let`, `const`, `using` or `catch` binds, is part of.
 fn declarator_of(pat: Pat<'_>) -> Option<VarDecl<'_>> {
-    let file = pat.file();
-    let mut at = pat.id();
-    loop {
-        match *file.bound.pat_parent.get(at.idx())? {
-            PatParent::Var(declarator) => return Some(VarDecl::new(file, declarator)),
-            PatParent::Prop(outer, _) | PatParent::Elem(outer, _) if outer != at => at = outer,
-            _ => return None,
-        }
+    match Declaration::Var(pat).node()? {
+        Node::VarDecl(declarator) => Some(declarator),
+        _ => None,
     }
 }
 

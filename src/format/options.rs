@@ -41,6 +41,8 @@ pub struct FormatOptions {
     pub experimental_operator_position: OperatorPosition,
     pub experimental_ternaries: bool,
     pub embedded_language_formatting: EmbeddedLanguageFormatting,
+    /// For YAML and Markdown.
+    pub prose_wrap: ProseWrap,
     /// The name of the file, if it is not the one that it was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
     /// Prettier's `parser`, if it is not left to the name of the file: `json5`, `babel`, ..
@@ -165,6 +167,17 @@ impl FormatOptions {
                     _ => return Err(InvalidOption),
                 };
             }
+            b"proseWrap" => {
+                self.prose_wrap = match value {
+                    b"always" => ProseWrap::Always,
+                    b"never" => ProseWrap::Never,
+                    b"preserve" => ProseWrap::Preserve,
+                    _ => return Err(InvalidOption),
+                };
+            }
+            // For languages that are not formatted.
+            b"htmlWhitespaceSensitivity" if matches!(value, b"css" | b"strict" | b"ignore") => {}
+            b"vueIndentScriptAndStyle" => _ = boolean()?,
             b"filepath" => self.filepath = Some(value.into()),
             b"parser" => self.parser = Some(value.into()),
             b"rangeStart" => self.range_start = Some(number(u32::MAX)?),
@@ -198,6 +211,18 @@ impl FormatOptions {
     pub fn is_supported(&self) -> bool {
         !self.experimental_ternaries && self.experimental_operator_position == OperatorPosition::End
     }
+}
+
+/// How a paragraph is divided into lines.
+#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+pub enum ProseWrap {
+    /// At the print width.
+    Always,
+    /// Not at all.
+    Never,
+    /// As it is.
+    #[default]
+    Preserve,
 }
 
 /// oxfmt follows an older Prettier (3.8) in a few places, and has a few rules of its own. Whoever

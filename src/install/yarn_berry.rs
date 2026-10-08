@@ -436,7 +436,8 @@ fn read_yarnrc_file(
             let map = &mut *entry.value_ptr;
             obj.try_for_each_property(|name, _, value| -> Result<(), AllocError> {
                 if let Some(range) = scalar_text(&data, &value) {
-                    map.put(name, Box::from(range))?;
+                    // yarn allows `npm:^1.0.0` here; in a bun catalog that is an alias
+                    map.put(name, Box::from(strip_npm_protocol(range)))?;
                 }
                 Ok(())
             })
@@ -449,26 +450,13 @@ fn read_yarnrc_file(
         }
     }
 
-    // yarn substitutes `${VAR}` in rc values; a registry spelled that way cannot
-    // be compared with bun's
-    let registry_of = |log: &mut bun_ast::Log, owner: &Expr| -> Result<Option<Box<[u8]>>, Error> {
-        let Some(url) = get_str(owner, b"npmRegistryServer").filter(|url| !url.is_empty()) else {
-            return Ok(None);
-        };
-        if strings::contains(url, b"${") {
-            return Err(invalid_lockfile(
-                log,
-                format_args!(
-                    "npmRegistryServer in {} uses an environment variable (\"{}\")",
-                    bstr::BStr::new(&path),
-                    bstr::BStr::new(url),
-                ),
-            ));
-        }
-        Ok(Some(Box::from(url)))
+    let registry_of = |owner: &Expr| -> Option<Box<[u8]>> {
+        get_str(owner, b"npmRegistryServer")
+            .filter(|url| !url.is_empty())
+            .map(Box::from)
     };
     if out.registry.is_none() {
-        out.registry = registry_of(log, &root)?;
+        out.registry = registry_of(&root);
     }
     if let Some(ExprData::EObject(scopes)) = root.get(b"npmScopes").map(|e| e.data) {
         for p in scopes.properties.slice() {
@@ -478,7 +466,7 @@ fn read_yarnrc_file(
             if out.scope_registries.contains(scope) {
                 continue;
             }
-            if let Some(url) = registry_of(log, value)? {
+            if let Some(url) = registry_of(value) {
                 out.scope_registries.put(scope, url)?;
             }
         }
@@ -582,6 +570,14 @@ fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
         joined.push(b'/');
     }
     joined.extend_from_slice(rel);
+    // `packages/a/../shared` and `packages/b/../shared` are one folder
+    if strings::contains(&joined, b"..") || strings::contains(&joined, b"/./") {
+        use bun_paths::resolve_path::{normalize_string, platform};
+        let normalized = normalize_string::<true, platform::Posix>(&joined);
+        if !normalized.is_empty() {
+            return normalized.to_vec();
+        }
+    }
     joined
 }
 
@@ -949,12 +945,23 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // package.json already holds the range that command is about to resolve, and
     // yarn.lock has nothing for it. Left out of the migrated package, the install
     // sees the dependency as added and resolves it.
-    let requested: Vec<&[u8]> = manager.update_requests.iter().map(|r| r.name).collect();
+    // (A request for a git / tarball / folder has no name yet: package.json holds
+    // its literal.)
+    let requested: Vec<(&[u8], &[u8])> = manager
+        .update_requests
+        .iter()
+        .map(|r| (r.name, r.version.literal.slice(r.version_buf())))
+        .collect();
     let being_added = |name: &[u8], spec: &[u8]| -> bool {
-        requested.contains(&name)
-            && [&b"@"[..], b"@npm:"]
-                .iter()
-                .all(|sep| !descriptor_to_entry.contains(&[name, sep, spec].concat()))
+        requested.iter().any(|(requested_name, literal)| {
+            if requested_name.is_empty() {
+                *literal == name || *literal == spec
+            } else {
+                *requested_name == name
+            }
+        }) && [&b"@"[..], b"@npm:"]
+            .iter()
+            .all(|sep| !descriptor_to_entry.contains(&[name, sep, spec].concat()))
     };
 
     let mut root_rewrites: Vec<ManifestRewrite> = Vec::new();
@@ -1212,12 +1219,16 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 continue;
             }
             if let Some(path) = paths.iter().find(|p| {
-                bun_paths::is_absolute(p) || strings::split_any(p, b"/\\").any(|part| part == b"..")
+                p.is_empty()
+                    || p.as_slice() == b"."
+                    || strings::contains_char(p, 0)
+                    || bun_paths::is_absolute(p)
+                    || strings::split_any(p, b"/\\").any(|part| part == b"..")
             }) {
                 return Err(invalid_lockfile(
                     log,
                     format_args!(
-                        "yarn.lock patch file \"{}\" is outside the project",
+                        "yarn.lock patch file \"{}\" is not a file inside the project",
                         bstr::BStr::new(path)
                     ),
                 ));
@@ -1342,6 +1353,13 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             };
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
+            // The migration rewrites `portal:` / `link:` ranges in package.json to
+            // `file:` before the install saves bun.lock. When that install fails, the
+            // next one migrates again and finds its own spelling.
+            let rewritten_from: Vec<Vec<u8>> = match literal.strip_prefix(b"file:") {
+                Some(path) => vec![[b"portal:", path].concat(), [b"link:", path].concat()],
+                None => Vec::new(),
+            };
 
             // Yarn passes every dependency (peers are not dependencies) through
             // `resolutions` before it looks the descriptor up, and takes the first
@@ -1392,15 +1410,20 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     found = lookup(&key);
                 }
                 // 3. relative protocols (file:, portal:, link:) are keyed per declaring package
-                if found.is_none() {
-                    if let Some(owner) = &owner_locator {
+                if let (None, Some(owner)) = (found, &owner_locator) {
+                    for spelling in
+                        core::iter::once(literal).chain(rewritten_from.iter().map(Vec::as_slice))
+                    {
                         key.clear();
                         key.extend_from_slice(name);
                         key.push(b'@');
-                        key.extend_from_slice(literal);
+                        key.extend_from_slice(spelling);
                         key.extend_from_slice(b"::locator=");
                         key.extend_from_slice(owner);
                         found = lookup(&key);
+                        if found.is_some() {
+                            break;
+                        }
                     }
                 }
                 // 4. workspaces by name (root -> workspace edges, and `workspace:` ranges however spelled)
@@ -1442,6 +1465,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // A fresh resolve only records os/cpu for registry packages.
     crate::migration::clear_non_registry_platform_constraints(this);
 
+    this.tag_workspace_links(manager.options.link_workspace_packages);
     if this.resolve(log).is_err() {
         return Err(Error::LockfileResolveFailed);
     }
@@ -1526,7 +1550,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
 
     for (abs_path, changed) in &edited {
-        write_package_json(manager, log, abs_path, changed);
+        write_package_json(manager, log, abs_path, changed)?;
     }
 
     Ok(LoadResult::Ok(LoadResultOk {
@@ -1563,6 +1587,18 @@ fn registry_for(
     let Some(url) = from_yarn else {
         return Ok(configured.to_vec());
     };
+    // yarn substitutes `${VAR}` in rc values; a registry spelled that way cannot
+    // be compared with bun's
+    if strings::contains(url, b"${") {
+        return Err(invalid_lockfile(
+            log,
+            format_args!(
+                "yarn's registry for \"{}\" uses an environment variable (\"{}\"); bun cannot tell if it is the registry bun is configured with",
+                bstr::BStr::new(name),
+                bstr::BStr::new(url),
+            ),
+        ));
+    }
     let same = |a: &[u8], b: &[u8]| {
         lockfile::bun_lock::url_is_under_registry(a, b)
             && lockfile::bun_lock::url_is_under_registry(b, a)
@@ -1750,13 +1786,18 @@ fn resolution_target_entry(
     let mut key: Vec<u8> = Vec::with_capacity(name.len() + target.len() + root_locator.len() + 16);
     key.extend_from_slice(name);
     key.push(b'@');
-    for prefix in [&b""[..], b"npm:"] {
-        if !prefix.is_empty() && has_protocol(target) {
-            break;
-        }
+    // `file:` may be this migration's own rewrite of `portal:` / `link:`
+    let path = target.strip_prefix(b"file:");
+    let spellings = [
+        Some((&b""[..], target)),
+        (!has_protocol(target)).then_some((&b"npm:"[..], target)),
+        path.map(|path| (&b"portal:"[..], path)),
+        path.map(|path| (&b"link:"[..], path)),
+    ];
+    for (prefix, rest) in spellings.into_iter().flatten() {
         key.truncate(name.len() + 1);
         key.extend_from_slice(prefix);
-        key.extend_from_slice(target);
+        key.extend_from_slice(rest);
         if let Some(&i) = descriptor_to_entry.get(&key) {
             return Some(i);
         }
@@ -2275,7 +2316,7 @@ fn write_package_json(
     log: &mut bun_ast::Log,
     abs_path: &[u8],
     changed: &[&'static str],
-) {
+) -> Result<(), Error> {
     let silent = manager.options.log_level.is_silent();
     let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
     let rel = strings::without_prefix(
@@ -2302,23 +2343,26 @@ fn write_package_json(
             )
             .is_ok()
         });
-    if silent {
-        return;
+    // bun.lock is about to be saved for the edited package.json
+    if !written {
+        return Err(invalid_lockfile(
+            log,
+            format_args!(
+                "could not write {}{}package.json",
+                bstr::BStr::new(rel),
+                if rel.is_empty() { "" } else { "/" },
+            ),
+        ));
     }
-    if written {
+    if !silent {
         bun_core::pretty_errorln!(
             "<d>{} in <r><green>{}{}package.json<r>",
             changed.join(", "),
             bstr::BStr::new(rel),
             if rel.is_empty() { "" } else { "/" },
         );
-    } else {
-        bun_core::warn!(
-            "could not update {}{}package.json after migrating yarn.lock",
-            bstr::BStr::new(rel),
-            if rel.is_empty() { "" } else { "/" },
-        );
     }
+    Ok(())
 }
 
 /// `resolutions` / `overrides` from the root package.json, parsed the way a

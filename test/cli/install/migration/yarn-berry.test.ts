@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { readdir } from "fs/promises";
+import { readdir, rm } from "fs/promises";
 import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot, toBeValidBin, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
@@ -513,6 +513,17 @@ describe("yarn berry migration", () => {
     `);
 
     await expectFrozenInstall(dir);
+
+    // An install that fails after the migration leaves the rewritten package.json and no
+    // bun.lock. The next migration reads its own `file:` spelling of `portal:` / `link:`.
+    await rm(join(dir, "bun.lock"));
+    const again = await run(dir, "pm", "migrate");
+    expect(again.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(again.stderr).not.toContain("error:");
+    // (`configVersion` differs between `bun install` and `bun pm migrate`)
+    const packagesOf = (lock: string) => lock.slice(lock.indexOf(`"packages": {`));
+    expect(packagesOf(await bunLockOf(dir))).toBe(packagesOf(bunLock));
+    expect(again.exitCode).toBe(0);
   });
 
   test.concurrent("tarball URL and git resolutions", async () => {
@@ -615,8 +626,8 @@ describe("yarn berry migration", () => {
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "berry-registries", dependencies: { "a-dep": "^1.0.1" } }),
-          // the same registry bun is configured with
-          ".yarnrc.yml": `npmRegistryServer: "${verdaccio.registryUrl()}"\n`,
+          // the same registry bun is configured with; the scope is one the lockfile does not use
+          ".yarnrc.yml": `npmRegistryServer: "${verdaccio.registryUrl()}"\nnpmScopes:\n  unused:\n    npmRegistryServer: "\${UNUSED_REGISTRY}"\n`,
           "yarn.lock": yarnLock({
             "a-dep@npm:^1.0.1": [
               `resolution: "a-dep@npm:1.0.2::__archiveUrl=${encodeURIComponent(`${verdaccio.registryUrl()}a-dep/-/a-dep-1.0.2.tgz`)}"`,
@@ -756,7 +767,7 @@ describe("yarn berry migration", () => {
         ".yarnrc.yml": `nodeLinker: node-modules
 
 catalog:
-  no-deps: ^1.0.0
+  no-deps: "npm:^1.0.0"
 
 catalogs:
   pinned:
@@ -936,7 +947,20 @@ catalogs:
             `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/../outside.patch::version=1.0.0&hash=1a2b3c"`,
           ],
         }),
-      error: () => `error: yarn.lock patch file "../outside.patch" is outside the project`,
+      error: () => `error: yarn.lock patch file "../outside.patch" is not a file inside the project`,
+    },
+    {
+      name: "a patch with an empty path",
+      manifest: { dependencies: { "no-deps": "patch:no-deps@npm%3A1.0.0#~/" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "patch:no-deps@npm%3A1.0.0#~/"`]),
+          "no-deps@npm:1.0.0": [`resolution: "no-deps@npm:1.0.0"`],
+          "no-deps@patch:no-deps@npm%3A1.0.0#~/": [
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/::version=1.0.0&hash=1a2b3c"`,
+          ],
+        }),
+      error: () => `error: yarn.lock patch file "" is not a file inside the project`,
     },
     {
       name: "a workspace package.json does not list",
@@ -1027,7 +1051,8 @@ catalogs:
       manifest: { dependencies: { "no-deps": "^1.0.0" } },
       files: () => ({ ".yarnrc.yml": `npmRegistryServer: "\${REGISTRY}"\n` }),
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
-      error: () => `uses an environment variable ("\${REGISTRY}")`,
+      error: () =>
+        `error: yarn's registry for "no-deps" uses an environment variable ("\${REGISTRY}"); bun cannot tell if it is the registry bun is configured with`,
     },
     {
       name: "the @jsr scope, which yarn fetches from npm.jsr.io by default",
@@ -1172,6 +1197,63 @@ catalogs:
       "peer-deps-fixed@1.0.0",
       "what-bin@1.0.0",
     ]);
+    expect(exitCode).toBe(0);
+
+    // a tarball URL has no name until it is resolved
+    const urlDir = await fixture("basic");
+    const url = await run(urlDir, "add", `${verdaccio.registryUrl()}one-fixed-dep/-/one-fixed-dep-1.0.0.tgz`);
+    expect(url.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(url.stderr).not.toContain("error:");
+    expect(lockedVersions(await bunLockOf(urlDir))).toEqual([
+      "@types/is-number@1.0.0",
+      "a-dep@1.0.3",
+      "no-deps@1.0.0",
+      "one-fixed-dep@http://localhost:1234/one-fixed-dep/-/one-fixed-dep-1.0.0.tgz",
+      "one-range-dep@1.0.0",
+      "peer-deps-fixed@1.0.0",
+      "what-bin@1.0.0",
+    ]);
+    expect(url.exitCode).toBe(0);
+  });
+
+  test.concurrent("a file: folder two workspaces declare has one path, as in a fresh resolve", async () => {
+    const shared = (owner: string) => ({
+      [`shared@file:../shared::locator=${owner}%40workspace%3Apackages%2F${owner}`]: [
+        `resolution: "shared@file:../shared#../shared::hash=1f2e3d&locator=${owner}%40workspace%3Apackages%2F${owner}"`,
+      ],
+    });
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-shared", workspaces: ["packages/a", "packages/b"] }),
+        "packages/a/package.json": JSON.stringify({ name: "a", dependencies: { shared: "file:../shared" } }),
+        "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { shared: "file:../shared" } }),
+        "packages/shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "yarn.lock": yarnLock({
+          "a@workspace:packages/a": [
+            `resolution: "a@workspace:packages/a"`,
+            `dependencies:`,
+            `  shared: "file:../shared"`,
+          ],
+          "b@workspace:packages/b": [
+            `resolution: "b@workspace:packages/b"`,
+            `dependencies:`,
+            `  shared: "file:../shared"`,
+          ],
+          "berry-shared@workspace:.": [`resolution: "berry-shared@workspace:."`],
+          ...shared("a"),
+          ...shared("b"),
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    // not `packages/a/../shared` and `packages/b/../shared`
+    const bunLock = await bunLockOf(dir);
+    expect(bunLock).toContain(`"a/shared": ["shared@file:packages/shared", {}],`);
+    expect(bunLock).toContain(`"b/shared": ["shared@file:packages/shared", {}],`);
     expect(exitCode).toBe(0);
   });
 

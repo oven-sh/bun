@@ -551,10 +551,7 @@ pub fn is_in_const_context(node: TsNode) -> bool {
             | SyntaxKind::TemplateExpression => current = parent,
             SyntaxKind::AsExpression | SyntaxKind::TypeAssertionExpression => {
                 // `isConstAssertionExpression`
-                return parent.type_node().is_some_and(|ty| {
-                    ty.kind() == SyntaxKind::TypeReference
-                        && ty.children().next().is_some_and(|name| name.kind() == SyntaxKind::Identifier && name.text() == b"const")
-                });
+                return parent.children().any(|it| it.kind() == SyntaxKind::TypeReference && it.get_source_text() == b"const");
             }
             SyntaxKind::CallExpression => {
                 let Some(signature) = parent.get_resolved_signature() else {

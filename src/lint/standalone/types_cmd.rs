@@ -11,6 +11,7 @@
 //! - `bun-lint types conformance <fixtures> [--rule=r] [--report=dir] [--verbose] [--jobs=n]`: runs
 //!   the type-aware test cases of typescript-eslint.
 //!
+//! - `bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]`: what types cost.
 //! - `bun-lint types typescript-tests ..`: TypeScript's own tests, as `bun check
 //!   --run-typescript-tests` runs them (test/cli/check/typescript-go/conformance.ts). The types and
 //!   the symbols that they compare are those that the linter is given.
@@ -37,7 +38,8 @@ pub(crate) struct Project<'a> {
     pub(crate) cwd: &'a str,
     /// The `tsconfig.json`.
     pub(crate) config: Option<&'a str>,
-    /// The files to lint, as absolute paths.
+    /// The files to lint, as absolute paths. Empty: all the files of the project that are not
+    /// declaration files and not in `node_modules`.
     pub(crate) files: &'a [String],
     /// Files that are not on the disk, or have another text there: absolute paths and texts.
     pub(crate) overlay: Vec<(String, Vec<u8>)>,
@@ -138,8 +140,13 @@ pub(crate) fn lint_project<R: Send>(
         }
     };
     let after_file = |checker: &mut bun_sema::check::Checker<'_, '_>, file: FileId| {
-        let path = checker.p.files.module(file).file_name();
-        if !wanted.iter().any(|it| it == path) {
+        let module = checker.p.files.module(file);
+        let path = module.file_name();
+        let is_wanted = match wanted.is_empty() {
+            true => !module.is_from_external_library && module.hir.kind != bun_lint::ast::FileKind::Declaration,
+            false => wanted.iter().any(|it| it == path),
+        };
+        if !is_wanted {
             return;
         }
         let Some(result) = bun_lint::types::with_file(checker, file, language, Some(&read_library), |file| then(file)) else {
@@ -725,12 +732,62 @@ fn run_one(args: &[String]) {
     }
 }
 
+/// The sum of `each` over the expressions of `file`.
+fn expressions<'a>(file: &'a File<'a>, each: &dyn Fn(Node<'a>) -> usize) -> usize {
+    let (mut work, mut total) = (vec![Node::File(file)], 0);
+    while let Some(node) = work.pop() {
+        node.for_each_child(|child| work.push(child));
+        if matches!(node, Node::Expr(_)) {
+            total += each(node);
+        }
+    }
+    total
+}
+
+/// `bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]`: how long it takes to check a project, to make a
+/// `File` of each of its files, to ask for the type of every expression, and to run rules.
+fn bench(args: &[String]) {
+    let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
+    let Some(config) = args.iter().find(|a| !a.starts_with("--")) else {
+        return println!("usage: bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]");
+    };
+    let config = absolute(config);
+    let cwd = std::path::Path::new(&config).parent().map(|it| it.to_string_lossy().into_owned()).unwrap_or_default();
+    let threads = flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(0);
+    let project = || Project {
+        cwd: &cwd,
+        config: Some(&config),
+        files: &[],
+        overlay: Vec::new(),
+        threads,
+    };
+    let language = LanguageOptions::default();
+    let time = |what: &str, then: &(dyn for<'a> Fn(&'a File<'a>) -> usize + Sync)| {
+        let started = std::time::Instant::now();
+        let results = lint_project(project(), &language, then);
+        let total: usize = results.iter().map(|it| it.1).sum();
+        println!("{:>8.3} s  {what}: {} files, {total}", started.elapsed().as_secs_f64(), results.len());
+    };
+    time("only the files", &|_| 0);
+    time("a walk over the expressions", &|file| expressions(file, &|_| 1));
+    time("the type of every expression", &|file| expressions(file, &|node| usize::from(node.ty().flags().contains(TypeFlags::ANY))));
+    time("the type of every expression, printed", &|file| expressions(file, &|node| node.ty().to_text().len()));
+    time("the symbol of every expression", &|file| expressions(file, &|node| usize::from(node.ts_symbol().is_some())));
+    if let Some(rules) = flag("--rules=") {
+        let rules = rules.split(',').map(|name| (RuleId::Known(find_rule(name).expect("the rule").meta).to_vec(), Json::Number(2.0)));
+        let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(rules.collect()))]);
+        let config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
+        time("the rules", &|file| linter().lint(file, &config, &LintOptions::default()).messages.len());
+    }
+}
+
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("dump") => dump_file(&args[1..]),
         Some("dump-fixtures") => dump_fixtures(&args[1..]),
         Some("conformance") => conformance(&args[1..]),
         Some("run") => run_one(&args[1..]),
+        Some("bench") => bench(&args[1..]),
         Some("typescript-tests") => {
             let rest: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
             if !bun_sema_standalone::baselines::run_from_command_line(&rest) {

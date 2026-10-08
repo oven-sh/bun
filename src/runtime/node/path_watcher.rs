@@ -185,9 +185,13 @@ impl PathWatcherManager {
         &buf[..resolved_path.len() + 1]
     }
 
-    /// Remove `watcher` from the live list and from its `by_path` slot, if it
-    /// still holds one. Caller holds `mutex`.
-    fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) {
+    /// `watcher` ends: take it out of the live list and out of its `by_path`
+    /// slot, if it still holds one. Only for the `detach()` of the last handler
+    /// and for a `watch()` whose OS watch did not start. A reader thread must not
+    /// call this for a watcher whose root is gone: the watcher is still open, and
+    /// the overflow and fatal-error reports reach it through the list. Caller
+    /// holds `mutex`.
+    fn drop_watcher_locked(&self, watcher: *mut PathWatcher) {
         // SAFETY: caller holds self.mutex; exclusive access to self.watchers and
         // self.by_path for the duration of this block (nothing here re-enters).
         unsafe {
@@ -425,7 +429,7 @@ impl PathWatcher {
             }
 
             // Last handler gone — make this watcher unreachable before dropping the lock.
-            manager.unlink_watcher_locked(this);
+            manager.drop_watcher_locked(this);
             // SAFETY: raw place write under manager.mutex; see above.
             unsafe { (*this).manager = None };
             // SAFETY: exclusive under manager.mutex (the reader and CF threads
@@ -599,10 +603,10 @@ pub(crate) fn watch(
             // handler and already returned `watcher` to its caller. Only destroy if
             // ours was the last handler; otherwise surface the error to the survivors
             // and leave `watcher.manager` set so their `detach()` takes the locked path
-            // (→ `unlinkWatcherLocked` no-ops, `removeWatch` no-ops on null `fsevents`,
+            // (→ `drop_watcher_locked` no-ops, `removeWatch` no-ops on null `fsevents`,
             // then frees). Never free memory another thread holds.
             manager.mutex.lock();
-            manager.unlink_watcher_locked(watcher);
+            manager.drop_watcher_locked(watcher);
             // SAFETY: holding manager.mutex; scoped accesses only.
             let remaining = unsafe {
                 (*watcher).handlers.swap_remove(&ctx);
@@ -649,7 +653,7 @@ pub(crate) fn watch(
         if let Err(err) = added {
             // Still under the same lock as the insertion, so no other thread
             // can have observed `watcher` yet — unconditional destroy is safe.
-            manager.unlink_watcher_locked(watcher);
+            manager.drop_watcher_locked(watcher);
             manager.mutex.unlock();
             // SAFETY: no other thread observed watcher.
             unsafe {

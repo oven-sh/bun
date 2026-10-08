@@ -845,32 +845,41 @@ describe("fs.watch", () => {
       // Nothing keeps the old inode here. It dies at the replace, but the
       // reader thread has not read that yet when fs.watch() runs again, and
       // ext4 gives the new file the old inode number. A watcher that joined
-      // the old one gets its change (link count), rename (IN_DELETE_SELF) and
-      // rename (IN_IGNORED), and never the write to the new file.
-      test.each(["rename-over", "unlink+create"] as const)(
-        "a file watched again in the same tick as the %s",
-        async how => {
-          using dir = tempDir("fs-watch-rebound-same-tick", {});
-          for (let i = 0; i < 10; i++) {
-            const name = `f${i}.txt`;
-            const target = path.join(String(dir), name);
-            fs.writeFileSync(target, "1");
-            using stale = observe(target);
+      // the old one gets the old inode's last events (IN_DELETE_SELF and
+      // IN_IGNORED, each a "rename") and never an event of the new one.
+      test.each([
+        ["file", "rename-over"],
+        ["file", "unlink+create"],
+        ["directory", "rmdir+mkdir"],
+        ["recursive directory", "rmdir+mkdir"],
+      ] as const)("a %s watched again in the same tick as the %s", async (kind, how) => {
+        using dir = tempDir("fs-watch-rebound-same-tick", {});
+        const recursive = kind === "recursive directory";
+        for (let i = 0; i < 10; i++) {
+          const name = `t${i}`;
+          const target = path.join(String(dir), name);
+          if (kind === "file") fs.writeFileSync(target, "1");
+          else fs.mkdirSync(target);
+          using stale = observe(target, recursive);
+          if (how === "rmdir+mkdir") {
+            fs.rmdirSync(target);
+            fs.mkdirSync(target);
+          } else {
             replace(target, how);
-            using fresh = observe(target);
-            await stale.saw("rename", 2);
-            // The old inode's events are all delivered. This watcher joins
-            // `fresh`, after it, so its first event comes after any of `fresh`.
-            using later = observe(target);
-            fs.appendFileSync(target, "x");
-            await later.saw();
-            expect({ fresh: fresh.events, later: later.events }).toEqual({
-              fresh: [["change", name]],
-              later: [["change", name]],
-            });
           }
-        },
-      );
+          using fresh = observe(target, recursive);
+          // A recursive root reports no "rename" for IN_IGNORED.
+          await stale.saw("rename", recursive ? 1 : 2);
+          // The old inode's events are all delivered. This watcher joins
+          // `fresh`, after it, so its first event comes after any of `fresh`.
+          using later = observe(target, recursive);
+          if (kind === "file") fs.appendFileSync(target, "x");
+          else fs.mkdirSync(path.join(target, "new"));
+          await later.saw();
+          const expected = [kind === "file" ? ["change", name] : ["rename", "new"]];
+          expect({ fresh: fresh.events, later: later.events }).toEqual({ fresh: expected, later: expected });
+        }
+      });
     });
   });
 

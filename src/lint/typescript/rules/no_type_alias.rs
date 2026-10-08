@@ -62,23 +62,26 @@ fn is_tuple(ty: TypeNode) -> bool {
 }
 
 /// Flattens `node` into the types that it is composed of.
-fn get_types<'a>(
-    node: TypeNode<'a>,
-    composition_type: Option<Composition>,
-    types: &mut SmallVec<[TypeWithLabel<'a>; 8]>,
-) {
-    let (parts, composition) = match node.kind() {
-        TypeKind::Union(parts) => (parts, Composition::Union),
-        TypeKind::Intersection(parts) => (parts, Composition::Intersection),
-        _ => {
-            return types.push(TypeWithLabel {
-                node,
-                composition_type,
-            });
-        }
-    };
-    for part in parts {
-        get_types(part, Some(composition), types);
+fn get_types<'a>(node: TypeNode<'a>, types: &mut SmallVec<[TypeWithLabel<'a>; 8]>) {
+    let mut stack: SmallVec<[TypeWithLabel<'a>; 8]> = smallvec::smallvec![TypeWithLabel {
+        node,
+        composition_type: None,
+    }];
+    while let Some(ty) = stack.pop() {
+        let (parts, composition) = match ty.node.kind() {
+            TypeKind::Union(parts) => (parts, Composition::Union),
+            TypeKind::Intersection(parts) => (parts, Composition::Intersection),
+            _ => {
+                types.push(ty);
+                continue;
+            }
+        };
+        let first = stack.len();
+        stack.extend(parts.iter().map(|node| TypeWithLabel {
+            node,
+            composition_type: Some(composition),
+        }));
+        stack[first..].reverse();
     }
 }
 
@@ -169,7 +172,7 @@ impl Rule for NoTypeAlias {
                 return;
             };
             let mut types = SmallVec::new();
-            get_types(alias.ty(), None, &mut types);
+            get_types(alias.ty(), &mut types);
             let is_top_level = types.len() == 1;
             for ty in types {
                 rule.validate_type_aliases(cx, ty, is_top_level);

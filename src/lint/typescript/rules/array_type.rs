@@ -50,17 +50,22 @@ const ERROR_STRING_GENERIC_SIMPLE: Message = Message::new(
 );
 
 /// typescript-eslint's `isSimpleType`.
-fn is_simple_type(ty: TypeNode) -> bool {
-    match ty.kind() {
-        TypeKind::Keyword(keyword) => keyword != Keyword::Intrinsic,
-        TypeKind::Array(_) => true,
-        TypeKind::Ref { name, args } if name.is("Array") => match (args.first(), args.len()) {
-            (None, _) => true,
-            (Some(only), 1) => is_simple_type(only),
+fn is_simple_type(mut ty: TypeNode) -> bool {
+    loop {
+        return match ty.kind() {
+            TypeKind::Keyword(keyword) => keyword != Keyword::Intrinsic,
+            TypeKind::Array(_) => true,
+            TypeKind::Ref { name, args } if name.is("Array") => match (args.first(), args.len()) {
+                (None, _) => true,
+                (Some(only), 1) => {
+                    ty = only;
+                    continue;
+                }
+                _ => false,
+            },
+            TypeKind::Ref { args, .. } => args.is_empty(),
             _ => false,
-        },
-        TypeKind::Ref { args, .. } => args.is_empty(),
-        _ => false,
+        };
     }
 }
 

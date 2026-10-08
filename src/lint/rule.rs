@@ -193,6 +193,11 @@ pub trait Rule: Send + Sync + Sized + 'static {
     /// `options`: what follows the severity in the configuration.
     fn new(options: &Options) -> Self;
 
+    /// What is wrong with `options` that the schema of the rule cannot tell, where ESLint's rule throws: the message.
+    fn validate(_options: &Options) -> Result<(), Vec<u8>> {
+        Ok(())
+    }
+
     /// Called for each file, like ESLint's `create`.
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a>;
 }
@@ -217,6 +222,7 @@ macro_rules! sorts {
             Types(TypeTag, Listener<'a, R, TypeNode<'a>>),
             Pats(PatTag, Listener<'a, R, Pat<'a>>),
             $($variant(Listener<'a, R, $handle<'a>>),)*
+            Nodes(NodeTags, Listener<'a, R, Node<'a>>),
             Enter(NodeTags, Listener<'a, R, Node<'a>>),
             Exit(NodeTags, Listener<'a, R, Node<'a>>),
             CodePathStart(OnCodePath<'a, R>),
@@ -323,6 +329,11 @@ impl<'a, R: Rule> Listeners<'a, R> {
         self.entries.extend(tags.map(|tag| Entry::Pats(tag, listener)));
     }
 
+    /// Every node of one of these kinds, in no particular order: for a rule that learns from its options which kinds it is about.
+    pub fn nodes(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
+        self.entries.push(Entry::Nodes(tags.into(), listener));
+    }
+
     /// Every node of one of these kinds, in source order, before its children.
     ///
     /// This makes the linter walk the file, which the listeners above do not need.
@@ -421,6 +432,11 @@ impl NodeTags {
     #[inline]
     pub const fn union(self, other: NodeTags) -> NodeTags {
         NodeTags(self.0 | other.0)
+    }
+
+    #[inline]
+    pub const fn intersects(self, other: NodeTags) -> bool {
+        self.0 & other.0 != 0
     }
 
     #[inline]

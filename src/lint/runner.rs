@@ -178,6 +178,56 @@ impl<'a> File<'a> {
         }
     }
 
+    /// Calls `visit` with every node of the kinds in `tags`, sort by sort.
+    pub(crate) fn every_node_of(&'a self, tags: NodeTags, mut visit: impl FnMut(Node<'a>)) {
+        for tag in EXPR_TAGS {
+            if tags.intersects(tag.into()) {
+                self.exprs_of(tag).iter().for_each(|&id| visit(Node::Expr(Expr::from_raw(self, id))));
+            }
+        }
+        for tag in StmtTag::ALL {
+            if tags.intersects(tag.into()) {
+                self.stmts_of(tag).iter().for_each(|&id| visit(Node::Stmt(Stmt::from_raw(self, id))));
+            }
+        }
+        for tag in TypeTag::ALL {
+            if tags.intersects(tag.into()) {
+                self.types_of(tag).iter().for_each(|&id| visit(Node::Type(TypeNode::from_raw(self, id))));
+            }
+        }
+        if tags.intersects(NodeTags::PAT) {
+            for tag in PatTag::ALL {
+                self.pats_of(tag).iter().for_each(|&id| visit(Node::Pat(Pat::from_raw(self, id))));
+            }
+        }
+        macro_rules! sorts {
+            ($($tags:ident $every:ident $variant:ident;)*) => {
+                $(if tags.intersects(NodeTags::$tags) {
+                    self.$every(|it| visit(Node::$variant(it)));
+                })*
+            };
+        }
+        sorts! {
+            FUNC every_func Func;
+            CLASS every_class Class;
+            MEMBER every_member Member;
+            PROP every_prop Prop;
+            PARAM every_param Param;
+            TYPE_PARAM every_type_param TypeParam;
+            VAR_DECL every_var_decl VarDecl;
+            CASE every_case Case;
+            ENUM_MEMBER every_enum_member EnumMember;
+            IMPORT_SPEC every_import_spec ImportSpec;
+            EXPORT_SPEC every_export_spec ExportSpec;
+            TUPLE_ELEM every_tuple_elem TupleElem;
+            PAT_PROP every_pat_prop PatProp;
+            PAT_ELEM every_pat_elem PatElem;
+        }
+        if tags.intersects(NodeTags::FILE) {
+            visit(Node::File(self));
+        }
+    }
+
     fn every_tuple_elem(&'a self, mut visit: impl FnMut(TupleElem<'a>)) {
         for i in 0..self.hir.tuple_elems.len() {
             let it = TupleElem::from_raw(self, i as u32);
@@ -251,6 +301,8 @@ impl<R: Rule> AnyRule for R {
 pub struct RuleEntry {
     pub meta: &'static Meta,
     pub build: fn(&Options) -> Box<dyn AnyRule>,
+    /// [`Rule::validate`]
+    pub validate: fn(&Options) -> Result<(), Vec<u8>>,
 }
 
 impl RuleEntry {
@@ -258,6 +310,7 @@ impl RuleEntry {
         RuleEntry {
             meta: &R::META,
             build: |options| Box::new(R::new(options)),
+            validate: R::validate,
         }
     }
 }
@@ -347,6 +400,7 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
                         listener(rule, symbol, cx);
                     }
                 }
+                Entry::Nodes(tags, listener) => file.every_node_of(tags, |node| listener(rule, node, cx)),
                 Entry::Enter(..)
                 | Entry::Exit(..)
                 | Entry::CodePathStart(_)
@@ -492,7 +546,7 @@ fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
         }
     }
     let mut found: Vec<Found<'a>> = Vec::new();
-    let mut add = |node: Node<'a>| {
+    file.every_node_of(Walk::tags_of(&walk.enter) | Walk::tags_of(&walk.exit), |node| {
         let span = node.span();
         found.push(Found {
             start: span.start,
@@ -500,56 +554,7 @@ fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
             rank: rank(node),
             node,
         });
-    };
-    let is_listened = |tags: NodeTags| {
-        (0..NodeTags::COUNT).any(|i| tags.has_index(i as u32) && !(walk.enter[i].is_empty() && walk.exit[i].is_empty()))
-    };
-    for tag in EXPR_TAGS {
-        if is_listened(tag.into()) {
-            file.exprs_of(tag).iter().for_each(|&id| add(Node::Expr(Expr::from_raw(file, id))));
-        }
-    }
-    for tag in StmtTag::ALL {
-        if is_listened(tag.into()) {
-            file.stmts_of(tag).iter().for_each(|&id| add(Node::Stmt(Stmt::from_raw(file, id))));
-        }
-    }
-    for tag in TypeTag::ALL {
-        if is_listened(tag.into()) {
-            file.types_of(tag).iter().for_each(|&id| add(Node::Type(TypeNode::from_raw(file, id))));
-        }
-    }
-    if is_listened(NodeTags::PAT) {
-        for tag in PatTag::ALL {
-            file.pats_of(tag).iter().for_each(|&id| add(Node::Pat(Pat::from_raw(file, id))));
-        }
-    }
-    macro_rules! sorts {
-        ($($tags:ident $every:ident $variant:ident;)*) => {
-            $(if is_listened(NodeTags::$tags) {
-                file.$every(|it| add(Node::$variant(it)));
-            })*
-        };
-    }
-    sorts! {
-        FUNC every_func Func;
-        CLASS every_class Class;
-        MEMBER every_member Member;
-        PROP every_prop Prop;
-        PARAM every_param Param;
-        TYPE_PARAM every_type_param TypeParam;
-        VAR_DECL every_var_decl VarDecl;
-        CASE every_case Case;
-        ENUM_MEMBER every_enum_member EnumMember;
-        IMPORT_SPEC every_import_spec ImportSpec;
-        EXPORT_SPEC every_export_spec ExportSpec;
-        TUPLE_ELEM every_tuple_elem TupleElem;
-        PAT_PROP every_pat_prop PatProp;
-        PAT_ELEM every_pat_elem PatElem;
-    }
-    if is_listened(NodeTags::FILE) {
-        add(Node::File(file));
-    }
+    });
     found.sort_unstable_by_key(|it| (it.start, std::cmp::Reverse(it.end), it.rank));
 
     // The nodes that have been entered and not left, each with its end.
@@ -570,7 +575,7 @@ fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
     }
 }
 
-const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
+pub(crate) const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
     use ExprTag::*;
     [
         Missing, Ident, PrivateIdentifier, This, Super, Null, True, False, Number, String, BigInt, Regex, Template,

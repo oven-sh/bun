@@ -648,8 +648,8 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
     type_query_operands.dedup();
     // What nothing says to be a part of anything is what the parser has left behind, and what is in it
     // has entries that `bind` does not have. That is rare enough to leave it to the binder.
-    !expr_parent.contains(&Parent::None)
-        && !stmt_parent.contains(&Parent::None)
+    !expr_parent.iter().any(|it| matches!(it, Parent::None))
+        && !stmt_parent.iter().any(|it| matches!(it, Parent::None))
         && fns.iter().all(|it| it.owner != FnOwner::None)
         && !class_owner.contains(&ClassOwner::Stmt(StmtId::NONE))
         && !type_scope.contains(&ScopeId::NONE)

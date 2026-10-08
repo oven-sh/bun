@@ -1,0 +1,109 @@
+[
+  {
+    "repo": "preactjs/preact",
+    "sha": "04074e2162c85852797b09a1d220f9483182fdce",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.8.0",
+      "oxfmt": "0.32.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": ["src", "test/browser", "test/node", "test/shared", "debug", "compat", "hooks", "test-utils"],
+        "from": "scripts.oxlint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": ["."],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "axios/axios",
+    "sha": "1a94bdbdf0518f3adbeada510b747aff80847ed7",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": ["lib/**/*.js"],
+        "shell": true,
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": ["."],
+        "from": "lint-staged runs prettier --write on each file"
+      }
+    ]
+  },
+  {
+    "repo": "pmndrs/zustand",
+    "sha": "d7a5583cffd80af515f7dfb69583c95cbdc9e2ce",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": ["."],
+        "from": "scripts.test:lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": ["."],
+        "from": "scripts.test:format"
+      }
+    ]
+  },
+  {
+    "repo": "vuejs/core",
+    "sha": "4ab865a848a1da3d10fb674f857e5fff13094644",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": ["."],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": ["."],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "expressjs/express",
+    "sha": "9efc29e280018dafc1f0617f3a3d28f4e463b7be",
+    "install": "bun",
+    "installArgs": ["--no-save"],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": ["."],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "fastify/fastify",
+    "sha": "5c081d4b7237f0eb2db9f1204dc6400e3aa1325e",
+    "install": "bun",
+    "installArgs": ["--no-save"],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.lint:eslint"
+      }
+    ]
+  }
+]

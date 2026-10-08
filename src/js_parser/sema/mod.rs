@@ -433,7 +433,7 @@ thread_local! {
 pub struct ThreadCaches(
     notes::Notes,
     builder::Recycled,
-    Option<Box<bun_sema_parser::Scratch>>,
+    [Option<Box<bun_sema_parser::Scratch>>; 2],
 );
 
 impl ThreadCaches {
@@ -480,9 +480,24 @@ pub fn summarize<'s>(
 }
 
 thread_local! {
-    /// What `bun_sema_parser` keeps from one file to the next.
-    static DIRECT: core::cell::RefCell<Option<Box<bun_sema_parser::Scratch>>> =
-        const { core::cell::RefCell::new(None) };
+    /// What `bun_sema_parser` keeps from one file to the next. Two of them: who formats a file
+    /// parses the result while the file is still at hand.
+    static DIRECT: core::cell::RefCell<[Option<Box<bun_sema_parser::Scratch>>; 2]> =
+        const { core::cell::RefCell::new([None, None]) };
+}
+
+/// One of `DIRECT`, which is nobody's until `give_back_scratch`.
+fn take_scratch() -> Box<bun_sema_parser::Scratch> {
+    let taken = DIRECT.with_borrow_mut(|all| all.iter_mut().find_map(Option::take));
+    taken.unwrap_or_default()
+}
+
+fn give_back_scratch(scratch: Box<bun_sema_parser::Scratch>) {
+    DIRECT.with_borrow_mut(|all| {
+        if let Some(free) = all.iter_mut().find(|it| it.is_none()) {
+            *free = Some(scratch);
+        }
+    });
 }
 
 /// How many files `summarize_as` has handed to `bun_sema_parser`, and how many of them that parser
@@ -666,9 +681,9 @@ pub fn summarize_in<'s>(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
-    let directly = DIRECT.with_borrow_mut(|scratch| {
+    let directly = DIRECT.with_borrow_mut(|all| {
         summarize_directly(
-            scratch.get_or_insert_default(),
+            all[0].get_or_insert_default(),
             dialect,
             (arena, session),
             path,
@@ -736,7 +751,7 @@ pub fn with_summary_in_place<'s, R>(
     then: impl FnOnce(Summary<'_, 's>, &dyn bun_sema::atom::Intern) -> R,
 ) -> R {
     // `then` may parse another text.
-    let mut scratch = DIRECT.take().unwrap_or_default();
+    let mut scratch = take_scratch();
     let directly = parse_directly(
         &mut scratch,
         dialect,
@@ -748,7 +763,7 @@ pub fn with_summary_in_place<'s, R>(
         every_file_is_a_module,
     );
     let Some(mut file) = directly else {
-        DIRECT.set(Some(scratch));
+        give_back_scratch(scratch);
         let (file, _) = summarize_with_recovery(
             dialect,
             false,
@@ -767,7 +782,7 @@ pub fn with_summary_in_place<'s, R>(
     if text.len() < 4 << 20 {
         scratch.recycle(file);
     }
-    DIRECT.set(Some(scratch));
+    give_back_scratch(scratch);
     result
 }
 

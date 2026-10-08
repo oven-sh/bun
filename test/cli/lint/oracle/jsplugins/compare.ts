@@ -59,8 +59,8 @@ for (const theirs of read(expectedPath)) {
     continue;
   }
   different++;
-  // The first and the last part of the path.
-  const kind = found[0].replace(/^(\/[^/]+).*(\/[^/]+)$/, "$1 .. $2").replace(/\d+/g, "N");
+  // The last names in the path.
+  const kind = found[0].replace(/\/\d+/g, "").split("/").slice(-2).join("/");
   note(kind, `${title}\n  at ${found[0]}\n  expected: ${JSON.stringify(found[1])?.slice(0, 300)}\n  actual:   ${JSON.stringify(found[2])?.slice(0, 300)}`);
 }
 for (const [kind, { count, examples }] of [...kinds].sort((a, b) => b[1].count - a[1].count)) {

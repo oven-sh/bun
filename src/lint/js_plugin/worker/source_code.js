@@ -54,6 +54,9 @@ class SourceCode extends TokenStore {
   get lineStartIndices() {
     return lineStarts ?? computeLineStarts();
   }
+  get tokensAndComments() {
+    return tokensAndComments();
+  }
   get visitorKeys() {
     return visitorKeys[dialect()];
   }

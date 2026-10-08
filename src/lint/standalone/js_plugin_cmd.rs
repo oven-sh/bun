@@ -189,11 +189,18 @@ fn batch(args: &[String]) {
                 if bun_lint::linter::parse_error(file).is_some() {
                     return Err(bun_lint::js_plugin::Failure::from(b"the parser rejects the code".to_vec()));
                 }
+                // As `Linter::lint` does.
+                for name in file.exported_in_comments() {
+                    if let Some(symbol) = file.scope().get_bytes(name) {
+                        symbol.mark_exported();
+                    }
+                }
                 host.run(file, &configuration.1, &references, true)
             })
         }));
         let outcome = match result {
-            Ok(Ok(reports)) => {
+            Ok(Ok(mut reports)) => {
+                reports.sort_by_key(|it| (it.line, it.column));
                 (b"messages".to_vec(), Json::Array(reports.iter().map(|it| report_as_json(it, enabled, code)).collect()))
             }
             Ok(Err(failure)) => (b"failure".to_vec(), Json::String(failure.message)),

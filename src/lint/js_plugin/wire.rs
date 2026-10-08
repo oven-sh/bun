@@ -33,7 +33,7 @@ pub(super) mod from_worker {
     pub(crate) const LOADED: u32 = 1;
     /// Text: why what was asked for cannot be done.
     pub(crate) const FAILED: u32 = 2;
-    /// JSON: the reports. Nothing if there are none.
+    /// JSON: `[reports, the indices of the variables that rules have marked as used]`. Nothing if there are none.
     pub(crate) const DONE: u32 = 3;
     /// JSON: `[new selectors, the indices of the selectors to match]`.
     pub(crate) const NEEDS_AST: u32 = 4;

@@ -57,12 +57,18 @@ pub struct Suggested {
 pub struct Failure {
     /// The index of the rule that threw, among those that were run.
     pub rule: Option<u32>,
+    /// The line of the node that was being visited.
+    pub line: Option<u32>,
     pub message: Vec<u8>,
 }
 
 impl From<Vec<u8>> for Failure {
     fn from(message: Vec<u8>) -> Failure {
-        Failure { rule: None, message }
+        Failure {
+            rule: None,
+            line: None,
+            message,
+        }
     }
 }
 
@@ -400,16 +406,20 @@ fn converse<'a>(
         match kind {
             from_worker::DONE if content.is_empty() => return Ok(Ok(Vec::new())),
             from_worker::DONE => {
-                let reports = crate::json::parse(&content);
-                let reports = reports.as_ref().and_then(Json::as_array).ok_or(b"It is out of step.".as_slice())?;
-                return Ok(Ok(reports.iter().filter_map(|it| report_of(it, &offsets)).collect()));
+                let Some(Json::Array(parts)) = crate::json::parse(&content) else {
+                    return Err(b"It is out of step.".to_vec());
+                };
+                let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
+                scopes::mark_used(file, part(1).iter().filter_map(|it| number(Some(it))));
+                return Ok(Ok(part(0).iter().filter_map(|it| report_of(it, &offsets)).collect()));
             }
-            // `[rule, message]`
+            // `[rule, message, line]`
             from_worker::FAILED => {
                 let failure = crate::json::parse(&content);
                 let part = |i: usize| failure.as_ref().and_then(|it| it.as_array()?.get(i));
                 return Ok(Err(Failure {
                     rule: number(part(0)),
+                    line: number(part(2)),
                     message: part(1).and_then(Json::as_str).unwrap_or_default().to_vec(),
                 }));
             }

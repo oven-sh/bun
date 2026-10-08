@@ -33,7 +33,13 @@ if (mode === "--fixtures") {
     for (const it of JSON.parse(readFileSync(file, "utf8")).cases ?? []) {
       const parser = it.languageOptions?.parser;
       if (it.skip || (parser !== "espree" && parser !== "typescript")) continue;
-      emit({ filename: it.filename.replace(/^.*\//, ""), code: it.code, languageOptions: it.languageOptions });
+      // Without types.
+      const { project, projectService, tsconfigRootDir, ...parserOptions } = it.languageOptions.parserOptions ?? {};
+      emit({
+        filename: it.filename.replace(/^.*\//, ""),
+        code: it.code,
+        languageOptions: { ...it.languageOptions, parserOptions },
+      });
     }
   }
 } else {

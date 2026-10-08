@@ -126,6 +126,12 @@ function comments() {
   return (list.all ??= allOf(list));
 }
 
+// ESLint's `sourceCode.tokensAndComments`
+function tokensAndComments() {
+  const list = tokenList ?? loadTokens();
+  return (list.withComments ??= someTokens(true, -1, -1, { includeComments: true }));
+}
+
 // The index of the first of the sorted `numbers` that is not less than `number`.
 function lowerBound(numbers, number) {
   let low = 0;

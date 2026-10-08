@@ -57,6 +57,18 @@ function resetScopes() {
   scopeData = null;
 }
 
+// The indices of the variables for which rules have set `eslintUsed`.
+function usedVariables() {
+  const used = [];
+  if (scopeData === null) return used;
+  const { variableObjects, variableCount } = scopeData;
+  for (let index = 0; index < variableCount; index++) {
+    const variable = variableObjects[index];
+    if (variable !== undefined && variable.eslintUsed && !(variable.flags & IS_USED)) used.push(index);
+  }
+  return used;
+}
+
 // Defines a property that is computed the first time it is read.
 function lazy(prototype, name, compute) {
   Object.defineProperty(prototype, name, {
@@ -136,6 +148,10 @@ class Definition {
       this.rest = name.parent.type === "RestElement" && name.parent.argument === name;
     }
   }
+}
+
+// What only `@typescript-eslint/scope-manager` has is in classes of their own: rules ask whether it is there.
+class TypeScriptDefinition extends Definition {
   get isTypeDefinition() {
     switch (this.type) {
       case "ClassName":
@@ -154,6 +170,21 @@ class Definition {
   }
 }
 
+function newDefinition(type, name) {
+  return tree.dialect === 0 ? new TypeScriptDefinition(type, name) : new Definition(type, name);
+}
+
+function newVariable(name, scope, index, flags) {
+  return tree.dialect === 0 ? new TypeScriptVariable(name, scope, index, flags) : new Variable(name, scope, index, flags);
+}
+
+// `eslint-scope` says less about the name of a class in the scope of the class.
+function forgetParent(definition) {
+  if (tree.dialect === 1 && definition.type === "ClassName") {
+    definition.parent = definition.index = definition.kind = undefined;
+  }
+}
+
 class Variable {
   // `index`: in the arrays, if it is there.
   constructor(name, scope, index, flags) {
@@ -165,6 +196,12 @@ class Variable {
     if (flags & IS_USED || tree.dialect === 0) this.eslintUsed = (flags & IS_USED) !== 0;
     if (flags & IS_EXPORTED) this.eslintExported = true;
   }
+  get stack() {
+    return this.references.every(it => it.from.variableScope === this.scope.variableScope);
+  }
+}
+
+class TypeScriptVariable extends Variable {
   get $id() {
     return this.index + 1;
   }
@@ -174,9 +211,6 @@ class Variable {
   get isValueVariable() {
     return this.defs.length === 0 && !(this.flags & IS_IN_LIB) ? true : (this.flags & IS_VALUE) !== 0;
   }
-  get stack() {
-    return this.references.every(it => it.from.variableScope === this.scope.variableScope);
-  }
 }
 for (const hidden of ["index", "flags"]) Object.defineProperty(Variable.prototype, hidden, { writable: true });
 lazy(Variable.prototype, "defs", function () {
@@ -185,13 +219,14 @@ lazy(Variable.prototype, "defs", function () {
   if (this.index < variableCount) {
     for (let at = variables[2 * this.index]; at < variables[2 * this.index + 2]; at++) {
       const name = definitions[2 * at];
-      if (name !== NO_INDEX) defs.push(new Definition(definitionTypes[definitions[2 * at + 1]], nodes[name]));
+      if (name !== NO_INDEX) defs.push(newDefinition(definitionTypes[definitions[2 * at + 1]], nodes[name]));
     }
   }
+  if (this.scope.type === "class") defs.forEach(forgetParent);
   return defs;
 });
 lazy(Variable.prototype, "identifiers", function () {
-  return this.defs.map(it => it.name);
+  return this.defs.map(it => it.name).filter(it => it.type !== "Literal");
 });
 lazy(Variable.prototype, "references", function () {
   return scopeData.referencesByVariable().of(this.index).map(referenceAt);
@@ -215,15 +250,6 @@ class Reference {
       }
     }
   }
-  get $id() {
-    return this.index + 1;
-  }
-  get isTypeReference() {
-    return (scopeData.references[5 * this.index + 1] & 4) !== 0;
-  }
-  get isValueReference() {
-    return (scopeData.references[5 * this.index + 1] & 16) !== 0;
-  }
   isStatic() {
     return !this.tainted && !!this.resolved && this.resolved.scope.isStatic();
   }
@@ -243,6 +269,19 @@ class Reference {
     return this.flag === 3;
   }
 }
+
+class TypeScriptReference extends Reference {
+  get $id() {
+    return this.index + 1;
+  }
+  get isTypeReference() {
+    return (scopeData.references[5 * this.index + 1] & 4) !== 0;
+  }
+  get isValueReference() {
+    return (scopeData.references[5 * this.index + 1] & 16) !== 0;
+  }
+}
+
 Reference.READ = 1;
 Reference.WRITE = 2;
 Reference.RW = 3;
@@ -255,7 +294,7 @@ lazy(Reference.prototype, "resolved", function () {
 });
 
 function referenceAt(index) {
-  return (scopeData.referenceObjects[index] ??= new Reference(index));
+  return (scopeData.referenceObjects[index] ??= (tree.dialect === 0 ? new TypeScriptReference(index) : new Reference(index)));
 }
 
 function nameOfDefinition(node) {
@@ -277,7 +316,7 @@ function variableAt(index) {
   while (scopeWords[5 * (low + 1) + 4] <= index) low++;
   const flags = variables[2 * index + 1];
   const name = flags & IS_ARGUMENTS ? "arguments" : nameOfDefinition(nodes[definitions[2 * variables[2 * index]]]);
-  return (scopeData.variableObjects[index] = new Variable(name, scopes[low], index, flags));
+  return (scopeData.variableObjects[index] = newVariable(name, scopes[low], index, flags));
 }
 
 class Scope {
@@ -330,6 +369,17 @@ lazy(Scope.prototype, "variables", function () {
   if (inner !== undefined) variables.push(variableAt(inner));
   for (let at = scopeWords[5 * this.index + 4]; at < scopeWords[5 * this.index + 9]; at++) variables.push(variableAt(at));
   if (this.index === 0) addGlobalVariables(this, variables);
+  // typescript-eslint comes to the type parameters of a function after its parameters.
+  if (this.type === "function" && this.block.typeParameters) {
+    const rank = variable => {
+      const kind = scopeData.definitions[2 * scopeData.variables[2 * variable.index] + 1];
+      if (variable.flags & IS_ARGUMENTS) return 0;
+      if (kind === 1) return 1;
+      return kind === 9 && variable.defs[0].node.parent === this.block.typeParameters ? 2 : 3;
+    };
+    const ranks = new Map(variables.map(it => [it, rank(it)]));
+    variables.sort((a, b) => ranks.get(a) - ranks.get(b));
+  }
   return variables;
 });
 lazy(Scope.prototype, "set", function () {
@@ -355,20 +405,20 @@ lazy(Scope.prototype, "through", function () {
 // Of the global scope.
 lazy(Scope.prototype, "implicit", function () {
   if (this.index !== 0) return undefined;
-  const implicit = { set: new Map(), variables: [], left: [...this.through] };
+  const implicit = { set: new Map(), variables: [], [tree.dialect === 1 ? "left" : "leftToBeResolved"]: [...this.through] };
   for (const reference of this.through) {
     if (!reference.isWriteOnly() || reference.init || reference.from.isStrict) continue;
     const { name } = reference.identifier;
     let variable = implicit.set.get(name);
     if (variable === undefined) {
-      variable = new Variable(name, this, NO_INDEX, 0);
+      variable = newVariable(name, this, NO_INDEX, 0);
       variable.defs = [];
       variable.identifiers = [];
       variable.references = [];
       implicit.set.set(name, variable);
       implicit.variables.push(variable);
     }
-    const definition = Object.create(Definition.prototype);
+    const definition = Object.create((tree.dialect === 0 ? TypeScriptDefinition : Definition).prototype);
     Object.assign(definition, {
       type: "ImplicitGlobalVariable",
       name: reference.identifier,
@@ -395,7 +445,7 @@ function addGlobalVariables(scope, variables) {
   const define = name => {
     let variable = byName.get(name);
     if (variable === undefined) {
-      variable = new Variable(name, scope, NO_INDEX, referred.get(name) ?? 0);
+      variable = newVariable(name, scope, NO_INDEX, referred.get(name) ?? 0);
       variable.defs = [];
       variable.identifiers = [];
       Object.defineProperty(variable, "references", {
@@ -481,7 +531,8 @@ class ScopeManager {
     return fileSettings.languageOptions.parserOptions.ecmaFeatures?.impliedStrict === true;
   }
   isModule() {
-    return this.scopes[1]?.type === "module";
+    const { sourceType, parserOptions } = fileSettings.languageOptions;
+    return ((tree.dialect === 0 && parserOptions.sourceType) || sourceType) === "module";
   }
   isStrictModeSupported() {
     return tree.dialect === 0 || fileSettings.languageOptions.ecmaVersion >= 5;
@@ -523,7 +574,7 @@ lazy(ScopeManager.prototype, "declaredVariables", function () {
     else if (!variables.includes(variable)) variables.push(variable);
   };
   for (const scope of this.scopes) {
-    for (const variable of scope.variables) {
+    for (const variable of scope.index === 0 ? [...scope.variables, ...scope.implicit.variables] : scope.variables) {
       for (const definition of variable.defs) {
         add(definition.node, variable);
         add(definition.parent, variable);
@@ -598,8 +649,9 @@ function scopeManager() {
         const scope = scopeOfName.get(nodes[definitions[2 * at]]);
         if (scope === undefined) continue;
         const inner = variableObjects.length;
-        const object = new Variable(scope.block.id.name, scope, inner, IS_TYPE | IS_VALUE);
-        object.defs = [new Definition("ClassName", scope.block.id)];
+        const object = newVariable(scope.block.id.name, scope, inner, IS_TYPE | IS_VALUE);
+        object.defs = [newDefinition("ClassName", scope.block.id)];
+        object.defs.forEach(forgetParent);
         variableObjects.push(object);
         innerClassNames.set(scope.index, inner);
         outer.set(variable, [...(outer.get(variable) ?? []), scope]);

@@ -211,3 +211,16 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
         out[header + i * 4..header + i * 4 + 4].copy_from_slice(&count.to_le_bytes());
     }
 }
+
+/// Sets ESLint's `variable.eslintUsed` for the variables at `indices`, which are sorted.
+pub(super) fn mark_used<'a>(file: &'a File<'a>, indices: impl Iterator<Item = u32>) {
+    let mut indices = indices.peekable();
+    if indices.peek().is_none() {
+        return;
+    }
+    for (index, symbol) in file.scopes().flat_map(Scope::symbols).enumerate() {
+        if indices.next_if_eq(&(index as u32)).is_some() {
+            symbol.mark_used();
+        }
+    }
+}

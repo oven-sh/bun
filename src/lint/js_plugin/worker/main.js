@@ -519,11 +519,11 @@ for (;;) {
     case LINT:
       try {
         lint();
-        send(DONE, reports.length === 0 ? "" : JSON.stringify(reports));
+        const used = usedVariables();
+        send(DONE, reports.length === 0 && used.length === 0 ? "" : JSON.stringify([reports, used]));
       } catch (error) {
-        let message = String(error?.message ?? error);
-        if (currentNode !== null) message += `\nOccurred at line ${currentNode.loc.start.line}`;
-        send(FAILED, JSON.stringify([currentRule?.position ?? null, message, String(error?.stack ?? "")]));
+        const line = currentNode === null ? null : currentNode.loc.start.line;
+        send(FAILED, JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]));
       }
       reset();
       break;

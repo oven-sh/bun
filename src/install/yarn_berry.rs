@@ -415,9 +415,12 @@ fn read_yarnrc_file(
     };
     let source = bun_ast::Source::init_path_string(path.as_slice(), data.as_slice());
     let arena = bun_alloc::Arena::new();
+    // The parser's messages point into `path` and `data`, which do not outlive
+    // this function; `log` does.
+    let mut parse_log = bun_ast::Log::init();
     let Ok(root) = bun_parsers::yaml::YAML::parse(
         &source,
-        log,
+        &mut parse_log,
         &arena,
         bun_parsers::yaml::CyclicAliases::Reject,
     ) else {

@@ -1116,6 +1116,91 @@ catalogs:
         }),
       error: () => `error: could not get the integrity of "what-bin@1.0.0" from the registry`,
     },
+    {
+      name: "a yarn.lock that is not YAML",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () => `__metadata:\n  version: 8\n"no-deps@npm:^1.0.0": [\n`,
+      error: () => `error: yarn.lock is not valid YAML`,
+    },
+    {
+      name: "no __metadata.version",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () => `__metadata:\n  cacheKey: 10c0\n\n"no-deps@npm:^1.0.0":\n  resolution: "no-deps@npm:1.0.0"\n`,
+      error: () => `error: yarn.lock is missing __metadata.version`,
+    },
+    {
+      name: "no entry for the root workspace",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () => yarnLock(noDeps100),
+      error: () => `error: yarn.lock has no root workspace entry ("@workspace:.")`,
+    },
+    {
+      name: "an entry that is not a mapping",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]) }) +
+        `\n"no-deps@npm:^1.0.0": 1.0.0\n`,
+      error: () => `error: yarn.lock entry "no-deps@npm:^1.0.0" is not a mapping`,
+    },
+    {
+      name: "a resolution with no name",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          "no-deps@npm:^1.0.0": [`resolution: "npm:1.0.0"`],
+        }),
+      error: () => `error: yarn.lock entry "no-deps@npm:^1.0.0" has an invalid resolution "npm:1.0.0"`,
+    },
+    {
+      name: "an npm resolution that is not a version",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          "no-deps@npm:^1.0.0": [`resolution: "no-deps@npm:^1.0.0"`],
+        }),
+      error: () => `error: yarn.lock entry "npm:^1.0.0" has an invalid version`,
+    },
+    {
+      name: "a patch of a package the lockfile does not have",
+      manifest: { dependencies: { "no-deps": "patch:no-deps@npm%3A1.0.0#~/a.patch" } },
+      files: () => ({ "a.patch": "" }),
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "patch:no-deps@npm%3A1.0.0#~/a.patch"`]),
+          "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch": [
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch::version=1.0.0&hash=1a2b3c"`,
+          ],
+        }),
+      error: () =>
+        `error: yarn.lock patch "patch:no-deps@npm%3A1.0.0#~/a.patch::version=1.0.0&hash=1a2b3c" patches "no-deps@npm:1.0.0", which is not in the lockfile`,
+    },
+    {
+      name: "a dependency range that is not a scalar",
+      manifest: { dependencies: { "one-range-dep": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  one-range-dep: "npm:^1.0.0"`]),
+          "one-range-dep@npm:^1.0.0": [`resolution: "one-range-dep@npm:1.0.0"`, `dependencies:`, `  no-deps: [1]`],
+        }),
+      error: () => `error: yarn.lock entry "one-range-dep" has a dependency that is not a string`,
+    },
+    {
+      name: "a .yarnrc.yml that is not YAML",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      files: () => ({ ".yarnrc.yml": `npmScopes: [\n` }),
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+      error: () => `.yarnrc.yml is not valid YAML`,
+    },
+    {
+      name: "a .yarnrc.yml that cannot be read",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      // a folder where the file should be
+      files: () => ({ ".yarnrc.yml/keep": "" }),
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+      error: () => `.yarnrc.yml`,
+    },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {
     test.concurrent(`not migrated: ${name}`, async () => {

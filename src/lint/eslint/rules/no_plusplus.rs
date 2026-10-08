@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow the unary operators `++` and `--`.
 pub struct NoPlusplus {
@@ -10,24 +11,21 @@ const UNEXPECTED_UNARY_OP: Message =
 
 /// ESLint's `isForLoopAfterthought`: `e` is the update of a `for`, or an operand of comma operators
 /// that are.
-fn is_for_loop_afterthought(e: Expr) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Binary { op: BinOp::Comma, .. }) => {
-                at = parent;
-            }
-            Node::Stmt(parent) => {
-                return matches!(parent.kind(), StmtKind::For { update: Some(update), .. } if update == at);
-            }
-            _ => return false,
+fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let found = known.find(Node::Expr(e), |at, parent| match parent {
+        Node::Expr(parent) if matches!(parent.kind(), ExprKind::Binary { op: BinOp::Comma, .. }) => None,
+        Node::Stmt(parent) => {
+            Some(matches!(parent.kind(), StmtKind::For { update: Some(update), .. } if Node::Expr(update) == at))
         }
-    }
+        _ => Some(false),
+    });
+    found == Some(true)
 }
 
 impl Rule for NoPlusplus {
     const META: Meta = Meta::eslint("no-plusplus", Kind::Suggestion);
-    type State<'a> = ();
+    /// `is_for_loop_afterthought`
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         NoPlusplus {
@@ -35,7 +33,7 @@ impl Rule for NoPlusplus {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.exprs([ExprTag::Unary], |rule, e, cx| {
             let ExprKind::Unary {
                 op: op @ (UnOp::PreInc | UnOp::PostInc | UnOp::PreDec | UnOp::PostDec),
@@ -44,10 +42,11 @@ impl Rule for NoPlusplus {
             else {
                 return;
             };
-            if rule.allow_for_loop_afterthoughts && is_for_loop_afterthought(e) {
+            if rule.allow_for_loop_afterthoughts && is_for_loop_afterthought(e, &mut cx.state) {
                 return;
             }
             cx.report(e, UNEXPECTED_UNARY_OP).data("operator", un_op_text(op));
         });
+        AncestorMemo::default()
     }
 }

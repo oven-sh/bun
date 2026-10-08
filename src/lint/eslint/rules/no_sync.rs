@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow synchronous methods.
 pub struct NoSync {
@@ -10,11 +11,9 @@ const NO_SYNC: Message = Message::new("noSync", "Unexpected sync method: '{{prop
 impl NoSync {
     /// Whether a `MemberExpression` that is `node` is looked at: with `allowAtRootLevel`, only
     /// inside a function.
-    fn applies(&self, node: Node) -> bool {
-        !self.allows_at_root_level
-            || node
-                .ancestors()
-                .any(|it| matches!(it, Node::Func(func) if ast_utils::is_function_with_body(func)))
+    fn applies<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) -> bool {
+        let is_function = |it: Node| matches!(it, Node::Func(func) if ast_utils::is_function_with_body(func));
+        !self.allows_at_root_level || cx.state.find(node, |_, it| is_function(it).then_some(())).is_some()
     }
 
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -26,7 +25,7 @@ impl NoSync {
             },
             _ => return,
         };
-        if name.ends_with(b"Sync") && ast_utils::is_member_expression(e) && self.applies(e.into()) {
+        if name.ends_with(b"Sync") && ast_utils::is_member_expression(e) && self.applies(e.into(), cx) {
             cx.report(e, NO_SYNC).data("propertyName", name.strip_prefix(b"#").unwrap_or(name));
         }
     }
@@ -40,7 +39,7 @@ impl NoSync {
             return;
         };
         for part in name.parts().skip(1) {
-            if part.bytes().ends_with(b"Sync") && self.applies(ty.into()) {
+            if part.bytes().ends_with(b"Sync") && self.applies(ty.into(), cx) {
                 cx.report(first.span().to(part.span()), NO_SYNC).data("propertyName", part);
             }
         }
@@ -49,7 +48,8 @@ impl NoSync {
 
 impl Rule for NoSync {
     const META: Meta = Meta::eslint("no-sync", Kind::Suggestion).deprecated();
-    type State<'a> = ();
+    /// That a node is in a function.
+    type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(options: &Options) -> Self {
         NoSync {
@@ -57,7 +57,7 @@ impl Rule for NoSync {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         on.exprs([ExprTag::Dot, ExprTag::Index], Self::check);
         if !file.is_javascript() {
             on.classes(|rule, class, cx| {
@@ -73,5 +73,6 @@ impl Rule for NoSync {
                 }
             });
         }
+        AncestorMemo::default()
     }
 }

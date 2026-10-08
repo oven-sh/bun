@@ -9,8 +9,6 @@ FAIL rejected js/_errors_/object/getter-with-parameter.js
 FAIL rejected js/_errors_/object/setter-without-parameter.js
 FAIL rejected js/_errors_/regex-v-u-flags/invalid-flags.js
 FAIL rejected js/_errors_/regex-v-u-flags/invalid-flags2.js
-FAIL format js/explicit-resource-management/valid-await-using-binding-escaped.js
-FAIL format js/explicit-resource-management/valid-using-binding-escaped.js
 FAIL rejected js/optional-chaining-assignment/invalid-destructuring-arr.js
 FAIL rejected js/optional-chaining-assignment/invalid-destructuring-obj.js
 FAIL rejected js/optional-chaining-assignment/invalid-for-await-of.js
@@ -23,17 +21,20 @@ FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-abstract-class
 FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-interface.ts
 FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-module.ts
 FAIL rejected typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts
-css: format 162/162 (0 syntax errors), rejected 2/2, second format 136/136, CRLF 162/162, CR 162/162, BOM 161/161
+FAIL format css/yaml/dirty.css
+FAIL format misc/check-ignore-pragma/yaml/with-noformat-pragma.yml checkIgnorePragma=true
+FAIL format misc/check-ignore-pragma/yaml/with-noprettier-pragma.yml checkIgnorePragma=true
+css: format 161/162 (0 syntax errors), rejected 2/2, second format 135/135, CRLF 161/161, CR 161/161, BOM 160/160
 graphql: format 104/104 (0 syntax errors), rejected 2/2, second format 87/87, CRLF 104/104, CR 104/104, BOM 104/104
-js: format 1334/1336 (0 syntax errors), rejected 39/58, second format 1043/1043, CRLF 1324/1324, CR 1324/1324, BOM 1330/1330
+js: format 1336/1336 (0 syntax errors), rejected 39/58, second format 1045/1045, CRLF 1326/1326, CR 1326/1326, BOM 1332/1332
 json: format 785/785 (0 syntax errors), rejected 0/0, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
 jsx: format 186/186 (0 syntax errors), rejected 0/0, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
-misc: format 272/272 (0 syntax errors), rejected 0/0, second format 237/237, CRLF 36/36, CR 36/36, BOM 271/271
+misc: format 270/272 (0 syntax errors), rejected 0/0, second format 237/237, CRLF 36/36, CR 36/36, BOM 269/269
 scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
 typescript: format 746/746 (0 syntax errors), rejected 24/28, second format 599/599, CRLF 745/745, CR 745/745, BOM 733/733
-format: 3963/3965 (99.95%)
-all checks: 18673/18698 (99.87%)
+format: 3962/3965 (99.92%)
+all checks: 18674/18700 (99.86%)
 not run: 17: Flow's type syntax
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
 not run: 33: embedded HTML or Markdown, which needs a formatter for that language

@@ -1,6 +1,73 @@
 //! What many rules need: ports of ESLint's `lib/rules/utils/ast-utils.js`, of
 //! `@eslint-community/eslint-utils` and of typescript-eslint's `util/`, under the same names in
 //! snake case.
+//!
+//! The doc comment of each function starts with the name it has upstream, so
+//! `grep -rn 'getStaticPropertyName' src/lint/utils` finds it.
+//!
+//! | upstream | module | a rule writes |
+//! | --- | --- | --- |
+//! | `require("./utils/ast-utils")` | [`ast_utils`] | `use bun_lint::utils::ast_utils;` and `ast_utils::is_function(node)`, as upstream's `astUtils.isFunction(node)` |
+//! | `require("@eslint-community/eslint-utils")`, `ASTUtils` of `@typescript-eslint/utils` | [`eslint_utils`] | `use bun_lint::utils::eslint_utils::{get_static_value, ..};` |
+//! | `import { .. } from '../util'` in typescript-eslint, syntax only | [`ts_utils`] | `use bun_lint::utils::ts_utils::{get_name_from_member, ..};` |
+//! | the same: `collectVariables`, `analyzeClassMemberUsage`, `explicitReturnTypeUtils`, `scopeUtils`, `referenceContainsTypeQuery` | [`ts_scope`] | `use bun_lint::utils::ts_scope::{..};` |
+//! | `./utils/fix-tracker` | [`fix_tracker`] | `FixTracker::new(fixer)` |
+//! | `./utils/keywords` | [`keywords`] | `keywords::KEYWORDS`, `keywords::is_keyword` |
+//! | `./utils/unicode` | [`unicode`] | `unicode::is_combining_character(c)`, .. |
+//! | `./utils/char-source` | [`char_source`] | `parse_string_literal`, `parse_template_token` |
+//! | `./utils/regular-expressions` | [`regular_expressions`] | `is_valid_with_unicode_flag`, .. |
+//! | `./utils/string-utils`, `../shared/string-utils` | [`string_utils`] | `upper_case_first`, `get_grapheme_count` |
+//! | `../shared/naming`, `../shared/directives` | [`naming`], [`directives`] | |
+//! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::sequence_expressions(e)`, `utils::Target` |
+//! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
+//!
+//! Several of these have a function of the same name that behaves differently, as upstream:
+//! `get_function_name_with_kind` and `get_function_head_loc[ation]` in `ast_utils`, `eslint_utils`
+//! and `ts_utils`, `is_parenthesised` in `ast_utils` and `is_parenthesized` in `eslint_utils`. Take
+//! the one from the module that the upstream rule imports from.
+//!
+//! # `ast-utils.js`
+//!
+//! | ESLint | [`ast_utils`] |
+//! | --- | --- |
+//! | `COMMENTS_IGNORE_PATTERN.test(s)` | `matches_comments_ignore_pattern(s)` |
+//! | `LINEBREAKS`, `LINEBREAKS.has(s)` | `LINEBREAKS`, `is_linebreak(s)` |
+//! | `LINEBREAK_MATCHER.test(s)`, `.exec(s)` | `has_linebreak(s)`, `text::find_line_break(s)` |
+//! | `createGlobalLinebreakMatcher()` | `create_global_linebreak_matcher(s)`, `text::lines(s)` |
+//! | `SHEBANG_MATCHER` | `match_shebang(s)` |
+//! | `STATEMENT_LIST_PARENTS.has(node.parent.type)` | `is_statement_list_parent(stmt.parent())` |
+//! | `ECMASCRIPT_GLOBALS` | `is_ecmascript_global(name)`, `ecmascript_global_since(name)` |
+//! | `isTokenOnSameLine(a, b)` | `is_token_on_same_line(file, a, b)` |
+//! | `isArrowToken`, `isCommaToken`, `isSemicolonToken`, `isColonToken`, `isDotToken`, `isQuestionDotToken`, `isEqToken`, `isOpening/ClosingParen/Bracket/BraceToken`, `isNot..Token`, `isCommentToken`, `isKeywordToken` | the same in snake case, on `&Token` |
+//! | `isDecimalIntegerNumericToken`, `canContinueExpressionInClassBody`, `isDirectiveComment` | the same, on `&Token` |
+//! | `equalTokens(a, b, sourceCode)` | `equal_tokens(file, a, b)` |
+//! | `canTokensBeAdjacent(a, b)` | `can_tokens_be_adjacent(a, b)`: tokens, `&str` or `&[u8]` |
+//! | `getNameLocationInGlobalDirectiveComment(sourceCode, comment, name)` | `get_name_location_in_global_directive_comment(&comment, name)` |
+//! | `isFunction`, `isLoop`, `isInLoop`, `getUpperFunction` | `is_function(node)`, `as_function(node)`, `is_loop(node)`, `is_in_loop(node)`, `get_upper_function(node)` |
+//! | `isBreakableStatement`, `isEmptyBlock`, `isDirective`, `isTopLevelExpressionStatement`, `getTrailingStatement`, `areBracesNecessary` | the same, on `Stmt` |
+//! | `isEmptyFunction`, `isES5Constructor`, `getFunctionNameWithKind`, `getFunctionHeadLoc`, `getOpeningParenOfParams` | the same, on `Func` |
+//! | `isDefaultThisBinding(node, sourceCode, { capIsConstructor })` | `is_default_this_binding(func, cap_is_constructor)` |
+//! | `getDirectivePrologue(node)` | `get_directive_prologue(file_or_func)` |
+//! | `isNullLiteral`, `isNullOrUndefined`, `isStringLiteral`, `isNumericLiteral`, `isStaticTemplateLiteral`, `isDecimalInteger`, `isCallee`, `couldBeError`, `getPrecedence`, `getBooleanValue`, `getStaticStringValue` | the same, on `Expr` |
+//! | `isLogicalExpression`, `isCoalesceExpression`, `isMixedLogicalAndCoalesceExpressions` | the same, on `Expr` |
+//! | `isLogicalAssignmentOperator(node.operator)` | `is_logical_assignment_operator(op)` |
+//! | `getStaticPropertyName(node)` | `get_static_property_name(expr_or_prop_or_member)`, `get_static_key_name(key)` |
+//! | `skipChainExpression(node)` | `skip_chain_expression(e)`, the identity |
+//! | `isSpecificId(node, name)` | `is_specific_id(e, "name")`, `is_specific_id_with(e, \|name\| ..)` |
+//! | `isSpecificMemberAccess(node, object, property)` | `is_specific_member_access(e, Some("object"), Some("property"))`, `is_specific_member_access_with`, `is_member_access_of_any(e, &["a", "b"])` |
+//! | `equalLiteralValue`, `isSameReference(a, b, disableStaticComputedKey)` | the same, on `Expr` |
+//! | `isArrayFromMethod`, `isArrayFromAsyncMethod`, `isPropertyDescriptor` | the same, on `Expr` |
+//! | `isParenthesised(sourceCode, node)`, `getParenthesisedText(sourceCode, node)` | `is_parenthesised(node)`, `get_parenthesised_text(node)` |
+//! | `isConstant(scope, node, inBooleanPosition)` | `is_constant(e, in_boolean_position)` |
+//! | `isReferenceToGlobalVariable(scope, node)`, `sourceCode.isGlobalReference(node)` | `is_reference_to_global_variable(e)`, `is_global_reference(e)`, `is_configured_global(file, name)` |
+//! | `getVariableByName(scope, name)` | `get_variable_by_name(scope, name)` |
+//! | `getModifyingReferences(references)` | `get_modifying_references(symbol.references())` |
+//! | `isStartOfExpressionStatement(node)`, `needsPrecedingSemicolon(sourceCode, node)` | `is_start_of_expression_statement(node)`, `needs_preceding_semicolon(node)` |
+//! | `getSwitchCaseColonToken(node, sourceCode)` | `get_switch_case_colon_token(case)` |
+//! | `getModuleExportName(node)` | `get_module_export_name(ident)` |
+//! | `getNextLocation(sourceCode, loc)` | `get_next_location(file, position)` |
+//! | `isImportAttributeKey(node)` | `is_import_attribute_key(prop)` |
+//! | `isSurroundedBy`, `hasOctalOrNonOctalDecimalEscapeSequence` | the same, on `&[u8]` |
 
 pub mod ast_utils;
 pub mod char_source;
@@ -16,3 +83,10 @@ pub mod text;
 pub mod ts_scope;
 pub mod ts_utils;
 pub mod unicode;
+
+pub use estree_compat::{
+    Target, TargetElement, TargetKind, catch_clause_span, chain_root, estree_ancestors,
+    estree_parent, estree_span, estree_type_name, get_node_by_range_index, is_assignment_target,
+    is_chain_root, is_in_optional_chain, is_sequence_root, last_sequence_expression, normalize,
+    sequence_expressions, sequence_root, type_annotation_span,
+};

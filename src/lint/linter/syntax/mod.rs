@@ -78,6 +78,7 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         )
     });
     let error = match (parser, of_parser) {
+        (_, of_parser) if !file.language().refuses_what_parser_refuses => of_parser.map(|it| it.1),
         // It converts a tree only if the parser has nothing to say.
         (Parser::TypeScript, None) => typescript_estree::first_error(file),
         (Parser::Espree, of_parser) => {

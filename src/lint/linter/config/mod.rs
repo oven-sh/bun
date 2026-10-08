@@ -389,6 +389,8 @@ impl Config {
         }
         config.validate_language_options(&language_options);
         config.language = LanguageOptions::from_json(&language_options, &settings);
+        // oxlint has no `parser`.
+        config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.linter = linter;
         for setting in rules {
             // ESLint's `throwRuleNotFoundError`, where it can be known that ESLint has no such rule.

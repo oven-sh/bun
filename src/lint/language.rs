@@ -93,6 +93,9 @@ pub struct LanguageOptions {
     pub isolated_declarations: bool,
     /// `parserOptions.project`, `projectService` or `programs` ask for types.
     pub wants_types: bool,
+    /// A file that `parser` throws on is refused, with its message: [`parse_error`](crate::linter::parse_error). `false` with a
+    /// configuration of oxlint, which has a parser of its own and no `parser`: only what cannot be parsed here is refused.
+    pub refuses_what_parser_refuses: bool,
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
@@ -312,6 +315,7 @@ impl LanguageOptions {
             wants_types: [&b"project"[..], b"projectService", b"programs"]
                 .iter()
                 .any(|key| is_truthy(parser_options.get(key))),
+            refuses_what_parser_refuses: true,
             parser_options,
             settings: settings.clone(),
             config_globals: OnceLock::new(),
@@ -393,6 +397,7 @@ impl Default for LanguageOptions {
             experimental_decorators: false,
             isolated_declarations: false,
             wants_types: false,
+            refuses_what_parser_refuses: true,
             parser_options: Json::Null,
             settings: Json::Null,
             config_globals: OnceLock::new(),

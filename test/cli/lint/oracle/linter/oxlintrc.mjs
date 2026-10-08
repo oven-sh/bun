@@ -17,6 +17,10 @@ const implemented = new Set(JSON.parse(execFileSync(bunLint, ["linter", "rules"]
 const probes = { "no-debugger": "debugger;", eqeqeq: "a == b;\na == null;", "no-cond-assign": "if (a = b) {}" };
 for (const id of Object.keys(probes)) if (!implemented.has(id)) delete probes[id];
 const code = `${Object.values(probes).join("\n")}\n`;
+// After them, what oxlint parses and ESLint's default parser refuses: a file is not refused because of it.
+const typescript = "declare const i: any;\ninterface I { a: 1 }\nabstract class A { abstract m(): void; private b?: number }\nenum E { a }\nlet c = i as I;\n";
+const tails = { ".ts": typescript, ".tsx": `${typescript}<a b={1} />;\n`, ".jsx": "<a b={1} />;\n", ".js": "<a b={1} />;\n@d class B {}\n", ".mjs": "@d class B {}\n" };
+const codeOf = name => code + tails[name.slice(name.lastIndexOf("."))];
 const ids = Object.keys(probes);
 
 const rng = random(11);
@@ -52,7 +56,7 @@ try {
     const basePath = join(root, String(i));
     const config = file(true);
     const extended = Object.fromEntries((config.extends ?? []).map(name => [name, file(false)]));
-    const sources = Object.fromEntries(list(path, 10).map(it => [join(basePath, it), code]));
+    const sources = Object.fromEntries(list(path, 10).map(it => [join(basePath, it), codeOf(it)]));
     for (const [name, text] of [[".oxlintrc.json", JSON.stringify(config)], ...Object.entries(extended).map(([name, it]) => [name, JSON.stringify(it)])]) {
       mkdirSync(dirname(join(basePath, name)), { recursive: true });
       writeFileSync(join(basePath, name), text);

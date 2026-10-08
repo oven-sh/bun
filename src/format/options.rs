@@ -62,12 +62,26 @@ pub struct FormatOptions {
     /// semicolon. A line break that is part of a text (in a template, in a comment) is written as `\r\n`, to
     /// tell it from the others: Markdown indents what follows it in another way.
     pub is_in_markdown: bool,
+    /// Formats the JavaScript and TypeScript in blocks of code in Markdown. Without it they stay as they are.
+    pub format_javascript: Option<FormatJavaScript>,
     /// Whose output to produce where the two differ.
     pub flavor: Flavor,
     /// oxfmt's `sortPackageJson`: the keys of a `package.json` are put in the usual order.
     pub sort_package_json: Option<crate::json::SortPackageJson>,
     /// How imports are sorted, if they are.
     pub sort_imports: Option<std::sync::Arc<crate::sort_imports::SortImports>>,
+}
+
+/// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that
+/// says which of them it is, the code, the options, and where to append the result. It returns whether the
+/// code could be formatted.
+#[derive(Clone)]
+pub struct FormatJavaScript(pub std::sync::Arc<dyn Fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool + Send + Sync>);
+
+impl std::fmt::Debug for FormatJavaScript {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FormatJavaScript")
+    }
 }
 
 /// An option has a value that Prettier does not accept, or there is no such option.

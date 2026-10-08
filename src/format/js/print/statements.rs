@@ -317,8 +317,9 @@ impl CommentPlacement {
     }
 }
 
-/// What Prettier's `attachComments` does, if no handler says otherwise, with `comments`: all the
-/// comments between a node and the next one, which starts at `following_start`.
+/// What Prettier's `attachComments` does with `comments`: all the comments between a node and the
+/// next one, which starts at `following_start`. Of the handlers, only the one for type cast comments
+/// is heeded.
 pub(crate) fn comment_placements(
     comments: &[Comment],
     following_start: u32,
@@ -352,7 +353,11 @@ pub(crate) fn comment_placements(
             continue;
         }
         if ends_line {
-            *placement = CommentPlacement::EndOfLine;
+            // Prettier's `handleClosureTypeCastComments`
+            *placement = match f.comments().is_type_cast_comment(comment) {
+                true => CommentPlacement::BeforeNode,
+                false => CommentPlacement::EndOfLine,
+            };
             continue;
         }
         gap_end = gap_end

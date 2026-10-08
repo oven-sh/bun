@@ -7,7 +7,7 @@
 use crate::ir::element::{Align, FormatElement, Tag};
 use crate::ir::prelude::{Format, Formatter, hard_line_break};
 use crate::ir::run::format_with;
-use crate::js::ast_nodes::{AstNodes, ExpressionStatement, node_as_ast_nodes};
+use crate::js::ast_nodes::{AstNodes, ExpressionStatement, Program, node_as_ast_nodes, type_parameters_of};
 use crate::js::comments::{self, Comment, Comments};
 use crate::js::print::program::ends_before_semicolon;
 use crate::js::source_text::SourceText;
@@ -54,7 +54,7 @@ pub fn format<'a>(
     // Everything is written with `\n`, which is replaced at the end.
     let mut formatted = Vec::new();
     if !trim_start(slice).is_empty() {
-        let alignment = alignment_size(before, options.indent_width.value());
+        let alignment = alignment_size(before.get(first..).unwrap_or_default(), options.indent_width.value());
         let slice_options = FormatOptions {
             range_start: None,
             range_end: None,
@@ -234,6 +234,15 @@ type Path<'a> = SmallVec<[AstNodes<'a>; 16]>;
 /// Prettier's `locStart`: with the decorators before it.
 fn loc_start(node: AstNodes<'_>) -> u32 {
     let class = match node {
+        // Babel's `Program` starts where the text does, that of typescript-estree at the first token.
+        AstNodes::Program(Program(file)) => {
+            let first = if file.has_bom() { BOM.len() as u32 } else { 0 };
+            return match (file.is_javascript(), file.body().first()) {
+                (true, _) => first,
+                (false, Some(statement)) => loc_start(node_as_ast_nodes(Node::Stmt(statement))),
+                (false, None) => node.span().end,
+            };
+        }
         AstNodes::Class(class) => Some(class),
         AstNodes::ExportNamedDeclaration(statement) | AstNodes::ExportDefaultDeclaration(statement) => {
             match statement.kind() {
@@ -388,7 +397,10 @@ fn find_node_at_offset<'a>(file: &'a File<'a>, offset: u32, edge: Edge) -> Optio
         Node::Stmt(statement) => exported_declaration(statement),
         _ => None,
     };
-    let path = inner.into_iter().chain(node_as_ast_nodes(innermost).ancestors());
+    let type_parameters = type_parameters_of(innermost)
+        .filter(|list| !list.is_empty())
+        .map(|_| AstNodes::TSTypeParameterDeclaration(innermost));
+    let path = type_parameters.into_iter().chain(inner).chain(node_as_ast_nodes(innermost).ancestors());
     let mut path = path.filter(|&node| is_in_estree(node) && edge.is_in(offset, full_span(node)));
     let first = path.find(|&node| is_source_element(node))?;
     Some(std::iter::once(first).chain(path).collect())
@@ -397,6 +409,7 @@ fn find_node_at_offset<'a>(file: &'a File<'a>, offset: u32, edge: Edge) -> Optio
 /// Prettier's `findSiblingAncestors`: widens two nodes as long as each stays within the other's
 /// side of the range.
 fn find_sibling_ancestors<'a>(
+    file: AstNodes<'a>,
     start_path: &[AstNodes<'a>],
     end_path: &[AstNodes<'a>],
     comments: &Comments<'a>,
@@ -406,6 +419,10 @@ fn find_sibling_ancestors<'a>(
     if start_node == end_node {
         return Some((start_node, end_node));
     }
+    // Prettier's `dropRootParents` only leaves out the file if there is anything else.
+    let root = [file];
+    let start_ancestors = if start_ancestors.is_empty() { &root[..] } else { start_ancestors };
+    let end_ancestors = if end_ancestors.is_empty() { &root[..] } else { end_ancestors };
 
     let start = loc_start(start_node);
     if let Some(&ancestor) = end_ancestors.iter().take_while(|&&it| loc_start(it) >= start).last() {
@@ -439,7 +456,8 @@ fn calculate_range<'a>(file: &'a File<'a>, mut start: u32, mut end: u32) -> Opti
         false => find_node_at_offset(file, end, Edge::End)?,
     };
     let comments = Comments::new(SourceText::new(text), comments_of(file));
-    let (start_node, end_node) = find_sibling_ancestors(&start_path, &end_path, &comments)?;
+    let root = AstNodes::Program(Program(file));
+    let (start_node, end_node) = find_sibling_ancestors(root, &start_path, &end_path, &comments)?;
     Some(Span::new(
         loc_start(start_node).min(loc_start(end_node)),
         start_node.span().end.max(end_node.span().end),

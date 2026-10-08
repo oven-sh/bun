@@ -11,6 +11,8 @@
 //!   whether each directory is ignored.
 //! - `project <cases.json>`: for each `{ basePath, config, flavor, extended, sources: { path: code } }`, what is reported for
 //!   each file with the configuration that it has.
+//! - `resolve oxlint|eslintrc|flat <configuration.json> <directory>`: how many files of the directory are linted, with how many
+//!   different configurations, and how long it takes to find that out.
 //! - `bench <directory>`: how long it takes to find out that the files have no comments that configure.
 //! - `validate <cases.json>`: for each `{ rule, options }`, the message of ESLint if the options are invalid.
 //! - `parse-fixtures <fixtures>`: the test cases that the parser rejects, all of which ESLint parses.
@@ -409,6 +411,66 @@ fn config(args: &[String]) {
     print(&out);
 }
 
+fn resolve(args: &[String]) {
+    fn walk(directory: &std::path::Path, config: &Config, files: &mut Vec<Vec<u8>>) {
+        for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let bytes = path.to_string_lossy().into_owned().into_bytes();
+            match path.is_dir() {
+                true if config.is_directory_ignored(&bytes) => {}
+                true => walk(&path, config, files),
+                false => files.push(bytes),
+            }
+        }
+    }
+    let [flavor, file, directory] = args else {
+        return println!("usage: bun-lint linter resolve oxlint|eslintrc|flat <configuration.json> <directory>");
+    };
+    let json = std::fs::read(file).ok().and_then(|it| bun_lint::json::parse(&it)).expect("the configuration");
+    let base_path = std::path::Path::new(file).parent().expect("a directory").to_string_lossy().into_owned();
+    let case = Json::Object(vec![
+        (b"basePath".to_vec(), Json::String(base_path.into_bytes())),
+        (b"flavor".to_vec(), Json::String(flavor.clone().into_bytes())),
+        (b"config".to_vec(), json),
+    ]);
+    let config = match config_of(&case) {
+        Ok(config) => config,
+        Err(error) => return println!("{}", text(&error.message)),
+    };
+    let mut files = Vec::new();
+    let start = std::time::Instant::now();
+    walk(std::path::Path::new(directory), &config, &mut files);
+    println!("{} files found in {:.1} ms", files.len(), start.elapsed().as_secs_f64() * 1e3);
+    for (name, is_known_not_ignored) in [("get", false), ("get", false), ("get_unless_ignored", true)] {
+        let start = std::time::Instant::now();
+        let mut distinct: Vec<*const ResolvedConfig> = Vec::new();
+        let (mut matched, mut rules) = (0, 0);
+        for file in &files {
+            let found = match is_known_not_ignored {
+                true => config.get_unless_ignored(linter().registry(), file),
+                false => config.get(linter().registry(), file),
+            };
+            if let FileConfig::Matched(resolved) = found {
+                matched += 1;
+                rules += resolved.rules.len();
+                let address = std::sync::Arc::as_ptr(&resolved);
+                if !distinct.contains(&address) {
+                    distinct.push(address);
+                }
+            }
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        println!(
+            "{name}: {matched} linted, {} configurations, {:.1} rules on average: {:.1} ms, {:.2} us per file",
+            distinct.len(),
+            rules as f64 / f64::from(matched.max(1)),
+            elapsed * 1e3,
+            elapsed * 1e6 / files.len().max(1) as f64,
+        );
+    }
+    println!("{} rules are configured and unknown, {} notes", config.unknown_rules().len(), config.notes().len());
+}
+
 fn bench(args: &[String]) {
     fn walk(directory: &std::path::Path, texts: &mut Vec<Vec<u8>>) {
         for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
@@ -510,6 +572,7 @@ pub(crate) fn run(args: &[String]) {
         Some("minimatch") => minimatch(&args[1..]),
         Some("validate") => validate(&args[1..]),
         Some("bench") => bench(&args[1..]),
+        Some("resolve") => resolve(&args[1..]),
         Some("parse-fixtures") => parse_fixtures(&args[1..]),
         Some("config") => config(&args[1..]),
         Some("project") => project(&args[1..]),

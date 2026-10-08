@@ -1,7 +1,7 @@
 // Formats real code with Prettier and with `bun-lint format`, and compares.
 //
 //   bun compare.ts --bin=<bun-lint> --prettier=<directory with node_modules/prettier> \
-//     [--options='{"semi":false}'] [--extensions=.json,.css] [--report=<directory>] [--limit=n] <files and directories..>
+//     [--options='{"semi":false}'] [--extensions=.json,.css] [--report=<directory>] [--limit=n] [--max-bytes=n] <files and directories..>
 //
 // Nothing of the files is written anywhere unless `--report` is given: then the expected and the
 // actual output of each file that differs are written there.
@@ -25,6 +25,7 @@ if (!bin || !prettierRoot || roots.length === 0) {
 const options: Record<string, unknown> = JSON.parse(flags.get("options") ?? "{}");
 const report = flags.get("report");
 const limit = Number(flags.get("limit") ?? Infinity);
+const maxBytes = Number(flags.get("max-bytes") ?? Infinity);
 const prettier = await import(resolve(prettierRoot, "node_modules/prettier/index.mjs"));
 
 const extensions = new Set((flags.get("extensions") ?? ".js,.jsx,.mjs,.cjs,.ts,.tsx,.mts,.cts").split(","));
@@ -36,7 +37,7 @@ function* walk(path: string): Generator<string> {
     for (const name of readdirSync(path).sort()) {
       if (name !== "node_modules" && name !== ".git") yield* walk(join(path, name));
     }
-  } else if (extensions.has(extname(path))) {
+  } else if (extensions.has(extname(path)) && stats.size <= maxBytes) {
     yield path;
   }
 }

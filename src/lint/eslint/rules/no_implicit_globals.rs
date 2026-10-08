@@ -1,5 +1,4 @@
 use bun_lint::prelude::*;
-use rustc_hash::FxHashSet;
 
 /// Disallow declarations in the global scope.
 pub struct NoImplicitGlobals {
@@ -41,20 +40,10 @@ fn assignment_of(reference: Reference<'_>) -> Span {
 impl NoImplicitGlobals {
     fn check_declarations<'a>(&self, cx: &Cx<'a, Self>) {
         let file = cx.file();
-        let exported = file.exported_in_comments();
-        // Instead of the list, if that is long.
-        let mut exported_names: FxHashSet<&[u8]> = FxHashSet::default();
-        if exported.len() > 8 {
-            exported_names.extend(exported.iter().map(|it| &**it));
-        }
-        let is_exported = |name: &[u8]| match exported_names.is_empty() {
-            true => exported.iter().any(|it| **it == *name),
-            false => exported_names.contains(name),
-        };
         for symbol in file.scope().symbols() {
             let name = symbol.name().bytes();
             let global = file.global(name);
-            if global.is_some_and(|it| it.is_writable) || is_exported(name) {
+            if global.is_some_and(|it| it.is_writable) || file.is_exported_in_comments(name) {
                 continue;
             }
             for declaration in symbol.declarations() {

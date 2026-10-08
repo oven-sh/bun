@@ -32,6 +32,12 @@ fn write_hashbang(f: &mut Formatter<'_>) {
         return;
     };
     let len = bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
+    // U+2028 and U+2029 end the line too.
+    let len = [&b"\xE2\x80\xA8"[..], b"\xE2\x80\xA9"]
+        .iter()
+        .filter_map(|separator| bun_core::strings::index_of(&rest[..len], separator))
+        .min()
+        .unwrap_or(len);
     write!(f, text(rest[..len].trim_ascii_end()));
     match f.source_text().lines_after((start + len) as u32) > 1 {
         true => write!(f, empty_line()),

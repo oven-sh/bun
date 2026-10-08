@@ -2,7 +2,7 @@
 // compares that with what `bun-lint` reports.
 //
 //   ESLINT_DIR=.. TYPESCRIPT_ESLINT_DIR=.. node extra-cases.ts --out <dir> [--judge <bun-lint>] [--jobs N] [--quiet]
-//       [--diff <dir>] <plugin>/<rule> <cases.json> [<plugin>/<rule> <cases.json> ...]
+//       [--diff <dir>] [--verdicts <file>] <plugin>/<rule> <cases.json> [<plugin>/<rule> <cases.json> ...]
 //
 // `<plugin>` is `eslint` or `typescript-eslint`. `cases.json` is an array of
 //
@@ -28,7 +28,8 @@
 //
 // `--out <dir>` gets `<dir>/<plugin>/<rule>.json` and a link to the fixture project. With `--judge`, `bun-lint conformance`
 // and `bun-lint types conformance` run on `<dir>`, and each case that differs is printed (and written to
-// `<diff>/<plugin>/<rule>.txt`). The last line is `N cases, M differ, K skipped`.
+// `<diff>/<plugin>/<rule>.txt`). The last line is `N cases, M differ, K skipped`. `--verdicts` gets, as JSON, the indices of
+// the cases that differ, by `<plugin>/<rule>`.
 //
 // Needs Node.js >= 23.6, as the extractors do.
 
@@ -78,6 +79,7 @@ const jobsOfRule: { plugin: Plugin; rule: string; file: string }[] = [];
 let out = "";
 let judge = "";
 let diffDir = "";
+let verdicts = "";
 let typesJobs = 4;
 let quiet = false;
 /** Seconds that ESLint has for one case. */
@@ -91,6 +93,7 @@ let upstream = join(scriptDir, "fixtures");
     if (arg === "--out") out = resolve(argv[++i]);
     else if (arg === "--judge") judge = resolve(argv[++i]);
     else if (arg === "--diff") diffDir = resolve(argv[++i]);
+    else if (arg === "--verdicts") verdicts = resolve(argv[++i]);
     else if (arg === "--fixtures") upstream = resolve(argv[++i]);
     else if (arg === "--jobs") typesJobs = Number(argv[++i]);
     else if (arg === "--quiet") quiet = true;
@@ -642,7 +645,13 @@ if (judge) {
   const only = written.length === 1 ? [`--rule=${written[0].rule}`] : [];
   const run = (args: string[]) => {
     const total = written.reduce((sum, it) => sum + it.cases.length, 0);
-    const result = spawnSync(judge, args, { encoding: "utf8", maxBuffer: 1 << 30, timeout: 60_000 + 500 * total });
+    const spawnOptions = { encoding: "utf8", maxBuffer: 1 << 30, timeout: 60_000 + 500 * total } as const;
+    let result = spawnSync(judge, args, spawnOptions);
+    // The binary is being replaced by a newer one.
+    for (let i = 0; i < 20 && (result.error as { code?: string } | undefined)?.code === "ETXTBSY"; i++) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+      result = spawnSync(judge, args, spawnOptions);
+    }
     if ((result.error as { code?: string } | undefined)?.code === "ETIMEDOUT") {
       console.log(`bun-lint ${args[0]} DID NOT FINISH: it hangs on one of the cases. Halve the file to find which.`);
       process.exitCode = 2;
@@ -659,6 +668,7 @@ if (judge) {
   let cases = 0;
   let differ = 0;
   let skipped = 0;
+  const differing: Record<string, number[]> = {};
   for (const fixture of written) {
     const id = `${fixture.plugin}/${fixture.rule}`;
     const ran = plain.has(id) || typed.has(id);
@@ -672,6 +682,7 @@ if (judge) {
     cases += fixture.cases.length;
     skipped += skips.length;
     differ += failures.size;
+    differing[id] = [...failures.keys()].sort((a, b) => a - b);
     if (!ran && skips.length < fixture.cases.length) {
       console.log(`${id}: bun-lint does not have the rule, or did not run`);
       process.exitCode = 2;
@@ -691,6 +702,7 @@ if (judge) {
       }
     }
   }
+  if (verdicts) writeFileSync(verdicts, JSON.stringify(differing));
   console.log(`${cases} cases, ${differ} differ, ${skipped} skipped`);
   if (differ > 0 && !process.exitCode) process.exitCode = 1;
 }

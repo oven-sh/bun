@@ -171,6 +171,13 @@ impl<'a> File<'a> {
         self.hir.mentioned.get(bit / 64).is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
+    /// [`File::mentions`] for a text whose [`mention_bit`] is known: a rule that looks for hundreds of names, which are not constants
+    /// of the program, computes their bits once, in [`Rule::new`](crate::rule::Rule::new).
+    #[inline]
+    pub fn mentions_bit(&self, bit: u32) -> bool {
+        self.hir.may_mention(bit)
+    }
+
     /// `text` as a name of this file, to compare the names of many nodes with: `name == wanted` compares two numbers, where
     /// `name.is("text")` looks the text of the name up and compares that. For [`Rule::register`](crate::rule::Rule::register),
     /// which keeps it in the state of the rule.

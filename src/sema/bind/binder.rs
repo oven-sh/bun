@@ -1598,28 +1598,37 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
 
     /// `lookupEntity`. `IsEntityNameExpressionEx`: `a["b"]` and `a[0]` are entity names only in
     /// JavaScript, and a parenthesized expression is not one.
-    fn lookup_entity(&mut self, e: ExprId, scope: ScopeId) -> Option<SymbolId> {
-        if is_parenthesized(self.f, e) {
-            return None;
-        }
-        let (obj, name) = match self.f[e].kind {
-            ExprKind::Ident(name) => return self.lookup_name(name, scope),
-            ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                ..
-            } if !is_private_name_at(self.f, name_pos) => (obj, name),
-            ExprKind::Index { obj, index, .. }
-                if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
-            {
-                (obj, self.literal_name(index))
+    fn lookup_entity(&mut self, mut e: ExprId, scope: ScopeId) -> Option<SymbolId> {
+        // The names after the first, from the last to the second. A loop: `a.b.c` is as deep as it
+        // is long.
+        let mut names: smallvec::SmallVec<[Atom; 8]> = smallvec::SmallVec::new();
+        let mut symbol = loop {
+            if is_parenthesized(self.f, e) {
+                return None;
             }
-            _ => return None,
+            let (obj, name) = match self.f[e].kind {
+                ExprKind::Ident(name) => break self.lookup_name(name, scope)?,
+                ExprKind::Dot {
+                    obj,
+                    name,
+                    name_pos,
+                    ..
+                } if !is_private_name_at(self.f, name_pos) => (obj, name),
+                ExprKind::Index { obj, index, .. }
+                    if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
+                {
+                    (obj, self.literal_name(index))
+                }
+                _ => return None,
+            };
+            names.push(name);
+            e = obj;
         };
-        let owner = self.lookup_entity(obj, scope)?;
-        let owner = self.initializer_symbol(owner)?;
-        self.export_of(owner, name)
+        for &name in names.iter().rev() {
+            let owner = self.initializer_symbol(symbol)?;
+            symbol = self.export_of(owner, name)?;
+        }
+        Some(symbol)
     }
 
     /// `getInitializerSymbol`

@@ -2892,17 +2892,17 @@ test.concurrent("should be able to redirect when using empty streams #15320", as
   }).toEqual({ status: 200, redirected: true, url: `http://localhost:${server.port}/`, text: "Hello, World" });
 });
 
-test("HEAD request for a Response with an S3 file body reports the object size and the server keeps serving", async () => {
-  // Answering a HEAD request whose Response body is an S3-backed Blob resolves
-  // the object size with an async S3 stat before writing headers. Run the
-  // server in a subprocess so a crash on that completion path shows up as a
-  // non-zero exit code instead of taking down the test runner.
+test("HEAD request for new Response(s3file) follows the redirect to the object and the server keeps serving", async () => {
+  // `new Response(s3file)` is a 302 to a presigned URL. fetch() follows it, so
+  // the S3 origin answers the HEAD with the object size. Run the server in a
+  // subprocess so a crash shows up as a non-zero exit code instead of taking
+  // down the test runner.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        // Fake S3 origin: answers the stat (HEAD) with a fixed Content-Length.
+        // Fake S3 origin: answers HEAD with a fixed Content-Length.
         const s3Origin = Bun.serve({
           port: 0,
           fetch(req) {

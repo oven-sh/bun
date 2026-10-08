@@ -141,7 +141,8 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
             if resolved.omits_final_newline {
                 without_final_newline(&mut out);
             }
-            Ok((out, None))
+            let cursor = bun_format::cursor::cursor_in_formatted_text(text, options, &out);
+            Ok((out, cursor))
         }
         Err(FormatError::SyntaxError) => Err(Failure::Syntax(format!("SyntaxError: It is not {what}.").into_bytes())),
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),

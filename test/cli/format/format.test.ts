@@ -119,6 +119,17 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test.each([
+    ["arrays", (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString()],
+    ["objects", (depth: number) => Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString()],
+  ])("JSON that is nested too deeply is refused, not formatted into gigabytes: %s", async (_, make) => {
+    const files = { "ok.json": make(512), "deep.json": make(513), "huge.json": make(200_000) };
+    const [ok, deep, huge] = await Promise.all(Object.keys(files).map(name => format(files, ["--check", name])));
+    expect(ok.stderr).not.toContain("[error]");
+    expect({ deep: deep.exitCode, huge: huge.exitCode }).toEqual({ deep: 2, huge: 2 });
+    expect(huge.stderr).toContain("[error] huge.json:");
+  });
+
   test("CSS", async () => {
     const result = await format({ "a.css": "a{color:red}\n", "b.scss": "a{b{color:RED}}\n" }, [], { reads: ["a.css", "b.scss"] });
     expect(result.files).toEqual({ "a.css": "a {\n  color: red;\n}\n", "b.scss": "a {\n  b {\n    color: RED;\n  }\n}\n" });

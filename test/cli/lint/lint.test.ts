@@ -361,23 +361,30 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(2);
     });
 
-    test("the rules of a plugin that is not built in are skipped with a warning", async () => {
-      const { stdout, stderr, exitCode } = await lint(
-        {
-          "eslint.config.js": `
-            const plugin = { meta: { name: "eslint-plugin-example" }, rules: { a: { create: () => ({}) }, b: { create: () => ({}) } } };
-            export default [{ plugins: { example: plugin }, rules: { "example/a": "error", "example/b": "warn", "no-debugger": "error" } }];`,
-          "a.js": "debugger;\n",
-        },
-        ["-f", "unix"],
-      );
-      expect(stdout).toMatchInlineSnapshot(`
-        "<dir>/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]
+    test("the rules of a plugin run, and their fixes are applied", async () => {
+      const files = {
+        "eslint.config.js": `
+          const noFoo = {
+            meta: { type: "problem", fixable: "code", messages: { foo: "No {{name}}." } },
+            create: context => ({
+              Identifier(node) {
+                if (node.name === "foo") context.report({ node, messageId: "foo", data: node, fix: fixer => fixer.replaceText(node, "bar") });
+              },
+            }),
+          };
+          export default [{ files: ["a.js"], plugins: { example: { rules: { "no-foo": noFoo } } }, rules: { "example/no-foo": "error", "no-debugger": "warn" } }];`,
+        "a.js": "debugger;\nfoo();\n",
+      };
+      const [plain, fixed] = await Promise.all([lint(files, ["-f", "unix", "a.js"]), lint(files, ["--fix", "a.js"], { reads: ["a.js"] })]);
+      expect(plain.stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:1:1: Unexpected 'debugger' statement. [Warning/no-debugger]
+        <dir>/a.js:2:1: No foo. [Error/example/no-foo]
 
-        1 problem"
+        2 problems"
       `);
-      expect(stderr).toContain('2 rules of the plugin "example" are not supported yet and were skipped');
-      expect(exitCode).toBe(1);
+      expect(plain.exitCode).toBe(1);
+      expect(fixed.files).toEqual({ "a.js": "debugger;\nbar();\n" });
+      expect(fixed.exitCode).toBe(0);
     });
 
     test("--rule, --global, --no-config-lookup", async () => {

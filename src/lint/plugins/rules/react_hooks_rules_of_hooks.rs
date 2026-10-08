@@ -398,7 +398,8 @@ impl Rule for RulesOfHooks {
         let mut state = State::default();
         // A file has many times as many calls as names.
         let mut is_name_of_hook = ByName::default();
-        for e in file.exprs_of_kind(ExprTag::Call) {
+        let may_call_a_hook = file.mentions_name_of_hook();
+        for e in file.exprs_of_kind(ExprTag::Call).filter(|_| may_call_a_hook) {
             let Some(callee) = e.as_call().map(Call::callee) else {
                 continue;
             };

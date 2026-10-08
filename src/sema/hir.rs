@@ -2021,6 +2021,10 @@ pub const fn mention_bit(text: &[u8]) -> u32 {
     mention_bit_of(words, text.len())
 }
 
+/// The bit of `FileIn::mentioned` that is also set if the file mentions `use`, or a text that starts
+/// with `use` and an ASCII capital or digit: what React takes for the name of a hook.
+pub const MENTION_OF_A_HOOK: u32 = mention_bit(b"use\0");
+
 /// `mention_bit` of the text with the length `len` whose first 16 bytes are `words`, little endian
 /// and padded with zeros.
 #[inline(always)]

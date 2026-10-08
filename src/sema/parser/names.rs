@@ -10,7 +10,7 @@
 //!   thread, little of it is touched, and the numbers are dense. The readers of the HIR ask
 //!   [`FileAtoms`].
 
-use crate::token::{T, keyword};
+use crate::token::{KEYWORDS, T, keyword};
 use bun_sema::atom::{Atom, Intern, KNOWN_TEXTS, NOT_IN_THE_FILE};
 use bun_sema::hir::mention_bit_of;
 use bun_threading::Guarded;
@@ -40,7 +40,7 @@ struct Long {
 const MENTIONED_WORDS: usize = bun_sema::hir::MENTIONED_BITS / 64;
 const SHORT_BITS: u32 = 14;
 const LONG_BITS: u32 = 12;
-const KNOWN_BITS: u32 = 9;
+const KNOWN_BITS: u32 = 10;
 /// How many places after its first a text can be at.
 const WINDOW: usize = 7;
 /// The first atom that a file numbers itself.
@@ -67,8 +67,9 @@ pub(crate) struct Names {
     mentioned: [u64; MENTIONED_WORDS],
     /// Which of `KNOWN_TEXTS` are in the file, likewise.
     known_in_file: [u64; KNOWN_TEXTS.len().div_ceil(64)],
-    /// The short ones of `KNOWN_TEXTS`. An entry without an atom is free.
-    known: Box<[([u64; 2], u32); 1 << KNOWN_BITS]>,
+    /// The keywords, and the short ones of `KNOWN_TEXTS`: the padded bytes, the atom if its number
+    /// is fixed, and the token kind. An entry without bytes is free.
+    known: Box<[([u64; 2], u32, T); 1 << KNOWN_BITS]>,
     /// The others.
     known_others: Vec<(&'static [u8], u32)>,
     late: Late,
@@ -96,19 +97,24 @@ fn boxed<E: Copy, const N: usize>(entry: E) -> Box<[E; N]> {
 
 impl Default for Names {
     fn default() -> Self {
-        let mut known = boxed(([0; 2], u32::MAX));
+        let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
         let mut known_others = Vec::new();
-        for (&text, atom) in KNOWN_TEXTS.iter().zip(0u32..) {
+        let with_numbers = KNOWN_TEXTS.iter().zip(0u32..).map(|(&text, atom)| (text, atom));
+        let keywords = KEYWORDS.iter().map(|&(text, _)| (text, u32::MAX));
+        for (text, atom) in with_numbers.chain(keywords) {
             if !is_short(text) {
                 known_others.push((text, atom));
                 continue;
             }
             let words = padded(text);
             let mut at = known_place(words);
-            while known[at].1 != u32::MAX {
+            while known[at].0 != [0; 2] && known[at].0 != words {
                 at = (at + 1) % known.len();
             }
-            known[at] = (words, atom);
+            // A keyword whose number is fixed is there already.
+            if known[at].0 != words {
+                known[at] = (words, atom, keyword(text));
+            }
         }
         Names {
             short: boxed(NO_SHORT),
@@ -292,23 +298,25 @@ impl Names {
         }
     }
 
-    /// The atom of a text that is in no table yet. `bit`: its `hir::mention_bit`. `words`: its
-    /// padded bytes if it is short.
+    /// The atom of a text that is in no table yet. `bit`: its `hir::mention_bit`. `known`: its
+    /// number if that is fixed.
     fn new_atom(
         &mut self,
         text: Text<'_>,
         bit: usize,
-        words: Option<[u64; 2]>,
+        known: Option<u32>,
         atoms: &dyn Intern,
     ) -> Atom {
         if !self.is_own {
             return atoms.intern(text.text);
         }
         self.mentioned[bit / 64 % MENTIONED_WORDS] |= 1 << (bit % 64);
-        let known = match words {
-            Some(words) => self.known_short(words),
-            None => self.known_other(text.text),
-        };
+        if let [b'u', b's', b'e', rest @ ..] = text.text
+            && matches!(rest.first(), None | Some(b'A'..=b'Z' | b'0'..=b'9'))
+        {
+            const BIT: usize = bun_sema::hir::MENTION_OF_A_HOOK as usize;
+            self.mentioned[BIT / 64] |= 1 << (BIT % 64);
+        }
         let atom = match known {
             Some(known) => {
                 self.known_in_file[known as usize / 64] |= 1 << (known % 64);
@@ -330,23 +338,26 @@ impl Names {
     /// The number of `text` if it is fixed.
     fn known(&self, text: &[u8]) -> Option<u32> {
         match is_short(text) {
-            true => self.known_short(padded(text)),
+            true => self.known_short(padded(text)).0,
             false => self.known_other(text),
         }
     }
 
     fn known_other(&self, text: &[u8]) -> Option<u32> {
         let found = self.known_others.iter().find(|it| it.0 == text);
-        found.map(|it| it.1)
+        found.map(|it| it.1).filter(|&atom| atom != u32::MAX)
     }
 
+    /// The number of the text with the padded bytes `words` if it is fixed, and its token kind.
     #[inline]
-    fn known_short(&self, words: [u64; 2]) -> Option<u32> {
+    fn known_short(&self, words: [u64; 2]) -> (Option<u32>, T) {
         let mut at = known_place(words);
         loop {
             match self.known[at] {
-                (_, u32::MAX) => return None,
-                (known, atom) if known == words => return Some(atom),
+                ([0, 0], ..) => return (None, T::Identifier),
+                (known, atom, kind) if known == words => {
+                    return ((atom != u32::MAX).then_some(atom), kind);
+                }
                 _ => at = (at + 1) % self.known.len(),
             }
         }
@@ -380,12 +391,12 @@ impl Names {
                 return (Atom(entry.atom), entry.kind);
             }
         }
-        let kind = keyword(text.text);
+        let (known, kind) = self.known_short(words);
         // `short_place` is `hir::mention_bit_of`.
         let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, first, Some(words), atoms), at),
+            Some(at) => (self.new_atom(text, first, known, atoms), at),
             None if self.is_own => return (self.other(text, atoms), kind),
-            None => (self.new_atom(text, first, Some(words), atoms), first),
+            None => (self.new_atom(text, first, known, atoms), first),
         };
         self.short[at] = Short {
             words,
@@ -431,9 +442,9 @@ impl Names {
         }
         let bit = mention_bit_of([words[0], words[1]], text.text.len()) as usize;
         let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, bit, None, atoms), at),
+            Some(at) => (self.new_atom(text, bit, self.known_other(text.text), atoms), at),
             None if self.is_own => return self.other(text, atoms),
-            None => (self.new_atom(text, bit, None, atoms), first),
+            None => (self.new_atom(text, bit, self.known_other(text.text), atoms), first),
         };
         self.long[at] = Long {
             words,
@@ -458,8 +469,7 @@ impl Names {
             Some(words) => mention_bit_of([words[0], words[1]], text.text.len()),
             None => bun_sema::hir::mention_bit(text.text),
         };
-        let words = is_short(text.text).then(|| padded(text.text));
-        let atom = self.new_atom(text, bit as usize, words, atoms);
+        let atom = self.new_atom(text, bit as usize, self.known(text.text), atoms);
         self.other.insert(hash, atom.0);
         atom
     }

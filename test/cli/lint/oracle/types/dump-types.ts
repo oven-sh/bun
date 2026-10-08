@@ -61,6 +61,8 @@ const ts: typeof import("typescript") = require("typescript");
 const { parseAndGenerateServices, simpleTraverse } = require("@typescript-eslint/typescript-estree");
 
 const projectDir = join(fixtures, "typescript-eslint-project");
+// What `{ from: "file" }` specifiers are relative to.
+process.chdir(projectDir);
 const typeRoots = process.env.BUN_LINT_TYPE_ROOTS?.split(",");
 const onlyRule = flag("--rule=");
 
@@ -153,6 +155,8 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
         const typeFlags = "Any Unknown String Number Boolean Enum BigInt StringLiteral NumberLiteral BooleanLiteral EnumLiteral BigIntLiteral ESSymbol UniqueESSymbol Void Undefined Null Never TypeParameter Object Union Intersection Index IndexedAccess Conditional Substitution NonPrimitive TemplateLiteral StringMapping".split(" ");
         const objectFlags = "Class Interface Reference Anonymous Mapped Instantiated ObjectLiteral FreshLiteral ArrayLiteral ReverseMapped ObjectRestType InstantiationExpressionType".split(" ");
         const tsutils = require("ts-api-utils");
+        const typeUtils = require("@typescript-eslint/type-utils");
+        const pluginUtil = (name: string) => require(`./dist/util/${name}.js`);
         const visit = (node: import("typescript").Node) => {
           ts.forEachChild(node, visit);
           if (!(ts as any).isExpressionNode(node) && !ts.isExpression(node)) return;
@@ -198,6 +202,52 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
           field("contextual", () => optional(checker.getContextualType(node as import("typescript").Expression)));
           field("thenable", () => tsutils.isThenableType(checker, node, type));
           field("assignableToString", () => checker.isTypeAssignableTo(type, checker.getStringType()));
+          const matches = (specifier: unknown) => typeUtils.typeMatchesSpecifier(type, specifier, program);
+          field("isTypeAnyType", () => typeUtils.isTypeAnyType(type));
+          field("isTypeUnknownType", () => typeUtils.isTypeUnknownType(type));
+          field("isTypeNeverType", () => typeUtils.isTypeNeverType(type));
+          field("isNullableType", () => typeUtils.isNullableType(type));
+          field("isTypeArrayTypeOrUnionOfArrayTypes", () => typeUtils.isTypeArrayTypeOrUnionOfArrayTypes(type, checker));
+          field("isTypeAnyArrayType", () => typeUtils.isTypeAnyArrayType(type, checker));
+          field("isTypeUnknownArrayType", () => typeUtils.isTypeUnknownArrayType(type, checker));
+          field("isTypeReferenceType", () => typeUtils.isTypeReferenceType(type));
+          field("isTypeBrandedLiteralLike", () => typeUtils.isTypeBrandedLiteralLike(type));
+          field("getTypeFlags", () => names(typeUtils.getTypeFlags(type), ts.TypeFlags, typeFlags));
+          field("getTypeName", () => typeUtils.getTypeName(checker, type));
+          field("isPromiseLike", () => typeUtils.isPromiseLike(program, type));
+          field("isPromiseConstructorLike", () => typeUtils.isPromiseConstructorLike(program, type));
+          field("isErrorLike", () => typeUtils.isErrorLike(program, type));
+          field("isReadonlyErrorLike", () => typeUtils.isReadonlyErrorLike(program, type));
+          field("isBuiltinSymbolLike", () => typeUtils.isBuiltinSymbolLike(program, type, ["Array", "Map", "Set", "Function", "RegExp"]));
+          field("isTypeReadonly", () => typeUtils.isTypeReadonly(program, type));
+          field("containsAllTypesByName", () => typeUtils.containsAllTypesByName(type, true, new Set(["Promise", "Array"]), false));
+          field("containsAllTypesByNameAny", () => typeUtils.containsAllTypesByName(type, false, new Set(["Promise", "Error"]), true));
+          field("discriminateAnyType", () => ["Any", "PromiseAny", "AnyArray", "Safe"][typeUtils.discriminateAnyType(type, checker, program, node)]);
+          field("needsToBeAwaited", () => ["Always", "Never", "May"][pluginUtil("needsToBeAwaited").needsToBeAwaited(checker, node, type)]);
+          field("getContextualType", () => optional(typeUtils.getContextualType(checker, node)));
+          field("getConstrainedTypeAtLocation", () => text(checker.getBaseConstraintOfType(type) ?? type));
+          field("getConstraintInfo", () => {
+            const info = pluginUtil("getConstraintInfo").getConstraintInfo(checker, type);
+            return [optional(info.constraintType), info.isTypeParameter];
+          });
+          field("isPossiblyFalsy", () => pluginUtil("truthinessUtils").isPossiblyFalsy(type));
+          field("isPossiblyTruthy", () => pluginUtil("truthinessUtils").isPossiblyTruthy(type));
+          field("isNumberLike", () => pluginUtil("baseTypeUtils").isNumberLike(type));
+          field("isStringLike", () => pluginUtil("baseTypeUtils").isStringLike(type));
+          field("hasBaseTypes", () => pluginUtil("baseTypeUtils").hasBaseTypes(type));
+          field("getEnumTypes", () => require("./dist/rules/enum-utils/shared.js").getEnumTypes(checker, type).map(text));
+          field("matchesLib", () => matches({ from: "lib", name: ["Promise", "Error", "Array", "string", "RegExp"] }));
+          field("matchesFile", () => matches({ from: "file", name: ["Foo", "Bar", "A", "B", "T", "Test"] }));
+          field("matchesFilePath", () => matches({ from: "file", name: ["Foo", "Bar", "A", "B", "T", "Test"], path: "file.ts" }));
+          field("matchesPackage", () => matches({ from: "package", name: ["Buffer", "URL", "ReactNode", "Element"], package: "node:buffer" }));
+          field("matchesReact", () => matches({ from: "package", name: ["ReactNode", "Element", "ReactElement", "FC"], package: "react" }));
+          field("matchesName", () => matches("Foo"));
+          field("isUnsafeAssignment", () => {
+            const receiver = checker.getContextualType(node as import("typescript").Expression);
+            if (!receiver) return null;
+            const found = typeUtils.isUnsafeAssignment(type, receiver, checker, services.tsNodeToESTreeNodeMap.get(node) ?? null);
+            return found ? [text(found.sender), text(found.receiver)] : false;
+          });
           if (ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) {
             const signature = checker.getResolvedSignature(node);
             field("resolved", () => (signature ? checker.signatureToString(signature) : null));

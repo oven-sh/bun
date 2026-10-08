@@ -1,9 +1,8 @@
 //! Which of the things that the HIR stores a node of TypeScript's tree is, for the nodes that have
 //! a type or a symbol of their own: expressions, identifiers, names of declarations.
 
-use super::super::enclosing_declaration::or_file_scope;
 use super::super::*;
-use crate::bind::{Decl, ScopeId, SymbolId};
+use crate::bind::{Decl, SymbolId};
 use crate::node::{Kind, Node, NodeData, Part};
 
 /// The HIR counterpart of a visited node.
@@ -248,59 +247,5 @@ impl Checker<'_, '_> {
             },
             _ => return None,
         })
-    }
-
-    /// `node.Parent`, as the scope from which names are resolved when a type or a symbol is printed
-    /// for the node.
-    pub(in crate::check) fn enclosing_scope_of_visited_node(
-        &self,
-        file: FileId,
-        kind: VisitedKind,
-    ) -> ScopeId {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match kind {
-            VisitedKind::Expression(e)
-            | VisitedKind::Parenthesized(e, _)
-            | VisitedKind::AccessName(e)
-            | VisitedKind::ModuleSpecifier(e)
-            | VisitedKind::ImportDeferName(e)
-            | VisitedKind::ConstOfAsConst(e)
-            | VisitedKind::JsxIntrinsicTagName(e, _) => self.enclosing_scope_of_expr(file, e),
-            VisitedKind::DeclarationName(decl, _) | VisitedKind::SpecifierPropertyName(decl, _) => {
-                self.enclosing_scope_of_declaration(file, decl)
-            }
-            VisitedKind::BindingName(pat) => self.enclosing_scope_of_pat(file, pat),
-            VisitedKind::LiteralInBindingPropertyName(p) | VisitedKind::BindingPropertyName(p)
-                if hir[p].value.is_some() =>
-            {
-                self.enclosing_scope_of_pat(file, hir[p].value)
-            }
-            VisitedKind::ThisParameter(f) => self.enclosing_scope_of_declaration(file, Decl::Fn(f)),
-            VisitedKind::LiteralInEnumMemberName(m) => {
-                self.enclosing_scope_of_declaration(file, Decl::EnumMember(m))
-            }
-            VisitedKind::LiteralInMemberName(m) | VisitedKind::MemberName(m) => {
-                self.enclosing_scope_of_member(file, m)
-            }
-            VisitedKind::LiteralInPropertyName(p)
-            | VisitedKind::PropertyName(p)
-            | VisitedKind::ImportAttributeName(p) => self.enclosing_scope_of_property(file, p),
-            VisitedKind::LiteralType(node)
-            | VisitedKind::LiteralTypeOperand(node)
-            | VisitedKind::TypeReferenceName(node, _)
-            | VisitedKind::HeritageClauseName(node, _)
-            | VisitedKind::HeritageClausePropertyAccess(node, _)
-            | VisitedKind::ImportTypeQualifierName(node, _)
-            | VisitedKind::TypePredicateParameter(node) => {
-                or_file_scope(bound.type_scope[node.idx()])
-            }
-            VisitedKind::ImportEqualsName(import, _) => {
-                self.enclosing_scope_of_declaration(file, Decl::ImportEquals(import))
-            }
-            VisitedKind::Label(s) => or_file_scope(bound.stmt_scope[s.idx()]),
-            VisitedKind::LiteralInBindingPropertyName(_)
-            | VisitedKind::BindingPropertyName(_)
-            | VisitedKind::JsxNamespacedNamePart => ScopeId(0),
-        }
     }
 }

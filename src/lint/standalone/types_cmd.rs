@@ -26,7 +26,7 @@ use bun_lint::linter::{LintOptions, Linter, Registry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
-use bun_lint::types::{ObjectFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags, tsutils};
+use bun_lint::types::{ObjectFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags, tsutils, utils};
 use bun_sema::program::FileId;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -373,6 +373,62 @@ fn dump_profiles<'a>(file: &'a File<'a>) -> String {
             ("thenable", tsutils::is_thenable_type(node, ty).to_string()),
             ("assignableToString", ty.is_assignable_to(file.type_checker().get_string_type()).to_string()),
         ];
+        // `@typescript-eslint/type-utils`, `eslint-plugin/src/util`
+        let specifier = |json: &str| bun_lint::json::parse(json.as_bytes()).and_then(|it| utils::TypeOrValueSpecifier::parse(&it));
+        let matches = |json: &str| specifier(json).is_some_and(|it| utils::type_matches_specifier(ty, &it)).to_string();
+        let utility_flags = utils::get_type_flags(ty);
+        let constraint = utils::get_constraint_info(ty);
+        fields.extend([
+            ("isTypeAnyType", utils::is_type_any_type(ty).to_string()),
+            ("isTypeUnknownType", utils::is_type_unknown_type(ty).to_string()),
+            ("isTypeNeverType", utils::is_type_never_type(ty).to_string()),
+            ("isNullableType", utils::is_nullable_type(ty).to_string()),
+            ("isTypeArrayTypeOrUnionOfArrayTypes", utils::is_type_array_type_or_union_of_array_types(ty).to_string()),
+            ("isTypeAnyArrayType", utils::is_type_any_array_type(ty).to_string()),
+            ("isTypeUnknownArrayType", utils::is_type_unknown_array_type(ty).to_string()),
+            ("isTypeReferenceType", utils::is_type_reference_type(ty).to_string()),
+            ("isTypeBrandedLiteralLike", utils::is_type_branded_literal_like(ty).to_string()),
+            ("getTypeFlags", list(&mut TYPE_FLAGS.iter().filter(|it| utility_flags.contains(it.0)).map(|it| format!("\"{}\"", it.1)))),
+            ("getTypeName", json_string(&utils::get_type_name(ty))),
+            ("isPromiseLike", utils::is_promise_like(ty).to_string()),
+            ("isPromiseConstructorLike", utils::is_promise_constructor_like(ty).to_string()),
+            ("isErrorLike", utils::is_error_like(ty).to_string()),
+            ("isReadonlyErrorLike", utils::is_readonly_error_like(ty).to_string()),
+            ("isBuiltinSymbolLike", utils::is_builtin_symbol_like(ty, &["Array", "Map", "Set", "Function", "RegExp"][..]).to_string()),
+            ("isTypeReadonly", utils::is_type_readonly(ty, &utils::ReadonlynessOptions::default()).to_string()),
+            ("containsAllTypesByName", utils::contains_all_types_by_name(ty, true, &["Promise", "Array"][..], false).to_string()),
+            ("containsAllTypesByNameAny", utils::contains_all_types_by_name(ty, false, &["Promise", "Error"][..], true).to_string()),
+            ("discriminateAnyType", format!("\"{:?}\"", utils::discriminate_any_type(ty, node))),
+            ("needsToBeAwaited", format!("\"{:?}\"", utils::needs_to_be_awaited(node, ty))),
+            ("getContextualType", optional(utils::get_contextual_type(node))),
+            ("getConstrainedTypeAtLocation", text_of(utils::get_constrained_type_at_location(node))),
+            ("getConstraintInfo", format!("[{}, {}]", optional(constraint.constraint_type), constraint.is_type_parameter)),
+            ("isPossiblyFalsy", utils::is_possibly_falsy(ty).to_string()),
+            ("isPossiblyTruthy", utils::is_possibly_truthy(ty).to_string()),
+            ("isNumberLike", utils::is_number_like(ty).to_string()),
+            ("isStringLike", utils::is_string_like(ty).to_string()),
+            ("hasBaseTypes", utils::has_base_types(ty).to_string()),
+            ("getEnumTypes", list(&mut utils::get_enum_types(ty).iter().map(|&it| text_of(it)))),
+            ("matchesLib", matches(r#"{"from": "lib", "name": ["Promise", "Error", "Array", "string", "RegExp"]}"#)),
+            ("matchesFile", matches(r#"{"from": "file", "name": ["Foo", "Bar", "A", "B", "T", "Test"]}"#)),
+            ("matchesFilePath", matches(r#"{"from": "file", "name": ["Foo", "Bar", "A", "B", "T", "Test"], "path": "file.ts"}"#)),
+            ("matchesPackage", matches(r#"{"from": "package", "name": ["Buffer", "URL", "ReactNode", "Element"], "package": "node:buffer"}"#)),
+            ("matchesReact", matches(r#"{"from": "package", "name": ["ReactNode", "Element", "ReactElement", "FC"], "package": "react"}"#)),
+            ("matchesName", matches(r#""Foo""#)),
+            ("isUnsafeAssignment", match node.get_contextual_type() {
+                Some(receiver) => {
+                    let sender = match node.to_ast() {
+                        Some(Node::Expr(e)) => Some(e),
+                        _ => None,
+                    };
+                    match utils::is_unsafe_assignment(ty, receiver, sender) {
+                        Some(found) => format!("[{}, {}]", text_of(found.sender), text_of(found.receiver)),
+                        None => "false".to_owned(),
+                    }
+                }
+                None => "null".to_owned(),
+            }),
+        ]);
         if matches!(node.kind(), SyntaxKind::CallExpression | SyntaxKind::NewExpression | SyntaxKind::TaggedTemplateExpression) {
             let signature = node.get_resolved_signature();
             fields.push(("resolved", signature.map_or_else(|| "null".to_owned(), |it| json_string(&it.to_text()))));

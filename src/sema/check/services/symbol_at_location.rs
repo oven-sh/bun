@@ -13,6 +13,7 @@ use crate::node::{Kind, Node, NodeData, Part};
 /// An entry of `symbol.Declarations`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(in crate::check) enum Declaration {
+    #[cfg_attr(not(feature = "baselines"), expect(dead_code))]
     Bound(Decl),
     /// A function expression or an object literal.
     Expression(ExprId),
@@ -56,9 +57,8 @@ pub(in crate::check) enum Found<'p> {
     Symbol(Sym),
     /// With the mapper to read it with.
     Property(FoundProp<'p>, MapperId),
-    /// `createUnionOrIntersectionProperty`: the property, the mapper to read it with, and the
-    /// properties in `propSet`.
-    Properties(&'p Prop<'p>, MapperId, Vec<&'p Prop<'p>>),
+    /// What `createUnionOrIntersectionProperty` makes for a union, with the mapper to read it with.
+    Properties(&'p Prop<'p>, MapperId),
     /// A symbol with one declaration that is in no table: `__object`, `__type`, a `this` parameter.
     Anonymous {
         file: FileId,
@@ -74,6 +74,7 @@ pub(in crate::check) enum Found<'p> {
     /// The parent is `t.symbol`.
     IndexSignature {
         of: TypeId,
+        #[cfg_attr(not(feature = "baselines"), expect(dead_code))]
         parent: Option<Sym>,
         declarations: Vec<(FileId, MemberId)>,
     },
@@ -774,12 +775,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
         }
         let (prop, mapper) = self.c.get_property_of_type(ty, name)?;
         Some(match &prop.source {
-            // `propSet`
-            PropSource::Intersected(_, parts) => {
-                let is_declared = |part: &&Prop| !part.flags.contains(PropFlags::WRITE_PARTIAL);
-                let props: Vec<&'p Prop<'p>> = parts.iter().filter(is_declared).collect();
-                Found::Properties(prop, mapper, props)
-            }
+            PropSource::Intersected(..) => Found::Properties(prop, mapper),
             _ => Found::Property(FoundProp::Of(prop), mapper),
         })
     }
@@ -910,7 +906,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     fn symbol_found(&mut self, found: Found<'p>) -> SymbolRef {
         match found {
             Found::Symbol(symbol) => self.symbol(symbol),
-            Found::Property(FoundProp::Of(prop), mapper) | Found::Properties(prop, mapper, _) => {
+            Found::Property(FoundProp::Of(prop), mapper) | Found::Properties(prop, mapper) => {
                 self.symbol_of_prop(prop, mapper)
             }
             // What is made up for a declared member says nothing but which symbol it is.

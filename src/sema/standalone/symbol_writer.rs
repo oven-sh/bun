@@ -84,10 +84,19 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         let (name, declarations) = match found {
             Found::Symbol(symbol) => self.describe_symbol(*symbol, scope),
             Found::Property(prop, _) => self.describe_property(prop, scope),
-            Found::Properties(_, _, props) => match props[..] {
-                [single] => self.describe_property(single, scope),
-                _ => self.describe_properties(props, scope),
-            },
+            Found::Properties(prop, _) => {
+                // `propSet`
+                let parts = match &prop.source {
+                    PropSource::Intersected(_, parts) => &parts[..],
+                    _ => &[],
+                };
+                let is_declared = |part: &&Prop| !part.flags.contains(PropFlags::WRITE_PARTIAL);
+                let props: Vec<&Prop> = parts.iter().filter(is_declared).collect();
+                match props[..] {
+                    [single] => self.describe_property(single, scope),
+                    _ => self.describe_properties(&props, scope),
+                }
+            }
             Found::Anonymous { file, declaration } => (
                 self.name_of_anonymous_symbol(*file, *declaration),
                 vec![(*file, *declaration)],

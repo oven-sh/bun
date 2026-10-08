@@ -112,7 +112,8 @@ pub fn is_class_ref_in_class_decorator(definition: Declaration, identifier: Span
 
 /// ESLint's `isInClassStaticInitializerRange`.
 fn is_in_class_static_initializer_range(class: Class, location: u32) -> bool {
-    class.members().iter().any(|member| match member.kind() {
+    // `location` is the end of a name.
+    class.members().around(location.saturating_sub(1)).is_some_and(|member| match member.kind() {
         MemberKind::StaticBlock => is_in_range(member.span(), location),
         MemberKind::Property => {
             member.is_static()
@@ -162,9 +163,9 @@ enum Parent {
 /// `TSClassImplements` or a `TSInterfaceHeritage`, not a `TSTypeReference`.
 fn is_heritage(ty: TypeNode) -> bool {
     match ty.parent() {
-        Node::Class(class) => class.implements().iter().any(|it| it == ty),
+        Node::Class(class) => class.implements().around(ty.span().start) == Some(ty),
         Node::Stmt(parent) => {
-            matches!(parent.kind(), StmtKind::Interface(it) if it.extends().iter().any(|it| it == ty))
+            matches!(parent.kind(), StmtKind::Interface(it) if it.extends().around(ty.span().start) == Some(ty))
         }
         _ => false,
     }

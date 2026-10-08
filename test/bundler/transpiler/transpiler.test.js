@@ -2296,6 +2296,25 @@ export default class {
     });
   });
 
+  // Without a bundle no renamer runs, so a generated name is printed as it is. `Bun.Transpiler`
+  // calls its input "input", so the name the parser makes for an anonymous default export is
+  // `input_default`.
+  describe("generated default export name", () => {
+    const js = new Bun.Transpiler({ loader: "js", target: "bun" });
+    const minifiesIdentifiers = new Bun.Transpiler({ loader: "js", target: "bun", minify: { identifiers: true } });
+
+    it("an anonymous default function gets no name", () => {
+      for (const keywords of ["function", "async function", "function*", "async function*"]) {
+        const source = `const input_default = 1;\nexport default ${keywords} () {}\n`;
+        expect(js.transformSync(source)).toBe(source);
+        expect(minifiesIdentifiers.transformSync(`export default ${keywords} () {}\n`)).toBe(
+          `export default ${keywords} () {}\n`,
+        );
+      }
+      expect(js.transformSync("export default function named() {}\n")).toBe("export default function named() {}\n");
+    });
+  });
+
   describe("exports.replace", () => {
     const transpiler = new Bun.Transpiler({
       exports: {

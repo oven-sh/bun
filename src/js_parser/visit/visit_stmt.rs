@@ -587,7 +587,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         let name: &'a [u8] = if let Some(func_loc) = func.func.name {
                             p.load_name_from_ref(func_loc.ref_)
                         } else {
-                            func.func.name = Some(data.default_name);
+                            // Only the dev server, React Fast Refresh and the React Compiler read this name.
+                            if p.options.bundle {
+                                func.func.name = Some(data.default_name);
+                            }
                             js_ast::ClauseItem::DEFAULT_ALIAS
                         };
 

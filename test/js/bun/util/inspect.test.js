@@ -768,6 +768,55 @@ describe("console.logging class displays names and extends", async () => {
   }
 });
 
+// JSC binds an anonymous `export default` to the private name `*default*`. Its `.name` is
+// "default", and that is what node prints.
+it("an anonymous export default function or class, and an instance of it, inspect as 'default'", async () => {
+  using dir = tempDir("inspect-export-default", {
+    "function.mjs": `export default function () {}`,
+    "async-function.mjs": `export default async function () {}`,
+    "class.mjs": `export default class {}`,
+    "subclass.mjs": `
+      export class Base {}
+      export default class extends Base {}
+    `,
+    "arrow.mjs": `export default () => {};`,
+    "main.mjs": `
+      import fn from "./function.mjs";
+      import asyncFn from "./async-function.mjs";
+      import Class from "./class.mjs";
+      import Subclass from "./subclass.mjs";
+      import arrow from "./arrow.mjs";
+
+      const element = { $$typeof: Symbol.for("react.element"), type: Class, props: {}, key: null };
+      const values = [fn, asyncFn, Class, Subclass, arrow, element, new Class(), new fn(), { nested: new Class() }];
+      console.log(JSON.stringify(values.map(value => Bun.inspect(value))));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: [
+      "[Function: default]",
+      "[AsyncFunction: default]",
+      "[class default]",
+      "[class default extends Base]",
+      "[Function: default]",
+      "<default />",
+      "default {}",
+      "default {}",
+      "{\n  nested: default {},\n}",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("console.log on a Blob shows name", () => {
   const blob = new Blob(["foo"], { type: "text/plain" });
   expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain;charset=utf-8"\n}');

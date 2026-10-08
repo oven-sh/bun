@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -174,4 +174,138 @@ test("Async functions frame should be included in stack trace", async () => {
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"
   `);
+});
+
+// JSC binds an anonymous `export default` to the private name `*default*` and shows it as "default"
+// once `name` is reified. A frame must say "default" too, as node does, whether or not something
+// has read `.name` yet.
+describe("an anonymous export default is named 'default' in frames", () => {
+  const modules = {
+    "function.mjs": `export default function () { return new Error("function").stack; }`,
+    "async-function.mjs": `export default async function () { return new Error("async function").stack; }`,
+    "generator.mjs": `export default function* () { yield new Error("generator").stack; }`,
+    "class.mjs": `export default class { constructor() { this.stack = new Error("class").stack; } }`,
+    "subclass.mjs": `
+      class Base { constructor() { this.stack = new Error("subclass").stack; } }
+      export default class extends Base {}
+    `,
+    "arrow.mjs": `export default () => new Error("arrow").stack;`,
+    "expression.mjs": `export default (function () { return new Error("expression").stack; });`,
+    // Only the private name is mapped. A function that is named starDefault keeps its name.
+    "named-star-default.mjs": `export default function starDefault() { return new Error("starDefault").stack; }`,
+    "throws.mjs": `export default function () { throw new Error("thrown by an anonymous default export"); }`,
+    "uncaught.mjs": `
+      import thrower from "./throws.mjs";
+      thrower();
+    `,
+    "unhandled-rejection.mjs": `
+      import thrower from "./throws.mjs";
+      Promise.resolve().then(() => thrower());
+    `,
+    "main.mjs": `
+      import fn from "./function.mjs";
+      import asyncFn from "./async-function.mjs";
+      import generator from "./generator.mjs";
+      import Class from "./class.mjs";
+      import Subclass from "./subclass.mjs";
+      import arrow from "./arrow.mjs";
+      import expression from "./expression.mjs";
+      import starDefault from "./named-star-default.mjs";
+
+      const frameNames = (stack, count) =>
+        stack
+          .split("\\n")
+          .slice(1, 1 + count)
+          .map(line => line.trim().replace(/^at /, "").replace(/ \\(.*$/, ""));
+
+      const topCallSite = getStack => {
+        const previous = Error.prepareStackTrace;
+        Error.prepareStackTrace = (_, callSites) => [callSites[0].getFunctionName(), callSites[0].isConstructor()];
+        try {
+          return getStack();
+        } finally {
+          Error.prepareStackTrace = previous;
+        }
+      };
+
+      const observe = async () => ({
+        function: frameNames(fn(), 1),
+        asyncFunction: frameNames(await asyncFn(), 1),
+        generator: frameNames(generator().next().value, 1),
+        class: frameNames(new Class().stack, 1),
+        subclass: frameNames(new Subclass().stack, 2),
+        arrow: frameNames(arrow(), 1),
+        expression: frameNames(expression(), 1),
+        starDefault: frameNames(starDefault(), 1),
+        callSites: [topCallSite(fn), topCallSite(() => new Class().stack), topCallSite(arrow)],
+      });
+
+      const beforeReadingName = await observe();
+      const names = [fn, asyncFn, generator, Class, Subclass, arrow, expression, starDefault].map(value => value.name);
+      const afterReadingName = await observe();
+      console.log(JSON.stringify({ beforeReadingName, names, afterReadingName }));
+    `,
+  };
+
+  const expected = {
+    function: ["default"],
+    asyncFunction: ["default"],
+    generator: ["default"],
+    class: ["new default"],
+    subclass: ["new Base", "new default"],
+    arrow: ["default"],
+    expression: ["default"],
+    starDefault: ["starDefault"],
+    callSites: [
+      ["default", false],
+      ["default", true],
+      ["default", false],
+    ],
+  };
+
+  test.concurrent("error.stack and CallSite#getFunctionName", async () => {
+    using dir = tempDir("export-default-frame-name", modules);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        beforeReadingName: expected,
+        names: ["default", "default", "default", "default", "default", "default", "default", "starDefault"],
+        afterReadingName: expected,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The printer of an uncaught error names its frames through its own lookup, not through error.stack.
+  test.concurrent.each(["uncaught.mjs", "unhandled-rejection.mjs"])(
+    "the frames printed for an uncaught error: %s",
+    async entry => {
+      using dir = tempDir("export-default-frame-name", modules);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const firstFrame = normalizeBunSnapshot(stderr, dir)
+        .split("\n")
+        .map(line => line.trim())
+        .find(line => line.startsWith("at "));
+      expect({ stdout, firstFrame, exitCode }).toEqual({
+        stdout: "",
+        firstFrame: "at default (file:NN:NN)",
+        exitCode: 1,
+      });
+    },
+  );
 });

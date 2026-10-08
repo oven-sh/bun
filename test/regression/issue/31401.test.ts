@@ -44,7 +44,7 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     expect(exitCode).toBe(0);
   });
 
-  test("transpile-only output uses a valid identifier for the generated default name", async () => {
+  test("transpile-only output has no generated name for an anonymous default function", async () => {
     using dir = tempDir("issue-31401-transpile", {
       "1.ts": `export default function () {}\n`,
     });
@@ -59,8 +59,28 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
+    expect(normalizeBunSnapshot(stdout)).toBe("export default function () {}");
+    expect(exitCode).toBe(0);
+  });
+
+  test("transpile-only output uses a valid identifier for the generated default name", async () => {
+    // A class that a decorator can replace still takes the generated name.
+    using dir = tempDir("issue-31401-transpile-class", {
+      "1.ts": `function dec(value: unknown) {}\n@dec export default class {}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", join(String(dir), "1.ts")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
     // Must be a valid identifier: the leading digit gets an underscore prefix.
-    expect(normalizeBunSnapshot(stdout)).toContain("export default function _1_default() {}");
+    expect(normalizeBunSnapshot(stdout)).toContain("export default class _1_default {");
     expect(exitCode).toBe(0);
   });
 });

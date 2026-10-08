@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::cmp::Reverse;
 
@@ -14,9 +15,18 @@ const UNNECESSARY_ASSIGN: Message = Message::new(
 /// What is known about the body of a class.
 #[derive(Default)]
 struct ReportInfo<'a> {
-    assigned_before_constructor: Vec<Cow<'a, [u8]>>,
-    assigned_before_unnecessary: Vec<Cow<'a, [u8]>>,
+    assigned_before_constructor: FxHashSet<Cow<'a, [u8]>>,
+    assigned_before_unnecessary: FxHashSet<Cow<'a, [u8]>>,
     unnecessary_assignments: Vec<(Cow<'a, [u8]>, Expr<'a>)>,
+}
+
+/// What is looked up for every assignment.
+#[derive(Default)]
+struct Memo<'a> {
+    /// For each name that a scope refers to: whether the first reference is to a parameter.
+    from_parameter: FxHashMap<Scope<'a>, FxHashMap<Name<'a>, bool>>,
+    /// The names of the parameter properties of a constructor.
+    parameter_properties: FxHashMap<Func<'a>, FxHashSet<Name<'a>>>,
 }
 
 fn is_this_member_expression(e: Expr<'_>) -> bool {
@@ -51,11 +61,28 @@ fn is_constructor_function_expression(func: Func<'_>) -> bool {
         && matches!(func.owner(), Node::Member(member) if member.is_constructor())
 }
 
-fn is_reference_from_parameter<'a>(identifier: Expr<'a>, name: Name<'a>) -> bool {
-    let mut references = Node::Expr(identifier).scope().references();
-    let reference = references.find(|it| it.name() == name);
-    let declaration = reference.and_then(Reference::symbol).and_then(|it| it.declarations().next());
-    matches!(declaration, Some(Declaration::Param(_)))
+impl<'a> Memo<'a> {
+    fn is_reference_from_parameter(&mut self, identifier: Expr<'a>, name: Name<'a>) -> bool {
+        let scope = Node::Expr(identifier).scope();
+        let first_references = self.from_parameter.entry(scope).or_insert_with(|| {
+            let mut first_references = FxHashMap::default();
+            for reference in scope.references() {
+                first_references.entry(reference.name()).or_insert_with(|| {
+                    matches!(reference.symbol().and_then(|it| it.declarations().next()), Some(Declaration::Param(_)))
+                });
+            }
+            first_references
+        });
+        first_references.get(&name).is_some_and(|it| *it)
+    }
+
+    fn has_parameter_property(&mut self, constructor: Func<'a>, name: Name<'a>) -> bool {
+        let names = self.parameter_properties.entry(constructor).or_insert_with(|| {
+            let properties = constructor.params().iter().filter(|it| it.is_parameter_property());
+            properties.filter_map(|it| it.pat().as_ident()).collect()
+        });
+        names.contains(&name)
+    }
 }
 
 fn get_identifier(mut e: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
@@ -87,15 +114,15 @@ fn enclosing_class_body(e: Expr<'_>) -> Option<Class<'_>> {
 }
 
 /// The assignment `e` is in `constructor`, at most in an arrow function that is called at once.
-fn check_in_constructor<'a>(e: Expr<'a>, constructor: Func<'a>, info: &mut ReportInfo<'a>) {
+fn check_in_constructor<'a>(e: Expr<'a>, constructor: Func<'a>, info: &mut ReportInfo<'a>, memo: &mut Memo<'a>) {
     let ExprKind::Assign { op, target, value } = e.kind() else {
         return;
     };
     // After a write to the parameter, `this.x = x` may copy another value than the parameter
     // property got.
     if let ExprKind::Ident(name) = target.kind() {
-        if is_reference_from_parameter(target, name) {
-            info.assigned_before_unnecessary.push(Cow::Borrowed(name.bytes()));
+        if memo.is_reference_from_parameter(target, name) {
+            info.assigned_before_unnecessary.insert(Cow::Borrowed(name.bytes()));
         }
         return;
     }
@@ -103,20 +130,16 @@ fn check_in_constructor<'a>(e: Expr<'a>, constructor: Func<'a>, info: &mut Repor
         return;
     };
     if !matches!(op, None | Some(BinOp::Nullish | BinOp::And | BinOp::Or)) {
-        info.assigned_before_unnecessary.push(left_name);
+        info.assigned_before_unnecessary.insert(left_name);
         return;
     }
     let Some((right, right_name)) = get_identifier(value) else {
         return;
     };
-    if right_name.bytes() != &*left_name || !is_reference_from_parameter(right, right_name) {
+    if right_name.bytes() != &*left_name || !memo.is_reference_from_parameter(right, right_name) {
         return;
     }
-    let has_parameter_property = constructor
-        .params()
-        .iter()
-        .any(|it| it.is_parameter_property() && it.pat().as_ident() == Some(right_name));
-    if has_parameter_property && !info.assigned_before_unnecessary.contains(&left_name) {
+    if memo.has_parameter_property(constructor, right_name) && !info.assigned_before_unnecessary.contains(&left_name) {
         info.unnecessary_assignments.push((left_name, e));
     }
 }
@@ -159,18 +182,13 @@ impl NoUnnecessaryParameterPropertyAssignment {
         let mut assignments: Vec<Expr<'a>> = cx.file().exprs_of_kind(ExprTag::Assign).filter(is_relevant).collect();
         assignments.sort_by_key(|it| (it.span().start, Reverse(it.span().end)));
 
-        let mut infos: Vec<(Class<'a>, ReportInfo<'a>)> = Vec::new();
+        let mut infos: FxHashMap<Class<'a>, ReportInfo<'a>> = FxHashMap::default();
+        let mut memo = Memo::default();
         for e in assignments {
             let Some(class) = enclosing_class_body(e) else {
                 continue;
             };
-            let at = infos.iter().position(|it| it.0 == class).unwrap_or_else(|| {
-                infos.push((class, ReportInfo::default()));
-                infos.len() - 1
-            });
-            let Some((_, info)) = infos.get_mut(at) else {
-                continue;
-            };
+            let info = infos.entry(class).or_default();
 
             let function = ast_utils::get_upper_function(e);
             let constructor = match function.and_then(call_around_arrow) {
@@ -178,18 +196,18 @@ impl NoUnnecessaryParameterPropertyAssignment {
                 None => function,
             };
             if let Some(constructor) = constructor.filter(|it| is_constructor_function_expression(*it)) {
-                check_in_constructor(e, constructor, info);
+                check_in_constructor(e, constructor, info, &mut memo);
             }
 
             if let ExprKind::Assign { target, .. } = e.kind()
                 && let Some(name) = get_property_name(target)
                 && is_in_field_initializer(e, function)
             {
-                info.assigned_before_constructor.push(name);
+                info.assigned_before_constructor.insert(name);
             }
         }
 
-        for (_, info) in &infos {
+        for info in infos.values() {
             for (name, e) in &info.unnecessary_assignments {
                 if !info.assigned_before_constructor.contains(name) {
                     cx.report(*e, UNNECESSARY_ASSIGN);

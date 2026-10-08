@@ -3,6 +3,18 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
+/** Runs `index.ts` in `dir`, then builds it with `bun build` and runs the bundle. */
+async function importedAndBundled(dir: string) {
+  const run = async (...args: string[]) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: dir, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const imported = await run("index.ts");
+  const { stderr, exitCode } = await run("build", "index.ts", "--target=bun", "--outfile=out.js");
+  return { imported, build: { stderr, exitCode }, bundled: await run("out.js") };
+}
+
 describe("Bun.YAML", () => {
   describe("parse", () => {
     // Test various input types
@@ -2076,11 +2088,115 @@ folded: >
           expect(() => YAML.parse("a\x80b")).toThrow();
         });
 
-        test.todo("CRLF in quoted scalars folds as one line break (→ space)", () => {
-          // [73] b-l-folded: a single break folds to a space. Currently `\r\n`
-          // in quoted scalars produces `\n` instead.
-          expect(YAML.parse('"a\r\nb"')).toBe("a b");
-          expect(YAML.parse("'a\r\nb'")).toBe("a b");
+        describe("CRLF in quoted scalars folds as one line break (→ space)", () => {
+          // [28] b-break is CR LF, CR or LF, and the style is not content.
+          // [73] b-l-folded: one break folds to a space, n breaks to n-1 LFs.
+          test("single break", () => {
+            expect(YAML.parse('"a\r\nb"')).toBe("a b");
+            expect(YAML.parse("'a\r\nb'")).toBe("a b");
+          });
+
+          const alternate = (lf: string, even: string, odd: string) => {
+            let breaks = 0;
+            return lf.replace(/\n/g, () => (breaks++ % 2 ? odd : even));
+          };
+          const lineEnds: [string, (lf: string) => string][] = [
+            ["LF", lf => lf],
+            ["CRLF", lf => lf.replaceAll("\n", "\r\n")],
+            ["CR", lf => lf.replaceAll("\n", "\r")],
+            ["CRLF, LF alternating", lf => alternate(lf, "\r\n", "\n")],
+            ["LF, CRLF alternating", lf => alternate(lf, "\n", "\r\n")],
+          ];
+
+          const folded: [lf: string, expected: unknown][] = [
+            ['"a\nb"', "a b"],
+            ["'a\nb'", "a b"],
+            ['"a\n\nb"', "a\nb"],
+            ["'a\n\nb'", "a\nb"],
+            ['"a\n\n\nb"', "a\n\nb"],
+            ["'a\n\n\nb'", "a\n\nb"],
+            ['"a \n b"', "a b"],
+            ["'a \n b'", "a b"],
+            ['"a\t\n\tb"', "a b"],
+            ['"\na\n"', " a "],
+            ["'\n\na\n\n'", "\na\n"],
+            // [112] s-double-escaped: the escaped break is not content.
+            ['"a\\\nb"', "ab"],
+            ['"a\\\n  b"', "ab"],
+            ['"a \\\n b"', "a b"],
+            ['"a\\\n\nb"', "a\nb"],
+            // https://github.com/oven-sh/bun/issues/44597
+            ['value: "first line\n  second line"\n', { value: "first line second line" }],
+            ["value: 'first line\n  second line'\n", { value: "first line second line" }],
+            ['k: "x\n  y"\nn: 1\n', { k: "x y", n: 1 }],
+            ["k: 'x\n\n  y'\nn: 1\n", { k: "x\ny", n: 1 }],
+            ['- "a\n  b"\n- c\n', ["a b", "c"]],
+            ["[\"a\n b\", 'c\n d']\n", ["a b", "c d"]],
+            ['{"a\n b": 1}\n', { "a b": 1 }],
+            ['--- "a\nb"\n--- c\n', ["a b", "c"]],
+          ];
+          const rejected: [lf: string, message: string][] = [
+            ['k:\n  "a\nb"\n', "Unexpected character"],
+            ['"a\n---\nb"\n', "Unexpected document start"],
+            ["'a\n...\nb'\n", "Unexpected document end"],
+          ];
+
+          describe.each(lineEnds)("%s line ends", (_, withLineEnds) => {
+            test.each(folded)("%j", (lf, expected) => {
+              expect(YAML.parse(withLineEnds(lf))).toEqual(expected);
+            });
+
+            test.each(rejected)("%j throws", (lf, message) => {
+              expect(() => YAML.parse(withLineEnds(lf))).toThrow(message);
+            });
+          });
+
+          test("every yaml-test-suite input parses the same with any line end", async () => {
+            // The suite inputs exist only as literals in the generated file.
+            const source = await file(join(import.meta.dir, "yaml-test-suite.test.ts")).text();
+            const inputs = Array.from(
+              source.matchAll(/const input: string =\s*(`(?:\\[^]|[^`\\])*`|"(?:\\.|[^"\\])*");/g),
+              match => new Function(`return ${match[1]}`)() as string,
+            );
+            expect(inputs).toHaveLength(source.match(/^test\("yaml-test-suite\//gm)!.length);
+
+            const show = (text: string) => {
+              try {
+                return Bun.inspect(YAML.parse(text), { depth: 64 });
+              } catch (e) {
+                return `throws: ${(e as Error).message}`;
+              }
+            };
+            const different: string[] = [];
+            for (const input of inputs) {
+              if (input.includes("\r")) continue;
+              const expected = show(input);
+              for (const [name, withLineEnds] of lineEnds.slice(1)) {
+                if (show(withLineEnds(input)) !== expected) different.push(`${name}: ${JSON.stringify(input)}`);
+              }
+            }
+            expect(different).toEqual([]);
+          });
+
+          test.concurrent("a .yaml module with CRLF line ends loads like its LF twin", async () => {
+            const lf = 'dq: "x\n  y"\nsq: \'x\n  y\'\nesc: "x\\\n  y"\n';
+            using dir = tempDir("yaml-crlf-module", {
+              "lf.yaml": lf,
+              "crlf.yaml": lf.replaceAll("\n", "\r\n"),
+              "index.ts": `
+                import lf from "./lf.yaml";
+                import crlf from "./crlf.yaml";
+                console.log(JSON.stringify(lf));
+                console.log(JSON.stringify(crlf));
+              `,
+            });
+            const line = '{"dq":"x y","sq":"x y","esc":"xy"}\n';
+            expect(await importedAndBundled(String(dir))).toEqual({
+              imported: { stdout: line + line, stderr: "", exitCode: 0 },
+              build: { stderr: "", exitCode: 0 },
+              bundled: { stdout: line + line, stderr: "", exitCode: 0 },
+            });
+          });
         });
 
         test.todo("verbatim/named-handle tags resolve as Core-schema types", () => {
@@ -2156,7 +2272,7 @@ folded: >
           expect(() => YAML.parse("a: 1\nb:\n\tc: 2")).toThrow(/line\s*\d|:\d+:\d+/);
         });
 
-        test.todo("`<<:` merge preserves source property order", () => {
+        test("`<<:` merge preserves source property order", () => {
           const r: any = YAML.parse("x: &x\n  a: 1\n  b: 2\n  c: 3\ny:\n  <<: *x");
           expect(Object.keys(r.y)).toEqual(["a", "b", "c"]);
         });
@@ -2711,6 +2827,74 @@ config:
           config: {
             foo: 3,
           },
+        });
+      });
+
+      describe("merged keys keep their source order", () => {
+        // JSON.stringify keeps key order, so each row pins order and values.
+        const x = "x: &x {a: 1, b: 2, c: 3}\n";
+        const abc = '{"a":1,"b":2,"c":3}';
+        test.each([
+          ["flow source", x + "y:\n  <<: *x", `{"x":${abc},"y":${abc}}`],
+          ["block source", "x: &x\n  a: 1\n  b: 2\n  c: 3\ny:\n  <<: *x", `{"x":${abc},"y":${abc}}`],
+          [
+            "own keys around the merge",
+            x + "y:\n  p: 0\n  <<: *x\n  q: 0",
+            `{"x":${abc},"y":{"p":0,"a":1,"b":2,"c":3,"q":0}}`,
+          ],
+          ["own key before the merge wins", x + "y:\n  b: 0\n  <<: *x", `{"x":${abc},"y":{"b":0,"a":1,"c":3}}`],
+          ["own key after the merge wins", x + "y:\n  <<: *x\n  b: 0", `{"x":${abc},"y":{"a":1,"b":0,"c":3}}`],
+          [
+            "earlier source of a merge list wins",
+            "a: &a {x: 1, y: 2}\nb: &b {y: 20, z: 30}\nm:\n  <<: [*a, *b]",
+            '{"a":{"x":1,"y":2},"b":{"y":20,"z":30},"m":{"x":1,"y":2,"z":30}}',
+          ],
+          [
+            "inline mapping in a merge list",
+            x + "y:\n  <<: [*x, {d: 4, a: 9}]\n  e: 5",
+            `{"x":${abc},"y":{"a":1,"b":2,"c":3,"d":4,"e":5}}`,
+          ],
+          ["same anchor twice", x + "y:\n  <<: [*x, *x]", `{"x":${abc},"y":${abc}}`],
+          ["two merge keys", "<<: {x: 1, y: 2}\nfoo: bar\n<<: {z: 3, t: 4}", '{"x":1,"y":2,"foo":"bar","z":3,"t":4}'],
+          ["merge of a merged mapping", x + "y: &y\n  <<: *x\nz:\n  <<: *y", `{"x":${abc},"y":${abc},"z":${abc}}`],
+          [
+            "merge of a mapping that overrides a merged key",
+            x + "mid: &m\n  <<: *x\n  a: 9\nleaf:\n  <<: *m",
+            `{"x":${abc},"mid":{"a":9,"b":2,"c":3},"leaf":{"a":9,"b":2,"c":3}}`,
+          ],
+          [
+            "a key repeated in the source keeps its first place and last value",
+            "x: &x {a: 1, b: 2, a: 3, c: 4}\ny:\n  <<: *x",
+            '{"x":{"a":3,"b":2,"c":4},"y":{"a":3,"b":2,"c":4}}',
+          ],
+          [
+            "keys that are not strings",
+            "x: &x {true: 1, ~: 2, 1.5: 3}\ny:\n  <<: *x",
+            '{"x":{"true":1,"null":2,"1.5":3},"y":{"true":1,"null":2,"1.5":3}}',
+          ],
+        ])("%s", (_, input, expected) => {
+          expect(JSON.stringify(YAML.parse(input))).toBe(expected);
+        });
+
+        test("keys that collide as property names merge like their source", () => {
+          const doc: any = YAML.parse('x: &x {1: a, "1": b}\ny:\n  <<: *x');
+          expect(doc).toEqual({ x: { 1: "b" }, y: { 1: "b" } });
+        });
+
+        test.concurrent("a .yaml module keeps the order through import and bun build", async () => {
+          using dir = tempDir("yaml-merge-order-module", {
+            "doc.yaml": x + "y:\n  p: 0\n  <<: *x\n  q: 0\n",
+            "index.ts": `
+              import doc from "./doc.yaml";
+              console.log(JSON.stringify(doc));
+            `,
+          });
+          const stdout = `{"x":${abc},"y":{"p":0,"a":1,"b":2,"c":3,"q":0}}\n`;
+          expect(await importedAndBundled(String(dir))).toEqual({
+            imported: { stdout, stderr: "", exitCode: 0 },
+            build: { stderr: "", exitCode: 0 },
+            bundled: { stdout, stderr: "", exitCode: 0 },
+          });
         });
       });
     });
@@ -4274,11 +4458,15 @@ config:
         expect(parsed).toEqual([{ a: 1, c: 2 }, { y: 3 }, { valid: "data" }]);
       });
 
+      // Several times the depth that overflows the stack. A debug or ASAN build
+      // needs seconds to build the longer chain.
+      const overflowDepth = isDebug || isASAN ? 200_000 : 1_000_000;
+
       test("handles stack overflow protection", () => {
         // Create deeply nested structure approaching stack limit
         let deep = {};
         let current = deep;
-        for (let i = 0; i < 1000000; i++) {
+        for (let i = 0; i < overflowDepth; i++) {
           current.next = {};
           current = current.next;
         }
@@ -4290,7 +4478,7 @@ config:
       test("stack overflow protection in the write pass", () => {
         let deep = {};
         let current = deep;
-        for (let i = 0; i < 1000000; i++) {
+        for (let i = 0; i < overflowDepth; i++) {
           current.next = {};
           current = current.next;
         }

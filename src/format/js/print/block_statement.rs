@@ -30,7 +30,7 @@ pub(crate) fn write_block_statement<'a>(statement: Stmt<'a>, body: List<'a, Stmt
                     format_dangling_comments(statement.span())
                 ))
             );
-        } else if is_non_collapsible(statement.ast_parent()) {
+        } else if is_non_collapsible(statement.ast_parent(), f) {
             write!(f, hard_line_break());
         }
     } else {
@@ -45,10 +45,11 @@ pub(crate) fn is_empty_block<'a>(block: List<'a, Stmt<'a>>) -> bool {
 }
 
 /// Whether an empty block in `parent` is written `{\n}` and not `{}`.
-fn is_non_collapsible(parent: AstNodes<'_>) -> bool {
+fn is_non_collapsible(parent: AstNodes<'_>, f: &Formatter<'_>) -> bool {
     match parent {
-        AstNodes::FunctionBody(_)
-        | AstNodes::ForStatement(_)
+        // `function a() { {} }`: a statement in the body, not the body.
+        AstNodes::FunctionBody(_) => !empty_block_in_function_body_collapses(f),
+        AstNodes::ForStatement(_)
         | AstNodes::WhileStatement(_)
         | AstNodes::DoWhileStatement(_)
         | AstNodes::TSModuleDeclaration(_)
@@ -56,4 +57,8 @@ fn is_non_collapsible(parent: AstNodes<'_>) -> bool {
         AstNodes::CatchClause(statement) => statement.finalizer().is_some(),
         _ => true,
     }
+}
+
+fn empty_block_in_function_body_collapses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }

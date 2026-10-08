@@ -4,7 +4,7 @@
 //! - [`ast`]: the syntax of a file.
 //! - [`semantic`]: scopes, symbols, references.
 //! - [`tokens`]: tokens and comments.
-//! - [`types`]: types.
+//! - [`types`][]: types.
 //! - [`code_path`]: ESLint's code path analysis.
 //! - [`rule`]: what a rule is. Start there.
 //! - [`js_plugin`]: rules that are written in JavaScript.

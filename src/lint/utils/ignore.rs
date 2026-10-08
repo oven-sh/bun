@@ -316,7 +316,7 @@ fn ignore_regex_source(pattern: &str, version: IgnoreVersion) -> String {
             if is_closed {
                 out.push(']');
             }
-        } else if is_closed && escapes % 2 == 0 {
+        } else if is_closed && escapes.is_multiple_of(2) {
             let mut range = sanitize_range(range);
             if version == IgnoreVersion::V7 {
                 if range.first() == Some(&'!') {

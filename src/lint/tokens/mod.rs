@@ -418,7 +418,7 @@ fn code_points(name: &[u8]) -> impl Iterator<Item = u32> {
     let mut at = 0;
     std::iter::from_fn(move || {
         let (c, size) = match name.get(at)? {
-            b'\\' => bun_core::lexer::peek_unicode_escape(name, at).unwrap_or((i32::from(b'\\'), 1)),
+            b'\\' => bun_core::lexer::peek_unicode_escape(name, at).unwrap_or_else(|| (i32::from(b'\\'), 1)),
             _ => bun_core::lexer::char_and_size(name, at),
         };
         at += size.max(1);

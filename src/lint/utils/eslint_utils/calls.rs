@@ -472,7 +472,8 @@ fn escape_regex_source(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
 /// The keys of a `Map` and the elements of a `Set` have no `-0`.
 fn without_negative_zero(value: StaticValue<'_>) -> StaticValue<'_> {
     match value {
-        StaticValue::Number(n) if n == 0.0 => StaticValue::Number(0.0),
+        // `-0.0 + 0.0` is `0.0`.
+        StaticValue::Number(n) => StaticValue::Number(n + 0.0),
         value => value,
     }
 }

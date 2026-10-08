@@ -209,7 +209,7 @@ pub fn is_conditional_test(e: Expr<'_>) -> bool {
 pub fn get_parent_function_node<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
     node.into()
         .ancestors()
-        .find_map(|it| it.as_func().and_then(|func| as_function(func)))
+        .find_map(|it| it.as_func().and_then(as_function))
 }
 
 /// typescript-eslint's `getTextWithParentheses`: the text of `e` with the innermost pair of

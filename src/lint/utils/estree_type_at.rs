@@ -197,11 +197,11 @@ impl At {
         let owner = func.owner();
         // The span of a `Func` starts with the method, the property or the `export` that it is in.
         let outer = || match owner {
-            Node::Member(member) => Some(self.member(member).unwrap_or(estree_type_name(owner))),
+            Node::Member(member) => Some(self.member(member).unwrap_or_else(|| estree_type_name(owner))),
             Node::Stmt(statement) => self.export(statement),
             Node::Expr(e) => match e.parent() {
                 parent @ Node::Prop(prop) => {
-                    Some(self.prop(prop).unwrap_or(estree_type_name(parent)))
+                    Some(self.prop(prop).unwrap_or_else(|| estree_type_name(parent)))
                 }
                 _ => None,
             },

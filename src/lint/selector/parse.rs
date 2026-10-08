@@ -825,7 +825,7 @@ fn push_escaped(out: &mut Vec<u8>, c: u32) {
         0x09 => out.extend_from_slice(b"\\t"),
         0x0A => out.extend_from_slice(b"\\n"),
         0x0D => out.extend_from_slice(b"\\r"),
-        0..=0x0F => out.extend_from_slice(format!("\\x0{c:X}").as_bytes()),
+        0x01..=0x08 | 0x0B | 0x0C | 0x0E | 0x0F => out.extend_from_slice(format!("\\x0{c:X}").as_bytes()),
         0x10..=0x1F | 0x7F..=0x9F => out.extend_from_slice(format!("\\x{c:X}").as_bytes()),
         0x1_0000.. => {
             // The lead surrogate, in WTF-8.

@@ -89,8 +89,7 @@ fn script(script: u8) -> CharSet {
 fn script_extensions(wanted: u8) -> CharSet {
     let mut with = Vec::new();
     let mut without = Vec::new();
-    for pair in tables::SCRIPT_EXTENSIONS.chunks_exact(2) {
-        let [first, hi] = *pair else { continue };
+    for &[first, hi] in tables::SCRIPT_EXTENSIONS.as_chunks::<2>().0 {
         let (lo, set) = (first >> 11, (first & 0x7FF) as usize);
         let bounds = (
             tables::SCRIPT_SET_OFFSETS.get(set),
@@ -247,7 +246,7 @@ impl Fold {
 }
 
 fn folds(unicode: bool) -> impl Iterator<Item = Fold> {
-    fold_table(unicode).chunks_exact(3).filter_map(fold_at)
+    fold_table(unicode).as_chunks::<3>().0.iter().filter_map(|triple| fold_at(triple))
 }
 
 fn fold_table(unicode: bool) -> &'static [i32] {
@@ -293,7 +292,7 @@ pub(super) fn canonicalize(cp: u32, unicode: bool) -> u32 {
             hi = mid;
         } else if cp > fold.last {
             lo = mid + 1;
-        } else if (cp - fold.first) % fold.stride == 0 {
+        } else if (cp - fold.first).is_multiple_of(fold.stride) {
             return cp.wrapping_add_signed(fold.delta);
         } else {
             return cp;

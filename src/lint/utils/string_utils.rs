@@ -167,7 +167,7 @@ impl Class {
             0x0A => Class::Lf,
             0..0x20 | 0x7F => Class::Control,
             0x20..0x7F => Class::Other,
-            0xAC00..=0xD7A3 if (c - 0xAC00) % 28 == 0 => Class::Lv,
+            0xAC00..=0xD7A3 if (c - 0xAC00).is_multiple_of(28) => Class::Lv,
             0xAC00..=0xD7A3 => Class::Lvt,
             0xD800..=0xDFFF => Class::Control,
             _ => {

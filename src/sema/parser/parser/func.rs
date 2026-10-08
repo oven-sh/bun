@@ -397,13 +397,19 @@ impl Parser<'_> {
             Tristate::Unknown => {
                 // `parsePossibleParenthesizedArrowFunctionExpression`
                 let at = self.pos();
-                if !self.not_arrows.contains(&at) {
+                // What is before a token that is read for good is not read again.
+                if self.speculations == 0 {
+                    let read = self.not_arrows.partition_point(|&it| it < at);
+                    self.not_arrows.drain(..read);
+                }
+                if self.not_arrows.binary_search(&at).is_err() {
                     let arrow = self
                         .try_parse(|p| p.parenthesized_arrow_function(false, allow_return_type));
                     if arrow.is_some() {
                         return arrow;
                     }
-                    self.not_arrows.push(at);
+                    let place = self.not_arrows.partition_point(|&it| it < at);
+                    self.not_arrows.insert(place, at);
                 }
             }
             Tristate::False => {}

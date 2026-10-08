@@ -166,7 +166,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) flow_statement_start: u32,
     pub(crate) has_top_level_await: bool,
     /// `notParenthesizedArrow`: the positions at which a speculative parse has found that no arrow
-    /// function starts.
+    /// function starts, in order.
     pub(crate) not_arrows: Vec<u32>,
     /// How many `T?` have been parsed that are not known to be an element of a tuple. Any other is
     /// an error.

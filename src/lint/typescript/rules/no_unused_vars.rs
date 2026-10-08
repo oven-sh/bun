@@ -705,7 +705,7 @@ impl NoUnusedVars {
             // A parameter that is called `_` is not ignored.
             let is_underscore_ignored = ignores_underscore
                 && name.bytes().starts_with(b"_")
-                && (std::ptr::eq(pattern, &self.vars_ignore_pattern) || std::ptr::eq(pattern, &self.args_ignore_pattern) && !name.is("_"));
+                && (std::ptr::eq(pattern, &raw const self.vars_ignore_pattern) || std::ptr::eq(pattern, &raw const self.args_ignore_pattern) && !name.is("_"));
             is_named_by_identifier(def) && (is_underscore_ignored || pattern.as_ref().is_some_and(|it| it.test(name)))
         };
         let mut report_if_used = |variable_type: VariableType| {

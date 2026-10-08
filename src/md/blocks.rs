@@ -3,7 +3,7 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use core::mem::{align_of, size_of};
+use core::mem::size_of;
 
 type BlockHeader = parser::BlockHeader;
 
@@ -211,19 +211,9 @@ impl Parser<'_> {
                         && self.containers[(n_parents - 1) as usize].ch != b'>'
                         && n_brothers + n_children == 0
                         && self.current_block.is_none()
-                        && self.block_bytes.len() > size_of::<BlockHeader>()
+                        && self.last_header_opens_list_item
                     {
-                        let align_mask_: usize = align_of::<BlockHeader>() - 1;
-                        let top_off = (self.block_bytes.len() - size_of::<BlockHeader>()
-                            + align_mask_)
-                            & !align_mask_;
-                        if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
-                            let top_type =
-                                self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
-                            if top_type == BlockType::Li as u8 {
-                                self.last_list_item_starts_with_two_blank_lines = true;
-                            }
-                        }
+                        self.last_list_item_starts_with_two_blank_lines = true;
                     }
                 }
                 break;
@@ -236,18 +226,14 @@ impl Parser<'_> {
                         && self.containers[(n_parents - 1) as usize].ch != b'>'
                         && n_brothers + n_children == 0
                         && self.current_block.is_none()
-                        && self.block_bytes.len() > size_of::<BlockHeader>()
+                        && self.last_header_opens_list_item
                     {
-                        let top_type =
-                            self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
-                        if top_type == BlockType::Li as u8 {
-                            n_parents -= 1;
-                            line.indent = total_indent;
-                            if n_parents > 0 {
-                                line.indent -= line
-                                    .indent
-                                    .min(self.containers[(n_parents - 1) as usize].contents_indent);
-                            }
+                        n_parents -= 1;
+                        line.indent = total_indent;
+                        if n_parents > 0 {
+                            line.indent -= line
+                                .indent
+                                .min(self.containers[(n_parents - 1) as usize].contents_indent);
                         }
                     }
                     self.last_list_item_starts_with_two_blank_lines = false;

@@ -1827,3 +1827,11 @@ describe("HTML declarations", () => {
     expect(Markdown.html("<!a>\nb\n\nc <!d> e\n")).toBe("<!a>\n<p>b</p>\n<p>c <!d> e</p>\n");
   });
 });
+
+describe("list items with code in them", () => {
+  test("what follows fenced code with deeply indented lines stays in the item", () => {
+    expect(Markdown.html("- a\n  ```\n      b\n      c\n  ```\n\n  d\n")).toBe(
+      "<ul>\n<li>\n<p>a</p>\n<pre><code>    b\n    c\n</code></pre>\n<p>d</p>\n</li>\n</ul>\n",
+    );
+  });
+});

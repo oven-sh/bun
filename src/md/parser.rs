@@ -90,6 +90,8 @@ pub(crate) struct Parser<'a> {
     // State
     pub(crate) last_line_has_list_loosening_effect: bool,
     pub(crate) last_list_item_starts_with_two_blank_lines: bool,
+    // The last header in `block_bytes` is the opener of a list item.
+    pub(crate) last_header_opens_list_item: bool,
     pub(crate) max_ref_def_output: u64,
 
     // Stack overflow protection for recursive inline processing
@@ -233,6 +235,8 @@ impl<'a> Parser<'a> {
         let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
         let needed = aligned + size_of::<BlockHeader>();
         check_block_bytes_len(needed)?;
+        self.last_header_opens_list_item = header.block_type == BlockType::Li
+            && header.flags & crate::types::BLOCK_CONTAINER_OPENER != 0;
         self.block_bytes
             .reserve(needed.saturating_sub(self.block_bytes.len()));
         // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
@@ -288,6 +292,7 @@ impl<'a> Parser<'a> {
             ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
+            last_header_opens_list_item: false,
             max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
         };

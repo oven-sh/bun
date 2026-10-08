@@ -213,10 +213,10 @@ struct Forest {
 }
 
 impl Forest {
-    /// The node with the least semidominator from `node` up to below the root of its tree, if the
+    /// The node with the least semidominator from `from` up to below the root of its tree, if the
     /// nodes from `linked` on are linked. The way up is made short for the next time.
-    fn least(&mut self, node: u32, linked: u32) -> u32 {
-        let mut top = node as usize;
+    fn least(&mut self, from: u32, linked: u32) -> u32 {
+        let mut top = from as usize;
         while self.ancestors[top] >= linked {
             self.path.push(top as u32);
             top = self.ancestors[top] as usize;
@@ -231,7 +231,7 @@ impl Forest {
             }
             top = it;
         }
-        self.labels[node as usize]
+        self.labels[from as usize]
     }
 }
 
@@ -528,19 +528,14 @@ impl Places {
     /// The segments that the variable is used in from whose end there is a way to the start of one of
     /// `targets` on which it is not used. Sorted. It takes time in proportion to what is on these ways,
     /// unless these are expected to be `most` of the segments.
-    fn leading_to(
-        &self,
-        graph: &Graph,
-        targets: impl Iterator<Item = u32>,
-        most: bool,
-    ) -> Vec<u32> {
+    fn leading_to(&self, graph: &Graph, targets: Vec<u32>, most: bool) -> Vec<u32> {
         let mut seen = if most && self.nearest.is_empty() {
             Seen::Many(vec![false; graph.last.len()])
         } else {
             Seen::Few(FxHashSet::default())
         };
         let mut found: Vec<u32> = Vec::new();
-        let mut stack: Vec<u32> = targets.collect();
+        let mut stack = targets;
         while let Some(segment) = stack.pop() {
             self.for_each_before(graph, segment, |from| {
                 if seen.insert(from) {
@@ -931,16 +926,17 @@ impl<'a, 'v> Variable<'a, 'v> {
 
         let places = self.places(graph);
         let is_plain = |segment: u32| apart.binary_search_by_key(&segment, |it| it.0).is_err();
-        let read = places
+        let read: Vec<u32> = places
             .list
             .iter()
             .filter(|it| it.1 == Place::Read && is_plain(it.0))
-            .map(|it| it.0);
+            .map(|it| it.0)
+            .collect();
         let read_after_plain = places.leading_to(graph, read, true);
         let mut read_after = read_after_plain.clone();
         let mut leading_apart: Vec<(u32, u32, u32)> = Vec::new();
         for &(segment, id) in &apart {
-            let leading = places.leading_to(graph, std::iter::once(segment), false);
+            let leading = places.leading_to(graph, vec![segment], false);
             if places.get(segment) == Some(Place::Read) {
                 read_after.extend_from_slice(&leading);
             }

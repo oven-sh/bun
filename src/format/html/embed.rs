@@ -198,6 +198,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// Writes what `format` appends to the vector that it is given, without the line breaks at its end.
     fn write_printed_text(
         &mut self,
+        is_markdown: bool,
         format: impl FnOnce(&FormatOptions, &mut Vec<u8>) -> Result<(), FormatError>,
     ) -> bool {
         let Some(options) = self.options_for_printed_text() else {
@@ -205,6 +206,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let mut printed = Vec::new();
         if format(&options, &mut printed).is_err() {
+            return false;
+        }
+        // Where a line break that is part of a text leads is not the same for all that Markdown prints: to the first
+        // column in code, to where the lines start in HTML. Which it is, the text does not say.
+        if is_markdown && self.out.indent_level() != Some(0) && strings::contains(&printed, b"\r\n") {
             return false;
         }
         let end = printed
@@ -246,7 +252,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         if let Some(parser) = crate::json::Parser::from_name(parser) {
             // To these parsers, a text with nothing in it is a syntax error.
             return !text::trim(code).is_empty()
-                && self.write_printed_text(|options, out| {
+                && self.write_printed_text(false, |options, out| {
                     crate::json::format(code, parser, options, &mut Default::default(), out)
                 });
         }
@@ -256,17 +262,17 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         match parser {
             b"babel" => program(Syntax::Babel, self),
             b"typescript" => program(Syntax::TypeScript, self),
-            b"yaml" => self.write_printed_text(|options, out| {
+            b"yaml" => self.write_printed_text(false, |options, out| {
                 crate::yaml::format(code, options, &mut Default::default(), out)
             }),
-            b"markdown" => self.write_printed_text(|options, out| {
+            b"markdown" => self.write_printed_text(true, |options, out| {
                 crate::markdown::format(code, options, &mut Default::default(), out)
             }),
-            b"graphql" => self.write_printed_text(|options, out| {
+            b"graphql" => self.write_printed_text(false, |options, out| {
                 crate::graphql::format(code, options, &mut Default::default(), out)
             }),
             // A template of which Prettier loses something stays as it is.
-            b"glimmer" => self.write_printed_text(|options, out| {
+            b"glimmer" => self.write_printed_text(false, |options, out| {
                 let mut scratch = crate::handlebars::Scratch::default();
                 let result = crate::handlebars::format(code, options, &mut scratch, out);
                 if scratch.is_damaged() {

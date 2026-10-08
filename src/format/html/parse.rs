@@ -153,9 +153,10 @@ impl<'a> Context<'a, '_> {
 
     /// `parseVue`
     fn parse_vue(&mut self, range: Span, options: ParseOptions) -> Result<(ParseOptions, Id)> {
-        let parser::ParseResult {
-            root, mut errors, ..
-        } = self.angular_html_parser_parse(range, &options, true)?;
+        let parser::ParseResult { root, errors, .. } =
+            self.angular_html_parser_parse(range, &options, true)?;
+        // A void element at the top makes the errors those of the second result.
+        let mut has_errors_of_second = false;
         let is_html = self.tree.children(root).any(|id| {
             let node = &self.tree[id];
             match node.kind {
@@ -170,6 +171,8 @@ impl<'a> Context<'a, '_> {
             return self.parse_html(range, parse_options(Parser::Html));
         }
         let mut second: Option<parser::ParseResult> = None;
+        // The first of what the second result has at the top that does not start before the element that is looked at.
+        let mut candidate = None;
         let mut next = self.tree.first_child(root);
         while let Some(id) = next {
             next = self.tree.next(id);
@@ -202,31 +205,42 @@ impl<'a> Context<'a, '_> {
             }
             let second = match &second {
                 Some(second) => second,
-                None => second.insert(self.angular_html_parser_parse(range, &options, false)?),
+                None => {
+                    let second = second.insert(self.angular_html_parser_parse(range, &options, false)?);
+                    second.errors.sort_unstable();
+                    candidate = self.tree.first_child(second.root);
+                    &*second
+                }
             };
             if is_void {
-                errors.clone_from(&second.errors);
+                has_errors_of_second = true;
             } else if second
                 .errors
-                .iter()
-                .any(|&at| at > start_span.start && end_span.is_none_or(|span| at < span.end))
+                .get(second.errors.partition_point(|&at| at <= start_span.start))
+                .is_some_and(|&at| end_span.is_none_or(|span| at < span.end))
             {
                 // Without an end tag, Prettier fails when it asks where that ends.
                 return Err(ParseError::Syntax);
             }
-            // `getElementWithSameLocation`
-            let same = self.tree.children(second.root).find(|&other| {
-                self.tree[other].kind == Kind::Element
-                    && self.tree[other].start_span.start == start_span.start
-            });
-            if let Some(same) = same {
+            // `getElementWithSameLocation`. Both lists are in the order of the text.
+            while let Some(other) = candidate.filter(|&it| self.tree[it].span.start < start_span.start) {
+                candidate = self.tree.next(other);
+            }
+            if let Some(same) = candidate.filter(|&it| {
+                self.tree[it].kind == Kind::Element && self.tree[it].start_span.start == start_span.start
+            }) {
+                candidate = self.tree.next(same);
                 self.tree.remove(same);
                 self.tree.replace(id, same);
             }
         }
-        match errors.is_empty() {
-            true => Ok((options, root)),
-            false => Err(ParseError::Syntax),
+        let has_errors = match (has_errors_of_second, &second) {
+            (true, Some(second)) => !second.errors.is_empty(),
+            _ => !errors.is_empty(),
+        };
+        match has_errors {
+            false => Ok((options, root)),
+            true => Err(ParseError::Syntax),
         }
     }
 

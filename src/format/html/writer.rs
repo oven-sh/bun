@@ -396,8 +396,12 @@ impl<'w, 'f> Writer<'w, 'f> {
     /// Calls `write` to write something that does not start and does not end with a line break.
     pub(crate) fn foreign<R>(&mut self, write: impl FnOnce(&mut Formatter<'f>) -> R) -> R {
         self.flush();
-        self.empty_line = EmptyLine::No;
-        write(self.f)
+        let start = self.f.elements().len();
+        let result = write(self.f);
+        if self.f.elements().len() > start {
+            self.empty_line = EmptyLine::No;
+        }
+        result
     }
 
     /// Starts something that may not become part of the document. Returns what to end it with.

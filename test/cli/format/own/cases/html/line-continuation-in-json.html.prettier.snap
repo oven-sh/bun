@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+<div>
+  <script type="application/json">
+    [
+      "a\
+b"
+    ]
+  </script>
+</div>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<div>
+  <script type="application/json">
+    [
+      "a\
+b"
+    ]
+  </script>
+</div>
+
+===================== End =====================

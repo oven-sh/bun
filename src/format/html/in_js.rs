@@ -9,9 +9,10 @@ use super::map_strings::{MapString, write_mapped};
 pub(crate) use super::utilities::is_placeholder_in_js;
 use crate::css::embed::is_blank;
 use crate::ir::element::{Group, Interned, LineMode};
+use crate::ir::printer::PrinterOptions;
 use crate::js::context::JsFormatContext;
 use crate::js::print::template::write_embedded_template_expression;
-use crate::options::{HtmlRoot, HtmlWhitespaceSensitivity};
+use crate::options::{HtmlRoot, HtmlWhitespaceSensitivity, LineEnding};
 use crate::prelude::*;
 use crate::text;
 use bun_core::strings;
@@ -275,8 +276,35 @@ impl MapString for Substitutions<'_> {
     }
 }
 
+/// Whether `document`, which is what has become of `text`, has all that is in `text` and nothing else: the check that a
+/// file gets before it is written.
+fn keeps_content(
+    text: &[u8],
+    document: Interned,
+    parser: Parser,
+    options: &FormatOptions,
+    f: &Formatter<'_>,
+) -> bool {
+    let printer_options = PrinterOptions {
+        line_ending: LineEnding::Lf,
+        marks_line_breaks_in_texts: false,
+        ..PrinterOptions::new(options, text)
+    };
+    let (source, mut printed) = (f.source_text().as_bytes(), Vec::new());
+    crate::ir::printer::print(
+        document,
+        &f.storage,
+        source,
+        printer_options,
+        &mut Default::default(),
+        &mut printed,
+    )
+    .is_ok()
+        && super::verify::has_same_content(text, &printed, parser)
+}
+
 /// Writes the template `e` as HTML, if that is what Prettier takes it for: `printEmbedHtmlLike`. Returns whether it
-/// has. If the text cannot be parsed, it has not.
+/// has. If the text cannot be parsed, or something of it would be lost, it has not.
 pub(crate) fn write_template<'a>(
     e: Expr<'a>,
     template: Template<'a>,
@@ -316,6 +344,9 @@ pub(crate) fn write_template<'a>(
     let Ok(top_level_count) = written else {
         return false;
     };
+    if !keeps_content(&text, document, parser, &options, f) {
+        return false;
+    }
     // In the order of the source, whatever the order of the placeholders: that of the comments.
     let expressions: SmallVec<[Interned; 8]> = (0..template.quasi_count().saturating_sub(1))
         .map(|index| {

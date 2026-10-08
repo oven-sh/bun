@@ -36,6 +36,8 @@ impl Reader {
             match byte {
                 // The exponent of a number, which goes if it is zero.
                 b'e' | b'E' if previous == b'.' || previous.is_ascii_digit() => {}
+                // `\n` in a template with HTML in it is white space.
+                _ if previous == b'\\' => {}
                 b'a'..=b'z' => self.letters[usize::from(byte - b'a')] += 1,
                 b'A'..=b'Z' => self.letters[usize::from(byte - b'A')] += 1,
                 // In lower case, U+0130 is an `i` and U+0307.

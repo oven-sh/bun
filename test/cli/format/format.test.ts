@@ -311,6 +311,16 @@ describe.concurrent("bun format", () => {
       },
     );
 
+    // What is formatted with it is formatted without it too, so this is about what is not.
+    test.each(Object.keys(sources))("%s: proseWrap", async source => {
+      const [files, args] = sources[source]("proseWrap", "never", "--prose-wrap=never");
+      const rename = (text: string) => text.replaceAll("a.vue", "a.md");
+      const named = Object.fromEntries(Object.entries(files).map(([name, text]) => [name, rename(text)]));
+      const result = await format({ ...named, "a.md": "a\nb\n" }, [...args, "-l", "a.md"]);
+      expect(result.stdout.split("\n").filter(Boolean)).toEqual(["a.md"]);
+      expect((await format({ "a.md": "a\nb\n" }, ["-l", "a.md"])).stdout).toBe("");
+    });
+
     test.each(options)("without %s", async (_name, _value, _flag, without, withIt) => {
       const result = await format({ "a.vue": withIt, "b.vue": without }, ["-l"]);
       expect(result.stdout.split("\n").filter(Boolean)).toEqual(["a.vue"]);
@@ -346,6 +356,19 @@ describe.concurrent("bun format", () => {
       expect(result.raw).toBe("");
       expect(result.stderr.split("\n").filter(line => line.startsWith("[error] "))).toEqual([error("a.html")]);
       expect(result.exitCode).toBe(2);
+    });
+
+    test("in a template and in a block of code, only that is", async () => {
+      const files = {
+        "a.js": "const a = html`" + lossy.trim() + "`;\nconst   b = html`<p   >c</p>`;\n",
+        "b.md": "#   a\n\n```html\n" + lossy + "```\n\n```html\n<p   >c</p>\n```\n",
+      };
+      const result = await format(files, [], { reads: ["a.js", "b.md"] });
+      expect(result.files).toEqual({
+        "a.js": "const a = html`" + lossy.trim() + "`;\nconst b = html`<p>c</p>`;\n",
+        "b.md": "# a\n\n```html\n" + lossy + "```\n\n```html\n<p>c</p>\n```\n",
+      });
+      expect(result.exitCode).toBe(0);
     });
 
     test("--no-verify", async () => {
@@ -473,6 +496,28 @@ describe.concurrent("bun format", () => {
       "a.css": "a {\n  color: red;\n}\n",
       "b.scss": "a {\n  b {\n    color: RED;\n  }\n}\n",
     });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("--end-of-line auto goes by the first \\r, also if lines before it end in \\n", async () => {
+    const result = await format(
+      { "a.js": "a;\nb;\r\nc;\n", "b.css": "a {\n}\nb {\n}\r", "c.js": "a;\nb;\n" },
+      ["--end-of-line", "auto"],
+      { reads: ["a.js", "b.css", "c.js"] },
+    );
+    expect(result.files).toEqual({
+      "a.js": "a;\r\nb;\r\nc;\r\n",
+      "b.css": "a {\r}\rb {\r}\r",
+      "c.js": "a;\nb;\n",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a value of 10,000 lines in a style sheet does not take quadratic time", async () => {
+    const result = await format({ "a.css": `a {\n  b:${Buffer.alloc(60_000, "\n    c").toString()};\n}\n` }, [], {
+      reads: ["a.css"],
+    });
+    expect(result.files["a.css"]?.split(/\s+/).join(" ")).toBe(`a { b:${Buffer.alloc(20_000, " c").toString()}; } `);
     expect(result.exitCode).toBe(0);
   });
 

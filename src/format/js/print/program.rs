@@ -20,7 +20,7 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
         // Prettier takes it off before it formats: it has no width.
         f.write_text(&source[..3], Some(TextWidth::single(0)));
     }
-    write_hashbang(f);
+    write_hashbang(false, f);
     // Nothing that a comment could belong to: they are all Prettier's dangling comments of the
     // program, which have no empty lines between them.
     if !file.body().is_empty()
@@ -47,8 +47,8 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     );
 }
 
-/// `#!/usr/bin/env bun`
-fn write_hashbang(f: &mut Formatter<'_>) {
+/// `#!/usr/bin/env bun`. `is_last`: nothing is written behind it, not even a line break.
+pub(crate) fn write_hashbang(is_last: bool, f: &mut Formatter<'_>) {
     let source = f.source_text().as_bytes();
     let start = if source.starts_with(b"\xEF\xBB\xBF") {
         3
@@ -66,6 +66,9 @@ fn write_hashbang(f: &mut Formatter<'_>) {
         .min()
         .unwrap_or(len);
     write!(f, text(rest[..len].trim_ascii_end()));
+    if is_last {
+        return;
+    }
     match f.source_text().lines_after((start + len) as u32) > 1 {
         true => write!(f, empty_line()),
         false => write!(f, hard_line_break()),

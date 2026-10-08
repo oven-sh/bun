@@ -296,14 +296,18 @@ fn format_normalized(
         ..
     } = scratch;
     parser::parse(text, config, tree)?;
-    if tree.comments.is_empty() {
+    // The writer does not mark a line break in a string. See `FormatOptions::is_in_markdown`.
+    let has_marks = options.is_in_markdown && bun_core::strings::contains(text, b"\\\n");
+    if tree.comments.is_empty() && !has_marks {
         if !tree.nodes.is_empty() {
             writer::write(text, tree, config, frames, out);
         }
         return Ok(());
     }
     // Only `jsonc` takes a document that is nothing but comments.
-    if config.is_stringify() || (tree.nodes.is_empty() && config.parser != Parser::Jsonc) {
+    if !tree.comments.is_empty()
+        && (config.is_stringify() || (tree.nodes.is_empty() && config.parser != Parser::Jsonc))
+    {
         return Err(FormatError::SyntaxError);
     }
     comments::attach(text, tree, attached);

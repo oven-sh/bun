@@ -200,6 +200,8 @@ fn format_embedded(
                 &mut out,
             )
             .is_ok()
+            // A block of which something would be lost stays as it is.
+            && crate::html::has_same_content(code, &out, parser, &options)
     } else {
         match parser {
             b"graphql" => {

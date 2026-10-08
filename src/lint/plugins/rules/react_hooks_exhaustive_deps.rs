@@ -3,6 +3,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 /// Verifies the list of dependencies for Hooks like useEffect and similar.
 pub struct ExhaustiveDeps {
@@ -36,6 +37,7 @@ pub struct State<'a> {
     use_effect_event_variables: FxHashSet<u32>,
     stable_known_value_cache: FxHashMap<usize, bool>,
     function_without_captured_value_cache: FxHashMap<usize, bool>,
+    oxlint: oxlint::exhaustive_deps::Memo<'a>,
 }
 
 struct Dependency<'a> {
@@ -46,6 +48,8 @@ struct Dependency<'a> {
 
 struct DeclaredDependency {
     key: Vec<u8>,
+    /// It is declared outside the component.
+    is_external: bool,
 }
 
 /// A change that is suggested: what describes it, and the fixes that make it.
@@ -144,34 +148,112 @@ fn get_dependency(mut node: Expr) -> Expr {
     }
 }
 
-type OptionalChains = FxHashMap<Vec<u8>, bool>;
+/// For the paths `foo`, `foo.bar`, `foo.bar.baz`: whether all uses of the last member are optional. A tree, so that a path of n
+/// members takes n entries.
+#[derive(Default)]
+struct OptionalChains<'a> {
+    /// The number of a path, by the number of what it is a member of, which is 0 for a variable, and its last name.
+    paths: FxHashMap<(u32, &'a [u8]), u32>,
+    /// By the number of the path less 1. `None`: it is only a part of other paths.
+    is_optional: Vec<Option<bool>>,
+}
+
+impl<'a> OptionalChains<'a> {
+    fn member(&mut self, of: u32, name: &'a [u8]) -> u32 {
+        *self.paths.entry((of, name)).or_insert_with(|| {
+            self.is_optional.push(None);
+            self.is_optional.len() as u32
+        })
+    }
+
+    /// It is optional only if all its uses are.
+    fn add_use(&mut self, path: u32, is_optional: bool) {
+        if let Some(known) = (path as usize).checked_sub(1).and_then(|it| self.is_optional.get_mut(it)) {
+            *known = Some(is_optional && *known != Some(false));
+        }
+    }
+
+    /// `path` with `?.` where all uses of a member are optional.
+    fn format(&self, path: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(path.len() + 2);
+        let mut at = Some(0);
+        for (i, member) in strings::split(path, b".").enumerate() {
+            at = at.and_then(|at| self.paths.get(&(at, member)).copied());
+            if i != 0 {
+                let is_optional = at.and_then(|at| *self.is_optional.get(at as usize - 1)?) == Some(true);
+                out.extend_from_slice(if is_optional { b"?." } else { b"." });
+            }
+            out.extend_from_slice(member);
+        }
+        out
+    }
+}
+
+/// The names in `foo.bar?.[baz.qux]`, in this order. `None` where upstream throws.
+fn names_of_property_chain<'a>(node: Expr<'a>) -> Option<SmallVec<[&'a [u8]; 2]>> {
+    enum Next<'a> {
+        Chain(Expr<'a>),
+        Name(&'a [u8]),
+    }
+    let mut names = SmallVec::new();
+    let mut stack: SmallVec<[Next<'a>; 4]> = smallvec::smallvec![Next::Chain(node)];
+    while let Some(next) = stack.pop() {
+        let node = match next {
+            Next::Chain(node) => node,
+            Next::Name(name) => {
+                names.push(name);
+                continue;
+            }
+        };
+        match node.kind() {
+            ExprKind::Ident(name) => names.push(name.bytes()),
+            ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
+                stack.push(Next::Name(name.bytes()));
+                stack.push(Next::Chain(obj));
+            }
+            // Upstream does not look at `computed` of what is in a `ChainExpression`.
+            ExprKind::Index { obj, index, .. } if node.is_chain_root() => {
+                stack.push(Next::Chain(index));
+                stack.push(Next::Chain(obj));
+            }
+            _ => return None,
+        }
+    }
+    Some(names)
+}
 
 /// `foo` is `foo`, `foo.bar` is `foo.bar`, `foo?.bar.baz` is `foo.bar.baz`. `None` where upstream throws.
-fn analyze_property_chain(node: Expr, mut optional_chains: Option<&mut OptionalChains>) -> Option<Vec<u8>> {
-    let (object, property, is_optional) = match node.kind() {
-        ExprKind::Ident(name) => {
-            if let Some(chains) = optional_chains {
-                chains.insert(name.bytes().to_vec(), false);
-            }
-            return Some(name.bytes().to_vec());
-        }
-        ExprKind::Dot { obj, name, chain } if !name.bytes().starts_with(b"#") => (obj, name.bytes().to_vec(), chain == Chain::Start),
-        // Upstream does not look at `computed` of what is in a `ChainExpression`.
-        ExprKind::Index { obj, index, chain } if node.is_chain_root() => {
-            (obj, analyze_property_chain(index, None)?, chain == Chain::Start)
-        }
-        _ => return None,
+fn analyze_property_chain<'a>(node: Expr<'a>, optional_chains: Option<&mut OptionalChains<'a>>) -> Option<Vec<u8>> {
+    let Some(chains) = optional_chains else {
+        return names_of_property_chain(node).map(|it| it.join(&b"."[..]));
     };
-    let mut result = analyze_property_chain(object, optional_chains.as_deref_mut())?;
-    result.push(b'.');
-    result.extend_from_slice(&property);
-    if let Some(chains) = optional_chains {
-        // It is optional only if all its uses are.
-        if is_optional {
-            chains.entry(result.clone()).or_insert(true);
-        } else {
-            chains.insert(result.clone(), false);
+    // The names of each member and whether it is optional, the last member first.
+    let mut members: SmallVec<[(SmallVec<[&'a [u8]; 2]>, bool); 4]> = SmallVec::new();
+    let mut object = node;
+    let variable = loop {
+        object = match object.kind() {
+            ExprKind::Ident(name) => break name.bytes(),
+            ExprKind::Dot { obj, name, chain } if !name.bytes().starts_with(b"#") => {
+                members.push((smallvec::smallvec![name.bytes()], chain == Chain::Start));
+                obj
+            }
+            ExprKind::Index { obj, index, chain } if object.is_chain_root() => {
+                members.push((names_of_property_chain(index)?, chain == Chain::Start));
+                obj
+            }
+            _ => return None,
+        };
+    };
+    let mut result = variable.to_vec();
+    let mut path = chains.member(0, variable);
+    chains.add_use(path, false);
+    for (names, is_optional) in members.into_iter().rev() {
+        for name in names {
+            result.push(b'.');
+            result.extend_from_slice(name);
+            path = chains.member(path, name);
         }
+        chains.add_use(path, is_optional);
     }
     Some(result)
 }
@@ -207,26 +289,46 @@ fn is_effect_name(name: &[u8]) -> bool {
 }
 
 /// What kind of value, which is a new one each time, the expression makes.
-fn get_construction_expression_type(e: Expr) -> Option<&'static str> {
-    let is_construction = |e: Expr| get_construction_expression_type(e).is_some();
-    match e.kind() {
+fn get_construction_expression_type<'a>(e: Expr<'a>) -> Option<&'static str> {
+    // One of the values that `first` or `second` can have is of such a kind.
+    let is_construction = |first: Expr<'a>, second: Option<Expr<'a>>| {
+        let mut values: SmallVec<[Expr; 8]> = std::iter::once(first).chain(second).collect();
+        while let Some(value) = values.pop() {
+            match without_as(value).kind() {
+                ExprKind::Cond { yes, no, .. } => values.extend([yes, no]),
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } => values.extend([left, right]),
+                ExprKind::Assign { value, .. } => values.push(value),
+                ExprKind::Object(_)
+                | ExprKind::Array(_)
+                | ExprKind::Fn(_)
+                | ExprKind::Class(_)
+                | ExprKind::Jsx(_)
+                | ExprKind::New(_)
+                | ExprKind::Regex(_) => return true,
+                _ => {}
+            }
+        }
+        false
+    };
+    match without_as(e).kind() {
         ExprKind::Object(_) => Some("object"),
         ExprKind::Array(_) => Some("array"),
         ExprKind::Fn(_) => Some("function"),
         ExprKind::Class(_) => Some("class"),
-        ExprKind::Cond { yes, no, .. } => (is_construction(yes) || is_construction(no)).then_some("conditional"),
+        ExprKind::Cond { yes, no, .. } => is_construction(yes, Some(no)).then_some("conditional"),
         ExprKind::Binary {
             op: BinOp::And | BinOp::Or | BinOp::Nullish,
             left,
             right,
-        } => (is_construction(left) || is_construction(right)).then_some("logical expression"),
+        } => is_construction(left, Some(right)).then_some("logical expression"),
         ExprKind::Jsx(jsx) => Some(if jsx.is_fragment() { "JSX fragment" } else { "JSX element" }),
-        ExprKind::Assign { value, .. } => is_construction(value).then_some("assignment expression"),
+        ExprKind::Assign { value, .. } => is_construction(value, None).then_some("assignment expression"),
         ExprKind::New(_) => Some("object construction"),
         ExprKind::Regex(_) => Some("regular expression"),
-        ExprKind::As { expr, .. } | ExprKind::AsConst(expr) if !e.is_angle_bracket_assertion() => {
-            get_construction_expression_type(expr)
-        }
         _ => None,
     }
 }
@@ -234,53 +336,74 @@ fn get_construction_expression_type(e: Expr) -> Option<&'static str> {
 // ───────────────────────────── collectRecommendations ─────────────────────────────
 
 #[derive(Default)]
-struct DepTreeNode {
+struct DepTreeNode<'k> {
     /// It is used in the code.
     is_used: bool,
     /// It is among the dependencies.
     is_satisfied_recursively: bool,
     /// Something deeper is used in the code.
     is_subtree_used: bool,
+    /// It is among the dependencies, and it or something deeper is used in the code.
+    is_satisfying: bool,
+    /// It is among the dependencies, and declared outside the component.
+    is_external: bool,
+    is_suggested: bool,
+    is_duplicate: bool,
+    is_unnecessary: bool,
     /// In the order in which they are added.
-    children: Vec<(Vec<u8>, usize)>,
+    children: Vec<(&'k [u8], usize)>,
 }
 
-struct DepTree {
-    nodes: Vec<DepTreeNode>,
+struct DepTree<'k> {
+    nodes: Vec<DepTreeNode<'k>>,
+    /// The child of a node by its name.
+    child: FxHashMap<(usize, &'k [u8]), usize>,
 }
 
-impl DepTree {
-    fn get_or_create_node_by_path(&mut self, path: &[u8], mut on_the_way: impl FnMut(&mut DepTreeNode)) -> usize {
+impl<'k> DepTree<'k> {
+    fn get_or_create_node_by_path(&mut self, path: &'k [u8], mut on_the_way: impl FnMut(&mut DepTreeNode)) -> usize {
         let mut at = 0;
         for key in strings::split(path, b".") {
-            at = match self.nodes[at].children.iter().find(|it| it.0 == key) {
-                Some(child) => child.1,
-                None => {
-                    let child = self.nodes.len();
-                    self.nodes.push(DepTreeNode::default());
-                    self.nodes[at].children.push((key.to_vec(), child));
-                    child
-                }
-            };
+            at = *self.child.entry((at, key)).or_insert_with(|| {
+                let child = self.nodes.len();
+                self.nodes.push(DepTreeNode::default());
+                self.nodes[at].children.push((key, child));
+                child
+            });
             on_the_way(&mut self.nodes[at]);
         }
         at
     }
 
-    fn scan(&self, at: usize, prefix: &[u8], missing: &mut Vec<Vec<u8>>, satisfying: &mut Vec<Vec<u8>>) {
-        for (key, child) in &self.nodes[at].children {
-            let path = if prefix.is_empty() { key.clone() } else { text(&[prefix, b".", key]) };
-            let child_node = &self.nodes[*child];
+    /// Finds what is missing, and marks what is satisfying.
+    fn scan(&mut self) -> Vec<Vec<u8>> {
+        let mut missing = Vec::new();
+        // The path of the node on top of the stack, or of a child of it.
+        let mut path: Vec<u8> = Vec::new();
+        // A node, how many of its children are done, and the length of its path.
+        let mut stack = vec![(0, 0, 0)];
+        while let Some(top) = stack.last_mut() {
+            let (at, next, length) = *top;
+            top.1 += 1;
+            let Some(&(key, child)) = self.nodes[at].children.get(next) else {
+                stack.pop();
+                continue;
+            };
+            path.truncate(length);
+            if length != 0 {
+                path.push(b'.');
+            }
+            path.extend_from_slice(key);
+            let child_node = &mut self.nodes[child];
             if child_node.is_satisfied_recursively {
-                if child_node.is_subtree_used {
-                    satisfying.push(path);
-                }
+                child_node.is_satisfying = child_node.is_subtree_used;
             } else if child_node.is_used {
-                missing.push(path);
+                missing.push(path.clone());
             } else {
-                self.scan(*child, &path, missing, satisfying);
+                stack.push((child, 0, path.len()));
             }
         }
+        missing
     }
 }
 
@@ -291,50 +414,42 @@ struct Recommendations {
     missing: Vec<Vec<u8>>,
 }
 
-fn add(set: &mut Vec<Vec<u8>>, key: &[u8]) {
-    if !set.iter().any(|it| it == key) {
-        set.push(key.to_vec());
-    }
-}
-
-fn has(set: &[Vec<u8>], key: &[u8]) -> bool {
-    set.iter().any(|it| it == key)
-}
-
-fn collect_recommendations(
-    dependencies: &[Dependency],
-    declared: &[DeclaredDependency],
-    stable: &[Vec<u8>],
-    external: &[Vec<u8>],
-    is_effect: bool,
-) -> Recommendations {
+fn collect_recommendations(dependencies: &[Dependency], declared: &[DeclaredDependency], is_effect: bool) -> Recommendations {
     let mut tree = DepTree {
         nodes: vec![DepTreeNode::default()],
+        child: FxHashMap::default(),
     };
     for dependency in dependencies {
         let node = tree.get_or_create_node_by_path(&dependency.key, |it| it.is_subtree_used = true);
         tree.nodes[node].is_used = true;
     }
-    for key in declared.iter().map(|it| &it.key).chain(stable) {
-        let node = tree.get_or_create_node_by_path(key, |_| {});
+    let mut nodes_of_declared = Vec::with_capacity(declared.len());
+    for dependency in declared {
+        let node = tree.get_or_create_node_by_path(&dependency.key, |_| {});
+        tree.nodes[node].is_satisfied_recursively = true;
+        tree.nodes[node].is_external |= dependency.is_external;
+        nodes_of_declared.push(node);
+    }
+    for dependency in dependencies.iter().filter(|it| it.is_stable) {
+        let node = tree.get_or_create_node_by_path(&dependency.key, |_| {});
         tree.nodes[node].is_satisfied_recursively = true;
     }
-    let (mut missing, mut satisfying) = (Vec::new(), Vec::new());
-    tree.scan(0, b"", &mut missing, &mut satisfying);
+    let missing = tree.scan();
 
     let (mut suggested, mut unnecessary, mut duplicate) = (Vec::new(), Vec::new(), Vec::new());
-    for DeclaredDependency { key } in declared {
-        if has(&satisfying, key) {
-            if has(&suggested, key) {
-                add(&mut duplicate, key);
-            } else {
-                suggested.push(key.clone());
-            }
-        } else if is_effect && !key.ends_with(b".current") && !has(external, key) {
+    for (DeclaredDependency { key, .. }, node) in declared.iter().zip(nodes_of_declared) {
+        let node = &mut tree.nodes[node];
+        // Each list has a key once.
+        let (list, is_in_list) = if node.is_satisfying && node.is_suggested {
+            (&mut duplicate, &mut node.is_duplicate)
+        } else if node.is_satisfying || is_effect && !key.ends_with(b".current") && !node.is_external {
             // An effect may have more dependencies than it uses.
-            add(&mut suggested, key);
+            (&mut suggested, &mut node.is_suggested)
         } else {
-            add(&mut unnecessary, key);
+            (&mut unnecessary, &mut node.is_unnecessary)
+        };
+        if !std::mem::replace(is_in_list, true) {
+            list.push(key.clone());
         }
     }
     suggested.extend(missing.iter().cloned());
@@ -384,7 +499,9 @@ impl Rule for ExhaustiveDeps {
         if follows_oxlint {
             on.exprs([ExprTag::Call], |rule, e, cx| {
                 if e.as_call().is_some_and(|it| may_be_hook(it.callee())) {
-                    oxlint::exhaustive_deps::run(cx, e, rule.additional_hooks.as_ref());
+                    let mut memo = std::mem::take(&mut cx.state.oxlint);
+                    oxlint::exhaustive_deps::run(cx, e, rule.additional_hooks.as_ref(), &mut memo);
+                    cx.state.oxlint = memo;
                 }
             });
             return State::default();
@@ -416,14 +533,21 @@ impl Rule for ExhaustiveDeps {
 struct Visit<'a> {
     /// `scopeManager.acquire(node)`
     scope: Scope<'a>,
-    /// The scopes around it, up to that of the component.
-    pure_scopes: Vec<Scope<'a>>,
     component_scope: Scope<'a>,
 }
 
 impl<'a> Visit<'a> {
+    /// It is one of the scopes around the function, up to that of the component.
     fn is_pure(&self, scope: Scope<'a>) -> bool {
-        self.pure_scopes.contains(&scope)
+        scope != self.scope && scope.contains(self.scope) && self.component_scope.contains(scope)
+    }
+}
+
+/// For a function expression with a name, ESLint has the scope of the name around that of the function, with the same node.
+fn scope_with_name(function_scope: Scope) -> Scope {
+    match function_scope.parent() {
+        Some(parent) if parent.kind() == ScopeKind::FunctionExpressionName => parent,
+        _ => function_scope,
     }
 }
 
@@ -674,7 +798,12 @@ impl ExhaustiveDeps {
             },
             _ => return false,
         };
-        let Some(function_scope) = visit.component_scope.children().find(|it| it.node() == block) else {
+        let own_scope = match block {
+            Node::Func(func) => func.scope(),
+            Node::Class(class) => class.scope(),
+            _ => None,
+        };
+        let Some(function_scope) = own_scope.map(scope_with_name).filter(|it| it.parent() == Some(visit.component_scope)) else {
             return false;
         };
         for reference in function_scope.through() {
@@ -708,34 +837,20 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         let Some(function_scope) = node.scope() else {
             return;
         };
-        // For a function expression with a name, ESLint answers with the scope of the name.
-        let scope = match function_scope.parent() {
-            Some(parent) if parent.kind() == ScopeKind::FunctionExpressionName => parent,
-            _ => function_scope,
-        };
-        let mut pure_scopes = Vec::new();
-        let mut component_scope = None;
-        for current in scope.chain().skip(1) {
-            pure_scopes.push(current);
-            if current.kind() == ScopeKind::Function {
-                component_scope = Some(current);
-                break;
-            }
-        }
-        let Some(component_scope) = component_scope else {
+        let scope = scope_with_name(function_scope);
+        let Some(component_scope) = scope.chain().skip(1).find(|it| it.kind() == ScopeKind::Function) else {
             return;
         };
-        let visit = Visit {
-            scope,
-            pure_scopes,
-            component_scope,
-        };
+        let visit = Visit { scope, component_scope };
         let hook_text = reactive_hook.text();
 
         let mut dependencies: Vec<Dependency<'a>> = Vec::new();
+        // Where each is in `dependencies`.
+        let mut dependency_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let mut optional_chains = OptionalChains::default();
         // `ref.current` in the function that an effect returns.
         let mut current_refs_in_effect_cleanup: Vec<(Vec<u8>, Reference<'a>, Ident<'a>)> = Vec::new();
+        let mut current_ref_by_key: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let callback_parent = match node.owner() {
             Node::Expr(e) => e.parent().as_expr(),
             _ => None,
@@ -759,9 +874,12 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                     && let Some(current_name) = current_of(dependency_node)
                     && is_inside_effect_cleanup(reference, node)
                 {
-                    match current_refs_in_effect_cleanup.iter_mut().find(|it| it.0 == dependency) {
+                    match current_ref_by_key.get(&dependency).and_then(|at| current_refs_in_effect_cleanup.get_mut(*at)) {
                         Some(existing) => (existing.1, existing.2) = (reference, current_name),
-                        None => current_refs_in_effect_cleanup.push((dependency.clone(), reference, current_name)),
+                        None => {
+                            current_ref_by_key.insert(dependency.clone(), current_refs_in_effect_cleanup.len());
+                            current_refs_in_effect_cleanup.push((dependency.clone(), reference, current_name));
+                        }
                     }
                 }
                 // `typeof a` in a type.
@@ -775,14 +893,17 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                 if resolved.declarations().next().is_none() {
                     continue;
                 }
-                match dependencies.iter_mut().find(|it| it.key == dependency) {
+                match dependency_by_key.get(&dependency).and_then(|at| dependencies.get_mut(*at)) {
                     Some(existing) => existing.references.push(reference),
-                    None => dependencies.push(Dependency {
-                        key: dependency,
-                        is_stable: Self::is_stable_known_hook_value(resolved, &mut cx.state)
-                            || Self::is_function_without_captured_values(resolved, &visit, &mut cx.state),
-                        references: vec![reference],
-                    }),
+                    None => {
+                        dependency_by_key.insert(dependency.clone(), dependencies.len());
+                        dependencies.push(Dependency {
+                            key: dependency,
+                            is_stable: Self::is_stable_known_hook_value(resolved, &mut cx.state)
+                                || Self::is_function_without_captured_values(resolved, &visit, &mut cx.state),
+                            references: vec![reference],
+                        });
+                    }
                 }
             }
             let at = scopes.len();
@@ -812,11 +933,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
 
         // Assignments to variables of the component are lost.
         let mut has_stale_assignments = false;
-        let mut stable_dependencies: Vec<Vec<u8>> = Vec::new();
         for dependency in &dependencies {
-            if dependency.is_stable {
-                stable_dependencies.push(dependency.key.clone());
-            }
             if let Some(write_expr) = dependency.references.iter().find_map(|it| it.write_expr()) {
                 has_stale_assignments = true;
                 let message = text(&[
@@ -848,7 +965,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                 })
             });
             if let Some(dependency) = set_state_inside_effect_without_deps {
-                let suggested = collect_recommendations(&dependencies, &[], &stable_dependencies, &[], true).suggested;
+                let suggested = collect_recommendations(&dependencies, &[], true).suggested;
                 let list = join(&suggested, b", ");
                 let message = text(&[
                     b"React Hook ",
@@ -875,7 +992,6 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         }
 
         let mut declared_dependencies: Vec<DeclaredDependency> = Vec::new();
-        let mut external_dependencies: Vec<Vec<u8>> = Vec::new();
         let array = match declared_dependencies_node.kind() {
             ExprKind::Array(elements) => Some(elements),
             ExprKind::As { expr, .. } | ExprKind::AsConst(expr) if !declared_dependencies_node.is_angle_bracket_assertion() => {
@@ -926,7 +1042,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                     ExprTag::String | ExprTag::Number | ExprTag::BigInt | ExprTag::True | ExprTag::False | ExprTag::Null | ExprTag::Regex
                 );
                 let message = match declared.as_string() {
-                    Some(value) if !value.bytes().is_empty() && dependencies.iter().any(|it| it.key == value.bytes()) => text(&[
+                    Some(value) if !value.bytes().is_empty() && dependency_by_key.contains_key(value.bytes()) => text(&[
                         b"The ",
                         declared.text(),
                         b" literal is not a valid dependency because it never changes. Did you mean to include ",
@@ -955,10 +1071,10 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                 Some(reference) => reference.symbol().is_some_and(|it| component_scope.contains(it.scope())),
                 None => true,
             };
-            if !is_declared_in_component {
-                add(&mut external_dependencies, &key);
-            }
-            declared_dependencies.push(DeclaredDependency { key });
+            declared_dependencies.push(DeclaredDependency {
+                key,
+                is_external: !is_declared_in_component,
+            });
         }
 
         let Recommendations {
@@ -966,7 +1082,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
             unnecessary,
             duplicate,
             missing,
-        } = collect_recommendations(&dependencies, &declared_dependencies, &stable_dependencies, &external_dependencies, is_effect);
+        } = collect_recommendations(&dependencies, &declared_dependencies, is_effect);
         let mut suggested_deps = suggested;
 
         if duplicate.len() + missing.len() + unnecessary.len() == 0 {
@@ -976,26 +1092,14 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
 
         // An effect can have reasons for more dependencies than it uses, nothing else has.
         if !is_effect && !missing.is_empty() {
-            suggested_deps = collect_recommendations(&dependencies, &[], &stable_dependencies, &external_dependencies, is_effect).suggested;
+            suggested_deps = collect_recommendations(&dependencies, &[], is_effect).suggested;
         }
         if declared_dependencies.is_sorted_by(|a, b| a.key <= b.key) {
             suggested_deps.sort();
         }
 
-        // `?.` where all uses of a member are optional.
-        let format_dependency = |path: &[u8]| {
-            let mut out = Vec::with_capacity(path.len() + 2);
-            let mut end = 0;
-            for (i, member) in strings::split(path, b".").enumerate() {
-                end += member.len() + usize::from(i != 0);
-                if i != 0 {
-                    let is_optional = optional_chains.get(&path[..end]) == Some(&true);
-                    out.extend_from_slice(if is_optional { b"?." } else { b"." });
-                }
-                out.extend_from_slice(member);
-            }
-            out
-        };
+        let format_dependency = |path: &[u8]| optional_chains.format(path);
+        let dependency_with_key = |key: &[u8]| dependency_by_key.get(key).and_then(|at| dependencies.get(*at));
         let get_warning_message = |deps: &[Vec<u8>], single_prefix: &str, label: &str, fix_verb: &str| {
             if deps.is_empty() {
                 return None;
@@ -1025,7 +1129,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
                     bad_ref,
                     b"' aren't valid dependencies because mutating them doesn't re-render the component.",
                 ]);
-            } else if let Some(dep) = external_dependencies.first()
+            } else if let Some(DeclaredDependency { key: dep, .. }) = declared_dependencies.iter().find(|it| it.is_external)
                 // Not for what has just been moved into the function.
                 && scope.get_bytes(dep).is_none()
             {
@@ -1039,8 +1143,8 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
 
         // `props.foo()` makes `props` a dependency, as it is the `this` of the call.
         if extra_warning.is_empty()
-            && has(&missing, b"props")
-            && let Some(props) = dependencies.iter().find(|it| it.key == b"props")
+            && missing.iter().any(|it| it == b"props")
+            && let Some(props) = dependency_with_key(b"props")
             && props.references.iter().all(|it| it.expr().is_some_and(|e| parent_member(e).is_some()))
         {
             extra_warning = text(&[
@@ -1056,7 +1160,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
             // A prop that is called and left out: its author may not know `useCallback`.
             let missing_callback_dep = missing.iter().find(|missing_dep| {
                 let top_scope_ref = component_scope.get_bytes(missing_dep);
-                let Some(used_dep) = dependencies.iter().find(|it| it.key == **missing_dep) else {
+                let Some(used_dep) = dependency_with_key(missing_dep) else {
                     return false;
                 };
                 used_dep.references.first().and_then(|it| it.symbol()) == top_scope_ref
@@ -1073,7 +1177,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         }
 
         if extra_warning.is_empty() {
-            extra_warning = set_state_recommendation(&missing, &dependencies, component_scope, &cx.state).unwrap_or_default();
+            extra_warning = set_state_recommendation(&missing, dependency_with_key, component_scope, &cx.state).unwrap_or_default();
         }
 
         let Some(warning) = get_warning_message(&missing, "a", "missing", "include")
@@ -1102,7 +1206,7 @@ Learn more about data fetching with Hooks: https://react.dev/link/hooks-data-fet
         reactive_hook_name: &[u8],
         cx: &Cx<'a, Self>,
     ) {
-        for DeclaredDependency { key } in declared_dependencies {
+        for DeclaredDependency { key, .. } in declared_dependencies {
             let Some(variable) = visit.component_scope.get_bytes(key) else {
                 continue;
             };
@@ -1220,15 +1324,18 @@ fn is_used_outside_of_hook<'a>(variable: Symbol<'a>, scope: Scope<'a>, declared_
 }
 
 /// What to say about `setState(something(missingDep))`.
-fn set_state_recommendation<'a>(
+fn set_state_recommendation<'a, 'd>(
     missing: &[Vec<u8>],
-    dependencies: &[Dependency<'a>],
+    dependency_with_key: impl Fn(&[u8]) -> Option<&'d Dependency<'a>>,
     component_scope: Scope<'a>,
     state: &State<'a>,
-) -> Option<Vec<u8>> {
+) -> Option<Vec<u8>>
+where
+    'a: 'd,
+{
     let component = component_scope.node();
     for missing_dep in missing {
-        let used_dep = dependencies.iter().find(|it| it.key == *missing_dep)?;
+        let used_dep = dependency_with_key(missing_dep)?;
         for reference in &used_dep.references {
             let Some(id) = reference.expr() else {
                 continue;

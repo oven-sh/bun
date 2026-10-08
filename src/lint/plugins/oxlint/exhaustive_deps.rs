@@ -4,7 +4,7 @@
 //! oxlint walks the callback. Here the references in it are looked at, each with what is around it.
 
 use bun_lint::prelude::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 
@@ -56,20 +56,75 @@ impl<'a> Dependency<'a> {
         text
     }
 
-    /// `other` is this, or what this is a property of.
-    fn contains(&self, other: &Self) -> bool {
-        self.name == other.name && self.chain.starts_with(&other.chain)
-    }
-
     fn ends_in_current(&self) -> bool {
         self.chain.last().is_some_and(|it| it.is("current"))
     }
+}
 
-    /// Without the last property.
-    fn base(&self) -> Dependency<'a> {
-        let mut base = self.clone();
-        base.chain.pop();
-        base
+/// What is known about `name.chain[0].chain[1]`.
+#[derive(Default)]
+struct Path {
+    /// What it is a property of. 0 for a variable.
+    base: u32,
+    /// It is read in the function.
+    is_found: bool,
+    /// It or a property of it is read in the function.
+    is_found_within: bool,
+    /// Its position in the array of dependencies, and 1.
+    declared: u32,
+    /// It is read in the function and missing in the array.
+    is_undeclared: bool,
+}
+
+/// The dependencies of one function, as a tree: a dependency is a property of another if that is above it.
+struct Paths<'a> {
+    /// The first is above the variables.
+    list: Vec<Path>,
+    /// The number of a path, by the number of what it is a property of and its last name.
+    properties: FxHashMap<(u32, Name<'a>), u32>,
+}
+
+impl Default for Paths<'_> {
+    fn default() -> Self {
+        Paths {
+            list: vec![Path::default()],
+            properties: FxHashMap::default(),
+        }
+    }
+}
+
+impl<'a> Paths<'a> {
+    /// The number of `dependency`. Calls `on_the_way` with what it is a property of, from the variable on, and with itself.
+    fn number_of(&mut self, dependency: &Dependency<'a>, mut on_the_way: impl FnMut(&mut Path)) -> u32 {
+        let mut at = 0;
+        for name in std::iter::once(&dependency.name).chain(&dependency.chain) {
+            at = *self.properties.entry((at, *name)).or_insert_with(|| {
+                self.list.push(Path {
+                    base: at,
+                    ..Path::default()
+                });
+                self.list.len() as u32 - 1
+            });
+            on_the_way(&mut self.list[at as usize]);
+        }
+        at
+    }
+
+    fn get(&self, path: u32) -> &Path {
+        &self.list[path as usize]
+    }
+
+    fn get_mut(&mut self, path: u32) -> &mut Path {
+        &mut self.list[path as usize]
+    }
+
+    fn base(&self, path: u32) -> &Path {
+        self.get(self.get(path).base)
+    }
+
+    /// What `path` is a property of, the nearest first.
+    fn above(&self, path: u32) -> impl Iterator<Item = &Path> {
+        std::iter::successors(Some(self.get(path).base), |it| Some(self.get(*it).base)).take_while(|it| *it != 0).map(|it| self.get(it))
     }
 }
 
@@ -93,12 +148,17 @@ fn outer(mut e: Expr) -> Expr {
     e
 }
 
-/// `StaticMemberExpression`
-fn as_static_member<'a>(e: Expr<'a>) -> Option<(Expr<'a>, Ident<'a>)> {
+/// `StaticMemberExpression`, of what is known not to be in the name of a tag.
+fn as_static_member_outside_tags<'a>(e: Expr<'a>) -> Option<(Expr<'a>, Ident<'a>)> {
     match e.kind() {
-        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") && !e.is_jsx_tag_name() && !e.is_in_type_query() => Some((obj, name)),
+        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") && !e.is_in_type_query() => Some((obj, name)),
         _ => None,
     }
+}
+
+/// `StaticMemberExpression`
+fn as_static_member<'a>(e: Expr<'a>) -> Option<(Expr<'a>, Ident<'a>)> {
+    as_static_member_outside_tags(e).filter(|_| !e.is_jsx_tag_name())
 }
 
 fn symbol_of(ident: Expr) -> Option<Symbol> {
@@ -108,21 +168,28 @@ fn symbol_of(ident: Expr) -> Option<Symbol> {
 /// `Err`: it is not a chain of properties. `Ok(None)`: of a JSX element.
 fn analyze_property_chain(e: Expr) -> Result<Option<Dependency>, ()> {
     let e = inner(e);
-    match e.kind() {
-        ExprKind::Ident(name) => Ok(Some(Dependency {
-            span: e.span(),
-            name,
-            symbol: symbol_of(e),
-            chain: SmallVec::new(),
-        })),
-        ExprKind::Jsx(jsx) if jsx.tag().is_some() => Ok(None),
-        _ => {
-            let (obj, name) = as_static_member(e).ok_or(())?;
-            Ok(analyze_property_chain(obj)?.map(|mut source| {
-                source.span = e.span();
-                source.chain.push(name.name());
-                source
-            }))
+    if e.tag() == ExprTag::Dot && e.is_jsx_tag_name() {
+        return Err(());
+    }
+    let mut chain = SmallVec::new();
+    let mut object = e;
+    loop {
+        match object.kind() {
+            ExprKind::Ident(name) => {
+                chain.reverse();
+                return Ok(Some(Dependency {
+                    span: e.span(),
+                    name,
+                    symbol: symbol_of(object),
+                    chain,
+                }));
+            }
+            ExprKind::Jsx(jsx) if jsx.tag().is_some() => return Ok(None),
+            _ => {
+                let (obj, name) = as_static_member_outside_tags(object).ok_or(())?;
+                chain.push(name.name());
+                object = inner(obj);
+            }
         }
     }
 }
@@ -195,6 +262,11 @@ fn is_second_of_array_pattern<'a>(declarator: VarDecl<'a>, name: Name<'a>) -> bo
 struct Found<'a> {
     /// In the order of the source.
     dependencies: Vec<Dependency<'a>>,
+    /// The number of each of `dependencies` in `paths`.
+    numbers: Vec<u32>,
+    /// By the number in `paths`, for those that are found: the position in `dependencies`.
+    positions: FxHashMap<u32, u32>,
+    paths: Paths<'a>,
     /// Every time that one was found: its position in `dependencies`.
     inserted: Vec<u32>,
     /// A function that `useState` or `useReducer` returns is named, outside the functions in the function.
@@ -203,17 +275,20 @@ struct Found<'a> {
 
 impl<'a> Found<'a> {
     fn insert(&mut self, dependency: Dependency<'a>) {
-        let at = self.dependencies.iter().position(|it| *it == dependency).unwrap_or_else(|| {
+        let number = self.paths.number_of(&dependency, |it| it.is_found_within = true);
+        let at = *self.positions.entry(number).or_insert_with(|| {
+            self.paths.get_mut(number).is_found = true;
             self.dependencies.push(dependency);
-            self.dependencies.len() - 1
+            self.numbers.push(number);
+            self.dependencies.len() as u32 - 1
         });
-        self.inserted.push(at as u32);
+        self.inserted.push(at);
     }
 
     /// The positions in `dependencies` in the order in which oxlint has them, which is that of its hash table. It names what is
     /// missing in that order, and prints the report where the first is. The same hashes in the same table give the same order.
-    fn order_of_oxlint(&self, file: &'a File<'a>) -> Vec<u32> {
-        let symbols = places_of_symbols(file);
+    /// `symbols`: [`places_of_symbols`].
+    fn order_of_oxlint(&self, symbols: &[(u32, u32)]) -> Vec<u32> {
         let mut table: FxHashSet<Hashed> = FxHashSet::default();
         for &at in &self.inserted {
             if let Some(dependency) = self.dependencies.get(at as usize) {
@@ -364,9 +439,10 @@ fn find_dependencies<'a>(func: Func<'a>, with_parameters: bool) -> Found<'a> {
         // The outermost of `ident.a.b`, and what it is a property of.
         let mut member = None;
         let mut at = ident;
-        while let Node::Expr(parent) = outer(at).parent()
-            && !ident.is_jsx_tag_name()
-            && let Some((obj, property)) = as_static_member(parent)
+        let is_in_tag = ident.is_jsx_tag_name();
+        while !is_in_tag
+            && let Node::Expr(parent) = outer(at).parent()
+            && let Some((obj, property)) = as_static_member_outside_tags(parent)
             && obj == outer(at)
         {
             if let Some((before, property)) = member.replace((parent, property.name())) {
@@ -413,25 +489,42 @@ fn is_inside_effect_cleanup<'a>(e: Expr<'a>, callback: Func<'a>) -> bool {
     })
 }
 
+/// What is the same for all calls in a file.
+#[derive(Default)]
+pub(crate) struct Memo<'a> {
+    /// Whether the value of a variable of a component is the same on every render.
+    is_stable: FxHashMap<Symbol<'a>, bool>,
+    /// Whether `variable.current` is on either side of an assignment.
+    is_current_written: FxHashMap<Symbol<'a>, bool>,
+    /// [`places_of_symbols`]
+    places_of_symbols: Option<Vec<(u32, u32)>>,
+    /// The `a.current` of the file, in the order of the source.
+    currents: Option<Vec<Expr<'a>>>,
+}
+
 struct Component<'a> {
     scope: Scope<'a>,
 }
 
+/// What tells whether the value of a variable is the same on every render.
+enum Stability<'a> {
+    Known(bool),
+    /// It is, if what the function reads is. With the variable that the function is the value of.
+    OfFunction(Func<'a>, Option<Symbol<'a>>),
+}
+
 impl<'a> Component<'a> {
-    fn is_dependency(&self, dependency: &Dependency<'a>) -> bool {
-        self.is_dependency_impl(dependency, &mut Vec::new())
+    /// `is_identifier_a_dependency`
+    fn is_dependency(&self, dependency: &Dependency<'a>, memo: &mut Memo<'a>) -> bool {
+        self.variable_of_component(dependency).is_some_and(|it| !self.is_stable_value(it.0, it.1, memo))
     }
 
-    /// `is_identifier_a_dependency_impl`
-    fn is_dependency_impl(&self, dependency: &Dependency<'a>, visited: &mut Vec<Symbol<'a>>) -> bool {
-        let Some(symbol) = dependency.symbol else {
-            return false;
-        };
-        let Some(declared) = declaration_of(symbol) else {
-            return false;
-        };
+    /// The variable, if `dependency` is a dependency unless the value of the variable is stable.
+    fn variable_of_component(&self, dependency: &Dependency<'a>) -> Option<(Symbol<'a>, Declared<'a>)> {
+        let symbol = dependency.symbol?;
+        let declared = declaration_of(symbol)?;
         if scope_of_declaration(symbol, declared) != self.scope {
-            return false;
+            return None;
         }
         let span = match declared {
             Declared::Variable(declarator) => declarator.span(),
@@ -440,33 +533,26 @@ impl<'a> Component<'a> {
             Declared::Parameter(param) => param.span(),
             Declared::Other => Span::empty(0),
         };
-        !span.contains(dependency.span) && !self.is_stable_value(declared, symbol, visited)
+        (!span.contains(dependency.span)).then_some((symbol, declared))
     }
 
-    fn is_stable_value(&self, declared: Declared<'a>, symbol: Symbol<'a>, visited: &mut Vec<Symbol<'a>>) -> bool {
-        if visited.contains(&symbol) {
-            return true;
-        }
-        visited.push(symbol);
+    fn stability(declared: Declared<'a>, symbol: Symbol<'a>) -> Stability<'a> {
         let declarator = match declared {
             Declared::Variable(declarator) => declarator,
-            Declared::Function(func) => return func.has_body() && self.is_function_stable(func, None, visited),
-            _ => return false,
+            Declared::Function(func) if func.has_body() => return Stability::OfFunction(func, None),
+            _ => return Stability::Known(false),
         };
         let Some(init) = declarator.init().map(inner) else {
-            return false;
+            return Stability::Known(false);
         };
-        match init.kind() {
-            ExprKind::Fn(func) => {
-                let own = declarator.pat().as_ident().map(|_| symbol);
-                self.is_function_stable(func, own, visited)
-            }
+        Stability::Known(match init.kind() {
+            ExprKind::Fn(func) => return Stability::OfFunction(func, declarator.pat().as_ident().map(|_| symbol)),
             ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) | ExprKind::BigInt(_) | ExprKind::String(_) => {
                 declarator.var_kind() == VarKind::Const
             }
             ExprKind::Call(call) => {
                 let Some(hook) = func_call_without_react_namespace(call) else {
-                    return false;
+                    return Stability::Known(false);
                 };
                 let is_assigned = || {
                     symbol.references().filter_map(Reference::expr).any(|it| {
@@ -479,29 +565,118 @@ impl<'a> Component<'a> {
                         && !is_assigned()
             }
             _ => false,
-        }
+        })
     }
 
-    /// `own`: the variable that the function is the value of.
-    fn is_function_stable(&self, func: Func<'a>, own: Option<Symbol<'a>>, visited: &mut Vec<Symbol<'a>>) -> bool {
+    /// The variables of the component that `func` reads. `None` if it reads `own`, the variable that it is the value of.
+    fn variables_read_in(&self, func: Func<'a>, own: Option<Symbol<'a>>) -> Option<Vec<(Symbol<'a>, Declared<'a>)>> {
         let found = find_dependencies(func, false);
-        found.dependencies.iter().all(|it| (own.is_none() || it.symbol != own) && !self.is_dependency_impl(it, visited))
+        if own.is_some() && found.dependencies.iter().any(|it| it.symbol == own) {
+            return None;
+        }
+        Some(found.dependencies.iter().filter_map(|it| self.variable_of_component(it)).collect())
+    }
+
+    /// oxlint's `is_stable_value`, which takes a function that it is looking at already for stable: so the value of a variable is
+    /// stable unless an unstable one can be reached from it, from a function to what it reads. The functions that read each other
+    /// are found as the strongly connected components of a graph are, so that each function is looked at once in a file.
+    fn is_stable_value(&self, symbol: Symbol<'a>, declared: Declared<'a>, memo: &mut Memo<'a>) -> bool {
+        struct Frame<'a> {
+            symbol: Symbol<'a>,
+            reads: Vec<(Symbol<'a>, Declared<'a>)>,
+            next: usize,
+            number: usize,
+            /// The least number of the functions in `open` that can be reached from it.
+            lowest: usize,
+        }
+        if let Some(&known) = memo.is_stable.get(&symbol) {
+            return known;
+        }
+        let mut stack: Vec<Frame<'a>> = Vec::new();
+        // The functions that have been entered, and from which one in `stack` can be reached.
+        let mut open: Vec<Symbol<'a>> = Vec::new();
+        let mut numbers: FxHashMap<Symbol<'a>, usize> = FxHashMap::default();
+        let mut entering = Some((symbol, declared));
+        loop {
+            if let Some((symbol, declared)) = entering.take() {
+                let reads = match Self::stability(declared, symbol) {
+                    Stability::Known(true) => {
+                        memo.is_stable.insert(symbol, true);
+                        None
+                    }
+                    Stability::Known(false) => Some(None),
+                    Stability::OfFunction(func, own) => Some(self.variables_read_in(func, own)),
+                };
+                match reads {
+                    None => {}
+                    Some(None) => {
+                        memo.is_stable.insert(symbol, false);
+                        break;
+                    }
+                    Some(Some(reads)) => {
+                        let number = numbers.len();
+                        numbers.insert(symbol, number);
+                        open.push(symbol);
+                        stack.push(Frame {
+                            symbol,
+                            reads,
+                            next: 0,
+                            number,
+                            lowest: number,
+                        });
+                    }
+                }
+            }
+            let Some(top) = stack.last_mut() else {
+                return true;
+            };
+            if let Some(&read) = top.reads.get(top.next) {
+                top.next += 1;
+                match (memo.is_stable.get(&read.0), numbers.get(&read.0)) {
+                    (Some(true), _) => {}
+                    (Some(false), _) => break,
+                    (None, Some(&number)) => top.lowest = top.lowest.min(number),
+                    (None, None) => entering = Some(read),
+                }
+                continue;
+            }
+            let (symbol, number, lowest) = (top.symbol, top.number, top.lowest);
+            stack.pop();
+            if lowest == number {
+                while let Some(stable) = open.pop() {
+                    memo.is_stable.insert(stable, true);
+                    if stable == symbol {
+                        break;
+                    }
+                }
+            }
+            if let Some(below) = stack.last_mut() {
+                below.lowest = below.lowest.min(lowest);
+            }
+        }
+        memo.is_stable.extend(open.into_iter().map(|it| (it, false)));
+        false
     }
 }
 
 fn is_expression_referentially_unique(e: Expr) -> bool {
-    let e = inner(e);
-    match e.kind() {
-        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::New(_) | ExprKind::Regex(_) | ExprKind::Jsx(_) => true,
-        ExprKind::Cond { yes, no, .. } => is_expression_referentially_unique(yes) || is_expression_referentially_unique(no),
-        ExprKind::Binary {
-            op: BinOp::And | BinOp::Or | BinOp::Nullish,
-            left,
-            right,
-        } => is_expression_referentially_unique(left) || is_expression_referentially_unique(right),
-        ExprKind::Assign { value, .. } => is_expression_referentially_unique(value),
-        _ => false,
+    let mut values: SmallVec<[Expr; 8]> = smallvec::smallvec![e];
+    while let Some(value) = values.pop() {
+        match inner(value).kind() {
+            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::New(_) | ExprKind::Regex(_) | ExprKind::Jsx(_) => {
+                return true;
+            }
+            ExprKind::Cond { yes, no, .. } => values.extend([yes, no]),
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => values.extend([left, right]),
+            ExprKind::Assign { value, .. } => values.push(value),
+            _ => {}
+        }
     }
+    false
 }
 
 fn is_declaration_referentially_unique(symbol: Symbol) -> bool {
@@ -549,7 +724,7 @@ fn without_dependency(file: &File, array: Expr, removed: Span) -> Vec<u8> {
 }
 
 /// `call`: any call. `additional_hooks`: the option.
-pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks: Option<&Regex>) {
+pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks: Option<&Regex>, memo: &mut Memo<'a>) {
     let ExprKind::Call(call) = node.kind() else {
         return;
     };
@@ -637,9 +812,9 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
         None
     });
 
-    let found = find_dependencies(callback, true);
+    let mut found = find_dependencies(callback, true);
     if is_effect && cx.file().mentions("current") {
-        report_refs_in_cleanups(cx, callback, &component);
+        report_refs_in_cleanups(cx, callback, &component, memo);
     }
     let Some(array) = array else {
         if is_effect && find_dependencies(callback, false).has_set_state_call {
@@ -651,7 +826,8 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
         return;
     };
 
-    let mut declared: Vec<Dependency<'a>> = Vec::new();
+    // Each with its number in `found.paths`.
+    let mut declared: Vec<(Dependency<'a>, u32)> = Vec::new();
     for element in elements {
         if matches!(element.tag(), ExprTag::Missing) {
             continue;
@@ -663,8 +839,16 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
         let element = inner(element);
         match analyze_property_chain(element) {
             Ok(None) => {}
-            Ok(Some(dependency)) if declared.contains(&dependency) => drop(cx.report(dependency.span, DUPLICATE)),
-            Ok(Some(dependency)) => declared.push(dependency),
+            Ok(Some(dependency)) => {
+                let number = found.paths.number_of(&dependency, |_| {});
+                let path = found.paths.get_mut(number);
+                if path.declared != 0 {
+                    cx.report(dependency.span, DUPLICATE);
+                } else {
+                    declared.push((dependency, number));
+                    path.declared = declared.len() as u32;
+                }
+            }
             Err(()) => {
                 let is_literal = matches!(
                     element.tag(),
@@ -678,9 +862,9 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
         }
     }
 
-    for dependency in &declared {
+    for (dependency, _) in &declared {
         if let Some(symbol) = dependency.symbol {
-            let is_ref_current = dependency.chain.len() == 1 && dependency.ends_in_current() && !component.is_dependency(dependency);
+            let is_ref_current = dependency.chain.len() == 1 && dependency.ends_in_current() && !component.is_dependency(dependency, memo);
             if !is_strictly_inside(component.scope, symbol.scope()) && !is_ref_current {
                 continue;
             }
@@ -691,27 +875,36 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
             .fix(|fixer| fixer.replace(array, without_dependency(cx.file(), array, dependency.span)));
     }
 
-    let mut undeclared: Vec<&Dependency<'a>> = (found.dependencies.iter())
-        .filter(|it| !declared.contains(it))
+    // Their positions in `found.dependencies`.
+    let mut undeclared: Vec<usize> = (found.dependencies.iter().zip(&found.numbers).enumerate())
+        .filter(|(_, (_, number))| found.paths.get(**number).declared == 0)
         // What is read of `foo.current` counts for `foo`.
-        .filter(|it| !(it.ends_in_current() && found.dependencies.contains(&it.base())))
-        .filter(|it| !declared.iter().any(|declared| it.contains(declared)))
-        .filter(|it| component.is_dependency(it))
+        .filter(|(_, (it, number))| !(it.ends_in_current() && found.paths.base(**number).is_found))
+        .filter(|(_, (_, number))| !found.paths.above(**number).any(|it| it.declared != 0))
+        .filter(|(_, (it, _))| component.is_dependency(it, memo))
+        .map(|it| it.0)
         .collect();
     if undeclared.len() > 1 {
-        let order = found.order_of_oxlint(cx.file());
-        undeclared.sort_by_cached_key(|wanted| {
-            let at = found.dependencies.iter().position(|it| it == *wanted);
-            order.iter().position(|it| Some(*it as usize) == at)
-        });
+        let symbols = memo.places_of_symbols.get_or_insert_with(|| places_of_symbols(cx.file()));
+        let mut ranks = vec![0; found.dependencies.len()];
+        for (rank, at) in found.order_of_oxlint(symbols).into_iter().enumerate() {
+            if let Some(it) = ranks.get_mut(at as usize) {
+                *it = rank;
+            }
+        }
+        undeclared.sort_by_key(|at| ranks.get(*at).copied());
     }
+    for number in undeclared.iter().filter_map(|at| found.numbers.get(*at)) {
+        found.paths.get_mut(*number).is_undeclared = true;
+    }
+    let paths = &found.paths;
     if !undeclared.is_empty() {
-        let mutable = declared.iter().find(|it| it.ends_in_current() && undeclared.iter().any(|missing| **missing == it.base()));
-        let missing: Vec<(Span, Vec<u8>)> = undeclared.iter().map(|it| (it.span, it.text())).collect();
-        report_missing(cx, hook, &missing, array.span(), mutable.map(Dependency::text).as_deref());
+        let mutable = declared.iter().find(|(it, number)| it.ends_in_current() && paths.base(*number).is_undeclared);
+        let missing: Vec<(Span, Vec<u8>)> = undeclared.iter().filter_map(|at| found.dependencies.get(*at)).map(|it| (it.span, it.text())).collect();
+        report_missing(cx, hook, &missing, array.span(), mutable.map(|it| it.0.text()).as_deref());
     }
 
-    for dependency in &declared {
+    for (dependency, _) in &declared {
         if let Some(Declared::Variable(declarator)) = dependency.symbol.and_then(declaration_of)
             && let Some(init) = declarator.init().filter(|it| !it.is_parenthesized())
             && let ExprKind::Call(call) = init.kind()
@@ -726,36 +919,45 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
         let unnecessary = |dependency: &Dependency| {
             cx.report(array, UNNECESSARY_DEPENDENCY).data("hook", hook).data("dependency", dependency.text());
         };
-        for (at, a) in declared.iter().enumerate() {
-            for b in &declared[at + 1..] {
-                if a.contains(b) {
-                    unnecessary(a);
-                } else if b.contains(a) {
-                    unnecessary(b);
-                }
-            }
+        // The pairs of which one is a property of the other: the positions of the first and of the second in the array, and that of
+        // the property.
+        let mut pairs: Vec<(usize, usize, usize)> = Vec::new();
+        for (at, (_, number)) in declared.iter().enumerate() {
+            let above = paths.above(*number).filter_map(|it| (it.declared as usize).checked_sub(1));
+            pairs.extend(above.map(|other| (at.min(other), at.max(other), at)));
         }
-        for dependency in declared.iter().filter(|it| !found.dependencies.contains(it)) {
-            let is_needed = found.dependencies.iter().any(|it| it.contains(dependency))
-                || undeclared.iter().any(|it| dependency.contains(it))
-                || declared.iter().any(|it| it != dependency && dependency.contains(it));
+        pairs.sort_unstable();
+        for (dependency, _) in pairs.iter().filter_map(|it| declared.get(it.2)) {
+            unnecessary(dependency);
+        }
+        for (dependency, number) in declared.iter().filter(|it| !paths.get(it.1).is_found) {
+            let is_needed = paths.get(*number).is_found_within
+                || paths.get(*number).is_undeclared
+                || paths.above(*number).any(|it| it.is_undeclared || it.declared != 0);
             if !is_needed {
                 unnecessary(dependency);
             }
         }
     }
 
-    for dependency in &declared {
+    for (dependency, _) in &declared {
         if let Some(symbol) = dependency.symbol.filter(|it| dependency.chain.is_empty() && is_declaration_referentially_unique(*it)) {
             cx.report(dependency.span, CHANGES_EVERY_RENDER).data("hook", hook).data("dependency", symbol.name());
         }
     }
 }
 
-fn report_refs_in_cleanups<'a, R: Rule>(cx: &Cx<'a, R>, callback: Func<'a>, component: &Component<'a>) {
+fn report_refs_in_cleanups<'a, R: Rule>(cx: &Cx<'a, R>, callback: Func<'a>, component: &Component<'a>, memo: &mut Memo<'a>) {
     let within = callback.estree_span();
-    for member in cx.file().exprs_of_kind(ExprTag::Dot) {
-        let Some((obj, _)) = as_static_member(member).filter(|it| it.1.name().is("current") && within.contains(member.span())) else {
+    let currents = memo.currents.get_or_insert_with(|| {
+        let is_current = |it: &Expr| as_static_member(*it).is_some_and(|it| it.1.name().is("current"));
+        let mut currents: Vec<Expr<'a>> = cx.file().exprs_of_kind(ExprTag::Dot).filter(is_current).collect();
+        currents.sort_unstable_by_key(|it| it.span().start);
+        currents
+    });
+    let first = currents.partition_point(|it| it.span().start < within.start);
+    for &member in currents[first..].iter().take_while(|it| it.span().start < within.end) {
+        let Some((obj, _)) = as_static_member_outside_tags(member).filter(|_| within.contains(member.span())) else {
             continue;
         };
         if !is_inside_effect_cleanup(member, callback) {
@@ -766,11 +968,13 @@ fn report_refs_in_cleanups<'a, R: Rule>(cx: &Cx<'a, R>, callback: Func<'a>, comp
             && let Some(symbol) = symbol_of(obj)
         {
             // `ref.current` on either side of an assignment.
-            let is_written = symbol.references().filter_map(Reference::expr).any(|it| {
-                matches!(it.parent(), Node::Expr(parent) if !it.is_parenthesized()
-                    && !parent.is_parenthesized()
-                    && as_static_member(parent).is_some_and(|it| it.1.name().is("current"))
-                    && matches!(parent.parent(), Node::Expr(assignment) if assignment.tag() == ExprTag::Assign))
+            let is_written = *memo.is_current_written.entry(symbol).or_insert_with(|| {
+                symbol.references().filter_map(Reference::expr).any(|it| {
+                    matches!(it.parent(), Node::Expr(parent) if !it.is_parenthesized()
+                        && !parent.is_parenthesized()
+                        && as_static_member(parent).is_some_and(|it| it.1.name().is("current"))
+                        && matches!(parent.parent(), Node::Expr(assignment) if assignment.tag() == ExprTag::Assign))
+                })
             });
             if is_written || declaration_of(symbol).is_some_and(|it| scope_of_declaration(symbol, it) != component.scope) {
                 continue;

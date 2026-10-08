@@ -101,15 +101,35 @@ impl<'a> SourceText<'a> {
     }
 
     pub(crate) fn next_non_whitespace_byte_is(self, position: u32, expected: u8) -> bool {
-        self.from(position).trim_ascii_start().first() == Some(&expected)
+        let mut rest = self.from(position).trim_ascii_start();
+        while rest.first().is_some_and(|b| !b.is_ascii()) {
+            match white_space_len(rest).max(line_terminator_len(rest)) {
+                0 => break,
+                len => rest = rest[len..].trim_ascii_start(),
+            }
+        }
+        rest.first() == Some(&expected)
     }
 
     pub(crate) fn bytes_contain(self, start: u32, end: u32, byte: u8) -> bool {
         bun_core::strings::contains_char(self.slice_range(start, end), byte)
     }
 
+    /// White space that is not ASCII counts as a space, U+2028 and U+2029 as `\n`.
     pub(crate) fn all_bytes_match(self, start: u32, end: u32, predicate: impl Fn(u8) -> bool) -> bool {
-        self.slice_range(start, end).iter().all(|&b| predicate(b))
+        let mut rest = self.slice_range(start, end);
+        while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
+            rest = &rest[at..];
+            let (len, stands_for) = match (white_space_len(rest), line_terminator_len(rest)) {
+                (0, len) => (len, b'\n'),
+                (len, _) => (len, b' '),
+            };
+            if len < 2 || !predicate(stands_for) {
+                return false;
+            }
+            rest = &rest[len..];
+        }
+        true
     }
 
     /// The number of characters in `span`.

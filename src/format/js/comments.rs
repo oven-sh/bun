@@ -13,6 +13,7 @@
 
 use super::source_text::SourceText;
 use crate::options::Flavor;
+use crate::pragma::{trim_end, trim_start};
 use bun_lint::ast::{Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind};
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::TokenKind;
@@ -281,9 +282,9 @@ fn attach_between_sides_of_assignment<'a>(nodes: &mut NodeFinder<'a>, comments: 
     if first.span.start < left_end || right_start < first.span.end {
         return None;
     }
-    let text = nodes.file.text();
-    let between = |start: u32, end: u32| text.get(start as usize..end as usize).unwrap_or_default();
-    let is_on_same_line = |a: &Comment, b: &Comment| between(a.span.end, b.span.start).iter().all(|b| matches!(b, b' ' | b'\t'));
+    let source = SourceText::new(nodes.file.text());
+    let is_on_same_line =
+        |a: &Comment, b: &Comment| source.all_bytes_match(a.span.end, b.span.start, |b| matches!(b, b' ' | b'\t' | 0x0B | 0x0C));
     let count = comments[index..].iter().take_while(|comment| comment.span.end <= right_start).count();
     let gap = comments.get_mut(index..index + count)?;
     let is_right_complex =
@@ -306,7 +307,7 @@ fn attach_between_sides_of_assignment<'a>(nodes: &mut NodeFinder<'a>, comments: 
             comment.is_line() && !is_right_complex
         } else {
             is_tie_broken = is_tie_broken
-                || !between(comment.span.end, leading_start).iter().all(|b| b.is_ascii_whitespace() || *b == b'(');
+                || !source.all_bytes_match(comment.span.end, leading_start, |b| b.is_ascii_whitespace() || b == b'(');
             if !is_tie_broken {
                 leading_start = comment.span.start;
             }
@@ -399,7 +400,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
             })
             .collect(),
     };
-    let is_blank = |start: u32, end: u32| text.get(start as usize..end as usize).is_some_and(|it| it.trim_ascii().is_empty());
+    let is_blank = |start: u32, end: u32| text.get(start as usize..end as usize).is_some_and(|it| trim_start(it).is_empty());
     let mut has_moved = false;
     // The comment before is on a line of its own, or follows one that is on the same line.
     let mut is_after_own_line_comment = false;
@@ -436,13 +437,16 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
             run_last += 1;
         }
         let after = text.get(comments.get(run_last).map_or(0, |last| last.span.end as usize)..).unwrap_or_default();
-        let after = after.trim_ascii_start();
+        let after = trim_start(after);
 
         // The first of its run, after `=`, `= (` or before an assignment operator.
         if run_start == comment.span.start
             && (starts_with_assignment_operator(after) || {
-                let before = text.get(..run_start as usize).unwrap_or_default();
-                before.iter().rev().find(|b| !b.is_ascii_whitespace() && **b != b'(') == Some(&b'=')
+                let mut before = trim_end(text.get(..run_start as usize).unwrap_or_default());
+                while let [rest @ .., b'('] = before {
+                    before = trim_end(rest);
+                }
+                before.ends_with(b"=")
             })
             && let Some(end) = attach_between_sides_of_assignment(&mut nodes, comments, index)
         {

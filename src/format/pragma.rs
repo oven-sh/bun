@@ -161,7 +161,7 @@ fn white_space_len(text: &[u8]) -> usize {
 }
 
 /// `String.prototype.trimStart`
-fn trim_start(mut text: &[u8]) -> &[u8] {
+pub(crate) fn trim_start(mut text: &[u8]) -> &[u8] {
     loop {
         match white_space_len(text) {
             0 => return text,
@@ -171,7 +171,7 @@ fn trim_start(mut text: &[u8]) -> &[u8] {
 }
 
 /// `String.prototype.trimEnd`
-fn trim_end(mut text: &[u8]) -> &[u8] {
+pub(crate) fn trim_end(mut text: &[u8]) -> &[u8] {
     loop {
         text = match text {
             [rest @ .., b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' '] | [rest @ .., 0xC2, 0xA0] => rest,

@@ -210,8 +210,9 @@ it("globals are deletable", () => {
 // delivery, an abort listener) with setImmediate / clearImmediate /
 // queueMicrotask. They reach them through private names, so fake timers or
 // anything else that replaces or deletes the public globals cannot strand it.
-// Node's lib/ keeps private references the same way.
-describe.concurrent("built-in modules do not schedule through replaced globals", () => {
+// Node's lib/ keeps private references the same way. The four timeout globals
+// (setTimeout, setInterval and their clear functions) are not covered yet.
+describe.concurrent("built-in modules keep their own setImmediate, clearImmediate and queueMicrotask", () => {
   /** Runs `source` in a fresh process and returns what it printed. */
   async function run(source) {
     await using proc = Bun.spawn({
@@ -223,6 +224,42 @@ describe.concurrent("built-in modules do not schedule through replaced globals",
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
   }
+
+  // A socket's 'close' is scheduled with setImmediate. These two cases are the
+  // close-order tests of https://github.com/oven-sh/bun/pull/44366.
+  describe.each(["before", "after"])("with setImmediate replaced %s node:net is loaded", order => {
+    const replace = `require("node:timers").setImmediate = globalThis.setImmediate = () => {};`;
+    it.each([
+      ["the peer", "end,finish,close:false", `socket.end("hello");`, ``],
+      ["the socket itself", "finish,end,close:false", `socket.on("end", () => socket.end());`, `client.end("hello");`],
+    ])("a net.Socket ended by %s emits 'close'", async (_, events, onConnection, onConnect) => {
+      const { stdout, stderr, exitCode } = await run(/* js */ `
+        ${order === "before" ? replace : ""}
+        const net = require("node:net");
+        ${order === "after" ? replace : ""}
+        const events = [];
+        const server = net.createServer(socket => {
+          socket.resume();
+          ${onConnection}
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          client.resume();
+          client.on("connect", () => {
+            ${onConnect}
+          });
+          client.on("end", () => events.push("end"));
+          client.on("finish", () => events.push("finish"));
+          client.on("close", hadError => {
+            events.push("close:" + hadError);
+            server.close();
+            console.log(events.join(","));
+          });
+        });
+      `);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: events, stderr: "", exitCode: 0 });
+    });
+  });
 
   it("an http2 session closes with setImmediate replaced", async () => {
     // A session whose close was handed to the replaced function never closes,

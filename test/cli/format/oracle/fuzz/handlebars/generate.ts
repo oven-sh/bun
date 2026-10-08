@@ -15,7 +15,12 @@ const flag = (name: string, otherwise: string) =>
   (args.find(it => it.startsWith(`-${name}=`)) ?? `-${name}=${otherwise}`).slice(name.length + 2);
 const [mode, count] = [flag("mode", "grammar"), +flag("n", "1000")];
 let seed = +flag("seed", "1");
-const random = (below: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >>> 8) % below;
+function random(below: number) {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let bits = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  bits = (bits + Math.imul(bits ^ (bits >>> 7), 61 | bits)) ^ bits;
+  return ((bits ^ (bits >>> 14)) >>> 0) % below;
+}
 const pick = <T>(list: readonly T[]): T => list[random(list.length)];
 const chance = (percent: number) => random(100) < percent;
 const many = (most: number, make: () => string, between: () => string = () => "") =>

@@ -82,6 +82,7 @@ fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
         | b"xsjs" | b"xsjslib" | b"start.frag" | b"end.frag" | b"wxs" => b"babel",
         b"typescript" | b"tsx" | b"ts" | b"typescriptreact" | b"cts" | b"mts" | b"angular-ts" => b"typescript",
         b"graphql" | b"gql" | b"graphqls" => b"graphql",
+        b"handlebars" | b"hbs" | b"htmlbars" => b"glimmer",
         b"markdown" | b"md" | b"pandoc" | b"livemd" | b"mdown" | b"mdwn" | b"mkd" | b"mkdn" | b"mkdown" | b"ronn" | b"scd"
         | b"workbook" => b"markdown",
         b"css" | b"postcss" | b"wxss" | b"pcss" => b"css",
@@ -149,6 +150,7 @@ fn format_embedded(
     } else {
         match parser {
             b"graphql" => crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok(),
+            b"glimmer" => crate::handlebars::format(code, &options, &mut Default::default(), &mut out).is_ok(),
             b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok(),
             b"markdown" | b"mdx" => {
                 let mode = Mode {

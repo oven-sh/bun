@@ -1,6 +1,7 @@
 //! Prettier's `language-handlebars/printer-glimmer.js`. It writes the parts of the document one after the other.
 
 use super::ast::{self, Call, Head, Kind, NOTHING, Node, NodeId, Range, Tree};
+use super::positions::Positions;
 use super::tokenizer::is_void_tag;
 use crate::FormatOptions;
 use crate::css::doc::{self, Doc, Elements, IndentCommand, Line};
@@ -53,6 +54,7 @@ pub(crate) struct Printer<'a> {
     /// `options.originalText`, with blanks in the place of the front matter.
     pub(crate) source: &'a [u8],
     pub(crate) front_matter: &'a [u8],
+    pub(crate) positions: &'a Positions,
     pub(crate) options: &'a FormatOptions,
     /// `options.htmlWhitespaceSensitivity !== "ignore"`
     pub(crate) is_white_space_sensitive: bool,
@@ -236,8 +238,8 @@ impl<'a> Printer<'a> {
 
     fn mustache_comment(&mut self, node: Node, value: &[u8]) {
         let is_tilde = |at: Option<usize>| at.and_then(|at| self.source.get(at)) == Some(&b'~');
-        let strips_left = is_tilde(Some(node.start as usize + 2));
-        let strips_right = is_tilde((node.end as usize).checked_sub(3));
+        let strips_left = is_tilde(self.positions.moved(node.start as usize, 2));
+        let strips_right = is_tilde(self.positions.moved(node.end as usize, -3));
         let dashes = if strings::contains(value, b"}}") { "--" } else { "" };
         self.token(if strips_left { "{{~!" } else { "{{!" });
         self.token(dashes);

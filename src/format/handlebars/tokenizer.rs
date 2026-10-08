@@ -6,6 +6,7 @@
 
 use super::ast::{Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::parser::{Statement, StatementKind};
+use super::positions::Positions;
 use super::{Error, MAX_DEPTH};
 use bun_core::strings;
 
@@ -119,6 +120,7 @@ struct Frame {
 struct Builder<'a> {
     source: &'a [u8],
     statements: &'a [Statement],
+    positions: &'a Positions,
     tree: &'a mut Tree,
 
     state: State,
@@ -127,7 +129,8 @@ struct Builder<'a> {
     end: usize,
     /// The tokenizer has read one character more than it had.
     has_read_too_far: bool,
-    /// Up to there, the tokenizer takes itself to be one character before where it is.
+    /// Up to `shifted_up_to`, the tokenizer takes itself to be so many UTF-16 code units before where it is.
+    shift: u32,
     shifted_up_to: usize,
     /// `tagNameBuffer` is empty. Otherwise it is `tag.name`.
     is_tag_name_buffer_empty: bool,
@@ -163,7 +166,10 @@ impl Builder<'_> {
 
     /// `this.offset()`
     fn position(&self) -> usize {
-        if self.index <= self.shifted_up_to { self.index.saturating_sub(1) } else { self.index }
+        if self.shift != 0 && self.index <= self.shifted_up_to {
+            return self.positions.moved(self.index, -i64::from(self.shift)).unwrap_or(self.index);
+        }
+        self.index
     }
 
     fn text(&self, text: Text) -> &[u8] {
@@ -173,7 +179,9 @@ impl Builder<'_> {
     // ───────────────────────────── TokenizerEventHandlers ─────────────────────────────
 
     fn append_to_comment(&mut self, start: usize, end: usize) {
-        self.tree.append_source(self.source, &mut self.comment, start, end);
+        if start < end {
+            self.tree.append_source(self.source, &mut self.comment, start, end);
+        }
     }
 
     fn finish_comment(&mut self) {
@@ -842,16 +850,22 @@ impl Builder<'_> {
 
     /// `ContentStatement`: `tokenizePart` and `flushData`.
     fn content(&mut self, start: usize, end: usize) -> Result<(), Error> {
-        (self.index, self.end, self.shifted_up_to) = (start, end, 0);
-        if std::mem::take(&mut self.has_read_too_far) {
-            // It skips a character, but counts from where the piece starts. The next line is counted from its start.
+        (self.index, self.end) = (start, end);
+        // It counts from where the parser takes the piece to start. The next line is counted from its start.
+        self.shift = self.positions.deficit_at(start);
+        let has_read_too_far = std::mem::take(&mut self.has_read_too_far);
+        if self.shift != 0 || has_read_too_far {
             let line = &self.source[start..end];
             let line = &line[..strings::index_of_char_usize(line, b'\n').unwrap_or(line.len())];
-            if line.is_empty() || !line.is_ascii() {
-                return Err(Error::Syntax);
-            }
-            self.index += 1;
             self.shifted_up_to = start + line.len();
+            // It skips a character, and does not count it.
+            if has_read_too_far {
+                if line.is_empty() || !line.is_ascii() {
+                    return Err(Error::Syntax);
+                }
+                self.index += 1;
+                self.shift += 1;
+            }
         }
         while let Some(character) = self.peek() {
             self.step(character)?;
@@ -909,10 +923,10 @@ impl Builder<'_> {
     }
 
     fn statement(&mut self, index: usize, statement: Statement) -> Result<(), Error> {
-        let (start, end) = (statement.start as usize, statement.end as usize);
         if let StatementKind::Content = statement.kind {
-            return self.content(start, end);
+            return self.content(statement.start as usize, statement.end as usize);
         }
+        let [start, end] = [statement.start, statement.end].map(|offset| self.positions.of_token(offset as usize));
         if let StatementKind::Unsupported = statement.kind {
             return Err(Error::Syntax);
         }
@@ -935,6 +949,9 @@ impl Builder<'_> {
                 if !is_valid {
                     return Err(Error::Syntax);
                 }
+                if let Some(mustache) = self.tree.nodes.get_mut(node as usize) {
+                    (mustache.start, mustache.end) = (start as u32, end as u32);
+                }
                 self.mustache(node)?;
             }
             StatementKind::Block {
@@ -956,7 +973,7 @@ impl Builder<'_> {
                     false => (self.block(first, block_params)?, NOTHING),
                 };
                 if let Some(block) = self.tree.nodes.get_mut(node as usize) {
-                    (block.start, block.end) = (statement.start, statement.end);
+                    (block.start, block.end) = (start as u32, end as u32);
                     if let Kind::BlockStatement { program, inverse, .. } = &mut block.kind {
                         (*program, *inverse) = (default_block, else_block);
                     }
@@ -1003,15 +1020,23 @@ impl Builder<'_> {
 }
 
 /// Adds the template that `statements` are to `tree`. `front_matter` comes first in it.
-pub(crate) fn build(source: &[u8], statements: &[Statement], front_matter: Option<NodeId>, tree: &mut Tree) -> Result<NodeId, Error> {
+pub(crate) fn build(
+    source: &[u8],
+    statements: &[Statement],
+    positions: &Positions,
+    front_matter: Option<NodeId>,
+    tree: &mut Tree,
+) -> Result<NodeId, Error> {
     let mut builder = Builder {
         source,
         statements,
+        positions,
         tree,
         state: State::BeforeData,
         index: 0,
         end: 0,
         has_read_too_far: false,
+        shift: 0,
         shifted_up_to: 0,
         is_tag_name_buffer_empty: true,
         tag_open: 0,

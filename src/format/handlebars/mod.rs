@@ -11,6 +11,7 @@
 mod ast;
 mod lexer;
 mod parser;
+mod positions;
 mod printer;
 mod tokenizer;
 
@@ -39,6 +40,7 @@ pub fn is_handlebars_path(path: &[u8]) -> bool {
 #[derive(Default)]
 pub struct Scratch {
     tokens: Vec<lexer::Token>,
+    positions: positions::Positions,
     statements: Vec<parser::Statement>,
     tree: ast::Tree,
     elements: Elements,
@@ -49,21 +51,23 @@ pub struct Scratch {
 fn parse(content: &[u8], front_matter_end: usize, scratch: &mut Scratch) -> Result<ast::NodeId, Error> {
     let Scratch {
         tokens,
+        positions,
         statements,
         tree,
         ..
     } = scratch;
     tokens.clear();
+    positions.clear();
     statements.clear();
     tree.clear();
     // Positions have 31 bits.
     if content.len() > i32::MAX as usize {
         return Err(Error::Syntax);
     }
-    lexer::lex(content, tokens)?;
+    lexer::lex(content, tokens, positions)?;
     parser::parse(content, tokens, tree, statements)?;
     let front_matter = (front_matter_end > 0).then(|| tree.add(ast::Kind::FrontMatter, 0, front_matter_end));
-    tokenizer::build(content, statements, front_matter, tree)
+    tokenizer::build(content, statements, positions, front_matter, tree)
 }
 
 /// Appends the formatted `text` to `out`: Prettier's `formatWithCursor`, without the cursor.
@@ -110,6 +114,7 @@ pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: 
         tree: &scratch.tree,
         source: &content,
         front_matter: &text[..front_matter_end],
+        positions: &scratch.positions,
         options,
         is_white_space_sensitive: !matches!(options.html_whitespace_sensitivity, HtmlWhitespaceSensitivity::Ignore),
         single_quote: matches!(options.quote_style, QuoteStyle::Single),

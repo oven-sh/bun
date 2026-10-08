@@ -279,6 +279,7 @@ fn is_other_language(path: &Path) -> bool {
     bun_format::json::parser_for_path(path).is_some()
         || bun_format::css::parser_for_path(path).is_some()
         || bun_format::graphql::is_graphql_path(path)
+        || bun_format::handlebars::is_handlebars_path(path)
         || bun_format::yaml::is_yaml_path(path)
         || bun_format::markdown::is_markdown_path(path)
         || bun_format::markdown::is_mdx_path(path)

@@ -235,14 +235,8 @@ fn report_index_error(
             );
         }
         IndexError::DocumentTooLarge => {
-            log.add_error_fmt_opts(
-                format_args!("JSON document is too large to parse (2 GiB maximum)"),
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc: bun_ast::Loc { start: 0 },
-                    ..Default::default()
-                },
-            );
+            let refused = source.check_parseable_len(log, "JSON document");
+            debug_assert!(refused.is_err());
         }
     }
     crate::Error::SyntaxError

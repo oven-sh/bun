@@ -10,7 +10,7 @@
 // a build without the length check fails fast on line 1 (with a different
 // message) instead of scanning the remaining 2 GiB to report its error.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { truncateSync, writeFileSync } from "node:fs";
 import { totalmem } from "node:os";
 import { join } from "node:path";
@@ -56,6 +56,59 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
         xml: "BuildMessage: XML document is too large to parse (2 GiB maximum)",
         json: "BuildMessage: JSON document is too large to parse (2 GiB maximum)",
         jsonc: "BuildMessage: JSON document is too large to parse (2 GiB maximum)",
+      },
+      null,
+      2,
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The limit error is about the whole source, so it has no position. A position
+// comes with an excerpt of its line, which the logger reads from the source.
+// Line 1 here is 32 MiB of NUL bytes that nothing wrote or read, so a call that
+// reads it takes 8192 minor page faults with 4 KiB pages, 2048 with 16 KiB
+// pages. Windows does not count them.
+test("the JSON limit error has no position and reads nothing of the source", async () => {
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
+      const input = new Uint8Array(${SIZE});
+      input.set(Buffer.from('{"a":1,]'));
+      input[${32 * 1024 * 1024}] = 10; // "\\n"
+      const transpiler = new Bun.Transpiler();
+      const results = {};
+      for (const loader of ["toml", "json", "jsonc"]) {
+        // Page in the parser and the logger, so that the count is for the input.
+        try { transpiler.transformSync("{]", loader); } catch {}
+        const before = process.resourceUsage().minorPageFault;
+        try {
+          transpiler.transformSync(input, loader);
+          results[loader] = "no error";
+        } catch (e) {
+          const faults = process.resourceUsage().minorPageFault - before;
+          const { line, column, lineText } = e.position;
+          results[loader] = { message: e.message, line, column, lineText, ${isWindows ? "" : "readsLittle: faults < 1024"} };
+        }
+      }
+      console.log(JSON.stringify(results, null, 2));
+    `,
+  ]);
+  const limit = (what: string) => ({
+    message: `${what} is too large to parse (2 GiB maximum)`,
+    line: -1,
+    column: -1,
+    lineText: "",
+    ...(isWindows ? {} : { readsLittle: true }),
+  });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(
+      {
+        toml: limit("TOML document"),
+        json: limit("JSON document"),
+        jsonc: limit("JSON document"),
       },
       null,
       2,

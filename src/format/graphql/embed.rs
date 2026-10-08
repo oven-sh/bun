@@ -14,19 +14,40 @@ fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
 }
 
 /// Whether a comment that is exactly `/* GraphQL */` is right before `start`, with nothing but other
-/// comments between.
-fn follows_language_comment(start: u32, f: &Formatter<'_>) -> bool {
+/// comments between. `is_statement`: a statement starts at `start`, and empty statements before it are
+/// nothing either.
+fn follows_language_comment(start: u32, is_statement: bool, f: &Formatter<'_>) -> bool {
     let source = f.source_text();
     let unprinted = f.comments().comments_before(start);
-    let mut position = start;
-    for comment in unprinted.iter().rev().chain(f.comments().printed_comments().iter().rev()) {
-        if comment.span.end > position || !is_blank(source.bytes_range(comment.span.end, position)) {
+    let (mut position, mut has_empty_statement) = (start, false);
+    let mut comments = unprinted.iter().rev().chain(f.comments().printed_comments().iter().rev());
+    while let Some(comment) = comments.next() {
+        if comment.span.end > position {
             return false;
         }
-        if comment.is_block() && source.text_for(&comment.content_span()) == b" GraphQL " {
-            return true;
+        let between = source.bytes_range(comment.span.end, position);
+        if !is_blank(between) {
+            if !is_statement || !bun_core::strings::split(between, b";").all(is_blank) {
+                return false;
+            }
+            has_empty_statement = true;
         }
         position = comment.span.start;
+        if !comment.is_block() || source.text_for(&comment.content_span()) != b" GraphQL " {
+            continue;
+        }
+        if !has_empty_statement {
+            return true;
+        }
+        // Behind a statement on the same line, it trails that. So do the comments before it.
+        let mut first = comment;
+        for previous in comments {
+            if first.preceded_by_newline() || !is_blank(source.bytes_range(previous.span.end, first.span.start)) {
+                break;
+            }
+            first = previous;
+        }
+        return first.preceded_by_newline() || matches!(trim(source.bytes_range(0, first.span.start)), [] | [.., b'{']);
     }
     false
 }
@@ -35,15 +56,15 @@ fn follows_language_comment(start: u32, f: &Formatter<'_>) -> bool {
 /// parentheses are not nodes.
 fn is_led_by_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     let outer_start = e.outer_span().start;
-    (e.is_parenthesized() && follows_language_comment(e.span().start, f))
-        || (parent.span().start != outer_start && follows_language_comment(outer_start, f))
+    (e.is_parenthesized() && follows_language_comment(e.span().start, false, f))
+        || (parent.span().start != outer_start && follows_language_comment(outer_start, false, f))
 }
 
 /// Prettier's `hasLanguageComment`
 fn has_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     is_led_by_language_comment(e, parent, f)
         || match parent {
-            AstNodes::ExpressionStatement(_) => follows_language_comment(parent.span().start, f),
+            AstNodes::ExpressionStatement(_) => follows_language_comment(parent.span().start, true, f),
             AstNodes::TSAsExpression(cast) => {
                 matches!(cast.kind(), ExprKind::AsConst(_)) && is_led_by_language_comment(cast, parent.parent(), f)
             }

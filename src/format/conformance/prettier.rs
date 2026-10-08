@@ -22,8 +22,6 @@ const BABEL_TS: &str =
     "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
 const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
-const FLOW: &str = "Flow's type syntax";
-const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
 
 /// What is not run, and why. A case is left out if its path contains the text.
@@ -56,12 +54,12 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("js/babel-plugins/pipeline-operator", PROPOSAL),
     ("js/babel-plugins/throw-expressions", PROPOSAL),
     ("js/babel-plugins/v8intrinsic", PROPOSAL),
-    ("misc/babel-redirect-to-babel-flow", FLOW),
     ("typescript/definite/definite.ts", BABEL_TS),
     ("typescript/definite/without-annotation.ts", BABEL_TS),
     ("misc/front-matter/with-plugins", PLUGIN),
     ("handlebars/front-matter/toml", PLUGIN),
     ("misc/plugins/embed-async-printer", PLUGIN),
+    ("vue/with-plugins", PLUGIN),
     ("js/_errors_/html-like-comments.js", HTML_LIKE_COMMENT),
     (
         "jsx/jsx-test-suite/rejected-snippets/0/0006-e58e.jsx",
@@ -392,19 +390,6 @@ fn parser_of(name: &[u8], language: &[u8]) -> &'static [u8] {
     }
 }
 
-/// The directory with the tests of a parser whose language is being written. Nothing is run with such a parser unless
-/// `--languages` has the directory.
-fn directory_of_new_parser(parser: &[u8]) -> Option<&'static [u8]> {
-    match parser {
-        b"html" => Some(b"html"),
-        b"vue" => Some(b"vue"),
-        b"angular" => Some(b"angular"),
-        b"lwc" => Some(b"lwc"),
-        b"mjml" => Some(b"mjml"),
-        _ => None,
-    }
-}
-
 /// The parser that all of a directory is read by, whatever the names of the files.
 fn parser_of_directory(language: &[u8]) -> Option<&'static [u8]> {
     match language {
@@ -439,7 +424,7 @@ fn is_javascript_parser(name: &[u8]) -> bool {
 /// and how many cases are not run for which reason.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     let languages = flags.languages.unwrap_or(
-        b"js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,misc",
+        b"js,jsx,typescript,flow,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,html,vue,angular,lwc,mjml,misc",
     );
     let mut by_directory: BTreeMap<Vec<u8>, Tally> = BTreeMap::new();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
@@ -471,24 +456,25 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     continue;
                 }
                 // JSON or a style sheet: the parser is not left to the name of the file.
-                let is_named = |it: &&[u8]| match directory_of_new_parser(it) {
-                    Some(directory) => {
-                        strings::split(languages, b",").any(|asked| asked == directory)
-                    }
-                    None => {
-                        it.starts_with(b"json")
-                            || matches!(
-                                *it,
-                                b"css"
-                                    | b"less"
-                                    | b"scss"
-                                    | b"graphql"
-                                    | b"yaml"
-                                    | b"markdown"
-                                    | b"mdx"
-                                    | b"glimmer"
-                            )
-                    }
+                let is_named = |it: &&[u8]| {
+                    it.starts_with(b"json")
+                        || matches!(
+                            *it,
+                            b"css"
+                                | b"less"
+                                | b"scss"
+                                | b"graphql"
+                                | b"yaml"
+                                | b"markdown"
+                                | b"mdx"
+                                | b"glimmer"
+                                | b"html"
+                                | b"vue"
+                                | b"angular"
+                                | b"lwc"
+                                | b"mjml"
+                                | b"__ng_interpolation"
+                        )
                 };
                 let first_parser = case.parsers.first().map(Vec::as_slice);
                 // What is rejected says by which parser in its title, or not at all.
@@ -502,28 +488,21 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 };
                 let named_parser = first_parser.filter(is_named).or(rejecting_parser);
                 let ours = named_parser.unwrap_or_else(|| parser_of(&case.name, language));
-                // Of a test that names no parser.
-                let inferred_parser: Option<&[u8]> =
-                    match strings::rsplit_once_char(&case.name, b'.').map_or(&b""[..], |it| it.1) {
-                        b"html" | b"htm" => Some(b"html"),
-                        b"vue" => Some(b"vue"),
-                        b"mjml" => Some(b"mjml"),
-                        b"hbs" | b"handlebars" => Some(b"glimmer"),
-                        _ => None,
-                    };
-                let is_other_language = match case.parsers.is_empty() {
-                    true => inferred_parser.is_some_and(|it| !is_named(&it)),
-                    false => {
-                        named_parser.is_none()
-                            && !case.parsers.iter().any(|it| is_javascript_parser(it))
-                    }
-                };
-                if is_other_language {
-                    *excluded.entry(OTHER_LANGUAGE).or_default() += 1;
+                if !case.parsers.is_empty()
+                    && named_parser.is_none()
+                    && !case.parsers.iter().any(|it| is_javascript_parser(it))
+                {
+                    *excluded.entry(PLUGIN).or_default() += 1;
                     continue;
                 }
+                // A plugin for what is embedded is not asked where that is left as it is.
+                let is_embedded_left = case
+                    .options
+                    .iter()
+                    .any(|it| it.0 == b"embeddedLanguageFormatting" && it.1 == b"off");
                 if let Some(&(_, reason)) = EXCLUDED
                     .iter()
+                    .filter(|it| it.1 != PLUGIN || !is_embedded_left)
                     .find(|it| strings::contains(&id, it.0.as_bytes()))
                 {
                     *excluded.entry(reason).or_default() += 1;
@@ -591,8 +570,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         let extension: &[u8] = match (named_parser, language) {
                             (Some(parser), _) if parser.starts_with(b"json") => b"json",
                             (Some(b"glimmer"), _) => b"hbs",
-                            (Some(b"angular"), _) => b"component.html",
-                            (Some(b"lwc"), _) => b"html",
+                            // Prettier gives it no name, and what is not called `.html` keeps its doctype as it is written.
+                            (Some(b"html" | b"angular" | b"lwc"), _) => b"text",
                             (Some(b"flow"), _) => b"js",
                             (Some(parser), _) => parser,
                             (None, b"typescript") => b"ts",

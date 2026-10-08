@@ -1,22 +1,35 @@
+FAIL rejected flow/_errors_/number.js
+FAIL rejected flow/_errors_/ambient/ambient.js
+FAIL rejected flow/_errors_/ambient/ambient.unknown
+FAIL format flow/await/await-keywords.js
+FAIL second-format flow/comments/type_annotations.js
+FAIL format flow/hook/declare-hook.js
+FAIL format flow/hook/hook-type-annotation.js
+FAIL format flow/mapped-types/comments.js
+FAIL format flow/ternary/arrows.js
+angular: format 109/109 (0 syntax errors), rejected 1/1, second format 96/96, CRLF 109/109, CR 109/109, BOM 109/109
 css: format 162/162 (0 syntax errors), rejected 2/2, second format 136/136, CRLF 162/162, CR 162/162, BOM 161/161
+flow: format 1500/1505 (2 syntax errors), rejected 19/22, second format 1171/1172, CRLF 1493/1493, CR 1493/1493, BOM 1500/1500
 graphql: format 104/104 (0 syntax errors), rejected 2/2, second format 87/87, CRLF 104/104, CR 104/104, BOM 104/104
 handlebars: format 128/128 (0 syntax errors), rejected 33/33, second format 114/114, CRLF 122/122, CR 122/122, BOM 128/128
+html: format 272/272 (0 syntax errors), rejected 2/2, second format 210/210, CRLF 262/262, CR 262/262, BOM 272/272
 js: format 1357/1357 (0 syntax errors), rejected 165/165, second format 1063/1063, CRLF 1347/1347, CR 1347/1347, BOM 1353/1353
 json: format 785/785 (0 syntax errors), rejected 191/191, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
 jsx: format 186/186 (0 syntax errors), rejected 19/19, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
+lwc: format 5/5 (0 syntax errors), rejected 0/0, second format 5/5, CRLF 5/5, CR 5/5, BOM 5/5
 markdown: format 1572/1572 (0 syntax errors), rejected 0/0, second format 949/949, CRLF 1568/1568, CR 1568/1568, BOM 1572/1572
 mdx: format 32/32 (0 syntax errors), rejected 0/0, second format 22/22, CRLF 32/32, CR 32/32, BOM 32/32
-misc: format 409/409 (0 syntax errors), rejected 7/7, second format 357/357, CRLF 68/68, CR 68/68, BOM 408/408
+misc: format 565/565 (0 syntax errors), rejected 7/7, second format 502/502, CRLF 104/104, CR 104/104, BOM 564/564
+mjml: format 9/9 (0 syntax errors), rejected 0/0, second format 8/8, CRLF 9/9, CR 9/9, BOM 9/9
 scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
 typescript: format 756/756 (0 syntax errors), rejected 355/355, second format 609/609, CRLF 755/755, CR 755/755, BOM 743/743
+vue: format 189/189 (0 syntax errors), rejected 3/3, second format 156/156, CRLF 189/189, CR 189/189, BOM 189/189
 yaml: format 1623/1623 (0 syntax errors), rejected 3/3, second format 1118/1118, CRLF 1616/1616, CR 1616/1616, BOM 1622/1622
-format: 7488/7488 (100.00%)
-all checks: 35591/35591 (100.00%)
-not run: 17: Flow's type syntax
+format: 9728/9733 (99.95%)
+all checks: 46093/46102 (99.98%)
 not run: 3: `babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted
-not run: 140: a language that is not there: HTML, Vue, Angular
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
 not run: 4: an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same
-not run: 5: formatted by a plugin of Prettier
+not run: 13: formatted by a plugin of Prettier
 not run: 66: syntax of a proposal at stage 2 or below, which only Babel parses

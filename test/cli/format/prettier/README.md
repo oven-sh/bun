@@ -1,6 +1,6 @@
 # Prettier's tests
 
-`bun format` prints what [Prettier](https://github.com/prettier/prettier) prints. `bundle.zst` holds `tests/format/{js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,misc}` of Prettier, and `{html,vue,angular,lwc,mjml,flow}`, which are run only if `--languages` names them, unchanged: the inputs, and the snapshots
+`bun format` prints what [Prettier](https://github.com/prettier/prettier) prints. `bundle.zst` holds `tests/format/{js,jsx,typescript,flow,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,html,vue,angular,lwc,mjml,misc}` of Prettier: all 19 directories, unchanged: the inputs, and the snapshots
 (`__snapshots__/format.test.js.snap`), which also say with which options each input is formatted. One file after the other, compressed with zstd: see `../bundle.ts`. `sync.ts` writes it, and `version.json` says from which
 commit. Prettier is under the MIT license: `LICENSE`.
 

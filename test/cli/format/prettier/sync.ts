@@ -8,14 +8,11 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collect, extract, writeBundle } from "../bundle.ts";
 
-const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "handlebars", "misc"];
-// Being written. The runner leaves them out unless `--languages` names them.
-const newLanguages = ["html", "vue", "angular", "lwc", "mjml", "flow"];
+const languages = ["js", "jsx", "typescript", "flow", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "handlebars", "html", "vue", "angular", "lwc", "mjml", "misc"];
 
-const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "glimmer"];
-const newParsers = ["html", "vue", "angular", "lwc", "mjml"];
+const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "glimmer", "html", "vue", "angular", "lwc", "mjml"];
 /** The parsers that count in the tests of a directory. `flow` only where it is the first: elsewhere `babel` stands for it. */
-const parsersIn = (directory: string) => [...ours, ...newParsers, ...(directory.startsWith("flow/") ? ["flow", "babel-flow"] : [])];
+const parsersIn = (directory: string) => [...ours, ...(directory.startsWith("flow/") ? ["flow", "babel-flow"] : [])];
 /** The name of a file that is parsed with the parser. */
 const fileFor = (parser: string, name: string) =>
   parser === "json-stringify"
@@ -32,11 +29,11 @@ type Options = { errors?: true | Record<string, true | string[]> } & Record<stri
  * file. The names are in `snippet-filenames.txt`: the name of the snippet, a tab, the name of the file.
  */
 async function addFromTests(root: string, files: Map<string, Uint8Array>) {
-  const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: [...ours, ...newParsers].map(value => ({ value })) }] }) };
+  const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: ours.map(value => ({ value })) }] }) };
   const separator = (title: string) => "=".repeat(Math.floor((80 - title.length) / 2)) + title + "=".repeat(Math.ceil((80 - title.length) / 2));
   const escape = (text: string) => text.replace(/[\\`]|\$\{/g, "\\$&");
 
-  for (const test of [...new Bun.Glob(`{${[...languages, ...newLanguages].join(",")}}/**/format.test.js`).scanSync(root)].sort()) {
+  for (const test of [...new Bun.Glob(`{${languages.join(",")}}/**/format.test.js`).scanSync(root)].sort()) {
     const code = readFileSync(join(root, test), "utf8");
     if (!/\bsnippets\b/.test(code)) continue;
     const directory = dirname(test);
@@ -55,9 +52,7 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
             const file = filename === undefined ? fileFor(parser, String(counts.size)) : `${counts.size}/${filename}`;
             counts.set(file, 1);
             files.set(`${directory}/rejected-snippets/${file}`, Buffer.from(code));
-            // The parser of a language that is being written is in the title, so that it is run only if that language is.
-            const kind = newParsers.includes(parser) ? `format[${parser}]` : "format";
-            rejected += `\nexports[\`${file} ${kind} 1\`] = \`\n"snippet: ${escape(name)}, ${parser}"\n\`;\n`;
+            rejected += `\nexports[\`${file} format 1\`] = \`\n"snippet: ${escape(name)}, ${parser}"\n\`;\n`;
           }
         }
         if (filename !== undefined) filenames.add(`${name}\t${filename}\n`);
@@ -97,7 +92,7 @@ if (source === "--extract" && rest.length === 2) {
 } else if (source && source !== "--extract") {
   const files = new Map<string, Uint8Array>();
   // The snapshots say with which options an input is formatted.
-  for (const language of [...languages, ...newLanguages]) {
+  for (const language of languages) {
     collect(join(source, "tests/format"), language, files, name => name === "format.test.js");
   }
   await addFromTests(join(source, "tests/format"), files);

@@ -401,6 +401,105 @@ it("Readable.fromWeb", async () => {
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
 });
 
+// Node takes the reader inside fromWeb() and never releases it, so no other consumer can take the web stream.
+describe("Readable.fromWeb keeps a web stream with a JS source locked", () => {
+  const locked = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_STATE" });
+  // Node also sets code ERR_INVALID_STATE on these three. Bun throws the TypeError of the streams spec, with no code.
+  const lockedNoCode = expect.objectContaining({ name: "TypeError", message: expect.stringContaining("locked") });
+
+  it("before the first read", async () => {
+    let n = 0;
+    const web = new ReadableStream({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([++n]));
+        if (n === 4) controller.close();
+      },
+    });
+    const r = Readable.fromWeb(web);
+    expect(web.locked).toBe(true);
+    expect(() => web.getReader()).toThrow(locked);
+    expect(() => web.tee()).toThrow(locked);
+    expect(() => Readable.fromWeb(web)).toThrow(locked);
+    expect(() => web.pipeThrough(new TransformStream())).toThrow(lockedNoCode);
+    await expect(web.pipeTo(new WritableStream())).rejects.toEqual(lockedNoCode);
+    await expect(web.cancel()).rejects.toEqual(lockedNoCode);
+    // No other consumer took a chunk.
+    const chunks = [];
+    for await (const chunk of r) chunks.push(...chunk);
+    expect(chunks).toEqual([1, 2, 3, 4]);
+  });
+
+  it("after destroy() before the first read", async () => {
+    let cancelReason;
+    const web = new ReadableStream({
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const r = Readable.fromWeb(web);
+    const error = new Error("user-destroy");
+    r.on("error", () => {});
+    const closed = new Promise(resolve => r.once("close", resolve));
+    r.destroy(error);
+    await closed;
+    expect(cancelReason).toBe(error);
+    expect(web.locked).toBe(true);
+    expect(() => web.getReader()).toThrow(locked);
+  });
+
+  it.each(["before fromWeb()", "after fromWeb()"])("after its signal aborts %s", async when => {
+    let cancelReason;
+    const web = new ReadableStream({
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+    const abort = new AbortController();
+    if (when === "before fromWeb()") abort.abort();
+    const r = Readable.fromWeb(web, { signal: abort.signal });
+    const errored = new Promise(resolve => r.once("error", resolve));
+    const closed = new Promise(resolve => r.once("close", resolve));
+    abort.abort();
+    const error = await errored;
+    await closed;
+    expect(error.name).toBe("AbortError");
+    expect(cancelReason).toBe(error);
+    expect(web.locked).toBe(true);
+    expect(() => web.getReader()).toThrow(locked);
+  });
+
+  it("after the Readable ended", async () => {
+    const web = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    const chunks = [];
+    for await (const chunk of Readable.fromWeb(web)) chunks.push(...chunk);
+    expect(chunks).toEqual([1]);
+    expect(web.locked).toBe(true);
+    expect(() => web.getReader()).toThrow(locked);
+  });
+
+  it("after the web stream errored", async () => {
+    const web = new ReadableStream({
+      pull() {
+        throw new Error("pull-boom");
+      },
+    });
+    const r = Readable.fromWeb(web);
+    const errors = [];
+    r.on("error", error => errors.push(error.message));
+    const closed = new Promise(resolve => r.once("close", resolve));
+    r.resume();
+    await closed;
+    expect(errors).toEqual(["pull-boom"]);
+    expect(web.locked).toBe(true);
+    expect(() => web.getReader()).toThrow(locked);
+  });
+});
+
 // fromWeb assigns stream.$bunNativePtr on the node Readable. When user code grafts
 // ReadableStream.prototype into the node stream prototype chain, that put used to
 // reach ReadableStream's private custom setter with the Readable as the receiver,

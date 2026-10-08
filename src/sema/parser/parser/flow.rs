@@ -825,8 +825,20 @@ impl Parser<'_> {
         }
     }
 
-    /// Pushes `+`, `-`, `readonly` or `writeonly` on the stack of modifiers, if the token is one.
+    /// The `+` or `-` before the name of a member of a class, which is no method.
     pub(crate) fn flow_variance(&mut self) {
+        self.flow_variance_token();
+        let is_before_method = self.look_ahead_parsing(|p| {
+            p.property_name();
+            matches!(p.token(), T::OpenParen | T::LessThan)
+        });
+        if is_before_method {
+            self.fail();
+        }
+    }
+
+    /// Pushes `+`, `-`, `readonly` or `writeonly` on the stack of modifiers, if the token is one.
+    fn flow_variance_token(&mut self) {
         match self.token() {
             T::Plus => self.modifier_token(Flags::OUT),
             T::Minus => self.modifier_token(Flags::IN),
@@ -944,6 +956,23 @@ impl Parser<'_> {
         };
         let first_modifier = self.s.modifiers.len();
         self.flow_object_type_member_rest(body, start, &mut member);
+        // No method, accessor or call property has a variance.
+        let is_variance = |it: &Modifier| match it.kind {
+            ModifierKind::Keyword(flag) if flag.is_empty() => {
+                self.lx.src.get(it.pos as usize) == Some(&b'w')
+            }
+            ModifierKind::Keyword(flag) => {
+                flag.intersects(Flags::IN | Flags::OUT | Flags::READONLY)
+            }
+            ModifierKind::Decorator(_) => false,
+        };
+        let written = self.s.modifiers.get(first_modifier..).unwrap_or_default();
+        if member.func.is_some()
+            && member.kind != MemberKind::IndexSignature
+            && written.iter().any(is_variance)
+        {
+            self.fail();
+        }
         member.modifiers = self.take_modifiers(first_modifier);
         member.loc = TextRange {
             pos: start.full,
@@ -980,7 +1009,7 @@ impl Parser<'_> {
                 self.modifier_token(Flags::empty());
             }
         }
-        self.flow_variance();
+        self.flow_variance_token();
         match self.token() {
             T::OpenBracket => return self.flow_bracketed_member(start, member),
             T::OpenParen | T::LessThan => {
@@ -1246,6 +1275,15 @@ impl Parser<'_> {
         }
     }
 
+    /// The modifiers on the stack from `base` on are before what is a class in the tree only.
+    fn flow_refuse_decorators(&mut self, base: usize) {
+        let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
+        let written = self.s.modifiers.get(base..).unwrap_or_default();
+        if written.iter().any(is_decorator) {
+            self.fail();
+        }
+    }
+
     /// The modifiers on the stack from `base` on, whose flags are `flags`, are not all JavaScript's.
     /// `declare` before `export` belongs to the `export`, not to what is exported: it gets no flag.
     pub(crate) fn flow_declare_before_export(&mut self, base: usize, flags: Flags) {
@@ -1389,6 +1427,7 @@ impl Parser<'_> {
 
     /// `declare class A<T> extends B<T> mixins C implements D { }`, at `class`.
     pub(crate) fn flow_declare_class(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
+        self.flow_refuse_decorators(base);
         self.next();
         let (name, name_pos) = self.identifier();
         let type_params = self.type_parameters();
@@ -2117,6 +2156,7 @@ impl Parser<'_> {
     /// `record A<T> implements B { a: T = b, static c: U = d, e() { } }`, after `record`, which is
     /// the last of the modifiers.
     fn flow_record(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
+        self.flow_refuse_decorators(base);
         let (name, name_pos) = self.identifier();
         let type_params = self.type_parameters();
         let implements = match self.eat(T::Implements) {

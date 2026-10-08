@@ -18,7 +18,7 @@ const UNNECESSARY: Message = Message::new(
     "Explicit undefined is unnecessary on an optional parameter.",
 );
 
-fn all_same<T>(
+fn all_same<T: Copy>(
     mut a: impl Iterator<Item = T>,
     mut b: impl Iterator<Item = T>,
     is_same: fn(T, T) -> bool,

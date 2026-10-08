@@ -333,12 +333,15 @@ fn is_nullable_property_type<'a>(obj_type: Type<'a>, property_type: Type<'a>) ->
 fn is_nullable_member_expression(node: Expr) -> bool {
     match node.kind() {
         ExprKind::Index { obj, index, .. } => is_nullable_property_type(obj.ty(), index.ty()),
-        ExprKind::Dot { obj, name, .. } => obj
-            .ty()
-            .get_properties()
-            .iter()
-            .find(|prop| prop.name() == name.bytes())
-            .is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL)),
+        ExprKind::Dot { obj, name, .. } => {
+            // As it is written, which for `this.#prop` is the name of the symbol.
+            let property_name = node.file().slice(name.span());
+            obj.ty()
+                .get_properties()
+                .iter()
+                .find(|prop| prop.name() == property_name)
+                .is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL))
+        }
         _ => false,
     }
 }
@@ -523,7 +526,7 @@ enum Property<'a> {
 /// the `foo?.bar` of a `{ bar: { baz: string } } | null`.
 fn is_member_expression_nullable_origin_from_object<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
     let (object, property) = match node.kind() {
-        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
+        ExprKind::Dot { obj, name, .. } if !node.file().slice(name.span()).starts_with(b"#") => {
             (obj, Property::Name(name))
         }
         ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => {

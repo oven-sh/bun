@@ -8,7 +8,7 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, get_contextual_type, get_declaration, is_nullable_type,
     is_type_flag_set,
 };
-use bun_lint::types::{ModifierFlags, Signature, SyntaxKind, Type, TypeFlags};
+use bun_lint::types::{Signature, SyntaxKind, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
 use bun_lint::utils::ts_utils::{
     is_start_of_arrow_function_body_needing_parentheses,
@@ -96,8 +96,10 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
         && let Some(type_node) = declaration.type_node()
     {
         // What is declared with `declare` is never narrowed.
-        let is_declare = list.and_then(|it| it.parent()).is_some_and(|it| it.kind() == SyntaxKind::VariableStatement)
-            && declaration.has_modifier(ModifierFlags::AMBIENT);
+        let is_declare = list.and_then(|it| it.parent()).is_some_and(|statement| {
+            statement.kind() == SyntaxKind::VariableStatement
+                && statement.children().any(|it| it.kind() == SyntaxKind::DeclareKeyword)
+        });
         // The type has not changed since the declaration, so nothing may have been assigned.
         if !is_declare && type_node.get_type_from_type_node() == get_constrained_type_at_location(node) {
             return true;

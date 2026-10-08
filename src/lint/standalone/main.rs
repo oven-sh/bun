@@ -326,6 +326,9 @@ fn bench(args: &[String]) {
         .collect();
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     let (parsing, linting, found) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
+    // With `--per-rule`: what each rule costs on its own, once what the rules share (tokens, scopes, ..) is computed.
+    let is_per_rule = args.iter().any(|a| a == "--per-rule");
+    let alone: Vec<AtomicU64> = rules.iter().map(|_| AtomicU64::new(0)).collect();
     let language = LanguageOptions::default();
     let started = std::time::Instant::now();
     for _ in 0..repeat {
@@ -341,8 +344,25 @@ fn bench(args: &[String]) {
                 let diagnostics = bun_lint::runner::run(file, &rules, false);
                 linting.fetch_add(before.elapsed().as_nanos() as u64, Relaxed);
                 found.fetch_add(diagnostics.len() as u64, Relaxed);
+                if is_per_rule {
+                    for (rule, nanos) in rules.iter().zip(&alone) {
+                        let before = std::time::Instant::now();
+                        bun_lint::runner::run(file, std::slice::from_ref(rule), false);
+                        nanos.fetch_add(before.elapsed().as_nanos() as u64, Relaxed);
+                    }
+                }
             });
         });
+    }
+    if is_per_rule {
+        let mut table: Vec<(f64, &str)> = (alone.iter().zip(&rules))
+            .map(|(nanos, rule)| (nanos.load(Relaxed) as f64 / 1e6 / repeat as f64, rule.rule.meta().name))
+            .collect();
+        table.sort_by(|a, b| b.0.total_cmp(&a.0));
+        println!("sum of the rules alone: {:.1} ms", table.iter().map(|it| it.0).sum::<f64>());
+        for (ms, name) in table {
+            println!("{ms:9.1} ms  {name}");
+        }
     }
     let per_pass = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e6 / repeat as f64;
     println!(

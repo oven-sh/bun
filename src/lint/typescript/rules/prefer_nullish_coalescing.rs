@@ -556,8 +556,8 @@ impl Rule for PreferNullishCoalescing {
             && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
         {
             on.finish(|_, cx| {
-                // TODO(api): replace by integrator::Cx::report_at_line_zero
-                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+                let line_zero = Position { line: 0, column: 0 };
+                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(line_zero).end_at(line_zero);
             });
         }
         on.exprs([ExprTag::Assign], |rule, node, cx| {

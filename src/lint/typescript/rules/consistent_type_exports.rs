@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::types::{NameOf, SymbolFlags, SyntaxKind, TsNode, TsSymbol};
+use bun_lint::types::{NameOf, SymbolFlags, TsSymbol};
 use bun_lint::utils::ts_utils::format_word_list;
 
 /// Enforce consistent usage of type exports.
@@ -28,51 +28,6 @@ struct ReportValueExport<'a> {
     value_specifiers: Vec<ExportSpec<'a>>,
 }
 
-/// `type` is the first token of the specifier or the import clause `node`, and not its name.
-fn starts_with_type_keyword(node: TsNode) -> bool {
-    node.get_source_text().starts_with(b"type")
-        && node.children().next().is_some_and(|first| first.span().start > node.span().start)
-}
-
-/// `type` follows the `export` of an `ExportDeclaration` or the `import` of an
-/// `ImportEqualsDeclaration`, and is not the name that is imported.
-fn is_type_only_statement(node: TsNode) -> bool {
-    let text = node.get_source_text();
-    let mut at = 0;
-    for keyword in [&b"export"[..], b"import"] {
-        if text.get(at as usize..).is_some_and(|rest| rest.starts_with(keyword)) {
-            at = skip_trivia(text, at + keyword.len() as u32);
-        }
-    }
-    text.get(at as usize..).is_some_and(|rest| rest.starts_with(b"type"))
-        && !node.name().is_some_and(|name| name.span().start == node.span().start + at)
-}
-
-/// `ts.isTypeOnlyImportOrExportDeclaration`
-// TODO(api): replace by types::TsNode::is_type_only_import_or_export_declaration
-fn is_type_only_import_or_export_declaration(node: TsNode) -> bool {
-    let within = |kind: SyntaxKind| node.ancestors().find(|it| it.kind() == kind);
-    match node.kind() {
-        SyntaxKind::ImportClause => starts_with_type_keyword(node),
-        SyntaxKind::NamespaceImport => {
-            within(SyntaxKind::ImportClause).is_some_and(starts_with_type_keyword)
-        }
-        SyntaxKind::ImportSpecifier => {
-            starts_with_type_keyword(node)
-                || within(SyntaxKind::ImportClause).is_some_and(starts_with_type_keyword)
-        }
-        SyntaxKind::ImportEqualsDeclaration => is_type_only_statement(node),
-        SyntaxKind::ExportSpecifier => {
-            starts_with_type_keyword(node)
-                || within(SyntaxKind::ExportDeclaration).is_some_and(is_type_only_statement)
-        }
-        SyntaxKind::NamespaceExport => {
-            within(SyntaxKind::ExportDeclaration).is_some_and(is_type_only_statement)
-        }
-        _ => false,
-    }
-}
-
 /// Whether a symbol resolves to a TypeScript type and not to a JavaScript value. `None` if it
 /// cannot be resolved.
 fn is_symbol_type_based(symbol: Option<TsSymbol>) -> Option<bool> {
@@ -82,7 +37,7 @@ fn is_symbol_type_based(symbol: Option<TsSymbol>) -> Option<bool> {
         if symbol.is_unknown() {
             return None;
         }
-        if symbol.declarations().any(is_type_only_import_or_export_declaration) {
+        if symbol.declarations().any(|it| it.is_type_only_import_or_export_declaration()) {
             return Some(true);
         }
         if symbol.has_flags(SymbolFlags::VALUE) {

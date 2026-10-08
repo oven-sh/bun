@@ -231,6 +231,10 @@ fn has_dispose_method<'a>(
     })
 }
 
+fn are_equivalent<'a>(left: Type<'a>, right: Type<'a>) -> bool {
+    left.is_assignable_to(right) && right.is_assignable_to(left)
+}
+
 /// Whether what the Promises in a union resolve to is the same as the rest of the union.
 fn has_matching_promise_type_argument(node: TsNode) -> bool {
     let constituents = union_constituents(node.get_type_at_location().get_apparent_type());
@@ -246,7 +250,6 @@ fn has_matching_promise_type_argument(node: TsNode) -> bool {
         };
         awaited_types.extend(union_constituents(awaited_type));
     }
-    let are_equivalent = |left: Type, right: Type| left.is_assignable_to(right) && right.is_assignable_to(left);
     non_promise_types.iter().all(|&ty| awaited_types.iter().any(|&awaited| are_equivalent(ty, awaited)))
         && awaited_types.iter().all(|&awaited| non_promise_types.iter().any(|&ty| are_equivalent(ty, awaited)))
 }

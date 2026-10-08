@@ -50,11 +50,6 @@ impl File<'_> {
         self.expr_tag_in_tree::<true>(i as u32)
     }
 
-    /// The kind of the statement at `i` of the HIR. `None` if it is not a node.
-    pub(crate) fn stmt_in_tree(&self, i: usize) -> Option<StmtTag> {
-        self.stmt_tag_in_tree::<true>(i as u32)
-    }
-
     /// The kind of the type at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn type_in_tree(&self, i: usize) -> Option<TypeTag> {
         self.type_tag_in_tree::<true>(i as u32)

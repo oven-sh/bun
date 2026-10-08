@@ -154,4 +154,25 @@ describe("a raw header list does not write into an array that the caller keeps",
       close();
     }
   });
+
+  // A Proxy of an array can report any length. The copy reads the length as Array.prototype.join
+  // does, so such a value is sent as before and does not make the call throw.
+  test("respond() and request() accept a Proxy of an array that reports a length of 1.5", async () => {
+    const proxy = new Proxy(["p1"], {
+      get: (target, key, receiver) => (key === "length" ? 1.5 : Reflect.get(target, key, receiver)),
+    });
+    let received: string[] = [];
+    const { client, close } = await peers((stream, _headers, _flags, rawHeaders) => {
+      received = nonPseudoFields(rawHeaders);
+      stream.respond([":status", 200, "x-proxy", proxy]);
+      stream.end();
+    });
+    try {
+      const list: any = [":path", "/", "x-proxy", proxy];
+      const headers = await exchange(client.request(list));
+      expect({ received, responded: headers["x-proxy"] }).toEqual({ received: ["x-proxy", "p1"], responded: "p1" });
+    } finally {
+      close();
+    }
+  });
 });

@@ -3920,7 +3920,8 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
 // node pushes into the caller's array, on a read of sentHeaders:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2173
 function copyHeaderValueArray(values: any[]): any[] {
-  const length = values.length;
+  // A Proxy of an array can report any length. ToLength reads it as Array.prototype.join does.
+  const length = $toLength(values.length);
   const copy = $newArrayWithSize(length);
   for (let i = 0; i < length; i++) $putByValDirect(copy, i, values[i]);
   return copy;

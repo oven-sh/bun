@@ -61,6 +61,14 @@ fn specifiers_of<'a>(import: Import<'a>) -> impl Iterator<Item = Specifier<'a>> 
     default.into_iter().chain(namespace).chain(import.named().iter().map(Specifier::Named))
 }
 
+/// oxlint does not know what JSX is compiled to, and takes `import React` and `import * as React` for values that it needs,
+/// whatever the file is.
+fn oxlint_takes_for_jsx_factory(file: &File, specifier: Specifier) -> bool {
+    file.language().is_oxlint
+        && !matches!(specifier, Specifier::Named(_))
+        && specifier.local().is_some_and(|it| it.name().is("React"))
+}
+
 /// What is known of all the imports from one module.
 #[derive(Default)]
 struct SourceImports<'a> {
@@ -449,7 +457,7 @@ impl ConsistentTypeImports {
                     continue;
                 }
                 let variable = specifier.local().and_then(|local| scope.get_name(local.name()));
-                let has_only_type_references = variable.is_some_and(|variable| {
+                let has_only_type_references = !oxlint_takes_for_jsx_factory(cx.file(), specifier) && variable.is_some_and(|variable| {
                     let mut references = variable.references();
                     references.len() > 0 && references.all(is_type_only_use)
                 });

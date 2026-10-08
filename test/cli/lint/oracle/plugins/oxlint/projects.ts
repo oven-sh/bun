@@ -9,6 +9,7 @@ export interface Project {
 
 const rules = (plugins: string[], rules: object) => ({ plugins, categories: { correctness: "off" }, rules });
 const hooks = rules(["react"], { "react-hooks/rules-of-hooks": "error", "react-hooks/exhaustive-deps": "warn" });
+const unused = rules(["typescript"], { "no-unused-vars": "error" });
 const noCycle = (...options: object[]) => rules(["import"], { "import/no-cycle": ["warn", ...options] });
 
 /** Two modules that import each other, the first with `first` and the second with `import { a } from "./a"`. */
@@ -324,6 +325,48 @@ export const projects: Project[] = [
     config: hooks,
     files: {
       "a.tsx": `function Component({ a }) {\n  useEffect(() => {\n    console.log(a);\n    // oxlint-disable-next-line react-hooks/exhaustive-deps\n  }, []);\n  useEffect(() => {\n    // oxlint-disable-next-line react-hooks/exhaustive-deps\n    console.log(a);\n  }, []);\n}\n`,
+    },
+  },
+  {
+    name: "no-unused-vars/type-query",
+    about: "oxlint_counts_type_query_as_use: typeof a in a type is a use, outside of what declares a",
+    config: unused,
+    files: {
+      "a.ts": `const list = ["a", "b"] as const;\nexport type Item = (typeof list)[number];\nexport function f() {\n  const value = g();\n  check<typeof value>();\n}\nconst self: typeof self = 1;\nexport function h(a: number, b: typeof a) {\n  return b;\n}\nconst never = 1;\n`,
+    },
+  },
+  {
+    name: "no-unused-vars/loop",
+    about: "oxlint_is_in_loop_body: a statement that updates a variable in the body of a loop is a use",
+    config: unused,
+    files: {
+      "a.ts": `export function f(xs: number[]) {\n  let a = 0;\n  for (const x of xs) {\n    if (x) {\n      a++;\n    }\n  }\n  let b = 0;\n  while (xs.pop()) b += 1;\n  let c = 0;\n  do {\n    c = c + 1;\n  } while (xs.pop());\n  let d = 0;\n  for (let i = 0; i < 1; i++) d--;\n  let e = 0;\n  for (const k in xs) e += 1;\n  let g = 0;\n  for (const x of xs) {\n    xs.forEach(() => {\n      g++;\n    });\n  }\n  let h = 0;\n  for (const x of xs) h = 1;\n  let i = 0;\n  if (xs) {\n    i++;\n  }\n}\n`,
+    },
+  },
+  {
+    name: "no-unused-vars/returned-function",
+    about: "oxlint_is_in_return_statement: the same at the top of a function that is part of what is returned",
+    config: unused,
+    files: {
+      "a.ts": `export function f(xs: number[]) {\n  let a = 0;\n  let b = 0;\n  let c = 0;\n  let d = 0;\n  let e = 0;\n  xs.forEach(() => {\n    b++;\n  });\n  const later = () => {\n    c++;\n  };\n  later();\n  return {\n    bump: async () => {\n      a++;\n    },\n    nested() {\n      if (xs) {\n        d++;\n      }\n    },\n    add: function () {\n      e += 1;\n    },\n  };\n}\nexport const g = () => {\n  let n = 0;\n  return () => n++;\n};\nlet m = 0;\nexport const h = () => ({\n  bump() {\n    m++;\n  },\n});\n`,
+    },
+  },
+  {
+    name: "no-unused-vars/place",
+    about: "oxlint_reports_the_declaration",
+    config: unused,
+    files: { "a.ts": `export function f() {\n  let n = 0;\n  n++;\n  let m;\n  m = 1;\n  m = 2;\n}\n` },
+  },
+  {
+    name: "consistent-type-imports/react",
+    about: "oxlint_takes_for_jsx_factory",
+    config: rules(["typescript"], { "typescript/consistent-type-imports": "error" }),
+    files: {
+      "a.ts": `import * as React from "react";\nexport function C(x: unknown) {\n  return x as React.ReactNode;\n}\n`,
+      "b.ts": `import React from "react";\nexport type N = React.ReactNode;\n`,
+      "c.ts": `import * as Other from "other";\nexport type N = Other.Node;\n`,
+      "d.ts": `import React, { FC } from "react";\nexport type N = [React.ReactNode, FC];\n`,
+      "e.ts": `import { React } from "react";\nexport type N = React.ReactNode;\n`,
     },
   },
   {

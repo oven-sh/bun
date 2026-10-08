@@ -51,6 +51,67 @@ const USED_ONLY_AS_TYPE: Message = Message::new(
     "'{{varName}}' is {{action}} but only used as a type{{additional}}.",
 );
 
+/// oxlint prints a variable that is assigned to and never read where it is declared, and not at the last assignment.
+fn oxlint_reports_the_declaration(file: &File) -> bool {
+    file.language().is_oxlint
+}
+
+/// What is a use for oxlint 1.80 and not for typescript-eslint. It is asked about the few variables that are about to be reported.
+fn oxlint_counts_as_used(variable: Variable) -> bool {
+    variable.references().any(|it| {
+        oxlint_counts_type_query_as_use(variable, it)
+            || it.is_read()
+                && statement_that_updates(it)
+                    .is_some_and(|statement| oxlint_is_in_loop_body(statement) || oxlint_is_in_return_statement(statement))
+    })
+}
+
+/// `typeof a` in a type, outside of what declares `a`. oxlint has an option for it, `reportVarsOnlyUsedAsTypes`, which is off.
+fn oxlint_counts_type_query_as_use(variable: Variable, reference: Reference) -> bool {
+    is_type_only_reference(variable.symbol(), reference)
+        && reference.expr().is_some()
+        && !variable.defs().filter_map(Declaration::node).any(|it| !matches!(it, Node::Func(_)) && it.span().contains(reference.span()))
+}
+
+/// The `a++;` or `a = a + 1;` that `reference` is in: an expression statement, with nothing but expressions in between.
+fn statement_that_updates(reference: Reference<'_>) -> Option<Stmt<'_>> {
+    let statement = reference.node().ancestors().find(|it| !matches!(it, Node::Expr(_)))?.as_stmt()?;
+    (statement.tag() == StmtTag::Expr && !statement.is_wrapper()).then_some(statement)
+}
+
+/// oxlint's `is_in_loop_body`: what a variable is in one turn of a loop, the next turn can see.
+fn oxlint_is_in_loop_body(statement: Stmt) -> bool {
+    let around = Node::Stmt(statement).ancestors().find(|it| match it {
+        Node::Stmt(it) => it.is_loop(),
+        Node::Func(_) | Node::File(_) => true,
+        _ => false,
+    });
+    match around.and_then(Node::as_stmt).map(Stmt::kind) {
+        Some(
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::DoWhile { body, .. },
+        ) => body.span().contains(statement.span()),
+        _ => false,
+    }
+}
+
+/// oxlint's `is_in_return_statement`: it is at the top of a function that is part of what is returned.
+fn oxlint_is_in_return_statement(statement: Stmt) -> bool {
+    for node in Node::Stmt(statement).ancestors() {
+        match node {
+            Node::Stmt(it) if it.tag() == StmtTag::Return => return true,
+            Node::Stmt(it) if it.tag() == StmtTag::Expr => {}
+            Node::Stmt(_) | Node::File(_) => return false,
+            Node::Func(func) if func.is_arrow() && matches!(func.body(), FnBody::Expr(_)) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// One of the `..IgnorePattern` options.
 struct Pattern {
     regex: Regex,
@@ -357,7 +418,7 @@ impl NoUnusedVars {
         let scope = unused_var.scope().variable_scope();
         let last_write = unused_var
             .references()
-            .filter(|it| it.is_write() && it.scope().variable_scope() == scope)
+            .filter(|it| it.is_write() && it.scope().variable_scope() == scope && !oxlint_reports_the_declaration(cx.file()))
             .last();
         let id = match last_write {
             Some(reference) => Some(reference.span()),
@@ -559,6 +620,9 @@ impl NoUnusedVars {
         }
 
         for unused_var in unused_vars {
+            if file.language().is_oxlint && oxlint_counts_as_used(unused_var) {
+                continue;
+            }
             let used_only_as_type =
                 unused_var.references().any(|it| is_type_only_reference(unused_var.symbol(), it));
             if used_only_as_type

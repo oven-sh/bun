@@ -541,6 +541,32 @@
  "exhaustive-deps/comments": [
   "a.tsx:8:17 react-hooks(exhaustive-deps)"
  ],
+ "no-unused-vars/type-query": [
+  "a.ts:11:7 eslint(no-unused-vars)",
+  "a.ts:7:7 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/loop": [
+  "a.ts:17:14 eslint(no-unused-vars)",
+  "a.ts:18:7 eslint(no-unused-vars)",
+  "a.ts:19:14 eslint(no-unused-vars)",
+  "a.ts:24:7 eslint(no-unused-vars)",
+  "a.ts:25:14 eslint(no-unused-vars)",
+  "a.ts:26:7 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/returned-function": [
+  "a.ts:3:7 eslint(no-unused-vars)",
+  "a.ts:4:7 eslint(no-unused-vars)",
+  "a.ts:5:7 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/place": [
+  "a.ts:2:7 eslint(no-unused-vars)",
+  "a.ts:4:7 eslint(no-unused-vars)"
+ ],
+ "consistent-type-imports/react": [
+  "c.ts:1:1 typescript(consistent-type-imports)",
+  "d.ts:1:1 typescript(consistent-type-imports)",
+  "e.ts:1:1 typescript(consistent-type-imports)"
+ ],
  "no-accumulating-spread/places": [
   "a.ts:11:5 oxc(no-accumulating-spread)",
   "a.ts:15:28 oxc(no-accumulating-spread)",

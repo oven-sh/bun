@@ -553,7 +553,7 @@ pub enum Summary<'a, 's> {
     /// Where `bun_sema_parser` has left it. It does not hold its text, and what
     /// `File::finish_nodes` computes is missing.
     InPlace(&'a mut bun_sema::hir::FileBuilder),
-    InArena(bun_sema::hir::File<'s>),
+    InArena(Box<bun_sema::hir::File<'s>>),
 }
 
 impl<'s> Summary<'_, 's> {
@@ -563,7 +563,7 @@ impl<'s> Summary<'_, 's> {
         (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
     ) -> bun_sema::hir::File<'s> {
         match self {
-            Summary::InArena(file) => file,
+            Summary::InArena(file) => *file,
             Summary::InPlace(file) => {
                 let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
                 *file = emptied;
@@ -755,7 +755,7 @@ pub fn with_summary<R>(
         |file, atoms| match file {
             Summary::InArena(mut file) => {
                 file.text = std::borrow::Cow::Borrowed(text);
-                then(file, atoms)
+                then(*file, atoms)
             }
             Summary::InPlace(file) => {
                 let mut file = file.lend(arena, session);
@@ -805,7 +805,7 @@ pub fn with_summary_in_place<'s, R>(
             experimental_decorators,
             every_file_is_a_module,
         );
-        return then(Summary::InArena(file), atoms);
+        return then(Summary::InArena(Box::new(file)), atoms);
     };
     let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
     // A very large file would leave its capacity to every later file.

@@ -88,7 +88,7 @@ fn compare(
                 let result = with_tree(dialect, name, after, |summary, atoms, _, _| {
                     let program_after = match &summary {
                         Summary::InPlace(hir) => Program::new(&**hir, after, atoms),
-                        Summary::InArena(hir) => Program::new(hir, after, atoms),
+                        Summary::InArena(hir) => Program::new(&**hir, after, atoms),
                     };
                     bun_format::verify::compare(&file, &program, &program_after, options, scratch)
                 });

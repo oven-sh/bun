@@ -249,10 +249,17 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
     let start = statement.span().start;
     if let [rest @ .., _] = f.comments().comments_before(start)
         && follows_type_cast_comment(start, f)
+        && (!f.comments().is_suppressed(start) || semicolon_is_before_cast_comment_of_ignored_statement(f))
         && expression_statement_needs_semicolon(statement, expression, f)
     {
         write!(f, [FormatLeadingComments::Comments(rest), ";"]);
     }
+}
+
+/// Prettier writes the `;` of a statement that is not formatted right before its text. oxfmt keeps the
+/// comment next to its `(`.
+fn semicolon_is_before_cast_comment_of_ignored_statement(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `"use strict";`

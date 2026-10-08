@@ -83,9 +83,10 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
         }
         let end = f.comments().without_semicolon(body.span()).end;
         // `statement; // prettier-ignore` has to see its comment.
-        let limit = match f.comments().has_trailing_suppression_comment(body.span().end) {
-            true => f.comments().end_of_line_comments_after(body.span().end).last().map_or(end, |last| last.span.end),
-            false => end,
+        // The `;` can be behind the comment.
+        let limit = match [body.span().end, end].into_iter().find(|&at| f.comments().has_trailing_suppression_comment(at)) {
+            Some(at) => f.comments().end_of_line_comments_after(at).last().map_or(end, |last| last.span.end),
+            None => end,
         };
         let previous_limit = f.comments_mut().limit_comments_up_to(limit);
         write!(f, body);

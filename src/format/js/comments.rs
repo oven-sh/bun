@@ -667,6 +667,29 @@ impl<'a> Comments<'a> {
         }
     }
 
+    /// Prettier's `handleMethodNameComments` for the comments at the end of a member of a class, which
+    /// is at `span`: those with code behind them on their line, a `)` or the `;`, trail the member,
+    /// unless they start the line. Where they start. The others are in the member.
+    ///
+    /// `value_end`: where the value of the member ends, without parentheses.
+    pub(crate) fn start_of_comments_before_semicolon(&self, value_end: Option<u32>, span: Span) -> u32 {
+        let content_end = self.without_semicolon(span).end;
+        let comments = self.comments_in_range(value_end.unwrap_or(content_end), span.end);
+        let is_on_same_line =
+            |end: u32, start: u32| self.source_text.all_bytes_match(end, start, |b| matches!(b, b' ' | b'\t' | b')' | b';'));
+        let mut first = comments.len();
+        while first > 0 && is_on_same_line(comments[first - 1].end(), comments.get(first).map_or(span.end, |next| next.start())) {
+            first -= 1;
+        }
+        match comments.get(first) {
+            // At the very end it has no code behind it.
+            Some(comment) if !comment.preceded_by_newline() && comments.last().is_some_and(|last| last.end() < span.end) => {
+                comment.start()
+            }
+            _ => span.end,
+        }
+    }
+
     /// Whether any comment of the file is a type cast.
     #[inline]
     pub(crate) fn has_type_cast_comments(&self) -> bool {

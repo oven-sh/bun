@@ -106,10 +106,13 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     format_grouped_parameters_with_return_type_for_method(value, f);
 
     if value.has_body() {
-        write!(f, FormatFunctionBody(value));
-    } else {
-        write!(f, OptionalSemicolon);
+        return write!(f, FormatFunctionBody(value));
     }
+    if !f.is_quiet() {
+        let limit = f.comments().start_of_comments_before_semicolon(None, member.span());
+        write!(f, FormatTrailingComments::Comments(f.comments().comments_before(limit)));
+    }
+    write!(f, OptionalSemicolon);
 }
 
 fn constructor_keeps_override(f: &Formatter<'_>) -> bool {
@@ -610,44 +613,42 @@ impl FormatClassElementWithSemicolon<'_> {
 
 impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        let span = self.element.span();
+        let is_suppressed =
+            f.comments().is_suppressed(span.start) || f.comments().has_trailing_suppression_comment(span.end);
         let needs_semi = self.element.kind() == MemberKind::Property
             && match f.options().semicolons {
-                Semicolons::Always => true,
+                Semicolons::Always => !is_suppressed,
                 Semicolons::AsNeeded => self.needs_semicolon(),
-            }
-            && !f.comments().is_suppressed(self.element.span().start)
-            && !f.comments().has_trailing_suppression_comment(self.element.span().end);
+            };
 
         if f.is_quiet() {
             return write!(f, [self.element, needs_semi.then_some(";")]);
         }
-        if needs_semi {
-            // The comments before the `;` are written behind it.
-            let element = FormatPropertyWithoutSemicolon(self.element, f.comments().without_semicolon(self.element.span()));
-            write!(f, [FormatNodeWithoutTrailingComments(&element), ";"]);
+        if is_suppressed {
+            // The `;` that keeps the next member apart is written in any case.
+            write!(f, [self.element, needs_semi.then_some(";")]);
+        } else if needs_semi {
+            // The comments on the line of the `;` are written behind it. They are in the member:
+            // `a = 1 // prettier-ignore ⏎ ;` is formatted.
+            let limit = f.comments().start_of_comments_before_semicolon(self.element.init().map(|it| it.span().end), span);
+            let previous_limit = f.comments_mut().limit_comments_up_to(limit);
+            write!(f, self.element);
+            // Nothing follows them in the member.
+            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(span.end)));
+            f.comments_mut().restore_view_limit(previous_limit);
+            write!(f, ";");
             if !(self.next_element.is_some() && no_comment_trails_what_is_before_another(f)) {
                 write_trailing_comments_of(self.element.as_ast_nodes(), f);
             }
-        } else if self.next_element.is_some() {
-            write!(f, FormatMemberBeforeAnother(self.element));
         } else {
-            write!(f, self.element);
+            match self.next_element {
+                Some(_) => write!(f, FormatMemberBeforeAnother(self.element)),
+                None => write!(f, self.element),
+            }
+            // Those before the `;` of the source, which is the end of the member.
+            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(span.end)));
         }
-    }
-}
-
-/// A property, and its span without the `;`.
-struct FormatPropertyWithoutSemicolon<'a>(Member<'a>, Span);
-
-impl Spanned for FormatPropertyWithoutSemicolon<'_> {
-    fn span(&self) -> Span {
-        self.1
-    }
-}
-
-impl<'a> Format<'a> for FormatPropertyWithoutSemicolon<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        self.0.fmt(f);
     }
 }
 

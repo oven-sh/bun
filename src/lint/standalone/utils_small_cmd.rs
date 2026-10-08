@@ -99,7 +99,7 @@ fn fix_tracker(cases: &[u8]) {
         severity: Severity::Error,
     }];
     let mut out = Vec::new();
-    for line in cases.split(|&b| b == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&cases, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("a case");
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();

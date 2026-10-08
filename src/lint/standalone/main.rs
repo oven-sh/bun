@@ -7,6 +7,7 @@
 
 mod ast_cmd;
 mod code_path_cmd;
+mod format_cmd;
 mod linter_cmd;
 mod regex_cmd;
 mod semantic_cmd;
@@ -304,6 +305,7 @@ fn main() {
         Some("regex") => regex_cmd::run(&args[1..]),
         Some("types") => types_cmd::run(&args[1..]),
         Some("linter") => linter_cmd::run(&args[1..]),
+        Some("format") => format_cmd::run(&args[1..]),
         _ => println!("usage: bun-lint conformance <fixtures> | bun-lint run <rule> <file> [options]"),
     }
 }

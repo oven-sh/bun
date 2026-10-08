@@ -1,0 +1,19 @@
+[package]
+name = "bun_format"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_sema.workspace = true
+bun_core.workspace = true
+bstr.workspace = true
+bitflags.workspace = true
+smallvec.workspace = true
+rustc-hash = "2"
+
+[lints]
+workspace = true

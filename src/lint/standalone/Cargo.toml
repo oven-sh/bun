@@ -11,6 +11,9 @@ path = "main.rs"
 bun_lint.workspace = true
 bun_lint_eslint.workspace = true
 bun_lint_typescript.workspace = true
+bun_format.workspace = true
+bun_sema_driver.workspace = true
+bun_threading.workspace = true
 bun_sema.workspace = true
 bun_sema_standalone = { path = "../../sema/standalone" }
 bun_js_parser.workspace = true

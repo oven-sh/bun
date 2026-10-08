@@ -568,6 +568,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_format"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_core",
+ "bun_lint",
+ "bun_sema",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_glob"
 version = "0.0.0"
 dependencies = [
@@ -1004,12 +1017,15 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
+ "bun_format",
  "bun_js_parser",
  "bun_lint",
  "bun_lint_eslint",
  "bun_lint_typescript",
  "bun_sema",
+ "bun_sema_driver",
  "bun_sema_standalone",
+ "bun_threading",
 ]
 
 [[package]]

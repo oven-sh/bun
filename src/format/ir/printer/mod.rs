@@ -201,6 +201,7 @@ impl<'d> Printer<'d> {
         let mode = stack.top();
         match self.element(index)? {
             FormatElement::Nop => {}
+            FormatElement::Skip(count) => queue.skip(*count),
             FormatElement::Space => {
                 if self.line_width > 0 {
                     self.pending_space = true;
@@ -224,7 +225,7 @@ impl<'d> Printer<'d> {
                 if mode.is_flat() {
                     match line_mode {
                         LineMode::Soft => return Ok(()),
-                        LineMode::SoftOrSpace => {
+                        LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
                             if self.line_width > 0 {
                                 self.pending_space = true;
                             }
@@ -249,7 +250,7 @@ impl<'d> Printer<'d> {
                     self.print_line_break();
                     self.has_empty_line = false;
                 }
-                if *line_mode == LineMode::Empty && !self.has_empty_line {
+                if matches!(line_mode, LineMode::Empty | LineMode::SoftOrSpaceEmpty) && !self.has_empty_line {
                     self.print_line_break();
                     self.has_empty_line = true;
                 }
@@ -268,6 +269,7 @@ impl<'d> Printer<'d> {
             FormatElement::Tag(tag) => match tag {
                 Tag::StartGroup(group) => {
                     let group_mode = if !group.mode().is_flat() {
+                        self.measured_group_fits = true;
                         PrintMode::Expanded
                     } else if mode.is_flat() && self.measured_group_fits {
                         // An enclosing group fits, so this one does.
@@ -460,7 +462,7 @@ impl<'d> Printer<'d> {
 
         stack.push(TagKind::Fill, mode);
 
-        while self.is_at_start_entry(queue) {
+        'entries: while self.is_at_start_entry(queue) {
             let mut measurer = FitsMeasurer::new_flat(queue, stack, indent_stack, self);
 
             // The number of pairs of an item and a separator that fit on the line.
@@ -495,8 +497,14 @@ impl<'d> Printer<'d> {
             measurer.finish();
 
             for _ in 0..flat_pairs {
+                // A group in the item is measured again and may break. Then what has been
+                // measured from here on does not hold.
+                let may_break = !self.measured_group_fits;
                 self.print_fill_item(queue, stack, indent_stack, PrintMode::Flat, PrintMode::Flat)?;
                 self.print_entry(queue, stack, indent_stack, PrintMode::Flat)?;
+                if may_break {
+                    continue 'entries;
+                }
             }
 
             let (item_mode, separator_mode) = match last_pair_layout {
@@ -834,6 +842,7 @@ impl<'d, 'print> FitsMeasurer<'d, 'print> {
 
         match element {
             FormatElement::Nop => {}
+            FormatElement::Skip(count) => self.queue.skip(*count),
             FormatElement::Space => {
                 if self.line_width > 0 {
                     self.pending_space = true;
@@ -842,7 +851,7 @@ impl<'d, 'print> FitsMeasurer<'d, 'print> {
             FormatElement::Line(line_mode) => {
                 if mode.is_flat() {
                     match line_mode {
-                        LineMode::SoftOrSpace => self.pending_space = true,
+                        LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => self.pending_space = true,
                         LineMode::Soft => {}
                         // The break is there in any mode, and everything up to it fits. In a
                         // fill, an item that has a comment on a line of its own before it does

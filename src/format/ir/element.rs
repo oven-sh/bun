@@ -15,6 +15,9 @@ pub(crate) enum FormatElement {
     /// Nothing: the place of a start tag that turned out not to be needed. See
     /// `Formatter::reserve_tag`.
     Nop,
+    /// The next so many elements are not part of what this is in. They are what an [`Interned`]
+    /// is a range of, left where they were written. See `Formatter::capture`.
+    Skip(u32),
     /// A space, unless it would end up at the start or at the end of a line.
     Space,
     Line(LineMode),
@@ -179,6 +182,8 @@ pub(crate) enum LineMode {
     Hard,
     /// A line break and an empty line.
     Empty,
+    /// A space if the enclosing group fits on a line, otherwise a line break and an empty line.
+    SoftOrSpaceEmpty,
 }
 
 impl LineMode {

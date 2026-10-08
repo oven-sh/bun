@@ -9,6 +9,8 @@ use crate::ir::element::{FormatElement, Interned, PrintMode, Tag, TagKind};
 use crate::options::IndentStyle;
 
 pub(super) trait Stack<T> {
+    /// The top is at depth 0.
+    fn at_depth(&self, depth: usize) -> Option<&T>;
     fn pop(&mut self) -> Option<T>;
     fn push(&mut self, value: T);
     fn top(&self) -> Option<&T>;
@@ -16,6 +18,10 @@ pub(super) trait Stack<T> {
 }
 
 impl<T> Stack<T> for Vec<T> {
+    fn at_depth(&self, depth: usize) -> Option<&T> {
+        self.get(self.len().checked_sub(depth + 1)?)
+    }
+
     #[inline]
     fn pop(&mut self) -> Option<T> {
         self.pop()
@@ -55,6 +61,13 @@ impl<'p, T> StackedStack<'p, T> {
 }
 
 impl<T: Copy> Stack<T> for StackedStack<'_, T> {
+    fn at_depth(&self, depth: usize) -> Option<&T> {
+        match depth.checked_sub(self.stack.len()) {
+            None => self.stack.at_depth(depth),
+            Some(depth) => self.original.get(self.original.len().checked_sub(depth + 1)?),
+        }
+    }
+
     #[inline]
     fn pop(&mut self) -> Option<T> {
         self.stack.pop().or_else(|| {
@@ -239,13 +252,27 @@ impl<S: Stack<Interned>> Queue<S> {
         Some(index)
     }
 
-    /// The next element. Of interned content, its first.
-    pub(super) fn top<'d>(&self, pool: &'d [FormatElement]) -> Option<&'d FormatElement> {
-        let mut top = pool.get(self.0.top()?.start as usize);
-        while let Some(FormatElement::Interned(interned)) = top {
-            top = pool.get(interned.range())?.first();
+    /// Removes the next `count` elements, which are in the same range as the one that has just
+    /// been popped.
+    #[inline]
+    pub(super) fn skip(&mut self, count: u32) {
+        if count == 0 {
+            return;
         }
-        top
+        match self.0.top_mut() {
+            Some(top) if top.len > count => {
+                top.start += count;
+                top.len -= count;
+            }
+            _ => {
+                self.0.pop();
+            }
+        }
+    }
+
+    /// The next element that stands for itself.
+    pub(super) fn top<'d>(&self, pool: &'d [FormatElement]) -> Option<&'d FormatElement> {
+        (0..).map_while(|depth| self.0.at_depth(depth)).find_map(|&range| first_of(range, pool))
     }
 
     /// Puts `elements` before everything that is in the queue.
@@ -306,6 +333,7 @@ impl<S: Stack<Interned>> Queue<S> {
         while depth > 0 {
             let index = self.pop().ok_or(PrintError::InvalidDocument)?;
             match pool.get(index as usize) {
+                Some(FormatElement::Skip(count)) => self.skip(*count),
                 Some(FormatElement::Interned(interned)) => self.extend_back(*interned),
                 Some(FormatElement::Tag(tag)) if tag.kind() == kind => match tag.is_start() {
                     true => depth += 1,
@@ -317,6 +345,26 @@ impl<S: Stack<Interned>> Queue<S> {
         }
         Ok(())
     }
+}
+
+/// The first element at `range` that stands for itself.
+fn first_of(range: Interned, pool: &[FormatElement]) -> Option<&FormatElement> {
+    let mut elements = pool.get(range.range())?.iter();
+    while let Some(element) = elements.next() {
+        match element {
+            FormatElement::Nop | FormatElement::Skip(0) => {}
+            FormatElement::Skip(count) => {
+                elements.nth(*count as usize - 1);
+            }
+            FormatElement::Interned(interned) => {
+                if let Some(first) = first_of(*interned, pool) {
+                    return Some(first);
+                }
+            }
+            element => return Some(element),
+        }
+    }
+    None
 }
 
 /// Tells when to stop measuring.
@@ -358,7 +406,7 @@ impl FitsEndPredicate for SingleEntryPredicate {
                 self.depth = self.depth.checked_sub(1).ok_or(PrintError::InvalidDocument)?;
                 self.is_done = self.depth == 0;
             }
-            FormatElement::Interned(_) => {}
+            FormatElement::Interned(_) | FormatElement::Skip(_) | FormatElement::Nop => {}
             _ if self.depth == 0 => return Err(PrintError::InvalidDocument),
             _ => {}
         }

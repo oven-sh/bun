@@ -58,6 +58,13 @@ pub(crate) const fn soft_line_break_or_space() -> Line {
     Line(LineMode::SoftOrSpace)
 }
 
+/// A space if the enclosing group fits on a line, otherwise a line break and an empty line.
+/// Prettier's `[line, softline]`.
+#[inline]
+pub(crate) const fn soft_empty_line_or_space() -> Line {
+    Line(LineMode::SoftOrSpaceEmpty)
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) struct Line(LineMode);
 

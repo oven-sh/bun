@@ -26,11 +26,18 @@ pub(crate) fn propagate_expand(root: Interned, storage: &mut Storage, buffers: &
 
 fn propagate(range: Interned, storage: &mut Storage, buffers: &mut PropagateBuffers) -> bool {
     let mut expands = false;
-    for index in range.range() {
+    let mut indices = range.range();
+    while let Some(index) = indices.next() {
         let Some(&element) = storage.pool.get(index) else {
             break;
         };
         let element_expands = match element {
+            FormatElement::Skip(count) => {
+                if count > 0 {
+                    indices.nth(count as usize - 1);
+                }
+                false
+            }
             FormatElement::Tag(Tag::StartGroup(_)) => {
                 buffers.enclosing.push(index as u32);
                 false

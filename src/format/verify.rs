@@ -157,6 +157,15 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                 out.push((Cow::Owned(regex), start));
                 continue;
             }
+            // The value of an attribute. Nothing is an escape in it but the entities.
+            TokenKind::JsxText
+                if before.is_some_and(|it| it.is_punctuator("=")) && matches!(text.first(), Some(b'"' | b'\'')) =>
+            {
+                let content = text.get(1..text.len().saturating_sub(1)).unwrap_or_default();
+                let content = bstr::ByteSlice::replace(content, "&apos;", "'");
+                out.push((Cow::Owned(bstr::ByteSlice::replace(&content[..], "&quot;", "\"")), start));
+                continue;
+            }
             TokenKind::JsxText => {
                 out.extend(
                     text.split(|byte| byte.is_ascii_whitespace())

@@ -16,9 +16,9 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
 
     for (index, element) in array.into_iter().enumerate() {
         if index > 0 {
-            // An empty line after an element is kept.
+            // An empty line after an element is kept if the array breaks.
             match previous_end.is_some_and(|end| is_line_after_element_empty(f.source_text().as_bytes(), end as usize)) {
-                true => write!(f, empty_line()),
+                true => write!(f, soft_empty_line_or_space()),
                 false => write!(f, soft_line_break_or_space()),
             }
         }

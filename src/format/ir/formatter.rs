@@ -92,7 +92,8 @@ arguments!(A B C D E F G H I J K L M N O P Q R S T U V W X);
 /// What elements refer to by index.
 #[derive(Default)]
 pub(crate) struct Storage {
-    /// What [`Interned`] is a range of.
+    /// Every element of the document, in the order they are written. [`Interned`] is a range of
+    /// it.
     pub(crate) pool: Vec<FormatElement>,
     /// What [`BestFitting`] is a range of.
     pub(crate) variants: Vec<Interned>,
@@ -105,6 +106,9 @@ pub(crate) const HARD_LINE_BREAK: Interned = Interned { start: 0, len: 1 };
 pub(crate) const END_LINE_SUFFIX: Interned = Interned { start: 1, len: 1 };
 
 impl Storage {
+    /// The number of elements that are in every pool.
+    const RESERVED: u32 = 2;
+
     pub(crate) fn clear(&mut self) {
         self.pool.clear();
         self.pool.push(FormatElement::Line(LineMode::Hard));
@@ -145,6 +149,7 @@ impl Storage {
             | FormatElement::LineSuffixBoundary
             | FormatElement::Space
             | FormatElement::Nop
+            | FormatElement::Skip(_)
             | FormatElement::Tag(_) => false,
         }
     }
@@ -153,8 +158,10 @@ impl Storage {
     /// line break, a text with a line break, or an expanded group.
     pub(crate) fn will_break(&self, elements: &[FormatElement]) -> bool {
         let mut ignore_depth = 0usize;
-        for element in elements {
+        let mut elements = elements.iter();
+        while let Some(element) = elements.next() {
             match element {
+                FormatElement::Skip(count) => skip(&mut elements, *count),
                 FormatElement::Tag(Tag::StartLineSuffix) => ignore_depth += 1,
                 FormatElement::Tag(Tag::EndLineSuffix) => {
                     ignore_depth = ignore_depth.saturating_sub(1);
@@ -170,8 +177,10 @@ impl Storage {
     /// Whether there is any [`FormatElement::Line`] in `elements`.
     pub(crate) fn may_directly_break(&self, elements: &[FormatElement]) -> bool {
         let mut ignore_depth = 0usize;
-        for element in elements {
+        let mut elements = elements.iter();
+        while let Some(element) = elements.next() {
             match element {
+                FormatElement::Skip(count) => skip(&mut elements, *count),
                 FormatElement::Tag(Tag::StartLineSuffix) => ignore_depth += 1,
                 FormatElement::Tag(Tag::EndLineSuffix) => {
                     ignore_depth = ignore_depth.saturating_sub(1);
@@ -179,6 +188,9 @@ impl Storage {
                 _ if ignore_depth != 0 => {}
                 FormatElement::Line(_) => return true,
                 FormatElement::Interned(it) if self.may_directly_break(self.interned(*it)) => {
+                    return true;
+                }
+                FormatElement::BestFitting(it) if self.may_directly_break(self.most_flat(*it)) => {
                     return true;
                 }
                 _ => {}
@@ -189,11 +201,28 @@ impl Storage {
 
     /// Whether `elements` starts with the label.
     pub(crate) fn has_label(&self, elements: &[FormatElement], label: LabelId) -> bool {
-        match elements.first() {
-            Some(FormatElement::Tag(Tag::StartLabelled(actual))) => *actual == label,
-            Some(FormatElement::Interned(it)) => self.has_label(self.interned(*it), label),
-            _ => false,
+        let mut elements = elements.iter();
+        while let Some(element) = elements.next() {
+            return match element {
+                FormatElement::Skip(count) => {
+                    skip(&mut elements, *count);
+                    continue;
+                }
+                FormatElement::Nop => continue,
+                FormatElement::Tag(Tag::StartLabelled(actual)) => *actual == label,
+                FormatElement::Interned(it) => self.has_label(self.interned(*it), label),
+                _ => false,
+            };
         }
+        false
+    }
+}
+
+/// Moves on by what a [`FormatElement::Skip`] says.
+#[inline]
+fn skip(elements: &mut std::slice::Iter<'_, FormatElement>, count: u32) {
+    if count > 0 {
+        elements.nth(count as usize - 1);
     }
 }
 
@@ -228,7 +257,6 @@ impl FormatElement {
 /// The vectors of a [`Formatter`], which keep their capacity from one file to the next.
 #[derive(Default)]
 pub(crate) struct FormatterBuffers {
-    pub(crate) elements: Vec<FormatElement>,
     pub(crate) storage: Storage,
     spare: Vec<Vec<FormatElement>>,
     cleaned: FxHashMap<Interned, Interned>,
@@ -236,9 +264,7 @@ pub(crate) struct FormatterBuffers {
 
 /// Collects the elements of a document.
 pub(crate) struct Formatter<'a> {
-    /// The document so far. Content that is being interned is written at the end and then moved
-    /// to the pool.
-    elements: Vec<FormatElement>,
+    /// `storage.pool` is the document so far.
     pub(crate) storage: Storage,
     /// Vectors for whoever needs one for a while: [`Formatter::take_vec`].
     spare: Vec<Vec<FormatElement>>,
@@ -253,20 +279,17 @@ pub(crate) struct Formatter<'a> {
 impl<'a> Formatter<'a> {
     pub(crate) fn new(context: JsFormatContext<'a>, buffers: FormatterBuffers) -> Self {
         let FormatterBuffers {
-            mut elements,
             mut storage,
             spare,
             mut cleaned,
         } = buffers;
-        elements.clear();
         storage.clear();
         cleaned.clear();
         let source = context.file().text();
         // Measured by oxc on the sources of VS Code: the median is 0.19 elements per byte, and
         // 95% of the files are below 0.4.
-        elements.reserve(source.len() * 2 / 5);
+        storage.pool.reserve(source.len() * 2 / 5);
         Formatter {
-            elements,
             storage,
             spare,
             cleaned,
@@ -277,11 +300,13 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Moves the document to the pool. Returns where it is, and the vectors.
-    pub(crate) fn finish(mut self) -> (Interned, FormatterBuffers) {
-        let root = self.move_to_pool(0);
+    /// Returns where the document is, and the vectors.
+    pub(crate) fn finish(self) -> (Interned, FormatterBuffers) {
+        let root = Interned {
+            start: Storage::RESERVED,
+            len: (self.storage.pool.len() as u32).saturating_sub(Storage::RESERVED),
+        };
         let buffers = FormatterBuffers {
-            elements: self.elements,
             storage: self.storage,
             spare: self.spare,
             cleaned: self.cleaned,
@@ -346,7 +371,7 @@ impl<'a> Formatter<'a> {
 
     #[inline(always)]
     pub(crate) fn write_element(&mut self, element: FormatElement) {
-        self.elements.push(element);
+        self.storage.pool.push(element);
     }
 
     #[inline(always)]
@@ -415,16 +440,16 @@ impl<'a> Formatter<'a> {
 
     // ───────────────────────────── looking at what is written ─────────────────────────────
 
-    /// Everything that is written so far and has not been interned. Remember its length to look
-    /// at what is written from then on: `f.elements_from(start)`.
+    /// Everything that is written so far. Remember its length to look at what is written from
+    /// then on: `f.elements_from(start)`.
     #[inline]
     pub(crate) fn elements(&self) -> &[FormatElement] {
-        &self.elements
+        &self.storage.pool
     }
 
     /// What has been written since `f.elements().len()` was `start`.
     pub(crate) fn elements_from(&self, start: usize) -> Elements<'_> {
-        self.view(self.elements.get(start..).unwrap_or_default())
+        self.view(self.storage.pool.get(start..).unwrap_or_default())
     }
 
     pub(crate) fn view<'f>(&'f self, elements: &'f [FormatElement]) -> Elements<'f> {
@@ -440,33 +465,46 @@ impl<'a> Formatter<'a> {
 
     // ───────────────────────────── interning ─────────────────────────────
 
-    fn move_to_pool(&mut self, start: usize) -> Interned {
-        let at = self.storage.pool.len();
-        let start = start.min(self.elements.len());
-        self.storage.pool.extend(self.elements.drain(start..));
+    /// Starts content that is not part of what is being written. Nothing is moved: it stays where
+    /// it is written, behind an element that tells whoever reads the pool to skip it.
+    #[inline]
+    fn start_capture(&mut self) -> usize {
+        self.storage.pool.push(FormatElement::Skip(0));
+        self.storage.pool.len() - 1
+    }
+
+    /// Ends the content that `slot` started.
+    fn end_capture(&mut self, slot: usize) -> Interned {
+        let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
+        match self.storage.pool.get_mut(slot) {
+            Some(element) if len > 0 => *element = FormatElement::Skip(len),
+            _ => self.storage.pool.truncate(slot),
+        }
         Interned {
-            start: at as u32,
-            len: (self.storage.pool.len() - at) as u32,
+            start: slot as u32 + 1,
+            len,
         }
     }
 
-    /// Formats `content` into the pool instead of the document.
+    /// Formats `content` without writing it. Returns where it is.
     pub(crate) fn capture(&mut self, content: &(impl Format<'a> + ?Sized)) -> Interned {
-        let start = self.elements.len();
+        let slot = self.start_capture();
         content.fmt(self);
-        self.move_to_pool(start)
+        self.end_capture(slot)
     }
 
     /// Formats `content` without writing it. The element that is returned stands for it, and can
     /// be written any number of times. `None` if `content` writes nothing.
     pub(crate) fn intern(&mut self, content: &(impl Format<'a> + ?Sized)) -> Option<FormatElement> {
-        let start = self.elements.len();
+        let slot = self.start_capture();
         content.fmt(self);
-        match self.elements.len().saturating_sub(start) {
-            0 => None,
-            1 => self.elements.pop(),
-            _ => Some(FormatElement::Interned(self.move_to_pool(start))),
+        if self.storage.pool.len() == slot + 2 {
+            let only = self.storage.pool.pop();
+            self.storage.pool.truncate(slot);
+            return only;
         }
+        let interned = self.end_capture(slot);
+        (interned.len > 0).then_some(FormatElement::Interned(interned))
     }
 
     /// The same for elements that are already there.
@@ -475,12 +513,9 @@ impl<'a> Formatter<'a> {
             [] => None,
             [one] => Some(*one),
             _ => {
-                let start = self.storage.pool.len() as u32;
+                let slot = self.start_capture();
                 self.storage.pool.extend_from_slice(elements);
-                Some(FormatElement::Interned(Interned {
-                    start,
-                    len: elements.len() as u32,
-                }))
+                Some(FormatElement::Interned(self.end_capture(slot)))
             }
         }
     }
@@ -515,19 +550,21 @@ impl<'a> Formatter<'a> {
     /// breaks are removed or replaced by spaces, what is written only if a group breaks is
     /// removed, and of several variants the flattest is taken.
     pub(crate) fn write_without_soft_lines(&mut self, content: &(impl Format<'a> + ?Sized)) {
-        let start = self.elements.len();
-        content.fmt(self);
-        let mut written = self.take_vec();
-        written.extend(self.elements.drain(start..));
-        let mut conditions = Vec::new();
-        self.remove_soft_lines(&written, &mut conditions);
-        self.recycle_vec(written);
+        let written = self.capture(content);
+        self.remove_soft_lines(written, &mut Vec::new());
     }
 
-    /// Writes `elements` without their soft line breaks.
-    fn remove_soft_lines(&mut self, elements: &[FormatElement], conditions: &mut Vec<PrintMode>) {
-        for &element in elements {
+    /// Writes the elements at `range` without their soft line breaks.
+    fn remove_soft_lines(&mut self, range: Interned, conditions: &mut Vec<PrintMode>) {
+        let mut indices = range.range();
+        while let Some(&element) = indices.next().and_then(|index| self.storage.pool.get(index)) {
             let cleaned = match element {
+                FormatElement::Skip(count) => {
+                    if count > 0 {
+                        indices.nth(count as usize - 1);
+                    }
+                    continue;
+                }
                 FormatElement::Tag(Tag::StartConditionalContent(condition)) => {
                     conditions.push(condition.mode);
                     continue;
@@ -538,22 +575,19 @@ impl<'a> Formatter<'a> {
                 }
                 _ if conditions.last() == Some(&PrintMode::Expanded) => continue,
                 FormatElement::Line(LineMode::Soft) => continue,
-                FormatElement::Line(LineMode::SoftOrSpace) => FormatElement::Space,
+                FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => FormatElement::Space,
                 FormatElement::Interned(interned) => {
                     FormatElement::Interned(self.clean_interned(interned, conditions))
                 }
                 FormatElement::BestFitting(best_fitting) => {
                     if let Some(&flattest) = self.storage.variants(best_fitting).first() {
-                        let mut copy = self.take_vec();
-                        copy.extend_from_slice(self.storage.interned(flattest));
-                        self.remove_soft_lines(&copy, conditions);
-                        self.recycle_vec(copy);
+                        self.remove_soft_lines(flattest, conditions);
                     }
                     continue;
                 }
                 element => element,
             };
-            self.elements.push(cleaned);
+            self.storage.pool.push(cleaned);
         }
     }
 
@@ -564,7 +598,7 @@ impl<'a> Formatter<'a> {
         let needs_cleaning = self.storage.interned(interned).iter().any(|element| {
             matches!(
                 element,
-                FormatElement::Line(LineMode::Soft | LineMode::SoftOrSpace)
+                FormatElement::Line(LineMode::Soft | LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty)
                     | FormatElement::Tag(
                         Tag::StartConditionalContent(_) | Tag::EndConditionalContent
                     )
@@ -573,17 +607,9 @@ impl<'a> Formatter<'a> {
             )
         });
         let cleaned = if needs_cleaning {
-            let mut copy = self.take_vec();
-            copy.extend_from_slice(self.storage.interned(interned));
-            // What is interned inside goes to the pool first, so this is built aside.
-            let outer = std::mem::take(&mut self.elements);
-            self.elements = self.take_vec();
-            self.remove_soft_lines(&copy, conditions);
-            let cleaned = self.move_to_pool(0);
-            let scratch = std::mem::replace(&mut self.elements, outer);
-            self.recycle_vec(scratch);
-            self.recycle_vec(copy);
-            cleaned
+            let slot = self.start_capture();
+            self.remove_soft_lines(interned, conditions);
+            self.end_capture(slot)
         } else {
             interned
         };
@@ -653,14 +679,14 @@ impl Formatter<'_> {
     /// [`Formatter::fill_tag`]. The content starts at the index after it.
     #[inline]
     pub(crate) fn reserve_tag(&mut self) -> usize {
-        self.elements.push(FormatElement::Nop);
-        self.elements.len() - 1
+        self.storage.pool.push(FormatElement::Nop);
+        self.storage.pool.len() - 1
     }
 
     /// Writes `tag` at a place that has been reserved. The end tag is up to the caller.
     #[inline]
     pub(crate) fn fill_tag(&mut self, reserved: usize, tag: Tag) {
-        if let Some(element @ FormatElement::Nop) = self.elements.get_mut(reserved) {
+        if let Some(element @ FormatElement::Nop) = self.storage.pool.get_mut(reserved) {
             *element = FormatElement::Tag(tag);
         }
     }
@@ -670,16 +696,15 @@ impl Formatter<'_> {
         use super::element::{Group, GroupMode};
         let mode = if should_expand { GroupMode::Expand } else { GroupMode::Flat };
         self.fill_tag(reserved, Tag::StartGroup(Group::new().with_mode(mode)));
-        self.elements.push(FormatElement::Tag(Tag::EndGroup));
+        self.storage.pool.push(FormatElement::Tag(Tag::EndGroup));
     }
 }
 
 impl<'a> Formatter<'a> {
-    /// Appends what `content` writes to `out`, and not to what is written so far.
+    /// Appends an element that stands for what `content` writes to `out`, and nothing to what is
+    /// written so far.
     pub(crate) fn write_into(&mut self, out: &mut Vec<FormatElement>, content: &(impl Format<'a> + ?Sized)) {
-        let start = self.elements.len();
-        content.fmt(self);
-        out.extend(self.elements.drain(start..));
+        out.extend(self.intern(content));
     }
 }
 

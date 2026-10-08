@@ -11,19 +11,27 @@ pub(crate) fn dump(root: Interned, storage: &Storage, source: &[u8]) -> String {
 }
 
 fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usize, out: &mut String) {
-    for element in storage.interned(range) {
+    let mut elements = storage.interned(range).iter();
+    while let Some(element) = elements.next() {
+        if let FormatElement::Skip(count) = element {
+            if *count > 0 {
+                elements.nth(*count as usize - 1);
+            }
+            continue;
+        }
         if element.is_end_tag() {
             depth = depth.saturating_sub(1);
         }
         let _ = write!(out, "{:width$}", "", width = depth * 2);
         let text = |bytes: &[u8]| format!("{:?}", bstr::BStr::new(bytes));
         let _ = match element {
-            FormatElement::Nop => writeln!(out, "nop"),
+            FormatElement::Nop | FormatElement::Skip(_) => writeln!(out, "nop"),
             FormatElement::Space => writeln!(out, "\" \""),
             FormatElement::Line(LineMode::Soft) => writeln!(out, "softline"),
             FormatElement::Line(LineMode::SoftOrSpace) => writeln!(out, "line"),
             FormatElement::Line(LineMode::Hard) => writeln!(out, "hardline"),
             FormatElement::Line(LineMode::Empty) => writeln!(out, "emptyline"),
+            FormatElement::Line(LineMode::SoftOrSpaceEmpty) => writeln!(out, "line softline"),
             FormatElement::ExpandParent => writeln!(out, "breakParent"),
             FormatElement::LineSuffixBoundary => writeln!(out, "lineSuffixBoundary"),
             FormatElement::Token(token) => writeln!(out, "{}", text(token.as_bytes())),

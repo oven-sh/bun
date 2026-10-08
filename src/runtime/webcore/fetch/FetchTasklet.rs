@@ -1880,7 +1880,7 @@ impl FetchTasklet {
             || self
                 .http
                 .as_deref()
-                .is_some_and(|http_| http_.method() == Method::HEAD)
+                .is_some_and(|http_| super::request_method_has_null_body(http_.method()))
     }
 
     /// Content the server frames anyway (a 205 with content) is dropped and the connection

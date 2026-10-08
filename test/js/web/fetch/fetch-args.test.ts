@@ -1,7 +1,10 @@
 import { TCPSocketListener } from "bun";
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import nodeFetch from "node-fetch";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { request as undiciRequest } from "undici";
 
 let server;
 let requestCount = 0;
@@ -176,6 +179,16 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
       `const url = URL.createObjectURL(new Blob(["x"])); URL.revokeObjectURL(url); fetch(url);`,
       "Failed to resolve blob:",
     ],
+    [
+      "blob: url with a method other than GET",
+      `fetch(URL.createObjectURL(new Blob(["x"])), { method: "POST" });`,
+      "fetch() only supports the GET method for blob: URLs",
+    ],
+    [
+      "file: url with a method other than GET",
+      `fetch(Bun.pathToFileURL(process.execPath), { method: "HEAD" });`,
+      "fetch() only supports the GET method for file: URLs",
+    ],
     ["data: url without a comma", `fetch("data:text/plain")`, "failed to fetch the data URL"],
     ["data: url with invalid base64", `fetch("data:text/plain;base64,@@@")`, "failed to fetch the data URL"],
     ["url toString() throws", `fetch({ toString() { throw new Error("UBOOM"); } })`, "UBOOM"],
@@ -271,6 +284,146 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
     expect(stdout).toBe("caught: protocol must be http:, https: or s3:\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// fetch() answers these three schemes itself, with no request on the wire.
+// https://fetch.spec.whatwg.org/#scheme-fetch gives each scheme its own rule for the request method.
+describe("fetch() of a data:, blob: or file: URL", () => {
+  type Send = (url: string, init?: RequestInit) => Promise<Response>;
+  const entryPoints: [name: string, send: Send][] = [
+    ["fetch(url, init)", (url, init) => fetch(url, init)],
+    ["fetch(new Request(url, init))", (url, init) => fetch(new Request(url, init))],
+    ["fetch(new Request(url), init)", (url, init) => fetch(new Request(url), init)],
+    ["fetch({ url, ...init })", (url, init) => fetch({ url, ...init } as any)],
+    ["Bun.fetch(url, init)", (url, init) => Bun.fetch(url, init)],
+    [
+      "new Bun.FetchSession().fetch(url, init)",
+      async (url, init) => {
+        using session = new Bun.FetchSession();
+        return await session.fetch(url, init);
+      },
+    ],
+  ];
+
+  const outcome = (promise: Promise<Response>) =>
+    promise.then(
+      async response => ({
+        status: response.status,
+        statusText: response.statusText,
+        contentType: response.headers.get("content-type"),
+        body: response.body === null ? null : await response.text(),
+      }),
+      error => ({ name: error.name, code: error.code, message: error.message }),
+    );
+  const answered = { status: 200, statusText: "OK", contentType: "text/plain;charset=utf-8" };
+  const onlyGet = (scheme: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `fetch() only supports the GET method for ${scheme} URLs`,
+  });
+
+  const methods = ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"];
+  const initFor = (method: string): RequestInit => ({
+    method,
+    body: method === "POST" || method === "PUT" ? "request body" : undefined,
+  });
+  async function outcomes(send: Send, url: string) {
+    const seen: object[] = [];
+    for (const method of methods) seen.push(await outcome(send(url, initFor(method))));
+    return seen;
+  }
+
+  describe.each(entryPoints)("%s", (_, send) => {
+    // The body of the response to a HEAD request is null: https://fetch.spec.whatwg.org/#main-fetch
+    test("data: answers every method, and HEAD with no body", async () => {
+      expect(await outcomes(send, "data:text/plain,data-body")).toEqual(
+        methods.map(method => ({ ...answered, body: method === "HEAD" ? null : "data-body" })),
+      );
+    });
+
+    test("blob: answers GET only", async () => {
+      const url = URL.createObjectURL(new Blob(["blob-body"], { type: "text/plain" }));
+      try {
+        expect(await outcomes(send, url)).toEqual(
+          methods.map(method => (method === "GET" ? { ...answered, body: "blob-body" } : onlyGet("blob:"))),
+        );
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    });
+
+    // The standard leaves file: to the implementation. Nothing here reads the
+    // file, so a HEAD answer could not report a file that does not exist.
+    test("file: answers GET only", async () => {
+      using dir = tempDir("fetch-file-method", { "file.txt": "file-body" });
+      expect(await outcomes(send, pathToFileURL(join(String(dir), "file.txt")).href)).toEqual(
+        methods.map(method => (method === "GET" ? { ...answered, body: "file-body" } : onlyGet("file:"))),
+      );
+    });
+  });
+
+  test("a data: HEAD response has the shape of a HEAD response from a server", async () => {
+    const shape = async (response: Response) => ({
+      body: response.body,
+      bodyUsed: response.bodyUsed,
+      ok: response.ok,
+      cloneText: await response.clone().text(),
+      json: await response
+        .clone()
+        .json()
+        .then(
+          value => ({ value }),
+          error => ({ rejects: error.name }),
+        ),
+      bytes: (await response.arrayBuffer()).byteLength,
+      bodyUsedAfterRead: response.bodyUsed,
+    });
+    const fromServer = await shape(await fetch(server!.url, { method: "HEAD" }));
+    const fromDataUrl = await shape(await fetch("data:application/json,{}", { method: "HEAD" }));
+    expect(fromDataUrl).toEqual(fromServer);
+    expect(fromDataUrl).toMatchObject({ body: null, bodyUsed: false, ok: true, cloneText: "", bytes: 0 });
+  });
+
+  test("a method that is not answered never reaches the resource", async () => {
+    // A revoked blob: URL and a file: URL with a foreign host reject for GET with an error of their own.
+    const revoked = URL.createObjectURL(new Blob(["x"]));
+    URL.revokeObjectURL(revoked);
+    expect(await outcome(fetch(revoked, { method: "POST", body: "request body" }))).toEqual(onlyGet("blob:"));
+    expect(await outcome(fetch(revoked))).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `Failed to resolve ${revoked}`,
+    });
+    expect(await outcome(fetch("file://other.host/file.txt", { method: "DELETE" }))).toEqual(onlyGet("file:"));
+    expect(await outcome(fetch("file://other.host/file.txt"))).toMatchObject({
+      name: "TypeError",
+      code: "ERR_INVALID_FILE_URL_HOST",
+    });
+  });
+
+  test("node-fetch and undici.request get the same answers", async () => {
+    const url = URL.createObjectURL(new Blob(["blob-body"]));
+    try {
+      const viaNodeFetch = await nodeFetch("data:text/plain,data-body", { method: "HEAD" });
+      const viaUndici = await undiciRequest("data:text/plain,data-body", { method: "HEAD" });
+      expect({
+        nodeFetch: { status: viaNodeFetch.status, text: await viaNodeFetch.text() },
+        undici: { status: viaUndici.statusCode, text: await viaUndici.body.text() },
+        nodeFetchBlobPost: await outcome(nodeFetch(url, { method: "POST" }) as unknown as Promise<Response>),
+        undiciBlobPost: await undiciRequest(url, { method: "POST" }).then(
+          () => "no error",
+          error => ({ name: error.name, code: error.code, message: error.message }),
+        ),
+      }).toEqual({
+        nodeFetch: { status: 200, text: "" },
+        undici: { status: 200, text: "" },
+        nodeFetchBlobPost: onlyGet("blob:"),
+        undiciBlobPost: onlyGet("blob:"),
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   });
 });
 

@@ -159,10 +159,40 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// dataURLResponse
+// Local schemes: data:, blob: and file:
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
+/// A URL scheme that `fetch()` answers itself. No request goes on the wire.
+#[derive(Copy, Clone)]
+enum LocalScheme {
+    Data,
+    Blob,
+    File,
+}
+
+impl LocalScheme {
+    /// <https://fetch.spec.whatwg.org/#scheme-fetch>: the request methods this scheme answers.
+    fn answers(self, method: Method) -> bool {
+        match self {
+            LocalScheme::Data => true,
+            LocalScheme::Blob => method == Method::GET,
+            // The standard leaves file: open. Not HEAD: nothing here reads the
+            // file, so a missing one would answer 200 and never report it.
+            LocalScheme::File => method == Method::GET,
+        }
+    }
+}
+
+/// <https://fetch.spec.whatwg.org/#main-fetch>: the response to a HEAD request has no body.
+pub(crate) fn request_method_has_null_body(method: Method) -> bool {
+    method == Method::HEAD
+}
+
+fn data_url_response(
+    url: BunString,
+    global_this: &JSGlobalObject,
+    method: Method,
+) -> JsResult<JSValue> {
     let blob = {
         let url_utf8 = url.to_utf8();
         match DataURL::parse_without_check(url_utf8.slice())
@@ -178,31 +208,57 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
             None => {
                 let err =
                     global_this.create_error_instance(format_args!("failed to fetch the data URL"));
-                return JSPromise::rejected_promise(global_this, err).to_js();
+                return Ok(JSPromise::rejected_promise(global_this, err).to_js());
             }
         }
     };
 
-    let response = bun_core::heap::into_raw(Box::new(Response::init(
-        response::Init {
-            status_code: 200,
-            status_text: BunString::create_atom(b"OK"),
-            ..Default::default()
-        },
-        Body::new(BodyValue::Blob(blob)),
-        url,
-        false,
-    )));
+    local_scheme_response(global_this, LocalScheme::Data, method, blob, url)
+}
+
+/// What a local scheme answers: 200 with `blob` as the body, and no body for a HEAD request.
+fn local_scheme_response(
+    global_this: &JSGlobalObject,
+    scheme: LocalScheme,
+    method: Method,
+    blob: Blob,
+    url: BunString,
+) -> JsResult<JSValue> {
+    debug_assert!(scheme.answers(method));
+    let mut init = response::Init {
+        status_code: 200,
+        status_text: BunString::static_("OK"),
+        ..Default::default()
+    };
+    let body = if request_method_has_null_body(method) {
+        // A `Response` reads its Content-Type from a Blob body, and this one has none.
+        let content_type = blob.content_type_slice();
+        if !content_type.is_empty() {
+            let mut headers = HeadersRef::create_empty();
+            headers.put(
+                HTTPHeaderName::ContentType,
+                &BunString::ascii(content_type),
+                global_this,
+            )?;
+            init.headers = Some(headers);
+        }
+        BodyValue::Null
+    } else {
+        BodyValue::Blob(blob)
+    };
+
+    let response =
+        bun_core::heap::into_raw(Box::new(Response::init(init, Body::new(body), url, false)));
 
     // Ownership of the boxed Response is transferred to the JS GC via
     // `make_maybe_pooled` (which stores the raw `*mut Response` in the wrapper
     // and finalizes it). Dropping a `Box<Response>` here would be a UAF.
-    JSPromise::resolved_promise_value(
+    Ok(JSPromise::resolved_promise_value(
         global_this,
         // SAFETY: `response` is a freshly allocated heap `Response`; ownership
         // transfers to JSC.
         Response::make_maybe_pooled(global_this, response),
-    )
+    ))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -565,8 +621,29 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
+    // The init's method, then the Request's, then the one of a `{ url, method }` input.
+    let extract_method = move || -> JsResult<Method> {
+        if let Some(options) = options_object {
+            if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
+                return Ok(method_jsc::from_js(global_this, method_)?.unwrap_or(Method::GET));
+            }
+        }
+
+        if let Some(req) = request_mut!() {
+            return Ok(req.method);
+        }
+
+        if let Some(req) = request_init_object {
+            if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
+                return Ok(method_jsc::from_js(global_this, method_)?.unwrap_or(Method::GET));
+            }
+        }
+
+        Ok(Method::GET)
+    };
+
     if url_str.starts_with_ascii(b"data:") {
-        return Ok(data_url_response(url_str, global_this));
+        return data_url_response(url_str, global_this, extract_method()?);
     }
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
@@ -593,26 +670,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // **Start with the harmless ones.**
 
     // "method"
-    let mut method = 'extract_method: {
-        if let Some(options) = options_object {
-            if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
-            }
-        }
-
-        if let Some(req) = request_mut!() {
-            break 'extract_method Some(req.method);
-        }
-
-        if let Some(req) = request_init_object {
-            if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                break 'extract_method method_jsc::from_js(global_this, method_)?;
-            }
-        }
-
-        break 'extract_method None;
-    }
-    .unwrap_or(Method::GET);
+    let mut method = extract_method()?;
 
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
@@ -1251,10 +1309,22 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    // This is not 100% correct.
-    // We don't pass along headers, we ignore method, we ignore status code...
-    // But it's better than status quo.
+    // file: and blob: are answered here, without a request. The request headers are not read.
     if url_type != URLType::Remote {
+        // No local scheme sends the request body, and `HTTPRequestBody` has no `Drop`.
+        body.detach();
+        let (scheme, scheme_name) = match url_type {
+            URLType::File => (LocalScheme::File, "file:"),
+            URLType::Blob => (LocalScheme::Blob, "blob:"),
+            URLType::Remote => unreachable!(),
+        };
+        if !scheme.answers(method) {
+            let err = global_this.to_type_error(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("fetch() only supports the GET method for {scheme_name} URLs"),
+            );
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        }
         // https://url.spec.whatwg.org/#file-host: a file: URL names a local file
         // only when its host is empty or "localhost".
         if url_type == URLType::File
@@ -1434,24 +1504,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
 
-        let response = bun_core::heap::into_raw(Box::new(Response::init(
-            response::Init {
-                status_code: 200,
-                ..Default::default()
-            },
-            Body::new(BodyValue::Blob(blob_to_use)),
-            url_string,
-            false,
-        )));
-
-        // Ownership of the boxed Response transfers to the JS GC; see
-        // `data_url_response` for the rationale.
-        return Ok(JSPromise::resolved_promise_value(
-            global_this,
-            // SAFETY: `response` is a freshly allocated heap `Response`; ownership
-            // transfers to JSC.
-            Response::make_maybe_pooled(global_this, response),
-        ));
+        return local_scheme_response(global_this, scheme, method, blob_to_use, url_string);
     }
 
     if !url.protocol.is_empty() {

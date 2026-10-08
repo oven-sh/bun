@@ -344,6 +344,8 @@ const text = await response.text();
 
 The URL's host must be empty or `localhost`. `fetch("file://other.host/path")` rejects with `ERR_INVALID_FILE_URL_HOST`.
 
+Bun answers a `file:` URL for the `GET` method only. Every other method, `HEAD` included, rejects with a `TypeError`. To check that a file exists or to read its size, use [`Bun.file()`](/runtime/file-io).
+
 On Windows, Bun normalizes paths automatically:
 
 ```ts
@@ -361,6 +363,8 @@ const response = await fetch("data:text/plain;base64,SGVsbG8sIFdvcmxkIQ==");
 const text = await response.text(); // "Hello, World!"
 ```
 
+A `data:` URL answers every request method. The response to a `HEAD` request has no body.
+
 #### Blob URLs - `blob:`
 
 You can fetch blobs using URLs created by `URL.createObjectURL()`:
@@ -370,6 +374,8 @@ const blob = new Blob(["Hello, World!"], { type: "text/plain" });
 const url = URL.createObjectURL(blob);
 const response = await fetch(url);
 ```
+
+A `blob:` URL answers the `GET` method only. Every other method rejects with a `TypeError`.
 
 ### Error handling
 

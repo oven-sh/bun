@@ -1,6 +1,9 @@
-// What a worker for JavaScript plugins is started with. The program itself is too long for a
-// command line: it is the first message. Messages are read from the file descriptor 3.
-const { readSync } = require("node:fs");
+// What a process for JavaScript plugins is started with: see `pipes.rs`. Messages are read from the file descriptor 3 and
+// written to 4. The program itself is too long for a command line: it is the first message.
+const { readSync, writeSync } = require("node:fs");
+
+const PROGRAM = 100;
+const RESULT = 100;
 
 // Fills `bytes` up to `length`. The process ends when there is no more to read.
 function receive(bytes, length) {
@@ -12,8 +15,52 @@ function receive(bytes, length) {
 }
 
 const header = new Uint32Array(2);
-receive(new Uint8Array(header.buffer), 8);
+const headerBytes = new Uint8Array(header.buffer);
+
+function send(kind, text) {
+  const bytes = Buffer.from(text);
+  const message = Buffer.allocUnsafe(8 + bytes.length);
+  message.writeUInt32LE(bytes.length, 0);
+  message.writeUInt32LE(kind, 4);
+  message.set(bytes, 8);
+  for (let at = 0; at < message.length; ) at += writeSync(4, message, at);
+}
+
+// The content of the message that is being handled.
+let message = new Uint8Array(0);
+// Whether that is what does not fit into the buffer it was asked for with.
+let isMessagePending = false;
+
+function request(kind, details, buffer) {
+  isMessagePending = kind === 0;
+  if (!isMessagePending) {
+    send(kind, details);
+    receive(headerBytes, 8);
+  }
+  const length = isMessagePending ? message.length : header[0];
+  if (length <= buffer.byteLength) again(buffer);
+  return length;
+}
+
+function again(buffer) {
+  if (isMessagePending) new Uint8Array(buffer).set(message);
+  else receive(new Uint8Array(buffer), header[0]);
+}
+
+receive(headerBytes, 8);
+if (header[1] !== PROGRAM) throw new Error("The first message is not the program.");
 const program = Buffer.allocUnsafe(header[0]);
 receive(program, header[0]);
-const AsyncFunction = (async () => {}).constructor;
-await new AsyncFunction("require", "load", "receive", program.toString())(require, specifier => import(specifier), receive);
+const handle = new Function("require", "load", "request", "again", program.toString())(
+  require,
+  specifier => import(specifier),
+  request,
+  again,
+);
+for (;;) {
+  receive(headerBytes, 8);
+  const kind = header[1];
+  message = new Uint8Array(header[0]);
+  receive(message, header[0]);
+  send(RESULT, await handle(kind));
+}

@@ -55,14 +55,14 @@ function readTokenList(buffer, at) {
 }
 
 function loadTokens() {
-  ask(NEEDS_TOKENS, "", TOKENS);
+  ask(TOKENS);
   tokenList = readTokenList(buffers[TOKENS], 0);
   commentList ??= readTokenList(buffers[TOKENS], tokenList.byteLength);
   return tokenList;
 }
 
 function loadComments() {
-  ask(NEEDS_COMMENTS, "", COMMENTS);
+  ask(COMMENTS);
   return (commentList = readTokenList(buffers[COMMENTS], 0));
 }
 

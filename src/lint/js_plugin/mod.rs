@@ -18,15 +18,19 @@
 //! All offsets that a worker sees are in UTF-16 code units, without the byte order mark.
 
 mod ast;
+mod engine;
 mod host;
 mod offsets;
+mod pipes;
 mod rules;
 mod schema;
 mod scopes;
 mod tokens;
 mod wire;
 
-pub use host::{Channel, Failure, Host, Report, Spawn, Suggested};
+pub use engine::{Engine, Serve, Vm};
+pub use host::{Failure, Host, Report, Suggested};
+pub use pipes::{Channel, Processes, Spawn};
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::PROGRAM;

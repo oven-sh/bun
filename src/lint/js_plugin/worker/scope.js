@@ -587,7 +587,7 @@ lazy(ScopeManager.prototype, "declaredVariables", function () {
 function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
   program();
-  ask(NEEDS_SCOPES, "", SCOPES);
+  ask(SCOPES);
   const buffer = buffers[SCOPES];
   const [scopeCount, variableCount, definitionCount, referenceCount, globalCount, commentCount] = new Uint32Array(buffer, 0, 6);
   let at = 24;

@@ -33,7 +33,7 @@ pub struct Rule {
     pub schema: Schema,
     /// `meta.defaultOptions`
     pub default_options: Vec<Json>,
-    /// What the workers know it by.
+    /// Its number among the rules of all plugins.
     pub(super) index: u32,
 }
 
@@ -57,12 +57,12 @@ impl Plugin {
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 
-/// A rule and its options. A worker is told once what they are.
+/// A rule and its options.
 #[derive(Debug)]
 pub struct Configured {
     pub rule: Arc<Rule>,
     pub(super) id: u32,
-    /// `[id, rule, options]`
+    /// `[rule, options]`
     pub(super) json: Box<[u8]>,
 }
 
@@ -70,7 +70,7 @@ impl Configured {
     /// `options`: ESLint's `context.options`, with the default options of the rule merged in.
     pub fn new(rule: Arc<Rule>, options: &[Json]) -> Arc<Configured> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let mut json = format!("[{id},{},[", rule.index).into_bytes();
+        let mut json = format!("[{},[", rule.index).into_bytes();
         for (i, option) in options.iter().enumerate() {
             if i > 0 {
                 json.push(b',');
@@ -87,11 +87,11 @@ impl Configured {
 }
 
 /// What a configuration has for the rules other than their options: ESLint's `context.settings` and
-/// `context.languageOptions`. A worker is told once what they are.
+/// `context.languageOptions`.
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
-    /// `[id, { settings, languageOptions, globals }]`
+    /// `{ settings, languageOptions, globals }`
     pub(super) json: Box<[u8]>,
 }
 
@@ -135,13 +135,10 @@ impl FileSettings {
         };
         let all_globals = config_globals_in_order(language).into_iter();
         let all_globals = all_globals.map(|(name, setting)| (name.into_owned(), string(setting_name(setting)))).collect();
-        let all = Json::Array(vec![
-            Json::Number(f64::from(id)),
-            Json::Object(vec![
-                (b"settings".to_vec(), settings),
-                (b"languageOptions".to_vec(), language_options),
-                (b"globals".to_vec(), Json::Object(all_globals)),
-            ]),
+        let all = Json::Object(vec![
+            (b"settings".to_vec(), settings),
+            (b"languageOptions".to_vec(), language_options),
+            (b"globals".to_vec(), Json::Object(all_globals)),
         ]);
         let mut json = Vec::new();
         write_json(&mut json, &all);

@@ -1,8 +1,10 @@
-//! The workers, and the conversation with one about a file.
+//! What the linter talks to: loads plugins, and runs their rules on a file.
 
+use super::engine::{Engine, Vm};
 use super::offsets::Offsets;
+use super::pipes::{Processes, Spawn};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
-use super::wire::{self, ToWorker, from_worker};
+use super::wire::{self, ask, call, result};
 use super::{ast, schema, scopes, tokens};
 use crate::ast::File;
 use crate::fix::Fix;
@@ -11,19 +13,9 @@ use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
 use crate::span::Span;
-use bun_threading::{Condition, Guarded};
+use bun_threading::Guarded;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
-
-/// Both ends of the pipes to a process. Dropping it closes them, at which the process ends.
-pub trait Channel: Send {
-    /// Writes all of `bytes`.
-    fn send(&mut self, bytes: &[u8]) -> Result<(), Vec<u8>>;
-    /// Reads until `into` is full.
-    fn receive(&mut self, into: &mut [u8]) -> Result<(), Vec<u8>>;
-}
-
-/// Starts the running executable with [`BOOTSTRAP`](super::BOOTSTRAP).
-pub type Spawn<'e> = dyn Fn() -> Result<Box<dyn Channel>, Vec<u8>> + Sync + 'e;
 
 /// ESLint's `context.report()`.
 #[derive(Clone, Debug)]
@@ -72,107 +64,35 @@ impl From<Vec<u8>> for Failure {
     }
 }
 
-struct Worker {
-    channel: Box<dyn Channel>,
-    /// How many of [`State::plugins`] it has loaded.
-    plugins: usize,
-    /// The ids of the [`FileSettings`] and the [`Configured`] that it was told. Sorted.
-    told: Vec<u32>,
-    /// The selectors that it has sent, in that order. `None`: it cannot be parsed.
-    selectors: Vec<Option<Selector>>,
-    /// To write messages in.
-    buffer: Vec<u8>,
-}
-
-/// A plugin, as it was asked for.
+/// A plugin that is loaded.
 struct Loaded {
-    /// The content of [`ToWorker::Load`].
-    request: Vec<u8>,
+    /// JSON: where it is.
+    location: Vec<u8>,
+    /// The number of its first rule.
+    first_rule: u32,
     plugin: Arc<Plugin>,
 }
 
 #[derive(Default)]
 struct State {
-    idle: Vec<Worker>,
-    /// How many workers there are, idle or not.
-    workers: usize,
     plugins: Vec<Loaded>,
     rules: u32,
+    /// The selectors that rules have listened for, by their numbers. `None`: it cannot be parsed.
+    selectors: Vec<Option<Arc<Selector>>>,
+    /// By their text.
+    selector_numbers: FxHashMap<Box<[u8]>, u32>,
 }
 
-/// The workers. All threads share it.
+enum Engines<'e> {
+    Given(&'e dyn Engine),
+    Processes(Processes<'e>),
+}
+
+/// The plugins of a run. All threads share it.
 pub struct Host<'e> {
-    spawn: &'e Spawn<'e>,
+    engine: Engines<'e>,
     cwd: Vec<u8>,
-    program: Vec<u8>,
-    max_workers: usize,
     state: Guarded<State>,
-    is_idle: Condition,
-}
-
-impl Worker {
-    fn receive(&mut self) -> Result<(u32, Vec<u8>), Vec<u8>> {
-        let mut header = [0; 8];
-        self.channel.receive(&mut header)?;
-        let [a, b, c, d, kind @ ..] = header;
-        let mut content = vec![0; u32::from_le_bytes([a, b, c, d]) as usize];
-        self.channel.receive(&mut content)?;
-        Ok((u32::from_le_bytes(kind), content))
-    }
-
-    fn send(&mut self) -> Result<(), Vec<u8>> {
-        let sent = self.channel.send(&self.buffer);
-        self.buffer.clear();
-        sent
-    }
-
-    /// Sends `request`, and returns the description of the plugin.
-    fn load(&mut self, request: &[u8]) -> Result<Json, Vec<u8>> {
-        wire::message(&mut self.buffer, ToWorker::Load, |out| out.extend_from_slice(request));
-        self.send()?;
-        match self.receive()? {
-            (from_worker::LOADED, json) => crate::json::parse(&json).ok_or_else(|| b"The worker is out of step.".to_vec()),
-            (_, why) => Err(why),
-        }
-    }
-
-    /// Adds what is in `json` to what is sent next, unless the worker has it.
-    fn tell(&mut self, kind: ToWorker, id: u32, json: &[u8]) {
-        if let Err(at) = self.told.binary_search(&id) {
-            self.told.insert(at, id);
-            wire::message(&mut self.buffer, kind, |out| out.extend_from_slice(json));
-        }
-    }
-
-    /// Takes in `[new selectors, indices of selectors]`, adds a description of the new ones to `out`, and returns the
-    /// selectors at the indices.
-    fn selectors(&mut self, request: &[u8], out: &mut Vec<u8>) -> Vec<Option<&Selector>> {
-        let request = crate::json::parse(request);
-        let part = |i: usize| request.as_ref().and_then(|it| it.as_array()?.get(i)?.as_array()).unwrap_or_default();
-        if !part(0).is_empty() {
-            // For each `[attributeCount, identifierCount]`, or the message of what ESLint throws.
-            wire::message(out, ToWorker::Selectors, |out| {
-                for (i, source) in part(0).iter().enumerate() {
-                    out.push(if i == 0 { b'[' } else { b',' });
-                    let parsed = Selector::parse(source.as_str().unwrap_or_default());
-                    match &parsed {
-                        Ok(selector) => {
-                            let counts = format!("[{},{}]", selector.attribute_count(), selector.identifier_count());
-                            out.extend_from_slice(counts.as_bytes());
-                        }
-                        Err(error) => write_json_string(out, error.message()),
-                    }
-                    self.selectors.push(parsed.ok());
-                }
-                out.push(b']');
-            });
-        }
-        let index = |it: &Json| match it {
-            Json::Number(index) => self.selectors.get(*index as usize)?.as_ref(),
-            _ => None,
-        };
-        part(1).iter().map(index).collect()
-    }
 }
 
 fn number(json: Option<&Json>) -> Option<u32> {
@@ -228,144 +148,143 @@ fn report_of(json: &Json, offsets: &Offsets) -> Option<Report> {
     })
 }
 
+const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+
 impl<'e> Host<'e> {
-    /// `cwd`: ESLint's `context.cwd`. No worker is started before it is needed, and never more than
-    /// `max_workers`.
-    pub fn new(spawn: &'e Spawn<'e>, cwd: &[u8], max_workers: usize) -> Host<'e> {
+    /// `cwd`: ESLint's `context.cwd`.
+    pub fn with_engine(engine: &'e dyn Engine, cwd: &[u8]) -> Host<'e> {
         Host {
-            spawn,
+            engine: Engines::Given(engine),
             cwd: cwd.to_vec(),
-            program: schema::PROGRAM.iter().flat_map(|it| it.1.bytes()).collect(),
-            max_workers: max_workers.max(1),
             state: Guarded::new(State::default()),
-            is_idle: Condition::default(),
         }
     }
 
-    /// For the harness: another program than [`PROGRAM`](super::PROGRAM).
-    #[doc(hidden)]
-    pub fn set_program(&mut self, program: Vec<u8>) {
-        self.program = program;
+    /// The same with at most `max_workers` processes for an engine.
+    pub fn new(spawn: &'e Spawn<'e>, cwd: &[u8], max_workers: usize) -> Host<'e> {
+        Host {
+            engine: Engines::Processes(Processes::new(spawn, max_workers)),
+            cwd: cwd.to_vec(),
+            state: Guarded::new(State::default()),
+        }
     }
 
-    fn start(&self) -> Result<Worker, Vec<u8>> {
-        let mut worker = Worker {
-            channel: (self.spawn)()?,
-            plugins: 0,
-            told: Vec::new(),
-            selectors: Vec::new(),
-            buffer: Vec::new(),
-        };
-        wire::message(&mut worker.buffer, ToWorker::Program, |out| out.extend_from_slice(&self.program));
-        wire::message(&mut worker.buffer, ToWorker::Start, |out| schema::write_start(&self.cwd, out));
-        worker.send()?;
-        Ok(worker)
-    }
-
-    /// A worker that is idle, or a new one, or the next that becomes idle. It has all the plugins.
-    fn acquire(&self) -> Result<Worker, Vec<u8>> {
-        let mut state = self.state.lock();
-        let found = loop {
-            if let Some(worker) = state.idle.pop() {
-                break Some(worker);
-            }
-            if state.workers < self.max_workers {
-                state.workers += 1;
-                break None;
-            }
-            self.is_idle.wait_guarded(&mut state);
-        };
-        let loaded = found.as_ref().map_or(0, |it| it.plugins);
-        let requests: Vec<Vec<u8>> = state.plugins.iter().skip(loaded).map(|it| it.request.clone()).collect();
-        drop(state);
-        let prepare = || {
-            let mut worker = match found {
-                Some(worker) => worker,
-                None => self.start()?,
-            };
-            for request in &requests {
-                worker.load(request)?;
-                worker.plugins += 1;
-            }
-            Ok(worker)
-        };
-        prepare().inspect_err(|_| self.lose())
-    }
-
-    fn release(&self, worker: Worker) {
-        self.state.lock().idle.push(worker);
-        self.is_idle.notify_one();
-    }
-
-    /// A worker is gone.
-    fn lose(&self) {
-        self.state.lock().workers -= 1;
-        self.is_idle.notify_one();
+    fn engine(&self) -> &dyn Engine {
+        match &self.engine {
+            Engines::Given(engine) => *engine,
+            Engines::Processes(processes) => processes,
+        }
     }
 
     /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
     /// is looked for from there. `alias`: the prefix of its rules, if it is not the name that the
     /// plugin has for itself.
     pub fn load(&self, directory: &[u8], specifier: &[u8], alias: Option<&[u8]>) -> Result<Arc<Plugin>, Vec<u8>> {
-        let mut request = b"[".to_vec();
+        let mut location = b"[".to_vec();
         for part in [Some(directory), Some(specifier), alias] {
             match part {
-                Some(part) => write_json_string(&mut request, part),
-                None => request.extend_from_slice(b"null"),
+                Some(part) => write_json_string(&mut location, part),
+                None => location.extend_from_slice(b"null"),
             }
-            request.push(b',');
+            location.push(b',');
         }
-        request.pop();
-        request.push(b']');
-        self.load_as(request)
+        location.pop();
+        location.push(b']');
+        self.load_from(location)
     }
 
     /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location`: what the script that
     /// evaluates such a file says about where the plugin is, in `$jsPlugins`.
     pub fn load_located(&self, location: &Json, prefix: &[u8]) -> Result<Arc<Plugin>, Vec<u8>> {
-        let mut request = b"[".to_vec();
-        write_json(&mut request, location);
-        request.extend_from_slice(b",null,");
-        write_json_string(&mut request, prefix);
-        request.push(b']');
-        self.load_as(request)
+        let mut written = b"[".to_vec();
+        write_json(&mut written, location);
+        written.extend_from_slice(b",null,");
+        write_json_string(&mut written, prefix);
+        written.push(b']');
+        self.load_from(written)
     }
 
-    /// `request`: the content of [`ToWorker::Load`].
-    fn load_as(&self, request: Vec<u8>) -> Result<Arc<Plugin>, Vec<u8>> {
-        let known = |state: &State| state.plugins.iter().find(|it| it.request == request).map(|it| Arc::clone(&it.plugin));
-        loop {
-            if let Some(plugin) = known(&self.state.lock()) {
-                return Ok(plugin);
-            }
-            let mut worker = self.acquire()?;
-            let described = match worker.load(&request) {
-                Ok(described) => described,
-                Err(why) => {
-                    // It is as it was, if it is still there.
-                    self.release(worker);
-                    return Err(why);
-                }
-            };
-            let mut state = self.state.lock();
-            // Another thread was faster, or has loaded another one, which this worker lacks.
-            if known(&state).is_some() || state.plugins.len() != worker.plugins {
-                drop(state);
-                drop(worker);
-                self.lose();
-                continue;
-            }
-            let plugin = Arc::new(plugin_of(&described, state.rules));
-            state.rules += plugin.rules.len() as u32;
-            state.plugins.push(Loaded {
-                request,
-                plugin: Arc::clone(&plugin),
-            });
-            worker.plugins += 1;
-            drop(state);
-            self.release(worker);
+    fn load_from(&self, location: Vec<u8>) -> Result<Arc<Plugin>, Vec<u8>> {
+        let known = |state: &State| state.plugins.iter().find(|it| it.location == location).map(|it| Arc::clone(&it.plugin));
+        if let Some(plugin) = known(&self.state.lock()) {
             return Ok(plugin);
         }
+        let mut loaded = Err(OUT_OF_STEP.to_vec());
+        self.engine().with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
+        let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
+        let mut state = self.state.lock();
+        // Another thread was faster.
+        if let Some(plugin) = known(&state) {
+            return Ok(plugin);
+        }
+        let plugin = Arc::new(plugin_of(&described, state.rules));
+        let first_rule = state.rules;
+        state.rules += plugin.rules.len() as u32;
+        state.plugins.push(Loaded {
+            location,
+            first_rule,
+            plugin: Arc::clone(&plugin),
+        });
+        Ok(plugin)
+    }
+
+    /// Has `vm` load the plugin at `location`. `place`: its position among the plugins and the number of its first rule, once
+    /// it has them. Returns the description of the plugin.
+    fn load_in(&self, vm: &mut dyn Vm, location: &[u8], place: Option<(usize, u32)>) -> Result<Vec<u8>, Vec<u8>> {
+        let place = place.map_or_else(|| "null,null".to_owned(), |(position, first_rule)| format!("{position},{first_rule}"));
+        let message = [b"[", location, b",", place.as_bytes(), b"]"].concat();
+        let returned = vm.call(call::LOAD, &message, &mut |asked, _, out| {
+            if asked == ask::START {
+                schema::write_start(&self.cwd, out);
+            }
+        })?;
+        match returned.split_first() {
+            Some((&result::DONE, described)) => Ok(described.to_vec()),
+            Some((&result::FAILED, why)) => Err(why.to_vec()),
+            _ => Err(OUT_OF_STEP.to_vec()),
+        }
+    }
+
+    /// Given JSON, selectors as text, appends what [`ask::SELECTORS`] says.
+    fn describe_selectors(&self, texts: &[u8], out: &mut Vec<u8>) {
+        let texts = crate::json::parse(texts);
+        let mut state = self.state.lock();
+        out.push(b'[');
+        for (i, text) in texts.as_ref().and_then(Json::as_array).unwrap_or_default().iter().enumerate() {
+            if i > 0 {
+                out.push(b',');
+            }
+            let text = text.as_str().unwrap_or_default();
+            let known = state.selector_numbers.get(text).and_then(|&it| Some((it, state.selectors.get(it as usize)?.clone()?)));
+            let parsed = match known {
+                Some(known) => Ok(known),
+                None => Selector::parse(text).map(|selector| {
+                    let (number, selector) = (state.selectors.len() as u32, Arc::new(selector));
+                    state.selectors.push(Some(Arc::clone(&selector)));
+                    state.selector_numbers.insert(text.into(), number);
+                    (number, selector)
+                }),
+            };
+            match parsed {
+                Ok((number, selector)) => {
+                    let counts = format!("[{number},{},{}]", selector.attribute_count(), selector.identifier_count());
+                    out.extend_from_slice(counts.as_bytes());
+                }
+                Err(error) => write_json_string(out, error.message()),
+            }
+        }
+        out.push(b']');
+    }
+
+    /// Given JSON, the numbers of selectors, these.
+    fn selectors(&self, numbers: &[u8]) -> Vec<Option<Arc<Selector>>> {
+        let numbers = crate::json::parse(numbers);
+        let numbers = numbers.as_ref().and_then(Json::as_array).unwrap_or_default();
+        if numbers.is_empty() {
+            return Vec::new();
+        }
+        let state = self.state.lock();
+        numbers.iter().map(|it| state.selectors.get(number(Some(it))? as usize)?.clone()).collect()
     }
 
     /// Runs the rules `enabled` on `file`. `wants_fixes`: whether anything reads [`Report::fix`] and
@@ -377,98 +296,97 @@ impl<'e> Host<'e> {
         enabled: &[&Configured],
         wants_fixes: bool,
     ) -> Result<Vec<Report>, Failure> {
-        let mut worker = self.acquire()?;
-        match converse(&mut worker, file, settings, enabled, wants_fixes) {
-            Ok(result) => {
-                self.release(worker);
-                result
-            }
-            Err(why) => {
-                drop(worker);
-                self.lose();
-                Err([b"A worker for JavaScript plugins has failed: ", &why[..]].concat().into())
-            }
-        }
+        let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
+        self.engine().with_vm(&mut |vm| outcome = self.run_in(vm, file, settings, enabled, wants_fixes))?;
+        outcome
     }
-}
 
-/// The outer `Err`: the worker is of no more use.
-fn converse<'a>(
-    worker: &mut Worker,
-    file: &'a File<'a>,
-    settings: &FileSettings,
-    enabled: &[&Configured],
-    wants_fixes: bool,
-) -> Result<Result<Vec<Report>, Failure>, Vec<u8>> {
-    let text = file.text();
-    let offsets = Offsets::new(text);
-    worker.tell(ToWorker::Settings, settings.id, &settings.json);
-    for configured in enabled {
-        worker.tell(ToWorker::Configure, configured.id, &configured.json);
-    }
-    let has_mark = text.starts_with(b"\xEF\xBB\xBF");
-    wire::message(&mut worker.buffer, ToWorker::Lint, |out| {
-        let path = file.path();
+    fn run_in<'a>(
+        &self,
+        vm: &mut dyn Vm,
+        file: &'a File<'a>,
+        settings: &FileSettings,
+        enabled: &[&Configured],
+        wants_fixes: bool,
+    ) -> Result<Vec<Report>, Failure> {
+        let text = file.text();
+        let offsets = Offsets::new(text);
+        let has_mark = text.starts_with(b"\xEF\xBB\xBF");
+        let (path, plugins) = (file.path(), self.state.lock().plugins.len());
+        let mut message = Vec::with_capacity(24 + enabled.len() * 4 + path.len() + text.len());
         let flags = u32::from(wants_fixes) | u32::from(has_mark) << 1;
-        wire::words(out, &[flags, settings.id, enabled.len() as u32, path.len() as u32]);
+        wire::words(&mut message, &[flags, plugins as u32, settings.id, enabled.len() as u32, path.len() as u32]);
         for configured in enabled {
-            wire::words(out, &[configured.id]);
+            wire::words(&mut message, &[configured.id]);
         }
-        out.extend_from_slice(path);
-        out.extend_from_slice(if has_mark { &text[3..] } else { text });
-    });
-    worker.send()?;
-    let mut ids = None;
-    loop {
-        let (kind, content) = worker.receive()?;
-        match kind {
-            from_worker::DONE if content.is_empty() => return Ok(Ok(Vec::new())),
-            from_worker::DONE => {
-                let Some(Json::Array(parts)) = crate::json::parse(&content) else {
-                    return Err(b"It is out of step.".to_vec());
-                };
-                let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
-                scopes::mark_used(file, part(1).iter().filter_map(|it| number(Some(it))));
-                return Ok(Ok(part(0).iter().filter_map(|it| report_of(it, &offsets)).collect()));
-            }
-            // `[rule, message, line]`
-            from_worker::FAILED => {
-                let failure = crate::json::parse(&content);
-                let part = |i: usize| failure.as_ref().and_then(|it| it.as_array()?.get(i));
-                return Ok(Err(Failure {
-                    rule: number(part(0)),
-                    line: number(part(2)),
-                    message: part(1).and_then(Json::as_str).unwrap_or_default().to_vec(),
-                }));
-            }
-            from_worker::NEEDS_AST | from_worker::NEEDS_MATCHES => {
-                let mut buffer = std::mem::take(&mut worker.buffer);
-                let selectors = worker.selectors(&content, &mut buffer);
-                match kind {
-                    from_worker::NEEDS_AST => {
-                        wire::message(&mut buffer, ToWorker::Ast, |out| ids = Some(ast::write(file, &offsets, &selectors, out)));
-                    }
-                    _ => wire::message(&mut buffer, ToWorker::Matches, |out| {
-                        ast::write_only_matches(file, &offsets, &selectors, out);
-                    }),
+        message.extend_from_slice(path);
+        message.extend_from_slice(if has_mark { &text[3..] } else { text });
+
+        let mut ids = None;
+        let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
+            ask::START => schema::write_start(&self.cwd, out),
+            ask::SETTINGS => out.extend_from_slice(&settings.json),
+            ask::CONFIGURED => {
+                let position = std::str::from_utf8(details).ok().and_then(|it| it.parse::<usize>().ok());
+                if let Some(configured) = position.and_then(|it| enabled.get(it)) {
+                    out.extend_from_slice(&configured.json);
                 }
-                worker.buffer = buffer;
-                worker.send()?;
             }
-            from_worker::NEEDS_TOKENS => {
-                wire::message(&mut worker.buffer, ToWorker::Tokens, |out| tokens::write(file, &offsets, out));
-                worker.send()?;
+            ask::SELECTORS => self.describe_selectors(details, out),
+            ask::AST | ask::MATCHES => {
+                let selectors = self.selectors(details);
+                let selectors: Vec<Option<&Selector>> = selectors.iter().map(Option::as_deref).collect();
+                match asked {
+                    ask::AST => ids = Some(ast::write(file, &offsets, &selectors, out)),
+                    _ => ast::write_only_matches(file, &offsets, &selectors, out),
+                }
             }
-            from_worker::NEEDS_COMMENTS => {
-                wire::message(&mut worker.buffer, ToWorker::Comments, |out| tokens::write_comments(file, &offsets, out));
-                worker.send()?;
+            ask::TOKENS => tokens::write(file, &offsets, out),
+            ask::COMMENTS => tokens::write_comments(file, &offsets, out),
+            ask::SCOPES => {
+                if let Some(ids) = &ids {
+                    scopes::write(file, &offsets, ids, out);
+                }
             }
-            from_worker::NEEDS_SCOPES => {
-                let ids = ids.as_ref().ok_or(b"It is out of step.".as_slice())?;
-                wire::message(&mut worker.buffer, ToWorker::Scopes, |out| scopes::write(file, &offsets, ids, out));
-                worker.send()?;
+            _ => {}
+        };
+        loop {
+            let returned = vm.call(call::LINT, &message, &mut serve)?;
+            let Some((&kind, content)) = returned.split_first() else {
+                return Err(OUT_OF_STEP.to_vec().into());
+            };
+            if kind == result::DONE && content.is_empty() {
+                return Ok(Vec::new());
             }
-            _ => return Err(b"It is out of step.".to_vec()),
+            let Some(Json::Array(parts)) = crate::json::parse(content) else {
+                return Err(OUT_OF_STEP.to_vec().into());
+            };
+            match kind {
+                result::DONE => {
+                    let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
+                    scopes::mark_used(file, part(1).iter().filter_map(|it| number(Some(it))));
+                    return Ok(part(0).iter().filter_map(|it| report_of(it, &offsets)).collect());
+                }
+                result::FAILED => {
+                    return Err(Failure {
+                        rule: number(parts.first()),
+                        line: number(parts.get(2)),
+                        message: parts.get(1).and_then(Json::as_str).unwrap_or_default().to_vec(),
+                    });
+                }
+                result::NEEDS_PLUGINS if !parts.is_empty() => {
+                    for position in parts.iter().filter_map(|it| number(Some(it))) {
+                        let state = self.state.lock();
+                        let Some(plugin) = state.plugins.get(position as usize) else {
+                            return Err(OUT_OF_STEP.to_vec().into());
+                        };
+                        let (location, first_rule) = (plugin.location.clone(), plugin.first_rule);
+                        drop(state);
+                        self.load_in(vm, &location, Some((position as usize, first_rule)))?;
+                    }
+                }
+                _ => return Err(OUT_OF_STEP.to_vec().into()),
+            }
         }
     }
 }

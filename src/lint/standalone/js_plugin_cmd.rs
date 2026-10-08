@@ -6,7 +6,7 @@
 //!   `{ id, filename, code, languageOptions, settings, rules }`, of which only `id` and `code` are required. Prints
 //!   `{ id, messages }` or `{ id, failure }`, a line for each.
 
-use bun_lint::js_plugin::{BOOTSTRAP, Channel, Configured, FileSettings, Host, Plugin, Report};
+use bun_lint::js_plugin::{BOOTSTRAP, Channel, Configured, FileSettings, Host, Plugin, Processes, Report};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
 use std::io::{Read, Write};
@@ -52,14 +52,14 @@ pub(crate) fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
     }))
 }
 
-/// With `BUN_LINT_WORKER=<src/lint/js_plugin/worker>` the workers run the program that is there now.
-fn new_host(cwd: &str, max_workers: usize) -> Host<'static> {
-    let mut host = Host::new(&spawn, cwd.as_bytes(), max_workers);
+/// With `BUN_LINT_WORKER=<src/lint/js_plugin/worker>` the processes run the program that is there now.
+pub(crate) fn new_processes(max: usize) -> Processes<'static> {
+    let mut processes = Processes::new(&spawn, max);
     if let Ok(directory) = std::env::var("BUN_LINT_WORKER") {
         let part = |it: &(&str, &str)| std::fs::read(format!("{directory}/{}", it.0)).expect("a part of the program");
-        host.set_program(bun_lint::js_plugin::PROGRAM.iter().flat_map(part).collect());
+        processes.set_program(bun_lint::js_plugin::PROGRAM.iter().flat_map(part).collect());
     }
-    host
+    processes
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -111,7 +111,8 @@ fn report_as_json(report: &Report, enabled: &[Arc<Configured>], code: &[u8]) -> 
 fn lint(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|it| it.strip_prefix(name));
     let cwd = std::env::current_dir().expect("the working directory").to_string_lossy().into_owned();
-    let host = new_host(&cwd, 1);
+    let processes = new_processes(1);
+    let host = Host::with_engine(&processes, cwd.as_bytes());
     let specifier = flag("--plugin=").expect("--plugin");
     let plugin = match host.load(cwd.as_bytes(), specifier.as_bytes(), flag("--alias=").map(str::as_bytes)) {
         Ok(plugin) => plugin,
@@ -152,7 +153,8 @@ fn enabled_by(plugin: &Plugin, rules: Option<&Json>) -> Vec<Arc<Configured>> {
 fn batch(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|it| it.strip_prefix(name));
     let cwd = std::env::current_dir().expect("the working directory").to_string_lossy().into_owned();
-    let host = new_host(&cwd, 1);
+    let processes = new_processes(1);
+    let host = Host::with_engine(&processes, cwd.as_bytes());
     let specifier = flag("--plugin=").expect("--plugin");
     let plugin = match host.load(cwd.as_bytes(), specifier.as_bytes(), flag("--alias=").map(str::as_bytes)) {
         Ok(plugin) => plugin,

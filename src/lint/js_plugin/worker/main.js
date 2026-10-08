@@ -1,76 +1,52 @@
-// ───────────── the worker ─────────────
+// ───────────── the program ─────────────
 //
-// Reads messages from the file descriptor 3 and answers on 4: see `wire.rs`. All of it is synchronous
-// but for loading a plugin.
+// It is the body of a function of `require`, `load`, which is `import()`, and of what it asks the other side with:
+// - `request(kind, details, buffer)` asks for something, writes the answer into `buffer` and returns its length. If that
+//   is more than fits, nothing is written.
+// - `again(buffer)` then writes it into a larger one.
+//
+// It returns `handle`, which the other side calls. See `wire.rs` for what is said. All of it is synchronous but for loading
+// a plugin.
 
-const { writeSync } = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { createRequire } = require("node:module");
 const nodePath = require("node:path");
 
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
-const START = 2;
-const LOAD = 3;
-const SETTINGS = 4;
-const CONFIGURE = 5;
-const LINT = 6;
-const AST = 7;
-const MATCHES = 8;
-const SELECTORS = 9;
-const TOKENS = 10;
-const COMMENTS = 11;
-const SCOPES = 12;
+const LOAD = 1;
+const LINT = 2;
 
-const LOADED = 1;
-const FAILED = 2;
-const DONE = 3;
-const NEEDS_AST = 4;
-const NEEDS_MATCHES = 5;
-const NEEDS_TOKENS = 6;
-const NEEDS_COMMENTS = 7;
-const NEEDS_SCOPES = 8;
+const DONE = "0";
+const FAILED = "1";
+const NEEDS_PLUGINS = "2";
 
-const header = new Uint32Array(2);
-const headerBytes = new Uint8Array(header.buffer);
+// The content of the message that is being handled.
+const MESSAGE = 0;
+const START = 1;
+const SETTINGS = 2;
+const CONFIGURED = 3;
+const SELECTORS = 4;
+const AST = 5;
+const MATCHES = 6;
+const TOKENS = 7;
+const COMMENTS = 8;
+const SCOPES = 9;
 
-// A buffer for each kind of message, which the next message of the kind overwrites.
+// By what was asked for: the last answer, which the next one overwrites.
 const buffers = [];
 
-// Waits for a message, and returns what it is. Its content is in `buffers[kind]`, from 0 to `header[0]`.
-function next() {
-  receive(headerBytes, 8);
-  const [length, kind] = header;
-  let buffer = buffers[kind];
-  if (buffer === undefined || buffer.byteLength < length) {
-    buffer = buffers[kind] = new ArrayBuffer(Math.max(1 << 16, 2 ** Math.ceil(Math.log2(length + 8))));
-  }
-  receive(new Uint8Array(buffer), length);
-  return kind;
+// Asks for something. The answer is in `buffers[kind]`. Returns its length.
+function ask(kind, details = "") {
+  const buffer = (buffers[kind] ??= new ArrayBuffer(1 << 16));
+  const length = request(kind, details, buffer);
+  if (length > buffer.byteLength) again((buffers[kind] = new ArrayBuffer(2 ** Math.ceil(Math.log2(length)))));
+  return length;
 }
 
-function contentAsText(kind) {
-  return decoder.decode(new Uint8Array(buffers[kind], 0, header[0]));
-}
-
-function send(kind, content) {
-  const bytes = typeof content === "string" ? Buffer.from(content) : content;
-  const message = Buffer.allocUnsafe(8 + bytes.length);
-  message.writeUInt32LE(bytes.length, 0);
-  message.writeUInt32LE(kind, 4);
-  message.set(bytes, 8);
-  for (let at = 0; at < message.length; ) at += writeSync(4, message, at);
-}
-
-// Sends a request, and waits for the answer, which is of the kind `expected`.
-function ask(kind, content, expected) {
-  send(kind, content);
-  for (;;) {
-    const got = next();
-    if (got === expected) return;
-    if (got === SELECTORS) defineSelectors(JSON.parse(contentAsText(got)));
-    else throw new Error(`Expected message ${expected}, got ${got}.`);
-  }
+function askForJson(kind, details) {
+  const length = ask(kind, details);
+  return JSON.parse(decoder.decode(new Uint8Array(buffers[kind], 0, length)));
 }
 
 // ───────────── plugins ─────────────
@@ -78,6 +54,10 @@ function ask(kind, content, expected) {
 let cwd = "";
 // The rules of all plugins: `{ rule, id }`, by the number that the other side knows them by.
 const rules = [];
+// The positions of the plugins whose rules are in `rules`.
+const loadedPlugins = new Set();
+// By where they are, as JSON: `{ name, plugin }` of the plugins that were ever loaded.
+const pluginsByLocation = new Map();
 
 // oxlint's `normalizePluginName`.
 function normalizePluginName(name) {
@@ -126,7 +106,7 @@ async function locatedPlugin(location, prefix) {
   return exported[location.index].plugins[prefix];
 }
 
-async function loadPlugin([directory, specifier, alias]) {
+async function findPlugin([directory, specifier, alias]) {
   const isLocated = typeof directory === "object";
   const isPath = isLocated || /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
   let plugin;
@@ -150,21 +130,33 @@ async function loadPlugin([directory, specifier, alias]) {
       "Plugin must either define `meta.name`, be loaded from an NPM package with a `name` field in `package.json`, or be given an alias in config",
     );
   }
+  return { name, plugin };
+}
+
+// `position`, `firstRule`: `null` as long as the other side does not know the plugin.
+async function loadPlugin([location, position, firstRule]) {
+  const key = JSON.stringify(location);
+  let found = pluginsByLocation.get(key);
+  if (found === undefined) pluginsByLocation.set(key, (found = await findPlugin(location)));
+  const { name, plugin } = found;
   const described = [];
-  for (const [ruleName, rule] of Object.entries(plugin.rules ?? {})) {
+  Object.entries(plugin.rules ?? {}).forEach(([ruleName, rule], i) => {
     // A function is a rule without `meta`, as for ESLint until version 8.
     const definition = typeof rule === "function" ? { create: rule } : rule;
     const meta = definition.meta;
-    rules.push({ rule: definition, id: `${name}/${ruleName}` });
-    described.push({
-      name: ruleName,
-      type: meta?.type,
-      fixable: Boolean(meta?.fixable),
-      hasSuggestions: meta?.hasSuggestions === true,
-      schema: asJson(meta?.schema),
-      defaultOptions: asJson(meta?.defaultOptions),
-    });
-  }
+    if (position !== null) rules[firstRule + i] = { rule: definition, id: `${name}/${ruleName}` };
+    else {
+      described.push({
+        name: ruleName,
+        type: meta?.type,
+        fixable: Boolean(meta?.fixable),
+        hasSuggestions: meta?.hasSuggestions === true,
+        schema: asJson(meta?.schema),
+        defaultOptions: asJson(meta?.defaultOptions),
+      });
+    }
+  });
+  if (position !== null) loadedPlugins.add(position);
   return { name, rules: described };
 }
 
@@ -244,7 +236,9 @@ const fileContext = Object.freeze({
   },
 });
 
-function configure([id, index, options]) {
+// The rule with its options that has `id`, and is at `position` among those that run on the file.
+function configure(id, position) {
+  const [index, options] = askForJson(CONFIGURED, String(position));
   const { rule, id: ruleId } = rules[index];
   const entry = { rule, ruleId, context: null, position: 0 };
   const meta = rule.meta;
@@ -256,23 +250,22 @@ function configure([id, index, options]) {
     },
   });
   configured.set(id, entry);
+  return entry;
 }
 
 // ───────────── listeners ─────────────
 
-// All selectors that are not just the name of a type, by their text. The other side knows them by `index`.
+// All selectors that are not just the name of a type, by their text. The other side knows them by `number`.
 const selectors = new Map();
-// Those that the other side has not seen yet.
+// Those that the other side has not been asked about yet.
 let newSelectors = [];
-// In the order of `index`.
-const selectorList = [];
 
-// `[attributeCount, identifierCount]` for each of `newSelectors`, or why it cannot be used.
-function defineSelectors(described) {
-  described.forEach((it, i) => {
+function describeNewSelectors() {
+  if (newSelectors.length === 0) return;
+  askForJson(SELECTORS, JSON.stringify(newSelectors.map(it => it.text))).forEach((it, i) => {
     const selector = newSelectors[i];
     if (typeof it === "string") selector.error = it;
-    else [selector.attributes, selector.identifiers] = it;
+    else [selector.number, selector.attributes, selector.identifiers] = it;
   });
   newSelectors = [];
 }
@@ -290,7 +283,7 @@ const codePathEvents = new Set([
 // The listeners of the file. By the number of a type: those for entering and for leaving a node of it.
 let enterByType = [];
 let exitByType = [];
-// By `index`: `{ selector, listeners }`, for the selectors that are listened for.
+// By their text: `{ selector, calls }`, for the selectors that are listened for.
 let bySelector = new Map();
 // By the name of an event of the code path analysis. `null`: nothing listens for any.
 let codePathCalls = null;
@@ -321,23 +314,23 @@ function addListeners(entry, listeners) {
     }
     let selector = selectors.get(key);
     if (selector === undefined) {
-      selector = { text: key, index: selectorList.length, isExit, attributes: 0, identifiers: 0, error: null };
+      selector = { text: key, number: -1, isExit, attributes: 0, identifiers: 0, error: null };
       selectors.set(key, selector);
-      selectorList.push(selector);
       newSelectors.push(selector);
     }
     hasExitListeners ||= isExit;
-    let listened = bySelector.get(selector.index);
-    if (listened === undefined) bySelector.set(selector.index, (listened = { selector, calls: [] }));
+    let listened = bySelector.get(key);
+    if (listened === undefined) bySelector.set(key, (listened = { selector, calls: [] }));
     listened.calls.push(call);
   }
 }
 
 // ───────────── the parts of a file that are asked for ─────────────
 
-// `[new selectors, the selectors to match]`
+// The numbers of the selectors to match.
 function selectorRequest() {
-  return JSON.stringify([newSelectors.map(it => it.text), [...bySelector.keys()]]);
+  describeNewSelectors();
+  return JSON.stringify(Array.from(bySelector.values(), it => it.selector.number));
 }
 
 // What matches the selectors of `bySelector`, in its order. `null`: not asked for yet.
@@ -348,7 +341,7 @@ function program() {
   if (tree === null) {
     // Once the listeners are known, what matches comes with the tree.
     const count = isTraversing ? bySelector.size : 0;
-    ask(NEEDS_AST, isTraversing ? selectorRequest() : "[[],[]]", AST);
+    ask(AST, isTraversing ? selectorRequest() : "[]");
     tree = readTree(buffers[AST], count);
     if (isTraversing) matches = tree.matches;
     makeNodes();
@@ -435,8 +428,8 @@ function traverse() {
   isTraversing = true;
   program();
   if (matches === null && bySelector.size > 0) {
-    ask(NEEDS_MATCHES, selectorRequest(), MATCHES);
-    matches = readMatches(new Uint32Array(buffers[MATCHES], 0, header[0] >> 2), bySelector.size);
+    const length = ask(MATCHES, selectorRequest());
+    matches = readMatches(new Uint32Array(buffers[MATCHES], 0, length >> 2), bySelector.size);
   }
   for (const { selector } of bySelector.values()) {
     if (selector.error !== null) throw new SyntaxError(selector.error);
@@ -495,18 +488,24 @@ function reset() {
   resetScopes();
 }
 
+// Returns the positions of the plugins that are missing, if any are.
 function lint() {
-  const buffer = buffers[LINT];
-  const [flags, settingsId, count, pathLength] = new Uint32Array(buffer, 0, 4);
-  const ids = new Uint32Array(buffer, 16, count);
-  const pathStart = 16 + 4 * count;
+  const length = ask(MESSAGE);
+  const buffer = buffers[MESSAGE];
+  const [flags, plugins, settingsId, count, pathLength] = new Uint32Array(buffer, 0, 5);
+  if (loadedPlugins.size < plugins) {
+    return Array.from({ length: plugins }, (_, position) => position).filter(position => !loadedPlugins.has(position));
+  }
+  const ids = new Uint32Array(buffer, 20, count);
+  const pathStart = 20 + 4 * count;
   wantsFixes = (flags & 1) !== 0;
   hasBOM = (flags & 2) !== 0;
   filename = decoder.decode(new Uint8Array(buffer, pathStart, pathLength));
-  text = decoder.decode(new Uint8Array(buffer, pathStart + pathLength, header[0] - pathStart - pathLength));
+  text = decoder.decode(new Uint8Array(buffer, pathStart + pathLength, length - pathStart - pathLength));
   fileSettings = allSettings.get(settingsId);
+  if (fileSettings === undefined) allSettings.set(settingsId, (fileSettings = deepFreeze(askForJson(SETTINGS))));
   for (let position = 0; position < count; position++) {
-    const entry = configured.get(ids[position]);
+    const entry = configured.get(ids[position]) ?? configure(ids[position], position);
     entry.position = position;
     currentRule = entry;
     const listeners = entry.rule.create(entry.context);
@@ -516,44 +515,38 @@ function lint() {
     addListeners(entry, listeners);
   }
   if (hasListeners) traverse();
+  return null;
 }
 
-for (;;) {
-  const kind = next();
-  switch (kind) {
-    case START: {
-      const start = JSON.parse(contentAsText(kind));
-      cwd = start.cwd;
-      defineTypes(start.types, start.strings);
-      break;
-    }
-    case LOAD:
-      try {
-        send(LOADED, JSON.stringify(await loadPlugin(JSON.parse(contentAsText(kind)))));
-      } catch (error) {
-        send(FAILED, String(error?.stack ?? error));
-      }
-      break;
-    case SETTINGS: {
-      const [id, settings] = JSON.parse(contentAsText(kind));
-      allSettings.set(id, deepFreeze(settings));
-      break;
-    }
-    case CONFIGURE:
-      configure(JSON.parse(contentAsText(kind)));
-      break;
-    case LINT:
-      try {
-        lint();
-        const used = usedVariables();
-        send(DONE, reports.length === 0 && used.length === 0 ? "" : JSON.stringify([reports, used]));
-      } catch (error) {
-        const line = currentNode === null ? null : currentNode.loc.start.line;
-        send(FAILED, JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]));
-      }
-      reset();
-      break;
-    default:
-      throw new Error(`Unexpected message ${kind}.`);
+let hasStarted = false;
+
+function start() {
+  const { cwd: directory, types, strings } = askForJson(START);
+  cwd = directory;
+  defineTypes(types, strings);
+  hasStarted = true;
+}
+
+// What the other side calls, with what the message is. Returns the result, or a promise of it.
+function handle(kind) {
+  if (!hasStarted) start();
+  if (kind === LOAD) {
+    return loadPlugin(askForJson(MESSAGE)).then(
+      described => DONE + JSON.stringify(described),
+      error => FAILED + String(error?.stack ?? error),
+    );
+  }
+  try {
+    const missing = lint();
+    if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
+    const used = usedVariables();
+    return reports.length === 0 && used.length === 0 ? DONE : DONE + JSON.stringify([reports, used]);
+  } catch (error) {
+    const line = currentNode === null ? null : currentNode.loc.start.line;
+    return FAILED + JSON.stringify([currentRule?.position ?? null, String(error?.message ?? error), line]);
+  } finally {
+    reset();
   }
 }
+
+return handle;

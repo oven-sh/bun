@@ -47,6 +47,24 @@ impl Span {
         }
     }
 
+    /// From the end of `previous` to `end`.
+    #[inline]
+    pub const fn after(previous: Span, end: u32) -> Span {
+        Span {
+            start: previous.end,
+            end,
+        }
+    }
+
+    /// From `start` to the start of `next`.
+    #[inline]
+    pub const fn before(start: u32, next: Span) -> Span {
+        Span {
+            start,
+            end: next.start,
+        }
+    }
+
     #[inline]
     pub const fn contains(self, other: Span) -> bool {
         self.start <= other.start && other.end <= self.end

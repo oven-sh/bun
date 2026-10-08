@@ -3,6 +3,7 @@
 use super::{Class, File, Func, Ident, List, Name, Node, Prop, TypeNode, handle};
 use crate::span::Span;
 use crate::tokens::skip_trivia;
+use bun_sema::atom::Atom;
 use bun_sema::hir::{self, BinOp, Chain, ExprTag, UnOp};
 use smallvec::SmallVec;
 
@@ -113,15 +114,31 @@ pub enum ExprKind<'a> {
 impl<'a> Expr<'a> {
     #[inline]
     pub fn kind(self) -> ExprKind<'a> {
+        match self.try_raw() {
+            None => ExprKind::Missing,
+            Some(raw) if self.file.hides_casts => self.kind_without_casts(raw),
+            Some(raw) => self.kind_of::<false>(raw),
+        }
+    }
+
+    #[inline(never)]
+    fn kind_without_casts(self, raw: &hir::Expr) -> ExprKind<'a> {
+        self.kind_of::<true>(raw)
+    }
+
+    /// `HIDES_CASTS`: an operand can be a cast that is synthesized from a JSDoc comment. What few
+    /// expressions need is not in here but in functions of its own, so that this one calls nothing.
+    #[inline(always)]
+    fn kind_of<const HIDES_CASTS: bool>(self, raw: &hir::Expr) -> ExprKind<'a> {
         let file = self.file;
-        let e = |id| Expr::new(file, id);
-        let Some(raw) = self.try_raw() else {
-            return ExprKind::Missing;
+        let e = |id| match HIDES_CASTS {
+            true => Expr::new(file, id),
+            false => Expr { file, id },
         };
         match raw.kind {
             hir::ExprKind::Missing => ExprKind::Missing,
             hir::ExprKind::Ident(name) => ExprKind::Ident(file.name(name)),
-            hir::ExprKind::PrivateIdentifier(name) => ExprKind::PrivateIdentifier(file.private_name(name)),
+            hir::ExprKind::PrivateIdentifier(name) => self.kind_of_private_identifier(name),
             hir::ExprKind::This => ExprKind::This,
             hir::ExprKind::Super => ExprKind::Super,
             hir::ExprKind::Null => ExprKind::Null,
@@ -130,21 +147,10 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Number(at) => {
                 ExprKind::Number(file.hir.numbers.get(at as usize).copied().unwrap_or(f64::NAN))
             }
-            hir::ExprKind::String(text) if file.is_backtick_string(self.id, raw) => {
-                ExprKind::Template(Template {
-                    expr: self,
-                    exprs: hir::IdList::EMPTY,
-                    only_text: Some(text),
-                })
-            }
-            hir::ExprKind::String(text) if file.is_jsx_attribute_string(self.id) => {
-                let value = file.name(text);
-                ExprKind::String(match super::entities::unescape(value.bytes()) {
-                    std::borrow::Cow::Borrowed(_) => value,
-                    std::borrow::Cow::Owned(decoded) => file.name(file.atoms.intern(&decoded)),
-                })
-            }
-            hir::ExprKind::String(text) => ExprKind::String(file.name(text)),
+            hir::ExprKind::String(text) => match file.hir.text.get(raw.pos as usize) {
+                Some(b'"' | b'\'') if file.hir.jsx.is_empty() => ExprKind::String(file.name(text)),
+                _ => self.kind_of_string(raw, text),
+            },
             hir::ExprKind::BigInt(text) => ExprKind::BigInt(file.name(text)),
             hir::ExprKind::Regex => ExprKind::Regex(Regex { expr: self }),
             hir::ExprKind::Template { exprs } => ExprKind::Template(Template {
@@ -162,13 +168,13 @@ impl<'a> Expr<'a> {
                 name,
                 name_pos,
                 chain,
-            } => ExprKind::Dot {
-                obj: e(obj),
-                name: match file.hir.text.get(name_pos as usize) {
-                    Some(b'#') => file.ident(file.private_name(name).atom(), name_pos),
-                    _ => file.ident(name, name_pos),
+            } => match file.spells_private_names_apart() && file.hir.text.get(name_pos as usize) == Some(&b'#') {
+                true => self.kind_of_private_member(obj, name, name_pos, chain),
+                false => ExprKind::Dot {
+                    obj: e(obj),
+                    name: file.ident(name, name_pos),
+                    chain,
                 },
-                chain,
             },
             hir::ExprKind::Index { obj, index, chain } => ExprKind::Index {
                 obj: e(obj),
@@ -199,7 +205,7 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Spread(operand) => ExprKind::Spread(e(operand)),
             hir::ExprKind::Await(operand) => ExprKind::Await(e(operand)),
             hir::ExprKind::Yield { value, star } => ExprKind::Yield {
-                value: Expr::some(file, value),
+                value: (value.idx() < file.hir.exprs.len()).then(|| e(value)),
                 star,
             },
             hir::ExprKind::As { expr, ty } => ExprKind::As {
@@ -223,6 +229,41 @@ impl<'a> Expr<'a> {
             hir::ExprKind::ImportMeta => ExprKind::ImportMeta,
             hir::ExprKind::NewTarget(_) => ExprKind::NewTarget,
         }
+    }
+
+    #[inline(never)]
+    fn kind_of_private_identifier(self, name: Atom) -> ExprKind<'a> {
+        ExprKind::PrivateIdentifier(self.file.private_name(name))
+    }
+
+    #[inline(never)]
+    fn kind_of_private_member(self, obj: hir::ExprId, name: Atom, name_pos: u32, chain: Chain) -> ExprKind<'a> {
+        ExprKind::Dot {
+            obj: Expr::new(self.file, obj),
+            name: self.file.ident(self.file.private_name(name).atom(), name_pos),
+            chain,
+        }
+    }
+
+    /// The kind of what the HIR has as the string `text` and is not plainly one.
+    #[inline(never)]
+    fn kind_of_string(self, raw: &hir::Expr, text: Atom) -> ExprKind<'a> {
+        let file = self.file;
+        if file.is_backtick_string(self.id, raw) {
+            return ExprKind::Template(Template {
+                expr: self,
+                exprs: hir::IdList::EMPTY,
+                only_text: Some(text),
+            });
+        }
+        let value = file.name(text);
+        if !file.is_jsx_attribute_string(self.id) {
+            return ExprKind::String(value);
+        }
+        ExprKind::String(match super::entities::unescape(value.bytes()) {
+            std::borrow::Cow::Borrowed(_) => value,
+            std::borrow::Cow::Owned(decoded) => file.name(file.atoms.intern(&decoded)),
+        })
     }
 
     /// The kind without what it holds. This is what a rule listens for.
@@ -268,6 +309,24 @@ impl<'a> Expr<'a> {
     /// Without the parentheses around it.
     #[inline]
     pub fn span(self) -> Span {
+        let file = self.file;
+        let Some(raw) = self.try_raw() else {
+            return Span::default();
+        };
+        let is_as_in_the_hir = match raw.kind {
+            hir::ExprKind::Ident(_) | hir::ExprKind::Dot { .. } => file.has_no_unicode_escapes(),
+            hir::ExprKind::Spread(_) | hir::ExprKind::String(_) => file.hir.jsx.is_empty(),
+            hir::ExprKind::Class(_) | hir::ExprKind::Fn(_) => false,
+            _ => true,
+        };
+        match is_as_in_the_hir {
+            true => Span::new(raw.pos, raw.end),
+            false => self.span_that_the_hir_may_not_have(),
+        }
+    }
+
+    #[inline(never)]
+    fn span_that_the_hir_may_not_have(self) -> Span {
         match self.try_raw() {
             // The HIR does not position the `...e` of the child `{...e}` of a JSX element.
             Some(&hir::Expr {
@@ -357,12 +416,6 @@ impl<'a> Expr<'a> {
         }
     }
 
-    /// What it is directly part of.
-    #[inline]
-    pub fn parent(self) -> Node<'a> {
-        Node::Expr(self).parent()
-    }
-
     #[inline]
     pub fn is_missing(self) -> bool {
         self.tag() == ExprTag::Missing
@@ -371,8 +424,8 @@ impl<'a> Expr<'a> {
     /// The name, if it is an identifier.
     #[inline]
     pub fn as_ident(self) -> Option<Name<'a>> {
-        match self.kind() {
-            ExprKind::Ident(name) => Some(name),
+        match self.try_raw()?.kind {
+            hir::ExprKind::Ident(name) => Some(self.file.name(name)),
             _ => None,
         }
     }
@@ -386,24 +439,27 @@ impl<'a> Expr<'a> {
     /// The value, if it is a string literal.
     #[inline]
     pub fn as_string(self) -> Option<Name<'a>> {
-        match self.kind() {
-            ExprKind::String(value) => Some(value),
+        match self.try_raw()?.kind {
+            hir::ExprKind::String(_) => match self.kind() {
+                ExprKind::String(value) => Some(value),
+                _ => None,
+            },
             _ => None,
         }
     }
 
     #[inline]
     pub fn as_call(self) -> Option<Call<'a>> {
-        match self.kind() {
-            ExprKind::Call(call) => Some(call),
+        match self.try_raw()?.kind {
+            hir::ExprKind::Call(call) => Some(Call::new(self.file, call)),
             _ => None,
         }
     }
 
     #[inline]
     pub fn as_fn(self) -> Option<Func<'a>> {
-        match self.kind() {
-            ExprKind::Fn(func) => Some(func),
+        match self.try_raw()?.kind {
+            hir::ExprKind::Fn(func) => Some(Func::new(self.file, func)),
             _ => None,
         }
     }
@@ -419,15 +475,17 @@ impl<'a> Expr<'a> {
     }
 
     /// `a?.b`, `a?.[b]`, `a?.()`: the `?.` is in this expression itself.
+    #[inline]
     pub fn is_optional(self) -> bool {
         self.chain() == Chain::Start
     }
 
     /// Its place in an optional chain.
+    #[inline]
     pub fn chain(self) -> Chain {
-        match self.kind() {
-            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
-            ExprKind::Call(call) => call.chain(),
+        match self.try_raw().map(|raw| raw.kind) {
+            Some(hir::ExprKind::Dot { chain, .. } | hir::ExprKind::Index { chain, .. }) => chain,
+            Some(hir::ExprKind::Call(call)) => Call::new(self.file, call).chain(),
             _ => Chain::No,
         }
     }
@@ -467,26 +525,27 @@ impl<'a> Expr<'a> {
     /// It is part of an optional chain: it is not evaluated if a `?.` to its left, or its own,
     /// finds `null` or `undefined`. In `a?.b.c!` that is `a?.b`, `a?.b.c` and `a?.b.c!`. In
     /// `(a?.b).c` it is only `a?.b`: parentheses end a chain.
+    #[inline]
     pub fn is_in_optional_chain(self) -> bool {
         let mut at = self;
-        loop {
-            match at.kind() {
-                ExprKind::NonNull(operand) if !operand.is_parenthesized() => at = operand,
-                ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
-                    return chain != Chain::No;
-                }
-                ExprKind::Call(call) => return call.chain() != Chain::No,
-                _ => return false,
+        while let Some(hir::Expr { kind: hir::ExprKind::NonNull(operand), .. }) = at.try_raw() {
+            at = Expr::new(self.file, *operand);
+            if at.is_parenthesized() {
+                return false;
             }
         }
+        at.chain() != Chain::No
     }
 
     /// It is the whole of an optional chain: where ESLint has a `ChainExpression`, with the same
     /// range, around the `MemberExpression`, the `CallExpression` or the `TSNonNullExpression`.
+    #[inline]
     pub fn is_chain_root(self) -> bool {
-        if !self.is_in_optional_chain() {
-            return false;
-        }
+        self.is_in_optional_chain() && self.ends_optional_chain()
+    }
+
+    /// Whether the optional chain that it is part of goes no further.
+    fn ends_optional_chain(self) -> bool {
         let Node::Expr(parent) = self.parent() else {
             return true;
         };
@@ -560,6 +619,7 @@ impl<'a> Expr<'a> {
     }
 
     /// The number of `!` of a `NonNull`: 2 for `x!!`. 0 for anything else.
+    #[inline]
     pub fn non_null_count(self) -> usize {
         match self.tag() {
             ExprTag::NonNull => self.inner_non_null_spans().len() + 1,
@@ -814,6 +874,7 @@ impl<'a> Template<'a> {
 
     /// The value of the piece of text at `i`. `None` if it has an invalid escape, which a tagged
     /// template allows.
+    #[inline]
     pub fn cooked(self, i: usize) -> Option<Name<'a>> {
         self.text_of_scanner(i).filter(|_| !has_invalid_escape(self.raw(i)))
     }
@@ -846,6 +907,7 @@ impl<'a> Template<'a> {
     }
 
     /// The piece of text at `i` as it is written, without its delimiters.
+    #[inline]
     pub fn raw(self, i: usize) -> &'a [u8] {
         let is_last = i + 1 == self.quasi_count();
         let span = self.quasi_span(i).shrink(1, if is_last { 1 } else { 2 });
@@ -853,6 +915,7 @@ impl<'a> Template<'a> {
     }
 
     /// The value, if there are no substitutions.
+    #[inline]
     pub fn as_static(self) -> Option<Name<'a>> {
         self.exprs.is_empty().then(|| self.cooked(0)).flatten()
     }
@@ -967,6 +1030,7 @@ impl<'a> Call<'a> {
     }
 
     /// The position of the `)`. `None` for `new C` and for a tagged template.
+    #[inline]
     pub fn close_paren(self) -> Option<u32> {
         self.raw()
             .map(|call| call.close_pos)
@@ -1120,6 +1184,7 @@ impl<'a> Jsx<'a> {
     }
 
     /// `</tag>`, `</>`
+    #[inline]
     pub fn closing_span(self) -> Option<Span> {
         let jsx = self.raw()?;
         (jsx.close_pos != u32::MAX).then(|| Span::new(jsx.close_pos, jsx.end))

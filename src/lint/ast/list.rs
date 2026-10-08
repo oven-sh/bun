@@ -75,6 +75,7 @@ impl<'a, T: Handle<'a>> List<'a, T> {
         }
     }
 
+    #[inline]
     pub fn is_empty(self) -> bool {
         self.len() == 0
     }

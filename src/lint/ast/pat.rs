@@ -156,6 +156,7 @@ impl<'a> PatElem<'a> {
     }
 
     /// `None` for a hole.
+    #[inline]
     pub fn pat(self) -> Option<Pat<'a>> {
         Pat::some(self.file, self.raw().pat).filter(|pat| pat.tag() != PatTag::Missing)
     }

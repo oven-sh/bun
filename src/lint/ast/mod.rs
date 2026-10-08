@@ -50,6 +50,8 @@ pub use list::{Iter as ListIter, List};
 pub use name::{Ident, Name};
 pub use node::{Ancestors, Node};
 pub use pat::*;
+#[doc(hidden)]
+pub use reach::NOT_IN_TREE;
 pub use stmt::*;
 pub use ty::*;
 
@@ -170,6 +172,7 @@ pub(crate) struct Lazy {
     pub(crate) lines: OnceCell<crate::source::Lines>,
     pub(crate) tokens: OnceCell<crate::tokens::TokenStore>,
     pub(crate) parents: OnceCell<node::Parents>,
+    has_types_that_are_errors: OnceCell<bool>,
     /// The text has a `\u`.
     has_unicode_escapes: OnceCell<bool>,
     /// A bit for each expression: it is in parentheses.
@@ -322,6 +325,7 @@ impl<'a> File<'a> {
 
     /// What another crate computes from the file once and keeps as long as the file. `init` runs
     /// the first time. There is one slot: `None` if it holds a value of another type.
+    #[inline]
     pub fn extension<T: 'static>(&'a self, init: impl FnOnce() -> T) -> Option<&'a T> {
         self.lazy.extension.get_or_init(|| Box::new(init())).downcast_ref()
     }
@@ -333,10 +337,24 @@ impl<'a> File<'a> {
         self.hir.text.starts_with(b"\xEF\xBB\xBF")
     }
 
+    /// It is known that the text has no `\u`: every identifier ends where the HIR says.
+    #[inline]
+    pub(crate) fn has_no_unicode_escapes(&self) -> bool {
+        self.lazy.has_unicode_escapes.get() == Some(&false)
+    }
+
     /// Where the identifier at `pos` ends. The HIR says `end`, which for some identifiers that are
     /// written with an escape is `pos` and the length of the name.
     #[inline]
     pub(crate) fn end_of_identifier(&self, pos: u32, end: u32) -> u32 {
+        match self.has_no_unicode_escapes() {
+            true => end,
+            false => self.end_of_identifier_that_may_have_escapes(pos, end),
+        }
+    }
+
+    #[inline(never)]
+    fn end_of_identifier_that_may_have_escapes(&self, pos: u32, end: u32) -> u32 {
         let has_escapes = self.lazy.has_unicode_escapes.get_or_init(|| bun_core::strings::contains(self.hir.text, b"\\u"));
         if !*has_escapes {
             return end;
@@ -425,10 +443,22 @@ impl<'a> File<'a> {
 
     /// The name `#x` that `atom` stands for. In a program that has been checked, the HIR has a
     /// spelling for it that tells the `#x` of one class from that of another.
+    #[inline]
     pub(crate) fn private_name(&'a self, atom: Atom) -> Name<'a> {
-        if self.types.is_none() || atom.is_none() {
-            return self.name(atom);
+        match self.spells_private_names_apart() && atom.is_some() {
+            true => self.written_private_name(atom),
+            false => self.name(atom),
         }
+    }
+
+    /// See [`File::private_name`].
+    #[inline]
+    pub(crate) fn spells_private_names_apart(&self) -> bool {
+        self.types.is_some()
+    }
+
+    #[inline(never)]
+    fn written_private_name(&'a self, atom: Atom) -> Name<'a> {
         let spelled = self.atoms.bytes(atom);
         match bun_sema::atom::written_name(spelled) {
             written if written.len() == spelled.len() => self.name(atom),
@@ -460,22 +490,27 @@ impl<'a> File<'a> {
 
     /// Whether `pos` is inside a JSDoc comment of a JavaScript file: a node there is synthesized
     /// from a tag for the type checker, and is not syntax.
+    #[inline]
     pub(crate) fn is_in_jsdoc(&self, pos: u32) -> bool {
         let comments = self.hir.jsdoc_comments;
-        if comments.is_empty() {
-            return false;
+        !comments.is_empty() && {
+            let after = comments.partition_point(|c| c.0 <= pos);
+            after > 0 && pos < comments[after - 1].1
         }
-        let after = comments.partition_point(|c| c.0 <= pos);
-        after > 0 && pos < comments[after - 1].1
     }
 
     /// `/** @type {T} */ (e)`, `/** @satisfies {T} */ (e)`: if `id` is the `e as T` that the HIR has
     /// in these parentheses, the `e`. The source has no such node, and neither has a handle: it
     /// takes exactly the place of `e` and the parentheses that `e` has of its own.
+    #[inline]
     pub(crate) fn jsdoc_cast_operand(&self, id: hir::ExprId) -> Option<hir::ExprId> {
-        if !self.hides_casts {
-            return None;
+        match self.hides_casts {
+            true => self.operand_if_jsdoc_cast(id),
+            false => None,
         }
+    }
+
+    fn operand_if_jsdoc_cast(&self, id: hir::ExprId) -> Option<hir::ExprId> {
         let cast = self.hir.exprs.get(id.idx())?;
         let operand = match cast.kind {
             hir::ExprKind::As { expr, .. }
@@ -493,6 +528,7 @@ impl<'a> File<'a> {
     }
 
     /// The cast that is synthesized from a JSDoc comment around the expression `id`.
+    #[inline]
     pub(crate) fn jsdoc_cast_around(&self, id: hir::ExprId) -> Option<hir::ExprId> {
         if !self.hides_casts {
             return None;
@@ -505,11 +541,17 @@ impl<'a> File<'a> {
 
     /// `id`, or what is in it if it is a cast that is synthesized from a JSDoc comment.
     #[inline]
-    pub(crate) fn written_expr(&self, mut id: hir::ExprId) -> hir::ExprId {
-        if self.hides_casts {
-            while let Some(operand) = self.jsdoc_cast_operand(id) {
-                id = operand;
-            }
+    pub(crate) fn written_expr(&self, id: hir::ExprId) -> hir::ExprId {
+        match self.hides_casts {
+            true => self.without_jsdoc_casts(id),
+            false => id,
+        }
+    }
+
+    #[inline(never)]
+    fn without_jsdoc_casts(&self, mut id: hir::ExprId) -> hir::ExprId {
+        while let Some(operand) = self.operand_if_jsdoc_cast(id) {
+            id = operand;
         }
         id
     }
@@ -604,6 +646,11 @@ macro_rules! handle {
             pub fn text(self) -> &'a [u8] {
                 self.file.slice(self.span())
             }
+
+            #[inline(never)]
+            fn starts_in_jsdoc(self) -> bool {
+                self.file.is_in_jsdoc(self.span().start)
+            }
         }
 
         impl PartialEq for $name<'_> {
@@ -639,7 +686,7 @@ macro_rules! handle {
             }
             #[inline]
             fn is_synthetic(self) -> bool {
-                self.file.has_synthetic_nodes() && self.file.is_in_jsdoc(self.span().start)
+                self.file.has_synthetic_nodes() && self.starts_in_jsdoc()
             }
         }
         impl crate::span::Spanned for $name<'_> {

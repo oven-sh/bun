@@ -71,6 +71,7 @@ macro_rules! conversions {
             }
 
             /// Which vector of the HIR it is in, and where.
+            #[inline]
             fn packed(self) -> Packed {
                 match self {
                     Node::File(_) => Packed::FILE,
@@ -84,6 +85,7 @@ macro_rules! conversions {
         enum Tag { File, $($variant,)* }
 
         impl Packed {
+            #[inline]
             fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {
                 match self.tag {
                     Tag::File => Node::File(file),
@@ -182,10 +184,19 @@ impl<'a> Node<'a> {
     }
 
     /// What it is directly part of. The file is its own parent.
+    #[inline]
     pub fn parent(self) -> Node<'a> {
-        let file = self.file();
+        match self {
+            Node::Expr(e) => e.parent(),
+            Node::Stmt(s) => s.parent(),
+            _ => self.parent_of_neither_expr_nor_stmt(),
+        }
+    }
+
+    /// The node that the binder has as `parent`.
+    fn of_parent(file: &'a File<'a>, parent: Option<&Parent>) -> Node<'a> {
         let (hir, bound) = (&file.hir, &file.bound);
-        let of_parent = |parent: Option<&Parent>| match parent.copied().unwrap_or(Parent::None) {
+        match parent.copied().unwrap_or(Parent::None) {
             Parent::None | Parent::File => Node::File(file),
             Parent::Expr(e) => Node::Expr(Expr::new(file, e)),
             Parent::Prop(p) if file.is_import_attribute(p) => file.parents().of_import_attribute(file, p),
@@ -224,7 +235,12 @@ impl<'a> Node<'a> {
                     _ => break Node::Stmt(Stmt::new(file, module.stmt)),
                 }
             },
-        };
+        }
+    }
+
+    fn parent_of_neither_expr_nor_stmt(self) -> Node<'a> {
+        let file = self.file();
+        let (hir, bound) = (&file.hir, &file.bound);
         let stmt = |s: Option<hir::StmtId>| match s {
             Some(s) if s.is_some() => Node::Stmt(Stmt::new(file, s)),
             _ => Node::File(file),
@@ -238,43 +254,8 @@ impl<'a> Node<'a> {
         let unpack = |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
         match self {
             Node::File(_) => self,
-            Node::Expr(e) => {
-                // Few files have a `typeof` in a type.
-                let in_type_query = !bound.type_query_operands.is_empty()
-                    && bound.type_query_operands.binary_search(&e.id()).is_ok();
-                if let Some(Some(ty)) = in_type_query.then(|| file.parents().of_type_query_operand(e.id())) {
-                    return Node::Type(TypeNode::new(file, ty));
-                }
-                let mut id = e.id();
-                while let Some(cast) = file.jsdoc_cast_around(id) {
-                    id = cast;
-                }
-                match bound.expr_parent.get(id.idx()) {
-                    // The substitutions of a tagged template are in the template.
-                    Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
-                        Some(hir::ExprKind::TaggedTemplate(call)) => match hir.calls.get(call.idx()) {
-                            Some(call) if call.callee != id && call.template != id => {
-                                Node::Expr(Expr::new(file, call.template))
-                            }
-                            _ => Node::Expr(Expr::new(file, parent)),
-                        },
-                        _ => Node::Expr(Expr::new(file, parent)),
-                    },
-                    parent => of_parent(parent),
-                }
-            }
-            Node::Stmt(s) => match of_parent(bound.stmt_parent.get(s.id().idx())) {
-                // The binder records the `switch` for what is in a clause.
-                Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.kind() {
-                    StmtKind::Switch { cases, .. } => {
-                        let start = s.span().start;
-                        (cases.iter().find(|case| case.span().contains_offset(start)))
-                            .map_or(Node::Stmt(parent), Node::Case)
-                    }
-                    _ => Node::Stmt(parent),
-                },
-                parent => parent,
-            },
+            Node::Expr(e) => e.parent(),
+            Node::Stmt(s) => s.parent(),
             Node::Pat(p) => match bound.pat_parent.get(p.id().idx()) {
                 Some(&PatParent::Var(d)) => Node::VarDecl(VarDecl::new(file, d)),
                 Some(&PatParent::Param(p)) => Node::Param(Param::new(file, p)),
@@ -344,6 +325,82 @@ impl<'a> Node<'a> {
     }
 }
 
+impl<'a> Expr<'a> {
+    /// What it is directly part of.
+    #[inline]
+    pub fn parent(self) -> Node<'a> {
+        let file = self.file;
+        if !file.hides_casts
+            && file.bound.type_query_operands.is_empty()
+            && let Some(&Parent::Expr(parent)) = file.bound.expr_parent.get(self.id.idx())
+            && let Some(raw) = file.hir.exprs.get(parent.idx())
+            && !matches!(raw.kind, hir::ExprKind::TaggedTemplate(_))
+        {
+            return Node::Expr(Expr { file, id: parent });
+        }
+        self.parent_in_general()
+    }
+
+    fn parent_in_general(self) -> Node<'a> {
+        let file = self.file;
+        let (hir, bound) = (&file.hir, &file.bound);
+        // Few files have a `typeof` in a type.
+        let in_type_query =
+            !bound.type_query_operands.is_empty() && bound.type_query_operands.binary_search(&self.id).is_ok();
+        if let Some(Some(ty)) = in_type_query.then(|| file.parents().of_type_query_operand(self.id)) {
+            return Node::Type(TypeNode::new(file, ty));
+        }
+        let mut id = self.id;
+        while let Some(cast) = file.jsdoc_cast_around(id) {
+            id = cast;
+        }
+        match bound.expr_parent.get(id.idx()) {
+            // The substitutions of a tagged template are in the template.
+            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+                Some(hir::ExprKind::TaggedTemplate(call)) => match hir.calls.get(call.idx()) {
+                    Some(call) if call.callee != id && call.template != id => {
+                        Node::Expr(Expr::new(file, call.template))
+                    }
+                    _ => Node::Expr(Expr::new(file, parent)),
+                },
+                _ => Node::Expr(Expr::new(file, parent)),
+            },
+            parent => Node::of_parent(file, parent),
+        }
+    }
+}
+
+impl<'a> Stmt<'a> {
+    #[inline]
+    pub fn parent(self) -> Node<'a> {
+        let file = self.file;
+        match file.bound.stmt_parent.get(self.id.idx()) {
+            Some(&Parent::FnBody(f)) => Node::Func(Func::new(file, f)),
+            Some(&Parent::Stmt(parent))
+                if matches!(file.hir.stmts.get(parent.idx()), Some(hir::Stmt { kind: hir::StmtKind::Block(_), .. })) =>
+            {
+                Node::Stmt(Stmt::new(file, parent))
+            }
+            parent => self.parent_in_general(parent),
+        }
+    }
+
+    fn parent_in_general(self, parent: Option<&Parent>) -> Node<'a> {
+        match Node::of_parent(self.file, parent) {
+            // The binder records the `switch` for what is in a clause.
+            Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.kind() {
+                StmtKind::Switch { cases, .. } => {
+                    let start = self.span().start;
+                    (cases.iter().find(|case| case.span().contains_offset(start)))
+                        .map_or(Node::Stmt(parent), Node::Case)
+                }
+                _ => Node::Stmt(parent),
+            },
+            parent => parent,
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct Ancestors<'a> {
     at: Option<Node<'a>>,
@@ -376,8 +433,6 @@ pub(crate) struct Parents {
     tuple_elems: Box<[Packed]>,
     /// The `a.b` of `typeof a.b`, with the type. Sorted.
     type_query_operands: Box<[(hir::ExprId, hir::TypeNodeId)]>,
-    /// There is a type that is an error and whose operand is not a node: `T?`, `unique T`.
-    has_types_in_errors: bool,
     /// The `this` of each `this` parameter, with the parameter. Sorted.
     this_names: Box<[(hir::PatId, hir::ParamId)]>,
 }
@@ -390,10 +445,7 @@ impl Parents {
     }
 
     /// Whether the type `id` is in a type that is an error, which has no children.
-    pub(super) fn is_in_error(&self, hir: &super::Hir, id: hir::TypeNodeId) -> bool {
-        if !self.has_types_in_errors {
-            return false;
-        }
+    fn is_in_error(&self, hir: &super::Hir, id: hir::TypeNodeId) -> bool {
         let mut at = id;
         while let Some(&Packed { tag: Tag::Type, id }) = self.types.get(at.idx()) {
             at = hir::TypeNodeId(id);
@@ -589,8 +641,6 @@ impl Parents {
             type_params,
             tuple_elems,
             type_query_operands: type_query_operands.into_boxed_slice(),
-            has_types_in_errors: (hir.types.iter())
-                .any(|it| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. } | hir::TypeNodeKind::Unique(_))),
             this_names: this_names.into_boxed_slice(),
         }
     }
@@ -600,5 +650,14 @@ impl File<'_> {
     #[inline]
     pub(super) fn parents(&self) -> &Parents {
         self.lazy.parents.get_or_init(|| Parents::new(self))
+    }
+
+    /// Whether the type `id` is in a type that is an error and whose operand is not a node: `T?`,
+    /// `unique T`.
+    #[inline]
+    pub(super) fn is_in_type_that_is_an_error(&self, id: hir::TypeNodeId) -> bool {
+        let is_error = |it: &hir::TypeNode| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. } | hir::TypeNodeKind::Unique(_));
+        *self.lazy.has_types_that_are_errors.get_or_init(|| self.hir.types.iter().any(is_error))
+            && self.parents().is_in_error(&self.hir, id)
     }
 }

@@ -124,18 +124,35 @@ impl<'a> TypeNode<'a> {
         TypeNode::some(file, id).filter(|ty| !super::Handle::is_synthetic(*ty))
     }
 
+    #[inline]
     pub fn kind(self) -> TypeKind<'a> {
+        match self.try_raw() {
+            None => TypeKind::Error,
+            Some(raw) if self.file.hides_casts => self.kind_without_casts(raw),
+            Some(raw) => self.kind_of::<false>(raw),
+        }
+    }
+
+    #[inline(never)]
+    fn kind_without_casts(self, raw: &hir::TypeNode) -> TypeKind<'a> {
+        self.kind_of::<true>(raw)
+    }
+
+    /// See `Expr::kind_of`.
+    #[inline(always)]
+    fn kind_of<const HIDES_CASTS: bool>(self, raw: &hir::TypeNode) -> TypeKind<'a> {
         let file = self.file;
         let t = |id| TypeNode::new(file, id);
-        let Some(raw) = self.try_raw() else {
-            return TypeKind::Error;
+        let e = |id| match HIDES_CASTS {
+            true => Expr::new(file, id),
+            false => Expr { file, id },
         };
         match raw.kind {
             hir::TypeNodeKind::Error
             | hir::TypeNodeKind::Unique(_)
             | hir::TypeNodeKind::JSDoc { .. } => TypeKind::Error,
             hir::TypeNodeKind::Heritage { expr, args } => TypeKind::Heritage {
-                expr: Expr::new(file, expr),
+                expr: e(expr),
                 args: List::ids(file, args),
             },
             hir::TypeNodeKind::Keyword(keyword) => TypeKind::Keyword(keyword),
@@ -182,7 +199,7 @@ impl<'a> TypeNode<'a> {
             hir::TypeNodeKind::Readonly(operand) => TypeKind::Readonly(t(operand)),
             hir::TypeNodeKind::UniqueSymbol => TypeKind::UniqueSymbol,
             hir::TypeNodeKind::Typeof { args, expr, .. } => TypeKind::Typeof {
-                expr: Expr::new(file, expr),
+                expr: e(expr),
                 args: List::ids(file, args),
             },
             hir::TypeNodeKind::Import {
@@ -370,6 +387,7 @@ impl<'a> TypeTemplate<'a> {
     }
 
     /// The piece of text at `i` as it is written, without its delimiters.
+    #[inline]
     pub fn raw(self, i: usize) -> &'a [u8] {
         let is_last = i + 1 == self.quasi_count();
         let span = self.quasi_span(i).shrink(1, if is_last { 1 } else { 2 });
@@ -482,6 +500,7 @@ impl<'a> EntityName<'a> {
     }
 
     /// The name at `i`, counted from the left.
+    #[inline]
     pub fn get(self, i: usize) -> Option<Ident<'a>> {
         let name = (i < self.names.len()).then(|| self.file.hir.names.get(self.names.start as usize + i))??;
         Some(self.file.ident(name.text, name.pos()))
@@ -514,6 +533,7 @@ impl<'a> EntityName<'a> {
     }
 
     /// Whether it is the single name `name`.
+    #[inline]
     pub fn is(self, name: &str) -> bool {
         self.as_ident().is_some_and(|it| it.name().is(name))
     }

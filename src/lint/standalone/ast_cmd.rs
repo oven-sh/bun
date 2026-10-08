@@ -15,7 +15,7 @@ mod estree_json;
 
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{
-    ExprKind, ExprTag, File, FnKind, Key, List, Modifier, Node, PatTag, StmtKind, StmtTag, TypeKind, TypeTag,
+    ExprKind, ExprTag, File, FnKind, Key, List, Modifier, NOT_IN_TREE, Node, PatTag, StmtKind, StmtTag, TypeKind, TypeTag,
     assign_op_text, bin_op_text, un_op_text,
 };
 use bun_lint::context::Severity;
@@ -545,6 +545,36 @@ fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, proble
 }
 
 /// What the rule below finds.
+/// Whether the kinds of all the elements of a vector of the HIR at once are those of the nodes that are reached, and of
+/// nothing else.
+fn check_tags<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, problems: &mut Vec<Problem>) {
+    let [mut exprs, mut stmts, mut types, mut pats] = [const { Vec::new() }; 4];
+    file.expr_tags_in_tree(&mut exprs);
+    file.stmt_tags_in_tree(&mut stmts);
+    file.type_tags_in_tree(&mut types);
+    file.pat_tags_in_tree(&mut pats);
+    let mut counts = [0usize; 4];
+    for &node in reached.keys() {
+        let (sort, tags, id, tag) = match node {
+            Node::Expr(it) => (0, &exprs, it.id().idx(), it.tag() as u8),
+            Node::Stmt(it) => (1, &stmts, it.id().idx(), it.tag() as u8),
+            Node::Type(it) => (2, &types, it.id().idx(), it.tag() as u8),
+            Node::Pat(it) => (3, &pats, it.id().idx(), it.tag() as u8),
+            _ => continue,
+        };
+        counts[sort] += 1;
+        if tags.get(id) != Some(&tag) {
+            problems.push((format!("in the tree, another kind in the list of all: {}", describe(node)), place(node)));
+        }
+    }
+    for (name, tags, count) in [("Expr", &exprs, counts[0]), ("Stmt", &stmts, counts[1]), ("Type", &types, counts[2]), ("Pat", &pats, counts[3])] {
+        let listed = tags.iter().filter(|&&tag| tag != NOT_IN_TREE).count();
+        if listed != count {
+            problems.push((format!("the list of all has {name}s that are not in the tree"), format!("{listed} and {count}")));
+        }
+    }
+}
+
 static FOUND: Mutex<Vec<Problem>> = Mutex::new(Vec::new());
 
 /// Listens for everything, and compares what it is called with to what a walk reaches.
@@ -587,6 +617,7 @@ impl Rule for Everything {
             let mut problems = Vec::new();
             let reached = check_tree(cx.file(), &mut problems);
             check_estree(cx.file(), &reached, &mut problems);
+            check_tags(cx.file(), &reached, &mut problems);
             for (&node, &times) in &cx.state {
                 if times > 1 {
                     problems.push((format!("listener called twice: {}", describe(node)), place(node)));

@@ -14,50 +14,108 @@ use super::{
 use bun_sema::bind::{FnOwner, MemberOwner, Parent, PatParent};
 use bun_sema::hir;
 
-impl File<'_> {
-    #[inline]
-    fn is_outside_jsdoc(&self, pos: u32) -> bool {
-        !self.has_synthetic_nodes() || !self.is_in_jsdoc(pos)
-    }
+/// In place of the kind of what is not a node: see [`File::expr_tags_in_tree`].
+pub const NOT_IN_TREE: u8 = u8::MAX;
 
+/// Declares `File::$all`, which is `File::$one` for a whole vector of the HIR.
+macro_rules! tags_in_tree {
+    ($($all:ident $one:ident $field:ident;)*) => {
+        impl File<'_> {$(
+            /// Replaces `out` by the kind, as a number, of each element of the vector of the HIR,
+            /// [`NOT_IN_TREE`] for what is not a node.
+            #[doc(hidden)]
+            pub fn $all(&self, out: &mut Vec<u8>) {
+                let tags = (0..self.hir.$field.len()).map(|i| i as u32);
+                out.clear();
+                // Nothing is synthesized in most files, and then nothing asks whether it is.
+                match self.has_synthetic_nodes() {
+                    true => out.extend(tags.map(|i| self.$one::<true>(i).map_or(NOT_IN_TREE, |tag| tag as u8))),
+                    false => out.extend(tags.map(|i| self.$one::<false>(i).map_or(NOT_IN_TREE, |tag| tag as u8))),
+                }
+            }
+        )*}
+    };
+}
+
+tags_in_tree! {
+    expr_tags_in_tree expr_tag_in_tree exprs;
+    stmt_tags_in_tree stmt_tag_in_tree stmts;
+    type_tags_in_tree type_tag_in_tree types;
+    pat_tags_in_tree pat_tag_in_tree pats;
+}
+
+impl File<'_> {
     /// The kind of the expression at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn expr_in_tree(&self, i: usize) -> Option<ExprTag> {
-        let raw = self.hir.exprs.get(i)?;
-        let id = hir::ExprId(i as u32);
-        let is_node = !matches!(self.bound.expr_parent.get(i), None | Some(Parent::None))
-            && !matches!(raw.kind, hir::ExprKind::Missing)
-            && self.is_outside_jsdoc(raw.pos)
-            && self.jsdoc_cast_operand(id).is_none()
-            && !self.hir.import_attributes.iter().any(|it| it.1 == id);
-        is_node.then(|| self.expr_tag(id, raw))
+        self.expr_tag_in_tree::<true>(i as u32)
     }
 
     /// The kind of the statement at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn stmt_in_tree(&self, i: usize) -> Option<StmtTag> {
-        let raw = self.hir.stmts.get(i)?;
-        let is_node = !matches!(self.bound.stmt_parent.get(i), None | Some(Parent::None))
-            && self.is_outside_jsdoc(raw.start)
-            && self.wrapped_in(hir::StmtId(i as u32)).is_none()
-            && !self.is_nested_namespace(hir::StmtId(i as u32));
-        is_node.then(|| StmtTag::of(&raw.kind))
+        self.stmt_tag_in_tree::<true>(i as u32)
     }
 
     /// The kind of the type at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn type_in_tree(&self, i: usize) -> Option<TypeTag> {
-        let raw = self.hir.types.get(i)?;
-        let is_node = self.bound.type_scope.get(i).is_some_and(|scope| scope.is_some())
-            && self.is_outside_jsdoc(raw.pos)
-            && !self.parents().is_in_error(&self.hir, hir::TypeNodeId(i as u32));
-        is_node.then(|| TypeTag::of(&raw.kind))
+        self.type_tag_in_tree::<true>(i as u32)
     }
 
     /// The kind of the pattern at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn pat_in_tree(&self, i: usize) -> Option<PatTag> {
-        let raw = self.hir.pats.get(i)?;
-        let is_bound = !matches!(self.bound.pat_parent.get(i), None | Some(PatParent::None));
+        self.pat_tag_in_tree::<true>(i as u32)
+    }
+
+    /// `MAY_BE_SYNTHETIC`, here and below: the file may have nodes that are synthesized from JSDoc
+    /// comments.
+    #[inline(always)]
+    fn is_written<const MAY_BE_SYNTHETIC: bool>(&self, pos: u32) -> bool {
+        !MAY_BE_SYNTHETIC || !self.is_in_jsdoc(pos)
+    }
+
+    #[inline(always)]
+    fn expr_tag_in_tree<const MAY_BE_SYNTHETIC: bool>(&self, i: u32) -> Option<ExprTag> {
+        let id = hir::ExprId(i);
+        let raw = self.hir.exprs.get(id.idx())?;
+        let attributes = self.hir.import_attributes;
+        let is_node = !matches!(self.bound.expr_parent.get(id.idx()), None | Some(Parent::None))
+            && !matches!(raw.kind, hir::ExprKind::Missing)
+            && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
+            && (!MAY_BE_SYNTHETIC || self.jsdoc_cast_operand(id).is_none())
+            && (attributes.is_empty()
+                || !matches!(raw.kind, hir::ExprKind::Object(_))
+                || !attributes.iter().any(|it| it.1 == id));
+        is_node.then(|| self.expr_tag(id, raw))
+    }
+
+    #[inline(always)]
+    fn stmt_tag_in_tree<const MAY_BE_SYNTHETIC: bool>(&self, i: u32) -> Option<StmtTag> {
+        let id = hir::StmtId(i);
+        let raw = self.hir.stmts.get(id.idx())?;
+        let is_node = !matches!(self.bound.stmt_parent.get(id.idx()), None | Some(Parent::None))
+            && self.is_written::<MAY_BE_SYNTHETIC>(raw.start)
+            && self.wrapped_in(id).is_none()
+            && !self.is_nested_namespace(id);
+        is_node.then(|| StmtTag::of(&raw.kind))
+    }
+
+    #[inline(always)]
+    fn type_tag_in_tree<const MAY_BE_SYNTHETIC: bool>(&self, i: u32) -> Option<TypeTag> {
+        let id = hir::TypeNodeId(i);
+        let raw = self.hir.types.get(id.idx())?;
+        let is_node = self.bound.type_scope.get(id.idx()).is_some_and(|scope| scope.is_some())
+            && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
+            && !self.is_in_type_that_is_an_error(id);
+        is_node.then(|| TypeTag::of(&raw.kind))
+    }
+
+    #[inline(always)]
+    fn pat_tag_in_tree<const MAY_BE_SYNTHETIC: bool>(&self, i: u32) -> Option<PatTag> {
+        let id = hir::PatId(i);
+        let raw = self.hir.pats.get(id.idx())?;
+        let is_bound = !matches!(self.bound.pat_parent.get(id.idx()), None | Some(PatParent::None));
         let is_node = !matches!(raw.kind, hir::PatKind::Missing)
-            && self.is_outside_jsdoc(raw.pos)
-            && (is_bound || self.is_this_name(hir::PatId(i as u32), raw));
+            && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
+            && (is_bound || self.is_this_name(id, raw));
         is_node.then(|| PatTag::of(&raw.kind))
     }
 
@@ -69,6 +127,7 @@ impl File<'_> {
     }
 
     /// Whether the statement `id` is the `B` of `namespace A.B`: it starts with its name.
+    #[inline]
     pub(crate) fn is_nested_namespace(&self, id: hir::StmtId) -> bool {
         match self.hir.stmts.get(id.idx()) {
             Some(&hir::Stmt { kind: hir::StmtKind::Module(m), start, .. }) => {
@@ -81,6 +140,7 @@ impl File<'_> {
     }
 
     /// Whether `prop` is a `key: "value"` of `with { .. }`, which is not a property of an object.
+    #[inline]
     pub(crate) fn is_import_attribute(&self, prop: hir::PropId) -> bool {
         let attributes = self.hir.import_attributes;
         !attributes.is_empty()

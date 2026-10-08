@@ -151,12 +151,14 @@ impl<'a> Func<'a> {
     }
 
     /// The `=>` of an arrow function.
+    #[inline]
     pub fn arrow_span(self) -> Option<Span> {
         let at = self.raw().anchor;
         self.is_arrow().then(|| Span::new(at, at + 2))
     }
 
     /// What it belongs to.
+    #[inline]
     pub fn owner(self) -> Node<'a> {
         let file = self.file;
         match file.bound.fns.get(self.id.idx()).map(|info| info.owner) {
@@ -175,6 +177,7 @@ impl<'a> Func<'a> {
     }
 
     /// The function that encloses it.
+    #[inline]
     pub fn enclosing(self) -> Option<Func<'a>> {
         Func::some(self.file, self.file.bound.fns.get(self.id.idx())?.enclosing)
     }
@@ -226,6 +229,7 @@ impl<'a> Func<'a> {
 
     /// The `this` parameter, if there is one, and the others: all that is written between the
     /// parentheses.
+    #[inline]
     pub fn params_with_this(self) -> impl Iterator<Item = Param<'a>> + 'a {
         self.this_param().into_iter().chain(self.params())
     }
@@ -288,6 +292,7 @@ impl<'a> Func<'a> {
     }
 
     /// It contains a `this`, possibly inside arrow functions.
+    #[inline]
     pub fn contains_this(self) -> bool {
         (self.file.bound.fns.get(self.id.idx())).is_some_and(|info| info.contains_this)
     }
@@ -342,6 +347,7 @@ impl<'a> Param<'a> {
     }
 
     /// Keywords and decorators, in source order.
+    #[inline]
     pub fn modifiers(self) -> List<'a, Modifier<'a>> {
         match self.file.hir.modifiers_of_params.get(self.id.idx()) {
             Some(&list) => List::run(self.file, list),
@@ -397,6 +403,7 @@ impl<'a> Param<'a> {
         Span::new(start, whole.end)
     }
 
+    #[inline]
     pub fn func(self) -> Option<Func<'a>> {
         Func::some(self.file, *self.file.bound.param_fn.get(self.id.idx())?)
     }
@@ -483,6 +490,17 @@ pub enum KeyKind<'a> {
     Computed(Expr<'a>),
 }
 
+impl<'a> KeyKind<'a> {
+    /// The HIR has no name for a `bigint`, or in a binding pattern the literal as it is written.
+    #[inline(never)]
+    fn of_bigint(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
+        let rest = file.text().get(start as usize..)?;
+        let literal = rest.get(..crate::tokens::token_len(rest))?;
+        (rest.first()?.is_ascii_digit() && literal.ends_with(b"n"))
+            .then(|| KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal)))))
+    }
+}
+
 impl<'a> Key<'a> {
     pub(crate) fn new(
         file: &'a File<'a>,
@@ -490,13 +508,7 @@ impl<'a> Key<'a> {
         name_kind: NameKind,
         start: u32,
     ) -> Option<Key<'a>> {
-        // The HIR has no name for a `bigint`, or in a binding pattern the literal as it is written.
-        let bigint = || {
-            let rest = file.text().get(start as usize..)?;
-            let literal = rest.get(..crate::tokens::token_len(rest))?;
-            (rest.first()?.is_ascii_digit() && literal.ends_with(b"n"))
-                .then(|| KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal)))))
-        };
+        let bigint = || KeyKind::of_bigint(file, start);
         let kind = match key {
             hir::PropKey::None => bigint()?,
             hir::PropKey::Private(name) => KeyKind::Private(file.private_name(name)),
@@ -730,6 +742,7 @@ impl<'a> Class<'a> {
     }
 
     /// The `Stmt` or the `Expr` that it is.
+    #[inline]
     pub fn owner(self) -> Node<'a> {
         match self.file.bound.class_owner.get(self.id.idx()) {
             Some(&ClassOwner::Expr(e)) => Node::Expr(Expr::new(self.file, e)),
@@ -861,6 +874,7 @@ impl<'a> Member<'a> {
     }
 
     /// It is in an interface or a type literal, not in a class.
+    #[inline]
     pub fn is_signature(self) -> bool {
         matches!(
             self.file.bound.member_owner.get(self.id.idx()),
@@ -870,6 +884,7 @@ impl<'a> Member<'a> {
 
     /// The `constructor` of a constructor, which ESLint has as its `key`. It can be written as a
     /// string.
+    #[inline]
     pub fn constructor_keyword(self) -> Option<Ident<'a>> {
         let raw = self.raw();
         match (raw.kind, raw.key) {
@@ -879,6 +894,7 @@ impl<'a> Member<'a> {
     }
 
     /// The type annotation of a property.
+    #[inline]
     pub fn ty(self) -> Option<TypeNode<'a>> {
         match self.raw().func.is_some() {
             true => None,
@@ -1016,6 +1032,7 @@ impl<'a> Prop<'a> {
     }
 
     /// `a?() {}`, which is an error.
+    #[inline]
     pub fn is_optional(self) -> bool {
         let at = self.raw().postfix_token;
         at != 0 && self.file.text().get(at as usize) == Some(&b'?')
@@ -1385,6 +1402,7 @@ impl<'a> Import<'a> {
     }
 
     /// `import "spec"`
+    #[inline]
     pub fn is_side_effect(self) -> bool {
         let raw = self.raw();
         raw.default.is_none() && raw.namespace.is_none() && !raw.has_named_imports

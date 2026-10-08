@@ -168,13 +168,30 @@ tags! {
 }
 
 impl<'a> Stmt<'a> {
+    #[inline]
     pub fn kind(self) -> StmtKind<'a> {
+        match self.try_raw() {
+            None => StmtKind::Empty,
+            Some(raw) if self.file.hides_casts => self.kind_without_casts(raw),
+            Some(raw) => self.kind_of::<false>(raw),
+        }
+    }
+
+    #[inline(never)]
+    fn kind_without_casts(self, raw: &hir::Stmt) -> StmtKind<'a> {
+        self.kind_of::<true>(raw)
+    }
+
+    /// See `Expr::kind_of`.
+    #[inline(always)]
+    fn kind_of<const HIDES_CASTS: bool>(self, raw: &hir::Stmt) -> StmtKind<'a> {
         let file = self.file;
-        let e = |id| Expr::new(file, id);
-        let s = |id| Stmt::new(file, id);
-        let Some(raw) = self.try_raw() else {
-            return StmtKind::Empty;
+        let e = |id| match HIDES_CASTS {
+            true => Expr::new(file, id),
+            false => Expr { file, id },
         };
+        let some = |id: hir::ExprId| (id.idx() < file.hir.exprs.len()).then(|| e(id));
+        let s = |id| Stmt::new(file, id);
         match raw.kind {
             hir::StmtKind::Empty => StmtKind::Empty,
             hir::StmtKind::Debugger => StmtKind::Debugger,
@@ -186,7 +203,7 @@ impl<'a> Stmt<'a> {
             hir::StmtKind::TypeAlias(a) => StmtKind::TypeAlias(Alias::new(file, a)),
             hir::StmtKind::Enum(en) => StmtKind::Enum(Enum::new(file, en)),
             hir::StmtKind::Module(m) => StmtKind::Module(Module::new(file, m)),
-            hir::StmtKind::Return(value) => StmtKind::Return(Expr::some(file, value)),
+            hir::StmtKind::Return(value) => StmtKind::Return(some(value)),
             hir::StmtKind::If { test, yes, no } => StmtKind::If {
                 test: e(test),
                 yes: s(yes),
@@ -199,8 +216,8 @@ impl<'a> Stmt<'a> {
                 body,
             } => StmtKind::For {
                 init: Stmt::some(file, init),
-                test: Expr::some(file, test),
-                update: Expr::some(file, update),
+                test: some(test),
+                update: some(update),
                 body: s(body),
             },
             hir::StmtKind::ForIn { left, expr, body } => StmtKind::ForIn {
@@ -227,13 +244,7 @@ impl<'a> Stmt<'a> {
                 body: s(body),
                 test: e(test),
             },
-            hir::StmtKind::Block(list) if file.is_with(raw) => {
-                let list: List<'a, Stmt<'a>> = List::ids(file, list);
-                match (list.get(0).map(Stmt::kind), list.get(1)) {
-                    (Some(StmtKind::Expr(object)), Some(body)) => StmtKind::With { object, body },
-                    _ => StmtKind::Block(list),
-                }
-            }
+            hir::StmtKind::Block(list) if file.is_with(raw) => Stmt::kind_of_with(List::ids(file, list)),
             hir::StmtKind::Block(list) => StmtKind::Block(List::ids(file, list)),
             hir::StmtKind::Switch { expr, cases } => StmtKind::Switch {
                 expr: e(expr),
@@ -276,6 +287,15 @@ impl<'a> Stmt<'a> {
             hir::StmtKind::ExportAsNamespace(name) => {
                 StmtKind::ExportAsNamespace(file.name(name))
             }
+        }
+    }
+
+    /// The kind of the `with` statement that the HIR has as the block `list`.
+    #[inline(never)]
+    fn kind_of_with(list: List<'a, Stmt<'a>>) -> StmtKind<'a> {
+        match (list.get(0).map(Stmt::kind), list.get(1)) {
+            (Some(StmtKind::Expr(object)), Some(body)) => StmtKind::With { object, body },
+            _ => StmtKind::Block(list),
         }
     }
 
@@ -482,11 +502,6 @@ impl<'a> Stmt<'a> {
         self.file.wrapped_in(self.id).map(|parent| Stmt::new(self.file, parent))
     }
 
-    #[inline]
-    pub fn parent(self) -> Node<'a> {
-        Node::Stmt(self).parent()
-    }
-
     /// The label of a `Labeled`, a `Break` or a `Continue`, where it is written.
     pub fn label(self) -> Option<Ident<'a>> {
         let (file, start) = (self.file, self.span().start);
@@ -564,6 +579,7 @@ impl super::File<'_> {
     }
 
     /// The `for` or `with` statement that the statement `id` is a wrapper in.
+    #[inline]
     pub(super) fn wrapped_in(&self, id: hir::StmtId) -> Option<hir::StmtId> {
         if !matches!(self.hir.stmts.get(id.idx())?.kind, hir::StmtKind::Expr(_)) {
             return None;

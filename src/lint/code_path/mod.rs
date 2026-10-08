@@ -22,15 +22,36 @@
 //! | `codePath.traverseSegments(options, callback)` | [`CodePath::traverse_segments`], [`CodePath::traverse_segments_between`] |
 //! | a `Set` of the current segments, kept by four listeners and a stack | [`CodePath::current_segments`], or [`CurrentSegments`] |
 //! | `isAnySegmentReachable(currentSegments)` | [`CodePath::is_current_reachable`] |
-//! | the same when a function is left, if that is all the rule asks | [`Func::is_end_reachable`], [`File::is_end_reachable`], without any listener |
 //! | `segment.reachable` | [`Segment::is_reachable`] |
 //!
-//! # What it costs
+//! # What it costs, and how to avoid it
 //!
-//! About a quarter of what parsing and binding the file costs, once for all rules. The walk does
-//! not go into an expression or a type in which nothing forks and nothing is listened for, so a
-//! rule with code paths should `on.enter(..)` and `on.exit(..)` as few kinds of nodes as it can:
-//! statements and functions are cheap, identifiers make the walk visit everything.
+//! A listener for code paths makes the linter analyze the whole file, which costs about a quarter
+//! of what parsing and binding it costs. No rule of ESLint needs that. In the order of what they
+//! cost:
+//!
+//! 1. What a rule asks with `isAnySegmentReachable(currentSegments)` is answered without any
+//!    listener, by a pass over the statements of the file that takes a few instructions for each
+//!    (a twentieth of the analysis) and is made once for all rules. The answers are those of the
+//!    analysis, quirks included (`test/cli/lint/oracle/code_path/reach.ts` compares them).
+//!
+//!    | when ESLint's rule asks | Here |
+//!    | --- | --- |
+//!    | entering a statement | [`Stmt::is_reachable`], [`File::has_unreachable_statements`] |
+//!    | leaving a function or the file | [`Func::is_end_reachable`], [`File::is_end_reachable`] |
+//!    | leaving a `SwitchCase` | [`Case::is_end_reachable`] |
+//!    | `onCodePathSegmentLoop`, to find the loops that never repeat | [`Stmt::is_repeating_loop`] |
+//!
+//! 2. A rule that needs segments finds out from the syntax which functions can have something to
+//!    report, in a listener without order (`on.funcs`, `on.classes`, `on.symbols`), and analyzes
+//!    only those: [`Func::code_path_steps`] with the functions in it, [`steps_of_code_path`]
+//!    without. It gets the events and the nodes it wants in order, as [`Step`]s, and calls what
+//!    would have been its listeners. See `constructor_super.rs`, `no_useless_return.rs` and
+//!    `no_useless_assignment.rs`. What tells that there is nothing to report has to be certain:
+//!    compare all the messages on `flows.ts` and `generate.ts` with those of the rule without it.
+//! 3. With listeners, the walk does not go into an expression or a type in which nothing forks and
+//!    nothing is listened for: `on.enter(..)` and `on.exit(..)` as few kinds of nodes as possible.
+//!    Statements and functions are cheap, identifiers make the walk visit everything.
 //!
 //! # The node of an event
 //!

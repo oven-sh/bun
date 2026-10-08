@@ -181,16 +181,25 @@ function common(node: any, sourceCode: any): [string, number, number] | null {
       if (FUNCTIONS.has(parent.type) || parent.type.startsWith("TS")) return null;
       if (type === "AssignmentPattern" && parent.type === "Property" && isBindingPattern(node)) return null;
       break;
+    case "TSNonNullExpression":
+      if (isInRunOfNonNull(node)) return null;
+      break;
     default:
       if (ABSENT.has(type) || (type.startsWith("TS") && !TYPESCRIPT_EXPRESSIONS.has(type))) return null;
   }
   return [type, start, end];
 }
 
+/** `a!!` is one node in `bun lint`: whether `node` is the `a!` of it. */
+const isInRunOfNonNull = (node: any) =>
+  node.parent.type === "TSNonNullExpression" && node.parent.range[0] === node.range[0];
+
 /** The node that `bun lint` passes with an event for which ESLint passes `node`. */
 function standIn(node: any): any {
   const parent = node.parent;
   switch (node.type) {
+    case "TSNonNullExpression":
+      return isInRunOfNonNull(node) ? standIn(parent) : node;
     case "BlockStatement":
       return FUNCTIONS.has(parent.type) ? parent : node;
     case "CatchClause":

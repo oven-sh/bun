@@ -867,13 +867,8 @@ where
         self.response_root.set_rooted(value, global_this);
 
         if self.method == Method::HEAD {
-            if let Some(resp) = self.resp.get() {
-                let mut pair = HeaderResponsePair {
-                    this: self,
-                    response,
-                };
-                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
-            }
+            // SAFETY: `response` is the live, protect()'d cell pointer.
+            unsafe { self.render_head(response) };
             return;
         }
 
@@ -2773,13 +2768,8 @@ where
             ctx.response_root.clear();
             response_value.ensure_still_alive();
             if ctx.method == Method::HEAD {
-                if let Some(resp) = ctx.resp.get() {
-                    let mut pair = HeaderResponsePair {
-                        this: ctx,
-                        response,
-                    };
-                    resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
-                }
+                // SAFETY: `response` is the live, rooted cell pointer.
+                unsafe { ctx.render_head(response) };
                 return;
             } else {
                 // SAFETY: `response` is the live, rooted cell pointer.
@@ -2831,13 +2821,8 @@ where
                     ctx.response_root.clear();
                     fulfilled_value.ensure_still_alive();
                     if ctx.method == Method::HEAD {
-                        if let Some(resp) = ctx.resp.get() {
-                            let mut pair = HeaderResponsePair {
-                                this: ctx,
-                                response,
-                            };
-                            resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
-                        }
+                        // SAFETY: `response` is the live, rooted cell pointer.
+                        unsafe { ctx.render_head(response) };
                         return;
                     }
                     // SAFETY: `response` is the live, rooted cell pointer.
@@ -3990,6 +3975,43 @@ where
             .set(unsafe { response::WeakRef::init_ref(response) });
     }
 
+    /// Safety: the contract of [`Self::set_response`].
+    #[inline(always)]
+    unsafe fn render_head(&self, response: *mut Response) {
+        // SAFETY: caller contract: `response` is live.
+        if unsafe { (*response).has_s3_redirect() } {
+            // SAFETY: caller contract.
+            return unsafe { self.render_s3_redirect_head(response) };
+        }
+        if let Some(resp) = self.resp.get() {
+            let mut pair = HeaderResponsePair {
+                this: self,
+                response,
+            };
+            resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+        }
+    }
+
+    /// Safety: the contract of [`Self::set_response`].
+    #[cold]
+    #[inline(never)]
+    unsafe fn render_s3_redirect_head(&self, response: *mut Response) {
+        let Some(resp) = self.resp.get() else { return };
+        if let Some(server) = self.server.get() {
+            // SAFETY: caller contract: `response` is live. The borrow ends before the error handler runs.
+            let signed = unsafe { (*response).sign_s3_redirect_for_head(server.global_this()) };
+            if let Err(err) = signed {
+                self.run_error_handler(err);
+                return;
+            }
+        }
+        let mut pair = HeaderResponsePair {
+            this: self,
+            response,
+        };
+        resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+    }
+
     /// # Safety
     /// Same contract as [`Self::set_response`].
     pub(crate) unsafe fn render(&self, response: *mut Response) {
@@ -3999,13 +4021,8 @@ where
         // handler path branches to `do_render_head_response` before reaching
         // here, but the `error()` handler paths call `render()` directly.
         if self.method == Method::HEAD {
-            if let Some(resp) = self.resp.get() {
-                let mut pair = HeaderResponsePair {
-                    this: self,
-                    response,
-                };
-                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
-            }
+            // SAFETY: caller contract.
+            unsafe { self.render_head(response) };
             return;
         }
 

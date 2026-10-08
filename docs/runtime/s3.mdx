@@ -294,6 +294,29 @@ Response (0 KB) {
 }
 ```
 
+The URL is signed for `GET` and is valid for 15 minutes.
+
+S3 checks the method of a presigned URL. When a `Bun.serve()` handler returns this response for a `HEAD` request, Bun signs the URL for `HEAD`. Every other request gets the `GET` URL. A copy made with `response.clone()` or `new Response(null, response)` behaves the same.
+
+```ts server.ts icon="/icons/typescript.svg"
+import { s3, serve } from "bun";
+
+serve({
+  routes: {
+    "/report.pdf": () => new Response(s3.file("report.pdf")),
+  },
+});
+```
+
+The `location` header that your code reads from the `Response` is always the `GET` URL. Code that sends the redirect in another way, for example through `server.fetch()` or with a response built from these headers, must sign for the method of the request:
+
+```ts s3.ts icon="/icons/typescript.svg"
+function download(request: Request) {
+  const method = request.method === "HEAD" ? "HEAD" : "GET";
+  return Response.redirect(s3file.presign({ method, expiresIn: 15 * 60 }));
+}
+```
+
 ---
 
 ## Support for S3-Compatible Services

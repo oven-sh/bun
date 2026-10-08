@@ -53,6 +53,8 @@ pub(crate) struct Sink {
     /// Whether anything reads `Diagnostic::fix` and `Diagnostic::suggestions`. If not, they are
     /// not computed.
     pub(crate) wants_fixes: Cell<bool>,
+    /// By `Diagnostic::rule`: how many bytes the messages, fixes and suggestions of the rule have.
+    pub(crate) bytes: RefCell<Vec<u64>>,
 }
 
 /// The context of the rule `R` in the file that is linted. It dereferences to the [`File`].
@@ -62,7 +64,28 @@ pub struct Cx<'a, R: Rule> {
     pub(crate) file: &'a File<'a>,
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
+    /// How often the rule has reported in this file.
+    pub(crate) reports: Cell<u32>,
+    /// [`Cx::has_reported_too_much`]
+    pub(crate) is_capped: Cell<bool>,
 }
+
+/// How many problems a rule can report in one file. A few rules report each pair of n things, as they do in ESLint, which takes
+/// more memory than there is for an n that a generated file can have.
+pub const MAX_REPORTS: u32 = 65_536;
+
+/// How many bytes the messages, fixes and suggestions of a rule can have in one file. A few rules quote in each of n messages,
+/// or replace in each of n fixes, a text whose length grows with n.
+pub const MAX_REPORTED_BYTES: u64 = 256 << 20;
+
+const TOO_MANY_PROBLEMS: Message = Message::new(
+    "tooManyProblems",
+    "This rule reported more than 65,536 problems in this file. The rest are not shown.",
+);
+const TOO_LARGE_PROBLEMS: Message = Message::new(
+    "tooLargeProblems",
+    "The problems that this rule reported in this file take more than 256 MB with their fixes. The rest are not shown.",
+);
 
 impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
     type Target = File<'a>;
@@ -87,26 +110,57 @@ impl<'a, R: Rule> Cx<'a, R> {
     ///     .data("name", ident.name())
     ///     .fix(|fixer| fixer.remove(declaration));
     /// ```
+    ///
+    /// After [`MAX_REPORTS`] reports, or [`MAX_REPORTED_BYTES`] bytes, one more says so where the next would be, and nothing is
+    /// made of the rest.
     #[cold]
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+        let diagnostic = |message: Message| Diagnostic {
+            rule: self.rule,
+            severity: self.severity,
+            message_id: message.id,
+            message: Vec::new(),
+            span: at.span(),
+            has_no_end: false,
+            start_position: None,
+            end_position: None,
+            comments_apply_at: None,
+            fix: None,
+            suggestions: Vec::new(),
+        };
+        if !self.is_capped.get() {
+            let bytes = self.file.sink.bytes.borrow().get(self.rule as usize).copied();
+            let closing = match self.reports.get() {
+                MAX_REPORTS => Some(TOO_MANY_PROBLEMS),
+                _ if bytes.is_some_and(|it| it > MAX_REPORTED_BYTES) => Some(TOO_LARGE_PROBLEMS),
+                reports => {
+                    self.reports.set(reports + 1);
+                    None
+                }
+            };
+            if let Some(closing) = closing {
+                self.is_capped.set(true);
+                drop(Report {
+                    file: self.file,
+                    message: closing,
+                    data: SmallVec::new(),
+                    diagnostic: Some(diagnostic(closing)),
+                });
+            }
+        }
         Report {
             file: self.file,
             message,
             data: SmallVec::new(),
-            diagnostic: Some(Diagnostic {
-                rule: self.rule,
-                severity: self.severity,
-                message_id: message.id,
-                message: Vec::new(),
-                span: at.span(),
-                has_no_end: false,
-                start_position: None,
-                end_position: None,
-                comments_apply_at: None,
-                fix: None,
-                suggestions: Vec::new(),
-            }),
+            diagnostic: (!self.is_capped.get()).then(|| diagnostic(message)),
         }
+    }
+
+    /// Whether the rule has reported as much as it can in this file: whatever else it finds is not shown. For a rule that can
+    /// find many times as much, to stop looking.
+    #[inline]
+    pub fn has_reported_too_much(&self) -> bool {
+        self.is_capped.get()
     }
 
     /// Reports `message` at a position: where ESLint's `loc` is a `{ line, column }` and not a
@@ -134,7 +188,9 @@ pub struct Report<'a> {
 impl<'a> Report<'a> {
     /// What `{{name}}` in the message stands for.
     pub fn data(mut self, name: &'static str, value: impl IntoText<'a>) -> Self {
-        self.data.push((name, value.into_text()));
+        if self.diagnostic.is_some() {
+            self.data.push((name, value.into_text()));
+        }
         self
     }
 
@@ -209,6 +265,13 @@ impl Drop for Report<'_> {
     fn drop(&mut self) {
         if let Some(mut diagnostic) = self.diagnostic.take() {
             diagnostic.message = interpolate(self.message, |name| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1));
+            let suggested = diagnostic.suggestions.iter().map(|it| it.message.len() + it.fix.text.len());
+            let size = diagnostic.message.len() + diagnostic.fix.as_ref().map_or(0, |it| it.text.len()) + suggested.sum::<usize>();
+            let mut bytes = self.file.sink.bytes.borrow_mut();
+            if bytes.len() <= diagnostic.rule as usize {
+                bytes.resize(diagnostic.rule as usize + 1, 0);
+            }
+            bytes[diagnostic.rule as usize] += size as u64;
             self.file.sink.diagnostics.borrow_mut().push(diagnostic);
         }
     }

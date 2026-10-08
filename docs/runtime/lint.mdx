@@ -322,6 +322,7 @@ These differences are intentional:
 - **Types are those of TypeScript 7**, as in `bun check`, whichever version of `typescript` you have installed.
 - **`--cache` and `--stats` have no effect.** Every run lints every file.
 - **`--print-config` leaves out the default options of rules.**
+- **A rule reports at most 65,536 problems in one file**, and at most 256 MB of messages and fixes. One more problem then says that the rest are not shown.
 - **A summary line on stderr** says how many files were linted and how long it took.
 
 ## CLI usage

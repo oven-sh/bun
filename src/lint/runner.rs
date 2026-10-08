@@ -443,6 +443,8 @@ impl<R: Rule> AnyRule for R {
                 file: start.file,
                 rule: start.rule,
                 severity: start.severity,
+                reports: std::cell::Cell::new(0),
+                is_capped: std::cell::Cell::new(false),
             },
         };
         run.run_unordered();
@@ -808,6 +810,7 @@ pub struct Enabled<'r> {
 /// `wants_fixes`: whether the fixes and suggestions are going to be read.
 pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
+    file.sink.bytes.borrow_mut().clear();
     run_rules(file, rules);
     let diagnostics = file.sink.diagnostics.take();
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a

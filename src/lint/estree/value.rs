@@ -56,14 +56,6 @@ impl<'a> Object<'a> {
             ],
         }
     }
-
-    pub fn get(self, name: &[u8]) -> Value<'a> {
-        let found = self
-            .entries()
-            .into_iter()
-            .find(|it| it.0.as_bytes() == name);
-        found.map_or(Value::Undefined, |it| it.1)
-    }
 }
 
 impl From<bool> for Value<'_> {
@@ -246,11 +238,6 @@ impl<'a> Nodes<'a> {
     #[inline]
     pub fn len(self) -> usize {
         self.count()
-    }
-
-    #[inline]
-    pub fn is_empty(mut self) -> bool {
-        self.next().is_none()
     }
 
     /// The element at `i`. The outer `None`: there is none.

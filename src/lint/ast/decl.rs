@@ -172,12 +172,6 @@ impl<'a> Func<'a> {
         }
     }
 
-    /// The same as [`Func::owner`].
-    #[inline]
-    pub fn parent(self) -> Node<'a> {
-        self.owner()
-    }
-
     /// The function that encloses it.
     #[inline]
     pub fn enclosing(self) -> Option<Func<'a>> {
@@ -414,15 +408,6 @@ impl<'a> Param<'a> {
     pub fn func(self) -> Option<Func<'a>> {
         Func::some(self.file, *self.file.bound.param_fn.get(self.id.idx())?)
     }
-
-    /// The function.
-    #[inline]
-    pub fn parent(self) -> Node<'a> {
-        match self.func() {
-            Some(func) => Node::Func(func),
-            None => Node::File(self.file),
-        }
-    }
 }
 
 handle! {
@@ -610,12 +595,6 @@ impl<'a> Key<'a> {
     #[inline]
     pub fn is(self, name: &str) -> bool {
         self.name().is_some_and(|it| it.is(name))
-    }
-
-    /// Where it starts: at the name, the quote or the bracket.
-    #[inline]
-    pub fn start(self) -> u32 {
-        self.start
     }
 
     /// The span of a plain name in ASCII, which most keys are.
@@ -844,12 +823,6 @@ impl<'a> Class<'a> {
         }
     }
 
-    /// The same as [`Class::owner`].
-    #[inline]
-    pub fn parent(self) -> Node<'a> {
-        self.owner()
-    }
-
     /// From its first token, which can be a decorator or a modifier.
     pub fn span(self) -> Span {
         let end = match self.file.bound.class_owner.get(self.id.idx()) {
@@ -888,13 +861,6 @@ impl<'a> Class<'a> {
             .or_else(|| self.name().map(|name| name.span().end))
             .unwrap_or_else(|| self.keyword_span().end);
         Span::new(skip_trivia(self.file.text(), head_end), self.span().end)
-    }
-
-    /// The constructor, not its overloads.
-    pub fn constructor(self) -> Option<Member<'a>> {
-        self.members()
-            .iter()
-            .find(|m| m.is_constructor() && m.func().is_some_and(Func::has_body))
     }
 }
 
@@ -1113,15 +1079,6 @@ impl<'a> Prop<'a> {
     #[inline]
     pub fn value(self) -> Option<Expr<'a>> {
         Expr::some(self.file, self.raw().value)
-    }
-
-    /// `async`, and keywords that are errors here. `get`, `set` and `*` are not modifiers.
-    pub fn modifiers(self) -> List<'a, Modifier<'a>> {
-        let all = self.file.hir.modifiers_of_props;
-        match all.binary_search_by_key(&self.id.0, |it| it.0.0) {
-            Ok(at) => List::run(self.file, all[at].1),
-            Err(_) => List::empty(self.file),
-        }
     }
 
     /// The function of a method or an accessor.
@@ -1594,12 +1551,6 @@ impl<'a> ImportSpec<'a> {
     pub fn span(self) -> Span {
         Span::new(self.raw().start, self.raw().end)
     }
-
-    /// The `Stmt` of the import.
-    #[inline]
-    pub fn parent(self) -> Node<'a> {
-        Node::ImportSpec(self).parent()
-    }
 }
 
 declaration! {
@@ -1731,11 +1682,5 @@ impl<'a> ExportSpec<'a> {
     #[inline]
     pub fn span(self) -> Span {
         Span::new(self.raw().start, self.raw().end)
-    }
-
-    /// The `Stmt` of the export.
-    #[inline]
-    pub fn parent(self) -> Node<'a> {
-        Node::ExportSpec(self).parent()
     }
 }

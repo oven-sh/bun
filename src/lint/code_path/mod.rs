@@ -113,7 +113,6 @@ pub enum Origin {
 pub(crate) struct CodePathData {
     origin: Origin,
     upper: Option<u32>,
-    children: Vec<u32>,
     initial_segment: u32,
     final_segments: Vec<u32>,
     returned_segments: Vec<u32>,
@@ -442,16 +441,6 @@ impl<'a> CodePath<'a> {
         self.read(|path| path.upper).map(|id| CodePath { file, id })
     }
 
-    pub fn child_code_paths(self) -> Vec<CodePath<'a>> {
-        let file = self.file;
-        self.read(|path| {
-            path.children
-                .iter()
-                .map(|&id| CodePath { file, id })
-                .collect()
-        })
-    }
-
     /// Calls `visit` with every reachable segment, from the initial segment on. A segment comes
     /// after all that precede it, except those that lead back to it from the end of a loop.
     pub fn traverse_segments(self, visit: impl FnMut(Segment<'a>, &mut Traversal)) {
@@ -730,11 +719,6 @@ impl<'a> CurrentSegments<'a> {
 
     pub fn iter(&self) -> impl Iterator<Item = Segment<'a>> + '_ {
         self.as_slice().iter().copied()
-    }
-
-    /// ESLint's `isAnySegmentReachable(currentSegments)`.
-    pub fn is_any_reachable(&self) -> bool {
-        self.iter().any(Segment::is_reachable)
     }
 }
 

@@ -141,11 +141,6 @@ fn source_type_of(value: Option<&Json>) -> Option<SourceType> {
 impl LanguageOptions {
     pub const LATEST_ECMA_VERSION: u32 = 2026;
 
-    pub fn global(&self, name: &[u8]) -> Option<Global> {
-        let at = self.globals.binary_search_by(|it| (*it.0).cmp(name)).ok()?;
-        Some(self.globals[at].1)
-    }
-
     /// ESLint's `normalizeEcmaVersionForLanguageOptions`.
     pub fn normalize_ecma_version(version: Option<&Json>) -> u32 {
         match version {

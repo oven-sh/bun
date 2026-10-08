@@ -9,9 +9,9 @@
 //! public for it.
 
 use super::estree::is_expression_statement;
-use super::{is_type_definition, is_type_import, is_type_only_reference, is_variable_definition};
+use super::{is_type_import, is_type_only_reference};
 use crate::ast::{
-    BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Handle, Key, KeyKind, Module,
+    BinOp, Class, Expr, ExprKind, ExprTag, File, FnKind, Func, Handle, Key, KeyKind, Module,
     ModuleName, Name, Node, Param, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag,
     TypeKind, TypeTag, UnOp, VarDecl,
 };
@@ -75,16 +75,6 @@ impl UsedMarks {
     #[inline]
     pub fn contains(&self, symbol: Symbol) -> bool {
         self.marked.contains(symbol)
-    }
-
-    /// ESLint's `sourceCode.markVariableAsUsed(name, node)`: marks what `name` means at `node`.
-    /// `false` if the file declares nothing of that name there.
-    pub fn mark_variable_as_used<'a>(&mut self, name: &str, node: impl Into<Node<'a>>) -> bool {
-        let symbol = node.into().scope().resolve(name);
-        if let Some(symbol) = symbol {
-            self.mark(symbol);
-        }
-        symbol.is_some()
     }
 
     /// ESLint's `markExportedVariables`: marks what the `/* exported a, b */` comments of a script
@@ -392,16 +382,6 @@ impl<'a> Variable<'a> {
             ),
         }
     }
-
-    /// `variable.isTypeVariable`
-    pub fn is_type_variable(self) -> bool {
-        self.defs().any(is_type_definition)
-    }
-
-    /// `variable.isValueVariable`
-    pub fn is_value_variable(self) -> bool {
-        self.defs().any(is_variable_definition)
-    }
 }
 
 // ───────────────────────────── what the visitor marks ─────────────────────────────
@@ -684,6 +664,8 @@ fn is_merged_type_declaration(facts: Facts, declaration: Declaration) -> bool {
         && facts.has(Facts::VALUE)
 }
 
+/// typescript-eslint's `isExported` of `collectUnusedVariables`: one of the declarations starts
+/// with `export`. `export { a }` is a reference instead.
 fn is_exported_with(variable: Variable, facts: Facts) -> bool {
     if !facts.has(Facts::EXPORTABLE) {
         return false;
@@ -696,36 +678,6 @@ fn is_exported_with(variable: Variable, facts: Facts) -> bool {
                 && !is_merged_type_declaration(facts, it)
         }),
     }
-}
-
-/// typescript-eslint's `isExported` of `collectUnusedVariables`: one of the declarations starts
-/// with `export`. `export { a }` is a reference instead.
-pub fn is_exported(variable: Variable) -> bool {
-    is_exported_with(variable, Facts::of(variable))
-}
-
-/// typescript-eslint's `isMergeableExported` (`isMergableExported`): the first declaration that is
-/// an exported class, function, interface, namespace or type alias, or is exported by default,
-/// decides. It holds for nothing that [`is_exported`] does not hold for.
-pub fn is_mergeable_exported(variable: Variable) -> bool {
-    let is_mergeable = |it: Declaration| match it {
-        Declaration::Fn(func) => func.has_body(),
-        Declaration::Class(_)
-        | Declaration::Interface(_)
-        | Declaration::Module(_)
-        | Declaration::TypeAlias(_) => true,
-        _ => false,
-    };
-    let decides = |it: &Declaration| {
-        !matches!(it, Declaration::Var(_))
-            && exported_statement(*it).is_some_and(|statement| {
-                is_mergeable(*it) || statement.flags().contains(Flags::DEFAULT)
-            })
-    };
-    variable
-        .defs()
-        .find(decides)
-        .is_some_and(|it| !is_merged_type_declaration(Facts::of(variable), it))
 }
 
 // ───────────────────────────── uses ─────────────────────────────
@@ -924,9 +876,10 @@ fn has_use<'a>(
     false
 }
 
-/// The range in which a reference to what `definition` defines is one from its own declaration: a
-/// function declaration, the function that a variable is initialized with, an interface, a type
-/// alias, a namespace, an enum.
+/// typescript-eslint's `isSelfReference` and `isInsideOneOf`, for what `isUsedVariable` passes to
+/// them: the range in which a reference to what `definition` defines is one from its own
+/// declaration. That is a function declaration, the function that a variable is initialized with, an
+/// interface, a type alias, a namespace, an enum.
 fn self_reference_range(definition: Declaration) -> Option<Span> {
     match definition {
         Declaration::Fn(func) => Some(func.span()),
@@ -941,14 +894,6 @@ fn self_reference_range(definition: Declaration) -> Option<Span> {
         | Declaration::Enum(_) => definition.node().map(Node::span),
         _ => None,
     }
-}
-
-/// typescript-eslint's `isSelfReference` and `isInsideOneOf`, for what `isUsedVariable` passes to
-/// them: the ranges in which a reference to `variable` is one from its own declaration. Those are
-/// its function declarations, the functions that it is initialized with, its interfaces, type
-/// aliases, namespaces and enums.
-pub fn get_self_reference_ranges(variable: Variable) -> SmallVec<[Span; 2]> {
-    variable.defs().filter_map(self_reference_range).collect()
 }
 
 /// Ranges, to ask whether an offset is in one of them, in the logarithm of their number.
@@ -987,6 +932,8 @@ impl Ranges {
     }
 }
 
+/// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it,
+/// from outside of its own declaration, and for more than its type unless it is a type.
 fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
     let is_split = facts.has(Facts::CLASS);
     // With few declarations it takes less to ask each of them.
@@ -1028,12 +975,6 @@ fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
             // It is written where the name is declared, and is in the scope around that.
             || reference.is_jsx_pragma()
     })
-}
-
-/// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it,
-/// from outside of its own declaration, and for more than its type unless it is a type.
-pub fn is_used_variable(variable: Variable) -> bool {
-    is_used_variable_with(variable, Facts::of(variable))
 }
 
 /// typescript-eslint's `isUsedVariable` for a variable of the global scope that the file does not

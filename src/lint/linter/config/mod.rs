@@ -377,11 +377,6 @@ impl Config {
         }
     }
 
-    /// The directory that the patterns are relative to.
-    pub fn base_path(&self) -> &[u8] {
-        &self.base_path
-    }
-
     /// [`Config::is_directory_ignored`] for a directory inside the base path of which it is known that
     /// no directory that it is in is ignored.
     pub fn is_directory_ignored_in(&self, directory: &[u8]) -> bool {

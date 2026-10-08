@@ -10,7 +10,7 @@
 //! - `ts_node`, `ts_part`, `ts_data`: the same for a field that only typescript-estree has.
 //! - `es_data`: a field that only espree has.
 //! - `ts_hidden`: a deprecated property of typescript-estree. It is not enumerable: a selector finds
-//!   it, [`VNode::fields`] does not have it.
+//!   it, whoever goes through the fields of a node leaves it out.
 //!
 //! The value is an expression of a type that converts to a [`Value`]. `None` converts to `null`.
 //! Where `?` meets a `None`, the field is `undefined`.

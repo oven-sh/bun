@@ -216,11 +216,6 @@ impl<'a> Node<'a> {
         self.locate(self.file()).get_type_at_location()
     }
 
-    /// `services.getTypeAtLocation(node)`
-    pub fn type_at_location(self) -> Type<'a> {
-        self.ty()
-    }
-
     /// `services.getSymbolAtLocation(node)`
     pub fn ts_symbol(self) -> Option<TsSymbol<'a>> {
         self.locate(self.file()).get_symbol_at_location()

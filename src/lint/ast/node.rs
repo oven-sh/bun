@@ -331,11 +331,6 @@ impl<'a> Node<'a> {
             _ => None,
         })
     }
-
-    /// The innermost statement that contains it.
-    pub fn enclosing_statement(self) -> Option<Stmt<'a>> {
-        self.ancestors().find_map(Node::as_stmt)
-    }
 }
 
 impl<'a> Expr<'a> {

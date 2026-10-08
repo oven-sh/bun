@@ -1,8 +1,7 @@
 //! `@typescript-eslint/utils`' `ast-utils/predicates.ts`.
 
 use crate::ast::{
-    BinOp, Expr, ExprKind, Flags, FnKind, Func, MemberKind, Node, PatKind, PropKind, StmtKind,
-    TypeKind,
+    BinOp, Expr, ExprKind, Flags, FnKind, Func, MemberKind, Node, PropKind, StmtKind, TypeKind,
 };
 use crate::tokens::{Token, TokenKind};
 use crate::utils::ast_utils::is_function;
@@ -32,22 +31,10 @@ pub fn is_optional_chain_punctuator(token: &Token<'_>) -> bool {
     token.is_punctuator("?.")
 }
 
-/// typescript-eslint's `isNotOptionalChainPunctuator`.
-#[inline]
-pub fn is_not_optional_chain_punctuator(token: &Token<'_>) -> bool {
-    !is_optional_chain_punctuator(token)
-}
-
 /// typescript-eslint's `isNonNullAssertionPunctuator`.
 #[inline]
 pub fn is_non_null_assertion_punctuator(token: &Token<'_>) -> bool {
     token.is_punctuator("!")
-}
-
-/// typescript-eslint's `isNotNonNullAssertionPunctuator`.
-#[inline]
-pub fn is_not_non_null_assertion_punctuator(token: &Token<'_>) -> bool {
-    !is_non_null_assertion_punctuator(token)
 }
 
 /// typescript-eslint's `isOptionalCallExpression`: `foo?.()`, `foo.bar?.()`, not `foo?.bar()`.
@@ -158,16 +145,6 @@ pub fn is_setter<'a>(node: impl Into<Node<'a>>) -> bool {
                 && matches!(member.parent(), Node::Class(_))
         }
         Node::Prop(prop) => prop.kind() == PropKind::Setter,
-        _ => false,
-    }
-}
-
-/// typescript-eslint's `isIdentifier`: an identifier that is an expression or a binding. The other
-/// `Identifier`s of ESTree are [`Ident`](crate::ast::Ident)s, which are not nodes.
-pub fn is_identifier<'a>(node: impl Into<Node<'a>>) -> bool {
-    match node.into() {
-        Node::Expr(e) => matches!(e.kind(), ExprKind::Ident(_)),
-        Node::Pat(pat) => matches!(pat.kind(), PatKind::Ident(_)),
         _ => false,
     }
 }

@@ -42,13 +42,4 @@ impl TokenClasses {
     pub fn len(&self) -> usize {
         self.numbers.len()
     }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.numbers.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.numbers.clear();
-    }
 }

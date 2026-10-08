@@ -138,12 +138,6 @@ impl<'a> EsNode<'a> {
         self.node.span()
     }
 
-    /// The node of [`crate::ast`] that it is, or that it is a part of.
-    #[inline]
-    pub fn base(self) -> Node<'a> {
-        self.node.base()
-    }
-
     /// Calls `visit` with each node of the ESTree that is made of `node`, an outer one before what is in it. Over all the nodes
     /// of a file, these are all the nodes of the ESTree, each once.
     pub fn for_each_at(node: Node<'a>, mut visit: impl FnMut(EsNode<'a>)) {

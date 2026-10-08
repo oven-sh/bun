@@ -1050,8 +1050,12 @@ impl<'a> Formatter<'a> {
     /// The text that `content` is printed as by itself, at the start of a line without indentation.
     /// For the rare case that how something is laid out depends on the text of its parts.
     pub(crate) fn print_to_text(&mut self, content: &(impl Format<'a> + ?Sized)) -> Vec<u8> {
-        use super::printer::{PrinterBuffers, PrinterOptions, print};
         let document = self.capture(content);
+        self.print_document(document)
+    }
+
+    fn print_document(&self, document: Interned) -> Vec<u8> {
+        use super::printer::{PrinterBuffers, PrinterOptions, print};
         let source = self.source;
         let mut out = Vec::new();
         let options = PrinterOptions::new(self.options(), source);

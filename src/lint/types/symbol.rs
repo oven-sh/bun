@@ -1,6 +1,6 @@
 //! `ts.Symbol`
 
-use super::{CheckFlags, Locate, ModifierFlags, SymbolFlags, TsNode, Type};
+use super::{CheckFlags, Locate, SymbolFlags, TsNode, Type};
 use crate::ast::File;
 use bun_sema::check::services::{SymbolOp, SymbolRef, SymbolTable};
 
@@ -64,11 +64,6 @@ impl<'a> SymbolList<'a> {
     #[inline]
     pub fn first(self) -> Option<TsSymbol<'a>> {
         self.get(0)
-    }
-
-    #[inline]
-    pub fn last(self) -> Option<TsSymbol<'a>> {
-        self.ids.last().map(|&id| TsSymbol::new(self.file, id))
     }
 
     pub fn iter(
@@ -136,11 +131,6 @@ impl<'a> TsSymbol<'a> {
         )
     }
 
-    #[inline]
-    pub fn file(self) -> &'a File<'a> {
-        self.file
-    }
-
     // ───────────────────────────── fields ─────────────────────────────
 
     /// `symbol.name`, `symbol.getName()`, `symbol.escapedName`, `symbol.getEscapedName()`
@@ -185,33 +175,15 @@ impl<'a> TsSymbol<'a> {
         declarations.iter().map(move |&node| TsNode::of(file, node))
     }
 
-    /// `symbol.getDeclarations()`
-    #[inline]
-    pub fn get_declarations(
-        self,
-    ) -> impl DoubleEndedIterator<Item = TsNode<'a>> + ExactSizeIterator + Clone + 'a {
-        self.declarations()
-    }
-
     /// `symbol.valueDeclaration`
     pub fn value_declaration(self) -> Option<TsNode<'a>> {
         let node = self.file.query(|q| q.value_declaration(self.id))?;
         Some(TsNode::of(self.file, node))
     }
 
-    /// `symbol.parent`
-    pub fn parent(self) -> Option<TsSymbol<'a>> {
-        self.op(SymbolOp::Parent)
-    }
-
     /// `symbol.members`: of a class, an interface or a type literal.
     pub fn members(self) -> SymbolList<'a> {
         self.table(SymbolTable::Members)
-    }
-
-    /// `symbol.exports`: of a module, a namespace or an enum, and the static members of a class.
-    pub fn exports(self) -> SymbolList<'a> {
-        self.table(SymbolTable::Exports)
     }
 
     // ───────────────────────────── ts.TypeChecker ─────────────────────────────
@@ -278,22 +250,6 @@ impl<'a> TsSymbol<'a> {
     /// `checker.isUnknownSymbol(symbol)`
     pub fn is_unknown(self) -> bool {
         self.file.query(|q| q.is_unknown_symbol(self.id))
-    }
-
-    /// `isReadonlySymbol(symbol)`
-    pub fn is_readonly(self) -> bool {
-        self.file.query(|q| q.is_readonly_symbol(self.id))
-    }
-
-    /// `isSpreadableProperty(symbol)`
-    pub fn is_spreadable_property(self) -> bool {
-        self.file.query(|q| q.is_spreadable_property(self.id))
-    }
-
-    /// `getDeclarationModifierFlagsFromSymbol(symbol)`
-    pub fn get_declaration_modifier_flags(self) -> ModifierFlags {
-        self.file
-            .query(|q| q.declaration_modifier_flags_from_symbol(self.id))
     }
 
     /// `symbol.getJsDocTags(checker).find(tag => tag.name === 'deprecated')`, as

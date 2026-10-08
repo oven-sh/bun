@@ -77,13 +77,6 @@ impl<'a> TsNode<'a> {
         self.raw
     }
 
-    /// There is no such node: what [`Locate`](super::Locate) yields without types. Its kind is
-    /// `Unknown`.
-    #[inline]
-    pub fn is_missing(self) -> bool {
-        self.raw.node.is_none()
-    }
-
     /// `node.kind`
     pub fn kind(self) -> SyntaxKind {
         self.file.query(|q| q.node_kind(self.raw))
@@ -128,11 +121,6 @@ impl<'a> TsNode<'a> {
         self.child(Child::Type)
     }
 
-    /// `node.body`
-    pub fn body(self) -> Option<TsNode<'a>> {
-        self.child(Child::Body)
-    }
-
     /// `node.constraint` of a type parameter.
     pub fn constraint(self) -> Option<TsNode<'a>> {
         self.child(Child::Constraint)
@@ -167,12 +155,6 @@ impl<'a> TsNode<'a> {
         self.file.query(|q| q.node_hir_flags(self.raw))
     }
 
-    /// `node.isTypeOnly`: of a specifier, an `ImportClause`, an `ImportEqualsDeclaration`, an
-    /// `ExportDeclaration`.
-    pub fn is_type_only(self) -> bool {
-        self.file.query(|q| q.is_type_only(self.raw, false))
-    }
-
     /// `ts.isTypeOnlyImportOrExportDeclaration(node)`: a specifier, a clause or a namespace import
     /// or export that is `type` itself or is part of an `import type` or an `export type`.
     pub fn is_type_only_import_or_export_declaration(self) -> bool {
@@ -192,11 +174,6 @@ impl<'a> TsNode<'a> {
     /// `node.exclamationToken !== undefined`: of a variable or a property.
     pub fn has_exclamation_token(self) -> bool {
         self.hir_flags().contains(ast::Flags::DEFINITE)
-    }
-
-    /// `node.asteriskToken !== undefined`: of a function.
-    pub fn has_asterisk_token(self) -> bool {
-        self.hir_flags().contains(ast::Flags::GENERATOR)
     }
 
     /// `ts.getCombinedModifierFlags(node)`
@@ -294,14 +271,6 @@ impl<'a> TsNode<'a> {
         Some(Type::new(self.file, id))
     }
 
-    /// `getApparentTypeOfContextualType(node)`
-    pub fn get_apparent_type_of_contextual_type(self) -> Option<Type<'a>> {
-        let id = self
-            .file
-            .query(|q| q.apparent_type_of_contextual_type(self.raw))?;
-        Some(Type::new(self.file, id))
-    }
-
     /// `checker.getContextualTypeForArgumentAtIndex(node, index)`
     pub fn get_contextual_type_for_argument_at_index(self, index: usize) -> Option<Type<'a>> {
         let index = index as u32;
@@ -331,45 +300,6 @@ impl<'a> TsNode<'a> {
             .file
             .query(|q| q.shorthand_assignment_value_symbol(self.raw))?;
         Some(TsSymbol::new(self.file, id))
-    }
-
-    /// `getAccessedPropertyName(node)`: the name that a property access, an element access with a
-    /// key of a literal type, a binding element or a parameter reads.
-    pub fn get_accessed_property_name(self) -> Option<&'a [u8]> {
-        self.file.query(|q| q.accessed_property_name(self.raw))
-    }
-
-    /// `checker.getConstantValue(node)`: of an enum member, or of an access to one.
-    pub fn get_constant_value(self) -> Option<super::Literal<'a>> {
-        self.file.query(|q| q.constant_value(self.raw))
-    }
-
-    /// `isConstContext(node)`: `as const` applies to the expression.
-    pub fn is_const_context(self) -> bool {
-        self.file.query(|q| q.is_const_context(self.raw))
-    }
-
-    /// `getFlowTypeOfReference(node, declaredType)`
-    pub fn get_flow_type_of_reference(self, declared: Type<'a>) -> Type<'a> {
-        let id = self
-            .file
-            .query(|q| q.flow_type_of_reference(self.raw, declared.id()));
-        Type::new(self.file, id)
-    }
-
-    /// `getContextFreeTypeOfExpression(node)`
-    pub fn get_context_free_type_of_expression(self) -> Type<'a> {
-        Type::new(
-            self.file,
-            self.file
-                .query(|q| q.context_free_type_of_expression(self.raw)),
-        )
-    }
-
-    /// The text after `@deprecated` in the JSDoc comment of the declaration. `None`: it has no
-    /// such tag.
-    pub fn deprecation(self) -> Option<&'a [u8]> {
-        self.file.query(|q| q.deprecation_of_node(self.raw))
     }
 }
 
@@ -427,20 +357,6 @@ impl<'a> SourceFile<'a> {
     /// `program.isSourceFileFromExternalLibrary(sourceFile)`: it was found in `node_modules`.
     pub fn is_from_external_library(self) -> bool {
         self.info().is_from_external_library
-    }
-
-    /// `sourceFile.isDeclarationFile`
-    pub fn is_declaration_file(self) -> bool {
-        self.info().is_declaration_file
-    }
-
-    pub fn is_javascript(self) -> bool {
-        self.info().is_javascript
-    }
-
-    /// `ts.isExternalModule(sourceFile)`
-    pub fn is_external_module(self) -> bool {
-        self.info().is_external_module
     }
 
     /// `program.sourceFileToPackageName.get(sourceFile.path)`: `foo` or `@scope/foo` for a file in

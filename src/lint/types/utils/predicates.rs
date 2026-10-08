@@ -80,15 +80,3 @@ pub fn type_is_or_has_base_type<'a>(ty: Type<'a>, parent_type: Type<'a>) -> bool
                 .is_some_and(|it| it.name() == parent_name)
         })
 }
-
-/// `isTypeBigIntLiteralType(type)`
-#[inline]
-pub fn is_type_big_int_literal_type(ty: Type) -> bool {
-    is_type_flag_set(ty, TypeFlags::BIG_INT_LITERAL)
-}
-
-/// `isTypeTemplateLiteralType(type)`
-#[inline]
-pub fn is_type_template_literal_type(ty: Type) -> bool {
-    is_type_flag_set(ty, TypeFlags::TEMPLATE_LITERAL)
-}

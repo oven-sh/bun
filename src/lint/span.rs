@@ -75,11 +75,6 @@ impl Span {
         self.start <= offset && offset < self.end
     }
 
-    #[inline]
-    pub const fn overlaps(self, other: Span) -> bool {
-        self.start < other.end && other.start < self.end
-    }
-
     /// The range without its first `start` and its last `end` bytes.
     #[inline]
     pub const fn shrink(self, start: u32, end: u32) -> Span {

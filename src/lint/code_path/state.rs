@@ -110,7 +110,6 @@ impl Store {
         paths.push(CodePathData {
             origin,
             upper,
-            children: Vec::new(),
             initial_segment: 0,
             final_segments: Vec::new(),
             returned_segments: Vec::new(),
@@ -118,9 +117,6 @@ impl Store {
             current_segments: SegmentIds::new(),
             segment_count: 0,
         });
-        if let Some(upper) = upper {
-            paths[upper as usize].children.push(id);
-        }
         id
     }
 

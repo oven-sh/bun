@@ -150,16 +150,6 @@ impl<'a> Signature<'a> {
             .map(|node| TsNode::of(self.file, node))
     }
 
-    /// `signature.minArgumentCount`
-    pub fn min_argument_count(self) -> usize {
-        self.info().min_argument_count as usize
-    }
-
-    /// `signatureHasRestParameter(signature)`
-    pub fn has_rest_parameter(self) -> bool {
-        self.info().has_rest_parameter
-    }
-
     /// `signature.getReturnType()`, `checker.getReturnTypeOfSignature(signature)`
     pub fn get_return_type(self) -> Type<'a> {
         Type::new(
@@ -177,16 +167,6 @@ impl<'a> Signature<'a> {
             file: self.file,
             data,
         })
-    }
-
-    /// `getTypeAtPosition(signature, index)`: the type that the argument at `index` is checked
-    /// against, which for a rest parameter is the type of an element. `None`: there are fewer
-    /// parameters.
-    pub fn get_type_at_position(self, index: usize) -> Option<Type<'a>> {
-        let id = self
-            .file
-            .query(|q| q.type_at_position(self.id, index as u32))?;
-        Some(Type::new(self.file, id))
     }
 
     /// `signature.getJsDocTags()`, the text of the `deprecated` one.
@@ -212,12 +192,6 @@ impl<'a> TypePredicate<'a> {
     #[inline]
     pub fn kind(self) -> TypePredicateKind {
         self.data.kind
-    }
-
-    /// `predicate.parameterName`. Empty for `this`.
-    #[inline]
-    pub fn parameter_name(self) -> &'a [u8] {
-        self.data.parameter_name
     }
 
     /// `predicate.parameterIndex`. `None` for `this`.
@@ -262,13 +236,5 @@ impl<'a> IndexInfo<'a> {
     #[inline]
     pub fn is_readonly(self) -> bool {
         self.data.is_readonly
-    }
-
-    /// `info.declaration`
-    #[inline]
-    pub fn declaration(self) -> Option<TsNode<'a>> {
-        self.data
-            .declaration
-            .map(|node| TsNode::of(self.file, node))
     }
 }

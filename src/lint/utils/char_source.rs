@@ -1,6 +1,5 @@
 //! ESLint's `lib/rules/utils/char-source.js`.
 
-use crate::span::Span;
 use bun_core::lexer::char_and_size;
 
 /// ESLint's `CodeUnit`. One UTF-16 code unit of the value of a string literal or of a template
@@ -16,22 +15,6 @@ pub struct CharInfo {
     pub code_unit: u16,
     pub start: u32,
     pub end: u32,
-}
-
-impl CharInfo {
-    /// The range in the file, for a literal or a token that starts at `literal_start`.
-    #[inline]
-    pub const fn span(self, literal_start: u32) -> Span {
-        Span::new(literal_start + self.start, literal_start + self.end)
-    }
-
-    /// ESLint's `codeUnit.source`, out of the text that was parsed.
-    #[inline]
-    pub fn source(self, literal: &[u8]) -> &[u8] {
-        literal
-            .get(self.start as usize..self.end as usize)
-            .unwrap_or_default()
-    }
 }
 
 struct Reader<'t> {

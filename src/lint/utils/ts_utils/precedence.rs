@@ -38,8 +38,6 @@ pub enum OperatorPrecedence {
 impl OperatorPrecedence {
     /// Upstream's `Coalesce = Conditional`.
     pub const COALESCE: OperatorPrecedence = OperatorPrecedence::Conditional;
-    pub const HIGHEST: OperatorPrecedence = OperatorPrecedence::Primary;
-    pub const LOWEST: OperatorPrecedence = OperatorPrecedence::Comma;
 }
 
 /// typescript-eslint's `getOperatorPrecedenceForNode`. Parentheses around `e` do not count.

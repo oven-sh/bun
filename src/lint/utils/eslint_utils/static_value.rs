@@ -144,15 +144,6 @@ impl<'a> StaticValue<'a> {
         }
     }
 
-    /// The boolean, if `typeof value === "boolean"`.
-    #[inline]
-    pub fn as_bool(&self) -> Option<bool> {
-        match *self {
-            StaticValue::Bool(b) => Some(b),
-            _ => None,
-        }
-    }
-
     /// `(value.source, value.flags)`, if `value instanceof RegExp`.
     #[inline]
     pub fn as_regex(&self) -> Option<(&[u8], &[u8])> {
@@ -256,12 +247,6 @@ impl<'a> StaticValue<'a> {
     #[inline]
     pub fn js_compare(&self, other: &StaticValue<'a>) -> Option<Option<Ordering>> {
         self.compare(other).ok()
-    }
-
-    /// The name of the property `object[value]`: the symbol, or `String(value)`. `None` if the
-    /// conversion throws.
-    pub fn to_js_property_key(&self) -> Option<PropertyKey<'a>> {
-        self.to_property_key().ok()
     }
 
     /// `ToPrimitive`. The objects here have no `valueOf` that returns a primitive value, so the

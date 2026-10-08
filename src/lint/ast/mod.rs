@@ -212,7 +212,6 @@ pub struct File<'a> {
     is_flow: bool,
     /// Whether there can be casts that are synthesized from JSDoc comments.
     hides_casts: bool,
-    has_module_syntax: bool,
     has_parse_errors: bool,
 }
 
@@ -234,10 +233,6 @@ impl<'a> File<'a> {
             is_js: hir.is_js,
             is_flow: hir.is_flow,
             hides_casts: hir.is_js && !hir.jsdoc_comments.is_empty(),
-            has_module_syntax: hir.has_module_syntax
-                || hir.is_module_by_decree
-                || path.ends_with(b".mjs")
-                || path.ends_with(b".mts"),
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
@@ -273,11 +268,6 @@ impl<'a> File<'a> {
         self.hir.text.get(span.range()).unwrap_or_default()
     }
 
-    #[inline]
-    pub fn kind(&self) -> FileKind {
-        self.kind
-    }
-
     /// `.js`, `.jsx`, `.mjs`, `.cjs`
     #[inline]
     pub fn is_javascript(&self) -> bool {
@@ -309,17 +299,10 @@ impl<'a> File<'a> {
     }
 
     /// ESLint's `Program.sourceType` is `"module"`. Both parsers repeat what the configuration says:
-    /// whether the file [has module syntax](File::has_module_syntax) does not matter.
+    /// whether the file has an `import` or an `export` does not matter.
     #[inline]
     pub fn is_module_program(&self) -> bool {
         self.language.scope_source_type() == crate::language::SourceType::Module
-    }
-
-    /// It has an `import` or an `export` at the top level, or its extension says that it is a
-    /// module: `.mjs`, `.mts`.
-    #[inline]
-    pub fn has_module_syntax(&self) -> bool {
-        self.has_module_syntax
     }
 
     /// The parser reported an error. Whether ESLint would refuse the file is another question, which

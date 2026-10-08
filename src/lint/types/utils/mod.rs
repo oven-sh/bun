@@ -20,13 +20,12 @@
 //! | `getConstrainedTypeAtLocation.ts` | [`get_constrained_type_at_location`] |
 //! | `getContextualType.ts` | [`get_contextual_type`] |
 //! | `getDeclaration.ts` | [`get_declaration`] |
-//! | `getSourceFileOfNode.ts` | [`get_source_file_of_node`] |
-//! | `getTypeName.ts` | [`get_type_name`], [`is_type_name_string`] |
+//! | `getTypeName.ts` | [`get_type_name`] |
 //! | `isSymbolFromDefaultLibrary.ts` | [`is_symbol_from_default_library`] |
 //! | `isTypeBrandedLiteralLike.ts` | [`is_type_branded_literal_like`] |
 //! | `isTypeReadonly.ts` | [`is_type_readonly`], [`ReadonlynessOptions`] |
 //! | `isUnsafeAssignment.ts` | [`is_unsafe_assignment`], [`UnsafeAssignment`] |
-//! | `predicates.ts` | [`is_nullable_type`], [`is_type_array_type_or_union_of_array_types`], [`is_type_never_type`], [`is_type_unknown_type`], [`is_type_reference_type`], [`is_type_any_type`], [`is_type_any_array_type`], [`is_type_unknown_array_type`], [`type_is_or_has_base_type`], [`is_type_big_int_literal_type`], [`is_type_template_literal_type`] |
+//! | `predicates.ts` | [`is_nullable_type`], [`is_type_array_type_or_union_of_array_types`], [`is_type_never_type`], [`is_type_unknown_type`], [`is_type_reference_type`], [`is_type_any_type`], [`is_type_any_array_type`], [`is_type_unknown_array_type`], [`type_is_or_has_base_type`] |
 //! | `propertyTypes.ts` | [`get_type_of_property_of_name`], [`get_type_of_property_of_type`] |
 //! | `requiresQuoting.ts` | [`requires_quoting`] |
 //! | `typeFlagUtils.ts` | [`get_type_flags`], [`is_type_flag_set`] |
@@ -76,7 +75,6 @@ mod get_constrained_type_at_location;
 mod get_constraint_info;
 mod get_contextual_type;
 mod get_declaration;
-mod get_source_file_of_node;
 mod get_type_name;
 mod get_value_of_literal_type;
 mod is_array_method_call_with_predicate;
@@ -106,7 +104,6 @@ pub use get_constrained_type_at_location::*;
 pub use get_constraint_info::*;
 pub use get_contextual_type::*;
 pub use get_declaration::*;
-pub use get_source_file_of_node::*;
 pub use get_type_name::*;
 pub use get_value_of_literal_type::*;
 pub use is_array_method_call_with_predicate::*;

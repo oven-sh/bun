@@ -293,14 +293,6 @@ impl<'a> Target<'a> {
         }
     }
 
-    #[inline]
-    pub fn as_ident(self) -> Option<Name<'a>> {
-        match self.kind() {
-            TargetKind::Ident(name) => Some(name),
-            _ => None,
-        }
-    }
-
     /// Splits the `a = 1` of an assignment target into the target and the default value.
     fn split_default(e: Expr<'a>) -> (Expr<'a>, Option<Expr<'a>>) {
         match e.kind() {

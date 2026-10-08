@@ -115,19 +115,6 @@ pub fn extract_name_for_member(node: MemberNode<'_>) -> Option<ExtractedName<'_>
     }
 }
 
-/// typescript-eslint's `extractNameForMemberExpression`, of a `Dot` or an `Index`.
-pub fn extract_name_for_member_expression(node: Expr<'_>) -> Option<ExtractedName<'_>> {
-    match node.kind() {
-        ExprKind::Index { index, .. } => extract_computed_name(index),
-        ExprKind::Dot { name, .. } => Some(ExtractedName {
-            code_name: Cow::Borrowed(name.bytes()),
-            is_private: name.bytes().starts_with(b"#"),
-            name_span: name.span(),
-        }),
-        _ => None,
-    }
-}
-
 // ───────────────────────────── members ─────────────────────────────
 
 /// typescript-eslint's `MemberNode`.
@@ -191,13 +178,13 @@ impl<'a> ClassMember<'a> {
     }
 }
 
-/// typescript-eslint's `ClassScopeResult`. The members are
-/// [`ClassMemberUsage::members_of`] the class.
+/// typescript-eslint's `ClassScopeResult`. `members.instance` and `members.static` are a range of
+/// [`ClassMemberUsage::members`], told apart by [`ClassMember::is_static`]. Of the members with the
+/// same name, only the last is one.
 #[derive(Copy, Clone, Debug)]
-pub struct ClassScopeResult<'a> {
-    pub class: Class<'a>,
+struct ClassScopeResult<'a> {
     /// `None` for an anonymous class.
-    pub class_name: Option<Name<'a>>,
+    class_name: Option<Name<'a>>,
     first_member: u32,
     member_count: u32,
 }
@@ -249,27 +236,6 @@ struct Candidate<'a> {
 }
 
 impl<'a> ClassMemberUsage<'a> {
-    /// `result.values()`
-    #[inline]
-    pub fn classes(&self) -> &[ClassScopeResult<'a>] {
-        &self.classes
-    }
-
-    /// `result.get(class)`
-    #[inline]
-    pub fn get(&self, class: Class<'a>) -> Option<&ClassScopeResult<'a>> {
-        self.classes.get(class.id().idx())
-    }
-
-    /// `members.instance` and `members.static` of a class, told apart by
-    /// [`ClassMember::is_static`]. Of the members with the same name, only the last is one.
-    pub fn members_of(&self, class: &ClassScopeResult<'a>) -> &[ClassMember<'a>] {
-        let first = class.first_member as usize;
-        self.members
-            .get(first..first + class.member_count as usize)
-            .unwrap_or_default()
-    }
-
     /// The members of all the classes.
     #[inline]
     pub fn members(&self) -> &[ClassMember<'a>] {
@@ -387,7 +353,6 @@ impl<'a> ClassMemberUsage<'a> {
                 .extend(keys.map(|(i, &key)| ((class, key), i as u32)));
         }
         self.classes.push(ClassScopeResult {
-            class,
             class_name: class.name().map(|name| name.name()),
             first_member: first as u32,
             member_count: (self.members.len() - first) as u32,

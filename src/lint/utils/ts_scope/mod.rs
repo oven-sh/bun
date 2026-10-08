@@ -15,24 +15,19 @@
 //! | `referenceContainsTypeQuery` | [`reference_contains_type_query`] |
 //! | `referenceContainsTypePredicate` | [`reference_contains_type_predicate`] |
 //! | `isTypeOnlyReference` | [`is_type_only_reference`] |
-//! | `isMergedTypeValueVariable` | [`is_merged_type_value_variable`] |
-//! | `variable.isTypeVariable`, `variable.isValueVariable` | [`is_type_variable`], [`is_value_variable`] |
-//! | `definition.isTypeDefinition`, `definition.isVariableDefinition` | [`is_type_definition`], [`is_variable_definition`] |
+//! | `definition.isTypeDefinition` | [`is_type_definition`] |
 //! | `definition.type === DefinitionType.Variable` | [`is_variable_declarator_definition`] |
-//! | `reference.isValueReference` | [`is_value_reference`] |
 //! | `isTypeImport` | [`is_type_import`] |
 //! | `collectVariables`, `VariableAnalysis` | [`collect_variables`], [`VariableAnalysis`] |
 //! | scope-manager's `Variable`, with the two variables of a class | [`Variable`] |
-//! | `variable.eslintUsed`, `sourceCode.markVariableAsUsed`, `/* exported */` | [`UsedMarks`] |
-//! | `isUsedVariable` | [`is_used_variable`], [`is_used_global_variable`] |
-//! | `isExported`, `isMergeableExported` | [`is_exported`], [`is_mergeable_exported`] |
-//! | `isSelfReference`, `isInsideOneOf` | [`get_self_reference_ranges`] |
+//! | `variable.eslintUsed`, `/* exported */` | [`UsedMarks`] |
+//! | `isUsedVariable`, for a global variable that the file does not declare | [`is_used_global_variable`] |
 //! | `isReadForItself`, `getRhsNode`, `isUnusedExpression` | [`is_read_for_itself`], [`get_rhs_node`], [`is_unused_expression`] |
 //! | `hasRestSibling(id.parent)`, `def.name.parent.type === "ArrayPattern"`, `ref.identifier.parent.type === "ArrayPattern"` | [`has_rest_sibling`], [`is_defined_in_array_pattern`], [`is_referenced_in_array_pattern`] |
 //! | `isInsideOfStorableFunction`, `isStorableFunction` | [`is_inside_of_storable_function`], [`is_storable_function`] |
-//! | `analyzeClassMemberUsage`, `ClassScopeResult` | [`analyze_class_member_usage`], [`ClassMemberUsage`], [`ClassScopeResult`] |
+//! | `analyzeClassMemberUsage` | [`analyze_class_member_usage`], [`ClassMemberUsage`] |
 //! | `Member`, `MemberNode` of `class-scope-analyzer` | [`ClassMember`], [`MemberNode`] |
-//! | `extractNameForMember`, `extractNameForMemberExpression`, `ExtractedName` | [`extract_name_for_member`], [`extract_name_for_member_expression`], [`ExtractedName`] |
+//! | `extractNameForMember`, `ExtractedName` | [`extract_name_for_member`], [`ExtractedName`] |
 
 mod class_scope_analyzer;
 mod collect_unused_variables;

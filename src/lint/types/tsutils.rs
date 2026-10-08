@@ -26,30 +26,6 @@ pub fn is_object_flag_set(ty: Type, flag: ObjectFlags) -> bool {
     ty.object_flags().intersects(flag)
 }
 
-/// `isSymbolFlagSet(symbol, flag)`
-#[inline]
-pub fn is_symbol_flag_set(symbol: TsSymbol, flag: SymbolFlags) -> bool {
-    symbol.flags().intersects(flag)
-}
-
-/// `isModifierFlagSet(node, flag)`
-#[inline]
-pub fn is_modifier_flag_set(node: TsNode, flag: ModifierFlags) -> bool {
-    node.modifier_flags().intersects(flag)
-}
-
-/// `isNodeFlagSet(node, flag)`
-#[inline]
-pub fn is_node_flag_set(node: TsNode, flag: NodeFlags) -> bool {
-    node.flags().intersects(flag)
-}
-
-/// `isTransientSymbolLinksFlagSet(symbol.links, flag)`
-#[inline]
-pub fn is_transient_symbol_links_flag_set(symbol: TsSymbol, flag: CheckFlags) -> bool {
-    symbol.check_flags().intersects(flag)
-}
-
 // ───────────────────────────── compiler options ─────────────────────────────
 
 /// An option that `isCompilerOptionEnabled` and `isStrictCompilerOptionEnabled` are asked about.
@@ -208,30 +184,9 @@ pub fn is_intrinsic_error_type(ty: Type) -> bool {
     ty.is_error()
 }
 
-/// `isEvolvingArrayType(type)`
-pub fn is_evolving_array_type(ty: Type) -> bool {
-    is_object_type(ty) && is_object_flag_set(ty, ObjectFlags::EVOLVING_ARRAY)
-}
-
-/// `isTupleType(type)`. In TypeScript that is the target of a tuple type reference. Here a tuple
-/// type is its own target, so this is the same as [`is_tuple_type_reference`].
-pub fn is_tuple_type(ty: Type) -> bool {
-    is_object_type(ty) && is_object_flag_set(ty, ObjectFlags::TUPLE)
-}
-
 /// `isTypeReference(type)`
 pub fn is_type_reference(ty: Type) -> bool {
     is_object_type(ty) && is_object_flag_set(ty, ObjectFlags::REFERENCE)
-}
-
-/// `isTupleTypeReference(type)`
-pub fn is_tuple_type_reference(ty: Type) -> bool {
-    is_tuple_type(ty)
-}
-
-/// `isFreshableIntrinsicType(type)`
-pub fn is_freshable_intrinsic_type(ty: Type) -> bool {
-    is_intrinsic_type(ty) && is_freshable_type(ty)
 }
 
 /// `isFalseLiteralType(type)`
@@ -242,12 +197,6 @@ pub fn is_false_literal_type(ty: Type) -> bool {
 /// `isTrueLiteralType(type)`
 pub fn is_true_literal_type(ty: Type) -> bool {
     is_boolean_literal_type(ty) && ty.intrinsic_name() == Some("true")
-}
-
-/// `typeIsLiteral(type)`
-#[inline]
-pub fn type_is_literal(ty: Type) -> bool {
-    ty.is_literal()
 }
 
 // ───────────────────────────── constituents ─────────────────────────────
@@ -312,12 +261,6 @@ pub fn get_call_signatures_of_type<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
         ty.get_call_signatures().iter().collect()
     }
     collect(ty, 0)
-}
-
-/// `getPropertyOfType(type, name)`
-#[inline]
-pub fn get_property_of_type<'a>(ty: Type<'a>, name: &[u8]) -> Option<TsSymbol<'a>> {
-    ty.get_property(name)
 }
 
 /// `getWellKnownSymbolPropertyOfType(type, wellKnownSymbolName, typeChecker)`: the property whose

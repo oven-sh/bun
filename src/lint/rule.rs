@@ -551,14 +551,6 @@ impl NodeTags {
     pub const PAT: NodeTags = NodeTags(1 << (REST + 13));
     pub const PAT_PROP: NodeTags = NodeTags(1 << (REST + 14));
     pub const PAT_ELEM: NodeTags = NodeTags(1 << (REST + 15));
-    /// `for`, `for`-`in`, `for`-`of`, `while`, `do`-`while`
-    pub const LOOPS: NodeTags = NodeTags(
-        1 << (STMTS + StmtTag::For as u32)
-            | 1 << (STMTS + StmtTag::ForIn as u32)
-            | 1 << (STMTS + StmtTag::ForOf as u32)
-            | 1 << (STMTS + StmtTag::While as u32)
-            | 1 << (STMTS + StmtTag::DoWhile as u32),
-    );
     pub const ALL: NodeTags = NodeTags(u128::MAX);
 
     pub(crate) const COUNT: usize = REST as usize + 16;

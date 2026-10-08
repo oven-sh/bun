@@ -18,7 +18,7 @@
 //! | `new RegExp(pattern, flags)` | [`Regex::new`], [`Regex::from_bytes`] |
 //! | `/pattern/flags` | [`Regex::literal`] |
 //! | `re.test(s)` | [`re.test(s)`](Regex::test) |
-//! | `re.exec(s)`, `s.match(re)` without `g` | [`re.exec(s)`](Regex::exec): `m[1]` is `m.get(1)`, `m.groups.name` is `m.name("name")`, `m.index` is `m.start()` |
+//! | `re.exec(s)`, `s.match(re)` without `g` | [`re.exec_at(s, 0)`](Regex::exec_at): `m[1]` is `m.get(1)`, `m.groups.name` is `m.name("name")`, `m.index` is `m.start()` |
 //! | the same when only `m[0]` and `m.index` are used | [`re.find(s)`](Regex::find) |
 //! | `re.lastIndex = i; re.exec(s)` with `g` or `y` | [`re.exec_at(s, i)`](Regex::exec_at), [`re.find_at(s, i)`](Regex::find_at). `lastIndex` is then `m.end()` |
 //! | `while ((m = re.exec(s)))` with `g`, `s.matchAll(re)` | [`re.exec_iter(s)`](Regex::exec_iter) |
@@ -30,10 +30,10 @@
 //! | `s.split(re)` | [`re.split(s)`](Regex::split) |
 //! | `re.source`, `re.flags`, `re.global`, .. | [`Regex::source`], [`Regex::flags`]: `re.flags().global`, `re.flags().to_string()` |
 //! | `String(re)`, `` `${re}` `` | `re.to_string()`, `format!("{re}")` |
-//! | `escapeRegExp(s)` of `escape-string-regexp` | [`escape`] |
+//! | `escapeRegExp(s)` of `escape-string-regexp` | [`escape_string_regexp`](crate::utils::text::escape_string_regexp) |
 //!
-//! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`],
-//! [`Regex::exec`] and [`Regex::find`] start at 0 whatever the flags.
+//! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`]
+//! and [`Regex::find`] start at 0 whatever the flags.
 //!
 //! # Text and positions
 //!
@@ -84,23 +84,6 @@ use bun_core::strings;
 use exec::{Machine, Slots};
 use program::{NONE, Program};
 use std::borrow::Cow;
-
-/// The version of Unicode of `\p{..}` and of the `i` flag.
-pub const UNICODE_VERSION: &str = unicode_tables::UNICODE_VERSION;
-
-/// `escapeRegExp(text)` of the package `escape-string-regexp`: a pattern that matches `text`.
-pub fn escape(text: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(text.len());
-    for &byte in text {
-        match byte {
-            b'|' | b'\\' | b'{' | b'}' | b'(' | b')' | b'[' | b']' | b'^' | b'$' | b'+' | b'*'
-            | b'?' | b'.' => out.extend_from_slice(&[b'\\', byte]),
-            b'-' => out.extend_from_slice(b"\\x2d"),
-            _ => out.push(byte),
-        }
-    }
-    out
-}
 
 /// V8's `EscapeRegExpSource`.
 fn escape_source(pattern: &[u8]) -> Box<[u8]> {
@@ -215,12 +198,6 @@ impl Regex {
         self.flags
     }
 
-    /// The number of capturing groups.
-    #[inline]
-    pub fn group_count(&self) -> usize {
-        self.program.group_count as usize - 1
-    }
-
     /// The names of the groups, in the order in which they first appear.
     pub fn group_names(&self) -> impl Iterator<Item = &[u8]> {
         self.names.iter().map(|(name, _)| &**name)
@@ -263,13 +240,8 @@ impl Regex {
         })
     }
 
-    /// `regex.exec(text)`, from the start of the text.
-    #[inline]
-    pub fn exec<'t>(&self, text: &'t [u8]) -> Option<Captures<'_, 't>> {
-        self.exec_at(text, 0)
-    }
-
     /// `regex.lastIndex = start; regex.exec(text)` for a regular expression with the `g` or `y` flag.
+    /// Without them JavaScript starts at 0.
     pub fn exec_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Captures<'_, 't>> {
         self.try_exec_at(text, start).ok()?
     }
@@ -448,11 +420,6 @@ impl<'t> Match<'t> {
     #[inline]
     pub fn range(self) -> std::ops::Range<usize> {
         self.start()..self.end()
-    }
-
-    #[inline]
-    pub fn len(self) -> usize {
-        self.end() - self.start()
     }
 
     #[inline]

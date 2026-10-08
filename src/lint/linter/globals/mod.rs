@@ -6,7 +6,7 @@
 //! | `globalScope.set.get(name)`, if it has no `defs` | [`File::global`] |
 //! | `variable.writeable` | [`GlobalVariable::is_writable`] |
 //! | `variable.eslintImplicitGlobalSetting` | [`GlobalVariable::implicit_setting`] |
-//! | `variable.eslintExplicitGlobal` | [`GlobalVariable::is_explicit`] |
+//! | `variable.eslintExplicitGlobal` | `!variable.comments.is_empty()` |
 //! | `variable.eslintExplicitGlobalComments` | [`GlobalVariable::comments`] |
 //! | `variable.eslintExported` | [`GlobalVariable::is_exported`] |
 //! | `variable instanceof ImplicitLibVariable` | [`GlobalVariable::is_in_lib`] |
@@ -224,13 +224,6 @@ impl ConfigGlobals {
 }
 
 impl LanguageOptions {
-    /// ESLint's `configGlobals[name]`: what the configuration says about the global variable
-    /// `name`, with what the version of ECMAScript and `sourceType: "commonjs"` define. Comments
-    /// of a file can change it: see [`File::global`].
-    pub fn configured_global(&self, name: &[u8]) -> Option<Global> {
-        self.config_globals().setting(name)
-    }
-
     /// What the libraries of TypeScript define, sorted by name: the name, whether it is a type, whether it is a value.
     pub fn lib_variables(&self) -> impl Iterator<Item = (&'static [u8], bool, bool)> + '_ {
         let libs = &self.config_globals().libs;
@@ -289,12 +282,6 @@ pub struct GlobalVariable<'f> {
 }
 
 impl GlobalVariable<'_> {
-    /// ESLint's `variable.eslintExplicitGlobal`.
-    #[inline]
-    pub fn is_explicit(&self) -> bool {
-        !self.comments.is_empty()
-    }
-
     /// Whether a reference that is in a type (`is_type`), or not, resolves to it.
     #[inline]
     pub fn accepts(&self, is_type: bool) -> bool {
@@ -353,17 +340,6 @@ impl<'a> File<'a> {
                 is_exported,
             }),
         }
-    }
-
-    /// What ESLint's `addDeclaredGlobals` declares `name` as: [`File::global`] without the
-    /// libraries of TypeScript. Never [`Global::Off`].
-    pub fn declared_global(&'a self, name: &[u8]) -> Option<Global> {
-        let global = self.global(name).filter(|it| !it.is_only_in_lib)?;
-        Some(if global.is_writable {
-            Global::Writable
-        } else {
-            Global::Readonly
-        })
     }
 
     /// ESLint's `getNameLocationInGlobalDirectiveComment`: where `name` is in the `/* global */`

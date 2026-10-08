@@ -152,11 +152,13 @@ pub enum Mode {
 ///
 /// `new ReferenceTracker(sourceCode.getScope(program))` is `ReferenceTracker::new(file)`.
 #[derive(Copy, Clone)]
-pub struct ReferenceTracker<'a, 'g> {
+pub struct ReferenceTracker<'a> {
     file: &'a File<'a>,
     mode: Mode,
-    global_object_names: &'g [&'g str],
 }
+
+/// What the option `globalObjectNames` is by default.
+const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];
 
 /// A trace map, or what `import` makes of that of a CommonJS module.
 #[derive(Copy, Clone)]
@@ -212,26 +214,17 @@ struct Walk<'a, 'm, T> {
     found: Vec<TrackedReference<'a, 'm, T>>,
 }
 
-impl<'a, 'g> ReferenceTracker<'a, 'g> {
+impl<'a> ReferenceTracker<'a> {
     pub fn new(file: &'a File<'a>) -> Self {
         ReferenceTracker {
             file,
             mode: Mode::Strict,
-            global_object_names: &["global", "globalThis", "self", "window"],
         }
     }
 
     /// The option `mode`.
     pub fn with_mode(self, mode: Mode) -> Self {
         ReferenceTracker { mode, ..self }
-    }
-
-    /// The option `globalObjectNames`.
-    pub fn with_global_object_names(self, global_object_names: &'g [&'g str]) -> Self {
-        ReferenceTracker {
-            global_object_names,
-            ..self
-        }
     }
 
     fn walk<'m, T: Copy>(&self) -> Walk<'a, 'm, T> {
@@ -260,7 +253,7 @@ impl<'a, 'g> ReferenceTracker<'a, 'g> {
                 );
             }
         }
-        for name in self.global_object_names {
+        for name in GLOBAL_OBJECT_NAMES {
             if let Some(variable) = walk.unmodified_global(name.as_bytes()) {
                 walk.variable_references(variable, &SmallVec::new(), View::Map(map), false);
             }

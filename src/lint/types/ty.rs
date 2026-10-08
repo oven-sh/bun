@@ -3,8 +3,8 @@
 use super::signature::SignatureList;
 use super::symbol::SymbolList;
 use super::{
-    ElementFlags, IndexInfo, IndexKind, Locate, ObjectFlags, SignatureKind, TsSymbol, TypeFacts,
-    TypeFlags, TypeFormatFlags,
+    ElementFlags, IndexInfo, IndexKind, ObjectFlags, SignatureKind, TsSymbol, TypeFlags,
+    TypeFormatFlags,
 };
 use crate::ast::{File, MappedModifier};
 use bun_sema::check::services::{Relation, Structure, TupleInfo, TypeOp, TypeTest};
@@ -166,18 +166,6 @@ pub struct TupleTarget<'a> {
 }
 
 impl<'a> TupleTarget<'a> {
-    /// `target.elementFlags`, one for each type argument.
-    #[inline]
-    pub fn element_flags(self) -> &'a [ElementFlags] {
-        self.info.element_flags
-    }
-
-    /// `target.combinedFlags`: all of them.
-    #[inline]
-    pub fn combined_flags(self) -> ElementFlags {
-        self.info.combined_flags
-    }
-
     /// `target.readonly`
     #[inline]
     pub fn readonly(self) -> bool {
@@ -492,17 +480,6 @@ impl<'a> Type<'a> {
             .intersects(TypeFlags::STRING_OR_NUMBER_LITERAL | TypeFlags::BIG_INT_LITERAL)
     }
 
-    /// `type.isClassOrInterface()`: the declared type of a class or an interface.
-    pub fn is_class_or_interface(self) -> bool {
-        self.object_flags()
-            .intersects(ObjectFlags::CLASS_OR_INTERFACE)
-    }
-
-    /// `type.isClass()`
-    pub fn is_class(self) -> bool {
-        self.object_flags().intersects(ObjectFlags::CLASS)
-    }
-
     type_tests! {
         /// `checker.isArrayType(type)`: `T[]` or `readonly T[]`.
         is_array_type Array;
@@ -533,53 +510,12 @@ impl<'a> Type<'a> {
         self.is_array_type() || self.is_tuple_type()
     }
 
-    /// `hasTypeFacts(type, facts)`: some value of the type has one of them.
-    pub fn has_type_facts(self, facts: TypeFacts) -> bool {
-        self.file.query(|q| q.has_type_facts(self.id, facts))
-    }
-
-    /// `checker.isNullableType(type)`: `undefined` or `null` is among its values.
-    pub fn is_nullable_type(self) -> bool {
-        self.has_type_facts(TypeFacts::IS_UNDEFINED_OR_NULL)
-    }
-
     // ───────────────────────────── relations ─────────────────────────────
 
     /// `checker.isTypeAssignableTo(type, target)`
     pub fn is_assignable_to(self, target: Type<'a>) -> bool {
         self.file
             .query(|q| q.is_related(Relation::Assignable, self.id, target.id))
-    }
-
-    /// `isTypeIdenticalTo(type, other)`
-    pub fn is_identical_to(self, other: Type<'a>) -> bool {
-        self.file
-            .query(|q| q.is_related(Relation::Identical, self.id, other.id))
-    }
-
-    /// `isTypeSubtypeOf(type, target)`
-    pub fn is_subtype_of(self, target: Type<'a>) -> bool {
-        self.file
-            .query(|q| q.is_related(Relation::Subtype, self.id, target.id))
-    }
-
-    /// `isTypeStrictSubtypeOf(type, target)`
-    pub fn is_strict_subtype_of(self, target: Type<'a>) -> bool {
-        self.file
-            .query(|q| q.is_related(Relation::StrictSubtype, self.id, target.id))
-    }
-
-    /// `isTypeComparableTo(type, target)`
-    pub fn is_comparable_to(self, target: Type<'a>) -> bool {
-        self.file
-            .query(|q| q.is_related(Relation::Comparable, self.id, target.id))
-    }
-
-    /// The order in which TypeScript lists the constituents of a union. The numbers of types have
-    /// no order.
-    pub fn compare(self, other: Type<'a>) -> std::cmp::Ordering {
-        let order = self.file.query(|q| q.compare_types(self.id, other.id));
-        order.unwrap_or(std::cmp::Ordering::Equal)
     }
 
     // ───────────────────────────── types made from it ─────────────────────────────
@@ -646,36 +582,9 @@ impl<'a> Type<'a> {
     }
 
     /// `checker.getBaseTypes(type)`, `type.getBaseTypes()`: what the class or the interface
-    /// extends. Empty unless [`Type::is_class_or_interface`].
+    /// extends. Empty unless it is the declared type of a class or an interface.
     pub fn get_base_types(self) -> TypeList<'a> {
         self.list(self.file.query(|q| q.base_types(self.id)))
-    }
-
-    /// `getIndexedAccessTypeOrUndefined(type, index)`. `in_expression`:
-    /// `AccessFlags.ExpressionPosition`, which adds `undefined` under `noUncheckedIndexedAccess`.
-    pub fn get_indexed_access_type(self, index: Type<'a>, in_expression: bool) -> Option<Type<'a>> {
-        let id = self
-            .file
-            .query(|q| q.indexed_access_type(self.id, index.id, in_expression))?;
-        Some(Type::new(self.file, id))
-    }
-
-    /// `getAssignmentReducedType(type, assigned)`
-    pub fn get_assignment_reduced_type(self, assigned: Type<'a>) -> Type<'a> {
-        Type::new(
-            self.file,
-            self.file
-                .query(|q| q.assignment_reduced_type(self.id, assigned.id)),
-        )
-    }
-
-    /// `getTypeWithDefault(type, defaultExpression)`
-    pub fn get_type_with_default(self, default: impl Locate<'a>) -> Type<'a> {
-        let default = default.locate(self.file).raw();
-        Type::new(
-            self.file,
-            self.file.query(|q| q.type_with_default(self.id, default)),
-        )
     }
 
     // ───────────────────────────── members ─────────────────────────────
@@ -702,14 +611,6 @@ impl<'a> Type<'a> {
         Some(Type::new(self.file, id))
     }
 
-    /// `getTypeOfPropertyOrIndexSignatureOfType(type, name)`
-    pub fn get_type_of_property_or_index_signature(self, name: &[u8]) -> Option<Type<'a>> {
-        let id = self
-            .file
-            .query(|q| q.type_of_property_or_index_signature_of_type(self.id, name))?;
-        Some(Type::new(self.file, id))
-    }
-
     /// `checker.getIndexInfosOfType(type)`
     pub fn get_index_infos(self) -> impl ExactSizeIterator<Item = IndexInfo<'a>> + 'a {
         let file = self.file;
@@ -726,14 +627,6 @@ impl<'a> Type<'a> {
         };
         self.get_index_infos()
             .find(|info| info.key_type().id == key)
-    }
-
-    /// `getApplicableIndexInfo(type, keyType)`: the index signature that a key of that type reads.
-    pub fn get_applicable_index_info(self, key: Type<'a>) -> Option<IndexInfo<'a>> {
-        let info = self
-            .file
-            .query(|q| q.applicable_index_info(self.id, key.id))?;
-        Some(IndexInfo::new(self.file, info))
     }
 
     /// `type.getStringIndexType()`

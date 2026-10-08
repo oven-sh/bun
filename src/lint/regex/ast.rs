@@ -302,22 +302,6 @@ impl<'s> Ast<'s> {
         }
     }
 
-    /// The flags of a literal.
-    pub fn flags(&self) -> Option<Flags> {
-        match self.root().kind() {
-            Kind::RegExpLiteral { flags, .. } => match flags.kind() {
-                Kind::Flags(flags) => Some(flags),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    #[inline]
-    pub fn node(&self, id: NodeId) -> Option<Node<'_>> {
-        ((id.0 as usize) < self.nodes.len()).then_some(Node { ast: self, id })
-    }
-
     /// The capturing groups, in the order of their `(`.
     pub fn capturing_groups(&self) -> impl Iterator<Item = Node<'_>> {
         self.root()
@@ -921,11 +905,6 @@ impl<'a> Nodes<'a> {
     #[inline]
     pub fn first(self) -> Option<Node<'a>> {
         self.get(0)
-    }
-
-    #[inline]
-    pub fn last(self) -> Option<Node<'a>> {
-        self.get(self.ids.len().checked_sub(1)?)
     }
 
     #[inline]

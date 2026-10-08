@@ -26,18 +26,9 @@ const BOM: &[u8] = b"\xEF\xBB\xBF";
 ///
 /// `parse` is called at most once, with a part of the text. It has to parse that like `file` has
 /// been parsed, as a file with the same name, and call its second argument with the result.
-pub fn format<'a>(
-    file: &'a File<'a>,
-    options: &FormatOptions,
-    scratch: &mut Scratch,
-    out: &mut Vec<u8>,
-    parse: impl FnOnce(&[u8], &mut dyn for<'b> FnMut(&'b File<'b>)),
-) -> Result<(), FormatError> {
-    format_with_cursor(file, options, scratch, out, parse).map(|_| ())
-}
-
-/// The same. Returns where the cursor, which is at `options.cursor_offset` in the text of `file`,
-/// is in what is appended, in UTF-16 code units like the option. `None` if there is none.
+///
+/// Returns where the cursor, which is at `options.cursor_offset` in the text of `file`, is in what
+/// is appended, in UTF-16 code units like the option. `None` if there is none.
 pub fn format_with_cursor<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,

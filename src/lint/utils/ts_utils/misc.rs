@@ -27,51 +27,6 @@ pub fn is_definition_file(file_name: &[u8]) -> bool {
             .any(|at| file_name[at..at + 3].eq_ignore_ascii_case(b".d."))
 }
 
-/// typescript-eslint's `arrayGroupByToMap`: the items by their key, the keys in the order of their
-/// first item, as a `Map` iterates. O(items × keys).
-pub fn array_group_by_to_map<T, K: PartialEq>(
-    array: impl IntoIterator<Item = T>,
-    mut get_key: impl FnMut(&T) -> K,
-) -> Vec<(K, Vec<T>)> {
-    let mut groups: Vec<(K, Vec<T>)> = Vec::new();
-    for item in array {
-        let key = get_key(&item);
-        match groups.iter_mut().find(|group| group.0 == key) {
-            Some(group) => group.1.push(item),
-            None => groups.push((key, vec![item])),
-        }
-    }
-    groups
-}
-
-/// typescript-eslint's `arraysAreEqual`.
-pub fn arrays_are_equal<T>(
-    a: Option<&[T]>,
-    b: Option<&[T]>,
-    mut eq: impl FnMut(&T, &T) -> bool,
-) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(a), Some(b)) => a.len() == b.len() && a.iter().zip(b).all(|(x, y)| eq(x, y)),
-        _ => false,
-    }
-}
-
-/// typescript-eslint's `findFirstResult`, which is [`Iterator::find_map`].
-#[inline]
-pub fn find_first_result<T, U>(
-    inputs: impl IntoIterator<Item = T>,
-    get_result: impl FnMut(T) -> Option<U>,
-) -> Option<U> {
-    inputs.into_iter().find_map(get_result)
-}
-
-/// typescript-eslint's `findLastIndex`, which is [`Iterator::rposition`]. `None` for upstream's -1.
-#[inline]
-pub fn find_last_index<T>(members: &[T], predicate: impl FnMut(&T) -> bool) -> Option<usize> {
-    members.iter().rposition(predicate)
-}
-
 /// typescript-eslint's `getNameFromIndexSignature`: the `key` of `[key: string]: T`.
 pub fn get_name_from_index_signature<'a>(member: Member<'a>) -> &'a [u8] {
     // An `Identifier`, as opposed to a `RestElement` or an `AssignmentPattern`.

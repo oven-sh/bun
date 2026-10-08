@@ -43,8 +43,8 @@
 //!
 //! | typescript-eslint | here |
 //! | --- | --- |
-//! | `services.getTypeAtLocation(node)` | `node.ty()` on [`Expr`](crate::ast::Expr), [`Pat`](crate::ast::Pat), [`TypeNode`](crate::ast::TypeNode) and [`Node`](crate::ast::Node). `node.type_at_location()` on every handle: on a [`Param`](crate::ast::Param), a [`VarDecl`](crate::ast::VarDecl) or a [`Member`](crate::ast::Member), `ty()` is the annotation that is written. [`Types::get_type_at_location`] |
-//! | `services.getSymbolAtLocation(node)` | `node.ts_symbol()` on every handle, [`Types::get_symbol_at_location`] |
+//! | `services.getTypeAtLocation(node)` | `node.ty()` on [`Expr`](crate::ast::Expr), [`Pat`](crate::ast::Pat), [`TypeNode`](crate::ast::TypeNode) and [`Node`](crate::ast::Node). `node.type_at_location()` on every handle but `Node`: on a [`Param`](crate::ast::Param), a [`VarDecl`](crate::ast::VarDecl) or a [`Member`](crate::ast::Member), `ty()` is the annotation that is written. [`Types::get_type_at_location`] |
+//! | `services.getSymbolAtLocation(node)` | `node.ts_symbol()` on every handle |
 //! | `services.esTreeNodeToTSNodeMap.get(node)` | `node.ts_node()`, [`Types::ts_node`] |
 //! | `services.tsNodeToESTreeNodeMap.get(tsNode)` | [`TsNode::to_ast`] |
 //! | the same for `node.id`, `node.key`, `node.property`, which are not nodes here | [`NameOf`]`(owner)`: `NameOf(member).ty()`, or the [`Ident`](crate::ast::Ident) itself: `types.get_type_at_location(ident)` |
@@ -56,9 +56,12 @@
 //!
 //! # Where the rest is
 //!
-//! - A method of `ts.TypeChecker` that takes a type, a symbol or a signature first is a method of
-//!   that handle **and** of [`Types`]: `checker.getApparentType(type)` is
-//!   `type.get_apparent_type()` or `types.get_apparent_type(type)`.
+//! - A method of `ts.TypeChecker` that takes a node, a type, a symbol or a signature first is a
+//!   method of that handle, [`TsNode`], [`Type`], [`TsSymbol`] or [`Signature`]:
+//!   `checker.getApparentType(type)` is `type.get_apparent_type()`, `checker.getTypeOfSymbol(symbol)`
+//!   is `symbol.get_type()`.
+//! - [`Types`] has what is asked of none of them: the compiler options, the types that always
+//!   exist, the symbols in scope.
 //! - `ts-api-utils` is [`tsutils`].
 //! - `@typescript-eslint/type-utils`, and what in `eslint-plugin/src/util` needs types, is [`utils`].
 //!
@@ -395,9 +398,7 @@ impl<'a> File<'a> {
 }
 
 /// `ts.TypeChecker` and `ts.Program`: what is not asked of a node, a type, a symbol or a signature.
-///
-/// Every method of `ts.TypeChecker` that rules use is here under its own name. Those that take a
-/// handle first only forward to the method of that handle, which reads better.
+/// What is, is a method of [`TsNode`], [`Type`], [`TsSymbol`] or [`Signature`].
 #[derive(Copy, Clone)]
 pub struct Types<'a> {
     pub(crate) file: &'a File<'a>,
@@ -414,11 +415,6 @@ macro_rules! intrinsic_types {
 }
 
 impl<'a> Types<'a> {
-    #[inline]
-    pub fn file(self) -> &'a File<'a> {
-        self.file
-    }
-
     // ───────────────────────────── ts.Program ─────────────────────────────
 
     /// `program.getCompilerOptions()`
@@ -434,12 +430,6 @@ impl<'a> Types<'a> {
     /// `program.getCurrentDirectory()`
     pub fn get_current_directory(self) -> &'a [u8] {
         self.file.query(|q| q.current_directory())
-    }
-
-    /// `program.getSourceFile(fileName)`
-    pub fn get_source_file(self, file_name: &[u8]) -> Option<SourceFile<'a>> {
-        let id = self.file.query(|q| q.source_file(file_name))?;
-        Some(SourceFile::new(self.file, id))
     }
 
     /// The file that is linted, as a file of the program.
@@ -473,53 +463,8 @@ impl<'a> Types<'a> {
         node.locate(self.file).get_type_at_location()
     }
 
-    /// `checker.getSymbolAtLocation(node)`
-    pub fn get_symbol_at_location(self, node: impl Locate<'a>) -> Option<TsSymbol<'a>> {
-        node.locate(self.file).get_symbol_at_location()
-    }
-
-    /// `checker.getTypeFromTypeNode(node)`
-    pub fn get_type_from_type_node(self, node: impl Locate<'a>) -> Type<'a> {
-        node.locate(self.file).get_type_from_type_node()
-    }
-
-    /// `checker.getContextualType(node)`
-    pub fn get_contextual_type(self, node: impl Locate<'a>) -> Option<Type<'a>> {
-        node.locate(self.file).get_contextual_type()
-    }
-
-    /// `checker.getContextualTypeForArgumentAtIndex(call, index)`
-    pub fn get_contextual_type_for_argument_at_index(
-        self,
-        call: impl Locate<'a>,
-        index: usize,
-    ) -> Option<Type<'a>> {
-        call.locate(self.file)
-            .get_contextual_type_for_argument_at_index(index)
-    }
-
-    /// `checker.getResolvedSignature(node)`, for a call, a `new`, a tagged template, a decorator or
-    /// a JSX element.
-    pub fn get_resolved_signature(self, node: impl Locate<'a>) -> Option<Signature<'a>> {
-        node.locate(self.file).get_resolved_signature()
-    }
-
-    /// `checker.getSignatureFromDeclaration(node)`
-    pub fn get_signature_from_declaration(self, node: impl Locate<'a>) -> Option<Signature<'a>> {
-        node.locate(self.file).get_signature_from_declaration()
-    }
-
-    /// `checker.getShorthandAssignmentValueSymbol(node)`: what the `a` of `{ a }` refers to.
-    pub fn get_shorthand_assignment_value_symbol(
-        self,
-        node: impl Locate<'a>,
-    ) -> Option<TsSymbol<'a>> {
-        node.locate(self.file)
-            .get_shorthand_assignment_value_symbol()
-    }
-
     /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, which does not make
-    /// the list. It is not [`Types::resolve_name`]: an alias counts for what it is, not for what it
+    /// the list. It is not `checker.resolveName(..)`: an alias counts for what it is, not for what it
     /// is an alias of.
     pub fn get_symbol_in_scope(
         self,
@@ -542,21 +487,6 @@ impl<'a> Types<'a> {
         let (file, node) = (self.file, node.locate(self.file).raw());
         let symbols = file.query(|q| q.symbols_in_scope(node, meaning));
         symbols.iter().map(move |&id| TsSymbol::new(file, id))
-    }
-
-    /// `checker.resolveName(name, node, meaning, excludeGlobals)`
-    pub fn resolve_name(
-        self,
-        name: &[u8],
-        node: impl Locate<'a>,
-        meaning: SymbolFlags,
-        exclude_globals: bool,
-    ) -> Option<TsSymbol<'a>> {
-        let node = node.locate(self.file).raw();
-        let id = self
-            .file
-            .query(|q| q.resolve_name(node, name, meaning, exclude_globals))?;
-        Some(TsSymbol::new(self.file, id))
     }
 
     // ───────────────────────────── types that always exist ─────────────────────────────
@@ -592,204 +522,6 @@ impl<'a> Types<'a> {
         get_non_primitive_type OBJECT;
         /// `errorType`
         get_error_type ERROR;
-    }
-
-    /// The declared type of the global class, interface or type alias `name` that has `arity` type
-    /// parameters: `globalRegExpType` is `get_global_type(b"RegExp", 0)`.
-    pub fn get_global_type(self, name: &[u8], arity: usize) -> Option<Type<'a>> {
-        let id = self.file.query(|q| q.global_type(name, arity as u32))?;
-        Some(Type::new(self.file, id))
-    }
-
-    /// `checker.getStringLiteralType(value)`
-    pub fn get_string_literal_type(self, value: &[u8]) -> Type<'a> {
-        Type::new(self.file, self.file.query(|q| q.string_literal_type(value)))
-    }
-
-    /// `checker.getNumberLiteralType(value)`
-    pub fn get_number_literal_type(self, value: f64) -> Type<'a> {
-        Type::new(self.file, self.file.query(|q| q.number_literal_type(value)))
-    }
-
-    /// `checker.getUnionType(types, reduction)`
-    pub fn get_union_type(self, types: &[Type<'a>], reduction: UnionReduction) -> Type<'a> {
-        let ids: smallvec::SmallVec<[TypeId; 8]> = types.iter().map(|ty| ty.id()).collect();
-        Type::new(
-            self.file,
-            self.file.query(|q| q.union_type(&ids, reduction)),
-        )
-    }
-
-    /// `checker.getIntersectionType(types)`
-    pub fn get_intersection_type(self, types: &[Type<'a>]) -> Type<'a> {
-        let ids: smallvec::SmallVec<[TypeId; 8]> = types.iter().map(|ty| ty.id()).collect();
-        Type::new(self.file, self.file.query(|q| q.intersection_type(&ids)))
-    }
-
-    // ───────────────────────────── the methods of ts.TypeChecker that are methods of a handle ─────────────────────────────
-
-    /// `checker.typeToString(type)`
-    pub fn type_to_string(self, ty: Type<'a>) -> Vec<u8> {
-        ty.to_text()
-    }
-
-    /// `checker.isTypeAssignableTo(source, target)`
-    pub fn is_type_assignable_to(self, source: Type<'a>, target: Type<'a>) -> bool {
-        source.is_assignable_to(target)
-    }
-
-    /// `checker.isArrayType(type)`
-    pub fn is_array_type(self, ty: Type<'a>) -> bool {
-        ty.is_array_type()
-    }
-
-    /// `checker.isTupleType(type)`
-    pub fn is_tuple_type(self, ty: Type<'a>) -> bool {
-        ty.is_tuple_type()
-    }
-
-    /// `checker.isArrayLikeType(type)`
-    pub fn is_array_like_type(self, ty: Type<'a>) -> bool {
-        ty.is_array_like_type()
-    }
-
-    /// `checker.getTypeArguments(type)`
-    pub fn get_type_arguments(self, ty: Type<'a>) -> ty::TypeList<'a> {
-        ty.get_type_arguments()
-    }
-
-    /// `checker.getApparentType(type)`
-    pub fn get_apparent_type(self, ty: Type<'a>) -> Type<'a> {
-        ty.get_apparent_type()
-    }
-
-    /// `checker.getBaseConstraintOfType(type)`
-    pub fn get_base_constraint_of_type(self, ty: Type<'a>) -> Option<Type<'a>> {
-        ty.get_base_constraint_of_type()
-    }
-
-    /// `checker.getAwaitedType(type)`
-    pub fn get_awaited_type(self, ty: Type<'a>) -> Option<Type<'a>> {
-        ty.get_awaited_type()
-    }
-
-    /// `checker.getWidenedType(type)`
-    pub fn get_widened_type(self, ty: Type<'a>) -> Type<'a> {
-        ty.get_widened_type()
-    }
-
-    /// `checker.getBaseTypeOfLiteralType(type)`
-    pub fn get_base_type_of_literal_type(self, ty: Type<'a>) -> Type<'a> {
-        ty.get_base_type_of_literal_type()
-    }
-
-    /// `checker.getNonNullableType(type)`
-    pub fn get_non_nullable_type(self, ty: Type<'a>) -> Type<'a> {
-        ty.get_non_nullable_type()
-    }
-
-    /// `checker.getBaseTypes(type)`
-    pub fn get_base_types(self, ty: Type<'a>) -> ty::TypeList<'a> {
-        ty.get_base_types()
-    }
-
-    /// `checker.getPropertiesOfType(type)`
-    pub fn get_properties_of_type(self, ty: Type<'a>) -> symbol::SymbolList<'a> {
-        ty.get_properties()
-    }
-
-    /// `checker.getPropertyOfType(type, name)`
-    pub fn get_property_of_type(self, ty: Type<'a>, name: &[u8]) -> Option<TsSymbol<'a>> {
-        ty.get_property(name)
-    }
-
-    /// `checker.getTypeOfPropertyOfType(type, name)`
-    pub fn get_type_of_property_of_type(self, ty: Type<'a>, name: &[u8]) -> Option<Type<'a>> {
-        ty.get_type_of_property(name)
-    }
-
-    /// `checker.getIndexInfosOfType(type)`
-    pub fn get_index_infos_of_type(
-        self,
-        ty: Type<'a>,
-    ) -> impl ExactSizeIterator<Item = IndexInfo<'a>> + 'a {
-        ty.get_index_infos()
-    }
-
-    /// `checker.getIndexInfoOfType(type, kind)`
-    pub fn get_index_info_of_type(self, ty: Type<'a>, kind: IndexKind) -> Option<IndexInfo<'a>> {
-        ty.get_index_info(kind)
-    }
-
-    /// `checker.getIndexTypeOfType(type, kind)`
-    pub fn get_index_type_of_type(self, ty: Type<'a>, kind: IndexKind) -> Option<Type<'a>> {
-        ty.get_index_info(kind).map(|info| info.ty())
-    }
-
-    /// `checker.getSignaturesOfType(type, kind)`
-    pub fn get_signatures_of_type(
-        self,
-        ty: Type<'a>,
-        kind: SignatureKind,
-    ) -> signature::SignatureList<'a> {
-        ty.get_signatures(kind)
-    }
-
-    /// `checker.getReturnTypeOfSignature(signature)`
-    pub fn get_return_type_of_signature(self, signature: Signature<'a>) -> Type<'a> {
-        signature.get_return_type()
-    }
-
-    /// `checker.getTypePredicateOfSignature(signature)`
-    pub fn get_type_predicate_of_signature(
-        self,
-        signature: Signature<'a>,
-    ) -> Option<TypePredicate<'a>> {
-        signature.get_type_predicate()
-    }
-
-    /// `checker.getTypeOfSymbol(symbol)`
-    pub fn get_type_of_symbol(self, symbol: TsSymbol<'a>) -> Type<'a> {
-        symbol.get_type()
-    }
-
-    /// `checker.getTypeOfSymbolAtLocation(symbol, node)`
-    pub fn get_type_of_symbol_at_location(
-        self,
-        symbol: TsSymbol<'a>,
-        node: impl Locate<'a>,
-    ) -> Type<'a> {
-        symbol.get_type_at_location(node)
-    }
-
-    /// `checker.getDeclaredTypeOfSymbol(symbol)`
-    pub fn get_declared_type_of_symbol(self, symbol: TsSymbol<'a>) -> Type<'a> {
-        symbol.get_declared_type()
-    }
-
-    /// `checker.getAliasedSymbol(symbol)`
-    pub fn get_aliased_symbol(self, symbol: TsSymbol<'a>) -> TsSymbol<'a> {
-        symbol.get_aliased_symbol()
-    }
-
-    /// `checker.getImmediateAliasedSymbol(symbol)`
-    pub fn get_immediate_aliased_symbol(self, symbol: TsSymbol<'a>) -> Option<TsSymbol<'a>> {
-        symbol.get_immediate_aliased_symbol()
-    }
-
-    /// `checker.getExportSymbolOfSymbol(symbol)`
-    pub fn get_export_symbol_of_symbol(self, symbol: TsSymbol<'a>) -> TsSymbol<'a> {
-        symbol.get_export_symbol()
-    }
-
-    /// `checker.getExportsOfModule(symbol)`
-    pub fn get_exports_of_module(self, symbol: TsSymbol<'a>) -> symbol::SymbolList<'a> {
-        symbol.get_exports_of_module()
-    }
-
-    /// `checker.isUnknownSymbol(symbol)`
-    pub fn is_unknown_symbol(self, symbol: TsSymbol<'a>) -> bool {
-        symbol.is_unknown()
     }
 }
 

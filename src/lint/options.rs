@@ -89,11 +89,6 @@ impl<'o> Object<'o> {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    #[inline]
     pub fn entries(&self) -> &'o [(Vec<u8>, Json)] {
         self.entries
     }

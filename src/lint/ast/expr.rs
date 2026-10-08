@@ -1225,11 +1225,6 @@ impl<'a> Call<'a> {
     }
 
     #[inline]
-    pub fn id(self) -> hir::CallId {
-        self.id
-    }
-
-    #[inline]
     pub fn callee(self) -> Expr<'a> {
         Expr::new(
             self.file,

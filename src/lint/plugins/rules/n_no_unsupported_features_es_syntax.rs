@@ -927,7 +927,7 @@ impl EsSyntax {
         }
     }
 
-    fn subclassing_builtins<'a>(&self, cx: &Context<'a>, tracker: &ReferenceTracker<'a, '_>) {
+    fn subclassing_builtins<'a>(&self, cx: &Context<'a>, tracker: &ReferenceTracker<'a>) {
         const READ: TraceMap<'static, ()> = TraceMap::EMPTY.read(());
         const BUILTINS: TraceMap<'static, ()> = TraceMap::new(&[
             ("Array", READ),
@@ -953,7 +953,7 @@ impl EsSyntax {
         }
     }
 
-    fn error_cause<'a>(&self, cx: &Context<'a>, tracker: &ReferenceTracker<'a, '_>) {
+    fn error_cause<'a>(&self, cx: &Context<'a>, tracker: &ReferenceTracker<'a>) {
         const ERROR: TraceMap<'static, ()> = TraceMap::EMPTY.construct(()).read(());
         const ERRORS: TraceMap<'static, ()> = TraceMap::new(&[
             ("Error", ERROR),

@@ -40,12 +40,27 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
 }
 
 fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
-    // Each of these takes a name as the callee, or a string or a template as the first argument.
+    // Each of these takes one of a few names as the callee, or a string or a template as the first
+    // argument.
     let Some(first) = call.args().first() else {
         return false;
     };
-    if call.callee().tag() != ExprTag::Ident
-        && !matches!(first.tag(), ExprTag::String | ExprTag::Template | ExprTag::TaggedTemplate)
+    let callee = call.callee();
+    if !matches!(first.tag(), ExprTag::String | ExprTag::Template | ExprTag::TaggedTemplate)
+        && !(callee.tag() == ExprTag::Ident
+            && matches!(
+                callee.text(),
+                b"require"
+                    | b"define"
+                    | b"async"
+                    | b"inject"
+                    | b"fakeAsync"
+                    | b"waitForAsync"
+                    | b"beforeEach"
+                    | b"beforeAll"
+                    | b"afterEach"
+                    | b"afterAll"
+            ))
     {
         return false;
     }

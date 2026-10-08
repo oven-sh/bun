@@ -77,7 +77,7 @@ fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>
 
 /// `?.`, the type arguments and the arguments of a call.
 fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
-    let ExprKind::Call(call) = expression.kind() else {
+    let Some(call) = expression.call().filter(|_| expression.tag() == ExprTag::Call) else {
         return;
     };
     write!(

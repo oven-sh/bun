@@ -54,13 +54,17 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, property: I
 
 /// The `.b` or `?.b` of `member`, where there are no comments. `name`: the `b`.
 pub(crate) fn write_lookup_without_comments<'a>(member: Expr<'a>, name: Ident<'a>, f: &mut Formatter<'a>) {
-    let operator = if member.is_optional() { "?." } else { "." };
     // The member access ends with the name.
     let name = Span::new(name.start(), member.span().end);
-    let start = name.start.saturating_sub(operator.len() as u32);
-    // As a rule nothing is between the two, and they are one piece of the source text.
-    match f.source_text().bytes_range(start, name.start) == operator.as_bytes() {
-        true => write!(f, source_text(Span::new(start, name.end))),
+    let byte_before = |count: u32| name.start.checked_sub(count).and_then(|at| f.source_text().byte_at(at));
+    // As a rule nothing is between the operator and the name, and they are one piece of the source
+    // text.
+    let (operator, is_before_name) = match member.is_optional() {
+        true => ("?.", byte_before(1) == Some(b'.') && byte_before(2) == Some(b'?')),
+        false => (".", byte_before(1) == Some(b'.')),
+    };
+    match is_before_name {
+        true => write!(f, source_text(Span::new(name.start - operator.len() as u32, name.end))),
         false => write!(f, [operator, source_text(name)]),
     }
 }

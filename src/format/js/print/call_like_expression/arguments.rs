@@ -226,6 +226,7 @@ fn format_all_elements_broken_out<'a>(
     );
 }
 
+#[inline(never)]
 fn format_all_args_broken_out<'a>(node: &FormatArguments<'a>, expand: bool, f: &mut Formatter<'a>) {
     let last_index = node.len().saturating_sub(1);
     write!(
@@ -447,6 +448,7 @@ fn can_group_arrow_function_expression_argument<'a>(
     }
 }
 
+#[inline(never)]
 fn write_grouped_arguments<'a>(
     node: &FormatArguments<'a>,
     group_layout: GroupedCallArgumentLayout,

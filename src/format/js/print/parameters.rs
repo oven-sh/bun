@@ -213,6 +213,11 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         }
     });
 
+    // A group makes no difference to what has no place to break at.
+    if !has_decorators && cannot_break(param, f) {
+        return write!(f, content);
+    }
+
     let is_hug_parameter = param.func().is_some_and(|func| {
         let parentheses_not_needed = func.is_arrow() && can_avoid_parentheses(func, f);
         should_hug_function_parameters(func, parentheses_not_needed, f)
@@ -225,6 +230,18 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
     } else {
         write!(f, group(&format_args!(FormatDecorators::of_param(param), group(&content))));
     }
+}
+
+/// Whether `param` is a name, and its type a keyword or a name.
+fn cannot_break<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
+    f.is_quiet()
+        && param.default().is_none()
+        && matches!(param.pat().kind(), PatKind::Ident(_))
+        && param.ty().is_none_or(|ty| match ty.kind() {
+            TypeKind::Keyword(_) => true,
+            TypeKind::Ref { args, .. } => args.is_empty(),
+            _ => false,
+        })
 }
 
 pub(crate) struct ParameterList<'a> {

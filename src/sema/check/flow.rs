@@ -5586,6 +5586,13 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// `flowAnalysisDisabled`: a walk has reached the depth limit (TS2563) in the function or module
+    /// body that is being checked, or since the services for a file were made. Until that body or
+    /// those services end, every reference that would be narrowed has the error type.
+    pub fn is_flow_analysis_disabled(&self) -> bool {
+        self.flow_analysis_disabled
+    }
+
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
     fn get_flow_type_of_reference(&mut self, mut walk: Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);

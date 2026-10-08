@@ -130,12 +130,12 @@ impl<'a> ChainMember<'a> {
     fn write(&self, f: &mut Formatter<'a>) {
         match *self {
             Self::StaticMember(member) => {
+                if f.is_quiet() {
+                    return write_lookup_without_comments(member, f);
+                }
                 let ExprKind::Dot { obj, name, .. } = member.kind() else {
                     return;
                 };
-                if f.is_quiet() {
-                    return write_lookup_without_comments(member, name, f);
-                }
                 let lookup =
                     format_args!(member.is_optional().then_some("?"), ".", identifier(name, member.as_chain_element()));
                 // The comments after the `.` lead the name.

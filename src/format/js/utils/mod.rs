@@ -24,7 +24,16 @@ use crate::prelude::*;
 #[inline]
 pub(crate) fn is_long_curried_call(call: Expr<'_>) -> bool {
     call.call().is_some_and(|call| call.args().len() > 1)
+        && may_be_followed_by_arguments(call)
         && matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent))
+}
+
+/// Whether what is behind `callee` can be between a callee and its arguments: whitespace, a comment, a
+/// `)`, or the start of `(`, `<T>(` or `?.(`.
+#[inline]
+fn may_be_followed_by_arguments(callee: Expr<'_>) -> bool {
+    (callee.file().text().get(callee.span().end as usize))
+        .is_some_and(|&next| next <= b' ' || !next.is_ascii() || matches!(next, b'(' | b')' | b'<' | b'?' | b'/'))
 }
 
 /// `parent`: the call that `call` is in. The whole of an optional chain is in a `ChainExpression`.

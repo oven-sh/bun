@@ -180,6 +180,12 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
         let FnBody::Block(statements) = func.body() else {
             return;
         };
+        if f.is_quiet() {
+            return match is_empty_block(statements) {
+                true => write!(f, [space(), "{}"]),
+                false => write!(f, [space(), "{", block_indent(&FormatStatements(statements)), "}"]),
+            };
+        }
         let write = |f: &mut Formatter<'a>| {
             write!(f, [FormatCommentsBeforeBody(func), space()]);
             if is_empty_block(statements) {

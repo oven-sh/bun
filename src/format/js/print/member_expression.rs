@@ -6,27 +6,30 @@ use crate::{format_args, write};
 
 /// `a.b`, `a?.b`, `a.#b`, `a[b]`, `a?.[b]`. Prettier's `printMemberExpression`.
 pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
-    match e.kind() {
-        ExprKind::Index { obj, .. } => {
-            write!(f, [obj, line_suffix_boundary(), FormatComputedMemberExpressionWithoutObject(e)]);
-        }
-        ExprKind::Dot { obj, name, .. } => write_static_member_expression(e, obj, name, f),
-        _ => {}
+    let Some(object) = e.object() else {
+        return;
+    };
+    match e.tag() {
+        ExprTag::Index => write!(f, [object, line_suffix_boundary(), FormatComputedMemberExpressionWithoutObject(e)]),
+        _ => write_static_member_expression(e, object, f),
     }
 }
 
-fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, property: Ident<'a>, f: &mut Formatter<'a>) {
+fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut Formatter<'a>) {
     let start = f.elements().len();
     write!(f, [object, line_suffix_boundary()]);
 
     if f.is_quiet() {
-        let lookup = format_with(|f| write_lookup_without_comments(e, property, f));
+        let lookup = format_with(|f| write_lookup_without_comments(e, f));
         return match should_inline(e, object, start, f) {
             true => write!(f, lookup),
             false => write!(f, group(&indent(&format_args!(soft_line_break(), lookup)))),
         };
     }
 
+    let Some(property) = e.member_name() else {
+        return;
+    };
     let operator = if e.is_optional() { "?." } else { "." };
     let property_start = property.start();
     let has_own_line_comment = f.comments().has_leading_own_line_comment(property_start);
@@ -52,10 +55,13 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, property: I
     );
 }
 
-/// The `.b` or `?.b` of `member`, where there are no comments. `name`: the `b`.
-pub(crate) fn write_lookup_without_comments<'a>(member: Expr<'a>, name: Ident<'a>, f: &mut Formatter<'a>) {
+/// The `.b` or `?.b` of `member`, where there are no comments.
+pub(crate) fn write_lookup_without_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
+    let Some(start) = member.member_name_start() else {
+        return;
+    };
     // The member access ends with the name.
-    let name = Span::new(name.start(), member.span().end);
+    let name = Span::new(start, member.span().end);
     let byte_before = |count: u32| name.start.checked_sub(count).and_then(|at| f.source_text().byte_at(at));
     // As a rule nothing is between the operator and the name, and they are one piece of the source
     // text.

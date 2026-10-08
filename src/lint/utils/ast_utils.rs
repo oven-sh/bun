@@ -1567,60 +1567,66 @@ pub fn is_constant_in(e: Expr<'_>, in_boolean_position: bool, constants: &mut Co
     found.is_constant
 }
 
-fn is_constant_unless_binary(e: Expr<'_>, in_boolean_position: bool) -> bool {
-    match e.kind() {
-        // A hole in an array.
-        ExprKind::Missing => true,
-        ExprKind::Object(_)
-        | ExprKind::Array(_)
-        | ExprKind::Assign { op: None, .. }
-        | ExprKind::Spread(_)
-            if is_assignment_target(e) =>
-        {
-            false
-        }
-        ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Object(_) => true,
-        ExprKind::Template(template) => {
-            let has_text = || {
-                (0..template.quasi_count())
-                    .any(|i| template.cooked(i).is_some_and(|it| !it.bytes().is_empty()))
-            };
-            (in_boolean_position && has_text())
-                || template.exprs().iter().all(|it| is_constant(it, false))
-        }
-        ExprKind::Array(elements) => {
-            in_boolean_position || elements.iter().all(|it| is_constant(it, false))
-        }
-        ExprKind::Unary { op, operand } => match op {
-            UnOp::Void => true,
-            UnOp::Typeof if in_boolean_position => true,
-            UnOp::Not => is_constant(operand, true),
-            UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => false,
-            _ => is_constant(operand, false),
-        },
-        ExprKind::Binary {
-            op: BinOp::Comma,
-            right,
-            ..
-        } => is_constant(right, in_boolean_position),
-        ExprKind::Binary { .. } => is_constant(e, in_boolean_position),
-        ExprKind::New(_) => in_boolean_position,
-        ExprKind::Assign { op, value, .. } => match op {
-            None => is_constant(value, in_boolean_position),
-            Some(op @ (BinOp::Or | BinOp::And)) if in_boolean_position => {
-                is_logical_identity(value, op)
+fn is_constant_unless_binary(mut e: Expr<'_>, mut in_boolean_position: bool) -> bool {
+    // Not by recursion where the answer is that for one operand: `a = a = ..` and `!!..a` are nested
+    // tens of thousands deep.
+    loop {
+        (e, in_boolean_position) = match e.kind() {
+            // A hole in an array.
+            ExprKind::Missing => return true,
+            ExprKind::Object(_)
+            | ExprKind::Array(_)
+            | ExprKind::Assign { op: None, .. }
+            | ExprKind::Spread(_)
+                if is_assignment_target(e) =>
+            {
+                return false;
             }
-            Some(_) => false,
-        },
-        ExprKind::Spread(operand) => is_constant(operand, in_boolean_position),
-        ExprKind::Call(call) => {
-            call.chain() == Chain::No
-                && call.callee().is_ident("Boolean")
-                && call.args().first().is_none_or(|it| is_constant(it, true))
-                && is_reference_to_global_variable(call.callee())
-        }
-        ExprKind::Ident(name) => name.is("undefined") && is_reference_to_global_variable(e),
-        _ => is_literal(e),
+            ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Object(_) => return true,
+            ExprKind::Template(template) => {
+                let has_text = || {
+                    (0..template.quasi_count())
+                        .any(|i| template.cooked(i).is_some_and(|it| !it.bytes().is_empty()))
+                };
+                return (in_boolean_position && has_text())
+                    || template.exprs().iter().all(|it| is_constant(it, false));
+            }
+            ExprKind::Array(elements) => {
+                return in_boolean_position || elements.iter().all(|it| is_constant(it, false));
+            }
+            ExprKind::Unary { op, operand } => match op {
+                UnOp::Void => return true,
+                UnOp::Typeof if in_boolean_position => return true,
+                UnOp::Not => (operand, true),
+                UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => return false,
+                _ => (operand, false),
+            },
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => (right, in_boolean_position),
+            ExprKind::Binary { .. } => return is_constant(e, in_boolean_position),
+            ExprKind::New(_) => return in_boolean_position,
+            ExprKind::Assign { op, value, .. } => match op {
+                None => (value, in_boolean_position),
+                Some(op @ (BinOp::Or | BinOp::And)) if in_boolean_position => {
+                    return is_logical_identity(value, op);
+                }
+                Some(_) => return false,
+            },
+            ExprKind::Spread(operand) => (operand, in_boolean_position),
+            ExprKind::Call(call) => {
+                return call.chain() == Chain::No
+                    && call.callee().is_ident("Boolean")
+                    && call.args().first().is_none_or(|it| is_constant(it, true))
+                    && is_reference_to_global_variable(call.callee());
+            }
+            ExprKind::Ident(name) => {
+                return name.is("undefined") && is_reference_to_global_variable(e);
+            }
+            _ => return is_literal(e),
+        };
     }
 }
 

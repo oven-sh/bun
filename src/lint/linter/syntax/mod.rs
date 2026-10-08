@@ -128,6 +128,34 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
             .is_some_and(|it| bun_core::strings::contains(it, b"@flow"))
 }
 
+/// Prettier's `isFlowFile`: it has `babel-flow` parse the file in place of `babel`. There is `@flow` or `@noflow` in a comment
+/// before the code.
+fn goes_to_flow(file: &File) -> bool {
+    let text = file.text();
+    let after_shebang = match text.starts_with(b"#!") {
+        true => bun_core::strings::index_of_any(text, b"\n\r").unwrap_or(text.len()),
+        false => 0,
+    };
+    let code = crate::tokens::skip_trivia(text, after_shebang as u32) as usize;
+    let mut comments = text.get(after_shebang..code).unwrap_or_default();
+    while let Some(at) = bun_core::strings::index_of_char_usize(comments, b'@') {
+        comments = &comments[at + 1..];
+        let word = comments
+            .strip_prefix(b"no")
+            .unwrap_or(comments)
+            .strip_prefix(b"flow");
+        if word.is_some_and(|it| {
+            !matches!(
+                it.first(),
+                Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+            )
+        }) {
+            return true;
+        }
+    }
+    file.path().ends_with(b".js.flow")
+}
+
 /// Whether Prettier refuses to format the file, which was parsed in the dialect of Babel
 /// ([`Dialect::babel`](bun_sema::resolve::Dialect::babel)): its parser throws. That is `typescript`, which is typescript-estree, for
 /// a TypeScript file, and `babel` for a JavaScript file. What `languageOptions` of the file say about a parser does not count.
@@ -142,7 +170,15 @@ pub fn refused_by_prettier<'a>(file: &'a File<'a>) -> bool {
     if file.has_parse_errors() && (of_parser.clone().any(is_reported) || !says_why) {
         return true;
     }
+    // TypeScript in JavaScript that Babel stumbles over: `type A = 1`, `a!`, a function without a body, decorators on both
+    // sides of `export`. Of the rest some is Flow to it, and Prettier's own tests have the rest formatted by other parsers.
+    let is_typescript = |it: &Diagnostic| {
+        matches!(it.kind, DiagnosticKind::Js | DiagnosticKind::Grammar)
+            && matches!(it.code, 1206 | 8008 | 8013 | 8017 | 8038)
+            && !file.is_in_jsdoc(it.start)
+    };
     match file.is_javascript() {
+        true if !goes_to_flow(file) && of_parser.clone().any(is_typescript) => true,
         true => espree::is_refused_by_babel(file),
         false => typescript_estree::first_error(file, true).is_some(),
     }

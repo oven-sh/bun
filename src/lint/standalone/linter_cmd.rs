@@ -857,8 +857,8 @@ fn diagnostics(args: &[String]) {
     print(&out);
 }
 
-/// `prettier <cases.json>`: for each `{ code, filename }`, whether Prettier refuses it, and whether the parser has reported
-/// something. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
+/// `prettier <cases.json>`: for each `{ code, filename }`, whether Prettier refuses it, whether the parser has reported
+/// something, and what it has left in the HIR. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
 fn prettier(args: &[String]) {
     let mut all = Vec::new();
     for case in &read_cases(args) {
@@ -891,6 +891,7 @@ fn prettier(args: &[String]) {
         all.push(Json::Array(vec![
             Json::Bool(bun_lint::linter::refused_by_prettier(&file)),
             Json::Bool(file.has_parse_errors()),
+            Json::Array(testing::diagnostics(&file)),
         ]));
     }
     let mut out = Vec::new();

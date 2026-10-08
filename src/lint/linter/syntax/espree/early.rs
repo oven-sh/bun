@@ -20,6 +20,39 @@ use smallvec::SmallVec;
 /// Patterns nest no deeper than the parser lets them. This bounds the recursion all the same.
 const MAX_DEPTH: u32 = 256;
 
+/// Whether the string that is written as `written` has half of a surrogate pair. It can only be written as an escape.
+fn has_lone_surrogate(written: &[u8]) -> bool {
+    let (mut at, mut is_after_high) = (0, false);
+    while let Some(&byte) = written.get(at) {
+        let (mut unit, mut len) = (None, 1);
+        if byte == b'\\' {
+            len = 2;
+            if let Some([b'u', rest @ ..]) = written.get(at + 1..) {
+                let digits = match rest {
+                    [b'{', rest @ ..] => {
+                        strings::index_of_char_usize(rest, b'}').map(|end| &rest[..end])
+                    }
+                    rest => rest.get(..4),
+                };
+                let Some(digits) = digits else {
+                    return false;
+                };
+                unit = std::str::from_utf8(digits)
+                    .ok()
+                    .and_then(|it| u32::from_str_radix(it, 16).ok());
+                len = 2 + digits.len() + if rest.starts_with(b"{") { 2 } else { 0 };
+            }
+        }
+        let is_low = matches!(unit, Some(0xDC00..=0xDFFF));
+        if is_after_high != is_low {
+            return true;
+        }
+        is_after_high = matches!(unit, Some(0xD800..=0xDBFF));
+        at += len;
+    }
+    is_after_high
+}
+
 impl<'a> Checks<'a> {
     pub(super) fn early_errors(&mut self) {
         self.decorators();
@@ -44,8 +77,125 @@ impl<'a> Checks<'a> {
         self.awaits();
         self.arrows();
         self.object_literals();
+        self.names_in_quotes();
+        self.async_before_of();
+        if self.is_babel {
+            self.sequences_in_jsx();
+            self.decorators_before_default();
+        }
         if self.is_whole {
             self.exports();
+        }
+    }
+
+    /// `parseModuleExportName`: a name of an import or an export that is written as a string.
+    fn names_in_quotes(&mut self) {
+        let file = self.file;
+        if !strings::contains(file.text(), b"\\u") {
+            return;
+        }
+        let mut names: SmallVec<[crate::ast::Ident<'a>; 8]> = SmallVec::new();
+        for it in file.body() {
+            match it.kind() {
+                StmtKind::Import(import) => {
+                    names.extend(import.named().iter().map(|it| it.imported()))
+                }
+                StmtKind::ExportNamed(export) => {
+                    names.extend(
+                        export
+                            .items()
+                            .iter()
+                            .flat_map(|it| [it.local(), it.exported()]),
+                    );
+                }
+                StmtKind::ExportStar { alias, .. } => names.extend(alias),
+                _ => {}
+            }
+        }
+        for name in names {
+            if name.is_string() && has_lone_surrogate(file.slice(name.span())) {
+                self.fail(
+                    name.start(),
+                    "An export name cannot include a lone surrogate.",
+                );
+            }
+        }
+    }
+
+    /// `for (async of a)`: it could be the start of `for (async of => {};;)`.
+    fn async_before_of(&mut self) {
+        for it in self.file.stmts_of_kind(StmtTag::ForOf) {
+            let StmtKind::ForOf {
+                left,
+                expr,
+                is_await: false,
+                ..
+            } = it.kind()
+            else {
+                continue;
+            };
+            if let StmtKind::Expr(target) = left.kind()
+                && matches!(target.kind(), ExprKind::Ident(_))
+                && !target.is_parenthesized()
+                && self.token_at(target.span().start) == b"async"
+            {
+                let message = "The left-hand side of a for-of loop may not be 'async'.";
+                match self.is_babel {
+                    true => self.fail(target.span().start, message),
+                    // acorn expects the `=>`.
+                    false => self.unexpected(expr.outer_span().start),
+                }
+            }
+        }
+    }
+
+    /// `<a>{b, c}</a>`, `<a b={c, d} />`, `<a {...b, c} />`, which acorn-jsx takes.
+    fn sequences_in_jsx(&mut self) {
+        let file = self.file;
+        let is_sequence = |it: Expr<'a>| {
+            matches!(
+                it.kind(),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    ..
+                }
+            ) && !it.is_parenthesized()
+        };
+        let message = "Sequence expressions cannot be directly nested inside JSX";
+        for &(id, ..) in file.hir.jsx_expressions {
+            let it = Expr::from_raw(file, id.0);
+            if is_sequence(it) {
+                self.fail(it.span().start, message);
+            }
+        }
+        if file.hir.jsx.is_empty() {
+            return;
+        }
+        for (i, raw) in file.hir.props.iter().enumerate() {
+            let prop = Prop::from_raw(file, i as u32);
+            if raw.kind == PropKind::Spread
+                && prop.is_jsx_attribute()
+                && let Some(value) = prop.value().filter(|it| is_sequence(*it))
+            {
+                self.fail(value.span().start, message);
+            }
+        }
+    }
+
+    /// `export @a default class {}`
+    fn decorators_before_default(&mut self) {
+        for it in self.file.body() {
+            let export = match it.kind() {
+                StmtKind::ExportDefault(_) => Some(it.span().start),
+                _ if it.is_default_export() => it.export_span().map(|it| it.start),
+                _ => None,
+            };
+            if let Some(export) = export.filter(|&at| self.token_at(at) == b"export")
+                && self.token_at(self.after_token(export)).starts_with(b"@")
+            {
+                let message = "Leading decorators must be attached to a class declaration";
+                self.fail(export, message);
+            }
         }
     }
 

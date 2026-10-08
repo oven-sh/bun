@@ -39,8 +39,9 @@ struct Checks<'a> {
 
 /// The errors, in the words of acorn, that Babel has too, that it does not recover from or Prettier does not let pass, and that
 /// it reports wherever acorn does. What is not listed does not count: Prettier formats a file with such an error.
-const REFUSED_BY_BABEL: [&str; 44] = [
+const REFUSED_BY_BABEL: [&str; 48] = [
     "A string literal cannot be used as an exported binding without `from`.",
+    "An export name cannot include a lone surrogate.",
     "Assigning to rvalue",
     "Async functions can only be declared at the top level or inside a block",
     "Await expression cannot be a default value",
@@ -59,6 +60,7 @@ const REFUSED_BY_BABEL: [&str; 44] = [
     "Illegal newline after throw",
     "Invalid regular expression flag",
     "Label '",
+    "Leading decorators must be attached to a class declaration",
     "Lexical declaration cannot appear in a single-statement context",
     "Logical expressions and coalesce expressions cannot be mixed",
     "Multiple default clauses",
@@ -71,8 +73,10 @@ const REFUSED_BY_BABEL: [&str; 44] = [
     "Private fields can't be accessed on super",
     "Redefinition of __proto__ property",
     "Rest elements cannot have a default value",
+    "Sequence expressions cannot be directly nested inside JSX",
     "Setter cannot use rest params",
     "Shorthand property assignments are valid only in destructuring patterns",
+    "The left-hand side of a for-of loop may not be 'async'.",
     "The only valid meta property for",
     "Unsyntactic break",
     "Unsyntactic continue",

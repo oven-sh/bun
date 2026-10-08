@@ -64,6 +64,10 @@ pub(crate) fn write_ts_union_type_in<'a>(
         parent,
         is_first_type_suppressed: suppression.is_some(),
     };
+    if union_breaks_one_per_line(f) {
+        return write_union_one_per_line(members, leading_comments, is_one_of_several_tuple_elements, f);
+    }
+
     let printed = format_with(|f| {
         write!(f, [prints_own_comments.then_some(format_leading_comments), group(&format_args!(if_group_breaks(&"| "), members))]);
         if prints_own_comments {
@@ -98,6 +102,63 @@ pub(crate) fn write_ts_union_type_in<'a>(
         return write!(f, printed);
     }
     write!(f, group(&indent(&format_args!(soft_line_break(), printed))));
+}
+
+/// oxfmt follows Prettier 3.8: a union that does not fit where it is has each type on a line of its
+/// own. 3.9 first tries all of them on one line, after a line break.
+///
+/// ```ts
+/// type A =              type A =
+///   | "aaaaaaaaaa"        "aaaaaaaaaa" | "bbbbbbbbbb";
+///   | "bbbbbbbbbb";
+/// ```
+pub(crate) fn union_breaks_one_per_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// oxc's `TSUnionType::write`, which is `printUnionType` of Prettier 3.8, for a union that is not
+/// written like an object type.
+fn write_union_one_per_line<'a>(
+    members: UnionMembers<'a>,
+    leading_comments: &'a [Comment],
+    is_one_of_several_tuple_elements: bool,
+    f: &mut Formatter<'a>,
+) {
+    let should_indent = !matches!(
+        members.parent,
+        AstNodes::TSTypeAssertion(_) | AstNodes::TSTupleType(_) | AstNodes::TSTypeParameterInstantiation(_)
+    );
+    let needs_parentheses = needs_parentheses(members.ty, f);
+    let starts_with_line_break = should_indent && leading_comments.is_empty();
+    let types = format_with(|f| {
+        let first_separator = format_args!(starts_with_line_break.then_some(soft_line_break_or_space()), "| ");
+        write!(f, [if_group_breaks(&first_separator), members]);
+    });
+    let content = format_with(|f| {
+        if needs_parentheses {
+            write!(f, [indent(&types), soft_line_break()]);
+        } else if is_one_of_several_tuple_elements {
+            write!(
+                f,
+                [
+                    indent(&format_args!(if_group_breaks(&format_args!("(", soft_line_break())), types)),
+                    soft_line_break(),
+                    if_group_breaks(&")")
+                ]
+            );
+        } else {
+            write!(f, types);
+        }
+    });
+    let has_own_line_comment = leading_comments.iter().any(|comment| comment.preceded_by_newline());
+    let inner = format_with(|f| {
+        let leading_comments = FormatLeadingComments::Comments(leading_comments);
+        write!(f, [has_own_line_comment.then_some(soft_line_break()), leading_comments, group(&content)]);
+    });
+    match should_indent && !needs_parentheses {
+        true => write!(f, group(&indent(&inner))),
+        false => write!(f, group(&inner)),
+    }
 }
 
 /// Prettier's `shouldIndentUnionType`.

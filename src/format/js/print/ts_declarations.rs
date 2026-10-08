@@ -7,7 +7,7 @@ use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::ts_types::{FormatModuleSpecifier, entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
-use super::union_type::write_ts_union_type_in;
+use super::union_type::{union_breaks_one_per_line, write_ts_union_type_in};
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -206,7 +206,7 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
         _ => false,
     };
     let should_break_after_operator = match ty.kind() {
-        TypeKind::Union(types) if !should_hug_type(ty, types, f) => true,
+        TypeKind::Union(types) if !should_hug_type(ty, types, f) => !union_breaks_one_per_line(f),
         TypeKind::Cond { check, extends, .. }
             if f.options().experimental_ternaries || is_generic(check) || is_generic(extends) =>
         {

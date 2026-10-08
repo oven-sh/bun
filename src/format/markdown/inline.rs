@@ -1215,113 +1215,122 @@ impl Context<'_> {
         Item::Node(node)
     }
 
-    fn resolve_strikethrough(&mut self, mut items: Vec<Item>) -> Vec<Item> {
-        let mut index = 0;
-        while index < items.len() {
-            if let Item::Sequence {
+    /// micromark goes through the sequences that can close and looks back for one that can open. Here what has
+    /// been gone through is in `done`, so that putting a pair together only moves what is between the two.
+    fn resolve_strikethrough(&mut self, items: Vec<Item>) -> Vec<Item> {
+        let mut done: Vec<Item> = Vec::with_capacity(items.len());
+        // Where the sequences in `done` are that can open.
+        let mut openers: Vec<usize> = Vec::new();
+        for item in items {
+            let Item::Sequence {
                 marker: b'~',
-                can_close: true,
-                end,
-                ..
-            } = items[index]
-            {
-                let opener = items[..index].iter().rposition(|item| {
-                    matches!(
-                        item,
-                        Item::Sequence {
-                            marker: b'~',
-                            can_open: true,
-                            ..
-                        }
-                    )
-                });
-                if let Some(open) = opener
-                    && let Item::Sequence { start, .. } = items[open]
-                {
-                    let inner: Vec<Item> = items.drain(open + 1..index).collect();
-                    let group = self.group(Kind::Delete, start, end, inner);
-                    items.splice(open..open + 2, [group]);
-                    index = open;
-                }
-            }
-            index += 1;
-        }
-        into_data(&mut items, b"~");
-        items
-    }
-
-    fn resolve_attention(&mut self, mut items: Vec<Item>) -> Vec<Item> {
-        let mut index = 0;
-        while index < items.len() {
-            let Item::Sequence {
-                marker: marker @ (b'*' | b'_'),
-                can_close: true,
-                can_open: closer_can_open,
-                start: close_start,
-                end: close_end,
-            } = items[index]
-            else {
-                index += 1;
-                continue;
-            };
-            let close_len = close_end - close_start;
-            let opener = items[..index].iter().rposition(|item| match *item {
-                Item::Sequence {
-                    marker: open_marker,
-                    can_open: true,
-                    can_close,
-                    start,
-                    end,
-                } if open_marker == marker => {
-                    // Not if one of them can both open and close, and together they are a multiple of three.
-                    !((can_close || closer_can_open) && close_len % 3 != 0 && (end - start + close_len) % 3 == 0)
-                }
-                _ => false,
-            });
-            let Some(open) = opener else {
-                index += 1;
-                continue;
-            };
-            let Item::Sequence {
-                start: open_start,
-                end: open_end,
                 can_open,
                 can_close,
+                end,
                 ..
-            } = items[open]
+            } = item
             else {
-                break;
+                done.push(item);
+                continue;
             };
-            let used = if open_end - open_start > 1 && close_len > 1 { 2 } else { 1 };
-            let inner: Vec<Item> = items.drain(open + 1..index).collect();
-            let kind = if used == 2 { Kind::Strong } else { Kind::Emphasis };
-            let group = self.group(kind, open_end - used, close_start + used, inner);
-            let mut replacement: smallvec::SmallVec<[Item; 3]> = smallvec::SmallVec::new();
-            if open_end - used > open_start {
-                replacement.push(Item::Sequence {
-                    marker,
+            if can_close
+                && let Some(open) = openers.pop()
+                && let Some(&Item::Sequence { start, .. }) = done.get(open)
+            {
+                let inner = done.split_off(open + 1);
+                done.pop();
+                let group = self.group(Kind::Delete, start, end, inner);
+                done.push(group);
+                continue;
+            }
+            if can_open {
+                openers.push(done.len());
+            }
+            done.push(item);
+        }
+        into_data(&mut done, b"~");
+        done
+    }
+
+    fn resolve_attention(&mut self, items: Vec<Item>) -> Vec<Item> {
+        let mut done: Vec<Item> = Vec::with_capacity(items.len());
+        let mut openers: Vec<usize> = Vec::new();
+        for item in items {
+            let Item::Sequence {
+                marker: marker @ (b'*' | b'_'),
+                can_open: closer_can_open,
+                can_close,
+                start: mut close_start,
+                end: close_end,
+            } = item
+            else {
+                done.push(item);
+                continue;
+            };
+            while can_close && close_start < close_end {
+                let close_len = close_end - close_start;
+                let opener = openers.iter().rposition(|&open| match done.get(open) {
+                    Some(&Item::Sequence {
+                        marker: open_marker,
+                        can_close,
+                        start,
+                        end,
+                        ..
+                    }) if open_marker == marker => {
+                        // Not if one of them can both open and close, and together they are a multiple of three.
+                        !((can_close || closer_can_open) && close_len % 3 != 0 && (end - start + close_len) % 3 == 0)
+                    }
+                    _ => false,
+                });
+                let Some(opener) = opener else {
+                    break;
+                };
+                let open = openers[opener];
+                let Some(&Item::Sequence {
                     start: open_start,
-                    end: open_end - used,
+                    end: open_end,
                     can_open,
+                    can_close,
+                    ..
+                }) = done.get(open)
+                else {
+                    break;
+                };
+                // The sequences between the two stand for themselves.
+                openers.truncate(opener);
+                let used = if open_end - open_start > 1 && close_len > 1 { 2 } else { 1 };
+                let inner = done.split_off(open + 1);
+                done.pop();
+                let kind = if used == 2 { Kind::Strong } else { Kind::Emphasis };
+                let group = self.group(kind, open_end - used, close_start + used, inner);
+                if open_end - used > open_start {
+                    openers.push(done.len());
+                    done.push(Item::Sequence {
+                        marker,
+                        start: open_start,
+                        end: open_end - used,
+                        can_open,
+                        can_close,
+                    });
+                }
+                done.push(group);
+                close_start += used;
+            }
+            if close_start < close_end {
+                if closer_can_open {
+                    openers.push(done.len());
+                }
+                done.push(Item::Sequence {
+                    marker,
+                    start: close_start,
+                    end: close_end,
+                    can_open: closer_can_open,
                     can_close,
                 });
             }
-            replacement.push(group);
-            // What is left of the closing sequence is looked at next.
-            index = open + replacement.len();
-            if close_start + used < close_end {
-                replacement.push(Item::Sequence {
-                    marker,
-                    start: close_start + used,
-                    end: close_end,
-                    can_open: closer_can_open,
-                    can_close: true,
-                });
-            }
-            items.splice(open..open + 2, replacement);
         }
-        into_data(&mut items, b"*_");
-        items
+        into_data(&mut done, b"*_");
+        done
     }
 
     // ───────────────────────────── nodes ─────────────────────────────

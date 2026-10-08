@@ -1,0 +1,99 @@
+------------------
+{ printWidth: 40 }
+------------------
+<a [x]="one < two > three"></a>
+<a
+  [x]="call(one < two, three > four)"
+></a>
+<a [x]="-(-one)"></a>
+<a [x]="one - -two"></a>
+<a [x]="one + (+two % three)"></a>
+<a [x]="async(...list).name"></a>
+<a [x]="test ? async() : other"></a>
+<a [x]="one.two in three"></a>
+<a [x]="one!.two"></a>
+<a [x]="(one) => two"></a>
+<a [x]="`${one.two}`"></a>
+<a (x)="one + (two = three)"></a>
+<a (x)="!(one = two)"></a>
+<a [x]="one || ((two) => three)"></a>
+<a [x]="class"></a>
+<a
+  [x]="package.version + interface"
+></a>
+<a
+  [x]="
+    new(
+      delete.name,
+      function(),
+      import.meta
+    )
+  "
+></a>
+<a [x]="{ if, class, this }"></a>
+<a
+  [x]="value | if | typeof: in : void"
+></a>
+<a [x]="(class) => class.name"></a>
+<a [x]="(one?.two)`text`.three()"></a>
+<a [x]="(one?.two)`text`().three"></a>
+<a *x="one / /two/"></a>
+<a [x]="`${one}`"></a>
+
+------------------
+{ printWidth: 80 }
+------------------
+<a [x]="one < two > three"></a>
+<a [x]="call(one < two, three > four)"></a>
+<a [x]="-(-one)"></a>
+<a [x]="one - -two"></a>
+<a [x]="one + (+two % three)"></a>
+<a [x]="async(...list).name"></a>
+<a [x]="test ? async() : other"></a>
+<a [x]="one.two in three"></a>
+<a [x]="one!.two"></a>
+<a [x]="(one) => two"></a>
+<a [x]="`${one.two}`"></a>
+<a (x)="one + (two = three)"></a>
+<a (x)="!(one = two)"></a>
+<a [x]="one || ((two) => three)"></a>
+<a [x]="class"></a>
+<a [x]="package.version + interface"></a>
+<a [x]="new(delete.name, function(), import.meta)"></a>
+<a [x]="{ if, class, this }"></a>
+<a [x]="value | if | typeof: in : void"></a>
+<a [x]="(class) => class.name"></a>
+<a [x]="(one?.two)`text`.three()"></a>
+<a [x]="(one?.two)`text`().three"></a>
+<a *x="one / /two/"></a>
+<a [x]="`${one}`"></a>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<a [x]="one < two > three"></a>
+<a [x]="call(one < two, three > four)"></a>
+<a [x]="-(-one)"></a>
+<a [x]="one - -two"></a>
+<a [x]="one + (+two % three)"></a>
+<a [x]="async(...list).name"></a>
+<a [x]="test ? async() : other"></a>
+<a [x]="one.two in three"></a>
+<a [x]="one!.two"></a>
+<a [x]="(one) => two"></a>
+<a [x]="`${one.two}`"></a>
+<a (x)="one + (two = three)"></a>
+<a (x)="!(one = two)"></a>
+<a [x]="one || ((two) => three)"></a>
+<a [x]="class"></a>
+<a [x]="package.version + interface"></a>
+<a [x]="new(delete.name, function(), import.meta)"></a>
+<a [x]="{ if, class, this }"></a>
+<a [x]="value | if | typeof: in : void"></a>
+<a [x]="(class) => class.name"></a>
+<a [x]="(one?.two)`text`.three()"></a>
+<a [x]="(one?.two)`text`().three"></a>
+<a *x="one / /two/"></a>
+<a [x]="`${one}`"></a>
+
+===================== End =====================

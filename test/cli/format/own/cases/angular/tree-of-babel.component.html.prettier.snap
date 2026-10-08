@@ -1,0 +1,78 @@
+------------------
+{ printWidth: 40 }
+------------------
+<a
+  (x)="
+    target.name =
+      someValue.options.other?.last
+  "
+></a>
+<a
+  (x)="
+    (callee?.(
+      first,
+      second,
+      third
+    ))(someArgument, another)
+  "
+></a>
+{{
+  i
+    .first()()
+    .second(one + two)
+}}
+{{
+  x
+    .someLongerMethodNameHereThatIsLong(
+      argument + another
+    )
+    .item.last(one, two, three)
+}}
+{{
+  o
+    .first()
+
+    [x].second?.()
+}}
+
+------------------
+{ printWidth: 80 }
+------------------
+<a (x)="target.name = someValue.options.other?.last"></a>
+<a (x)="(callee?.(first, second, third))(someArgument, another)"></a>
+{{
+  i
+    .first()()
+    .second(one + two)
+}}
+{{
+  x
+    .someLongerMethodNameHereThatIsLong(argument + another)
+    .item.last(one, two, three)
+}}
+{{
+  o
+    .first()
+
+    [x].second?.()
+}}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<a (x)="target.name = someValue.options.other?.last"></a>
+<a (x)="(callee?.(first, second, third))(someArgument, another)"></a>
+{{
+  i
+    .first()()
+    .second(one + two)
+}}
+{{ x.someLongerMethodNameHereThatIsLong(argument + another).item.last(one, two, three) }}
+{{
+  o
+    .first()
+
+    [x].second?.()
+}}
+
+===================== End =====================

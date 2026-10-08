@@ -1,0 +1,103 @@
+------------------
+{ printWidth: 40 }
+------------------
+<a *x=""></a>
+<a *x="$implicit as one"></a>
+<a *x="&quot;&quot;; let one"></a>
+<a *x="one as two"></a>
+<a *x="{ one: 1 } as two"></a>
+<a
+  *x="one + two as three; else four"
+></a>
+<a *x="let one of list as two"></a>
+<a *x="let one of list as two"></a>
+<a
+  *x="
+    let one of list;
+    track one.id;
+    let two = index
+  "
+></a>
+<a *x="one; then two; else three"></a>
+<a *x="one; else two; then: three"></a>
+<a
+  *x="
+    one;
+    &quot;a-b&quot;: two;
+    a-bc: three;
+    &quot;a b&quot;: four;
+    &quot;é&quot;: five
+  "
+></a>
+<a *x="one; key: two; other: three"></a>
+<a *x="two as one"></a>
+<a *x="let'one'"></a>
+<a
+  *x="one; two let three = four; five six"
+></a>
+<a (x)="()"></a>
+<a [x]=""></a>
+@if (one; as two) {}
+@for (
+  one of list | first: "two";
+  track $index;
+  let three = $index
+) {}
+
+------------------
+{ printWidth: 80 }
+------------------
+<a *x=""></a>
+<a *x="$implicit as one"></a>
+<a *x="&quot;&quot;; let one"></a>
+<a *x="one as two"></a>
+<a *x="{ one: 1 } as two"></a>
+<a *x="one + two as three; else four"></a>
+<a *x="let one of list as two"></a>
+<a *x="let one of list as two"></a>
+<a *x="let one of list; track one.id; let two = index"></a>
+<a *x="one; then two; else three"></a>
+<a *x="one; else two; then: three"></a>
+<a
+  *x="
+    one;
+    &quot;a-b&quot;: two;
+    a-bc: three;
+    &quot;a b&quot;: four;
+    &quot;é&quot;: five
+  "
+></a>
+<a *x="one; key: two; other: three"></a>
+<a *x="two as one"></a>
+<a *x="let'one'"></a>
+<a *x="one; two let three = four; five six"></a>
+<a (x)="()"></a>
+<a [x]=""></a>
+@if (one; as two) {}
+@for (one of list | first: "two"; track $index; let three = $index) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<a *x=""></a>
+<a *x="$implicit as one"></a>
+<a *x="&quot;&quot;; let one"></a>
+<a *x="one as two"></a>
+<a *x="{ one: 1 } as two"></a>
+<a *x="one + two as three; else four"></a>
+<a *x="let one of list as two"></a>
+<a *x="let one of list as two"></a>
+<a *x="let one of list; track one.id; let two = index"></a>
+<a *x="one; then two; else three"></a>
+<a *x="one; else two; then: three"></a>
+<a *x="one; &quot;a-b&quot;: two; a-bc: three; &quot;a b&quot;: four; &quot;é&quot;: five"></a>
+<a *x="one; key: two; other: three"></a>
+<a *x="two as one"></a>
+<a *x="let'one'"></a>
+<a *x="one; two let three = four; five six"></a>
+<a (x)="()"></a>
+<a [x]=""></a>
+@if (one; as two) {}
+@for (one of list | first: "two"; track $index; let three = $index) {}
+
+===================== End =====================

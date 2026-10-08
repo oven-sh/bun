@@ -1,0 +1,17 @@
+<a [x]="one + two // comment"></a>
+<a [x]="{ one: 1 } // comment"></a>
+<a [x]="one
+// on a line of its own"></a>
+<a [x]="one
+
+  // after an empty line"></a>
+<a (x)="one(); two // comment"></a>
+<a (x)="one(); two() // comment"></a>
+<a (x)="(one.  two) // prettier-ignore"></a>
+<a (x)="one( 1 );  two( 2 ); // prettier-ignore"></a>
+<a [x]="{one:  1} // prettier-ignore"></a>
+<a [x]="// only a comment"></a>
+{{ one  +  two // prettier-ignore }}
+{{ // only a comment }}
+@let one = two // comment
+;

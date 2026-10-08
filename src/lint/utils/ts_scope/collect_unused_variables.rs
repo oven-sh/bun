@@ -174,9 +174,9 @@ fn is_definition(declaration: Declaration) -> bool {
         Declaration::Module(module) => {
             matches!(module.name(), ModuleName::Ident(_)) && !is_part_of_qualified_name(module)
         }
-        Declaration::Param(_) => !matches!(
-            declaration.node(),
-            Some(Node::Func(func)) if func.kind() == FnKind::IndexSignature
+        Declaration::Param(pat) => !matches!(
+            pat.parent(),
+            Node::Param(param) if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature)
         ),
         Declaration::Other => false,
         _ => true,
@@ -261,19 +261,18 @@ impl<'a> Variable<'a> {
 
 // ───────────────────────────── what the visitor marks ─────────────────────────────
 
-/// `for (x in y) return;`, `for (x of y) { return; }`
-fn is_loop_that_only_returns(head: Stmt) -> bool {
-    let Some(StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. }) =
-        head.parent().as_stmt().map(Stmt::kind)
+/// The head of `for (x in y) return;` or `for (x of y) { return; }`, if `statement` is such a loop.
+fn head_of_loop_that_only_returns(statement: Stmt<'_>) -> Option<Stmt<'_>> {
+    let (StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. }) = statement.kind()
     else {
-        return false;
+        return None;
     };
     let only = match body.as_block() {
         Some(statements) if statements.len() == 1 => statements.first(),
         Some(_) => None,
         None => Some(body),
     };
-    left == head && only.is_some_and(|statement| statement.tag() == StmtTag::Return)
+    only.is_some_and(|it| it.tag() == StmtTag::Return).then_some(left)
 }
 
 /// Whether `pat` is the first name that the head of such a loop declares.
@@ -284,7 +283,7 @@ fn is_declared_by_loop_that_only_returns<'a>(pat: Pat<'a>, declaration: Declarat
     let Node::Stmt(head) = declarator.parent() else {
         return false;
     };
-    if !is_loop_that_only_returns(head) {
+    if head.parent().as_stmt().and_then(head_of_loop_that_only_returns) != Some(head) {
         return false;
     }
     let mut first = None;
@@ -318,11 +317,14 @@ fn is_declaration_marked_as_used(declaration: Declaration) -> bool {
 
 /// The `x` of `for (x in y) return;`
 fn is_assigned_by_loop_that_only_returns(reference: Reference) -> bool {
-    reference.is_write()
-        && matches!(
-            reference.expr().map(Expr::parent),
-            Some(Node::Stmt(head)) if is_loop_that_only_returns(head)
-        )
+    if !reference.is_write() {
+        return false;
+    }
+    let Some(id) = reference.expr() else {
+        return false;
+    };
+    let head = id.parent().as_stmt().and_then(head_of_loop_that_only_returns);
+    matches!(head.map(Stmt::kind), Some(StmtKind::Expr(target)) if target == id)
 }
 
 fn is_marked_as_used(variable: Variable) -> bool {

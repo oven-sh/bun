@@ -145,6 +145,15 @@ text.push(
     "*fix differs*: the same message at the same place, another fix or other suggestions. A message that is misplaced counts twice.\n",
 );
 
+{
+  const all = merge(passes);
+  const differing = Object.values(all).filter(it => differencesOf(it) > 0).length;
+  text.push(
+    `**${sumOf(all, it => it.eslint)} messages of ESLint compared in ${passes.length} passes, ${sumOf(all, differencesOf)} differences, ` +
+      `in ${differing} of ${Object.keys(all).length} rules that report anything.**\n`,
+  );
+}
+
 text.push("## Passes\n");
 text.push("| plan | corpus | files | equal files | messages ESLint | messages ours | differences | rules that differ |");
 text.push("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |");
@@ -156,16 +165,24 @@ for (const pass of passes) {
   );
 }
 
-function table(rules: Record<string, Counts>, withLinks: boolean) {
-  text.push("| rule | ESLint | ours | only ESLint | only ours | fix differs | differences |");
-  text.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
+function table(list: PassResult[], withLinks: boolean) {
+  const rules = merge(list);
+  text.push(`| rule | ESLint | ours | only ESLint | only ours | fix differs | differences |${withLinks ? " mostly in |" : ""}`);
+  text.push(`| --- | ---: | ---: | ---: | ---: | ---: | ---: |${withLinks ? " --- |" : ""}`);
   const rows = Object.entries(rules)
     .filter(([, it]) => differencesOf(it) > 0)
     .sort((a, b) => differencesOf(b[1]) - differencesOf(a[1]) || (a[0] < b[0] ? -1 : 1));
   for (const [rule, it] of rows) {
     const name = withLinks ? `[${rule}](examples/${pathOf(rule)}.txt)` : rule;
+    const where = list
+      .map(pass => [`${pass.plan} ${pass.corpus}`, pass.rules[rule] ? differencesOf(pass.rules[rule]) : 0] as const)
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1]);
+    const mostly = where.slice(0, 2).map(([pass, n]) => `${pass}: ${n}`);
+    if (where.length > 2) mostly.push(`${where.length - 2} more`);
     text.push(
-      `| ${name} | ${it.eslint} | ${it.ours} | ${it.onlyEslint} | ${it.onlyOurs} | ${it.fixDiffers} | ${differencesOf(it)} |`,
+      `| ${name} | ${it.eslint} | ${it.ours} | ${it.onlyEslint} | ${it.onlyOurs} | ${it.fixDiffers} | ${differencesOf(it)} |` +
+        (withLinks ? ` ${mostly.join(", ")} |` : ""),
     );
   }
   if (rows.length === 0) text.push("| none | | | | | | |");
@@ -174,7 +191,7 @@ function table(rules: Record<string, Counts>, withLinks: boolean) {
 const merged = merge(open);
 const agreeing = Object.entries(merged).filter(([, it]) => differencesOf(it) === 0);
 text.push("\n## Rules by number of differences (all passes, without the confidential corpus)\n");
-table(merged, true);
+table(open, true);
 text.push(
   `\n${agreeing.length} rules report something and agree everywhere ` +
     `(${agreeing.reduce((sum, [, it]) => sum + it.eslint, 0)} messages).\n`,
@@ -194,7 +211,7 @@ if (!hasTrouble) text.push("None.");
 const closed = passes.filter(it => it.confidential);
 if (closed.length > 0) {
   text.push("\n## The confidential corpus: numbers only\n");
-  table(merge(closed), false);
+  table(closed, false);
   for (const pass of closed) {
     for (const [kind, count] of Object.entries(pass.trouble)) {
       if (typeof count !== "number") throw new Error("names of files of a confidential corpus");

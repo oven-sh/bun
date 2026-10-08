@@ -34,7 +34,7 @@
 // Needs Node.js >= 23.6, as the extractors do.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, normalize, parse as parsePath, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -300,6 +300,9 @@ function typescriptRecorder(): Recorder {
     return linter;
   }
 
+  /** Gives the file of the last type-aware case the text that it has on disk. */
+  let restore: { path: string; run: () => void } | null = null;
+
   function attempt(ruleName: string, item: ExtraCase, defaults: Config | null, jsx: boolean) {
     const ruleId = `@typescript-eslint/${ruleName}`;
     const { code } = item;
@@ -341,7 +344,18 @@ function typescriptRecorder(): Recorder {
     };
     if (item.settings) config.settings = item.settings;
 
-    const result = verify(() => linterFor(parserOptions.tsconfigRootDir, filename).verify(code, config, filename));
+    // The programs of typescript-estree remember the text that a file was linted with. The declarations of a case that was
+    // `react.tsx` would be visible to the next one that is `file.ts`: both are scripts of one program.
+    const path = resolve(parserOptions.tsconfigRootDir ?? ".", filename);
+    if (restore && restore.path !== path) {
+      restore.run();
+      restore = null;
+    }
+    const linter = linterFor(parserOptions.tsconfigRootDir, filename);
+    const result = verify(() => linter.verify(code, config, filename));
+    if (typeAware && existsSync(path)) {
+      restore = { path, run: () => verify(() => linter.verify(readFileSync(path, "utf8"), { ...config, rules: {} }, filename)) };
+    }
     if (result.skip) result.skip = result.skip.replaceAll(projectDir, ".");
 
     const dropped: string[] = [];

@@ -167,7 +167,15 @@ async function ours(batch: Batch, files: string[], into: Map<string, Message[]>)
 // Comparison
 // ---------------------------------------------------------------------------
 
-const idOf = (message: Message) => message.ruleId ?? (message.fatal ? PARSE_ERROR : LINTER);
+/** That a rule does not exist is said by the linter, in the name of the rule. */
+const idOf = (message: Message) =>
+  message.ruleId === null || message.ruleId === undefined
+    ? message.fatal
+      ? PARSE_ERROR
+      : LINTER
+    : message.messageId === undefined && message.message.startsWith("Definition for rule '")
+      ? LINTER
+      : message.ruleId;
 
 const placeKey = (m: Message) =>
   JSON.stringify([m.ruleId, m.severity, m.line, m.column, m.endLine, m.endColumn, m.messageId, m.message]);

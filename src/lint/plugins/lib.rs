@@ -6,11 +6,12 @@
 //! - `n`: https://github.com/eslint-community/eslint-plugin-n (Copyright Toru Nagashima, MIT License)
 //! - `oxc`: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License)
 
+mod n;
+
 bun_lint::rules! {
     import_no_cycle::NoCycle,
     import_no_mutable_exports::NoMutableExports,
     n_no_unsupported_features_es_builtins::EsBuiltins,
-    n_no_unsupported_features_es_syntax::EsSyntax,
     n_no_unsupported_features_node_builtins::NodeBuiltins,
     oxc_no_accumulating_spread::NoAccumulatingSpread,
     react_hooks_exhaustive_deps::ExhaustiveDeps,

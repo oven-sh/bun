@@ -24,7 +24,7 @@ use bun_sema::bind::{BindOptions, bind};
 use bun_sema::config::{Project, find_config, load_overriding, without_config};
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
-use bun_sema::resolve::{Host, Resolver, ScriptKind};
+use bun_sema::resolve::{Host, Resolver, ScriptKind, ancestors, join};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_native};
@@ -79,6 +79,8 @@ pub struct Graph<'h> {
     resolvers: ShardedMap<Vec<u8>, Resolver<'h>>,
     /// The path of the `tsconfig.json` for the files of a directory.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
+    /// The closest `package.json`, by directory.
+    packages: ShardedMap<Vec<u8>, Option<Json>>,
     recorded: Guarded<Vec<Recorded<'h>>>,
     complete: OnceLock<Complete>,
 }
@@ -144,6 +146,7 @@ impl<'h> Graph<'h> {
             store,
             resolvers: ShardedMap::default(),
             configs: ShardedMap::default(),
+            packages: ShardedMap::default(),
             recorded: Guarded::new(Vec::new()),
             complete: OnceLock::new(),
         }
@@ -381,6 +384,21 @@ impl Modules for Graph<'_> {
 
     fn component(&self, module: ModuleId) -> u32 {
         self.complete.get().and_then(|it| it.components.get(module.0 as usize)).copied().unwrap_or(u32::MAX)
+    }
+
+    fn package_json(&self, path: &[u8]) -> Option<&Json> {
+        let path = from_native(path);
+        let directory = directory_of(&path);
+        if let Some(known) = self.packages.get_ref(directory) {
+            return known.as_ref();
+        }
+        let disk = self.store.disk();
+        let found = ancestors(directory).find_map(|it| {
+            let file = join(it, b"package.json");
+            let text = disk.is_file(&file).then(|| disk.read(&file))??;
+            bun_lint::json::parse(&text).filter(|it| it.as_object().is_some())
+        });
+        self.packages.insert_ref(directory.to_vec(), found).as_ref()
     }
 }
 

@@ -1,16 +1,19 @@
+use crate::n::{Builtins, data};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
 /// Disallow unsupported ECMAScript built-ins on the specified version.
-pub struct EsBuiltins;
+pub struct EsBuiltins(Builtins);
 
 impl Rule for EsBuiltins {
-    const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/es-builtins", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/es-builtins", Kind::Problem).recommended();
     type State<'a> = ();
 
-    fn new(_: &Options) -> Self {
-        EsBuiltins
+    fn new(options: &Options) -> Self {
+        EsBuiltins(Builtins::new(options, data::ES_GLOBALS, &[], &[]))
     }
 
-    fn register<'a>(&self, _: &mut Listeners<'a, Self>, _: &'a File<'a>) {}
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.finish(|rule, cx| rule.0.check(cx));
+    }
 }

@@ -11,6 +11,7 @@
 //! The model is `ExportMap.imports` of eslint-plugin-import.
 
 use crate::ast::{ExprKind, ExprTag, File, StmtKind};
+use crate::options::Json;
 use crate::utils::text::find_line_break;
 use smallvec::SmallVec;
 
@@ -87,6 +88,9 @@ pub trait Modules: Sync {
 
     /// The same number for two modules of which each imports values from the other, directly or not.
     fn component(&self, module: ModuleId) -> u32;
+
+    /// The `package.json` that is closest to the file at `path`, of those that are an object. It can be asked at any time.
+    fn package_json(&self, path: &[u8]) -> Option<&Json>;
 }
 
 impl<'a> File<'a> {

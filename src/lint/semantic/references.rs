@@ -898,7 +898,7 @@ impl<'f> Collector<'f, '_> {
                 .collect();
             elements.sort_unstable();
             let found = elements.iter().find_map(|&pos| {
-                let mut scope = tree.region_at(pos).from;
+                let mut scope = tree.scope_at(pos);
                 while let Some(data) = tree.scopes.get(scope as usize) {
                     if let Some(index) = variables.get(scope, name) {
                         return Some(index);

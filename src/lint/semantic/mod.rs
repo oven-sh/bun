@@ -102,6 +102,10 @@ pub(crate) trait Binding {
     /// The declarations that conflict with an earlier one of the same name. Each has a symbol of
     /// its own.
     fn refused_declarations(&self, into: &mut Vec<Decl>);
+    fn scopes(&self) -> &[bind::Scope];
+    /// For each of `scopes`, what makes it, where its kind does not tell. Empty if the binder has
+    /// not kept that.
+    fn scope_nodes(&self) -> &[bind::ScopeNode];
 }
 
 /// A `bind::Symbol` without its declarations.
@@ -111,7 +115,7 @@ pub(crate) struct RawSymbol {
     pub(crate) flags: SymFlags,
 }
 
-impl Binding for bind::Bound<'_> {
+impl<S: hir::Storage> Binding for bind::BoundIn<S> {
     fn symbol_count(&self) -> usize {
         self.symbols.len()
     }
@@ -164,6 +168,12 @@ impl Binding for bind::Bound<'_> {
     }
     fn refused_declarations(&self, into: &mut Vec<Decl>) {
         into.extend(self.redeclarations.iter().map(|it| it.decl));
+    }
+    fn scopes(&self) -> &[bind::Scope] {
+        &self.scopes
+    }
+    fn scope_nodes(&self) -> &[bind::ScopeNode] {
+        &self.scope_node
     }
 }
 

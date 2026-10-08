@@ -618,10 +618,7 @@ impl Checker<'_, '_> {
                 ..
             }
             | ExprKind::NonNull(x)
-            | ExprKind::AsConst(x) => self.check_literals_expected_by_pattern(
-                file,
-                crate::hir::skip_non_null_assertions(hir, x),
-            ),
+            | ExprKind::AsConst(x) => self.check_literals_expected_by_pattern(file, x),
             // `getContextualReturnType`, `GetImmediatelyInvokedFunctionExpression`
             ExprKind::Call(c) => {
                 let ExprKind::Fn(func) = hir[hir[c].callee].kind else {

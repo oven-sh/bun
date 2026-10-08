@@ -2828,22 +2828,95 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
+    // The parser reads a run of `!` in a loop, so nothing bounds its length.
     test.each([
-      ["an initializer", (run: string) => `export const y = x${run};`],
-      ["an argument", (run: string) => `f(x${run});`],
-      ["before a property access", (run: string) => `f(x${run}.a);`],
-      ["in an optional chain", (run: string) => `f(x?.a${run}.toFixed());`],
-    ])("60,000 non-null assertions in a row, %s", async (_where, statement) => {
+      [
+        "an initializer",
+        (run: string) => `export const z: number = x${run};`,
+        "a.ts(5,14): error TS2322: Type '{ a: number; }' is not assignable to type 'number'.",
+      ],
+      [
+        "an argument",
+        (run: string) => `take(x${run});`,
+        "a.ts(5,6): error TS2345: Argument of type '{ a: number; }' is not assignable to parameter of type 'number'.",
+      ],
+      [
+        "before a property access",
+        (run: string) => `take(x${run}.b);`,
+        "a.ts(5,60008): error TS2339: Property 'b' does not exist on type '{ a: number; }'.",
+      ],
+      [
+        "in an optional chain",
+        (run: string) => `take(x?.a${run}.b);`,
+        "a.ts(5,60011): error TS2339: Property 'b' does not exist on type 'number'.",
+      ],
+      [
+        "an assignment target",
+        (run: string) => `y${run} = "";`,
+        "a.ts(5,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+      ],
+      [
+        "an operand of ++",
+        (run: string) => `x${run}++;`,
+        "a.ts(5,1): error TS2588: Cannot assign to 'x' because it is a constant.",
+      ],
+      [
+        "a condition over an optional chain",
+        (run: string) => `if (f()?.a${run}.b) take(1);`,
+        "a.ts(5,60012): error TS2339: Property 'b' does not exist on type 'number'.",
+      ],
+      [
+        "an object literal with a contextual type",
+        (run: string) => `export const o: { a: 1 } = ({ a: 2 })${run};`,
+        "a.ts(5,14): error TS2322: Type '{ a: 2; }' is not assignable to type '{ a: 1; }'.\n  Types of property 'a' are incompatible.\n    Type '2' is not assignable to type '1'.",
+      ],
+      [
+        "an arrow function with a contextual type",
+        (run: string) => `export const g: (n: number) => void = ((n) => n.b)${run};`,
+        "a.ts(5,49): error TS2339: Property 'b' does not exist on type 'number'.",
+      ],
+      [
+        "an array literal with a contextual type",
+        (run: string) => `export const l: 1[] = [2]${run};`,
+        "a.ts(5,14): error TS2322: Type '2[]' is not assignable to type '1[]'.\n  Type '2' is not assignable to type '1'.",
+      ],
+    ])("60,000 non-null assertions in a row, %s", async (_where, statement, expected) => {
       using dir = project({
         "a.ts": `declare const x: { a: number } | undefined;
-declare function f(a: unknown): void;
+declare let y: number | undefined;
+declare function f(): typeof x;
+declare function take(n: number): void;
 ${statement(repeat("!", 60_000))}
 `,
       });
-      const { stderr, exitCode } = await check(dir);
-      expect(stderr.split("\n")[0]).toBe(
-        "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
-      );
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(1);
+    });
+
+    // `T[][][]` is read in a loop as well. Its type is as deep as it looks, so whether a build can tell what
+    // the type is depends on the size of its stack frames.
+    test.each([
+      ["the type of a class property", "a.ts", (run: string) => `export class C {\n  p: number${run} = 1;\n}`],
+      [
+        "a JSDoc @typedef",
+        "a.js",
+        (run: string) => `/** @typedef {number${run}} T */\n/** @type {T} */\nexport let t = 1;`,
+      ],
+      [
+        "a JSDoc @param with properties",
+        "a.js",
+        (run: string) => `/**\n * @param {Object${run}} a\n * @param {number} a.b\n */\nexport function f(a) {}`,
+      ],
+    ])("200,000 array types in a row, %s", async (_where, name, declaration) => {
+      using dir = project({
+        [name]: `${declaration(repeat("[]", 200_000))}
+/** @type {number} */
+export const wrong = "";
+export const alsoWrong = wrong.nope;
+`,
+      });
+      const { exitCode } = await check(dir, ["--allowJs", "--checkJs"]);
       expect(exitCode).toBe(1);
     });
 

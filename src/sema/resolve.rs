@@ -347,14 +347,20 @@ impl ScriptKind {
 
     /// `GetScriptKindFromFileName`
     pub fn from_file_name(path: &[u8]) -> Option<ScriptKind> {
-        let dot = strings::last_index_of_char(path, b'.')?;
-        Some(match &path[dot..].to_ascii_lowercase()[..] {
-            b".js" | b".cjs" | b".mjs" => ScriptKind::Js,
-            b".jsx" => ScriptKind::Jsx,
-            b".ts" | b".cts" | b".mts" => ScriptKind::Ts,
-            b".tsx" => ScriptKind::Tsx,
-            _ => return None,
-        })
+        const KINDS: [(&[u8], ScriptKind); 8] = [
+            (b".js", ScriptKind::Js),
+            (b".cjs", ScriptKind::Js),
+            (b".mjs", ScriptKind::Js),
+            (b".jsx", ScriptKind::Jsx),
+            (b".ts", ScriptKind::Ts),
+            (b".cts", ScriptKind::Ts),
+            (b".mts", ScriptKind::Ts),
+            (b".tsx", ScriptKind::Tsx),
+        ];
+        let extension = &path[strings::last_index_of_char(path, b'.')?..];
+        let mut kinds = KINDS.iter();
+        let found = kinds.find(|(name, _)| extension.eq_ignore_ascii_case(name))?;
+        Some(found.1)
     }
 
     /// Whether a file called `path` is another language than its name says. JavaScript can have
@@ -368,10 +374,10 @@ impl ScriptKind {
 
 /// Whether `GetScriptKindFromFileName` is `ScriptKindTSX` or `ScriptKindJSX`.
 pub fn is_jsx_file_name(path: &[u8]) -> bool {
-    strings::last_index_of_char(path, b'.').is_some_and(|dot| {
-        let extension = &path[dot..];
-        extension.eq_ignore_ascii_case(b".tsx") || extension.eq_ignore_ascii_case(b".jsx")
-    })
+    matches!(
+        ScriptKind::from_file_name(path),
+        Some(ScriptKind::Tsx | ScriptKind::Jsx)
+    )
 }
 
 /// The LANGUAGE of a file: `is_javascript`, unless the host knows better than the name. What goes

@@ -1954,10 +1954,8 @@ impl<'s> Checker<'_, 's> {
             ExprKind::Unary { op: UnOp::Void, .. } => self.check_node_deferred(file, e),
             ExprKind::Dot { obj: x, .. }
             | ExprKind::Unary { operand: x, .. }
-            | ExprKind::Spread(x) => self.check_expression(file, x),
-            ExprKind::NonNull(x) => {
-                self.check_expression(file, crate::hir::skip_non_null_assertions(hir, x))
-            }
+            | ExprKind::Spread(x)
+            | ExprKind::NonNull(x) => self.check_expression(file, x),
             // `checkAssertion`
             ExprKind::AsConst(x) => {
                 self.check_erasable_type_assertion(file, e, x);
@@ -2195,15 +2193,16 @@ impl<'s> Checker<'_, 's> {
 /// resolve, so that `getTypeOfSymbol` of the property that `node` annotates cannot close a cycle.
 /// `checkTypeOperator`, `checkConditionalType`, `checkArrayType` and `checkJSDocType` visit the
 /// children and do not ask for the type of `node`.
-fn is_resolved_by_check_source_element(hir: &File, node: TypeNodeId) -> bool {
+fn is_resolved_by_check_source_element(hir: &File, mut node: TypeNodeId) -> bool {
+    // The parser builds `T[][][]..` in a loop, so nothing bounds its depth.
+    while node.is_some()
+        && let TypeNodeKind::Array(of) | TypeNodeKind::Readonly(of) = hir[node].kind
+    {
+        node = of;
+    }
     node.is_some()
-        && match hir[node].kind {
-            TypeNodeKind::Keyof(_) | TypeNodeKind::Cond { .. } | TypeNodeKind::JSDoc { .. } => {
-                false
-            }
-            TypeNodeKind::Array(of) | TypeNodeKind::Readonly(of) => {
-                is_resolved_by_check_source_element(hir, of)
-            }
-            _ => true,
-        }
+        && !matches!(
+            hir[node].kind,
+            TypeNodeKind::Keyof(_) | TypeNodeKind::Cond { .. } | TypeNodeKind::JSDoc { .. }
+        )
 }

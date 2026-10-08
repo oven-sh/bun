@@ -1846,6 +1846,11 @@ pub struct FileIn<S: Storage> {
     /// `ParenthesizedExpression`: the inner expression, the start and the end of the parentheses.
     /// Ordered by expression, and for nested parentheses around one expression innermost first.
     pub parens: S::List<(ExprId, u32, u32)>,
+    /// `x!!!` is one `NonNull`, which ends at the last `!`. The parser reads a run of `!` in a loop,
+    /// so nothing bounds its length, and `x!!` has the type of `x!`. These are the other
+    /// `NonNullExpression`s of the run: the `NonNull`, and where each ends. Ordered by expression, the
+    /// innermost first.
+    pub non_null_ends: S::Few<(ExprId, u32)>,
     /// `JsxExpression`: the inner expression, the start and the end of the braces. Ordered by
     /// expression.
     pub jsx_expressions: S::List<(ExprId, u32, u32)>,
@@ -2333,6 +2338,7 @@ impl FileBuilder {
             specifier_expressions: few_to_arena(self.specifier_expressions, arena),
             exports_from_expressions: few_to_arena(self.exports_from_expressions, arena),
             parens: copy_to_arena(&mut self.parens, arena),
+            non_null_ends: few_to_arena(self.non_null_ends, arena),
             jsx_expressions: copy_to_arena(&mut self.jsx_expressions, arena),
             jsx_pragmas: self.jsx_pragmas,
             jsdoc_comments: few_to_arena(self.jsdoc_comments, arena),
@@ -2418,6 +2424,13 @@ pub fn is_parenthesized(hir: &File, e: ExprId) -> bool {
 #[inline]
 pub fn open_parenthesis(hir: &File, e: ExprId) -> Option<u32> {
     parentheses_around(hir, e).last().map(|p| p.1)
+}
+
+/// `File::non_null_ends` of `e`.
+pub fn non_null_ends_in<S: Storage>(hir: &FileIn<S>, e: ExprId) -> &[(ExprId, u32)] {
+    let first = hir.non_null_ends.partition_point(|it| it.0.0 < e.0);
+    let count = hir.non_null_ends[first..].partition_point(|it| it.0 == e);
+    &hir.non_null_ends[first..first + count]
 }
 
 /// The parentheses around `e`, the innermost first.
@@ -2553,15 +2566,6 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
     }
 }
 
-/// `SkipOuterExpressions(e, OEKNonNullAssertions)`. The parser builds a run of `!` in a loop, so nothing bounds its length: a
-/// function that looks through `!` takes the whole run at once and does not recurse for each.
-pub fn skip_non_null_assertions(hir: &File, mut e: ExprId) -> ExprId {
-    while let ExprKind::NonNull(x) = hir[e].kind {
-        e = x;
-    }
-    e
-}
-
 /// `isNarrowableReference`
 pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
     match hir[e].kind {
@@ -2571,7 +2575,7 @@ pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
         | ExprKind::NewTarget(_)
         | ExprKind::ImportMeta => true,
         ExprKind::Dot { obj, .. } => is_narrowable_reference(hir, obj),
-        ExprKind::NonNull(x) => is_narrowable_reference(hir, skip_non_null_assertions(hir, x)),
+        ExprKind::NonNull(x) => is_narrowable_reference(hir, x),
         // With a literal key the object is not checked.
         ExprKind::Index { obj, index, .. } => {
             is_string_or_numeric_literal_like(hir, index)

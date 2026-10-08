@@ -154,6 +154,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             import_attributes.dedup_by_key(|attributes| attributes.0);
         }
         this.b.file.parens.sort_by_key(|p| p.0.0);
+        this.b.file.non_null_ends.sort_by_key(|it| it.0.0);
         this.b
             .file
             .jsx_expressions
@@ -2043,6 +2044,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             created.reverse();
             let mut paren_full_start = None;
             let mut is_parenthesized_type = false;
+            // `id`, if it is a `NonNull` with nothing around it yet.
+            let mut non_null = None;
             for (what, kept) in created {
                 let kind = match what {
                     Mark::End => {
@@ -2065,10 +2068,17 @@ impl<'p, 'a> Lower<'p, 'a> {
                         }
                         pos = open;
                         self.b.file.parens.push((id, open, end));
+                        non_null = None;
                         continue;
                     }
                     Mark::NonNull => {
                         self.b.js_error_at_range((pos, end), 8013, b"");
+                        if non_null == Some(id) {
+                            let inner =
+                                std::mem::replace(&mut self.b.file.exprs[id.idx()].end, end);
+                            self.b.file.non_null_ends.push((id, inner));
+                            continue;
+                        }
                         ExprKind::NonNull(id)
                     }
                     Mark::Instantiation => ExprKind::Instantiation {
@@ -2128,6 +2138,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     _ => continue,
                 };
                 id = self.b.file.expr(kind, pos, end);
+                non_null = matches!(kind, ExprKind::NonNull(_)).then_some(id);
             }
         }
         self.source_end = end;

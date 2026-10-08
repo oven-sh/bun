@@ -240,13 +240,18 @@ pub(crate) fn is_jsdoc_like(comment: &[u8]) -> bool {
 }
 
 /// `isObjectOrObjectArrayTypeReference`
-fn is_object_or_object_array(file: &bun_sema::hir::FileBuilder, ty: ts::TypeId) -> bool {
+fn is_object_or_object_array(file: &bun_sema::hir::FileBuilder, mut ty: ts::TypeId) -> bool {
+    // The parser builds `T[][][]..` in a loop, so nothing bounds its depth.
+    while ty.is_some()
+        && let TypeNodeKind::Array(element) = file[ty].kind
+    {
+        ty = element;
+    }
     if ty.is_none() {
         return false;
     }
     match file[ty].kind {
         TypeNodeKind::Keyword(ts::Keyword::Object) => true,
-        TypeNodeKind::Array(element) => is_object_or_object_array(file, element),
         TypeNodeKind::Ref { name, args } => {
             args.is_empty() && file.texts(name).eq([bun_sema::atom::known::Object])
         }

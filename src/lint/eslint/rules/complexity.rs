@@ -24,24 +24,98 @@ fn is_field_initializer<'a>(member: Member<'a>, node: Node<'a>) -> bool {
         && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
 }
 
-/// What has the code path that `node` is in: the `Func` of a function or of a static block, or the
-/// `Member` whose initializer it is in. `None` at the top level.
-fn code_path_owner(node: Node<'_>) -> Option<Node<'_>> {
-    let mut inner = node;
-    for ancestor in node.ancestors() {
-        match ancestor {
-            Node::Func(func) if func.has_body() => return Some(ancestor),
-            Node::Member(member) if is_field_initializer(member, inner) => return Some(ancestor),
-            _ => inner = ancestor,
+/// What a walk from a node towards the root finds, for a rule that asks that of many nodes.
+///
+/// A long walk leaves what it has found at every [`Climber::STRIDE`]th node on its way, and a walk
+/// that comes to such a node ends there. So all the walks in a file together take
+/// O(nodes + walks) steps, however deep the nodes are in each other.
+pub struct Climber<'a, T> {
+    /// What the walk from a node finds, and how many steps of it count.
+    known: FxHashMap<Node<'a>, (T, u32)>,
+}
+
+/// What a walk does on the step from a node to its parent.
+pub(crate) enum Step<T> {
+    /// It ends and has found this.
+    Stop(T),
+    /// It goes on, and the step is counted.
+    Count,
+    Pass,
+}
+
+impl<T> Default for Climber<'_, T> {
+    fn default() -> Self {
+        Climber {
+            known: FxHashMap::default(),
         }
     }
-    None
+}
+
+impl<'a, T: Copy> Climber<'a, T> {
+    const STRIDE: u32 = 32;
+
+    /// Walks from `start` to the root. `step` gets a node and its parent and depends on nothing
+    /// else. Returns what the walk finds, `at_root` if nothing stops it, and how many steps count.
+    pub(crate) fn climb(
+        &mut self,
+        start: Node<'a>,
+        at_root: T,
+        step: impl Fn(Node<'a>, Node<'a>) -> Step<T>,
+    ) -> (T, u32) {
+        let (mut at, mut steps, mut count) = (start, 0u32, 0u32);
+        let found = loop {
+            if !self.known.is_empty()
+                && let Some(&(found, above)) = self.known.get(&at)
+            {
+                count += above;
+                break found;
+            }
+            if matches!(at, Node::File(_)) {
+                break at_root;
+            }
+            let parent = at.parent();
+            match step(at, parent) {
+                Step::Stop(found) => break found,
+                Step::Count => count += 1,
+                Step::Pass => {}
+            }
+            (at, steps) = (parent, steps + 1);
+        };
+        if steps >= Self::STRIDE {
+            let (mut at, mut above) = (start, count);
+            for i in 0..steps {
+                if i % Self::STRIDE == 0 {
+                    self.known.insert(at, (found, above));
+                }
+                let parent = at.parent();
+                if matches!(step(at, parent), Step::Count) {
+                    above = above.saturating_sub(1);
+                }
+                at = parent;
+            }
+        }
+        (found, count)
+    }
+}
+
+#[derive(Default)]
+pub struct State<'a> {
+    /// The complexity of each code path that has more than one route.
+    complexities: FxHashMap<Node<'a>, usize>,
+    owners: Climber<'a, Option<Node<'a>>>,
 }
 
 impl Complexity {
+    /// Adds to the complexity of what has the code path that `node` is in: the `Func` of a function
+    /// or of a static block, or the `Member` whose initializer it is in. Nothing at the top level.
     fn increase<'a>(node: impl Into<Node<'a>>, by: usize, cx: &mut Cx<'a, Self>) {
-        if let Some(owner) = code_path_owner(node.into()) {
-            *cx.state.entry(owner).or_insert(1) += by;
+        let (owner, _) = cx.state.owners.climb(node.into(), None, |inner, ancestor| match ancestor {
+            Node::Func(func) if func.has_body() => Step::Stop(Some(ancestor)),
+            Node::Member(member) if is_field_initializer(member, inner) => Step::Stop(Some(ancestor)),
+            _ => Step::Pass,
+        });
+        if let Some(owner) = owner {
+            *cx.state.complexities.entry(owner).or_insert(1) += by;
         }
     }
 
@@ -65,7 +139,7 @@ impl Complexity {
         let Some(threshold) = self.threshold else {
             return;
         };
-        for (&owner, &complexity) in &cx.state {
+        for (&owner, &complexity) in &cx.state.complexities {
             if complexity <= threshold {
                 continue;
             }
@@ -97,8 +171,7 @@ impl Complexity {
 
 impl Rule for Complexity {
     const META: Meta = Meta::eslint("complexity", Kind::Suggestion);
-    /// The complexity of each code path that has more than one route.
-    type State<'a> = FxHashMap<Node<'a>, usize>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -116,19 +189,19 @@ impl Rule for Complexity {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         let Some(threshold) = self.threshold else {
-            return FxHashMap::default();
+            return State::default();
         };
         if threshold == 0 {
             on.funcs(|_, func, cx| {
                 if func.has_body() {
-                    cx.state.entry(Node::Func(func)).or_insert(1);
+                    cx.state.complexities.entry(Node::Func(func)).or_insert(1);
                 }
             });
             on.members(|_, member, cx| {
                 if let Some(init) = member.init()
                     && is_field_initializer(member, Node::Expr(init))
                 {
-                    cx.state.entry(Node::Member(member)).or_insert(1);
+                    cx.state.complexities.entry(Node::Member(member)).or_insert(1);
                 }
             });
         }
@@ -184,6 +257,6 @@ impl Rule for Complexity {
             });
         }
         on.finish(Self::report_all);
-        FxHashMap::default()
+        State::default()
     }
 }

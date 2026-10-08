@@ -1,3 +1,4 @@
+use super::complexity::{Climber, Step};
 use bun_lint::prelude::*;
 
 /// Enforce a maximum depth that blocks can be nested.
@@ -38,9 +39,12 @@ impl MaxDepth {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let in_function = Node::Stmt(stmt).ancestors().take_while(|it| !matches!(it, Node::Func(_)));
-        let around = in_function.filter(|it| matches!(it, Node::Stmt(outer) if keyword_of(*outer).is_some()));
-        let depth = around.count() + 1;
+        let (_, around) = cx.state.climb(Node::Stmt(stmt), (), |_, ancestor| match ancestor {
+            Node::Func(_) => Step::Stop(()),
+            Node::Stmt(outer) if keyword_of(outer).is_some() => Step::Count,
+            _ => Step::Pass,
+        });
+        let depth = around as usize + 1;
         if depth > max {
             let start = stmt.span().start;
             cx.report(Span::new(start, start + keyword.len() as u32), TOO_DEEPLY)
@@ -52,7 +56,7 @@ impl MaxDepth {
 
 impl Rule for MaxDepth {
     const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
-    type State<'a> = ();
+    type State<'a> = Climber<'a, ()>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -64,7 +68,7 @@ impl Rule for MaxDepth {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Climber<'a, ()> {
         on.stmts(
             [
                 StmtTag::If,
@@ -80,5 +84,6 @@ impl Rule for MaxDepth {
             ],
             Self::check,
         );
+        Climber::default()
     }
 }

@@ -93,31 +93,34 @@ fn is_plain_computed_key(key: Key<'_>) -> bool {
     }
 }
 
-fn has_modifier(member: Member<'_>, flag: Flags) -> bool {
-    member.modifiers().iter().any(|it| it.flag() == flag)
-}
-
 /// The decorators, the modifiers, the name, `?`, `!` and the type of a property of a class.
 fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
-    let node = member.as_ast_nodes();
-    write!(f, FormatDecorators::of_member(member));
-    for (flag, keyword) in [
-        (Flags::AMBIENT, "declare"),
-        (Flags::PUBLIC, "public"),
-        (Flags::PROTECTED, "protected"),
-        (Flags::PRIVATE, "private"),
-        (Flags::STATIC, "static"),
-        (Flags::ABSTRACT, "abstract"),
-        (Flags::OVERRIDE, "override"),
-        (Flags::READONLY, "readonly"),
-        (Flags::ACCESSOR, "accessor"),
-    ] {
-        if has_modifier(member, flag) {
-            write!(f, [keyword, space()]);
+    let modifiers = member.modifiers();
+    if !modifiers.is_empty() {
+        write!(f, FormatDecorators::of_member(member));
+        let written = modifiers.iter().fold(Flags::empty(), |all, it| all | it.flag());
+        for (flag, keyword) in [
+            (Flags::AMBIENT, "declare"),
+            (Flags::PUBLIC, "public"),
+            (Flags::PROTECTED, "protected"),
+            (Flags::PRIVATE, "private"),
+            (Flags::STATIC, "static"),
+            (Flags::ABSTRACT, "abstract"),
+            (Flags::OVERRIDE, "override"),
+            (Flags::READONLY, "readonly"),
+            (Flags::ACCESSOR, "accessor"),
+        ] {
+            if written.contains(flag) {
+                write!(f, [keyword, space()]);
+            }
         }
     }
-    if let Some(key) = member.key() {
-        format_computed_or_property_key(key, node, f);
+    match member.key() {
+        Some(key) if key.is_computed() => format_computed_or_property_key(key, member.as_ast_nodes(), f),
+        Some(key) => {
+            write_member_name(key, || member.as_ast_nodes(), f);
+        }
+        None => {}
     }
     let flags = member.flags();
     write!(
@@ -130,7 +133,57 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
     );
 }
 
+/// A left side that is a name without comments. See [`AssignmentLike::name_on_the_left`].
+#[derive(Copy, Clone)]
+enum NameOnTheLeft<'a> {
+    /// It is written as it is in the source.
+    At(Span),
+    /// What is assigned to, which can need parentheses.
+    Target(Expr<'a>),
+}
+
+impl<'a> Format<'a> for NameOnTheLeft<'a> {
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        match *self {
+            NameOnTheLeft::At(span) => write!(f, source_text(span)),
+            NameOnTheLeft::Target(target) => write!(f, target),
+        }
+    }
+}
+
 impl<'a> AssignmentLike<'a> {
+    /// What [`AssignmentLike::write_left`] writes and returns, if that is only a name and can be told
+    /// without writing it.
+    fn name_on_the_left(&self, f: &Formatter<'a>) -> Option<(NameOnTheLeft<'a>, bool)> {
+        if !f.is_quiet() {
+            return None;
+        }
+        let key = match *self {
+            AssignmentLike::VariableDeclarator(declarator) => {
+                let id = declarator.pat();
+                let is_name = id.tag() == PatTag::Ident && declarator.ty().is_none() && !declarator.is_definite();
+                return is_name.then(|| (NameOnTheLeft::At(id.span()), false));
+            }
+            AssignmentLike::AssignmentExpression(assignment) => {
+                let target = assignment.left().filter(|target| target.tag() == ExprTag::Ident)?;
+                return Some((NameOnTheLeft::Target(target), false));
+            }
+            AssignmentLike::ObjectProperty(property) => property.key()?,
+            AssignmentLike::BindingProperty(property) => property.key()?,
+            AssignmentLike::PropertyDefinition(_) | AssignmentLike::AccessorProperty(_) => return None,
+        };
+        if !matches!(key.kind(), KeyKind::Ident(_)) || f.options().quote_properties.is_consistent() {
+            return None;
+        }
+        let span = key.span(f.file());
+        let text_width_for_break = u32::from(f.options().indent_width.value() + MIN_OVERLAP_FOR_BREAK);
+        // No text is wider than it is long.
+        let is_short = span.len() < text_width_for_break
+            || f.string_width(f.source_text().text_for(&span)) < text_width_for_break;
+        Some((NameOnTheLeft::At(span), is_short))
+    }
+
     /// Returns whether the left side is a short name.
     fn write_left(&self, f: &mut Formatter<'a>) -> bool {
         let text_width_for_break = (f.options().indent_width.value() + MIN_OVERLAP_FOR_BREAK) as usize;
@@ -245,6 +298,8 @@ impl<'a> AssignmentLike<'a> {
                                             if_group_fits_on_line(&soft_line_break()).with_group_id(fluid_group_id)
                                         ]
                                     ),
+                                    // The chain is broken if this group is.
+                                    None if layout == AssignmentLikeLayout::ChainTail => write!(f, soft_empty_line()),
                                     None => write!(f, soft_line_break()),
                                 });
                                 write!(f, group(&indent(&format_args!(line_break, right))));
@@ -546,23 +601,71 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
             return;
         }
 
+        let right_expression = self.get_right_expression();
+        if let Some((name, is_short)) = self.name_on_the_left(f) {
+            let layout = self.layout(right_expression, is_short, false, f);
+            let content = format_with(|f| {
+                write!(f, name);
+                self.write_operator(f);
+                self.write_after_operator(right_expression, layout, f);
+            });
+            return match layout.has_group_around_it(true) {
+                true => write!(f, group(&content)),
+                false => write!(f, content),
+            };
+        }
+
         // Whether there is a group around it all, and one around the left side, depends on the
         // layout, which depends on what is written for the left side.
         let outer_group = f.reserve_tag();
         let left_group = f.reserve_tag();
         let is_left_short = self.write_left(f);
-        let left_may_break = match f.elements().get(left_group + 1..) {
-            Some([FormatElement::SourceText(_)]) => false,
-            _ => f.elements_from(left_group + 1).may_directly_break(),
-        };
-        let right_expression = self.get_right_expression();
+        let left = f.elements().get(left_group + 1..).unwrap_or_default();
+        let is_left_text = left.len() <= 12 && left.iter().all(is_text_on_one_line);
+        let left_may_break = !is_left_text && f.elements_from(left_group + 1).may_directly_break();
         let layout = self.layout(right_expression, is_left_short, left_may_break, f);
-        if layout != AssignmentLikeLayout::BreakLeftHandSide {
+        // A group of text at the start of a group makes no difference: `Formatter::is_at_start_of_group`.
+        if layout != AssignmentLikeLayout::BreakLeftHandSide && !(is_left_text && layout.has_group_around_it(false)) {
             f.group_from(left_group, false);
         }
 
         self.write_operator(f);
+        self.write_after_operator(right_expression, layout, f);
 
+        if layout.has_group_around_it(is_left_text) {
+            f.group_from(outer_group, false);
+        }
+    }
+}
+
+/// Whether `element` is text without a line break, or a space.
+fn is_text_on_one_line(element: &FormatElement) -> bool {
+    match element {
+        FormatElement::Token(_) | FormatElement::Space => true,
+        FormatElement::SourceText(text) | FormatElement::OwnedText(text) => !text.width.is_multiline(),
+        _ => false,
+    }
+}
+
+impl AssignmentLikeLayout {
+    /// Whether there is a group around the assignment. `is_left_text`: the left side is nothing but
+    /// text on one line.
+    fn has_group_around_it(self, is_left_text: bool) -> bool {
+        match self {
+            AssignmentLikeLayout::Chain
+            | AssignmentLikeLayout::ChainTail
+            | AssignmentLikeLayout::ChainTailArrowFunction => false,
+            // All that can break is in the group after the operator, which fits if and only if a group
+            // around text and it fits.
+            AssignmentLikeLayout::BreakAfterOperator => !is_left_text,
+            _ => true,
+        }
+    }
+}
+
+impl<'a> AssignmentLike<'a> {
+    /// `right_expression`: [`AssignmentLike::get_right_expression`].
+    fn write_after_operator(&self, right_expression: Option<Expr<'a>>, layout: AssignmentLikeLayout, f: &mut Formatter<'a>) {
         let right = format_with(|f| self.write_right(right_expression, f, layout, None));
         match layout {
             AssignmentLikeLayout::Fluid => {
@@ -586,13 +689,6 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
             AssignmentLikeLayout::BreakLeftHandSide => write!(f, [space(), group(&right)]),
             AssignmentLikeLayout::Chain => write!(f, [soft_line_break_or_space(), right]),
             AssignmentLikeLayout::ChainTail => write!(f, soft_line_indent_or_space(&right)),
-        }
-
-        if !matches!(
-            layout,
-            AssignmentLikeLayout::Chain | AssignmentLikeLayout::ChainTail | AssignmentLikeLayout::ChainTailArrowFunction
-        ) {
-            f.group_from(outer_group, false);
         }
     }
 }

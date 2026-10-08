@@ -10,7 +10,7 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{Config, FileConfig, Linter, RcFlavor, ResolvedConfig};
+use bun_lint::linter::{Config, Linter, RcFlavor, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
@@ -593,35 +593,6 @@ impl<'l> Loader<'l> {
             Some(path) => gitignore::with_file(chain, self.cwd(), &paths::resolve(self.cwd(), &paths::from_native(path))),
             None => chain,
         }
-    }
-
-    /// The category of oxlint that each rule of the registry is in.
-    pub(crate) fn categories(&self) -> Vec<Option<&'static str>> {
-        const ALL: [&str; 7] = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
-        let registry = self.linter.registry();
-        let mut categories = vec![None; registry.all().len()];
-        for category in ALL {
-            // What a configuration that has only this category turns on.
-            let severity = |it: &str| Json::String(if it == category { b"error".to_vec() } else { b"off".to_vec() });
-            const PLUGINS: [&[u8]; 5] = [b"typescript", b"react", b"import", b"node", b"oxc"];
-            let plugins = PLUGINS.iter().map(|it| Json::String(it.to_vec()));
-            let json = object(vec![
-                (b"plugins", Json::Array(plugins.collect())),
-                (b"categories", Json::Object(ALL.iter().map(|it| (it.as_bytes().to_vec(), severity(it))).collect())),
-            ]);
-            let Ok(config) = Config::from_rc_json(registry, b"/", &json, RcFlavor::Oxlint, &mut |_, _| None) else {
-                continue;
-            };
-            let FileConfig::Matched(config) = config.get(registry, b"/a.ts") else {
-                continue;
-            };
-            for rule in config.rules.iter().filter(|it| it.severity != Severity::Off) {
-                if let Some(index) = registry.index_of(rule.entry) {
-                    categories[index] = Some(category);
-                }
-            }
-        }
-        categories
     }
 
     pub(crate) fn environment(&self) -> &'l Environment<'l> {

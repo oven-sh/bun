@@ -110,9 +110,7 @@ impl Suppressions {
                     let (mut hidden, shown): (Vec<_>, Vec<_>) =
                         std::mem::take(&mut result.messages).into_iter().partition(|it| rule_of(it).as_ref() == Some(rule));
                     for message in &mut hidden {
-                        message.suppressions = vec![Suppression {
-                            justification: Box::default(),
-                        }];
+                        message.suppressions = vec![Suppression::file()];
                     }
                     result.messages = shown;
                     result.suppressed_by_file += hidden.len();

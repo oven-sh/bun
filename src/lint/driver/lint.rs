@@ -47,6 +47,7 @@ impl Context<'_> {
                 true => Some(&only_errors),
                 false => None,
             },
+            ..LintOptions::default()
         }
     }
 
@@ -80,7 +81,7 @@ impl Context<'_> {
                 Kind::Suggestion => FixType::Suggestion,
                 Kind::Layout => FixType::Layout,
             },
-            Some(RuleId::Unknown(_)) => return false,
+            Some(_) => return false,
         })
     }
 

@@ -148,9 +148,12 @@ fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::Channel>, Ve
     })?;
     let spawned = spawn_process_cstr(
         &SpawnOptions {
-            stdin: Stdio::Pipe(to_worker[0]),
-            stdout: Stdio::Pipe(from_worker[1]),
+            stdin: Stdio::Ignore,
+            // What the script prints is for the user, and not among the messages.
+            stdout: Stdio::Pipe(bun_sys::Fd::stderr()),
             stderr: Stdio::Inherit,
+            // 3 and 4
+            extra_fds: Box::new([Stdio::Pipe(to_worker[0]), Stdio::Pipe(from_worker[1])]),
             cwd: Box::<[u8]>::from(script.cwd),
             #[cfg(windows)]
             windows: crate::api::bun::process::WindowsOptions {

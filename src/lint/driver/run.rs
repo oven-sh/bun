@@ -57,8 +57,9 @@ pub struct Environment<'e> {
     /// Runs a script to its end. `Ok`: what it has printed on standard output. `Err`: it failed, and
     /// this is why.
     pub run_script: &'e (dyn Fn(&Script) -> Result<Vec<u8>, Vec<u8>> + Sync),
-    /// Starts a script, with pipes for its standard input and output. It is talked to through what
-    /// is returned. What it prints on standard error is for the user.
+    /// Starts a script, with a pipe to read from as its file descriptor 3 and one to write to as 4.
+    /// It is talked to through what is returned. What it prints is for the user: it goes to
+    /// standard error.
     pub spawn_worker: &'e (dyn Fn(&Script) -> Result<Box<dyn Channel>, Vec<u8>> + Sync),
     /// The version of Bun.
     pub version: &'e [u8],
@@ -417,9 +418,8 @@ impl Run<'_> {
             Err(error) => return self.fail(&error),
         };
         if options.rules {
-            let categories = loader.categories();
             let as_json = matches!(format, Format::Json | Format::OxlintJson);
-            format::oxlint::write_rules(&mut self.out.stdout, linter.registry(), &|index| categories[index], as_json);
+            format::oxlint::write_rules(&mut self.out.stdout, linter.registry(), as_json);
             return self.out;
         }
         let timing = Timing {

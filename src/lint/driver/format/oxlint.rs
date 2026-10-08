@@ -304,20 +304,19 @@ fn plugin(prefix: &[u8]) -> &[u8] {
     if prefix == b"react-hooks" { b"react" } else { scope(prefix) }
 }
 
-/// `--rules`. `as_json`: with `-f json`. `category_of`: the category of a rule, given its index in
-/// the registry.
-pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, category_of: &dyn Fn(usize) -> Option<&'static str>, as_json: bool) {
-    let mut all: Vec<_> = registry.all().iter().enumerate().map(|(index, it)| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta, index)).collect();
+/// `--rules`. `as_json`: with `-f json`.
+pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool) {
+    let mut all: Vec<_> = registry.all().iter().map(|it| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta)).collect();
     all.sort_by_key(|it| (it.0, it.1.name));
     if !as_json {
-        for (scope, meta, _) in all {
+        for (scope, meta) in all {
             out.extend_from_slice(scope);
             let _ = writeln!(out, "/{}", meta.name);
         }
         return;
     }
-    let rules = all.into_iter().map(|(scope, meta, index)| {
-        let category = category_of(index);
+    let rules = all.into_iter().map(|(scope, meta)| {
+        let category = bun_lint::linter::oxlint_category(meta.plugin, meta.name);
         let fix: &[u8] = match (meta.fixable != Fixable::No, meta.has_suggestions) {
             (true, true) => b"fixable_safe_fix_or_suggestion",
             (true, false) => b"fixable_fix",

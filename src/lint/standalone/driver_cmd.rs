@@ -38,7 +38,10 @@ impl Drop for Worker {
 
 fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint::js_plugin::Channel>, Vec<u8>> {
     use std::process::Stdio;
-    let mut command = std::process::Command::new(std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned()));
+    // The pipes are its file descriptors 3 and 4. What it prints is for the user.
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c", r#"exec "$0" "$@" 3<&0 4>&1 1>&2 </dev/null"#]);
+    command.arg(std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned()));
     command.arg("-e").arg(script.source).args(script.arguments.iter().map(|it| os(it))).current_dir(os(script.cwd));
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|error| error.to_string().into_bytes())?;
     let (input, output) = (child.stdin.take(), child.stdout.take());

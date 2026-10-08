@@ -10,7 +10,6 @@ pub(crate) mod ast;
 mod block;
 mod content;
 pub(crate) mod embed;
-pub(crate) mod front_matter;
 mod inline;
 mod preprocess;
 mod printer;
@@ -18,8 +17,10 @@ mod strings;
 mod unicode_tables;
 
 use crate::css::doc;
+use crate::front_matter;
 use crate::options::{EmbeddedLanguageFormatting, LineEnding, LineWidth};
-use crate::range::{Offsets, trim_start, write_with_line_ending};
+use crate::range::{Offsets, write_with_line_ending};
+use crate::text::{BOM, trim_start};
 use crate::{FormatError, FormatOptions};
 
 /// Whether Prettier takes the file at `path` for Markdown.
@@ -226,8 +227,6 @@ fn format_embedded(
     };
     is_done.then_some(out)
 }
-
-const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 /// Whether a comment with `@` and one of `pragmas` is at the start of `text`, behind the front matter.
 fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {

@@ -1,7 +1,7 @@
 use super::FormatJsxName;
 use crate::js::print::type_parameters::type_arguments;
-use crate::js::utils::array::is_next_line_empty;
 use crate::prelude::*;
+use crate::text::is_next_line_empty;
 use crate::{format_args, write};
 
 /// `<a b="c">`, `<a b="c" />`

@@ -71,55 +71,10 @@ fn write_hashbang(f: &mut Formatter<'_>) {
     }
 }
 
-/// `\n`, `\r\n`, `\r`, U+2028 or U+2029 at the start of `text`: what is after it.
-fn strip_line_terminator(text: &[u8]) -> Option<&[u8]> {
-    match text {
-        [b'\r', b'\n', rest @ ..]
-        | [b'\n' | b'\r', rest @ ..]
-        | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
-        _ => None,
-    }
-}
-
-fn trim_blanks_start(text: &[u8]) -> &[u8] {
-    let count = text
-        .iter()
-        .take_while(|b| matches!(b, b' ' | b'\t'))
-        .count();
-    &text[count..]
-}
-
-/// Prettier's `isNextLineEmpty`: whether the line after the one that `position` is on is empty.
-/// Commas, semicolons and comments after `position` are passed over.
+/// Prettier's `isNextLineEmpty`
+#[inline]
 pub(crate) fn is_next_line_empty(source: SourceText<'_>, position: u32) -> bool {
-    let mut rest = source
-        .as_bytes()
-        .get(position as usize..)
-        .unwrap_or_default();
-    // Nearly always the line ends here.
-    if let [b'\n', next_line @ ..] = rest {
-        return strip_line_terminator(trim_blanks_start(next_line)).is_some();
-    }
-    loop {
-        let count = rest
-            .iter()
-            .take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t'))
-            .count();
-        rest = &rest[count..];
-        let Some(comment) = rest.strip_prefix(b"/*") else {
-            break;
-        };
-        let Some(end) = bun_core::strings::index_of(comment, b"*/") else {
-            break;
-        };
-        rest = &comment[end + 2..];
-    }
-    if rest.starts_with(b"//") {
-        let end = bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
-        rest = &rest[end..];
-    }
-    let rest = strip_line_terminator(rest).unwrap_or(rest);
-    strip_line_terminator(trim_blanks_start(rest)).is_some()
+    crate::text::is_next_line_empty(source.as_bytes(), position as usize)
 }
 
 /// Whether Prettier's `locEnd` of `statement` is before the `;` at its end.

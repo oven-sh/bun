@@ -2,6 +2,7 @@
 //! handlers of `language-js/comments/handle-comments.js` that have a say in JSON.
 
 use super::parser::{Comment, Owner, Tree};
+use crate::text::{has_newline, has_newline_backwards};
 use bun_lint::utils::text::{code_point_at, is_js_whitespace};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -17,69 +18,6 @@ pub(super) struct Attached {
     /// The index of the comment.
     pub(super) comment: u32,
     pub(super) placement: Placement,
-}
-
-fn skip_spaces(text: &[u8], at: usize) -> usize {
-    at + text
-        .get(at..)
-        .unwrap_or_default()
-        .iter()
-        .take_while(|b| matches!(b, b' ' | b'\t'))
-        .count()
-}
-
-fn skip_spaces_backwards(text: &[u8], end: usize) -> usize {
-    end - text
-        .get(..end)
-        .unwrap_or_default()
-        .iter()
-        .rev()
-        .take_while(|b| matches!(b, b' ' | b'\t'))
-        .count()
-}
-
-/// The length of the line break at `at`. The text has no `\r`.
-fn line_break_len(text: &[u8], at: usize) -> usize {
-    match text.get(at..).unwrap_or_default() {
-        [b'\n', ..] => 1,
-        // U+2028 and U+2029
-        [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
-        _ => 0,
-    }
-}
-
-/// The length of the line break that ends at `end`.
-fn line_break_len_backwards(text: &[u8], end: usize) -> usize {
-    match text.get(..end).unwrap_or_default() {
-        [.., b'\n'] => 1,
-        [.., 0xE2, 0x80, 0xA8 | 0xA9] => 3,
-        _ => 0,
-    }
-}
-
-/// Prettier's `hasNewline`: nothing but blanks is between `at` and the end of the line.
-pub(super) fn has_newline(text: &[u8], at: usize) -> bool {
-    line_break_len(text, skip_spaces(text, at)) > 0
-}
-
-/// Prettier's `hasNewline(.., { backwards: true })`: nothing but blanks is between the start of the
-/// line and `at`. Not on the first line.
-pub(super) fn has_newline_backwards(text: &[u8], at: usize) -> bool {
-    line_break_len_backwards(text, skip_spaces_backwards(text, at)) > 0
-}
-
-/// Prettier's `isPreviousLineEmpty`
-pub(super) fn is_previous_line_empty(text: &[u8], at: usize) -> bool {
-    let line_start = skip_spaces_backwards(text, at);
-    let previous_line_end = line_start - line_break_len_backwards(text, line_start);
-    line_break_len_backwards(text, skip_spaces_backwards(text, previous_line_end)) > 0
-}
-
-/// The line after the one that `at` is the end of, but for blanks, is empty: what
-/// `printLeadingComment` asks.
-pub(super) fn is_followed_by_empty_line(text: &[u8], at: usize) -> bool {
-    let line_end = skip_spaces(text, at);
-    has_newline(text, line_end + line_break_len(text, line_end))
 }
 
 /// `/^[\s(]*$/`

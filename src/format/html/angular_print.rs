@@ -3,7 +3,7 @@
 use super::ast::{Flags, Id, Kind};
 use super::cursor::Target;
 use super::printer::Printer;
-use crate::css::text;
+use crate::text;
 
 /// `ANGULAR_CONTROL_FLOW_BLOCK_SETTINGS.get(name)?.has(next)`
 fn can_follow(name: &[u8], next: &[u8]) -> bool {

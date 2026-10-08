@@ -3,8 +3,8 @@
 use super::ast::{Attribute, Id};
 use super::js::{self, Binding, Hug, Syntax};
 use super::printer::Printer;
-use crate::css::text;
 use crate::options::{HtmlRoot, InHtml};
+use crate::text;
 
 /// `v-for="left operator right"`
 struct VFor<'v> {

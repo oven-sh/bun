@@ -16,9 +16,9 @@ mod printer;
 mod tokenizer;
 
 use crate::css::doc::{self, Elements};
-use crate::css::text;
 use crate::options::{HtmlWhitespaceSensitivity, QuoteStyle};
 use crate::range::{Offsets, normalized_len};
+use crate::text::{self, BOM};
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
@@ -96,7 +96,6 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    const BOM: &[u8] = "\u{FEFF}".as_bytes();
     scratch.is_damaged = false;
     let original = text;
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
@@ -116,7 +115,7 @@ pub fn format(
         return Ok(());
     }
     // So that all positions stay.
-    let front_matter_end = crate::markdown::front_matter::parse(text).map_or(0, |it| it.end);
+    let front_matter_end = crate::front_matter::parse(text).map_or(0, |it| it.end);
     let mut content = Cow::Borrowed(text);
     if front_matter_end > 0 {
         for byte in &mut content.to_mut()[..front_matter_end] {

@@ -10,9 +10,9 @@ use super::utilities::{
 };
 use super::writer::Attempt;
 use super::{Parser, data};
-use crate::css::text;
 use crate::markdown::infer_parser;
 use crate::options::{HtmlRoot, InHtml, LineEnding, LineWidth};
+use crate::text;
 use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 
@@ -36,14 +36,6 @@ fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8]> {
         }
         _ => return None,
     })
-}
-
-/// `text.length`
-fn utf16_len(text: &[u8]) -> usize {
-    match text.is_ascii() {
-        true => text.len(),
-        false => bstr::ByteSlice::chars(text).map(char::len_utf16).sum(),
-    }
 }
 
 /// `String(value)`, for a number that is not negative. `None`: it is written with an exponent.
@@ -643,7 +635,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         };
         let max_url_len = candidates
             .iter()
-            .map(|candidate| utf16_len(candidate.url))
+            .map(|candidate| text::utf16_len(candidate.url) as usize)
             .max()
             .unwrap_or(0);
         let max_descriptor_left_len = descriptors
@@ -662,9 +654,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 if descriptor.is_empty() {
                     continue;
                 }
-                let alignment =
-                    max_url_len - utf16_len(candidate.url) + 1 + max_descriptor_left_len
-                        - left_len(descriptor);
+                let alignment = max_url_len - text::utf16_len(candidate.url) as usize
+                    + 1
+                    + max_descriptor_left_len
+                    - left_len(descriptor);
                 printer.out.start_if(true, None);
                 printer.out.text(&b" ".repeat(alignment));
                 printer.out.end_if();

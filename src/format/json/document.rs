@@ -6,13 +6,10 @@
 //! There is no recursion: a container that is being written is a [`Frame`].
 
 use super::Config;
-use super::comments::{
-    Attached, Placement, comments_of, has_newline, has_newline_backwards,
-    is_followed_by_empty_line, is_previous_line_empty,
-};
+use super::comments::{Attached, Placement, comments_of};
 use super::parser::{
     BLANK_AFTER, BREAK_AFTER_OPEN, CONCISE, Comment, Kind, MATRIX, Node, Owner, QUOTED, REWRITTEN,
-    Tree, UNQUOTED, make_string,
+    Tree, UNQUOTED,
 };
 use crate::ir::element::{
     Align, Condition, FormatElement, Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag,
@@ -22,6 +19,10 @@ use crate::ir::formatter::Storage;
 use crate::ir::width::string_width;
 use crate::js::utils::number::format_trimmed_number;
 use crate::options::QuoteStyle;
+use crate::text::{
+    has_newline, has_newline_backwards, is_followed_by_empty_line, is_previous_line_empty,
+    make_string,
+};
 use std::num::NonZeroU32;
 
 /// What a value is in, which says what is written after it.
@@ -423,7 +424,7 @@ impl Builder<'_> {
                     .get(1..source.len().saturating_sub(1))
                     .unwrap_or_default();
                 let start = self.storage.text.len();
-                make_string(content, quote, &mut self.storage.text);
+                make_string(content, quote.as_byte(), &mut self.storage.text);
                 let written = self.storage.text.get(start..).unwrap_or_default();
                 let (len, width) = (
                     written.len() as u32,

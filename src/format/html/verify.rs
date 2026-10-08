@@ -11,7 +11,7 @@
 use super::Parser;
 use super::ast::{Id, Kind, Tree};
 use super::parse;
-use crate::range::white_space_len;
+use crate::text::white_space_len;
 use rustc_hash::FxHasher;
 use std::hash::Hasher;
 

@@ -223,8 +223,8 @@ fn is_two_words(text: &[u8], first: &[u8], second: &[u8]) -> bool {
         return false;
     };
     let before = rest.len();
-    while let Some(len) = crate::css::text::white_space_len_at_start(rest)
-        .filter(|_| !matches!(rest[0], b'\n' | b'\r'))
+    while !matches!(rest.first(), Some(b'\n' | b'\r'))
+        && let len @ 1.. = crate::text::white_space_len(rest)
     {
         rest = &rest[len..];
     }
@@ -1214,11 +1214,11 @@ impl<'a> Tokenizer<'a, '_> {
 /// `text.trim()`
 fn trimmed(text: &[u8], span: Span) -> Span {
     let all = span.of(text);
-    let without_start = crate::css::text::trim_start(all);
+    let without_start = crate::text::trim_start(all);
     let start = span.start + (all.len() - without_start.len()) as u32;
     Span::new(
         start,
-        start + crate::css::text::trim_end(without_start).len() as u32,
+        start + crate::text::trim_end(without_start).len() as u32,
     )
 }
 

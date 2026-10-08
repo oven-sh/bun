@@ -3,7 +3,8 @@
 //! An error token makes the composer report an error, and Prettier rejects a text with an error. So
 //! here the first one ends the parsing.
 
-use super::lexer::{BOM, Lexeme, LexemeKind};
+use super::lexer::{Lexeme, LexemeKind};
+use crate::text::BOM;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum TokenType {

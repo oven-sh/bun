@@ -13,7 +13,7 @@
 
 use super::source_text::SourceText;
 use crate::options::Flavor;
-use crate::pragma::{trim_end, trim_start};
+use crate::text::{trim_end, trim_start};
 use bun_lint::ast::{
     BinOp, Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind,
 };

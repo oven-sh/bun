@@ -1,7 +1,6 @@
-//! Prettier's `print/misc.js`, and the utilities of Prettier that it uses: strings, numbers, units,
-//! and questions about the text around a position.
+//! Prettier's `print/misc.js`, and the utilities of Prettier that it uses: strings, numbers, units.
 
-use super::text::{self, ByteSet};
+use crate::text::{self, ByteSet, make_string};
 use std::borrow::Cow;
 
 /// The units of `css-units-list`, as they are written.
@@ -13,6 +12,12 @@ const CSS_UNITS: [&[u8]; 62] = [
     b"turn", b"s", b"ms", b"Hz", b"kHz", b"dpi", b"dpcm", b"dppx", b"x", b"cqw", b"cqh", b"cqi",
     b"cqb", b"cqmin", b"cqmax", b"fr",
 ];
+
+/// What is white space to the tokenizers.
+#[inline]
+pub(super) fn is_space(byte: Option<&u8>) -> bool {
+    matches!(byte, Some(b' ' | b'\n' | b'\t' | b'\r' | 0x0C))
+}
 
 fn css_unit(unit: &[u8]) -> Option<&'static [u8]> {
     CSS_UNITS
@@ -87,29 +92,6 @@ fn string_len(text: &[u8]) -> Option<usize> {
             _ => at += 1,
         }
     }
-}
-
-/// Prettier's `makeString`.
-fn make_string(raw_content: &[u8], enclosing_quote: u8, out: &mut Vec<u8>) {
-    let other_quote = if enclosing_quote == b'"' { b'\'' } else { b'"' };
-    out.push(enclosing_quote);
-    let mut at = 0;
-    while let Some(&byte) = raw_content.get(at) {
-        match (byte, raw_content.get(at + 1)) {
-            (b'\\', Some(&escaped @ (b'"' | b'\'' | b'\\'))) => {
-                if escaped != other_quote {
-                    out.push(b'\\');
-                }
-                out.push(escaped);
-                at += 2;
-                continue;
-            }
-            (b'"' | b'\'', _) if byte == enclosing_quote => out.extend_from_slice(&[b'\\', byte]),
-            _ => out.push(byte),
-        }
-        at += 1;
-    }
-    out.push(enclosing_quote);
 }
 
 /// Prettier's `printString`. `raw` has its quotes.
@@ -313,69 +295,4 @@ pub(crate) fn last_line_has_inline_comment(value: &[u8]) -> bool {
     let last_line_start =
         bun_core::strings::last_index_of_any(value, b"\n\r").map_or(0, |at| at + 1);
     text::includes(&value[last_line_start..], b"//")
-}
-
-// ───────────────────────────── `src/utilities` ─────────────────────────────
-
-fn skip_forward(text: &[u8], mut at: usize, set: &[u8]) -> usize {
-    while text
-        .get(at)
-        .is_some_and(|b| bun_core::strings::contains_char(set, *b))
-    {
-        at += 1;
-    }
-    at
-}
-
-/// The length of the line break at the start of `text`.
-fn newline_len(text: &[u8]) -> usize {
-    match text {
-        [b'\r', b'\n', ..] => 2,
-        [b'\n' | b'\r', ..] => 1,
-        [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
-        _ => 0,
-    }
-}
-
-/// `hasNewline(text, index)`
-pub(crate) fn has_newline(text: &[u8], index: usize) -> bool {
-    let at = skip_forward(text, index, b" \t");
-    newline_len(text.get(at..).unwrap_or_default()) > 0
-}
-
-/// `hasNewline(text, index, { backwards: true })`
-pub(crate) fn has_newline_backwards(text: &[u8], index: usize) -> bool {
-    let before = text.get(..index).unwrap_or_default();
-    let end = before
-        .iter()
-        .rposition(|b| !matches!(b, b' ' | b'\t'))
-        .map_or(0, |at| at + 1);
-    matches!(
-        before[..end],
-        [.., b'\n' | b'\r'] | [.., 0xE2, 0x80, 0xA8 | 0xA9]
-    )
-}
-
-/// `isNextLineEmpty(text, index)`
-pub(crate) fn is_next_line_empty(text: &[u8], index: usize) -> bool {
-    let mut at = index;
-    loop {
-        let old = at;
-        at = skip_forward(text, at, b",; \t");
-        if text.get(at..).is_some_and(|rest| rest.starts_with(b"/*"))
-            && let Some(close) = text::index_of_from(text, b"*/", at + 2)
-        {
-            at = close + 2;
-        }
-        at = skip_forward(text, at, b" \t");
-        if at == old {
-            break;
-        }
-    }
-    if text.get(at..).is_some_and(|rest| rest.starts_with(b"//")) {
-        at += bun_core::strings::index_of_any(&text[at..], b"\n\r")
-            .map_or(text.len() - at, |len| len as usize);
-    }
-    at += newline_len(text.get(at..).unwrap_or_default());
-    has_newline(text, at)
 }

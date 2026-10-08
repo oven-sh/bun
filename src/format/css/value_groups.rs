@@ -1,12 +1,11 @@
 //! Prettier's `print/comma-separated-value-group.js` and `print/parenthesized-value-group.js`.
 
 use super::Parser as Syntax;
-use super::misc::is_next_line_empty;
 use super::postcss::Kind;
 use super::printer::{Printer, Statement};
 use super::sink::Separator;
-use super::text;
 use super::value_parser::{Before, ValueId, ValueKind, ValueRef};
+use crate::text::{self, is_next_line_empty};
 
 /// `isAtWordPlaceholderNode`
 fn is_at_word_placeholder(node: ValueRef<'_>) -> bool {

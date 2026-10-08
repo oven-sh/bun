@@ -1,7 +1,8 @@
 //! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`), and Prettier's
 //! `parse/parse-selector.js`.
 
-use super::text::{self, ByteSet};
+use super::misc::is_space;
+use crate::text::{self, ByteSet};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum TokenKind {
@@ -34,10 +35,6 @@ struct Token {
 }
 
 struct ParseError;
-
-fn is_space(byte: Option<&u8>) -> bool {
-    matches!(byte, Some(b' ' | b'\n' | b'\t' | b'\r' | 0x0C))
-}
 
 static AT_END: ByteSet = ByteSet::new(b" \n\t\r{()'\"\\;/");
 static WORD_END: ByteSet = ByteSet::new(b" \n\t\r()*:;@!&'\"+|~>,[]\\/");

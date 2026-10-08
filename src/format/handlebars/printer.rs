@@ -6,8 +6,8 @@ use super::positions::Positions;
 use super::tokenizer::is_void_tag;
 use crate::FormatOptions;
 use crate::css::doc::{self, Doc, Elements, IndentCommand, Line};
-use crate::css::text::{self, white_space_len_at_start};
 use crate::options::EmbeddedLanguageFormatting;
+use crate::text::{self, white_space_len};
 use bun_core::strings;
 
 const HTML_WHITE_SPACE: &[u8] = b"\t\n\x0C\r ";
@@ -44,7 +44,7 @@ fn count_new_lines(text: &[u8]) -> usize {
 
 /// `/\s/.test(text)`
 fn has_white_space(text: &[u8]) -> bool {
-    (0..text.len()).any(|at| white_space_len_at_start(&text[at..]).is_some())
+    (0..text.len()).any(|at| white_space_len(&text[at..]) > 0)
 }
 
 /// `string.toUpperCase() === string`, for the first UTF-16 code unit of the name of a tag.
@@ -340,7 +340,7 @@ impl<'a> Printer<'a> {
 
     /// Prettier's `printEmbedFrontMatter`, or `printFrontMatter` where that does not apply.
     fn print_front_matter(&mut self, raw: &[u8]) {
-        let formatted = crate::markdown::front_matter::parse(raw).and_then(|front_matter| {
+        let formatted = crate::front_matter::parse(raw).and_then(|front_matter| {
             if matches!(
                 self.options.embedded_language_formatting,
                 EmbeddedLanguageFormatting::Off
@@ -629,9 +629,8 @@ impl<'a> Printer<'a> {
             return self.with_literal_lines(chars, true);
         }
         // What JavaScript takes for white space can be in the name of a class.
-        self.is_damaged |= (0..chars.len()).any(|at| {
-            chars[at] == 0x0B || white_space_len_at_start(&chars[at..]).is_some_and(|len| len > 1)
-        });
+        self.is_damaged |=
+            (0..chars.len()).any(|at| chars[at] == 0x0B || white_space_len(&chars[at..]) > 1);
         let mut classes = text::trim(chars);
         if follows_mustache && text::starts_with_white_space(chars) {
             self.out.line(Line::Space);
@@ -640,7 +639,7 @@ impl<'a> Printer<'a> {
         // `.replaceAll(/\s+/g, " ")`
         while !classes.is_empty() {
             let len = (0..classes.len())
-                .find(|at| white_space_len_at_start(&classes[*at..]).is_some())
+                .find(|at| white_space_len(&classes[*at..]) > 0)
                 .unwrap_or(classes.len());
             self.escaped(&classes[..len]);
             classes = &classes[len..];

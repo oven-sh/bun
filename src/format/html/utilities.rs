@@ -3,8 +3,8 @@
 use super::ast::{Attribute, Flags, Id, Kind, Node, Span, Tree};
 use super::data::{self, Display};
 use super::{Options, Parser};
-use crate::css::text;
 use crate::options::HtmlWhitespaceSensitivity;
+use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
 

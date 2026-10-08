@@ -15,7 +15,6 @@ mod postcss;
 mod printer;
 mod selector_parser;
 mod sink;
-pub(crate) mod text;
 mod value_groups;
 mod value_parser;
 
@@ -24,7 +23,8 @@ use self::memo::Memo;
 use self::sink::Sink;
 use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
-use crate::{FormatError, FormatOptions};
+use crate::text::{self, BOM};
+use crate::{FormatError, FormatOptions, front_matter};
 use std::borrow::Cow;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -69,17 +69,6 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 #[derive(Default)]
 pub struct Scratch {
     memo: Memo,
-}
-
-/// Prettier's `parseFrontMatter`: the length of the front matter at the start of `text`.
-fn front_matter_len(text: &[u8]) -> Option<usize> {
-    let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
-    let first_line_break = text::index_of_char_from(text, b'\n', 3)?;
-    let language = text::trim(&text[3..first_line_break]);
-    let is_yaml = delimiter == b"---" && (language.is_empty() || language == b"yaml");
-    let end = text::index_of_from(text, &[b"\n", delimiter].concat(), first_line_break)
-        .or_else(|| text::index_of_from(text, b"\n...", first_line_break).filter(|_| is_yaml))?;
-    Some(end + 1 + 3)
 }
 
 /// Prettier's `replaceQuotesInInlineComments`: the inline comments in which quotes and asterisks are to
@@ -187,7 +176,7 @@ fn parse_and_print<'o>(
     memo: &'o mut Memo,
 ) -> Result<Sink<'o>, FormatError> {
     // What is parsed has blanks in the place of the front matter, so that all positions stay.
-    let front_matter = front_matter_len(text).map(|len| &text[..len]);
+    let front_matter = front_matter::parse(text).map(|it| &text[..it.end]);
     let mut blanked: Cow<'_, [u8]> = match front_matter {
         None => Cow::Borrowed(text),
         Some(front_matter) => {
@@ -314,7 +303,6 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    const BOM: &[u8] = "\u{FEFF}".as_bytes();
     let original = text;
     let (has_bom, text) = match text.strip_prefix(BOM) {
         Some(rest) => (true, rest),
@@ -323,7 +311,7 @@ pub fn format(
     let text = normalize_end_of_line(text);
     let text = match crate::pragma::before_parsing_css(
         &text,
-        front_matter_len(&text).unwrap_or(0),
+        front_matter::parse(&text).map_or(0, |it| it.end),
         options,
     ) {
         BeforeParsing::LeaveAsItIs => {

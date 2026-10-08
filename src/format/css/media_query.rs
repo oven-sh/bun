@@ -1,7 +1,7 @@
 //! `postcss-media-query-parser` 0.2.3 (`dist/parsers.js`), and Prettier's
 //! `parse/parse-media-query.js`.
 
-use super::text;
+use crate::text;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum MediaKind {
@@ -99,7 +99,7 @@ fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
         }
         match element {
             None => {
-                if let Some(len) = text::white_space_len_at_start(&string[i..]) {
+                if let len @ 1.. = text::white_space_len(&string[i..]) {
                     skip = len - 1;
                     continue;
                 }

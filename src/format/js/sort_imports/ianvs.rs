@@ -5,9 +5,10 @@ use super::babel::{
 };
 use super::builtins::is_builtin_module;
 use super::compare::{collate_base_numeric, natural_sort_case_sensitive};
-use super::generator::{Piece, PieceKind, Printer, Prologue, whitespace_len};
+use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
+use crate::text::{trim, trim_end, trim_start};
 use bun_lint::regex::Regex;
 use bun_lint::span::Span;
 use std::cmp::Ordering;
@@ -109,24 +110,6 @@ fn has_ignore_next_node(model: &Model, comments: &[CommentId]) -> bool {
     comments
         .iter()
         .any(|comment| trim(model.comment_value(*comment)) == b"prettier-ignore")
-}
-
-/// `text.trim()`
-fn trim(text: &[u8]) -> &[u8] {
-    trim_end(trim_start(text))
-}
-
-fn trim_end(text: &[u8]) -> &[u8] {
-    let mut text = text;
-    loop {
-        text = match text {
-            [rest @ .., b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C] | [rest @ .., 0xC2, 0xA0] => {
-                rest
-            }
-            [rest @ .., a, b, c] if whitespace_len(&[*a, *b, *c]) == 3 => rest,
-            _ => return text,
-        };
-    }
 }
 
 fn has_kind(model: &Model, declaration: &Declaration, kind: SpecifierKind) -> bool {
@@ -782,12 +765,4 @@ pub(super) fn preprocess(
     let trimmed = header_end + trim_end(&out[header_end..]).len();
     out.truncate(trimmed);
     Some(out)
-}
-
-fn trim_start(text: &[u8]) -> &[u8] {
-    let mut text = text;
-    while let len @ 1.. = whitespace_len(text) {
-        text = &text[len..];
-    }
-    text
 }

@@ -5,7 +5,8 @@
 //! is a range of the text.
 
 use super::Parser as Syntax;
-use super::text::{self, ByteSet};
+use super::misc::is_space;
+use crate::text::{self, ByteSet};
 
 /// A range of the text.
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
@@ -179,10 +180,6 @@ struct Tokenizer<'a> {
 static AT_END: ByteSet = ByteSet::new(b"\t\n\x0C\r \"#'()/;[\\]{}");
 static WORD_END: ByteSet = ByteSet::new(b"\t\n\x0C\r !\"#'():;@[\\]{}/");
 static SCSS_WORD_END: ByteSet = ByteSet::new(b",\t\n\x0C\r !\"#'():;@[\\]{}/");
-
-fn is_space(byte: Option<&u8>) -> bool {
-    matches!(byte, Some(b' ' | b'\n' | b'\t' | b'\r' | 0x0C))
-}
 
 impl<'a> Tokenizer<'a> {
     fn end_of_file(&self) -> bool {

@@ -2,7 +2,7 @@
 
 use super::Error;
 use super::positions::Positions;
-use crate::range::white_space_len;
+use crate::text::white_space_len;
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

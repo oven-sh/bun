@@ -5,8 +5,8 @@ use super::Parser as Syntax;
 use super::media_query::{self, MediaNode};
 use super::postcss::{self, Kind, NodeId, Range, Tree};
 use super::selector_parser::{SelectorId, Selectors};
-use super::text::{self, ByteSet};
 use super::value_parser::{ValueId, Values};
+use crate::text::{self, ByteSet};
 use std::borrow::Cow;
 
 /// `node.value`

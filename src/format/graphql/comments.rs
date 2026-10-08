@@ -2,6 +2,7 @@
 //! which has no special cases for GraphQL.
 
 use super::parser::{NodeId, Tree};
+use crate::text::has_newline_backwards;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Placement {
@@ -17,27 +18,6 @@ pub(crate) struct Attached {
     /// The index in `Tree::comments`.
     pub(crate) comment: u32,
     pub(crate) placement: Placement,
-}
-
-/// Whether only blanks are between the previous line break and `position`.
-pub(crate) fn has_newline_before(text: &[u8], position: u32) -> bool {
-    let before = text.get(..position as usize).unwrap_or_default();
-    let blanks = before
-        .iter()
-        .rev()
-        .take_while(|byte| matches!(byte, b' ' | b'\t'))
-        .count();
-    matches!(before[..before.len() - blanks], [.., b'\n' | b'\r'])
-}
-
-/// Whether only blanks are between `position` and the next line break.
-pub(crate) fn has_newline_after(text: &[u8], position: u32) -> bool {
-    let after = text.get(position as usize..).unwrap_or_default();
-    let blanks = after
-        .iter()
-        .take_while(|byte| matches!(byte, b' ' | b'\t'))
-        .count();
-    matches!(after.get(blanks), Some(b'\n' | b'\r'))
 }
 
 /// Fills `attached`, which is sorted by node, and by position for the same node.
@@ -75,7 +55,7 @@ pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
 
         let leading = following.map(|node| (node, Placement::Leading));
         let trailing = preceding.map(|node| (node, Placement::Trailing));
-        let (node, placement) = match has_newline_before(text, comment.start) {
+        let (node, placement) = match has_newline_backwards(text, comment.start as usize) {
             true => leading.or(trailing),
             false => trailing.or(leading),
         }

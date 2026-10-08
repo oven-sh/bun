@@ -1273,8 +1273,8 @@ impl Context<'_> {
             let brace = skip(close + 2);
             if bytes.get(brace) == Some(&b'}') {
                 let value = &bytes[value_start..close];
-                let leading = value.len() - crate::range::trim_start(value).len();
-                let len = crate::range::trim_end(crate::range::trim_start(value)).len();
+                let leading = value.len() - crate::text::trim_start(value).len();
+                let len = crate::text::trim_end(crate::text::trim_start(value)).len();
                 let node = self.new_node(Kind::EsComment, start, brace + 1);
                 let value = self.raw(value_start + leading, value_start + leading + len);
                 self.set_value(node, value);

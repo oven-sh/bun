@@ -105,11 +105,11 @@ pub(super) fn calculate_range(
 ) -> Option<Span> {
     // The range is narrowed so that it starts and ends with something.
     let range = text.get(start..end)?;
-    let trimmed = crate::range::trim_start(range);
+    let trimmed = crate::text::trim_start(range);
     let is_blank = trimmed.is_empty();
     if !is_blank {
         start += range.len() - trimmed.len();
-        end = start + crate::range::trim_end(trimmed).len();
+        end = start + crate::text::trim_end(trimmed).len();
     }
 
     let find = |offset: usize, edge| {

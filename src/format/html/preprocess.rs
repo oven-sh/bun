@@ -324,7 +324,7 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 return false;
             };
             for expected in *b"//>" {
-                match crate::css::text::trim_start(rest).split_first() {
+                match crate::text::trim_start(rest).split_first() {
                     Some((&first, after)) if first == expected => rest = after,
                     _ => return false,
                 }

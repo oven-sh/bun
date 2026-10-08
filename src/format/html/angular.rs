@@ -12,12 +12,13 @@ use super::ast::{Attribute, Flags, Id};
 use super::js::{self, AngularExpression, Hug};
 use super::printer::Printer;
 use super::utilities::{html_split, html_trim_preserve_indentation, min_indentation};
-use crate::css::text;
 use crate::ir::element::TextWidth;
 use crate::options::{HtmlRoot, InHtml};
 use crate::prelude::*;
+use crate::text;
 use crate::write;
 use bun_core::strings;
+use bun_lint::utils::text::json_stringify;
 use microsyntax::Part;
 use parser::{Code, Expression, Parser};
 
@@ -85,35 +86,6 @@ fn is_plain_microsyntax_key(name: &[u8]) -> bool {
         && groups
             .iter()
             .all(|group| matches!(*group, [b'-', start, part] if is_start(start) && is_part(part)))
-}
-
-/// `JSON.stringify(name)`
-fn json_stringify(name: &[u8], out: &mut Vec<u8>) {
-    out.push(b'"');
-    for &byte in name {
-        match byte {
-            b'"' => out.extend_from_slice(b"\\\""),
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            0x08 => out.extend_from_slice(b"\\b"),
-            0x0C => out.extend_from_slice(b"\\f"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            0..0x20 => {
-                const HEX: &[u8; 16] = b"0123456789abcdef";
-                out.extend_from_slice(&[
-                    b'\\',
-                    b'u',
-                    b'0',
-                    b'0',
-                    HEX[usize::from(byte >> 4)],
-                    HEX[usize::from(byte & 15)],
-                ]);
-            }
-            _ => out.push(byte),
-        }
-    }
-    out.push(b'"');
 }
 
 /// The `key.name` of a node in the body of an `NGMicrosyntax`. `None`: it has no `key`.
@@ -284,7 +256,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     fn write_microsyntax_key(&mut self, name: &[u8]) {
         match is_plain_microsyntax_key(name) {
             true => self.out.text(name),
-            false => self.out.built_text(|out| json_stringify(name, out)),
+            false => self.out.built_text(|out| out.extend(json_stringify(name))),
         }
     }
 
@@ -322,7 +294,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 write!(f, " as ");
                 match is_plain_microsyntax_key(alias) {
                     true => write!(f, text(alias)),
-                    false => f.write_built_text(|out| json_stringify(alias, out)),
+                    false => f.write_built_text(|out| out.extend(json_stringify(alias))),
                 }
             });
         }

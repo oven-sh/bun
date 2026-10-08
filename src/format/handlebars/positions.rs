@@ -5,6 +5,7 @@
 //! behind one of these all columns are too small, until the next token with a line break. `@glimmer/syntax` makes
 //! offsets of them, and Prettier takes text from there.
 
+use crate::text::utf16_len;
 use bun_core::strings;
 
 #[derive(Default)]
@@ -29,12 +30,6 @@ fn index_of_separator(text: &[u8]) -> Option<usize> {
         from += 2;
     }
     None
-}
-
-fn utf16_len(text: &[u8]) -> u32 {
-    text.iter()
-        .map(|&byte| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0))
-        .sum()
 }
 
 impl Positions {

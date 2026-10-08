@@ -14,12 +14,11 @@ use crate::js::comments::{self, Comment, Comments};
 use crate::js::print::program::ends_before_semicolon;
 use crate::js::source_text::SourceText;
 use crate::options::{Flavor, LineEnding};
+use crate::text::{BOM, trim_end, trim_start, utf16_len, white_space_len};
 use crate::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::{File, FnBody, FnKind, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
 use smallvec::SmallVec;
-
-const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 /// Appends to `out` the text of `file` with what `options.range_start` and `options.range_end`
 /// select formatted. That is all of it if neither is set.
@@ -84,7 +83,7 @@ pub fn format_with_cursor<'a>(
             range_start: None,
             range_end: None,
             cursor_offset: cursor_in_slice
-                .map(|cursor| utf16_len(slice.get(..cursor).unwrap_or(slice)) as u32),
+                .map(|cursor| utf16_len(slice.get(..cursor).unwrap_or(slice))),
             line_ending: LineEnding::Lf,
             ..options.clone()
         };
@@ -128,7 +127,7 @@ pub fn format_with_cursor<'a>(
     let cursor_in_whole = cursor_in_whole.map(|cursor| cursor.min(whole.len()));
     let (up_to_cursor, rest) = whole.split_at(cursor_in_whole.unwrap_or(0));
     write_with_line_ending(up_to_cursor, line_ending, out);
-    let cursor_in_out = cursor_in_whole.map(|_| utf16_len(&out[out_start..]) as u32);
+    let cursor_in_out = cursor_in_whole.map(|_| utf16_len(&out[out_start..]));
     write_with_line_ending(rest, line_ending, out);
     Ok(cursor_in_out)
 }
@@ -136,13 +135,6 @@ pub fn format_with_cursor<'a>(
 /// How long `text` is after each `\r\n` in it has become `\n`.
 pub(crate) fn normalized_len(text: &[u8]) -> usize {
     text.len() - bun_core::strings::count(text, b"\r\n")
-}
-
-/// How many UTF-16 code units `text` is.
-fn utf16_len(text: &[u8]) -> usize {
-    text.iter()
-        .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
-        .sum()
 }
 
 /// `rangeStart`, `rangeEnd` and `cursorOffset`, which count UTF-16 code units, as offsets in the text.
@@ -195,42 +187,6 @@ fn offset_of_utf16_index(text: &[u8], index: u32) -> Option<usize> {
         };
     }
     (units >= index).then_some(text.len())
-}
-
-/// `\s` of a regular expression at the start of `text`: its length.
-pub(crate) fn white_space_len(text: &[u8]) -> usize {
-    match *text {
-        [b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ', ..] => 1,
-        [0xC2, 0xA0, ..] => 2,
-        [0xE1, 0x9A, 0x80, ..]
-        | [0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF, ..]
-        | [0xE2, 0x81, 0x9F, ..]
-        | [0xE3, 0x80, 0x80, ..]
-        | [0xEF, 0xBB, 0xBF, ..] => 3,
-        _ => 0,
-    }
-}
-
-pub(crate) fn trim_start(mut text: &[u8]) -> &[u8] {
-    loop {
-        match white_space_len(text) {
-            0 => return text,
-            len => text = &text[len..],
-        }
-    }
-}
-
-pub(crate) fn trim_end(mut text: &[u8]) -> &[u8] {
-    'text: loop {
-        for len in 1..=3.min(text.len()) {
-            let at = text.len() - len;
-            if white_space_len(&text[at..]) == len {
-                text = &text[..at];
-                continue 'text;
-            }
-        }
-        return text;
-    }
 }
 
 /// Prettier's `getAlignmentSize` of the white space that the last line of `before` starts with.

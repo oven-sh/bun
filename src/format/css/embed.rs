@@ -2,10 +2,10 @@
 
 use super::doc::{self, Doc, Line};
 use super::sink::Sink;
-use super::text;
 use crate::ir::element::{Condition, Group, GroupMode, LineMode, PrintMode, TextWidth};
 use crate::js::print::template::write_embedded_template_expression;
 use crate::prelude::*;
+use crate::text;
 
 const PLACEHOLDER: &[u8] = b"@prettier-placeholder-";
 

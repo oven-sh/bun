@@ -2,8 +2,8 @@
 
 use super::ast::{Chomping, Id, Kind, List, Node, Tree};
 use crate::css::doc::{Alignment, Elements, Group, IndentCommand, Line};
-use crate::css::text;
 use crate::options::ProseWrap;
+use crate::text::{self, is_previous_line_empty};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -59,26 +59,6 @@ fn should_print_end_comments(node: &Node<'_>) -> bool {
             node.kind,
             Kind::DocumentHead | Kind::DocumentBody | Kind::FlowMapping | Kind::FlowSequence
         )
-}
-
-/// Prettier's `isPreviousLineEmpty`.
-fn is_previous_line_empty(text: &[u8], start: usize) -> bool {
-    let skip_spaces = |text: &[u8]| {
-        text.iter()
-            .rposition(|b| !matches!(b, b' ' | b'\t'))
-            .map_or(0, |at| at + 1)
-    };
-    // `skipNewline`
-    let newline_len = |text: &[u8]| match text {
-        [.., b'\n'] => 1,
-        [.., 0xE2, 0x80, 0xA8 | 0xA9] => 3,
-        _ => 0,
-    };
-    let before = &text[..start.min(text.len())];
-    let before = &before[..skip_spaces(before)];
-    let before = &before[..before.len() - newline_len(before)];
-    let before = &before[..skip_spaces(before)];
-    newline_len(before) > 0
 }
 
 /// `splitWithSingleSpace`: `" a   b c   d e   f "` is `[" a   b", "c   d", "e   f "]`.
@@ -223,14 +203,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if byte == b'\n' {
                 newline_count += 1;
             }
-            let white_space_len = text::white_space_len_at_start(&rest[i..]);
-            if newline_count == 1 && white_space_len.is_none() {
+            let white_space_len = text::white_space_len(&rest[i..]);
+            if newline_count == 1 && white_space_len == 0 {
                 return false;
             }
             if newline_count == 2 {
                 return true;
             }
-            i += white_space_len.unwrap_or(1);
+            i += white_space_len.max(1);
         }
         false
     }

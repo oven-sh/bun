@@ -310,13 +310,13 @@ pub(crate) fn ordered_item_info(text: &[u8], tree: &Tree, item: NodeId) -> (u64,
     let head = text
         .get(node.start as usize..end as usize)
         .unwrap_or_default();
-    let head = crate::range::trim_start(head);
+    let head = crate::text::trim_start(head);
     let digits = head.iter().take_while(|byte| byte.is_ascii_digit()).count();
     let number = head[..digits]
         .iter()
         .fold(0u64, |number, digit| number * 10 + u64::from(digit - b'0'));
     let after = head.get(digits + 1..).unwrap_or_default();
-    (number, after.len() - crate::range::trim_start(after).len())
+    (number, after.len() - crate::text::trim_start(after).len())
 }
 
 /// Whether `code` is indented code, by the looks of it.

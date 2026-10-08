@@ -3,10 +3,10 @@
 use super::comments::{self, Attached};
 use super::parser::{self, Tree};
 use super::printer::Builder;
-use super::{is_blank, trim};
 use crate::ir::element::LineMode;
 use crate::js::print::template::write_embedded_template_expression;
 use crate::prelude::*;
+use crate::text::{is_blank, trim};
 use smallvec::SmallVec;
 
 fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {

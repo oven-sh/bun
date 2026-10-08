@@ -5,8 +5,9 @@
 //! since Prettier goes by them.
 
 use super::Parser as Syntax;
+use super::misc::is_space;
 use super::selector_parser::{SelectorId, Selectors};
-use super::text::{self, ByteSet};
+use crate::text::{self, ByteSet};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum TokenKind {
@@ -44,10 +45,6 @@ pub(crate) struct ParseError;
 
 /// How deep parentheses can be nested. What follows is recursive.
 const MAX_DEPTH: i32 = 128;
-
-fn is_space(byte: Option<&u8>) -> bool {
-    matches!(byte, Some(b' ' | b'\n' | b'\t' | b'\r' | 0x0C))
-}
 
 /// The index of the first character from `from` on that ends a word. A `/` does if `slash` says so,
 /// given what follows it.

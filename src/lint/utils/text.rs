@@ -6,6 +6,7 @@
 //! | `[...s]`, `s.codePointAt(i)` | [`code_points`] |
 //! | `[...s].length` | [`code_point_count`] |
 //! | `/\s/u.test(c)` | [`is_js_whitespace`] |
+//! | `/^\s/u.exec(s)?.[0].length` in bytes | [`white_space_len`] |
 //! | `s.trim()`, `trimStart()`, `trimEnd()` | [`trim`], [`trim_start`], [`trim_end`] |
 //! | `s.toLowerCase()`, `s.toUpperCase()` | [`to_lower_case`], [`to_upper_case`] |
 //! | `s[0].toUpperCase() + s.slice(1)` | [`upper_case_first`] |
@@ -137,22 +138,43 @@ pub fn is_js_whitespace(c: u32) -> bool {
     }
 }
 
+/// The length in bytes of the character that `text` starts with, if `\s` matches it, and 0 if not.
+#[inline]
+pub fn white_space_len(text: &[u8]) -> usize {
+    match *text {
+        [0x09..=0x0D | b' ', ..] => 1,
+        [0xC2, 0xA0, ..] => 2,
+        // U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF
+        [0xE1, 0x9A, 0x80, ..]
+        | [0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF, ..]
+        | [0xE2, 0x81, 0x9F, ..]
+        | [0xE3, 0x80, 0x80, ..]
+        | [0xEF, 0xBB, 0xBF, ..] => 3,
+        _ => 0,
+    }
+}
+
 /// `text.trimStart()`
-pub fn trim_start(text: &[u8]) -> &[u8] {
-    let end = bun_core::lexer::end_of_run(text, 0, |c| is_js_whitespace(c as u32));
-    text.get(end..).unwrap_or_default()
+#[inline]
+pub fn trim_start(mut text: &[u8]) -> &[u8] {
+    while let len @ 1.. = white_space_len(text) {
+        text = &text[len..];
+    }
+    text
 }
 
 /// `text.trimEnd()`
+#[inline]
 pub fn trim_end(mut text: &[u8]) -> &[u8] {
-    while !text.is_empty() {
-        let (c, start) = bun_core::lexer::last_char(text);
-        if !is_js_whitespace(c as u32) {
-            break;
-        }
-        text = &text[..start];
+    loop {
+        text = match *text {
+            [ref rest @ .., 0x09..=0x0D | b' '] => rest,
+            [.., 0..0x80] | [] => return text,
+            [ref rest @ .., 0xC2, 0xA0] => rest,
+            [ref rest @ .., a, b, c] if white_space_len(&[a, b, c]) == 3 => rest,
+            _ => return text,
+        };
     }
-    text
 }
 
 /// `text.trim()`

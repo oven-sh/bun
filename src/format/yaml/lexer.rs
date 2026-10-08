@@ -1,5 +1,6 @@
 //! `yaml` 2.9: `parse/lexer.js`. All of the text is there from the start, and its line breaks are `\n`.
 
+use crate::text::BOM;
 use bun_core::strings;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -27,8 +28,6 @@ enum State {
     Doc,
     Flow,
 }
-
-pub(crate) const BOM: &[u8] = "\u{FEFF}".as_bytes();
 
 fn is_empty(ch: Option<u8>) -> bool {
     matches!(ch, None | Some(b' ' | b'\n' | b'\r' | b'\t'))

@@ -1,4 +1,5 @@
-//! Front matter: Prettier's `src/main/front-matter/parse.js`.
+//! Front matter, which style sheets, Markdown and HTML can start with: Prettier's
+//! `src/main/front-matter/parse.js`.
 
 /// `---`, a language, lines, `---`, with ranges in the text that it is at the start of.
 #[derive(Copy, Clone, Debug)]
@@ -14,8 +15,8 @@ pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
     let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
     let first_line_break = 3 + bun_core::strings::index_of_char_usize(&text[3..], b'\n')?;
     let first_line = &text[3..first_line_break];
-    let language_start = 3 + (first_line.len() - crate::range::trim_start(first_line).len());
-    let language = crate::range::trim_end(crate::range::trim_start(first_line));
+    let language_start = 3 + (first_line.len() - crate::text::trim_start(first_line).len());
+    let language = crate::text::trim_end(crate::text::trim_start(first_line));
     let find = |needle: &[u8]| {
         Some(first_line_break + bun_core::strings::index_of(&text[first_line_break..], needle)?)
     };

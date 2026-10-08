@@ -4,7 +4,8 @@
 //! Functions have the names that they have there. What depends on options that the plugins do not
 //! set (`retainLines`, `compact`, `concise`, source maps, ..) is left out.
 
-use super::babel::{CommentId, Model, Node, SpecifierKind, Which, attribute_key_span, utf16_len};
+use super::babel::{CommentId, Model, Node, SpecifierKind, Which, attribute_key_span};
+use crate::text::{utf16_len, white_space_len};
 use bun_core::strings;
 
 /// What `_buf._last` is after a string has been appended.
@@ -868,20 +869,6 @@ fn has_newline(text: &[u8]) -> bool {
         || strings::contains(text, b"\xE2\x80\xA9")
 }
 
-/// How many bytes at the start of `text` are a character that `\s` matches.
-pub(super) fn whitespace_len(text: &[u8]) -> usize {
-    match text {
-        [b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C, ..] => 1,
-        [0xC2, 0xA0, ..] => 2,
-        [0xE1, 0x9A, 0x80, ..]
-        | [0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF, ..]
-        | [0xE2, 0x81, 0x9F, ..]
-        | [0xE3, 0x80, 0x80, ..]
-        | [0xEF, 0xBB, 0xBF, ..] => 3,
-        _ => 0,
-    }
-}
-
 /// `adjustMultilineComment`: takes up to `offset` characters of whitespace off the start of every
 /// line of `comment` but the first, and puts `indent_size` spaces there.
 fn adjust_multiline_comment(comment: &[u8], offset: u32, indent_size: u32) -> Vec<u8> {
@@ -893,7 +880,7 @@ fn adjust_multiline_comment(comment: &[u8], offset: u32, indent_size: u32) -> Ve
         rest = &rest[at + 1..];
         // `\n\s{1,offset}`, which can take line breaks too.
         for _ in 0..offset {
-            match whitespace_len(rest) {
+            match white_space_len(rest) {
                 0 => break,
                 len => rest = &rest[len..],
             }

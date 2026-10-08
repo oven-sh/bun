@@ -11,10 +11,11 @@
 
 use super::Config;
 use super::parser::{
-    BLANK_AFTER, CONCISE, Kind, MUST_BREAK, Node, QUOTED, REWRITTEN, Tree, UNQUOTED, make_string,
+    BLANK_AFTER, CONCISE, Kind, MUST_BREAK, Node, QUOTED, REWRITTEN, Tree, UNQUOTED,
 };
 use crate::js::utils::number::format_trimmed_number;
 use crate::options::{IndentStyle, QuoteStyle};
+use crate::text::make_string;
 
 /// A container that is being written.
 struct Frame {
@@ -269,7 +270,7 @@ impl Writer<'_, '_> {
                     source
                         .get(1..source.len().saturating_sub(1))
                         .unwrap_or_default(),
-                    quote,
+                    quote.as_byte(),
                     self.out,
                 );
             }

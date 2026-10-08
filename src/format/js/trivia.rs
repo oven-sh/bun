@@ -357,7 +357,7 @@ impl<'a> Format<'a> for Comment {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let content = f.source_text().text_for(&self.span);
         if self.is_line() {
-            return write!(f, text(crate::pragma::trim_end(content)));
+            return write!(f, text(crate::text::trim_end(content)));
         }
         if super::jsdoc::write_comment(self, f) {
             return;

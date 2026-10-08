@@ -14,6 +14,7 @@
 
 pub mod css;
 pub mod cursor;
+mod front_matter;
 pub mod graphql;
 pub mod handlebars;
 pub mod html;
@@ -24,6 +25,7 @@ pub mod markdown;
 pub mod options;
 pub mod pragma;
 pub mod range;
+mod text;
 pub mod verify;
 pub mod yaml;
 

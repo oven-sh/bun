@@ -1,15 +1,17 @@
 //! The document of a GraphQL text: Prettier's `src/language-graphql/printer-graphql.js`, and what
 //! `src/main/comments/print.js` does with the comments.
 
-use super::comments::{Attached, Placement, has_newline_after, has_newline_before};
+use super::comments::{Attached, Placement};
 use super::parser::{
     HAS_ALIAS, IS_BLOCK, IS_REPEATABLE, IS_SHORTHAND, Kind, MUTATION, NodeId, SUBSCRIPTION, Tree,
     read_escape,
 };
 use crate::ir::element::{Condition, FormatElement, Group, LineMode, PrintMode, Tag, TextWidth};
 use crate::ir::formatter::Formatter;
-use crate::js::print::program::is_next_line_empty;
-use crate::js::source_text::SourceText;
+use crate::text::{
+    self, has_newline_backwards, is_followed_by_empty_line, is_next_line_empty,
+    is_previous_line_empty,
+};
 use bun_lint::span::Span;
 
 /// Writes the elements of a document.
@@ -168,42 +170,11 @@ impl<'t> Builder<'t, '_, '_> {
         self.source(Span::new(span.start, span.start + len));
     }
 
-    /// Whether the line before the one that `position` is on is empty.
-    fn is_previous_line_empty(&self, position: u32) -> bool {
-        fn strip_line_break(text: &[u8]) -> Option<&[u8]> {
-            match text {
-                [rest @ .., b'\r', b'\n'] | [rest @ .., b'\n' | b'\r'] => Some(rest),
-                _ => None,
-            }
-        }
-        fn trim_blanks(text: &[u8]) -> &[u8] {
-            let blanks = text
-                .iter()
-                .rev()
-                .take_while(|byte| matches!(byte, b' ' | b'\t'))
-                .count();
-            &text[..text.len() - blanks]
-        }
-        let before = trim_blanks(self.text.get(..position as usize).unwrap_or_default());
-        let before = trim_blanks(strip_line_break(before).unwrap_or(before));
-        strip_line_break(before).is_some()
-    }
-
     /// Prettier's `printLeadingComment`
     fn leading_comment(&mut self, span: Span) {
         self.comment(span);
         // An empty line after it is kept.
-        let after = self.text.get(span.end as usize..).unwrap_or_default();
-        let blanks = after
-            .iter()
-            .take_while(|byte| matches!(byte, b' ' | b'\t'))
-            .count();
-        let line_break = match after.get(blanks..) {
-            Some([b'\r', b'\n', ..]) => 2,
-            Some([b'\n' | b'\r', ..]) => 1,
-            _ => 0,
-        };
-        match has_newline_after(self.text, span.end + (blanks + line_break) as u32) {
+        match is_followed_by_empty_line(self.text, span.end as usize) {
             true => self.line(LineMode::Empty),
             false => self.hardline(),
         }
@@ -218,9 +189,12 @@ impl<'t> Builder<'t, '_, '_> {
         {
             let span = self.comment_span(attached);
             self.tag(Tag::StartLineSuffix);
-            let is_on_own_line = is_after_line_suffix || has_newline_before(self.text, span.start);
+            let is_on_own_line =
+                is_after_line_suffix || has_newline_backwards(self.text, span.start as usize);
             match is_on_own_line {
-                true if self.is_previous_line_empty(span.start) => self.line(LineMode::Empty),
+                true if is_previous_line_empty(self.text, span.start as usize) => {
+                    self.line(LineMode::Empty)
+                }
                 true => self.hardline(),
                 false => self.push(FormatElement::Space),
             }
@@ -324,7 +298,7 @@ impl<'t> Builder<'t, '_, '_> {
     pub(crate) fn print_comment_lines(&mut self) {
         let (mut has_comment, mut is_after_blank_line, mut start) = (false, false, 0);
         for line in bun_core::strings::split(self.text, b"\n") {
-            let comment = super::trim(line);
+            let comment = text::trim(line);
             if !comment.is_empty() {
                 match (has_comment, is_after_blank_line) {
                     (false, _) => {}
@@ -332,8 +306,7 @@ impl<'t> Builder<'t, '_, '_> {
                     (true, false) => self.hardline(),
                 }
                 has_comment = true;
-                let comment_start =
-                    start + (line.len() - crate::range::trim_start(line).len()) as u32;
+                let comment_start = start + (line.len() - text::trim_start(line).len()) as u32;
                 self.source(Span::new(
                     comment_start,
                     comment_start + comment.len() as u32,
@@ -362,7 +335,7 @@ impl<'t> Builder<'t, '_, '_> {
         for (index, &id) in nodes.iter().enumerate() {
             self.print(id);
             if index + 1 < nodes.len() {
-                match is_next_line_empty(SourceText::new(self.text), self.tree.span(id).end) {
+                match is_next_line_empty(self.text, self.tree.span(id).end as usize) {
                     true => self.line(LineMode::Empty),
                     false => self.hardline(),
                 }
@@ -406,9 +379,7 @@ impl<'t> Builder<'t, '_, '_> {
                 break;
             }
             // That empty line is a forced line break.
-            if keeps_empty_lines
-                && is_next_line_empty(SourceText::new(self.text), self.tree.span(id).end)
-            {
+            if keeps_empty_lines && is_next_line_empty(self.text, self.tree.span(id).end as usize) {
                 self.line(LineMode::Empty);
             } else {
                 self.token_if(PrintMode::Flat, ", ");

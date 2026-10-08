@@ -4,16 +4,15 @@ use super::Parser as Syntax;
 use super::media_query::{MediaKind, MediaNode};
 use super::memo::Memo;
 use super::misc::{
-    adjust_numbers, adjust_strings, has_newline_backwards, is_next_line_empty,
-    last_line_has_inline_comment, maybe_to_lower_case, print_css_number, print_string, print_unit,
-    quote_attribute_value,
+    adjust_numbers, adjust_strings, last_line_has_inline_comment, maybe_to_lower_case,
+    print_css_number, print_string, print_unit, quote_attribute_value,
 };
 use super::parse::{Context, CssNode, Params, Parsed, Value};
 use super::postcss::{Kind, Node, NodeId, Tree};
 use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
-use super::text;
 use super::value_parser::{ValueId, ValueKind, Values};
+use crate::text::{self, has_newline_backwards, is_next_line_empty};
 use std::borrow::Cow;
 
 /// A node and the nodes that it is in.

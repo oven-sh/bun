@@ -3,7 +3,7 @@
 
 use super::lexer::Kind;
 use super::parser::{Expression, Failed, Parsed, Parser};
-use crate::css::text;
+use crate::text;
 
 /// A node in the `body` of an `NGMicrosyntax`. A name is the `name` of an `NGMicrosyntaxKey`.
 #[derive(Debug)]

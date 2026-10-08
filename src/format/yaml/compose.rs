@@ -5,7 +5,7 @@
 //! Of the values of scalars there is only what an error or Prettier's printer depends on.
 
 use super::cst::{Item, SourceToken, Token, TokenType};
-use crate::css::text;
+use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
 

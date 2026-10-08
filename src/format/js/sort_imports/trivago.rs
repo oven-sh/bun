@@ -1,11 +1,12 @@
 //! `@trivago/prettier-plugin-sort-imports` 6.0: its `preprocessor`.
 
-use super::babel::{Attached, Declaration, Model, Node, SpecifierKind, utf16_len};
+use super::babel::{Attached, Declaration, Model, Node, SpecifierKind};
 use super::builtins::is_builtin_module;
 use super::compare::{locale_compare, natural_sort};
 use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
+use crate::text::utf16_len;
 use bun_lint::linter::Glob;
 use bun_lint::regex::Regex;
 use bun_lint::span::Span;

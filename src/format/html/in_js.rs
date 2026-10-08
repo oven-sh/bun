@@ -8,12 +8,12 @@ use super::js::write_string;
 use super::map_strings::{MapString, write_mapped};
 pub(crate) use super::utilities::is_placeholder_in_js;
 use crate::css::embed::is_blank;
-use crate::css::text;
 use crate::ir::element::{Group, Interned, LineMode};
 use crate::js::context::JsFormatContext;
 use crate::js::print::template::write_embedded_template_expression;
 use crate::options::{HtmlRoot, HtmlWhitespaceSensitivity};
 use crate::prelude::*;
+use crate::text;
 use bun_core::strings;
 use smallvec::SmallVec;
 

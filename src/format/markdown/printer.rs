@@ -308,7 +308,7 @@ impl<'a> Printer<'a, '_> {
                     .str(node.value)
                     .strip_prefix(b"<!--")?
                     .strip_suffix(b"-->")?;
-                crate::range::trim_end(crate::range::trim_start(comment))
+                crate::text::trim_end(crate::text::trim_start(comment))
             }
             Kind::EsComment => self.str(node.value),
             Kind::Paragraph if self.is_mdx && node.first_child == node.last_child => self.str(
@@ -376,7 +376,7 @@ impl<'a> Printer<'a, '_> {
         let mut from = 0;
         while let Some(at) = bun_core::strings::index_of(&source[from..], b"\n\n") {
             from += at + 2;
-            if !crate::range::trim_start(&source[from..]).is_empty() {
+            if !crate::text::trim_start(&source[from..]).is_empty() {
                 return true;
             }
         }
@@ -515,7 +515,7 @@ impl<'a> Printer<'a, '_> {
             && self.has_ancestor(id, |it| it.kind == Kind::Blockquote)
         {
             // `/\n>\s*$/`
-            let trimmed = crate::range::trim_end(source);
+            let trimmed = crate::text::trim_end(source);
             if let Some(without) = trimmed.strip_suffix(b"\n>") {
                 source = without;
             }
@@ -1072,7 +1072,7 @@ impl<'a> Printer<'a, '_> {
         // The package collapse-white-space: every run of white space is a space.
         let mut rest = label;
         while !rest.is_empty() {
-            let trimmed = crate::range::trim_start(rest);
+            let trimmed = crate::text::trim_start(rest);
             if trimmed.len() < rest.len() {
                 printed.push(b' ');
                 rest = trimmed;
@@ -1240,7 +1240,7 @@ impl<'a> Printer<'a, '_> {
             Kind::Html => {
                 let mut value = self.str(node.value);
                 if self.kind(node.parent) == Some(Kind::Root) && node.next == NONE {
-                    value = crate::range::trim_end(value);
+                    value = crate::text::trim_end(value);
                 }
                 let is_comment =
                     value.len() >= 7 && value.starts_with(b"<!--") && value.ends_with(b"-->");
@@ -1257,7 +1257,7 @@ impl<'a> Printer<'a, '_> {
             Kind::List => self.print_list(id, node),
             Kind::ListItem | Kind::TableRow => Doc::EMPTY,
             Kind::Import | Kind::Export | Kind::Jsx => {
-                Doc::from(crate::range::trim_end(self.str(node.value)))
+                Doc::from(crate::text::trim_end(self.str(node.value)))
             }
             Kind::EsComment => docs!["{/* ", self.str(node.value), " */}"],
             Kind::ThematicBreak => match self.find_ancestor(id, |it| it.kind == Kind::List) {
@@ -1450,7 +1450,7 @@ impl<'a> Printer<'a, '_> {
                 code,
                 width: (self.options.line_width.value() as usize).saturating_sub(self.indentation),
             })?;
-            return Some(lines_of(crate::range::trim_end(&formatted)));
+            return Some(lines_of(crate::text::trim_end(&formatted)));
         }
         if node.kind != Kind::Code || node.second.is_null() {
             return None;
@@ -1466,7 +1466,7 @@ impl<'a> Printer<'a, '_> {
             code,
             width,
         })?;
-        let formatted = crate::range::trim_end(&formatted);
+        let formatted = crate::text::trim_end(&formatted);
         let is_as_it_is = self.indentation == 0
             && !self.is_in_template
             && !self.options.is_in_markdown
@@ -1490,7 +1490,7 @@ impl<'a> Printer<'a, '_> {
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
         let value = &self.original[front_matter.value.0..front_matter.value.1];
-        let value = crate::range::trim_end(crate::range::trim_start(value));
+        let value = crate::text::trim_end(crate::text::trim_start(value));
         let formatted = match value {
             b"" if is_yaml || is_toml => (self.embed)(&Embedded {
                 language: b"",
@@ -1507,7 +1507,7 @@ impl<'a> Printer<'a, '_> {
         let Some(formatted) = formatted else {
             return Doc::from(raw);
         };
-        let formatted = crate::range::trim_end(&formatted);
+        let formatted = crate::text::trim_end(&formatted);
         mark_as_root(docs![
             &raw[..3],
             language,

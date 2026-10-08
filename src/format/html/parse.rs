@@ -6,7 +6,7 @@ use super::data;
 use super::lexer::{self, LexedAttribute};
 use super::parser;
 use super::utilities::is_unknown_namespace;
-use crate::css::text;
+use crate::text;
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -450,14 +450,14 @@ pub(crate) fn collapse_white_space(value: &[u8]) -> Vec<u8> {
     let mut rest = text::trim(value);
     let mut result = Vec::with_capacity(rest.len());
     while let Some(&byte) = rest.first() {
-        match text::white_space_len_at_start(rest) {
-            Some(len) => {
+        match text::white_space_len(rest) {
+            len @ 1.. => {
                 if result.last() != Some(&b' ') {
                     result.push(b' ');
                 }
                 rest = &rest[len..];
             }
-            None => {
+            0 => {
                 result.push(byte);
                 rest = &rest[1..];
             }

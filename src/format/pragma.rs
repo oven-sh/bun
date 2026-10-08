@@ -9,6 +9,7 @@
 //! which are made of regular expressions. Each function here names the expression that it is.
 
 use crate::options::FormatOptions;
+use crate::text::{trim_end, trim_start, utf16_len, white_space_len};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -41,9 +42,7 @@ pub fn before_parsing_css<'t>(
     }
     // Not if only a part of the file is formatted.
     let is_whole_file = options.range_start.unwrap_or(0) == 0
-        && options
-            .range_end
-            .is_none_or(|end| end as usize >= utf16_len(text));
+        && options.range_end.is_none_or(|end| end >= utf16_len(text));
     if options.insert_pragma && !options.require_pragma && is_whole_file && !has_pragma(content) {
         let mut out = Vec::with_capacity(text.len() + 32);
         if !front_matter.is_empty() {
@@ -54,12 +53,6 @@ pub fn before_parsing_css<'t>(
         return BeforeParsing::Format(Cow::Owned(out));
     }
     BeforeParsing::Format(Cow::Borrowed(text))
-}
-
-/// The `length` that `text` has as a string of JavaScript.
-fn utf16_len(text: &[u8]) -> usize {
-    // One for each character, and one more for those of four bytes.
-    text.iter().filter(|b| **b & 0xC0 != 0x80).count() + text.iter().filter(|b| **b >= 0xF0).count()
 }
 
 /// Whether the first comment of `text` has `@format` or `@prettier`.
@@ -167,48 +160,6 @@ pub fn insert_pragma(text: &[u8], out: &mut Vec<u8>) {
         out.extend_from_slice(line_break);
     }
     out.extend_from_slice(parts.rest);
-}
-
-/// The length of the white space or line break, `\s` of a regular expression, that `text` starts
-/// with.
-fn white_space_len(text: &[u8]) -> usize {
-    match text {
-        [b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ', ..] => 1,
-        [0xC2, 0xA0, ..] => 2,
-        [0xE1, 0x9A, 0x80, ..]
-        | [0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF, ..]
-        | [0xE2, 0x81, 0x9F, ..]
-        | [0xE3, 0x80, 0x80, ..]
-        | [0xEF, 0xBB, 0xBF, ..] => 3,
-        _ => 0,
-    }
-}
-
-/// `String.prototype.trimStart`
-pub(crate) fn trim_start(mut text: &[u8]) -> &[u8] {
-    loop {
-        match white_space_len(text) {
-            0 => return text,
-            len => text = &text[len..],
-        }
-    }
-}
-
-/// `String.prototype.trimEnd`
-pub(crate) fn trim_end(mut text: &[u8]) -> &[u8] {
-    loop {
-        text = match text {
-            [rest @ .., b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' '] | [rest @ .., 0xC2, 0xA0] => {
-                rest
-            }
-            [rest @ .., 0xE1, 0x9A, 0x80]
-            | [rest @ .., 0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF]
-            | [rest @ .., 0xE2, 0x81, 0x9F]
-            | [rest @ .., 0xE3, 0x80, 0x80]
-            | [rest @ .., 0xEF, 0xBB, 0xBF] => rest,
-            _ => return text,
-        };
-    }
 }
 
 fn count_spaces(text: &[u8]) -> usize {

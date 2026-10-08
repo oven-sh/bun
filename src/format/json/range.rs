@@ -5,6 +5,7 @@
 
 use super::parser::{Kind, Node, Tree};
 use super::{Config, Scratch, format_normalized};
+use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 use bun_lint::utils::text::{is_js_whitespace, trim, utf16_len, utf16_offset_to_byte};
 
@@ -132,7 +133,6 @@ pub(super) fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
     let has_bom = original.starts_with(BOM);
     // The offsets count UTF-16 code units of the original. One that is not in the text does not
     // count.

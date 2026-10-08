@@ -8,8 +8,8 @@ mod lexer;
 mod printer;
 
 use crate::css::doc::{self, Doc, Elements};
-use crate::css::text;
 use crate::options::{QuoteStyle, TrailingCommas};
+use crate::text::{self, BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
@@ -85,26 +85,6 @@ fn write_document(
     Ok(())
 }
 
-/// `/^\s*#[^\S\n]*@(?:a|b)\s*?(?:\n|$)/`
-fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
-    fn without_blanks(mut text: &[u8]) -> &[u8] {
-        while let Some(len) = text::white_space_len_at_start(text).filter(|_| text[0] != b'\n') {
-            text = &text[len..];
-        }
-        text
-    }
-    let Some(rest) = text::trim_start(text).strip_prefix(b"#") else {
-        return false;
-    };
-    let Some(rest) = without_blanks(rest).strip_prefix(b"@") else {
-        return false;
-    };
-    pragmas.iter().any(|pragma| {
-        rest.strip_prefix(*pragma)
-            .is_some_and(|rest| matches!(without_blanks(rest).first(), None | Some(b'\n')))
-    })
-}
-
 /// `/(?:[/\\]|^)\.(?:prettier|stylelint|lintstaged)rc$/`: a file that Prettier first tries to format as JSON.
 fn can_be_json(path: &[u8]) -> bool {
     let name = &path[bun_core::strings::last_index_of_any(path, b"/\\").map_or(0, |at| at + 1)..];
@@ -118,7 +98,6 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    const BOM: &[u8] = "\u{FEFF}".as_bytes();
     let original = text;
     let (has_bom, text) = match text.strip_prefix(BOM) {
         Some(rest) => (true, rest),

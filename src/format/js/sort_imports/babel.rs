@@ -6,6 +6,7 @@
 //! the lines that nodes and comments are on. This is as much of Babel's tree as that takes: the
 //! `#!` line, the directives and the import declarations that are not in a `declare module`.
 
+use crate::text::utf16_len;
 use bun_lint::ast::{File, Ident, Import, KeyKind, Prop, Stmt, StmtKind, StmtTag};
 use bun_lint::span::Span;
 use bun_lint::tokens::TokenKind;
@@ -791,14 +792,4 @@ impl<'a> Model<'a> {
 pub(super) fn attribute_key_span<'a>(file: &'a File<'a>, attribute: Prop<'a>) -> Option<Span> {
     let key = attribute.key()?;
     matches!(key.kind(), KeyKind::String(_) | KeyKind::Ident(_)).then(|| key.span(file))
-}
-
-/// `text.length` in JavaScript.
-pub(super) fn utf16_len(text: &[u8]) -> u32 {
-    if text.is_ascii() {
-        return text.len() as u32;
-    }
-    // A character of four bytes is two code units, every other is one.
-    text.iter().filter(|byte| **byte & 0xC0 != 0x80).count() as u32
-        + text.iter().filter(|byte| **byte >= 0xF0).count() as u32
 }

@@ -29,13 +29,14 @@ mod verify;
 mod vue;
 mod writer;
 
-use crate::css::{normalize_end_of_line, text};
+use crate::css::normalize_end_of_line;
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;
 use crate::options::{HtmlRoot, InHtml, JavaScriptParser};
-use crate::range::{Offsets, normalized_len, trim_end, write_with_line_ending};
-use crate::{FormatError, FormatOptions};
+use crate::range::{Offsets, normalized_len, write_with_line_ending};
+use crate::text::{self, BOM, trim_end};
+use crate::{FormatError, FormatOptions, front_matter};
 use bun_core::strings;
 use cursor::Cursor;
 use std::borrow::Cow;
@@ -108,8 +109,6 @@ pub(crate) struct Options<'o> {
     pub(crate) has_parent_parser: bool,
 }
 
-const BOM: &[u8] = "\u{FEFF}".as_bytes();
-
 /// `/^\s*<!--\s*@(?:a|b)\s*-->/.test(text)`
 fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     (|| {
@@ -124,21 +123,10 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     .is_some()
 }
 
-/// Prettier's `parseFrontMatter`: the length of the front matter at the start of `text`.
-fn front_matter_len(text: &[u8]) -> Option<usize> {
-    let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
-    let first_line_break = text::index_of_char_from(text, b'\n', 3)?;
-    let language = text::trim(&text[3..first_line_break]);
-    let is_yaml = delimiter == b"---" && (language.is_empty() || language == b"yaml");
-    let end = text::index_of_from(text, &[b"\n", delimiter].concat(), first_line_break)
-        .or_else(|| text::index_of_from(text, b"\n...", first_line_break).filter(|_| is_yaml))?;
-    Some(end + 1 + 3)
-}
-
 /// What is parsed of `text`: it has blanks in the place of the front matter, so that all positions stay. And the length of
 /// the front matter.
 fn without_front_matter(text: &[u8]) -> (Cow<'_, [u8]>, Option<usize>) {
-    let Some(len) = front_matter_len(text) else {
+    let Some(len) = front_matter::parse(text).map(|it| it.end) else {
         return (Cow::Borrowed(text), None);
     };
     let mut blanked = text.to_vec();

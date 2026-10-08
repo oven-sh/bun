@@ -18,6 +18,7 @@ mod writer;
 pub use sort_package_json::{SortPackageJson, sort_package_json};
 
 use crate::options::{Expand, IndentStyle, QuoteProperties, QuoteStyle};
+use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -207,7 +208,6 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
     let original = text;
     let config = Config::new(parser, options, text);
     let (bom, text) = match text.strip_prefix(BOM) {

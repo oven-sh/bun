@@ -11,12 +11,13 @@
 use super::{Config, Parser};
 use crate::FormatError;
 use crate::ir::width::string_width;
-use crate::js::utils::array::{is_line_after_element_empty, is_next_line_empty};
+use crate::js::utils::array::is_line_after_element_empty;
 use crate::js::utils::number::format_trimmed_number;
 use crate::js::utils::string::{
     is_canonical_simple_number, is_es5_identifier_name, is_simple_number,
 };
 use crate::options::{QuoteProperties, QuoteStyle};
+use crate::text::{is_next_line_empty, make_string};
 use bun_lint::utils::text::{
     code_point_at, is_identifier_part, is_identifier_start, is_js_whitespace,
 };
@@ -752,7 +753,7 @@ impl Reader<'_, '_> {
         } else {
             let mut scratch = std::mem::take(&mut self.tree.scratch);
             scratch.clear();
-            make_string(content, wanted, &mut scratch);
+            make_string(content, wanted.as_byte(), &mut scratch);
             let width = string_width(&scratch);
             self.tree.scratch = scratch;
             (width, REWRITTEN)
@@ -925,24 +926,4 @@ impl Reader<'_, '_> {
             };
         Ok(self.push(Kind::Template, start, width, 0))
     }
-}
-
-/// Prettier's `makeString`: `content`, which is what is between the other quotes, in `quote`.
-pub(super) fn make_string(content: &[u8], quote: QuoteStyle, out: &mut Vec<u8>) {
-    let (quote, other) = (quote.as_byte(), quote.other().as_byte());
-    out.push(quote);
-    let mut bytes = content.iter().copied();
-    while let Some(byte) = bytes.next() {
-        match byte {
-            b'\\' => match bytes.next() {
-                // It does not have to be escaped any more.
-                Some(escaped) if escaped == other => out.push(escaped),
-                Some(escaped) => out.extend([b'\\', escaped]),
-                None => out.push(b'\\'),
-            },
-            _ if byte == quote => out.extend([b'\\', byte]),
-            _ => out.push(byte),
-        }
-    }
-    out.push(quote);
 }

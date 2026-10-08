@@ -5,6 +5,7 @@
 
 use super::collation_tables::{EXPANSIONS, PRIMARY, SECONDARY, TERTIARY};
 use bstr::ByteSlice;
+use bun_lint::utils::text::is_js_whitespace;
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
@@ -59,14 +60,6 @@ fn digits_at<T: Unit>(text: &[T], at: usize) -> usize {
         .iter()
         .take_while(|unit| is_digit(**unit))
         .count()
-}
-
-/// ECMAScript's `WhiteSpace` and `LineTerminator`.
-fn is_js_whitespace(code: u32) -> bool {
-    matches!(
-        code,
-        0x09..=0x0D | 0x20 | 0xA0 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 | 0xFEFF
-    )
 }
 
 fn ascii_of<T: Unit>(text: &[T]) -> String {

@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::text::{is_next_line_empty, skip_inline_comment, skip_trailing_comment};
 use crate::write;
 
 /// Prettier's `printArrayElements`: the elements of an array literal or an array pattern, each on
@@ -36,71 +37,12 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
     }
 }
 
-fn skip(text: &[u8], at: usize, is_skipped: impl Fn(u8) -> bool) -> usize {
-    at + text
-        .get(at..)
-        .unwrap_or_default()
-        .iter()
-        .take_while(|b| is_skipped(**b))
-        .count()
-}
-
-fn skip_spaces(text: &[u8], at: usize) -> usize {
-    skip(text, at, |b| matches!(b, b' ' | b'\t'))
-}
-
-/// Prettier's `skipInlineComment`
-fn skip_block_comment(text: &[u8], at: usize) -> usize {
-    let rest = text.get(at..).unwrap_or_default();
-    match rest
-        .strip_prefix(b"/*")
-        .and_then(|content| bun_core::strings::index_of(content, b"*/"))
-    {
-        Some(end) => at + end + 4,
-        None => at,
-    }
-}
-
-/// Prettier's `skipTrailingComment`
-fn skip_line_comment(text: &[u8], at: usize) -> usize {
-    let rest = text.get(at..).unwrap_or_default();
-    match rest.starts_with(b"//") {
-        true => at + bun_core::strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len()),
-        false => at,
-    }
-}
-
-fn skip_newline(text: &[u8], at: usize) -> usize {
-    match text.get(at..).unwrap_or_default() {
-        [b'\r', b'\n', ..] => at + 2,
-        [b'\n' | b'\r', ..] => at + 1,
-        // U+2028 and U+2029
-        [0xE2, 0x80, 0xA8 | 0xA9, ..] => at + 3,
-        _ => at,
-    }
-}
-
-/// Prettier's `isNextLineEmpty`
-pub(crate) fn is_next_line_empty(text: &[u8], start: usize) -> bool {
-    let mut at = start;
-    loop {
-        let line_end = skip(text, at, |b| matches!(b, b',' | b';' | b' ' | b'\t'));
-        let next = skip_spaces(text, skip_block_comment(text, line_end));
-        if next == at {
-            break;
-        }
-        at = next;
-    }
-    let line_start = skip_spaces(text, skip_newline(text, skip_line_comment(text, at)));
-    skip_newline(text, line_start) != line_start
-}
-
 /// Prettier's `isLineAfterElementEmpty`: the line after the comma that follows the element that ends
 /// at `end` is empty.
 pub(crate) fn is_line_after_element_empty(text: &[u8], end: usize) -> bool {
     let mut at = end;
     while text.get(at).is_some_and(|b| *b != b',') {
-        at = skip_block_comment(text, skip_line_comment(text, at + 1));
+        at = skip_inline_comment(text, skip_trailing_comment(text, at + 1));
     }
     is_next_line_empty(text, at)
 }

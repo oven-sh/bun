@@ -5,6 +5,7 @@
 //! result. The crate reads the text with `serde_json` and writes it with `serde_json`, so this also
 //! does what that round trip does to the spelling of strings and numbers.
 
+use crate::text::BOM;
 use bun_lint::utils::text::{number_to_string, push_code_point};
 use std::borrow::Cow;
 
@@ -39,7 +40,6 @@ impl Value<'_> {
 /// Appends `text` with its fields sorted to `out`, on one line. Returns `false`, and appends nothing,
 /// if `text` is not JSON in the strict sense: it is formatted as it is then.
 pub fn sort_package_json(text: &[u8], options: SortPackageJson, out: &mut Vec<u8>) -> bool {
-    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
     let body = text.strip_prefix(BOM).unwrap_or(text);
     let mut reader = Reader { text: body, at: 0 };
     let Some(value) = reader.value(0) else {

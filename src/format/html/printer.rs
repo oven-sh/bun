@@ -10,9 +10,9 @@ use super::utilities::{
 };
 use super::writer::Writer;
 use super::{Options, Parser};
-use crate::css::text;
 use crate::ir::element::CursorMark;
 use crate::options::{AttributePosition, EmbeddedLanguageFormatting};
+use crate::text;
 use bun_core::strings;
 
 pub(crate) struct Printer<'t, 'a, 'o, 'w, 'f> {

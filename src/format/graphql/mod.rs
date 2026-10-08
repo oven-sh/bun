@@ -15,10 +15,8 @@ mod range;
 use crate::ir::element::{Align, FormatElement, LineMode, Tag};
 use crate::js::context::JsFormatContext;
 use crate::options::LineEnding;
-use crate::range::{
-    Offsets, alignment_size, normalized_len, trim_end, trim_start, white_space_len,
-    write_with_line_ending,
-};
+use crate::range::{Offsets, alignment_size, normalized_len, write_with_line_ending};
+use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma, is_blank, trim};
 use crate::{FormatError, FormatOptions};
 
 /// Whether Prettier takes the file at `path` for GraphQL.
@@ -34,42 +32,6 @@ pub struct Scratch {
     tree: parser::Tree,
     attached: Vec<comments::Attached>,
     document: crate::Scratch,
-}
-
-const BOM: &[u8] = b"\xEF\xBB\xBF";
-
-/// Without the white space at the start, up to the end of the line.
-fn skip_blanks(mut text: &[u8]) -> &[u8] {
-    while !text.starts_with(b"\n") {
-        match white_space_len(text) {
-            0 => break,
-            len => text = &text[len..],
-        }
-    }
-    text
-}
-
-/// `text.trim()` of JavaScript
-fn trim(text: &[u8]) -> &[u8] {
-    trim_end(trim_start(text))
-}
-
-fn is_blank(text: &[u8]) -> bool {
-    trim_start(text).is_empty()
-}
-
-/// Whether the first thing in `text` is a comment that is `@` and one of `pragmas`.
-fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
-    let Some(comment) = trim_start(text).strip_prefix(b"#") else {
-        return false;
-    };
-    let Some(name) = skip_blanks(comment).strip_prefix(b"@") else {
-        return false;
-    };
-    pragmas.iter().any(|pragma| {
-        name.strip_prefix(*pragma)
-            .is_some_and(|rest| matches!(skip_blanks(rest), [] | [b'\n', ..]))
-    })
 }
 
 /// Appends the formatted `text` to `out`: Prettier's `formatWithCursor`, without the cursor.

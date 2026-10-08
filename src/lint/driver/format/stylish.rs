@@ -4,6 +4,7 @@ use crate::results::{Counts, FileResult};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::regex::Regex;
+use bun_lint::utils::text::{trim_end, white_space_len};
 use std::io::Write;
 use std::sync::LazyLock;
 
@@ -48,33 +49,6 @@ fn styled(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
     }
 }
 
-/// The length of the white space, as `\s` and `trimEnd()` see it, that `text` starts with: of one
-/// character.
-fn space_len(text: &[u8]) -> usize {
-    match text {
-        [b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ', ..] => 1,
-        [0xC2, 0xA0, ..] => 2,
-        [0xE1, 0x9A, 0x80, ..]
-        | [0xE2, 0x80, 0x80..=0x8A | 0xA8 | 0xA9 | 0xAF, ..]
-        | [0xE2, 0x81, 0x9F, ..]
-        | [0xE3, 0x80, 0x80, ..]
-        | [0xEF, 0xBB, 0xBF, ..] => 3,
-        _ => 0,
-    }
-}
-
-/// `text.trimEnd()`
-fn trim_end(text: &mut Vec<u8>) {
-    loop {
-        let len = text.len();
-        let space = (1..=3usize).find(|&n| n <= len && space_len(&text[len - n..]) == n);
-        match space {
-            Some(n) => text.truncate(len - n),
-            None => return,
-        }
-    }
-}
-
 /// What `util.stripVTControlCharacters` removes.
 static CONTROL_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(concat!(
@@ -111,7 +85,7 @@ fn write_line_with_position(out: &mut Vec<u8>, color: bool, line: &[u8]) {
             continue;
         }
         let mut second = at + first;
-        while let n @ 1.. = space_len(&line[second..]) {
+        while let n @ 1.. = white_space_len(&line[second..]) {
             second += n;
         }
         let second_len = digits(second);
@@ -219,7 +193,7 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
                 styled(&mut text, color, &DIM, &row.rule);
             }
             pad(&mut text, rules - visible_len(&row.rule));
-            trim_end(&mut text);
+            text.truncate(trim_end(&text).len());
             if i > 0 {
                 out.push(b'\n');
             }

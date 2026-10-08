@@ -3,6 +3,14 @@
   "name": "tests/Angular/imports-with-decorators.js",
   "filename": "imports-with-decorators.js",
   "options": {
+   "overrides": [
+    {
+     "files": "*.js",
+     "options": {
+      "parser": "typescript"
+     }
+    }
+   ],
    "tabWidth": 4,
    "importOrder": [
     "^@core/(.*)$",

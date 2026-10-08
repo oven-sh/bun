@@ -9,8 +9,8 @@
 use super::state::{ChoiceKind, Cx, LoopKind, State};
 use super::{CodePath, Event, Origin, Segment, SegmentIds};
 use crate::ast::{
-    BinOp, Chain, Expr, ExprKind, File, Flags, FnKind, Func, Member, MemberKind, Node, Pat, PatKind,
-    PropKind, Stmt, StmtKind, StmtTag,
+    BinOp, Chain, Expr, ExprKind, File, Flags, FnKind, Func, Key, KeyKind, Member, MemberKind, Node,
+    Pat, PatKind, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
 };
 use bun_sema::atom::Atom;
 
@@ -94,6 +94,8 @@ fn boolean_value_if_simple_constant(e: Expr) -> Option<bool> {
         ExprKind::True | ExprKind::Regex(_) => Some(true),
         ExprKind::False | ExprKind::Null => Some(false),
         ExprKind::Number(value) => Some(value != 0.0 && !value.is_nan()),
+        // A template is not a `Literal`.
+        ExprKind::String(_) if e.text().starts_with(b"`") => None,
         ExprKind::String(value) => Some(!value.bytes().is_empty()),
         ExprKind::BigInt(_) => {
             let digits = match e.text() {
@@ -154,6 +156,40 @@ fn is_property_definition(member: Member) -> bool {
     member.kind() == MemberKind::Property
         && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
         && matches!(member.parent(), Node::Class(_))
+}
+
+/// Whether the first child that `node` has in ESTree is an `Identifier` that does not exist here
+/// and for which `isIdentifierReference` holds. It holds for every name that ESLint does not
+/// know to be something else, which includes all the names in the syntax of TypeScript.
+fn starts_with_identifier_reference(node: Node) -> bool {
+    let is_identifier = |key: Option<Key>| key.is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)));
+    match node {
+        Node::Prop(prop) => prop.kind() == PropKind::Shorthand,
+        Node::PatProp(prop) => prop.is_shorthand(),
+        Node::Type(ty) => match ty.kind() {
+            TypeKind::Ref { .. } => true,
+            TypeKind::Import { name, .. } => !name.is_empty(),
+            TypeKind::Predicate { param, .. } => !param.is("this"),
+            _ => false,
+        },
+        Node::TypeParam(_) => true,
+        Node::TupleElem(element) => element.name().is_some(),
+        Node::EnumMember(member) => is_identifier(member.key()),
+        // The key of a `MethodDefinition` or a `PropertyDefinition` is known not to be a reference.
+        Node::Member(member) => {
+            let is_definition = matches!(member.parent(), Node::Class(_))
+                && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT);
+            !is_definition && is_identifier(member.key())
+        }
+        Node::Stmt(stmt) => match stmt.kind() {
+            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Enum(_) => true,
+            StmtKind::Fn(func) => !func.has_body() && func.name().is_some(),
+            _ => false,
+        },
+        // The `const` is a `TSTypeReference`.
+        Node::Expr(e) => matches!(e.kind(), ExprKind::AsConst(_)) && e.is_angle_bracket_assertion(),
+        _ => false,
+    }
 }
 
 impl<'a> Analyzer<'a> {
@@ -232,6 +268,10 @@ impl<'a> Analyzer<'a> {
         Self::leave_from_current_segment(state.path, cx);
         (cx.emit)(Event::CodePathEnd(CodePath::new(cx.file, state.path), cx.node));
         self.spare_states.push(state);
+    }
+
+    fn is_before_first_throwable(&self, cx: &Cx<'_, 'a>) -> bool {
+        self.states.last().is_some_and(|state| state.is_before_first_throwable(cx.store()))
     }
 
     /// Leaving an `Identifier` of ESTree for which `isIdentifierReference` holds. What it changes
@@ -358,7 +398,7 @@ impl<'a> Analyzer<'a> {
                     }
                 }
                 StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
-                    if is_stmt(left) {
+                    if is_stmt(left) || matches!(left.kind(), StmtKind::Expr(left) if is(left)) {
                         state.make_for_in_of_left(store);
                     } else if is(expr) {
                         state.make_for_in_of_right(store);
@@ -417,6 +457,14 @@ impl<'a> Analyzer<'a> {
             },
             Node::Prop(prop) if prop.value() == Some(e) => is |= parent.is & Is::PATTERN,
             Node::Stmt(_) if parent.is.contains(Is::LEFT_OF_FOR) => is |= Is::PATTERN,
+            Node::Stmt(parent) => match parent.kind() {
+                StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
+                    if matches!(left.kind(), StmtKind::Expr(left) if left == e) {
+                        is |= Is::PATTERN;
+                    }
+                }
+                _ => {}
+            },
             Node::Member(member) if member.init() == Some(e) && is_property_definition(member) => {
                 is |= Is::FIELD_INITIALIZER;
             }
@@ -532,7 +580,6 @@ impl<'a> Analyzer<'a> {
             self.preprocess(parent, cx);
         }
         let parent_node = parent.map(|it| it.node);
-        let mut leaves_identifier = false;
         match node {
             Node::File(_) => self.start_code_path(Origin::Program, cx),
             Node::Expr(e) => self.enter_expr(e, is, parent_node, cx),
@@ -568,17 +615,15 @@ impl<'a> Analyzer<'a> {
                     state.fork_path(cx.store());
                 }
             }
-            Node::Prop(prop) => {
+            Node::Prop(_) => {
                 if let (Some(parent), Some(frame)) = (parent, self.ancestors.last_mut()) {
                     frame.is |= parent.is & Is::PATTERN;
                 }
-                leaves_identifier = prop.kind() == PropKind::Shorthand;
             }
-            Node::PatProp(prop) => leaves_identifier = prop.is_shorthand(),
             _ => {}
         }
         self.forward_current_to_head(cx);
-        if leaves_identifier {
+        if self.is_before_first_throwable(cx) && starts_with_identifier_reference(node) {
             self.leave_identifier_reference(cx);
         }
     }
@@ -657,6 +702,12 @@ impl<'a> Analyzer<'a> {
                 state.make_first_throwable_path_in_try_or_catch_block(store);
             }
             ExprKind::Yield { .. } => state.make_yield(store),
+            // The `const` is a `TSTypeReference`, whose name is an `Identifier`.
+            ExprKind::AsConst(_) => {
+                if state.is_before_first_throwable(store) && !e.is_angle_bracket_assertion() {
+                    self.leave_identifier_reference(cx);
+                }
+            }
             _ => {}
         }
         false
@@ -751,9 +802,7 @@ impl<'a> Analyzer<'a> {
             },
             Node::Pat(pat) => {
                 if matches!(pat.kind(), PatKind::Ident(_)) {
-                    let is_first = (self.states.last())
-                        .is_some_and(|state| state.is_before_first_throwable(store));
-                    if is_first && Self::is_binding_a_reference(pat) {
+                    if self.is_before_first_throwable(cx) && Self::is_binding_a_reference(pat) {
                         self.leave_identifier_reference(cx);
                     }
                     true

@@ -306,13 +306,8 @@ fn format_text_with_cursor(
     let has_comment_types =
         module.flow && module.babel && bun_format::flow::may_have_comment_types(&code);
     let code = match has_comment_types {
-        true => with_file_as(
-            Dialect::flow(false),
-            path,
-            &code,
-            bun_format::flow::uncommented,
-        )
-        .map_or(code, std::borrow::Cow::Owned),
+        true => with_file_as(module, path, &code, bun_format::flow::uncommented)
+            .map_or(code, std::borrow::Cow::Owned),
         false => code,
     };
     let format_as = |is_script: bool| {

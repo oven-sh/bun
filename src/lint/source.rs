@@ -2,6 +2,7 @@
 
 use crate::ast::{File, Name};
 use crate::span::{Position, Span};
+pub use bun_sema::hir::mention_bit;
 use std::cell::{Cell, OnceCell};
 
 /// Where the lines of a file start.

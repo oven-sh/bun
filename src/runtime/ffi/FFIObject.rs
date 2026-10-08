@@ -30,7 +30,6 @@ unsafe extern "C" fn noop_bytes_deallocator(_ptr: *mut c_void, _ctx: *mut c_void
 
 /// Unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
 /// this passes the caller's deallocator through so FFI bytes are only freed when asked.
-#[allow(non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,
@@ -61,7 +60,6 @@ fn create_buffer_with_ctx(
 }
 
 // ── Put helpers from ZigGeneratedCode.cpp; each installs a host fn over its `*__slowpath` export ──
-#[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
     fn Reader__u8__put(global: *mut JSGlobalObject, value: JSValue);
@@ -113,7 +111,7 @@ const DOM_CALL: DomCall = DomCall {
     put: FFI__ptr__put,
 };
 
-pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
+pub(crate) fn to_js(global_object: &JSGlobalObject) -> JSValue {
     // Unrolled manually; keep in sync with `FIELDS` below.
     let fields = FIELDS();
     let object = JSValue::create_empty_object(global_object, fields.len() + 3);
@@ -138,7 +136,7 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     object
 }
 
-pub mod reader {
+pub(crate) mod reader {
     use super::*;
 
     // Same shape as `DOM_CALL` above: the descriptor only needs the `put` extern.
@@ -241,7 +239,7 @@ pub mod reader {
         ),
     ];
 
-    pub fn to_js(global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(global_this: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global_this, DOM_CALLS.len());
         for (_, dc) in DOM_CALLS {
             // SAFETY: `put` is a C++-side helper; global_this is live for the call.

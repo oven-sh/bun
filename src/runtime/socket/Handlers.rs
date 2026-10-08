@@ -34,7 +34,7 @@ bun_output::declare_scope!(Listener, visible);
 /// Held as `Rc<Handlers>` by each owner (the `Listener`, each `NewSocket`, and
 /// each in-flight callback [`Scope`]), so a socket that closes while a callback
 /// frame still holds it cannot free it out from under that frame.
-pub struct Handlers {
+pub(crate) struct Handlers {
     /// The cell holding every callback and the pending connect promise. Read
     /// via the named accessors ([`on_data`](Self::on_data), ...); `reload`
     /// rewrites it in place via [`apply_reload`](Self::apply_reload).
@@ -48,6 +48,8 @@ pub struct Handlers {
 
     pub(crate) vm: &'static VirtualMachine,
     pub(crate) global_object: GlobalRef,
+    /// The context of the script that gave these handlers: a socket event is dispatched inside it.
+    context: bun_jsc::ContextId,
     /// Live sockets plus in-flight callback [`Scope`]s. Drives the listener's
     /// idle release; ownership itself is the `Rc`.
     pub(crate) active_connections: Cell<u32>,
@@ -86,7 +88,7 @@ impl Handlers {
     /// `handlers` slot so the callbacks stay reachable from every object that
     /// can still invoke them.
     #[inline]
-    pub fn cell(&self) -> JSValue {
+    pub(crate) fn cell(&self) -> JSValue {
         self.cell.to_js()
     }
 
@@ -121,7 +123,7 @@ impl Handlers {
     pub(crate) fn on_open(&self) -> JSValue {
         self.cell.on_open()
     }
-    pub fn on_close(&self) -> JSValue {
+    pub(crate) fn on_close(&self) -> JSValue {
         self.cell.on_close()
     }
     pub(crate) fn on_data(&self) -> JSValue {
@@ -205,9 +207,11 @@ impl Handlers {
     #[inline]
     pub(crate) fn enter(self: &Rc<Self>) -> Scope {
         self.mark_active();
+        let context = self.vm.enter_context(self.context);
         self.vm.event_loop_ref().enter();
         Scope {
             handlers: Rc::clone(self),
+            _context: context,
         }
     }
 
@@ -253,8 +257,12 @@ impl Handlers {
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
+                listener.abort_handle.leave();
                 listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                 listener.this_value.with_mut(|r| r.downgrade());
+                listener
+                    .strong_data
+                    .with_mut(|s| s.clear_without_deallocation());
             }
         }
         false
@@ -288,6 +296,7 @@ impl Handlers {
         }
 
         global_object.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             on_error,
             &global_object,
             this_value,
@@ -296,7 +305,7 @@ impl Handlers {
         Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         opts: JSValue,
         mode: SocketMode,
@@ -322,6 +331,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
+            context: global_object.bun_vm().context_of_caller_no_frame().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
@@ -417,6 +427,7 @@ impl Handlers {
 /// to invoke outlive a `close()` from inside them.
 pub(crate) struct Scope {
     pub(crate) handlers: Rc<Handlers>,
+    _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 
 impl Scope {
@@ -441,7 +452,7 @@ impl Scope {
 
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
-pub struct SocketConfig {
+pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
@@ -582,7 +593,7 @@ impl SocketConfig {
         Ok(result)
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         vm: &'static VirtualMachine,
         opts: JSValue,
         global_object: &JSGlobalObject,

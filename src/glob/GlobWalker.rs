@@ -1508,7 +1508,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             log!("walker: matched path: {}", bstr::BStr::new(&path));
             // The paths are already put into self.matched_paths, which we use for the output,
             // so we don't need to do anything here
-            let _ = path;
         }
 
         Ok(Ok(()))
@@ -2190,7 +2189,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             // TODO: Support other escaping glob syntax
             i += 1;
         }
-        let _ = prev_is_backslash;
         debug_assert!(i == 0 || i as usize == pattern.len());
         i = i.saturating_sub(1);
 

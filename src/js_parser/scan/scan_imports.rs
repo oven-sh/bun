@@ -1,4 +1,3 @@
-#![allow(clippy::needless_range_loop)]
 #![warn(unused_must_use)]
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
@@ -32,9 +31,10 @@ impl<'a> ImportScanner<'a> {
         'p,
         const TYPESCRIPT: bool,
         const SCAN_ONLY: bool,
+        const SEMA: bool,
         const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool,
     >(
-        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
+        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY, SEMA>,
         stmts: &'a mut [Stmt],
         will_transform_to_common_js: bool,
         // Const generics can't gate a param type on a const, so use Option and

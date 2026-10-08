@@ -430,8 +430,10 @@ impl Run<'_> {
             is_on: options.timing,
             ..Timing::default()
         };
-        let names = bun_sema::session::Session::new();
-        let atoms = bun_sema::atom::Interner::new_in(&names);
+        let names: Vec<_> = (0..pool.threads.max(1))
+            .map(|_| bun_sema::session::Session::new())
+            .collect();
+        let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
         let context = Context {
             atoms: &atoms,
             linter: &linter,

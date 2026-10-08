@@ -75,14 +75,7 @@ pub struct FormatOptions {
 /// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that
 /// says which of them it is, the code, the options, and where to append the result. It returns whether the
 /// code could be formatted.
-#[derive(Clone)]
-pub struct FormatJavaScript(pub std::sync::Arc<dyn Fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool + Send + Sync>);
-
-impl std::fmt::Debug for FormatJavaScript {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("FormatJavaScript")
-    }
-}
+pub type FormatJavaScript = fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool;
 
 /// An option has a value that Prettier does not accept, or there is no such option.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

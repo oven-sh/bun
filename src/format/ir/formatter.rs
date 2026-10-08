@@ -1,8 +1,9 @@
 //! [`Format`], and the [`Formatter`] that it writes to.
 
+use super::document::Tracker;
 use super::element::{
-    BestFitting, FormatElement, GroupId, Interned, LabelId, LineMode, PrintMode, Skip, Tag, Text,
-    TextWidth,
+    BestFitting, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned, LabelId, LineMode, PrintMode,
+    Skip, Tag, Text, TextWidth,
 };
 use crate::js::comments::Comments;
 use crate::js::context::JsFormatContext;
@@ -134,17 +135,64 @@ impl Storage {
         }
     }
 
+    /// What has been found out about `interned` when it was written: what it is on one line, and
+    /// whether it [will break](Storage::will_break).
+    #[inline]
+    pub(crate) fn summary_of(&self, interned: Interned) -> (Flat, bool) {
+        match (interned.start as usize).checked_sub(1).and_then(|before| self.pool.get(before)) {
+            Some(FormatElement::Skip(skip)) if skip.len == interned.len => (skip.flat, skip.will_break),
+            _ => self.summary_of_part(interned),
+        }
+    }
+
+    /// The same for what is not all of what has been captured but a part of it.
+    #[cold]
+    fn summary_of_part(&self, part: Interned) -> (Flat, bool) {
+        let flat = Flat {
+            width: 0,
+            flags: FlatFlags::default().with(FlatFlags::EXPANDS, self.part_expands(part, 0)),
+        };
+        (flat, self.will_break(self.interned(part)))
+    }
+
+    /// Whether there is something in `part` that forces the groups around it to break.
+    fn part_expands(&self, part: Interned, depth: u32) -> bool {
+        let mut elements = self.interned(part).iter();
+        while let Some(element) = elements.next() {
+            let expands = match element {
+                FormatElement::Skip(it) => {
+                    skip(&mut elements, it.len);
+                    false
+                }
+                FormatElement::Line(mode) => mode.will_break(),
+                FormatElement::ExpandParent => true,
+                FormatElement::SourceText(text) | FormatElement::OwnedText(text) => text.width.is_multiline(),
+                FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
+                FormatElement::Interned(interned) => match (interned.start as usize).checked_sub(1).and_then(|at| self.pool.get(at)) {
+                    Some(FormatElement::Skip(it)) if it.len == interned.len => it.flat.flags.has(FlatFlags::EXPANDS),
+                    _ => depth >= 16 || self.part_expands(*interned, depth + 1),
+                },
+                _ => false,
+            };
+            if expands {
+                return true;
+            }
+        }
+        false
+    }
+
     fn element_will_break(&self, element: &FormatElement) -> bool {
         match element {
             FormatElement::ExpandParent => true,
-            FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
+            // Not one that is only known to break because of what is in it: that is looked at.
+            FormatElement::Tag(Tag::StartGroup(group)) => group.mode() == GroupMode::Expand,
             FormatElement::Line(mode) => mode.will_break(),
             FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
                 text.width.is_multiline()
             }
-            FormatElement::Interned(interned) => self.will_break(self.interned(*interned)),
+            FormatElement::Interned(interned) => self.summary_of(*interned).1,
             // If even the flattest variant has something that forces a break, it breaks.
-            FormatElement::BestFitting(it) => self.will_break(self.most_flat(*it)),
+            FormatElement::BestFitting(it) => self.variants(*it).first().is_some_and(|&flattest| self.summary_of(flattest).1),
             FormatElement::Token(_)
             | FormatElement::LineSuffixBoundary
             | FormatElement::Space
@@ -232,11 +280,17 @@ fn skip(elements: &mut std::slice::Iter<'_, FormatElement>, count: u32) {
 pub(crate) struct Elements<'f> {
     storage: &'f Storage,
     elements: &'f [FormatElement],
+    /// If it is known already.
+    will_break: Option<bool>,
 }
 
 impl<'f> Elements<'f> {
+    #[inline]
     pub(crate) fn will_break(self) -> bool {
-        self.storage.will_break(self.elements)
+        match self.will_break {
+            Some(will_break) => will_break,
+            None => self.storage.will_break(self.elements),
+        }
     }
 
     pub(crate) fn may_directly_break(self) -> bool {
@@ -259,6 +313,7 @@ impl FormatElement {
 #[derive(Default)]
 pub(crate) struct FormatterBuffers {
     pub(crate) storage: Storage,
+    tracker: Tracker,
     spare: Vec<Vec<FormatElement>>,
     cleaned: FxHashMap<Interned, Interned>,
 }
@@ -267,6 +322,8 @@ pub(crate) struct FormatterBuffers {
 pub(crate) struct Formatter<'a> {
     /// `storage.pool` is the document so far.
     pub(crate) storage: Storage,
+    /// It is told about every element that is written.
+    tracker: Tracker,
     /// Vectors for whoever needs one for a while: [`Formatter::take_vec`].
     spare: Vec<Vec<FormatElement>>,
     /// Interned content, and the same without soft line breaks.
@@ -281,10 +338,12 @@ impl<'a> Formatter<'a> {
     pub(crate) fn new(context: JsFormatContext<'a>, buffers: FormatterBuffers) -> Self {
         let FormatterBuffers {
             mut storage,
+            mut tracker,
             spare,
             mut cleaned,
         } = buffers;
         storage.clear();
+        tracker.clear();
         cleaned.clear();
         let source = context.file().text();
         // Measured by oxc on the sources of VS Code: the median is 0.19 elements per byte, and
@@ -292,6 +351,7 @@ impl<'a> Formatter<'a> {
         storage.pool.reserve(source.len() * 2 / 5);
         Formatter {
             storage,
+            tracker,
             spare,
             cleaned,
             next_group_id: Cell::new(1),
@@ -309,6 +369,7 @@ impl<'a> Formatter<'a> {
         };
         let buffers = FormatterBuffers {
             storage: self.storage,
+            tracker: self.tracker,
             spare: self.spare,
             cleaned: self.cleaned,
         };
@@ -372,7 +433,9 @@ impl<'a> Formatter<'a> {
 
     #[inline(always)]
     pub(crate) fn write_element(&mut self, element: FormatElement) {
+        let index = self.storage.pool.len() as u32;
         self.storage.pool.push(element);
+        self.tracker.note(element, index, &mut self.storage);
     }
 
     #[inline(always)]
@@ -450,18 +513,19 @@ impl<'a> Formatter<'a> {
 
     /// What has been written since `f.elements().len()` was `start`.
     pub(crate) fn elements_from(&self, start: usize) -> Elements<'_> {
-        self.view(self.storage.pool.get(start..).unwrap_or_default())
-    }
-
-    pub(crate) fn view<'f>(&'f self, elements: &'f [FormatElement]) -> Elements<'f> {
         Elements {
             storage: &self.storage,
-            elements,
+            elements: self.storage.pool.get(start..).unwrap_or_default(),
+            will_break: Some(self.tracker.will_break_from(start)),
         }
     }
 
     pub(crate) fn interned(&self, interned: Interned) -> Elements<'_> {
-        self.view(self.storage.interned(interned))
+        Elements {
+            storage: &self.storage,
+            elements: self.storage.interned(interned),
+            will_break: Some(self.storage.summary_of(interned).1),
+        }
     }
 
     // ───────────────────────────── interning ─────────────────────────────
@@ -470,15 +534,24 @@ impl<'a> Formatter<'a> {
     /// it is written, behind an element that tells whoever reads the pool to skip it.
     #[inline]
     pub(crate) fn start_capture(&mut self) -> usize {
+        let slot = self.storage.pool.len();
         self.storage.pool.push(FormatElement::Skip(Skip::new(0)));
-        self.storage.pool.len() - 1
+        self.tracker.start_skipped(slot as u32);
+        slot
     }
 
     /// Ends the content that `slot` started.
     pub(crate) fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
+        let (_, flat, will_break) = self.tracker.end_skipped().unwrap_or_default();
         match self.storage.pool.get_mut(slot) {
-            Some(element) if len > 0 => *element = FormatElement::Skip(Skip::new(len)),
+            Some(element) if len > 0 => {
+                *element = FormatElement::Skip(Skip {
+                    len,
+                    flat,
+                    will_break,
+                });
+            }
             _ => self.storage.pool.truncate(slot),
         }
         Interned {
@@ -502,6 +575,7 @@ impl<'a> Formatter<'a> {
         if self.storage.pool.len() == slot + 2 {
             let only = self.storage.pool.pop();
             self.storage.pool.truncate(slot);
+            self.tracker.end_skipped();
             return only;
         }
         let interned = self.end_capture(slot);
@@ -515,7 +589,9 @@ impl<'a> Formatter<'a> {
             [one] => Some(*one),
             _ => {
                 let slot = self.start_capture();
-                self.storage.pool.extend_from_slice(elements);
+                for &element in elements {
+                    self.write_element(element);
+                }
                 Some(FormatElement::Interned(self.end_capture(slot)))
             }
         }
@@ -588,7 +664,7 @@ impl<'a> Formatter<'a> {
                 }
                 element => element,
             };
-            self.storage.pool.push(cleaned);
+            self.write_element(cleaned);
         }
     }
 
@@ -679,27 +755,23 @@ impl<'a, T: Format<'a>> MemoizeFormat<'a> for T {}
 impl Formatter<'_> {
     /// Keeps a place for a start tag of which it is not known yet whether it is needed, or what it
     /// says: that depends on the content, which is written first. Returns what to pass to
-    /// [`Formatter::fill_tag`]. The content starts at the index after it.
+    /// [`Formatter::group_from`]. The content starts at the index after it.
     #[inline]
     pub(crate) fn reserve_tag(&mut self) -> usize {
+        let reserved = self.storage.pool.len();
         self.storage.pool.push(FormatElement::Nop);
-        self.storage.pool.len() - 1
-    }
-
-    /// Writes `tag` at a place that has been reserved. The end tag is up to the caller.
-    #[inline]
-    pub(crate) fn fill_tag(&mut self, reserved: usize, tag: Tag) {
-        if let Some(element @ FormatElement::Nop) = self.storage.pool.get_mut(reserved) {
-            *element = FormatElement::Tag(tag);
-        }
+        self.tracker.reserve(reserved as u32);
+        reserved
     }
 
     /// Makes what has been written since `reserved` was reserved a group.
     pub(crate) fn group_from(&mut self, reserved: usize, should_expand: bool) {
-        use super::element::{Group, GroupMode};
         let mode = if should_expand { GroupMode::Expand } else { GroupMode::Flat };
-        self.fill_tag(reserved, Tag::StartGroup(Group::new().with_mode(mode)));
-        self.storage.pool.push(FormatElement::Tag(Tag::EndGroup));
+        if let Some(element @ FormatElement::Nop) = self.storage.pool.get_mut(reserved) {
+            *element = FormatElement::Tag(Tag::StartGroup(Group::new().with_mode(mode)));
+            self.tracker.use_reserved(reserved as u32, mode);
+            self.write_element(FormatElement::Tag(Tag::EndGroup));
+        }
     }
 }
 

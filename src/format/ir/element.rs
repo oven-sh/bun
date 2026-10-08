@@ -58,6 +58,8 @@ pub(crate) struct Skip {
     pub(crate) len: u32,
     /// What they are on one line.
     pub(crate) flat: Flat,
+    /// What `Storage::will_break` says about them.
+    pub(crate) will_break: bool,
 }
 
 impl Skip {
@@ -66,6 +68,7 @@ impl Skip {
         Skip {
             len,
             flat: Flat::default(),
+            will_break: false,
         }
     }
 }

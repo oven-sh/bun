@@ -52,7 +52,12 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
     let tag = e.tag();
     match tag {
         T::Missing | T::PrivateIdentifier | T::Super | T::Spread => return false,
-        T::Ident => return is_name_that_may_need_parentheses(e.text()),
+        T::Ident => {
+            let text = e.text();
+            // `l\u0065t` is `let`.
+            return is_name_that_may_need_parentheses(text)
+                || (text.len() >= 8 && bun_core::strings::contains_char(text, b'\\'));
+        }
         // `in` in the head of a `for` statement, and a sequence, depend on more.
         T::Binary if matches!(e.binary_operator(), None | Some(BinOp::In | BinOp::Comma)) => return true,
         _ => {}
@@ -388,7 +393,8 @@ fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
 
 /// Prettier's `shouldAddParenthesesToIdentifier`.
 fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let name = e.text();
+    // Without escapes, as it is written: `(l\u0065t)[0]` is `(let)[0]`.
+    let name = e.as_ident().map_or(&b""[..], |name| name.bytes());
     if !is_name_that_may_need_parentheses(name) || is_cast_target(e, f) {
         return false;
     }
@@ -450,8 +456,10 @@ fn assignment_needs_parentheses<'a>(e: Expr<'a>, left: Expr<'a>, parent: AstNode
             statement.is_arrow_function_body()
                 || (matches!(left.kind(), ExprKind::Object(_)) && is_assignment_target(left))
         }
-        // `interface A { [a = 1]; }`, `a = b = c`. `({ a: (b = 1) } = c)`, which is an error.
-        N::TSPropertySignature(_) | N::AssignmentExpression(_) | N::AssignmentTargetPropertyProperty(_) => false,
+        // `interface A { [a = 1]; }`, `a = b = c`
+        N::TSPropertySignature(_) | N::AssignmentExpression(_) => false,
+        // `({ a: (b = 1) } = c)`, which is an error. Not `({ [(a = 1)]: b } = c)`.
+        N::AssignmentTargetPropertyProperty(property) => property.value() != Some(e),
         // `for (a = 1, b = 2; ; a++, b++)`
         N::SequenceExpression(sequence) => {
             !matches!(parent.parent(), N::ForStatement(statement) if is_init_or_update(statement, sequence))

@@ -1865,3 +1865,13 @@ describe("the end of a script", () => {
     expect(Markdown.html("<script>\na\n</script\n>\nb\n")).toBe("<script>\na\n</script\n>\nb\n");
   });
 });
+
+describe("email autolinks", () => {
+  test.each(["5892063+a@b.c", "a@b", "a.b!#$%&'*+/=?^_`{|}~-@c-d.e"])("<%s>", address => {
+    expect(Markdown.html(`<${address}>\n`)).toStartWith('<p><a href="mailto:');
+  });
+
+  test.each(["a@-b.c", "a@b-.c"])("<%s> is not one", address => {
+    expect(Markdown.html(`<${address}>\n`)).toBe(`<p>&lt;${address}&gt;</p>\n`);
+  });
+});

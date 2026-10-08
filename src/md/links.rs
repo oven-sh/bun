@@ -949,60 +949,57 @@ impl Parser<'_> {
                     });
                 }
             }
+        }
 
-            // Check for email autolink
-            let mut email_pos = pos;
-            // username part
+        // Check for email autolink
+        let mut email_pos = pos;
+        // username part
+        while email_pos < content.len()
+            && (helpers::is_alpha_num(content[email_pos])
+                || bun_core::strings::contains_char(b".!#$%&'*+/=?^_`{|}~-", content[email_pos]))
+        {
+            email_pos += 1;
+        }
+        if email_pos < content.len() && content[email_pos] == b'@' && email_pos > pos {
+            email_pos += 1;
+            // domain part: labels separated by '.', each 1-63 chars, alphanumeric or
+            // hyphen, which is neither the first nor the last of them
+            let mut label_len: u32 = 0;
+            let mut valid_domain = true;
             while email_pos < content.len()
                 && (helpers::is_alpha_num(content[email_pos])
                     || content[email_pos] == b'.'
-                    || content[email_pos] == b'-'
-                    || content[email_pos] == b'_'
-                    || content[email_pos] == b'+')
+                    || content[email_pos] == b'-')
             {
+                if content[email_pos] == b'.' {
+                    if label_len == 0 || content[email_pos - 1] == b'-' {
+                        valid_domain = false;
+                        break;
+                    }
+                    label_len = 0;
+                } else {
+                    if label_len == 0 && content[email_pos] == b'-' {
+                        valid_domain = false;
+                        break;
+                    }
+                    label_len += 1;
+                    if label_len > 63 {
+                        valid_domain = false;
+                        break;
+                    }
+                }
                 email_pos += 1;
             }
-            if email_pos < content.len() && content[email_pos] == b'@' && email_pos > pos {
-                email_pos += 1;
-                // domain part: labels separated by '.', each 1-63 chars, alphanumeric or hyphen
-                let domain_start = email_pos;
-                let mut label_len: u32 = 0;
-                let mut dot_count: u32 = 0;
-                let mut valid_domain = true;
-                while email_pos < content.len()
-                    && (helpers::is_alpha_num(content[email_pos])
-                        || content[email_pos] == b'.'
-                        || content[email_pos] == b'-')
-                {
-                    if content[email_pos] == b'.' {
-                        if label_len == 0 {
-                            valid_domain = false;
-                            break;
-                        }
-                        label_len = 0;
-                        dot_count += 1;
-                    } else {
-                        label_len += 1;
-                        if label_len > 63 {
-                            valid_domain = false;
-                            break;
-                        }
-                    }
-                    email_pos += 1;
-                }
-                if valid_domain
-                    && email_pos < content.len()
-                    && content[email_pos] == b'>'
-                    && email_pos > domain_start
-                    && label_len > 0
-                    && dot_count > 0
-                    && helpers::is_alpha_num(content[email_pos - 1])
-                {
-                    return Some(Autolink {
-                        end_pos: email_pos + 1,
-                        is_email: true,
-                    });
-                }
+            if valid_domain
+                && email_pos < content.len()
+                && content[email_pos] == b'>'
+                && label_len > 0
+                && helpers::is_alpha_num(content[email_pos - 1])
+            {
+                return Some(Autolink {
+                    end_pos: email_pos + 1,
+                    is_email: true,
+                });
             }
         }
 

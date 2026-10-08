@@ -1,4 +1,4 @@
-// Collects source texts into one JSONL file, a line being {"id", "filename", "code"}.
+// Collects source texts into one JSONL file, a line being {"id", "filename", "code", "sourceType", "parser"}.
 //
 //   bun collect.ts --out inputs.jsonl [--fixtures <conformance/fixtures>] [--files <dir> <glob>]..
 //
@@ -14,11 +14,14 @@ const seen = new Set<string>();
 let out = "inputs.jsonl";
 let maxBytes = 2_000_000;
 
-function add(id: string, filename: string, code: string) {
-  const key = filename.slice(filename.lastIndexOf(".")) + "\0" + code;
+function add(id: string, filename: string, code: string, sourceType?: string, parser?: string) {
+  // What is not well-formed does not survive the trip to UTF-8.
+  if (!code.isWellFormed()) return;
+  sourceType ??= /\.m[jt]s$/.test(filename) || /^\s*(import|export)\b/m.test(code) ? "module" : "commonjs";
+  const key = filename.slice(filename.lastIndexOf(".")) + "\0" + sourceType + "\0" + code;
   if (seen.has(key) || code.length > maxBytes) return;
   seen.add(key);
-  inputs.push(JSON.stringify({ id, filename, code }));
+  inputs.push(JSON.stringify({ id, filename, code, sourceType, parser }));
 }
 
 for (let i = 0; i < args.length; i++) {
@@ -35,8 +38,9 @@ for (let i = 0; i < args.length; i++) {
         const fixture = JSON.parse(readFileSync(join(root, path), "utf8"));
         (fixture.cases ?? []).forEach((it: any, index: number) => {
           const id = `${path.replace(/\.json$/, "")}#${index}`;
-          add(id, it.filename ?? "file.js", it.code);
-          if (typeof it.output === "string") add(`${id}:output`, it.filename ?? "file.js", it.output);
+          const { sourceType, parser } = it.languageOptions ?? {};
+          add(id, it.filename ?? "file.js", it.code, sourceType, parser);
+          if (typeof it.output === "string") add(`${id}:output`, it.filename ?? "file.js", it.output, sourceType, parser);
         });
       }
       break;

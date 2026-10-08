@@ -19,7 +19,7 @@ use bun_lint::ast::{
     assign_op_text, bin_op_text, un_op_text,
 };
 use bun_lint::context::Severity;
-use bun_lint::estree::{NodeType, VNode, Value};
+use bun_lint::estree_for_tests::{NodeType, VNode, Value};
 use bun_lint::language::{Parser, SourceType};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
@@ -61,6 +61,8 @@ struct Input {
     id: String,
     filename: String,
     code: Vec<u8>,
+    /// `languageOptions.sourceType`, which espree goes by.
+    source_type: SourceType,
 }
 
 fn read_inputs(path: &str) -> Vec<Input> {
@@ -73,6 +75,11 @@ fn read_inputs(path: &str) -> Vec<Input> {
             id: String::from_utf8_lossy(&field(b"id")?).into_owned(),
             filename: String::from_utf8_lossy(&field(b"filename")?).into_owned(),
             code: field(b"code")?,
+            source_type: match field(b"sourceType").as_deref() {
+                Some(b"script") => SourceType::Script,
+                Some(b"commonjs") => SourceType::CommonJs,
+                _ => SourceType::Module,
+            },
         })
     });
     inputs.collect()
@@ -84,6 +91,14 @@ fn with_input<R>(
     language: &LanguageOptions,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Result<R, String> {
+    let language = match language.parser {
+        Parser::Espree => &LanguageOptions {
+            source_type: input.source_type,
+            jsx: true,
+            ..LanguageOptions::default()
+        },
+        _ => language,
+    };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::with_file(&input.filename, &input.code, language, then)
     }));
@@ -135,7 +150,7 @@ fn estree_batch(path: &str, language: &LanguageOptions) {
 fn schema() {
     let mut types = Vec::new();
     for node_type in NodeType::ALL {
-        let names = |only: &dyn Fn(&bun_lint::estree::FieldEntry) -> bool| {
+        let names = |only: &dyn Fn(&bun_lint::estree_for_tests::FieldEntry) -> bool| {
             let fields = node_type.fields().iter().filter(|it| only(it));
             fields.map(|it| format!("{:?}", it.field.name())).collect::<Vec<_>>().join(",")
         };
@@ -442,7 +457,7 @@ fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, proble
         }
         // typescript-estree has directives in static blocks, ESLint's own parser has not.
         let in_static_block = v.parent().is_some_and(|it| it.node_type() == NodeType::StaticBlock);
-        if !in_static_block && matches!(v.field(bun_lint::estree::Field::Directive), Value::Str(_)) {
+        if !in_static_block && matches!(v.field(bun_lint::estree_for_tests::Field::Directive), Value::Str(_)) {
             directives.push(v.span());
         }
         v.for_each_child(|child| {

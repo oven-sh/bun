@@ -16,9 +16,9 @@
 use super::value::{Nodes, Object, Value};
 use super::views::*;
 use super::vnode::{Leaf, Part, VNode};
-use super::{Dialect, Field};
+use super::Field;
 use crate::ast::{
-    ExprKind, ExprTag, Flags, FnBody, FnKind, MappedModifier, MemberKind, ModuleName, Node, PatKind,
+    ExprKind, ExprTag, Flags, FnBody, MappedModifier, MemberKind, ModuleName, Node, PatKind,
     PropKind, StmtKind, StmtTag, TypeKind, TypeTag, UnOp, VarDecl, VarKind, assign_op_text,
     bin_op_text, un_op_text,
 };

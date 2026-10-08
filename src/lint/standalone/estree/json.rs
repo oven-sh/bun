@@ -7,7 +7,7 @@
 //! - There are no `loc`, `start`, `end`, `tokens` and `comments`.
 
 use bun_lint::ast::File;
-use bun_lint::estree::{Nodes, VNode, Value};
+use bun_lint::estree_for_tests::{Nodes, VNode, Value};
 use std::io::Write as _;
 
 /// Converts offsets in UTF-8 text to offsets in the same text as UTF-16.
@@ -82,7 +82,7 @@ impl<'a> Writer<'a, '_> {
         while let Some(frame) = self.open.last_mut() {
             match frame {
                 Frame::Node(node, next) => {
-                    let (node, is_typescript) = (*node, node.dialect() == bun_lint::estree::Dialect::TypeScript);
+                    let (node, is_typescript) = (*node, node.dialect() == bun_lint::estree_for_tests::Dialect::TypeScript);
                     let Some(entry) = node.node_type().fields().get(*next) else {
                         self.out.push(b'}');
                         self.open.pop();

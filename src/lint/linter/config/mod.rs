@@ -51,8 +51,12 @@ mod presets;
 mod rc;
 
 use super::registry::Registry;
-use super::resolved::{ConfiguredRule, LinterOptions, ResolvedConfig};
+use super::resolved::{
+    ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, find_js_rule,
+};
+use super::schema;
 use crate::context::Severity;
+use crate::js_plugin;
 use crate::language::LanguageOptions;
 use crate::options::{Json, Options};
 use crate::rule::Plugin;
@@ -60,7 +64,7 @@ use cache::Cache;
 pub use flat::ConfigError;
 use merge::RuleSetting;
 use minimatch::{Minimatch, split_path};
-pub use rc::{RcFlavor, oxlint_category};
+pub use rc::{LoadPlugin, RcFlavor, oxlint_category};
 use std::sync::Arc;
 
 #[doc(hidden)]
@@ -187,6 +191,7 @@ pub struct Config {
     prefers_typescript_rules: bool,
     notes: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
+    js_plugins: Vec<Arc<js_plugin::Plugin>>,
     cache: Cache,
 }
 
@@ -347,6 +352,31 @@ impl Config {
         )
     }
 
+    /// What ESLint, or oxlint, says about options that the schema of a rule of a JavaScript plugin does not allow.
+    /// `lines`: of [`schema::validate_js`].
+    fn js_options_error(&self, rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
+        if !self.prefers_typescript_rules {
+            return [b"Key \"rules\": Key \"", &rule.id[..], b"\":\n", lines].concat();
+        }
+        let start: &[u8] = b"Failed to setup JS plugin options:\nError: ";
+        if rule.schema == js_plugin::Schema::None {
+            return [start, b"Rule '", &rule.id, b"' does not accept options"].concat();
+        }
+        let mut printed = Vec::new();
+        let options = Json::Array(schema::with_js_defaults(rule, options));
+        super::message::write_json_indented(&mut printed, &options, 0);
+        [
+            start,
+            b"Options validation failed for rule '",
+            &rule.id,
+            b"':\nOptions:\n",
+            &printed,
+            b"\nErrors:\n",
+            super::space::trim_end(lines),
+        ]
+        .concat()
+    }
+
     /// Merges the objects at `indices`, and does what the constructor of ESLint's `Config` does.
     fn merge(&self, registry: &Registry, indices: &[u32]) -> ResolvedConfig {
         let (mut language_options, mut settings) = (Json::Null, Json::Null);
@@ -422,6 +452,25 @@ impl Config {
                     );
                 }
             }
+            if let Some(Some(rule)) = find_js_rule(&self.js_plugins, &setting.id) {
+                let options: Arc<[Json]> = setting.options.into();
+                if setting.severity != Severity::Off
+                    && config.error.is_none()
+                    && let Err(lines) = schema::validate_js(rule, &options)
+                {
+                    config.error = Some(self.js_options_error(rule, &options, &lines));
+                }
+                let configured = self.cache.js_rule(rule, &options, || {
+                    let options = schema::with_js_defaults(rule, &options);
+                    js_plugin::Configured::new(Arc::clone(rule), &options)
+                });
+                config.js_rules.push(ConfiguredJsRule {
+                    configured,
+                    severity: setting.severity,
+                    options,
+                });
+                continue;
+            }
             let Some(entry) = config.find_rule(registry, &setting.id) else {
                 config.has_skipped_rules |= setting.severity != Severity::Off;
                 continue;
@@ -439,6 +488,10 @@ impl Config {
                 options,
                 instance,
             ));
+        }
+        if !self.js_plugins.is_empty() {
+            config.js_plugins.clone_from(&self.js_plugins);
+            config.js_settings = Some(js_plugin::FileSettings::new(&config.language));
         }
         // From here on: a rule that is turned off can be configured without its plugin.
         if !self.accepts_all_plugins {

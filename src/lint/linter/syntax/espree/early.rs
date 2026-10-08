@@ -4,7 +4,7 @@
 //! Code that runs has none of them, so what matters is that finding none is cheap: each check goes through the nodes of one
 //! kind, of which there are few or none.
 
-use super::{Checks, is_let_as_name};
+use super::Checks;
 use crate::ast::{
     BinOp, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member, MemberKind, Node, Param,
     PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag, UnOp, VarKind,
@@ -322,7 +322,6 @@ impl<'a> Checks<'a> {
             if !matches!(list.kind(), StmtKind::Var(_))
                 || is_in_loop_head
                 || file.is_in_jsdoc(raw.loc.end)
-                || is_let_as_name(list)
             {
                 continue;
             }
@@ -345,7 +344,7 @@ impl<'a> Checks<'a> {
             let StmtKind::Var(list) = it.kind() else {
                 continue;
             };
-            if list.is_empty() && !is_let_as_name(it) {
+            if list.is_empty() {
                 self.unexpected(self.after_token(it.span().start));
             }
             if matches!(
@@ -366,9 +365,7 @@ impl<'a> Checks<'a> {
                 };
                 let (Some(first), 1) = (list.first(), list.len()) else {
                     // It takes it for the head of a `for`, in which a `;` follows.
-                    if !is_let_as_name(left) {
-                        self.unexpected(left.span().end);
-                    }
+                    self.unexpected(left.span().end);
                     continue;
                 };
                 // Allowed again since ES2017.
@@ -459,14 +456,8 @@ impl<'a> Checks<'a> {
                 // `let` is a name there, unless a `[` follows.
                 Some(VarKind::Let) => {
                     let next = self.after_token(start);
-                    let has_line_break = strings::index_of_any(
-                        self.file.slice(crate::span::Span::new(start, next)),
-                        b"\n\r",
-                    )
-                    .is_some();
                     match self.token_at(next) {
                         b"[" => self.unexpected(start),
-                        _ if has_line_break => {}
                         _ => self.unexpected(next),
                     }
                 }

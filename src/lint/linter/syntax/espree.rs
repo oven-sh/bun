@@ -17,7 +17,6 @@ use crate::ast::{
 };
 use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
-use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
@@ -941,37 +940,6 @@ impl<'a> Checks<'a> {
     }
 }
 
-/// Whether `statement` is a `let` declaration only for TypeScript's parser. Where only a statement can be, after `if (a)` and
-/// the like, `let` is a name in sloppy mode, and so it is in `for (let in a)` and `for (let;;)`.
-fn is_let_as_name(statement: Stmt) -> bool {
-    let StmtKind::Var(list) = statement.kind() else {
-        return false;
-    };
-    let Node::Stmt(parent) = statement.parent() else {
-        return false;
-    };
-    let (file, start) = (statement.file(), statement.span().start);
-    if !file
-        .text()
-        .get(start as usize..)
-        .is_some_and(|it| it.starts_with(b"let"))
-    {
-        return false;
-    }
-    match parent.kind() {
-        StmtKind::For { init, .. } if init == Some(statement) => list.is_empty(),
-        StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == statement => {
-            list.is_empty()
-        }
-        StmtKind::Block(_) | StmtKind::Switch { .. } | StmtKind::Try { .. } => false,
-        // A line break after it ends the statement.
-        _ => {
-            let next = skip_trivia(file.text(), start + 3);
-            strings::index_of_any(file.slice(Span::new(start, next)), b"\n\r").is_some()
-        }
-    }
-}
-
 /// `BIND_LEXICAL`, `BIND_FUNCTION`, `BIND_VAR`
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Binding {
@@ -990,9 +958,6 @@ impl Binding {
                     Node::VarDecl(it) => Some(it),
                     _ => None,
                 })?;
-                if matches!(declaration.parent(), Node::Stmt(list) if is_let_as_name(list)) {
-                    return None;
-                }
                 if declaration.var_kind() == VarKind::Var {
                     Binding::Var
                 } else {

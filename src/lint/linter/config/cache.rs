@@ -1,5 +1,6 @@
 //! What a [`Config`](super::Config) computes once and all threads share.
 
+use crate::js_plugin::{Configured, Rule};
 use crate::linter::registry::Registry;
 use crate::linter::resolved::ResolvedConfig;
 use crate::options::Json;
@@ -9,12 +10,15 @@ use std::sync::Arc;
 
 type Resolved = Vec<(Box<[u32]>, Arc<ResolvedConfig>)>;
 type Instances = Vec<(Arc<[Json]>, Arc<dyn AnyRule>)>;
+type JsInstances = Vec<(Arc<[Json]>, Arc<Configured>)>;
 
 pub(super) struct Cache {
     /// By the indices of the objects that are merged. Sorted.
     resolved: RwLock<Resolved>,
     /// For each rule, by its index in the registry: what has been made of it, by the options.
     rules: RwLock<Vec<Instances>>,
+    /// The same for the rules of JavaScript plugins, by the options as they are written.
+    js_rules: RwLock<JsInstances>,
 }
 
 impl Default for Cache {
@@ -22,6 +26,7 @@ impl Default for Cache {
         Cache {
             resolved: RwLock::new(Vec::new()),
             rules: RwLock::new(Vec::new()),
+            js_rules: RwLock::new(Vec::new()),
         }
     }
 }
@@ -49,6 +54,24 @@ impl Cache {
                 made
             }
         }
+    }
+
+    pub(super) fn js_rule(
+        &self,
+        rule: &Arc<Rule>,
+        options: &Arc<[Json]>,
+        make: impl FnOnce() -> Arc<Configured>,
+    ) -> Arc<Configured> {
+        let mut rules = self.js_rules.write();
+        let is_it = |it: &&(Arc<[Json]>, Arc<Configured>)| {
+            Arc::ptr_eq(&it.1.rule, rule) && it.0 == *options
+        };
+        if let Some(found) = rules.iter().find(is_it) {
+            return Arc::clone(&found.1);
+        }
+        let made = make();
+        rules.push((Arc::clone(options), Arc::clone(&made)));
+        made
     }
 
     pub(super) fn rule(

@@ -8,11 +8,13 @@ use super::flat::{ConfigError, Reader};
 use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
+use crate::js_plugin;
 use crate::linter::registry::Registry;
 use crate::linter::space::trim_end;
 use crate::options::Json;
 use crate::rule::Plugin;
 use bun_core::strings;
+use std::sync::Arc;
 
 /// Whose file it is. The two agree on the format and differ in what some of it means.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -134,11 +136,18 @@ fn with_eslint_severities(rules: &Json) -> Json {
     Json::Object(entries.collect())
 }
 
+/// Loads a JavaScript plugin: [`Host::load`](crate::js_plugin::Host::load). It is given the directory of the file that names the
+/// plugin, the specifier, and the name that the file gives the plugin, if it does.
+pub type LoadPlugin<'l> =
+    dyn FnMut(&[u8], &[u8], Option<&[u8]>) -> Result<Arc<js_plugin::Plugin>, Vec<u8>> + 'l;
+
 struct Rc<'r, 'l> {
     reader: Reader<'r>,
     flavor: RcFlavor,
     /// Reads the file that `extends` names, relative to the directory given first.
     load: &'l mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
+    /// `None`: JavaScript plugins are skipped.
+    load_plugin: Option<&'l mut LoadPlugin<'l>>,
     /// `categories`, the later entries overriding the earlier ones.
     categories: Vec<(Vec<u8>, Severity)>,
     /// `plugins` names typescript, or nothing has `plugins`.
@@ -181,7 +190,8 @@ impl Rc<'_, '_> {
         }
     }
 
-    fn note_js_plugins(&mut self, json: &Json) {
+    /// Loads what `jsPlugins` of `json` names, which is a file in `directory` or one of its overrides.
+    fn load_js_plugins(&mut self, json: &Json, directory: &[u8]) -> Result<(), ConfigError> {
         for plugin in json
             .get(b"jsPlugins")
             .and_then(Json::as_array)
@@ -191,12 +201,24 @@ impl Rc<'_, '_> {
                 .as_str()
                 .or_else(|| plugin.get(b"specifier").and_then(Json::as_str))
                 .unwrap_or(b"?");
-            self.reader.note(&[
-                b"jsPlugins are not supported: \"",
-                specifier,
-                b"\". Its rules are skipped.",
-            ]);
+            let Some(load) = &mut self.load_plugin else {
+                self.reader.note(&[
+                    b"jsPlugins are not supported: \"",
+                    specifier,
+                    b"\". Its rules are skipped.",
+                ]);
+                continue;
+            };
+            let alias = plugin.get(b"name").and_then(Json::as_str);
+            let loaded = load(directory, specifier, alias).map_err(|why| {
+                ConfigError::new(&[b"Failed to load JS plugin: ", specifier, b"\n  ", &why])
+            })?;
+            let all = &mut self.reader.js_plugins;
+            if !all.iter().any(|it| it.name == loaded.name) {
+                all.push(loaded);
+            }
         }
+        Ok(())
     }
 
     /// Adds the objects for the file `json`, which is in `directory`. `is_extended`: another file
@@ -213,6 +235,15 @@ impl Rc<'_, '_> {
         }
         if depth > 32 {
             return Err(ConfigError::new(&[b"Too many levels of \"extends\"."]));
+        }
+        // A plugin that an override names is known everywhere.
+        self.load_js_plugins(json, directory)?;
+        for item in json
+            .get(b"overrides")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+        {
+            self.load_js_plugins(item, directory)?;
         }
         for name in strings_of(json.get(b"extends")) {
             if let Some(objects) = presets::find(name) {
@@ -256,7 +287,6 @@ impl Rc<'_, '_> {
             let all = self.plugins.get_or_insert_default();
             all.extend(plugins.iter().filter_map(Json::as_str).map(<[u8]>::to_vec));
         }
-        self.note_js_plugins(json);
         // oxlint takes all patterns relative to the file that extends.
         let base_path = (self.flavor == RcFlavor::Eslint
             && directory != &self.reader.base_path[..])
@@ -317,7 +347,6 @@ impl Rc<'_, '_> {
                 item.get(b"excludeFiles")
                     .or_else(|| item.get(b"excludedFiles")),
             );
-            self.note_js_plugins(item);
             if let Some(plugins) = item.get(b"plugins").and_then(Json::as_array) {
                 let all = self.plugins.get_or_insert_default();
                 all.extend(plugins.iter().filter_map(Json::as_str).map(<[u8]>::to_vec));
@@ -388,12 +417,37 @@ impl Config {
     /// `load(directory, name)` reads a file that `extends` names, relative to `directory`.
     /// It is not asked for the configurations that ESLint and typescript-eslint publish:
     /// `eslint:recommended`, `plugin:@typescript-eslint/recommended`, `typescript-eslint/strict`, ..
+    ///
+    /// The plugins that `jsPlugins` names are skipped, with a note.
     pub fn from_rc_json(
         registry: &Registry,
         base_path: &[u8],
         json: &Json,
         flavor: RcFlavor,
         load: &mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
+    ) -> Result<Config, ConfigError> {
+        Self::from_rc(registry, base_path, json, flavor, load, None)
+    }
+
+    /// The same, with the plugins that `jsPlugins` names.
+    pub fn from_rc_json_with_plugins(
+        registry: &Registry,
+        base_path: &[u8],
+        json: &Json,
+        flavor: RcFlavor,
+        load: &mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
+        load_plugin: &mut LoadPlugin<'_>,
+    ) -> Result<Config, ConfigError> {
+        Self::from_rc(registry, base_path, json, flavor, load, Some(load_plugin))
+    }
+
+    fn from_rc<'l>(
+        registry: &Registry,
+        base_path: &[u8],
+        json: &Json,
+        flavor: RcFlavor,
+        load: &'l mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
+        load_plugin: Option<&'l mut LoadPlugin<'l>>,
     ) -> Result<Config, ConfigError> {
         let base_path = path::resolve(b"/", base_path);
         let mut rc = Rc {
@@ -404,10 +458,12 @@ impl Config {
                 objects: Vec::new(),
                 notes: Vec::new(),
                 unknown_rules: Vec::new(),
+                js_plugins: Vec::new(),
                 defaults: 0,
             },
             flavor,
             load,
+            load_plugin,
             categories: match flavor {
                 RcFlavor::Oxlint => vec![(b"correctness".to_vec(), Severity::Warn)],
                 RcFlavor::Eslint => Vec::new(),

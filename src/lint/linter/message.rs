@@ -1,11 +1,14 @@
 //! What the linter reports about a file: ESLint's `LintMessage`.
 
 use crate::ast::File;
-use crate::context::{Severity, Suggestion};
+use crate::context::Severity;
 use crate::fix::Fix;
+use crate::js_plugin;
 use crate::options::Json;
 use crate::rule::{Meta, Plugin};
 use crate::span::Span;
+use std::borrow::Cow;
+use std::sync::Arc;
 
 /// ESLint's `ruleId`.
 #[derive(Clone, Debug)]
@@ -13,6 +16,8 @@ pub enum RuleId {
     /// A rule that exists. It is written `no-debugger`, `@typescript-eslint/no-explicit-any`,
     /// whatever alias the configuration or a comment uses.
     Known(&'static Meta),
+    /// A rule of a JavaScript plugin.
+    Js(Arc<js_plugin::Rule>),
     /// As a configuration or a comment names it.
     Unknown(Box<[u8]>),
 }
@@ -21,6 +26,7 @@ impl PartialEq for RuleId {
     fn eq(&self, other: &RuleId) -> bool {
         match (self, other) {
             (RuleId::Known(a), RuleId::Known(b)) => a.plugin == b.plugin && a.name == b.name,
+            (RuleId::Js(a), RuleId::Js(b)) => Arc::ptr_eq(a, b),
             (RuleId::Unknown(a), RuleId::Unknown(b)) => a == b,
             _ => false,
         }
@@ -38,6 +44,7 @@ impl RuleId {
                 }
                 out.extend_from_slice(meta.name.as_bytes());
             }
+            RuleId::Js(rule) => out.extend_from_slice(&rule.id),
             RuleId::Unknown(name) => out.extend_from_slice(name),
         }
     }
@@ -49,9 +56,18 @@ impl RuleId {
     }
 }
 
-/// Why a message is not shown: `{ kind: "directive", justification }`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SuppressionKind {
+    /// An `eslint-disable` comment.
+    Directive,
+    /// `eslint-suppressions.json`
+    File,
+}
+
+/// Why a message is not shown: `{ kind, justification }`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Suppression {
+    pub kind: SuppressionKind,
     /// What follows `--` in the `eslint-disable` comment.
     pub justification: Box<[u8]>,
 }
@@ -60,6 +76,7 @@ impl Suppression {
     /// By an `eslint-disable` comment.
     pub fn directive(justification: &[u8]) -> Suppression {
         Suppression {
+            kind: SuppressionKind::Directive,
             justification: justification.into(),
         }
     }
@@ -67,7 +84,50 @@ impl Suppression {
     /// By `eslint-suppressions.json`.
     pub fn file() -> Suppression {
         Suppression {
+            kind: SuppressionKind::File,
             justification: Box::default(),
+        }
+    }
+}
+
+/// An element of ESLint's `suggestions`.
+#[derive(Clone, Debug)]
+pub struct Suggestion {
+    /// Empty: the rule gave the description itself.
+    pub message_id: Cow<'static, str>,
+    /// `desc`
+    pub message: Vec<u8>,
+    /// What the placeholders of the message stand for.
+    pub data: Vec<(Cow<'static, str>, Vec<u8>)>,
+    pub fix: Fix,
+}
+
+impl From<crate::context::Suggestion> for Suggestion {
+    fn from(it: crate::context::Suggestion) -> Suggestion {
+        let data = it.data.into_iter();
+        Suggestion {
+            message_id: Cow::Borrowed(it.message_id),
+            message: it.message,
+            data: data
+                .map(|(name, value)| (Cow::Borrowed(name), value))
+                .collect(),
+            fix: it.fix,
+        }
+    }
+}
+
+impl From<js_plugin::Suggested> for Suggestion {
+    fn from(it: js_plugin::Suggested) -> Suggestion {
+        let data = it.data.into_iter();
+        Suggestion {
+            message_id: it
+                .message_id
+                .map_or(Cow::Borrowed(""), |id| Cow::Owned(id.into())),
+            message: it.message,
+            data: data
+                .map(|(name, value)| (Cow::Owned(name.into()), value))
+                .collect(),
+            fix: it.fix,
         }
     }
 }
@@ -81,7 +141,7 @@ pub struct LintMessage {
     pub severity: Severity,
     pub message: Vec<u8>,
     /// `None`: it is from the linter itself. Empty: from a rule whose messages have no ids.
-    pub message_id: Option<&'static str>,
+    pub message_id: Option<Cow<'static, str>>,
     /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`.
     pub line: u32,
     /// From 1, in UTF-16 code units.
@@ -199,6 +259,37 @@ pub fn write_json(out: &mut Vec<u8>, value: &Json) {
     }
 }
 
+/// `JSON.stringify(value, null, 2)`
+pub(crate) fn write_json_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
+    let new_line = |out: &mut Vec<u8>, depth: usize| {
+        out.push(b'\n');
+        out.resize(out.len() + 2 * depth, b' ');
+    };
+    match value {
+        Json::Array(items) if !items.is_empty() => {
+            for (i, item) in items.iter().enumerate() {
+                out.push(if i == 0 { b'[' } else { b',' });
+                new_line(out, depth + 1);
+                write_json_indented(out, item, depth + 1);
+            }
+            new_line(out, depth);
+            out.push(b']');
+        }
+        Json::Object(entries) if !entries.is_empty() => {
+            for (i, (key, value)) in entries.iter().enumerate() {
+                out.push(if i == 0 { b'{' } else { b',' });
+                new_line(out, depth + 1);
+                write_json_string(out, key);
+                out.extend_from_slice(b": ");
+                write_json_indented(out, value, depth + 1);
+            }
+            new_line(out, depth);
+            out.push(b'}');
+        }
+        value => write_json(out, value),
+    }
+}
+
 /// `String(value)`
 pub(crate) fn write_js_string(out: &mut Vec<u8>, value: &Json) {
     match value {
@@ -301,7 +392,7 @@ impl LintMessage {
         if !self.is_fatal || self.line != 0 {
             let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
         }
-        if let Some(id) = self.message_id.filter(|it| !it.is_empty()) {
+        if let Some(id) = self.message_id.as_deref().filter(|it| !it.is_empty()) {
             out.extend_from_slice(b",\"messageId\":");
             write_json_string(out, id.as_bytes());
         }
@@ -352,7 +443,10 @@ impl LintMessage {
                 if i > 0 {
                     out.push(b',');
                 }
-                out.extend_from_slice(b"{\"kind\":\"directive\",\"justification\":");
+                out.extend_from_slice(match suppression.kind {
+                    SuppressionKind::Directive => b"{\"kind\":\"directive\",\"justification\":",
+                    SuppressionKind::File => b"{\"kind\":\"file\",\"justification\":",
+                });
                 write_json_string(out, &suppression.justification);
                 out.push(b'}');
             }

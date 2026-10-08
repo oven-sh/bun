@@ -83,6 +83,40 @@ pub fn environments() -> impl Iterator<Item = &'static str> {
     tables::ENVIRONMENTS.iter().map(|it| it.0)
 }
 
+/// ESLint's `configGlobals` in the order of its keys: what each version of ECMAScript adds, what `sourceType: "commonjs"` defines,
+/// `languageOptions.globals`. One that is there already keeps its place and gets the later setting. Those of
+/// `languageOptions.globals` are in the order of their names, which is not kept from the configuration.
+pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, [u8]>, Global)> {
+    let mut all: Vec<(Cow<'static, [u8]>, Global)> =
+        Vec::with_capacity(80 + language.globals.len());
+    // ESLint's lists are sorted without regard to case.
+    let mut add = |start: u16, len: u16| {
+        let from = all.len();
+        all.extend(variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)));
+        if let Some(added) = all.get_mut(from..) {
+            let folded = |it: &(Cow<'static, [u8]>, Global)| it.0.to_ascii_lowercase();
+            added.sort_by_cached_key(folded);
+        }
+    };
+    let versions = tables::ECMA_VERSIONS.iter();
+    if versions.clone().any(|it| it.0 == language.ecma_version) {
+        for &(_, start, len) in versions.filter(|it| it.0 <= language.ecma_version) {
+            add(start, len);
+        }
+    }
+    if language.source_type == SourceType::CommonJs {
+        add(tables::COMMONJS.0, tables::COMMONJS.1);
+    }
+    let defined = all.len();
+    for (name, setting) in &language.globals {
+        match all.iter_mut().take(defined).find(|it| *it.0 == **name) {
+            Some(existing) => existing.1 = *setting,
+            None => all.push((Cow::Owned(name.to_vec()), *setting)),
+        }
+    }
+    all
+}
+
 /// What a configuration says about globals, computed once from its [`LanguageOptions`].
 #[doc(hidden)]
 #[derive(Clone, Debug, Default)]

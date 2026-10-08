@@ -3,9 +3,12 @@
 use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
+use crate::js_plugin;
 use crate::linter::registry::{Registry, parse_rule_id};
+use crate::linter::resolved::find_js_rule;
 use crate::options::Json;
 use crate::rule::Plugin;
+use std::sync::Arc;
 
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -29,6 +32,8 @@ pub(super) struct Reader<'r> {
     pub(super) objects: Vec<ConfigObject>,
     pub(super) notes: Vec<Vec<u8>>,
     pub(super) unknown_rules: Vec<Box<[u8]>>,
+    /// The JavaScript plugins that are loaded.
+    pub(super) js_plugins: Vec<Arc<js_plugin::Plugin>>,
     /// How many of the objects are ESLint's own.
     pub(super) defaults: usize,
 }
@@ -184,6 +189,21 @@ impl Reader<'_> {
                     b"\": Expected severity of \"off\", 0, \"warn\", 1, \"error\", or 2.",
                 ]));
             };
+            if let Some(found) = find_js_rule(&self.js_plugins, id) {
+                // Also for a rule that is off, as in oxlint.
+                if found.is_none() {
+                    return Err(ConfigError::new(&[
+                        b"Rule '",
+                        name,
+                        b"' not found in plugin '",
+                        prefix,
+                        b"'",
+                    ]));
+                }
+                setting.plugin = prefix.into();
+                settings.push(setting);
+                continue;
+            }
             if !matches!(prefix, b"eslint" | b"typescript" | b"typescript-eslint") {
                 setting.plugin = parse_rule_id(id).0.into();
             }
@@ -479,6 +499,7 @@ impl Config {
             objects: Vec::new(),
             notes: Vec::new(),
             unknown_rules: Vec::new(),
+            js_plugins: Vec::new(),
             defaults: 0,
         };
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
@@ -509,6 +530,7 @@ impl Reader<'_> {
             prefers_typescript_rules: self.prefers_typescript_rules,
             notes: self.notes,
             unknown_rules: self.unknown_rules,
+            js_plugins: self.js_plugins,
             cache: Default::default(),
         }
     }

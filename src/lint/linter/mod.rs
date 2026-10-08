@@ -41,24 +41,29 @@ mod schema;
 mod space;
 mod syntax;
 
-pub use config::{Config, ConfigError, FileConfig, Glob, RcFlavor, oxlint_category};
+pub use config::{Config, ConfigError, FileConfig, Glob, LoadPlugin, RcFlavor, oxlint_category};
 pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fix};
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use levn::parse_object as parse_levn_object;
-pub use message::{LintMessage, RuleId, Suppression, Utf16Offsets, write_json, write_json_string};
+pub use message::{
+    LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets, write_json,
+    write_json_string,
+};
 pub(crate) use per_file::PerFile;
 pub use registry::{Registry, parse_rule_id};
-pub use resolved::{ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
+pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 pub(crate) use space::trim as trim_js_space;
 pub use syntax::{not_in_a_project, parse_error};
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
+use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::runner::{AnyRule, Enabled, RuleEntry};
 use directives::{ConfigComment, Label};
 use message::Locator;
 use std::borrow::Cow;
+use std::sync::Arc;
 
 /// What a test of this module can reach of its parts.
 #[doc(hidden)]
@@ -84,6 +89,20 @@ pub struct LintOptions<'o> {
     pub wants_fixes: bool,
     /// ESLint's `ruleFilter`: which of the enabled rules run. `--quiet` leaves out those that warn.
     pub rule_filter: Option<&'o (dyn Fn(&RuleId, Severity) -> bool + Sync)>,
+    /// Runs the rules of JavaScript plugins. `None`: they are skipped.
+    pub js_plugins: Option<&'o js_plugin::Host<'o>>,
+    /// The file is linted again, for the rules that are about several files only.
+    pub again: Option<Again<'o>>,
+}
+
+/// See [`LintOptions::again`]. Only the rules with [`Meta::needs_modules`](crate::rule::Meta::needs_modules) run. What the
+/// other rules have reported is taken over, and the comments of the file are applied to all of it.
+#[derive(Copy, Clone)]
+pub struct Again<'o> {
+    /// What [`Linter::lint`] returned the first time.
+    pub previous: &'o LintResult,
+    /// The first time the file had types.
+    pub had_types: bool,
 }
 
 impl Default for LintOptions<'_> {
@@ -93,6 +112,8 @@ impl Default for LintOptions<'_> {
             report_unused_disable_directives: None,
             wants_fixes: true,
             rule_filter: None,
+            js_plugins: None,
+            again: None,
         }
     }
 }
@@ -108,7 +129,8 @@ pub struct LintResult {
     /// not implemented here. They are skipped.
     pub skipped_rules: Vec<Box<[u8]>>,
     /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
-    /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)). There is nothing else in the result then.
+    /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
+    /// nothing else in the result then.
     pub thrown: Option<Vec<u8>>,
 }
 
@@ -129,6 +151,74 @@ enum RuleRef<'r> {
     Shared(&'r dyn AnyRule),
     /// Made for this file, from the options in a comment.
     Own(Box<dyn AnyRule>),
+}
+
+/// The same for a rule of a JavaScript plugin.
+struct RunningJs<'r> {
+    severity: Severity,
+    configured: Cow<'r, Arc<js_plugin::Configured>>,
+}
+
+/// A rule that a configuration or a comment names.
+#[derive(Copy, Clone)]
+enum Named<'c> {
+    Native(&'static RuleEntry),
+    Js(&'c Arc<js_plugin::Rule>),
+}
+
+impl Named<'_> {
+    fn id(self) -> RuleId {
+        match self {
+            Named::Native(entry) => RuleId::Known(entry.meta),
+            Named::Js(rule) => RuleId::Js(Arc::clone(rule)),
+        }
+    }
+
+    fn is(self, other: Named) -> bool {
+        match (self, other) {
+            (Named::Native(a), Named::Native(b)) => is_same_rule(a, b),
+            (Named::Js(a), Named::Js(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    /// [`schema::validate`]
+    fn validate(self, options: &[Json]) -> Result<(), Vec<u8>> {
+        match self {
+            Named::Native(entry) => schema::validate(entry.meta, options),
+            Named::Js(rule) => schema::validate_js(rule, options),
+        }
+    }
+
+    fn with_defaults(self, options: &[Json]) -> Vec<Json> {
+        match self {
+            Named::Native(entry) => schema::with_defaults(entry.meta, options),
+            Named::Js(rule) => schema::with_js_defaults(rule, options),
+        }
+    }
+}
+
+/// What the configuration has for a rule.
+#[derive(Copy, Clone)]
+enum Existing<'c> {
+    Native(&'c ConfiguredRule),
+    Js(&'c ConfiguredJsRule),
+}
+
+impl<'c> Existing<'c> {
+    fn severity(self) -> Severity {
+        match self {
+            Existing::Native(it) => it.severity,
+            Existing::Js(it) => it.severity,
+        }
+    }
+
+    fn options(self) -> &'c [Json] {
+        match self {
+            Existing::Native(it) => &it.options,
+            Existing::Js(it) => &it.options,
+        }
+    }
 }
 
 fn quoted(parts: &[&[u8]]) -> Vec<u8> {
@@ -191,6 +281,13 @@ impl Linter {
                 });
             }
         }
+        let enabled_js = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
+        let mut running_js: Vec<RunningJs> = enabled_js
+            .map(|it| RunningJs {
+                severity: it.severity,
+                configured: Cow::Borrowed(&it.configured),
+            })
+            .collect();
 
         if !options.allow_inline_config || config.linter.no_inline_config {
             file.ignore_config_comments();
@@ -224,7 +321,7 @@ impl Linter {
                 configured: Vec::new(),
             };
             for comment in comments.iter().filter(is_understood) {
-                inline.apply(comment, &mut running);
+                inline.apply(comment, &mut running, &mut running_js);
             }
             for comment in comments.iter().filter(is_understood) {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
@@ -248,6 +345,14 @@ impl Linter {
                 }
                 runs
             });
+            running_js.retain(|it| {
+                let id = RuleId::Js(Arc::clone(&it.configured.rule));
+                let runs = filter(&id, it.severity);
+                if !runs {
+                    rules_to_ignore.push(id);
+                }
+                runs
+            });
         }
         // ESLint makes the rules that run, and one of them throws.
         let mut refusals = (running.iter().filter(|it| it.severity != Severity::Off))
@@ -259,11 +364,57 @@ impl Linter {
             };
         }
         // Nor can what disables a rule that does not run for lack of types be called unused.
-        if file.types.is_none() {
+        if file.types.is_none() && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
             rules_to_ignore.extend(without_types.map(|it| RuleId::Known(it.entry.meta)));
+        }
+        if options.js_plugins.is_none() {
+            let skipped = running_js.iter();
+            rules_to_ignore.extend(skipped.map(|it| RuleId::Js(Arc::clone(&it.configured.rule))));
+        }
+        if let Some(again) = options.again {
+            running.retain(|it| it.entry.meta.needs_modules);
+            let is_of_another_rule = |it: &&LintMessage| {
+                it.message_id.is_some()
+                    && !matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.needs_modules)
+            };
+            let previous = (again.previous.messages.iter()).chain(&again.previous.suppressed);
+            problems.extend(previous.filter(is_of_another_rule).map(|it| LintMessage {
+                suppressions: Vec::new(),
+                ..it.clone()
+            }));
+        }
+        // First, for the variables that they mark as used.
+        if let (Some(host), Some(settings), None) =
+            (options.js_plugins, &config.js_settings, options.again)
+            && !running_js.is_empty()
+        {
+            let enabled: Vec<&js_plugin::Configured> =
+                running_js.iter().map(|it| &**it.configured).collect();
+            match host.run(file, settings, &enabled, options.wants_fixes) {
+                Ok(reports) => {
+                    problems.reserve(reports.len());
+                    for report in reports {
+                        if let Some(rule) = running_js.get(report.rule as usize) {
+                            problems.push(js_message(report, rule));
+                        }
+                    }
+                }
+                Err(failure) => {
+                    let rule = failure.rule.and_then(|it| running_js.get(it as usize));
+                    match js_failure(&failure.message, rule, file.path(), config) {
+                        Ok(problem) => problems.push(problem),
+                        Err(thrown) => {
+                            return LintResult {
+                                thrown: Some(thrown),
+                                ..LintResult::default()
+                            };
+                        }
+                    }
+                }
+            }
         }
         let enabled: Vec<Enabled> = (running.iter())
             .map(|it| Enabled {
@@ -319,7 +470,7 @@ fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locat
         rule_id: Some(RuleId::Known(entry.meta)),
         severity: diagnostic.severity,
         message: diagnostic.message,
-        message_id: Some(diagnostic.message_id),
+        message_id: Some(Cow::Borrowed(diagnostic.message_id)),
         line,
         column,
         end: (!diagnostic.has_no_end).then(|| match diagnostic.end_position {
@@ -329,9 +480,63 @@ fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locat
         }),
         is_fatal: false,
         fix: diagnostic.fix,
-        suggestions: diagnostic.suggestions,
+        suggestions: (diagnostic.suggestions.into_iter().map(Into::into)).collect(),
         suppressions: Vec::new(),
     }
+}
+
+fn js_message(report: js_plugin::Report, rule: &RunningJs) -> LintMessage {
+    let id = report.message_id;
+    LintMessage {
+        rule_id: Some(RuleId::Js(Arc::clone(&rule.configured.rule))),
+        severity: rule.severity,
+        message: report.message,
+        message_id: Some(id.map_or(Cow::Borrowed(""), |id| Cow::Owned(id.into()))),
+        line: report.line,
+        column: report.column,
+        end: report.end,
+        is_fatal: false,
+        fix: report.fix,
+        suggestions: (report.suggestions.into_iter().map(Into::into)).collect(),
+        suppressions: Vec::new(),
+    }
+}
+
+/// What becomes of a rule of a JavaScript plugin that throws `message`. `Err`: ESLint throws it on. oxlint reports it for the file.
+fn js_failure(
+    message: &[u8],
+    rule: Option<&RunningJs>,
+    path: &[u8],
+    config: &ResolvedConfig,
+) -> Result<LintMessage, Vec<u8>> {
+    if !config.prefers_typescript_rules {
+        let mut thrown = [message, b"\nOccurred while linting ", path].concat();
+        if let Some(rule) = rule {
+            thrown.extend_from_slice(b"\nRule: \"");
+            thrown.extend_from_slice(&rule.configured.rule.id);
+            thrown.push(b'"');
+        }
+        return Err(thrown);
+    }
+    Ok(LintMessage {
+        rule_id: None,
+        severity: Severity::Error,
+        message: [
+            b"Error running JS plugin.\nFile path: ",
+            path,
+            b"\n",
+            message,
+        ]
+        .concat(),
+        message_id: None,
+        line: 0,
+        column: 0,
+        end: None,
+        is_fatal: true,
+        fix: None,
+        suggestions: Vec::new(),
+        suppressions: Vec::new(),
+    })
 }
 
 /// Applies the comments of a file to its configuration.
@@ -343,7 +548,7 @@ struct Inline<'i, 'c, 'a> {
     problems: &'i mut Vec<LintMessage>,
     skipped: &'i mut Vec<Box<[u8]>>,
     /// The rules that a comment has configured already.
-    configured: Vec<&'static RuleEntry>,
+    configured: Vec<Named<'c>>,
 }
 
 impl<'c, 'a> Inline<'_, 'c, 'a> {
@@ -364,8 +569,12 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
 
     /// The rule called `id`. If there is none, reports that, unless the plugin is one that the
     /// configuration knows.
-    fn find(&mut self, comment: &ConfigComment, id: &[u8]) -> Option<&'static RuleEntry> {
-        let found = self.config.find_rule(&self.linter.registry, id);
+    fn find(&mut self, comment: &ConfigComment, id: &[u8]) -> Option<Named<'c>> {
+        let config = self.config;
+        let found = match config.find_js_rule(id) {
+            Some(found) => found.map(Named::Js),
+            None => (config.find_rule(&self.linter.registry, id)).map(Named::Native),
+        };
         if found.is_none() {
             if self.config.is_foreign(id) {
                 if !self.skipped.iter().any(|it| **it == *id) {
@@ -381,7 +590,12 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
 
     /// The part of ESLint's `applyInlineConfig` and of what `verify` does with its result that is
     /// about rules.
-    fn apply(&mut self, comment: &ConfigComment, running: &mut Vec<Running<'c>>) {
+    fn apply(
+        &mut self,
+        comment: &ConfigComment,
+        running: &mut Vec<Running<'c>>,
+        running_js: &mut Vec<RunningJs<'c>>,
+    ) {
         match comment.label {
             Label::Rules => {}
             Label::Env => {
@@ -412,10 +626,10 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             Err(message) => return self.fatal(comment, message),
         };
         for (id, value) in rules {
-            let Some(entry) = self.find(comment, &id) else {
+            let Some(rule) = self.find(comment, &id) else {
                 continue;
             };
-            if self.configured.iter().any(|it| is_same_rule(it, entry)) {
+            if self.configured.iter().any(|it| it.is(rule)) {
                 let message = quoted(&[
                     b"Rule \"",
                     &id,
@@ -447,20 +661,23 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                     &passed,
                     b"\".\n",
                 ]);
-                self.error(comment, Some(RuleId::Known(entry.meta)), message);
+                self.error(comment, Some(rule.id()), message);
                 continue;
             };
-            let existing = self.config.rule(entry);
+            let existing = match rule {
+                Named::Native(entry) => self.config.rule(entry).map(Existing::Native),
+                Named::Js(rule) => self.config.js_rule(rule).map(Existing::Js),
+            };
             // A comment that has only a severity keeps the options of the configuration.
             let options: &[Json] = match (inline.len(), existing) {
-                (1, Some(existing)) => &existing.options,
+                (1, Some(existing)) => existing.options(),
                 _ => &inline[1..],
             };
             if self.config.linter.report_unused_inline_configs != Severity::Off {
                 self.report_if_unused(
                     comment,
                     &id,
-                    entry,
+                    rule,
                     existing,
                     severity,
                     options,
@@ -469,12 +686,12 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             }
             // The options of a rule that the configuration enables are validated already.
             let is_validated =
-                inline.len() == 1 && existing.is_some_and(|it| it.severity != Severity::Off);
+                inline.len() == 1 && existing.is_some_and(|it| it.severity() != Severity::Off);
             // ESLint leaves out what is off only if that is written `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
             if !is_validated
                 && !is_zero
-                && let Err(lines) = schema::validate(entry.meta, options)
+                && let Err(lines) = rule.validate(options)
             {
                 let message = quoted(&[
                     b"Inline configuration for rule \"",
@@ -483,10 +700,38 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                     space::trim(&lines),
                     b"\n",
                 ]);
-                self.error(comment, Some(RuleId::Known(entry.meta)), message);
+                self.error(comment, Some(rule.id()), message);
                 continue;
             }
-            self.configured.push(entry);
+            self.configured.push(rule);
+            let (entry, existing) = match (rule, existing) {
+                (Named::Native(entry), Some(Existing::Native(existing))) => (entry, Some(existing)),
+                (Named::Native(entry), _) => (entry, None),
+                (Named::Js(js), existing) => {
+                    let is_it = |it: &RunningJs| Arc::ptr_eq(&it.configured.rule, js);
+                    if severity == Severity::Off {
+                        running_js.retain(|it| !is_it(it));
+                        continue;
+                    }
+                    let new = RunningJs {
+                        severity,
+                        configured: match existing {
+                            Some(Existing::Js(it)) if inline.len() == 1 => {
+                                Cow::Borrowed(&it.configured)
+                            }
+                            _ => Cow::Owned(js_plugin::Configured::new(
+                                Arc::clone(js),
+                                &rule.with_defaults(options),
+                            )),
+                        },
+                    };
+                    match running_js.iter_mut().find(|it| is_it(it)) {
+                        Some(running) => *running = new,
+                        None => running_js.push(new),
+                    }
+                    continue;
+                }
+            };
             let shared = existing
                 .filter(|_| inline.len() == 1)
                 .and_then(ConfiguredRule::instance);
@@ -525,13 +770,13 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
         &mut self,
         comment: &ConfigComment,
         id: &[u8],
-        entry: &'static RuleEntry,
-        existing: Option<&ConfiguredRule>,
+        rule: Named,
+        existing: Option<Existing>,
         severity: Severity,
         options: &[Json],
         has_only_severity: bool,
     ) {
-        if existing.map_or(Severity::Off, |it| it.severity) != severity {
+        if existing.map_or(Severity::Off, Existing::severity) != severity {
             return;
         }
         let name = match severity {
@@ -543,10 +788,8 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             Some(_) => format!("is already configured to '{name}'"),
             None => "is not enabled so can't be turned off".to_owned(),
         };
-        let existing_options = existing.map_or(Vec::new(), |it| {
-            schema::with_defaults(entry.meta, &it.options)
-        });
-        let options = schema::with_defaults(entry.meta, options);
+        let existing_options = existing.map_or(Vec::new(), |it| rule.with_defaults(it.options()));
+        let options = rule.with_defaults(options);
         let suffix: &[u8] =
             if existing_options.is_empty() && options.is_empty() || severity == Severity::Off {
                 b")."
@@ -623,15 +866,15 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             push(None, b"");
         }
         // Two names for one rule count once.
-        let mut rules: Vec<&'static RuleEntry> = Vec::new();
+        let mut rules: Vec<Named> = Vec::new();
         names.retain(|&name| {
-            let Some(entry) = self.find(comment, name) else {
+            let Some(rule) = self.find(comment, name) else {
                 return true;
             };
-            let is_new = !rules.iter().any(|it| is_same_rule(it, entry));
+            let is_new = !rules.iter().any(|it| it.is(rule));
             if is_new {
-                rules.push(entry);
-                push(Some(RuleId::Known(entry.meta)), name);
+                rules.push(rule);
+                push(Some(rule.id()), name);
             }
             is_new
         });

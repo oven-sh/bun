@@ -21,6 +21,7 @@
 
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
+use bun_lint::js_plugin::Host;
 use bun_lint::language::{Global, LanguageOptions, Parser, SourceType};
 use bun_lint::linter::{
     Config, FileConfig, LintMessage, LintOptions, Linter, RcFlavor, Registry, ResolvedConfig,
@@ -209,6 +210,7 @@ fn verify(args: &[String]) {
                 Some(true) => Some(&only_errors),
                 _ => None,
             },
+            ..LintOptions::default()
         };
         if let Some(error) = &config.error {
             testing::write_json(
@@ -496,7 +498,8 @@ fn describe(config: &ResolvedConfig) -> Vec<(Vec<u8>, Json)> {
 }
 
 /// The configuration of a case: `basePath`, `config`, `flavor`, and `extended`, which has the files that `extends` names.
-fn config_of(case: &Json) -> Result<Config, bun_lint::linter::ConfigError> {
+/// `host`: loads what `jsPlugins` names, from the disk.
+fn config_of(case: &Json, host: Option<&Host>) -> Result<Config, bun_lint::linter::ConfigError> {
     let null = Json::Null;
     let registry = linter().registry();
     let base_path = case.get(b"basePath").and_then(Json::as_str).unwrap_or(b"/");
@@ -504,9 +507,17 @@ fn config_of(case: &Json) -> Result<Config, bun_lint::linter::ConfigError> {
     let extended = case.get(b"extended");
     let mut load = |_: &[u8], name: &[u8]| extended.and_then(|it| it.get(name)).cloned();
     match case.get(b"flavor").and_then(Json::as_str) {
-        Some(b"oxlint") => {
-            Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load)
-        }
+        Some(b"oxlint") => match host {
+            Some(host) => Config::from_rc_json_with_plugins(
+                registry,
+                base_path,
+                json,
+                RcFlavor::Oxlint,
+                &mut load,
+                &mut |directory, specifier, alias| host.load(directory, specifier, alias),
+            ),
+            None => Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load),
+        },
         Some(b"eslintrc") => {
             Config::from_rc_json(registry, base_path, json, RcFlavor::Eslint, &mut load)
         }
@@ -517,7 +528,15 @@ fn config_of(case: &Json) -> Result<Config, bun_lint::linter::ConfigError> {
 fn project(args: &[String]) {
     let cases = read_cases(args);
     let results = cases.iter().map(|case| {
-        let config = match config_of(case) {
+        // `jsPlugins: true`: the case is on the disk, with its plugins.
+        let base_path = case.get(b"basePath").and_then(Json::as_str).unwrap_or(b"/");
+        let host = (case.get(b"jsPlugins").and_then(Json::as_bool) == Some(true))
+            .then(|| Host::new(&crate::js_plugin_cmd::spawn, base_path, 1));
+        let options = LintOptions {
+            js_plugins: host.as_ref(),
+            ..LintOptions::default()
+        };
+        let config = match config_of(case, host.as_ref()) {
             Ok(config) => config,
             Err(error) => {
                 return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]);
@@ -533,9 +552,22 @@ fn project(args: &[String]) {
                 return (path.clone(), Json::Null);
             };
             let code = code.as_str().unwrap_or_default();
+            if host.is_some()
+                && let Some(error) = &resolved.error
+            {
+                let error = Json::String(error.clone());
+                return (path.clone(), Json::Object(vec![(b"error".to_vec(), error)]));
+            }
             let result = with_file(&text(path), code, &resolved.language, |file| {
-                linter().lint(file, &resolved, &LintOptions::default())
+                linter().lint(file, &resolved, &options)
             });
+            if let Some(thrown) = result.thrown {
+                let thrown = Json::String(thrown);
+                return (
+                    path.clone(),
+                    Json::Object(vec![(b"thrown".to_vec(), thrown)]),
+                );
+            }
             let messages = result.messages.iter().map(|it| {
                 Json::Array(vec![
                     it.rule_id
@@ -559,7 +591,7 @@ fn config(args: &[String]) {
     let cases = read_cases(args);
     let registry = linter().registry();
     let results = cases.iter().map(|case| {
-        let config = match config_of(case) {
+        let config = match config_of(case, None) {
             Ok(config) => config,
             Err(error) => {
                 return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]);
@@ -652,7 +684,7 @@ fn resolve(args: &[String]) {
         ),
         (b"config".to_vec(), json),
     ]);
-    let config = match config_of(&case) {
+    let config = match config_of(&case, None) {
         Ok(config) => config,
         Err(error) => return println!("{}", text(&error.message)),
     };

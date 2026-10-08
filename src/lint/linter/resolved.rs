@@ -2,6 +2,7 @@
 
 use super::registry::{Registry, parse_rule_id};
 use crate::context::Severity;
+use crate::js_plugin;
 use crate::language::{LanguageOptions, Parser};
 use crate::options::{Json, Options};
 use crate::rule::Plugin;
@@ -90,6 +91,25 @@ impl ConfiguredRule {
     }
 }
 
+/// An entry of ESLint's `rules` for a rule of a JavaScript plugin.
+#[derive(Clone)]
+pub struct ConfiguredJsRule {
+    /// The rule, with its default options merged into `options`.
+    pub configured: Arc<js_plugin::Configured>,
+    pub severity: Severity,
+    /// What follows the severity.
+    pub options: Arc<[Json]>,
+}
+
+pub(crate) fn find_js_rule<'p>(
+    plugins: &'p [Arc<js_plugin::Plugin>],
+    id: &[u8],
+) -> Option<Option<&'p Arc<js_plugin::Rule>>> {
+    let (prefix, name) = parse_rule_id(id);
+    let plugin = plugins.iter().find(|it| *it.name == *prefix)?;
+    Some(plugin.rule(name))
+}
+
 /// The configuration of a file: what ESLint's `configs.getConfig(path)` returns.
 #[derive(Clone, Default)]
 pub struct ResolvedConfig {
@@ -98,6 +118,14 @@ pub struct ResolvedConfig {
     pub linter: LinterOptions,
     /// In the order of the configuration, which is the order the rules run in.
     pub rules: Vec<ConfiguredRule>,
+    /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is
+    /// there, and are skipped otherwise.
+    pub js_rules: Vec<ConfiguredJsRule>,
+    /// What the rules of JavaScript plugins see of `language`. It is there if `js_plugins` is not empty.
+    pub js_settings: Option<Arc<js_plugin::FileSettings>>,
+    /// The JavaScript plugins whose rules the configuration and the comments of the file can name. The name of one hides
+    /// the plugin of the same name that is implemented here.
+    pub js_plugins: Vec<Arc<js_plugin::Plugin>>,
     /// The plugins that are configured and that are not implemented here, by the prefix of their
     /// rules. Their rules are skipped.
     pub foreign_plugins: Vec<Box<[u8]>>,
@@ -152,7 +180,17 @@ impl ResolvedConfig {
         }
     }
 
-    /// The rule that the configuration, or a comment of a file that it is for, calls `id`.
+    /// The rule of a JavaScript plugin that the configuration, or a comment of a file that it is for, calls `id`.
+    /// `Some(None)`: the plugin has no such rule.
+    pub fn find_js_rule(&self, id: &[u8]) -> Option<Option<&Arc<js_plugin::Rule>>> {
+        find_js_rule(&self.js_plugins, id)
+    }
+
+    pub fn js_rule(&self, rule: &Arc<js_plugin::Rule>) -> Option<&ConfiguredJsRule> {
+        (self.js_rules.iter()).find(|it| Arc::ptr_eq(&it.configured.rule, rule))
+    }
+
+    /// The rule that the configuration, or a comment of a file that it is for, calls `id`. Not one of a JavaScript plugin.
     pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
         let found = registry.find_preferring(id, self.prefers_typescript_rules);
         if let Some(plugins) = &self.plugins {

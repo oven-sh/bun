@@ -10,6 +10,7 @@
 mod data;
 mod validate;
 
+use crate::js_plugin;
 use crate::linter::message::{RuleId, write_json};
 use crate::options::Json;
 use crate::rule::Meta;
@@ -74,16 +75,42 @@ pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<
 pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
     let found = find(id);
     let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
-    let options = match parts.get(1).and_then(Json::as_array) {
-        Some(defaults) => deep_merge_arrays(defaults, options),
-        None => options.to_vec(),
-    };
-    if options.is_empty() && !matches!(parts.first(), Some(Json::Object(_))) {
+    validate_with(
+        parts.first(),
+        parts.get(1).and_then(Json::as_array).unwrap_or_default(),
+        options,
+    )
+}
+
+/// The same for a rule of a JavaScript plugin.
+pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<(), Vec<u8>> {
+    match &rule.schema {
+        js_plugin::Schema::Any => Ok(()),
+        js_plugin::Schema::None => validate_with(None, &rule.default_options, options),
+        js_plugin::Schema::Json(schema) => {
+            validate_with(Some(schema), &rule.default_options, options)
+        }
+    }
+}
+
+/// ESLint's `context.options` for a rule of a JavaScript plugin.
+pub(crate) fn with_js_defaults(rule: &js_plugin::Rule, options: &[Json]) -> Vec<Json> {
+    deep_merge_arrays(&rule.default_options, options)
+}
+
+/// `schema`: `meta.schema`, if the rule has one. `defaults`: `meta.defaultOptions`.
+fn validate_with(
+    schema: Option<&Json>,
+    defaults: &[Json],
+    options: &[Json],
+) -> Result<(), Vec<u8>> {
+    let options = deep_merge_arrays(defaults, options);
+    if options.is_empty() && !matches!(schema, Some(Json::Object(_))) {
         return Ok(());
     }
     // `getRuleOptionsSchema`
     let entry = |key: &[u8], value: Json| (key.to_vec(), value);
-    let schema = match parts.first() {
+    let schema = match schema {
         Some(schema @ Json::Object(_)) => schema.clone(),
         Some(Json::Array(items)) if !items.is_empty() => Json::Object(vec![
             entry(b"type", Json::String(b"array".to_vec())),

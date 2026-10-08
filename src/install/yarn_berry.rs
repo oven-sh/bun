@@ -1640,7 +1640,7 @@ fn registry_for(
             format_args!(
                 "yarn's registry for \"{}\" uses an environment variable (\"{}\"); bun cannot tell if it is the registry bun is configured with",
                 bstr::BStr::new(name),
-                bstr::BStr::new(url),
+                bun_core::fmt::redacted_npm_url(url),
             ),
         ));
     }
@@ -1664,8 +1664,9 @@ fn registry_for(
         format_args!(
             "yarn fetches \"{}\" from {} and bun is configured to fetch it from {}; add the registry to bunfig.toml or .npmrc",
             bstr::BStr::new(name),
-            bstr::BStr::new(url),
-            bstr::BStr::new(configured),
+            // a registry URL can carry a password or a token
+            bun_core::fmt::redacted_npm_url(url),
+            bun_core::fmt::redacted_npm_url(configured),
         ),
     ))
 }

@@ -1268,6 +1268,22 @@ catalogs:
     "yarn.lock": yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
   });
 
+  test.concurrent("a registry URL with a password is not printed", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...cleanProject(),
+        ".yarnrc.yml": `npmRegistryServer: "http://builder:hunter2secret@127.0.0.1:${verdaccio.port}/"\n`,
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain(`error: yarn fetches "no-deps" from `);
+    expect(stderr).toContain(`127.0.0.1:${verdaccio.port}/ and bun is configured to fetch it from`);
+    expect(stderr).not.toContain("hunter2secret");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("yarn's registry from YARN_NPM_REGISTRY_SERVER", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },

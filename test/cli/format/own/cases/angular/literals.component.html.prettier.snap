@@ -25,6 +25,14 @@ two'
   "
 ></a>
 {{ "\x4" + "it's" + '"' }}
+<a
+  [x]="{
+    '
+': someLongerName.property,
+    '
+b': someLongerName.method(argument),
+  }"
+></a>
 
 ------------------
 { printWidth: 80 }
@@ -40,6 +48,14 @@ two'
   "
 ></a>
 {{ "\x4" + "it's" + '"' }}
+<a
+  [x]="{
+    '
+': someLongerName.property,
+    '
+b': someLongerName.method(argument),
+  }"
+></a>
 
 -------------------
 { printWidth: 100 }
@@ -55,5 +71,13 @@ two'
   "
 ></a>
 {{ "\x4" + "it's" + '"' }}
+<a
+  [x]="{
+    '
+': someLongerName.property,
+    '
+b': someLongerName.method(argument),
+  }"
+></a>
 
 ===================== End =====================

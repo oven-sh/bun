@@ -3,3 +3,6 @@
 <a [x]="call('one
 two')"></a>
 {{ "\x4" + 'it\'s' + '"' }}
+<a [x]="{ '
+': someLongerName.property, '
+b': someLongerName.method(argument) }"></a>

@@ -39,6 +39,18 @@
 <a [x]="(one?.two)`text`().three"></a>
 <a *x="one / /two/"></a>
 <a [x]="`${one}`"></a>
+<a
+  [x]="
+    call(
+      one < two,
+
+      three
+    )
+  "
+></a>
+<a [x]="[one < two, three]"></a>
+<a *x="one > //"></a>
+<a [x]="{ one: 1, 'two three': 2 }"></a>
 
 ------------------
 { printWidth: 80 }
@@ -67,6 +79,18 @@
 <a [x]="(one?.two)`text`().three"></a>
 <a *x="one / /two/"></a>
 <a [x]="`${one}`"></a>
+<a
+  [x]="
+    call(
+      one < two,
+
+      three
+    )
+  "
+></a>
+<a [x]="[one < two, three]"></a>
+<a *x="one > //"></a>
+<a [x]="{ one: 1, 'two three': 2 }"></a>
 
 -------------------
 { printWidth: 100 }
@@ -95,5 +119,17 @@
 <a [x]="(one?.two)`text`().three"></a>
 <a *x="one / /two/"></a>
 <a [x]="`${one}`"></a>
+<a
+  [x]="
+    call(
+      one < two,
+
+      three
+    )
+  "
+></a>
+<a [x]="[one < two, three]"></a>
+<a *x="one > //"></a>
+<a [x]="{ one: 1, 'two three': 2 }"></a>
 
 ===================== End =====================

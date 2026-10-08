@@ -2193,15 +2193,16 @@ impl<'s> Checker<'_, 's> {
 /// resolve, so that `getTypeOfSymbol` of the property that `node` annotates cannot close a cycle.
 /// `checkTypeOperator`, `checkConditionalType`, `checkArrayType` and `checkJSDocType` visit the
 /// children and do not ask for the type of `node`.
-fn is_resolved_by_check_source_element(hir: &File, node: TypeNodeId) -> bool {
+fn is_resolved_by_check_source_element(hir: &File, mut node: TypeNodeId) -> bool {
+    // The parser builds `T[][][]..` in a loop, so nothing bounds its depth.
+    while node.is_some()
+        && let TypeNodeKind::Array(of) | TypeNodeKind::Readonly(of) = hir[node].kind
+    {
+        node = of;
+    }
     node.is_some()
-        && match hir[node].kind {
-            TypeNodeKind::Keyof(_) | TypeNodeKind::Cond { .. } | TypeNodeKind::JSDoc { .. } => {
-                false
-            }
-            TypeNodeKind::Array(of) | TypeNodeKind::Readonly(of) => {
-                is_resolved_by_check_source_element(hir, of)
-            }
-            _ => true,
-        }
+        && !matches!(
+            hir[node].kind,
+            TypeNodeKind::Keyof(_) | TypeNodeKind::Cond { .. } | TypeNodeKind::JSDoc { .. }
+        )
 }

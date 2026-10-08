@@ -52,8 +52,8 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── `const` enums ─────────────────────────────
 
-    /// `checkConstEnumAccess` for `e` and for each parenthesized expression and `JsxExpression`
-    /// around it, which have the same type.
+    /// `checkConstEnumAccess` for `e`, for the other `NonNullExpression`s of a run of `!` that it is,
+    /// and for each parenthesized expression and `JsxExpression` around it. They have the same type.
     pub(super) fn check_const_enum_access(&mut self, file: FileId, e: ExprId, ty: TypeId) {
         let (hir, files) = (self.hir(file), self.files());
         let TypeData::Anon {
@@ -80,6 +80,17 @@ impl Checker<'_, '_> {
         };
         let flag_name = super::errors_modules::isolated_modules_like_flag_name(files);
         let mut node = hir.node(e);
+        // The parent of each is a `NonNullExpression`.
+        for &(_, end) in non_null_ends_in(hir, e) {
+            let (start, _) = self.get_error_range_for_node(file, node);
+            self.error_at((file, start, end), 2475, &[]);
+            if files.options.isolated_modules_reported
+                && self.aliases_is_ambient_const_enum(symbol)
+                && !is_valid_type_only_alias_use_site(hir, node)
+            {
+                self.error_at((file, start, end), 2748, &[Arg::Bytes(flag_name)]);
+            }
+        }
         loop {
             let parent = hir.parent(node);
             // The other children of a `TypeQuery` are types.

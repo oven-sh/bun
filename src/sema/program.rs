@@ -36,6 +36,7 @@ use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::io::Write;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -762,12 +763,29 @@ struct Resolution<'r> {
     is_importable: bool,
     /// The error of `parseTask.load` for an extension that the program does not support. The file
     /// is not read.
-    unsupported_extension: Option<u32>,
+    unsupported_extension: Option<UnsupportedExtension>,
+}
+
+#[derive(Copy, Clone)]
+struct UnsupportedExtension {
+    code: u32,
+    /// The first specifier in the file that is resolved like this, if there is one.
+    span: Option<(u32, u32)>,
+}
+
+/// What `parse_and_bind` makes of a file of a package. It is the same for every copy of the file
+/// that has the same text.
+struct Parse<'s> {
+    hir: hir::File<'s>,
+    bound: Bound<'s>,
 }
 
 /// `'r`: the paths belong to the `Resolver`.
 struct Loaded<'s, 'r> {
+    /// Without `hir` and `bound` if `parse` has them.
     module: Module<'s>,
+    /// The `Parse` that `load_ahead` returns for it and for the other copies of the file.
+    parse: Option<u32>,
     imports: Vec<Resolution<'r>>,
     /// (path, is a lib, `increaseDepth`, `packageId`)
     references: Vec<(&'r [u8], bool, bool, Option<PackageId<'r>>)>,
@@ -792,6 +810,8 @@ struct FoundFile<'s> {
     first: FileId,
     /// The task that loads it reads it. Otherwise it is read if `collectFiles` wants it.
     is_read: bool,
+    /// `Loaded::parse`, until `collectFiles` has given the module its `hir` and `bound`.
+    parse: Option<u32>,
     /// `parseTask.loaded`, of `first`: a task for the file has run that was not elided.
     is_loaded: bool,
     /// `seen` of `collectFiles`, of `first`: the task that it came to first, whose spelling is the
@@ -4179,6 +4199,7 @@ impl<'s> Files<'s> {
                 first,
                 // Another spelling of a name is only read if `collectFiles` comes to it first.
                 is_read: first == id,
+                parse: None,
                 is_loaded: false,
                 named: None,
             });
@@ -4353,10 +4374,11 @@ impl<'s> Files<'s> {
             .filter(|found| found.is_read)
             .map(|found| (found.path.pretty, found.is_lib))
             .collect();
-        let mut ahead: FxHashMap<&[u8], Box<Loaded>> = match seeds.is_empty() {
-            true => FxHashMap::default(),
-            false => Self::load_ahead(session, host, &resolver, options, &atoms, seeds),
-        };
+        let (mut ahead, mut parses): (FxHashMap<&[u8], Box<Loaded>>, Vec<Option<Parse>>) =
+            match seeds.is_empty() {
+                true => Default::default(),
+                false => Self::load_ahead(session, host, &resolver, options, &atoms, seeds),
+            };
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
@@ -4507,22 +4529,16 @@ impl<'s> Files<'s> {
                             }
                             continue;
                         }
-                        if let Some(code) = resolution.unsupported_extension {
+                        if let Some(UnsupportedExtension { code, span }) =
+                            resolution.unsupported_extension
+                        {
                             // One task loads the file, whoever else refers to it.
-                            let module = &loaded.module;
-                            let of_file = module.redirect_for_resolution.unwrap_or(options);
-                            let mode_of = |u: &SpecifierUse| {
-                                mode_for_usage_location(of_file, module.default_mode, u)
-                            };
-                            let uses = module.hir.specifier_uses.iter();
-                            let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
-                            if let Some(u) = uses.min_by_key(|u| u.pos)
+                            if let Some((pos, end)) = span
                                 && !(unsupported.iter())
                                     .any(|it| it.3.args[0] == *displayed_path(path))
                             {
-                                let end = end_of_string_literal(&module.hir.text, u.pos);
                                 let problem = reference_problem(options, code, path);
-                                unsupported.push((*id, u.pos, end, problem));
+                                unsupported.push((*id, pos, end, problem));
                             }
                             continue;
                         }
@@ -4572,6 +4588,7 @@ impl<'s> Files<'s> {
                         traces[id.idx()] = of_file;
                     }
                     loaded.module.path = all_found.files[id.idx()].path;
+                    all_found.files[id.idx()].parse = loaded.parse;
                     modules[id.idx()] = Some(loaded.module);
                     // `w.start(loader, taskByFileName.subTasks, data.lowestDepth)`
                     if starts_sub_tasks {
@@ -4666,6 +4683,28 @@ impl<'s> Files<'s> {
                     };
                     queued.push((task, std::mem::replace(&mut depths[first.idx()], u32::MAX)));
                     continue 'load;
+                }
+                // The copy that is in the program. Another file has taken the `Parse` if the tasks
+                // gave the two of them different ids.
+                if let Some(slot) = all_found.files[file.idx()].parse.take()
+                    && let Some(module) = &mut modules[file.idx()]
+                {
+                    let parse = parses[slot as usize].take().unwrap_or_else(|| {
+                        let (text, specifies_esm) = (host.read_source(path), module.specifies_esm);
+                        let (hir, bound) = Self::parse_and_bind(
+                            arena,
+                            host,
+                            options,
+                            &atoms,
+                            path,
+                            false,
+                            specifies_esm,
+                            text,
+                        );
+                        Parse { hir, bound }
+                    });
+                    (module.hir, module.bound) = (parse.hir, parse.bound);
+                    rename_private_names(&mut module.hir, &module.bound, &atoms, path);
                 }
                 seen[file.idx()] = true;
                 log.append(&mut traces[file.idx()]);
@@ -5178,6 +5217,10 @@ impl<'s> Files<'s> {
     /// and which of two copies of the same package is used, depend on the order in which files
     /// refer to each other. That order is traversed afterwards, with all of these files already
     /// loaded.
+    ///
+    /// `parseTask.load` parses every copy of a package file, and `collectFiles` drops all but one.
+    /// Here one copy is parsed, and a copy with the same text uses the result to find what it refers
+    /// to, from where it is. The results are returned by `Loaded::parse`.
     fn load_ahead<'r>(
         session: &'s Session,
         host: &dyn Host,
@@ -5185,25 +5228,58 @@ impl<'s> Files<'s> {
         options: &'s Options,
         atoms: &Interner<'s>,
         seeds: Vec<(&'r [u8], bool)>,
-    ) -> FxHashMap<&'r [u8], Box<Loaded<'s, 'r>>> {
+    ) -> (
+        FxHashMap<&'r [u8], Box<Loaded<'s, 'r>>>,
+        Vec<Option<Parse<'s>>>,
+    ) {
         /// Adjacent paths are in the same directory.
         const RUN: usize = 16;
         /// Contents that have been read occupy memory until they are processed.
         const AHEAD: usize = 256;
+        #[derive(Copy, Clone)]
+        struct ToLoad<'r> {
+            path: &'r [u8],
+            is_lib: bool,
+            /// The index in `Shared::slots` for its `PackageId`.
+            package: Option<u32>,
+        }
+        enum Slot<'s, 'r> {
+            /// A thread parses a copy. These copies have been read meanwhile. They become `ready`
+            /// again when it is done.
+            InProgress(Vec<(ToLoad<'r>, Cow<'static, [u8]>)>),
+            Done {
+                parse: Arc<Parse<'s>>,
+                specifies_esm: bool,
+                path: &'r [u8],
+            },
+        }
         struct Shared<'s, 'r> {
-            to_read: std::collections::VecDeque<(&'r [u8], bool)>,
-            ready: Vec<((&'r [u8], bool), Cow<'static, [u8]>)>,
+            to_read: std::collections::VecDeque<ToLoad<'r>>,
+            ready: Vec<(ToLoad<'r>, Cow<'static, [u8]>)>,
             seen: FxHashSet<&'r [u8]>,
             /// Taken from `to_read` and not in `done` yet.
             in_progress: usize,
             done: FxHashMap<&'r [u8], Box<Loaded<'s, 'r>>>,
+            /// By `PackageId.String`.
+            by_package_id: FxHashMap<Vec<u8>, u32>,
+            slots: Vec<Option<Slot<'s, 'r>>>,
         }
+        // Each copy is in the program, or the log shows what each copy refers to.
+        let shares_parses = !options.retains_duplicate_packages && !options.trace_resolution;
         let shared = Guarded::new(Shared {
             seen: seeds.iter().map(|seed| seed.0).collect(),
-            to_read: seeds.into(),
+            to_read: (seeds.into_iter())
+                .map(|(path, is_lib)| ToLoad {
+                    path,
+                    is_lib,
+                    package: None,
+                })
+                .collect(),
             ready: Vec::new(),
             in_progress: 0,
             done: FxHashMap::default(),
+            by_package_id: FxHashMap::default(),
+            slots: Vec::new(),
         });
         let has_changed = bun_threading::Condvar::new();
         // What a thread that only reads waits for: it has no use for a file that is ready.
@@ -5219,26 +5295,95 @@ impl<'s> Files<'s> {
                     state.in_progress += count;
                     drop(state);
                     for file in run {
-                        let text = host.read_source(file.0);
+                        let text = host.read_source(file.path);
                         shared.lock().ready.push((file, text));
                         has_changed.notify_one();
                     }
                     state = shared.lock();
-                } else if processes && let Some(((path, is_lib), text)) = state.ready.pop() {
-                    let has_room_again = state.ready.len() == AHEAD;
-                    drop(state);
-                    if has_room_again {
+                } else if processes && let Some((file, text)) = state.ready.pop() {
+                    if state.ready.len() == AHEAD {
                         has_to_read.notify_all();
                     }
+                    let ToLoad {
+                        path,
+                        is_lib,
+                        package,
+                    } = file;
+                    let parsed = match package.map(|slot| &mut state.slots[slot as usize]) {
+                        None => None,
+                        Some(Some(Slot::InProgress(waiting))) => {
+                            waiting.push((file, text));
+                            continue;
+                        }
+                        Some(Some(Slot::Done {
+                            parse,
+                            specifies_esm,
+                            path,
+                        })) => Some((Arc::clone(parse), *specifies_esm, *path)),
+                        Some(slot @ None) => {
+                            *slot = Some(Slot::InProgress(Vec::new()));
+                            None
+                        }
+                    };
+                    drop(state);
                     let arena = *arena.get_or_insert_with(|| session.arena());
-                    let loaded = Box::new(Self::load_one(
-                        arena, host, resolver, options, atoms, path, is_lib, text,
-                    ));
+                    let load_parsed = |specifies_esm: bool, parse: &Parse<'s>| {
+                        let mut loaded = Self::load_parsed(
+                            arena,
+                            host,
+                            resolver,
+                            options,
+                            atoms,
+                            path,
+                            is_lib,
+                            specifies_esm,
+                            &parse.hir,
+                            &parse.bound,
+                        );
+                        loaded.parse = package;
+                        loaded
+                    };
+                    let specifies_esm =
+                        package.is_some() && Self::specifies_esm(resolver, options, path, is_lib);
+                    let mut parsed_now = None;
+                    let loaded = match (package, parsed) {
+                        (Some(_), Some((parse, of_parsed, parsed_path)))
+                            if of_parsed == specifies_esm
+                                && *parse.hir.text == *text
+                                && get_base_file_name(parsed_path) == get_base_file_name(path) =>
+                        {
+                            load_parsed(specifies_esm, &parse)
+                        }
+                        (Some(_), None) => {
+                            let (hir, bound) = Self::parse_and_bind(
+                                arena,
+                                host,
+                                options,
+                                atoms,
+                                path,
+                                is_lib,
+                                specifies_esm,
+                                text,
+                            );
+                            let parse = Arc::new(Parse { hir, bound });
+                            let loaded = load_parsed(specifies_esm, &parse);
+                            parsed_now = Some(Slot::Done {
+                                parse,
+                                specifies_esm,
+                                path,
+                            });
+                            loaded
+                        }
+                        _ => Self::load_one(
+                            arena, host, resolver, options, atoms, path, is_lib, text,
+                        ),
+                    };
+                    let loaded = Box::new(loaded);
                     // The sub tasks, except for whatever depends on a file's depth in packages.
-                    let found: Vec<(&'r [u8], bool)> = loaded
+                    let found: Vec<(&'r [u8], bool, Option<PackageId<'r>>)> = loaded
                         .references
                         .iter()
-                        .map(|&(path, is_lib, ..)| (path, is_lib))
+                        .map(|&(path, is_lib, _, package_id)| (path, is_lib, package_id))
                         .chain(
                             loaded
                                 .imports
@@ -5249,23 +5394,44 @@ impl<'s> Files<'s> {
                                         && !(is_javascript_file(host, it.path)
                                             && strings::contains(it.path, b"/node_modules/"))
                                 })
-                                .map(|it| (it.path, false)),
+                                .map(|it| (it.path, false, it.package_id)),
                         )
                         .collect();
                     state = shared.lock();
                     let before = state.to_read.len();
-                    for (path, is_lib) in found {
+                    for (path, is_lib, package_id) in found {
                         if state.seen.insert(path) {
-                            state.to_read.push_back((path, is_lib));
+                            let state = &mut *state;
+                            let package = package_id.filter(|_| shares_parses).map(|id| {
+                                let new = state.slots.len() as u32;
+                                let slot = *state.by_package_id.entry(id.to_bytes()).or_insert(new);
+                                if slot == new {
+                                    state.slots.push(None);
+                                }
+                                slot
+                            });
+                            state.to_read.push_back(ToLoad {
+                                path,
+                                is_lib,
+                                package,
+                            });
                         }
                     }
                     let has_more = state.to_read.len() > before;
+                    let mut has_ready = false;
+                    if let (Some(slot), Some(done)) = (package, parsed_now)
+                        && let Some(Slot::InProgress(waiting)) =
+                            state.slots[slot as usize].replace(done)
+                    {
+                        has_ready = !waiting.is_empty();
+                        state.ready.extend(waiting);
+                    }
                     state.done.insert(path, loaded);
                     state.in_progress -= 1;
                     if has_more || state.in_progress == 0 {
                         has_to_read.notify_all();
                     }
-                    if has_more && reads || state.in_progress == 0 {
+                    if has_more && reads || has_ready || state.in_progress == 0 {
                         has_changed.notify_all();
                     }
                 } else if state.in_progress == 0 && state.to_read.is_empty() {
@@ -5293,10 +5459,20 @@ impl<'s> Files<'s> {
             // Any one of these finishes the load by itself.
             None => host.parallel(threads, &|_| load(true, true)),
         }
-        std::mem::take(&mut shared.lock().done)
+        let mut state = shared.lock();
+        let (done, slots) = (
+            std::mem::take(&mut state.done),
+            std::mem::take(&mut state.slots),
+        );
+        let parse_of = |slot: Option<Slot<'s, 'r>>| match slot {
+            Some(Slot::Done { parse, .. }) => Arc::into_inner(parse),
+            _ => None,
+        };
+        (done, slots.into_iter().map(parse_of).collect())
     }
 
-    /// Everything that depends on the file alone.
+    /// Everything that depends on the text of the file and the kind of file it is. The file that
+    /// gets the result calls `rename_private_names`.
     fn parse_and_bind(
         arena: &'s Arena,
         host: &dyn Host,
@@ -5366,7 +5542,6 @@ impl<'s> Files<'s> {
             };
             bound = bind::bind(&hir, bind_options, atoms, arena);
         }
-        rename_private_names(&mut hir, &bound, atoms, path);
         (hir, bound)
     }
 
@@ -5396,24 +5571,8 @@ impl<'s> Files<'s> {
         is_lib: bool,
         text: Cow<'static, [u8]>,
     ) -> Loaded<'s, 'r> {
-        // `parseTask.load`: a library is given `SourceFileMetaData{ImpliedNodeFormat: CommonJS}`,
-        // whatever `package.json` is above it.
-        // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, regardless of its
-        // package.
-        let specifies_esm = !is_lib
-            && !path.ends_with(b".json")
-            && (options.resolves_like_node || strings::contains(path, b"/node_modules/"))
-            && resolver.is_ecmascript_module(path);
-        let is_esm = options.resolves_like_node && specifies_esm;
-        let package_json_without_type =
-            if !is_lib && matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
-                resolver
-                    .package_json_without_type(path)
-                    .map_or(Atom::NONE, |found| atoms.intern(&found))
-            } else {
-                Atom::NONE
-            };
-        let (hir, bound) = Self::parse_and_bind(
+        let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
+        let (mut hir, bound) = Self::parse_and_bind(
             arena,
             host,
             options,
@@ -5423,6 +5582,56 @@ impl<'s> Files<'s> {
             specifies_esm,
             text,
         );
+        rename_private_names(&mut hir, &bound, atoms, path);
+        let mut loaded = Self::load_parsed(
+            arena,
+            host,
+            resolver,
+            options,
+            atoms,
+            path,
+            is_lib,
+            specifies_esm,
+            &hir,
+            &bound,
+        );
+        (loaded.module.hir, loaded.module.bound) = (hir, bound);
+        loaded
+    }
+
+    /// `parseTask.load`: a library is given `SourceFileMetaData{ImpliedNodeFormat: CommonJS}`,
+    /// whatever `package.json` is above it.
+    /// `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, regardless of its
+    /// package.
+    fn specifies_esm(resolver: &Resolver, options: &Options, path: &[u8], is_lib: bool) -> bool {
+        !is_lib
+            && !path.ends_with(b".json")
+            && (options.resolves_like_node || strings::contains(path, b"/node_modules/"))
+            && resolver.is_ecmascript_module(path)
+    }
+
+    /// Everything that depends on where the file is. The module is without `hir` and `bound`.
+    fn load_parsed<'r>(
+        arena: &'s Arena,
+        host: &dyn Host,
+        resolver: &Resolver<'r>,
+        options: &'s Options,
+        atoms: &Interner<'s>,
+        path: &[u8],
+        is_lib: bool,
+        specifies_esm: bool,
+        hir: &hir::File<'s>,
+        bound: &Bound<'s>,
+    ) -> Loaded<'s, 'r> {
+        let is_esm = options.resolves_like_node && specifies_esm;
+        let package_json_without_type =
+            if !is_lib && matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
+                resolver
+                    .package_json_without_type(path)
+                    .map_or(Atom::NONE, |found| atoms.intern(&found))
+            } else {
+                Atom::NONE
+            };
         let _resolving = Spent::on(host, Phase::Resolve);
         // `optionsForFile`. Program-wide diagnostics still use the options of the program.
         let (of_program, program_resolver) = (options, resolver);
@@ -5435,19 +5644,19 @@ impl<'s> Files<'s> {
         let default_mode = options.default_mode(implied_format);
         let visited = match hir.specifier_uses.is_empty() {
             true => Vec::new(),
-            false => module_references(&hir),
+            false => module_references(hir),
         };
         let is_import = |u: &SpecifierUse| is_among_imports(&visited, atoms, u);
         let mut extensionless_imports = Vec::new();
         // `moduleNames`, each with the mode it is resolved in, and whether it is a synthetic import
         // or one of `file.Imports()`: a module augmentation adds no file to the program.
         let mut module_names: Vec<(Atom, ResolutionMode, bool)> = Vec::new();
-        if imports_helpers(options, &hir) {
+        if imports_helpers(options, hir) {
             module_names.push((known::tslib, default_mode, true));
         }
         // Interned whether or not it resolves: the checker passes it to `module_of_specifier`,
         // which only accepts published atoms.
-        let runtime = jsx_runtime_of(options, &hir, atoms);
+        let runtime = jsx_runtime_of(options, hir, atoms);
         let runtime = runtime.map(|runtime| (atoms.intern(&runtime), runtime));
         // Only a file that can contain JSX tags, according to its file name, imports their runtime.
         let runtime = runtime.filter(|_| crate::resolve::is_jsx_file_name(path));
@@ -5459,7 +5668,7 @@ impl<'s> Files<'s> {
                     resolver.resolve_module_name_traced(name, from, mode, Some(&tracer));
                 }
             };
-            if imports_helpers(options, &hir) {
+            if imports_helpers(options, hir) {
                 trace(b"tslib", default_mode);
             }
             if let Some((_, runtime)) = &runtime {
@@ -5468,13 +5677,13 @@ impl<'s> Files<'s> {
             let statements = hir.specifier_uses.iter().filter(|u| !u.kind.is_dynamic());
             let mut statements: Vec<&SpecifierUse> = statements.collect();
             statements.sort_by_key(|u| u.pos);
-            let uses = statements.into_iter().chain(dynamic_imports(&hir));
+            let uses = statements.into_iter().chain(dynamic_imports(hir));
             for u in uses.filter(|u| is_import(u)) {
                 let mode = mode_for_usage_location(options, default_mode, u);
                 trace(atoms.bytes(u.spec), mode);
             }
             // `getModuleNames`: nothing is resolved for `declare global`.
-            for augmentation in module_augmentations(&hir, atoms) {
+            for augmentation in module_augmentations(hir, atoms) {
                 if let ModuleName::String(name) = hir[augmentation].name {
                     trace(atoms.bytes(name), default_mode);
                 }
@@ -5606,7 +5815,7 @@ impl<'s> Files<'s> {
                 untyped_import_files.push((atoms.intern(found), package));
             }
             // `resolveExternalModule` asks with the options of the program.
-            let diagnostic = get_resolution_diagnostic(of_program, extension, &hir);
+            let diagnostic = get_resolution_diagnostic(of_program, extension, hir);
             match diagnostic {
                 Some(6142) => jsx_imports.push((spec, mode, atoms.intern(found))),
                 Some(7042) => json_imports.push((spec, mode, atoms.intern(found))),
@@ -5619,7 +5828,7 @@ impl<'s> Files<'s> {
             // "Don't treat redirected files as JS files."
             let is_js_file = is_javascript && !of_program.is_source_of_referenced_project(found);
             let should_add_file = is_import
-                && get_resolution_diagnostic(options, extension, &hir).is_none()
+                && get_resolution_diagnostic(options, extension, hir).is_none()
                 && !options.no_resolve
                 && !(is_js_file && !options.allow_js);
             // `parseTask.load`: the declaration file is read in place of a source of a referenced
@@ -5635,6 +5844,15 @@ impl<'s> Files<'s> {
             } else {
                 None
             };
+            let unsupported_extension = unsupported_extension.map(|code| {
+                let of_file = redirect_for_resolution.unwrap_or(of_program);
+                let mode_of = |u: &SpecifierUse| mode_for_usage_location(of_file, default_mode, u);
+                let uses = hir.specifier_uses.iter();
+                let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
+                let first = uses.min_by_key(|u| u.pos);
+                let span = first.map(|u| (u.pos, end_of_string_literal(&hir.text, u.pos)));
+                UnsupportedExtension { code, span }
+            });
             imports.push(Resolution {
                 spec,
                 mode,
@@ -5712,8 +5930,8 @@ impl<'s> Files<'s> {
         references.extend(types);
         references.extend(libs);
         let module = Module {
-            hir,
-            bound,
+            hir: hir::File::empty_in(arena, hir.lazy.session),
+            bound: Bound::empty_in(arena),
             is_lib,
             // `load` fills `path`, `imports` and `edges`.
             path: Path::init(b""),
@@ -5750,24 +5968,25 @@ impl<'s> Files<'s> {
             transient_symbols: ArenaVec::new_in(arena),
         };
         let mut module = module;
-        module.has_conditional_or_mapped_type = module.hir.types.iter().any(|node| {
+        module.has_conditional_or_mapped_type = hir.types.iter().any(|node| {
             matches!(
                 node.kind,
                 TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_)
             )
         });
         module.adds_nothing = !is_lib
-            && matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-            && !module.hir.is_js
-            && module.hir.has_module_syntax
-            && module.bound.global_augmentations.is_empty()
-            && module.bound.ambient_modules.is_empty()
-            && module.bound.pattern_ambient_modules.is_empty()
-            && module.bound.umd_globals.is_empty()
+            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            && !hir.is_js
+            && hir.has_module_syntax
+            && bound.global_augmentations.is_empty()
+            && bound.ambient_modules.is_empty()
+            && bound.pattern_ambient_modules.is_empty()
+            && bound.umd_globals.is_empty()
             // `make_module_clones`: it adds a symbol to the file of what it imports.
-            && !(module.hir.imports.iter()).any(|import| import.namespace.is_some());
+            && !(hir.imports.iter()).any(|import| import.namespace.is_some());
         Loaded {
             module,
+            parse: None,
             imports,
             references,
             unsupported_libs,
@@ -6078,8 +6297,6 @@ impl<'s> Files<'s> {
         if !self.modules.is_empty() && !self.globals.contains_key(known::undefined) {
             self.globals.insert(known::undefined, self.undefined_symbol);
         }
-        let globals = SymbolMap::from_iter_in(self.globals.iter().copied(), self.arena);
-        self.merged_exports.insert(self.global_this_symbol, globals);
         self.make_transient_symbols();
         // The target an alias resolved to during the symbol merge may have become a part of a
         // merged symbol by now.
@@ -6167,6 +6384,16 @@ impl<'s> Files<'s> {
             self.new_symbol(SymFlags::MODULE | SymFlags::MERGED, known::globalThis);
         self.globals
             .insert(known::globalThis, self.global_this_symbol);
+    }
+
+    /// `symbol.Exports` of a transient symbol. `c.globalThisSymbol.Exports = c.globals`: they are one
+    /// table, also while the symbol merge fills it.
+    fn merged_exports_of(&self, symbol: Sym) -> Option<&SymbolMap<'s>> {
+        if symbol == self.global_this_symbol {
+            Some(&self.globals)
+        } else {
+            self.merged_exports.get(&symbol)
+        }
     }
 
     /// `target.Exports` of a transient symbol, during the symbol merge.
@@ -6465,7 +6692,7 @@ impl<'s> Files<'s> {
     /// `symbol.Exports`
     fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         let sym = self.holder_of_exports(sym);
-        match self.merged_exports.get(&sym) {
+        match self.merged_exports_of(sym) {
             Some(table) => table.to_vec(),
             None => {
                 let (file, bound) = (sym.file, self.bound(sym.file));
@@ -6798,7 +7025,7 @@ impl<'s> Files<'s> {
     pub fn export_in_table(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let symbol = self.symbol(sym);
         if symbol.flags.contains(SymFlags::MERGED) {
-            if let Some(table) = self.merged_exports.get(&sym) {
+            if let Some(table) = self.merged_exports_of(sym) {
                 return table.get(name).copied();
             }
             if let Some(target) = self.target_of_module_clone(sym) {
@@ -6843,7 +7070,7 @@ impl<'s> Files<'s> {
         let symbol = self.symbol(sym);
         // `None`: the exports recorded by the binder.
         let merged = if symbol.flags.contains(SymFlags::MERGED) {
-            self.merged_exports.get(&sym)
+            self.merged_exports_of(sym)
         } else {
             None
         };

@@ -177,6 +177,10 @@ macro_rules! file_local_fields {
 }
 pub(crate) use file_local_fields;
 
+/// The signature passed to `assignContextualParameterTypes`, if it was called, and whether
+/// `instantiateSignature` created it for the call.
+pub(crate) type AssignedSignature = (Option<SigId>, bool);
+
 pub struct Program<'s> {
     /// The arenas that the program and everything computed from it are in.
     pub session: &'s Session,
@@ -323,7 +327,7 @@ pub struct Program<'s> {
     call_diagnostics: ByNodeIndirect<(FileId, ExprId), Vec<Reported>, Buffered, &'s Session>,
     /// `NodeCheckFlagsContextChecked`, with the signature passed to
     /// `assignContextualParameterTypes`. `None`: it was not called.
-    context_checked: ByNode<(FileId, FnId), Option<SigId>, Buffered, &'s Session>,
+    context_checked: ByNode<(FileId, FnId), AssignedSignature, Buffered, &'s Session>,
     /// `contextFreeTypes` for a function.
     context_free_types: ByNode<(FileId, FnId), TypeId, Buffered, &'s Session>,
     /// The diagnostics `resolveCall` reported for a call the first time it was resolved again while
@@ -675,6 +679,7 @@ impl<'s> Program<'s> {
             instantiation_depth: 0,
             outermost_comparison: None,
             instantiation_count: 0,
+            instantiations_computed: 0,
             recent_instantiations: Default::default(),
             recent_composed: Default::default(),
             unresolved_members: Vec::new(),
@@ -1263,6 +1268,8 @@ pub struct Checker<'p, 's> {
     outermost_comparison: Option<Option<(FileId, u32, u32)>>,
     /// `instantiationCount`: the instantiations computed since the last statement, type node or expression check began.
     instantiation_count: u32,
+    /// How many instantiations no cache had.
+    instantiations_computed: u64,
     /// The entries most recently read from or written to `Program::instantiations`.
     recent_instantiations: instantiate::Recent,
     /// The entries most recently read from or written to `Program::composed`.
@@ -1596,14 +1603,14 @@ pub struct Checker<'p, 's> {
     /// The functions whose first check is in progress, see `context_checked`. They are published to
     /// `Program::context_checked`, for every thread, only once the results of the first check are:
     /// a thread that found one without the other would continue without a first check of its own.
-    context_checking: Vec<((FileId, crate::hir::FnId), Option<SigId>)>,
+    context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature)>,
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to write. See `is_context_checked`.
     context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
     /// The functions whose first check is not published because a frame in progress is tainted,
     /// with the index and the serial of the lowest such frame. tsgo sets
     /// `NodeCheckFlagsContextChecked` and assigns the parameter types whatever is in progress. So
     /// until that frame is left the function is checked, with that signature.
-    context_checked_under: Vec<(usize, u64, (FileId, crate::hir::FnId), Option<SigId>)>,
+    context_checked_under: Vec<(usize, u64, (FileId, crate::hir::FnId), AssignedSignature)>,
     /// `links.resolvedType` of an initializer that `checkExpressionCached` is checking, as a nested
     /// `checkExpressionCached` of it has assigned it: the index and the serial of the frame of the
     /// outermost visit, and the type. See `check_declaration_initializer`.
@@ -2127,6 +2134,12 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
+        // `resolveIntersectionTypeMembers` has none either, and calls `setStructuredTypeMembers` at its end.
+        if matches!(q, Query::Shape(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
+            && self.ends_at_reduction_in_progress(i)
+        {
+            return false;
+        }
         self.last_enter = EnterOutcome::Refused;
         // Everything in progress between there and here is computed without the result, so it is
         // provisional.
@@ -2203,7 +2216,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether the first resolution on the path from `stack[i]` is a return type that
-    /// `getNonCircularReturnTypeOfSignature` has requested.
+    /// `getNonCircularReturnTypeOfSignature` or `getContextualReturnType` has requested.
     fn ends_at_non_circular_return(&self, i: usize) -> bool {
         !self.non_circular_returns.is_empty()
             && (self.stack[i..].iter().position(|&q| self.is_resolution(q))).is_some_and(|above| {
@@ -2756,7 +2769,11 @@ impl<'p, 's> Checker<'p, 's> {
             self.note_limit();
             return self.mark_tainted_from(0);
         };
-        self.add_diagnostic_of(None, Reported::bare(at, code));
+        // Past the limit of 5,000,000 every further instantiation of the statement reports the same.
+        // `sort_and_deduplicate_diagnostics` leaves one: millions are not kept until then.
+        if !self.is_last_diagnostic_of_task(at, code) {
+            self.add_diagnostic_of(None, Reported::bare(at, code));
+        }
         // A query that began under an instantiation had less depth left than the same query has
         // from depth 0, where a finite type does not reach the limit. tsgo stores its result
         // regardless, and which types that breaks depends on the order in which it checks files.
@@ -3858,7 +3875,14 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    pub fn synth(&self, shape: Shape<'s>) -> TypeId {
+    pub fn synth(&self, mut shape: Shape<'s>) -> TypeId {
+        // A symbol that is given its type has no mapper (`createSymbolWithType`, `getSpreadSymbol`). What the
+        // property it is made from had would make the shape look generic for good.
+        for prop in &mut shape.props {
+            if let PropSource::Type(_) | PropSource::Copy(..) = prop.source {
+                prop.mapper = MapperId::IDENTITY;
+            }
+        }
         self.intern(TypeData::Synth(self.boxed(shape)))
     }
 

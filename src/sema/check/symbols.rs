@@ -2218,13 +2218,22 @@ impl<'p, 's> Checker<'p, 's> {
             let widened = match self.data(ty) {
                 TypeData::Anon {
                     origin:
-                        Origin::ObjectLiteral(file, e, is_js_literal, created_by, object_flags, _),
+                        Origin::ObjectLiteral(
+                            file,
+                            e,
+                            is_js_literal,
+                            in_const_context,
+                            created_by,
+                            object_flags,
+                            _,
+                        ),
                     mapper,
                 } => self.intern(TypeData::Anon {
                     origin: Origin::WidenedLiteral(
                         *file,
                         *e,
                         *is_js_literal,
+                        *in_const_context,
                         *created_by,
                         object_flags.contains(ObjectFlags::NON_INFERRABLE_TYPE),
                     ),
@@ -3606,6 +3615,12 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_resolving_return_type(sig) {
             return self.any_for_return_type_in_resolution();
         }
+        self.return_type_not_in_resolution(sig)
+    }
+
+    /// `getReturnTypeOfSignature(sig)`, for a caller that has asked `isResolvingReturnTypeOfSignature(sig)` first: a path
+    /// that leads here a second time ends here.
+    pub(super) fn return_type_not_in_resolution(&mut self, sig: SigId) -> TypeId {
         self.non_circular_returns.push(self.stack.len());
         let ty = self.sig_return(sig);
         self.non_circular_returns.pop();

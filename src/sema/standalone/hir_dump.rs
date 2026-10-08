@@ -95,6 +95,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         exports_from_expressions: _,
         has_parse_diagnostics,
         parens,
+        non_null_ends,
         jsx_expressions,
         jsx_pragmas,
         jsdoc_comments,
@@ -337,6 +338,12 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     put!(d, 0, "", "parens[{}]:", around.len());
     for (pos, kind, open, end) in around {
         put!(d, 1, "", "{kind} pos={pos} open={open} end={end}");
+    }
+
+    put!(d, 0, "", "non_null_ends[{}]:", non_null_ends.len());
+    for &(expr, end) in non_null_ends {
+        let pos = file.exprs.get(expr.idx()).map_or(u32::MAX, |expr| expr.pos);
+        put!(d, 1, "", "pos={pos} end={end}");
     }
 
     put!(d, 0, "", "jsx_expressions[{}]:", jsx_expressions.len());

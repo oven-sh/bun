@@ -2207,8 +2207,8 @@ impl<'p, 's> Checker<'p, 's> {
         let check_of_literal = |t: TypeId| match *self.data(t) {
             TypeData::Anon {
                 origin:
-                    Origin::ObjectLiteral(_, _, _, created_by, ..)
-                    | Origin::WidenedLiteral(_, _, _, created_by, ..),
+                    Origin::ObjectLiteral(_, _, _, _, created_by, ..)
+                    | Origin::WidenedLiteral(_, _, _, _, created_by, ..),
                 ..
             } => match created_by {
                 // The call for a member contains those for the members after it.

@@ -2782,16 +2782,23 @@ export const wrong: number = { ...tool, kind: 1 };
     });
 
     test("a type that is nested too deeply to be printed whole loses no error", async () => {
-      // The frames of a build that is not optimised are larger: at 1,000 levels the check itself runs out of stack there.
-      const depth = isDebug || isASAN ? 100 : 1000;
+      // An optimised build prints about 700 levels, and the check itself runs out of stack at about 3,000. The frames of
+      // another build are larger, by how much depends on the system: there the type may be printed whole.
+      const isOptimised = !isDebug && !isASAN;
+      const depth = isOptimised ? 1500 : 100;
       using dir = project({
         "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
 export const wrong: number = x;
 `,
       });
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
-      expect(stdout).toStartWith("a.ts(2,14): error TS2322: Type '{ a: { a: { a: { a: { a: { a: ");
-      expect(stdout).toEndWith(" }; }; }' is not assignable to type 'number'.");
+      const levels = stdout.split("{ a: ").length - 1;
+      expect(levels).toBeGreaterThanOrEqual(50);
+      if (isOptimised) expect(levels).toBeLessThan(depth);
+      const innermost = levels < depth ? "any" : "1";
+      expect(stdout).toBe(
+        `a.ts(2,14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
+      );
       expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
       expect(exitCode).toBe(1);
     });
@@ -2818,6 +2825,108 @@ const wrong: number = "";
       expect(stderr.split("\n")[0]).toBe(
         "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
       );
+      expect(exitCode).toBe(1);
+    });
+
+    // The parser reads a run of `!` in a loop, so nothing bounds its length.
+    test.each([
+      [
+        "an initializer",
+        (run: string) => `export const z: number = x${run};`,
+        "a.ts(5,14): error TS2322: Type '{ a: number; }' is not assignable to type 'number'.",
+      ],
+      [
+        "an argument",
+        (run: string) => `take(x${run});`,
+        "a.ts(5,6): error TS2345: Argument of type '{ a: number; }' is not assignable to parameter of type 'number'.",
+      ],
+      [
+        "before a property access",
+        (run: string) => `take(x${run}.b);`,
+        "a.ts(5,60008): error TS2339: Property 'b' does not exist on type '{ a: number; }'.",
+      ],
+      [
+        "in an optional chain",
+        (run: string) => `take(x?.a${run}.b);`,
+        "a.ts(5,60011): error TS2339: Property 'b' does not exist on type 'number'.",
+      ],
+      [
+        "an assignment target",
+        (run: string) => `y${run} = "";`,
+        "a.ts(5,1): error TS2322: Type 'string' is not assignable to type 'number'.",
+      ],
+      [
+        "an operand of ++",
+        (run: string) => `x${run}++;`,
+        "a.ts(5,1): error TS2588: Cannot assign to 'x' because it is a constant.",
+      ],
+      [
+        "a condition over an optional chain",
+        (run: string) => `if (f()?.a${run}.b) take(1);`,
+        "a.ts(5,60012): error TS2339: Property 'b' does not exist on type 'number'.",
+      ],
+      [
+        "an object literal with a contextual type",
+        (run: string) => `export const o: { a: 1 } = ({ a: 2 })${run};`,
+        "a.ts(5,14): error TS2322: Type '{ a: 2; }' is not assignable to type '{ a: 1; }'.\n  Types of property 'a' are incompatible.\n    Type '2' is not assignable to type '1'.",
+      ],
+      [
+        "an arrow function with a contextual type",
+        (run: string) => `export const g: (n: number) => void = ((n) => n.b)${run};`,
+        "a.ts(5,49): error TS2339: Property 'b' does not exist on type 'number'.",
+      ],
+      [
+        "an array literal with a contextual type",
+        (run: string) => `export const l: 1[] = [2]${run};`,
+        "a.ts(5,14): error TS2322: Type '2[]' is not assignable to type '1[]'.\n  Type '2' is not assignable to type '1'.",
+      ],
+    ])("60,000 non-null assertions in a row, %s", async (_where, statement, expected) => {
+      using dir = project({
+        "a.ts": `declare const x: { a: number } | undefined;
+declare let y: number | undefined;
+declare function f(): typeof x;
+declare function take(n: number): void;
+${statement(repeat("!", 60_000))}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(1);
+    });
+
+    // `T[][][]` is read in a loop as well. Its type is as deep as it looks, so what a build says about the
+    // type depends on the size of its stack frames. The errors after it do not.
+    test.each([
+      [
+        "the type of a class property",
+        "a.ts",
+        (run: string) => `export class C {\n  p: number${run} = 1;\n}`,
+        `a.ts(6,32): error TS2339: Property 'nope' does not exist on type '""'.`,
+      ],
+      [
+        "a JSDoc @typedef",
+        "a.js",
+        (run: string) => `/** @typedef {number${run}} T */\n/** @type {T} */\nexport let t = 1;`,
+        `a.js(5,14): error TS2322: Type 'string' is not assignable to type 'number'.
+a.js(6,32): error TS2339: Property 'nope' does not exist on type 'number'.`,
+      ],
+      [
+        "a JSDoc @param with properties",
+        "a.js",
+        (run: string) => `/**\n * @param {Object${run}} a\n * @param {number} a.b\n */\nexport function f(a) {}`,
+        `a.js(7,14): error TS2322: Type 'string' is not assignable to type 'number'.
+a.js(8,32): error TS2339: Property 'nope' does not exist on type 'number'.`,
+      ],
+    ])("200,000 array types in a row, %s", async (_where, name, declaration, errorsAfterIt) => {
+      using dir = project({
+        [name]: `${declaration(repeat("[]", 200_000))}
+/** @type {number} */
+export const wrong = "";
+export const alsoWrong = wrong.nope;
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--allowJs", "--checkJs"]);
+      expect(stdout.slice(-errorsAfterIt.length)).toBe(errorsAfterIt);
       expect(exitCode).toBe(1);
     });
 

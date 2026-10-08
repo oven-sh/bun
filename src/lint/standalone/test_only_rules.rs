@@ -54,7 +54,7 @@ fn add_named_import<'a>(file: &'a File<'a>, id: &str, into: &mut Vec<LintMessage
     for statement in file.stmts_of_kind(StmtTag::Import) {
         let span = statement.span();
         let text = &file.text()[span.start as usize..span.end as usize];
-        let Some(brace) = text.iter().rposition(|it| *it == b'}') else {
+        let Some(brace) = bun_core::strings::last_index_of_char(text, b'}') else {
             continue;
         };
         let has_comma = text[..brace].trim_ascii_end().ends_with(b",");

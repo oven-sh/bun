@@ -10,8 +10,12 @@ FAIL oxfmt cases/classes/semicolon-on-a-later-line.ts { printWidth: 80 }
 FAIL oxfmt cases/classes/semicolon-on-a-later-line.ts { printWidth: 100 }
 FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 80 }
 FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 100 }
+FAIL oxfmt cases/comments/around-the-operator-of-a-binary-expression.js { printWidth: 80 }
+FAIL oxfmt cases/comments/around-the-operator-of-a-binary-expression.js { printWidth: 100 }
 FAIL oxfmt cases/comments/before-the-parentheses-of-a-nested-chain.js { printWidth: 80 }
 FAIL oxfmt cases/comments/before-the-parentheses-of-a-nested-chain.js { printWidth: 100 }
+FAIL oxfmt cases/comments/nothing-but-comments-and-a-semicolon.js { printWidth: 80 }
+FAIL oxfmt cases/comments/nothing-but-comments-and-a-semicolon.js { printWidth: 100 }
 FAIL oxfmt cases/comments/type-comment-behind-the-key-of-a-property.js { printWidth: 80 }
 FAIL oxfmt cases/comments/type-comment-behind-the-key-of-a-property.js { printWidth: 100 }
 FAIL oxfmt cases/comments/type-comment-behind-the-operator-of-a-conditional.js { printWidth: 80 }
@@ -24,5 +28,5 @@ FAIL oxfmt cases/ignore/semicolon-behind-the-comment.js { printWidth: 80 }
 FAIL oxfmt cases/ignore/semicolon-behind-the-comment.js { printWidth: 100 }
 FAIL oxfmt cases/jsx-narrow/group-with-nothing-but-text.jsx { printWidth: 35 }
 FAIL oxfmt cases/operator-at-the-start/comment-before-the-operator.js { experimentalOperatorPosition: "start", printWidth: 50 }
-as Prettier prints them: 70/70
-as oxfmt prints them, in its flavor: 36/62
+as Prettier prints them: 76/76
+as oxfmt prints them, in its flavor: 38/68

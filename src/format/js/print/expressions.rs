@@ -104,6 +104,8 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
     if let Some(key) = property.key() {
         format_computed_or_property_key(key, AstNodes::ObjectProperty(property), f);
     }
+    // An error.
+    write!(f, property.is_optional().then_some("?"));
     format_grouped_parameters_with_return_type_for_method(value, f);
     if value.has_body() {
         write!(f, [space(), FormatFunctionBody(value)]);
@@ -114,7 +116,16 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
 pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     match e.kind() {
         ExprKind::ImportMeta => write!(f, "import.meta"),
-        _ => write!(f, "new.target"),
+        _ => {
+            let text = e.text();
+            let is_in_name = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
+            let name = text.iter().rposition(|byte| !is_in_name(byte)).map_or(0, |at| at + 1);
+            match text.get(name..) {
+                Some(b"target") | None => write!(f, "new.target"),
+                // An error: `new.targ`.
+                Some(_) => write!(f, ["new.", source_text(Span::new(e.span().start + name as u32, e.span().end))]),
+            }
+        }
     }
 }
 

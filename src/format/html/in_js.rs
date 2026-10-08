@@ -92,6 +92,16 @@ fn text_with_placeholders(template: Template<'_>, counter: u32) -> Vec<u8> {
                 .map_or(&[][..], |cooked| cooked.bytes()),
         );
     }
+    // Half of a surrogate pair, which an escape can stand for, is U+FFFD once what Prettier prints is written as UTF-8.
+    let mut from = 0;
+    while let Some(at) = text::index_of_char_from(&text, 0xED, from) {
+        if text.get(at + 1).is_some_and(|&byte| byte >= 0xA0)
+            && let Some(half) = text.get_mut(at..at + 3)
+        {
+            half.copy_from_slice("\u{FFFD}".as_bytes());
+        }
+        from = at + 1;
+    }
     match strings::contains_char(&text, b'\r') {
         true => crate::css::normalize_end_of_line(&text).into_owned(),
         false => text,

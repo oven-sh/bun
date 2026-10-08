@@ -43,9 +43,6 @@ pub(crate) struct ParsedShellScript {
     pub(crate) jsobjs: JsCell<Vec<JSValue>>,
     pub(crate) export_env: JsCell<Option<EnvMap>>,
     pub(crate) output_mode: Cell<OutputMode>,
-    /// `output_mode` is the default of the `$` instance, not a call on this
-    /// command, so a call on this command replaces it.
-    pub(crate) output_mode_is_shell_default: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: the codegen finalizer drops this Box (and the `JsRef`) at sweep.
@@ -62,7 +59,6 @@ impl Default for ParsedShellScript {
             jsobjs: JsCell::new(Vec::new()),
             export_env: JsCell::new(None),
             output_mode: Cell::new(OutputMode::Tee),
-            output_mode_is_shell_default: Cell::new(false),
             cwd: JsCell::new(None),
             this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
@@ -156,18 +152,15 @@ impl ParsedShellScript {
         if !callframe.argument(1).to_boolean() {
             if current == mode {
                 self.output_mode.set(OutputMode::Tee);
-                self.output_mode_is_shell_default.set(false);
             }
             return Ok(JSValue::UNDEFINED);
         }
-        if current != mode && current != OutputMode::Tee && !self.output_mode_is_shell_default.get()
-        {
+        if current != mode && current != OutputMode::Tee {
             return Err(global.throw(format_args!(
                 "inheritStdio() cannot be combined with quiet() or an output method such as text()"
             )));
         }
         self.output_mode.set(mode);
-        self.output_mode_is_shell_default.set(false);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -325,17 +318,9 @@ fn create_parsed_shell_script_impl(
 
     shargs.set_script_ast(script_ast);
 
-    // The `$` instance's `inheritStdio()` default.
-    let inherit_stdio = arguments.len() > 2 && arguments[2].to_boolean();
     let mut parsed_shell_script = Box::new(ParsedShellScript {
         args: JsCell::new(Some(shargs)),
         jsobjs: JsCell::new(jsobjs),
-        output_mode: Cell::new(if inherit_stdio {
-            OutputMode::Inherit
-        } else {
-            OutputMode::Tee
-        }),
-        output_mode_is_shell_default: Cell::new(inherit_stdio),
         ..Default::default()
     });
     parsed_shell_script.estimated_size_for_gc = parsed_shell_script.compute_estimated_size_for_gc();

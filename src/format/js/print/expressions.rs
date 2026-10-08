@@ -228,7 +228,24 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
 
 /// `yield a`, `yield* a`
 pub(crate) fn write_yield_expression<'a>(argument: Option<Expr<'a>>, delegate: bool, f: &mut Formatter<'a>) {
-    write!(f, ["yield", delegate.then_some("*"), argument.map(|_| space()), argument]);
+    write!(f, ["yield", delegate.then_some("*")]);
+    let Some(argument) = argument else {
+        return;
+    };
+    write!(f, space());
+    let is_binaryish = matches!(argument.kind(), ExprKind::Binary { op, .. } if op != BinOp::Comma);
+    match is_binaryish && yield_parenthesizes_binary_expression_that_breaks(f) {
+        true => write!(
+            f,
+            group(&format_args!(if_group_breaks(&"("), soft_block_indent(&argument), if_group_breaks(&")")))
+        ),
+        false => write!(f, argument),
+    }
+}
+
+/// oxfmt, like Prettier 3.8, writes the argument of `yield` as that of `return`.
+fn yield_parenthesizes_binary_expression_that_breaks(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `<T>a`

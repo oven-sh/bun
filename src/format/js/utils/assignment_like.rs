@@ -609,7 +609,7 @@ pub(crate) fn is_short_argument<'a>(argument: Expr<'a>, threshold: u16, f: &Form
         }
         AstNodes::TemplateLiteral(_) => matches!(argument.kind(), ExprKind::Template(template) if {
             let raw = template.raw(0);
-            template.quasi_count() == 1 && raw.len() <= threshold && !bun_core::strings::contains_char(raw, b'\n')
+            template.quasi_count() == 1 && raw.len() <= threshold && bun_core::strings::index_of_any(raw, b"\r\n").is_none()
         }),
         AstNodes::CallExpression(_) => argument.call().is_some_and(|call| {
             let callee = call.callee();

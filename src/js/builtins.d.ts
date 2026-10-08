@@ -424,8 +424,6 @@ declare var $Buffer: {
   new (size: number): Buffer;
   new (string: string, encoding?: BufferEncoding): Buffer;
 };
-declare var $clearImmediate: typeof clearImmediate;
-declare var $queueMicrotask: typeof queueMicrotask;
 declare var $setImmediate: typeof setImmediate;
 
 declare interface Error {

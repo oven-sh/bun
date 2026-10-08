@@ -1409,6 +1409,11 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+static JSValue createQueueMicrotaskFunction(VM& vm, JSObject* globalObject)
+{
+    return JSFunction::create(vm, globalObject->globalObject(), 1, "queueMicrotask"_s, functionQueueMicrotask, ImplementationVisibility::Public);
+}
+
 using MicrotaskCallback = void (*)(void*);
 
 JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
@@ -2857,18 +2862,17 @@ BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInterna
 #undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
 
 // Built-in JS reads these as `@name` (globalsToPrefix), so replacing the public global cannot redirect the runtime's own scheduling.
-#define BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getterName, createFunction)                                         \
-    JSC_DEFINE_CUSTOM_GETTER(getterName, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName name)) \
-    {                                                                                                               \
-        auto& vm = JSC::getVM(lexicalGlobalObject);                                                                 \
-        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);                             \
-        JSValue function = createFunction;                                                                          \
-        globalObject->putDirect(vm, name, function, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);   \
-        return JSValue::encode(function);                                                                           \
+#define BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getterName, createFunction)                                       \
+    JSC_DEFINE_CUSTOM_GETTER(getterName, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName name))      \
+    {                                                                                                             \
+        auto& vm = JSC::getVM(globalObject);                                                                      \
+        JSValue function = createFunction(vm, globalObject);                                                      \
+        globalObject->putDirect(vm, name, function, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly); \
+        return JSValue::encode(function);                                                                         \
     }
-BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getSetImmediatePrivate, Bun::createSetImmediateFunction(vm, globalObject))
-BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getClearImmediatePrivate, JSFunction::create(vm, globalObject, 1, "clearImmediate"_s, Bun::functionClearImmediate, ImplementationVisibility::Public))
-BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getQueueMicrotaskPrivate, JSFunction::create(vm, globalObject, 1, "queueMicrotask"_s, functionQueueMicrotask, ImplementationVisibility::Public))
+BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getClearImmediatePrivate, Bun::createClearImmediateFunction)
+BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getQueueMicrotaskPrivate, createQueueMicrotaskFunction)
+BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION(getSetImmediatePrivate, Bun::createSetImmediateFunction)
 #undef BUN_DEFINE_LAZY_PRIVATE_GLOBAL_FUNCTION
 
 // The public global is the same object as the private one; `get` (not `getDirect`) so the lazy getter runs.
@@ -2876,13 +2880,10 @@ static JSValue privateGlobalFunction(VM& vm, JSObject* globalObject, const Ident
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue function = globalObject->get(globalObject->globalObject(), privateName);
-    scope.assertNoException();
+    // An own property whose getter only allocates.
+    scope.assertNoExceptionExceptTermination();
+    RETURN_IF_EXCEPTION(scope, {});
     return function;
-}
-
-static JSValue setImmediateGlobalFunction(VM& vm, JSObject* globalObject)
-{
-    return privateGlobalFunction(vm, globalObject, WebCore::builtinNames(vm).setImmediatePrivateName());
 }
 
 static JSValue clearImmediateGlobalFunction(VM& vm, JSObject* globalObject)
@@ -2893,6 +2894,11 @@ static JSValue clearImmediateGlobalFunction(VM& vm, JSObject* globalObject)
 static JSValue queueMicrotaskGlobalFunction(VM& vm, JSObject* globalObject)
 {
     return privateGlobalFunction(vm, globalObject, WebCore::builtinNames(vm).queueMicrotaskPrivateName());
+}
+
+static JSValue setImmediateGlobalFunction(VM& vm, JSObject* globalObject)
+{
+    return privateGlobalFunction(vm, globalObject, WebCore::builtinNames(vm).setImmediatePrivateName());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3029,9 +3035,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, builtinNames.requireESMPrivateName(), JSC::CustomGetterSetter::create(vm, getRequireESMBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.loadEsmIntoCjsPrivateName(), JSC::CustomGetterSetter::create(vm, getLoadEsmIntoCjsBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.internalRequirePrivateName(), JSC::CustomGetterSetter::create(vm, getInternalRequireBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.setImmediatePrivateName(), JSC::CustomGetterSetter::create(vm, getSetImmediatePrivate, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.clearImmediatePrivateName(), JSC::CustomGetterSetter::create(vm, getClearImmediatePrivate, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
-    putDirectCustomAccessor(vm, builtinNames.queueMicrotaskPrivateName(), JSC::CustomGetterSetter::create(vm, getQueueMicrotaskPrivate, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 
@@ -3074,6 +3077,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultControllerPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultController_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.WritableStreamDefaultWriterPrivateName(), CustomGetterSetter::create(vm, WritableStreamDefaultWriter_getter, nullptr), attributesForStructure(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.AbortSignalPrivateName(), CustomGetterSetter::create(vm, AbortSignal_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.clearImmediatePrivateName(), CustomGetterSetter::create(vm, getClearImmediatePrivate, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.queueMicrotaskPrivateName(), CustomGetterSetter::create(vm, getQueueMicrotaskPrivate, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    putDirectCustomAccessor(vm, builtinNames.setImmediatePrivateName(), CustomGetterSetter::create(vm, getSetImmediatePrivate, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 
     // ----- Public Properties -----
 

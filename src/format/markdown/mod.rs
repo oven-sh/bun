@@ -6,7 +6,7 @@
 //! text ─ block::parse (with inline) ─→ Tree (mdast) ─ preprocess ─→ sentences ─ printer ─→ the document of `css::doc`
 //! ```
 
-mod ast;
+pub(crate) mod ast;
 mod block;
 mod content;
 pub(crate) mod embed;
@@ -47,6 +47,11 @@ pub fn dump_ast(text: &[u8], out: &mut Vec<u8>) {
     if let Some(root) = block::parse(text, &mut tree) {
         ast::dump(text, &tree, root, out);
     }
+}
+
+/// Fills `tree` with the syntax of `text`, which is a description in a JSDoc comment. Returns the root.
+pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::NodeId> {
+    block::parse(text, tree)
 }
 
 /// Prettier's `inferParser(options, { language })`: the parser for code in `language`.

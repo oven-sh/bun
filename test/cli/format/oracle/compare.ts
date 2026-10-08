@@ -1,7 +1,7 @@
 // Formats real code with Prettier and with `bun-lint format`, and compares.
 //
 //   bun compare.ts --bin=<bun-lint> --prettier=<directory with node_modules/prettier> \
-//     [--options='{"semi":false}'] [--report=<directory>] [--limit=n] <files and directories..>
+//     [--options='{"semi":false}'] [--extensions=.json,.css] [--report=<directory>] [--limit=n] <files and directories..>
 //
 // Nothing of the files is written anywhere unless `--report` is given: then the expected and the
 // actual output of each file that differs are written there.
@@ -27,7 +27,7 @@ const report = flags.get("report");
 const limit = Number(flags.get("limit") ?? Infinity);
 const prettier = await import(resolve(prettierRoot, "node_modules/prettier/index.mjs"));
 
-const extensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
+const extensions = new Set((flags.get("extensions") ?? ".js,.jsx,.mjs,.cjs,.ts,.tsx,.mts,.cts").split(","));
 function* walk(path: string): Generator<string> {
   if (statSync(path).isDirectory()) {
     for (const name of readdirSync(path).sort()) {

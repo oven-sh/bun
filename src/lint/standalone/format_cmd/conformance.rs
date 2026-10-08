@@ -59,6 +59,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("typescript/multiparser-css", EMBEDDED),
     ("typescript/angular-component-examples", EMBEDDED),
     ("typescript/decorators-ts/angular.ts", EMBEDDED),
+    ("typescript/as/as-const-embedded.ts", EMBEDDED),
     ("misc/embedded-language-formatting", EMBEDDED),
     ("styled-components", EMBEDDED),
     ("styled-jsx", EMBEDDED),
@@ -426,9 +427,8 @@ pub(super) fn run(args: &Args) {
                     Err(_) => {
                         // `snippet: test.cjs`: the name that the test gives the text. It is parsed
                         // as the parser of the test says.
-                        if let Some(name) = case.name.strip_prefix("snippet: ").filter(|it| it.contains('.')) {
-                            let _ = options.set(b"filepath", name.as_bytes());
-                        }
+                        let name = case.name.strip_prefix("snippet: ").filter(|it| it.contains('.'));
+                        let _ = options.set(b"filepath", name.unwrap_or_default().as_bytes());
                         let extension = match language {
                             _ if is_json => case.parsers.first().map_or("json", |it| if it.starts_with("json") { "json" } else { it.as_str() }),
                             "typescript" => "ts",

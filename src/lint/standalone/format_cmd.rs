@@ -31,7 +31,7 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
         let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| crate::with_file(&path, slice, language, |file| then(file));
         bun_format::range::format(file, options, &mut scratch, &mut out, parse).map(|()| out)
     }
-    let name = options.filepath.as_deref().unwrap_or(path.as_bytes());
+    let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path.as_bytes());
     let json_parser = match &options.parser {
         Some(parser) => bun_format::json::Parser::from_name(parser),
         None => bun_format::json::parser_for_path(name),

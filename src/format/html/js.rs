@@ -154,7 +154,12 @@ fn with_file(
                 });
                 let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
                 // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
-                let is_html_like = |comment: &Comment| matches!(file.text().get(comment.span.start as usize), Some(b'<' | b'-'));
+                let is_html_like = |comment: &Comment| {
+                    matches!(
+                        file.text().get(comment.span.start as usize),
+                        Some(b'<' | b'-')
+                    )
+                };
                 if source_type != SourceType::Script && comments.iter().any(is_html_like) {
                     return;
                 }

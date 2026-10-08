@@ -4,11 +4,11 @@ use super::ast::{Attribute, Flags, Id, Kind};
 use super::js::{self, Hug, SourceType, Syntax};
 use super::parse::collapse_white_space;
 use super::printer::Printer;
-use super::writer::Attempt;
 use super::utilities::{
     dedent_string, html_split, html_trim, html_trim_preserve_indentation, is_script_like_tag,
     should_unquote_attribute_value, unescape_quote_entities,
 };
+use super::writer::Attempt;
 use super::{Parser, data};
 use crate::css::text;
 use crate::markdown::infer_parser;

@@ -456,9 +456,9 @@ impl<'a> Tree<'a> {
                 (Some(prev), _) => lines_between(options, prev.span, node.span) > 0,
                 (None, Some(parent)) => {
                     parent.kind == Kind::Root
-                        || parent.start_span().is_some_and(|span| {
-                            lines_between(options, span, node.span) > 0
-                        })
+                        || parent
+                            .start_span()
+                            .is_some_and(|span| lines_between(options, span, node.span) > 0)
                 }
                 (None, None) => false,
             }
@@ -471,9 +471,9 @@ impl<'a> Tree<'a> {
                 (Some(next), _) => lines_between(options, node.span, next.span) > 0,
                 (None, Some(parent)) => {
                     parent.kind == Kind::Root
-                        || parent.end_span().is_some_and(|span| {
-                            lines_between(options, node.span, span) > 0
-                        })
+                        || parent
+                            .end_span()
+                            .is_some_and(|span| lines_between(options, node.span, span) > 0)
                 }
                 (None, None) => false,
             }

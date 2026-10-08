@@ -86,15 +86,25 @@ impl<'w, 'f> Writer<'w, 'f> {
         };
         match self.empty_line {
             EmptyLine::IfGroupHasBroken(id) => {
-                for (group_mode, is_line_empty) in [(PrintMode::Expanded, true), (PrintMode::Flat, false)] {
-                    self.f.write_element(FormatElement::Tag(Tag::StartConditionalContent(Condition::new(group_mode).with_group_id(Some(id)))));
+                for (group_mode, is_line_empty) in
+                    [(PrintMode::Expanded, true), (PrintMode::Flat, false)]
+                {
+                    self.f
+                        .write_element(FormatElement::Tag(Tag::StartConditionalContent(
+                            Condition::new(group_mode).with_group_id(Some(id)),
+                        )));
                     self.write_lines(mode, count, is_line_empty);
-                    self.f.write_element(FormatElement::Tag(Tag::EndConditionalContent));
+                    self.f
+                        .write_element(FormatElement::Tag(Tag::EndConditionalContent));
                 }
             }
             empty_line => self.write_lines(mode, count, empty_line != EmptyLine::No),
         }
-        self.empty_line = if mode == LineMode::Hard { EmptyLine::Yes } else { EmptyLine::IfGroupBreaks };
+        self.empty_line = if mode == LineMode::Hard {
+            EmptyLine::Yes
+        } else {
+            EmptyLine::IfGroupBreaks
+        };
     }
 
     /// `is_line_empty`: the printer leaves out the first on a line that is empty.
@@ -102,23 +112,30 @@ impl<'w, 'f> Writer<'w, 'f> {
         let written_by_mode = if is_line_empty { 0 } else { 1 };
         if mode == LineMode::Hard && is_line_empty {
             // The first is for the indentation that is due not to be written.
-            self.f.write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
+            self.f
+                .write_element(FormatElement::Tag(Tag::StartDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
-            self.f.write_text(&b"\n".repeat(count as usize), Some(TextWidth::multiline(0)));
-            self.f.write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
+            self.f
+                .write_text(&b"\n".repeat(count as usize), Some(TextWidth::multiline(0)));
+            self.f
+                .write_element(FormatElement::Tag(Tag::EndDedent(DedentMode::Root)));
             self.f.write_element(FormatElement::Line(LineMode::Hard));
         } else if mode == LineMode::Hard && count > written_by_mode + 1 {
             let extra = (count - written_by_mode - 1) as usize;
-            self.f.write_text(&b"\n".repeat(extra + written_by_mode as usize), Some(TextWidth::multiline(0)));
+            self.f.write_text(
+                &b"\n".repeat(extra + written_by_mode as usize),
+                Some(TextWidth::multiline(0)),
+            );
             self.f.write_element(FormatElement::Line(LineMode::Empty));
         } else {
             let with_empty_line = count > written_by_mode;
-            self.f.write_element(FormatElement::Line(match (mode, with_empty_line) {
-                (mode, false) => mode,
-                (LineMode::Soft, true) => LineMode::SoftEmpty,
-                (LineMode::SoftOrSpace, true) => LineMode::SoftOrSpaceEmpty,
-                (_, true) => LineMode::Empty,
-            }));
+            self.f
+                .write_element(FormatElement::Line(match (mode, with_empty_line) {
+                    (mode, false) => mode,
+                    (LineMode::Soft, true) => LineMode::SoftEmpty,
+                    (LineMode::SoftOrSpace, true) => LineMode::SoftOrSpaceEmpty,
+                    (_, true) => LineMode::Empty,
+                }));
         }
     }
 

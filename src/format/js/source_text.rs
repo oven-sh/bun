@@ -123,7 +123,12 @@ impl<'a> SourceText<'a> {
     }
 
     /// The same as [`SourceText::all_bytes`].
-    pub(crate) fn all_bytes_match(self, start: u32, end: u32, predicate: impl Fn(u8) -> bool) -> bool {
+    pub(crate) fn all_bytes_match(
+        self,
+        start: u32,
+        end: u32,
+        predicate: impl Fn(u8) -> bool,
+    ) -> bool {
         self.all_bytes(Span::new(start, end), predicate)
     }
 

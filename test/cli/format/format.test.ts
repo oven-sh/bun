@@ -111,11 +111,30 @@ describe.concurrent("bun format", () => {
   });
 
   test("other languages are left alone, with a warning", async () => {
-    const result = await format({ "a.css": "a{color:red}\n", "b.json": '{"a":1}\n', "c.js": ugly }, [], {
-      reads: ["a.css", "b.json", "c.js"],
+    const result = await format({ "a.css": "a{color:red}\n", "b.md": "*  a\n", "c.js": ugly }, [], {
+      reads: ["a.css", "b.md", "c.js"],
     });
-    expect(result.files).toEqual({ "a.css": "a{color:red}\n", "b.json": '{"a":1}\n', "c.js": formatted });
+    expect(result.files).toEqual({ "a.css": "a{color:red}\n", "b.md": "*  a\n", "c.js": formatted });
     expect(result.stderr).toContain("2 files are in a language that bun format does not support yet");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("JSON", async () => {
+    const result = await format(
+      {
+        "a.json": '{"a":1,"b":[1,2]}',
+        "b.jsonc": '// c\n{"a":1,}\n',
+        "package.json": '{"name":"x","files":[]}',
+      },
+      [],
+      { reads: ["a.json", "b.jsonc", "package.json"] },
+    );
+    expect(result.files).toEqual({
+      "a.json": '{ "a": 1, "b": [1, 2] }\n',
+      "b.jsonc": '// c\n{ "a": 1 }\n',
+      // Like `JSON.stringify`.
+      "package.json": '{\n  "name": "x",\n  "files": []\n}\n',
+    });
     expect(result.exitCode).toBe(0);
   });
 

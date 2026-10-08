@@ -37,6 +37,9 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--end-of-line <which>           <b>lf<r> <d>(default)<r>, <b>crlf<r>, <b>cr<r>, or <b>auto<r>"),
     clap::param!("--require-pragma                Only format files that start with a comment that has <b>@format<r> or <b>@prettier<r>"),
     clap::param!("--check-ignore-pragma           Do not format files that start with a comment that has <b>@noformat<r> or <b>@noprettier<r>"),
+    clap::param!("--insert-pragma                 Put a comment with <b>@format<r> at the top of the files that are formatted"),
+    clap::param!("--range-start <offset>          Only format the statements from this offset on"),
+    clap::param!("--range-end <offset>            Only format the statements up to this offset"),
     clap::param!("--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),
@@ -51,7 +54,7 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--experimental-ternaries"),
     clap::param!("--experimental-operator-position <where>"),
     clap::param!("--embedded-language-formatting <which>"),
-    clap::param!("--insert-pragma"),
+    clap::param!("--jsx-bracket-same-line"),
     clap::param!("--parser <name>"),
     clap::param!("--plugin <name>..."),
     clap::param!("--cache"),
@@ -190,6 +193,9 @@ fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
         b"require-pragma" => b"requirePragma",
         b"insert-pragma" => b"insertPragma",
         b"check-ignore-pragma" => b"checkIgnorePragma",
+        b"range-start" => b"rangeStart",
+        b"range-end" => b"rangeEnd",
+        b"jsx-bracket-same-line" => b"jsxBracketSameLine",
         _ => return None,
     })
 }

@@ -14,7 +14,8 @@ use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_format::FormatOptions;
-use bun_lint::linter::Glob;
+use bun_format::sort_imports::{Settings as SortSettings, SortImports};
+use bun_lint::linter::{Glob, write_json};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
@@ -59,7 +60,13 @@ pub(crate) enum Flavor {
 }
 
 /// The options that the formatter has.
-const OPTIONS: [&[u8]; 17] = [
+const OPTIONS: [&[u8]; 23] = [
+    b"jsxBracketSameLine",
+    b"rangeStart",
+    b"rangeEnd",
+    b"insertPragma",
+    b"requirePragma",
+    b"checkIgnorePragma",
     b"printWidth",
     b"tabWidth",
     b"useTabs",
@@ -145,6 +152,12 @@ fn settings(json: &Json) -> Settings {
             // `Infinity` is not JSON. A YAML file can have it.
             Json::Number(number) if *number >= 65535.0 => b"65535".to_vec(),
             Json::Number(number) => bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *number).to_vec(),
+            // What is about the order of imports, as JSON.
+            Json::Array(_) | Json::Object(_) if name == b"plugins" || name.starts_with(b"importOrder") || name.ends_with(b"ortImports") => {
+                let mut text = Vec::new();
+                write_json(&mut text, value);
+                text
+            }
             // A feature of oxfmt that is configured, and so is on.
             Json::Object(_) => b"true".to_vec(),
             _ => continue,
@@ -202,10 +215,6 @@ impl Config {
 #[derive(Default)]
 pub(crate) struct Resolved {
     pub(crate) options: FormatOptions,
-    /// Only a file whose first comment has `@format` or `@prettier` is formatted.
-    pub(crate) requires_pragma: bool,
-    /// A file whose first comment has `@noformat` or `@noprettier` is not.
-    pub(crate) checks_ignore_pragma: bool,
     /// `insertFinalNewline: false` of oxfmt.
     pub(crate) omits_final_newline: bool,
 }
@@ -219,6 +228,8 @@ pub(crate) struct Configs<'c> {
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     pub(crate) flavor: Flavor,
+    /// How to sort imports, by the options that say so: they are read once, not for every file.
+    sort_imports: Guarded<Vec<(SortSettings, Option<Arc<SortImports>>)>>,
     /// With oxfmt, the one `.editorconfig` that counts: the nearest to the working directory.
     editorconfig_of_oxfmt: Option<Arc<editorconfig::File>>,
     /// For the user.
@@ -233,6 +244,7 @@ impl<'c> Configs<'c> {
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
             flavor: Flavor::Prettier,
+            sort_imports: Guarded::new(Vec::new()),
             editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
         };
@@ -301,7 +313,9 @@ impl<'c> Configs<'c> {
         if matches!(json, Json::Null) {
             return Ok(None);
         }
-        if json.get(b"plugins").and_then(Json::as_array).is_some_and(|it| !it.is_empty()) {
+        // What the plugins that sort imports do is built in.
+        let is_built_in = |it: &Json| it.as_str().is_some_and(|name| name.ends_with(b"/prettier-plugin-sort-imports"));
+        if json.get(b"plugins").and_then(Json::as_array).is_some_and(|it| !it.iter().all(is_built_in)) {
             self.warn(&[b"Plugins are not supported: \"plugins\" in ", path, b" has no effect."]);
         }
         Ok(Some(Arc::new(Config::new(path, &json, is_oxfmt))))
@@ -420,15 +434,19 @@ impl<'c> Configs<'c> {
             Precedence::PreferFile => from_flags.collect(),
         };
         let mut resolved = Resolved::default();
+        let mut sort = SortSettings::default();
+        // oxfmt sorts the keys of a `package.json` unless it is told not to.
+        let mut sorts_package_json = self.flavor == Flavor::Oxfmt && paths::basename(path) == b"package.json";
+        let _ = resolved.options.set(b"filepath", path);
+        if self.flavor == Flavor::Oxfmt {
+            let _ = resolved.options.set(b"flavor", b"oxfmt");
+        }
         for (name, value) in all {
             match name {
-                b"requirePragma" => resolved.requires_pragma = value == b"true",
-                b"checkIgnorePragma" => resolved.checks_ignore_pragma = value == b"true",
-                b"insertPragma" if value == b"true" => self.warn(&[b"insertPragma is not supported: no pragma is inserted."]),
+                name if sort.set(name, value) => {}
                 b"insertFinalNewline" if self.flavor == Flavor::Oxfmt => resolved.omits_final_newline = value == b"false",
-                b"sortImports" | b"experimentalSortImports" | b"sortTailwindcss" | b"experimentalTailwindcss" | b"jsdoc"
-                    if value != b"false" =>
-                {
+                b"sortPackageJson" => sorts_package_json &= value != b"false",
+                b"sortTailwindcss" | b"experimentalTailwindcss" | b"jsdoc" if value != b"false" => {
                     self.warn(&[name, b" is not supported yet, and has no effect."]);
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
@@ -437,6 +455,20 @@ impl<'c> Configs<'c> {
                 _ => {}
             }
         }
+        if sorts_package_json {
+            self.warn(&[b"sortPackageJson is not supported yet: the keys of package.json stay in their order."]);
+        }
+        resolved.options.sort_imports = self.sort_imports(sort)?;
         Ok(resolved)
+    }
+
+    fn sort_imports(&self, settings: SortSettings) -> Result<Option<Arc<SortImports>>, Fatal> {
+        let mut known = self.sort_imports.lock();
+        if let Some((_, how)) = known.iter().find(|it| it.0 == settings) {
+            return Ok(how.clone());
+        }
+        let how = settings.compile().map_err(Fatal)?;
+        known.push((settings, how.clone()));
+        Ok(how)
     }
 }

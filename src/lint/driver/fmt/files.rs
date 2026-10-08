@@ -35,7 +35,7 @@ pub(crate) enum Expanded {
 /// What kind of file a name stands for.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Language {
-    /// JavaScript or TypeScript.
+    /// JavaScript, TypeScript or JSON.
     Supported,
     /// Prettier formats it. This formatter does not.
     Other,
@@ -45,13 +45,16 @@ pub(crate) enum Language {
 
 pub(crate) fn language_of(path: &[u8]) -> Language {
     let name = paths::basename(path);
+    if bun_format::json::parser_for_path(path).is_some() {
+        return Language::Supported;
+    }
     let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
     match extension {
         b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx" => Language::Supported,
-        b"css" | b"scss" | b"less" | b"pcss" | b"postcss" | b"json" | b"jsonc" | b"json5" | b"jsonl" | b"md" | b"markdown" | b"mdx"
+        b"css" | b"scss" | b"less" | b"pcss" | b"postcss" | b"md" | b"markdown" | b"mdx"
         | b"yaml" | b"yml" | b"html" | b"htm" | b"xhtml" | b"vue" | b"graphql" | b"gql" | b"graphqls" | b"hbs" | b"handlebars"
-        | b"webmanifest" | b"importmap" | b"code-workspace" | b"es6" | b"jsm" | b"wxs" | b"wxss" | b"mjml" => Language::Other,
-        _ if matches!(name, b".prettierrc" | b".babelrc" | b".swcrc" | b".jshintrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format") => {
+        | b"es6" | b"jsm" | b"wxs" | b"wxss" | b"mjml" => Language::Other,
+        _ if matches!(name, b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format") => {
             Language::Other
         }
         _ => Language::Unknown,

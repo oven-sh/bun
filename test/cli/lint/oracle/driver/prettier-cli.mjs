@@ -4,7 +4,7 @@
 //   bun prettier-cli.mjs --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="<bun-lint> cli @format" [--only=substring] [--verbose]
 //
 // `bun format` writes unless told otherwise, so Prettier is given `--write` where the case has neither `--check` nor `-l`, and
-// what the two print then is not compared. Only JavaScript and TypeScript are compared: `bun format` leaves the rest alone.
+// what the two print then is not compared. Only JavaScript, TypeScript and JSON are compared: `bun format` leaves the rest alone.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -39,7 +39,7 @@ function run(command, root, test, args) {
   });
   const files = {};
   for (const name of Object.keys(test.files)) {
-    if (!/\.[cm]?[jt]sx?$/.test(name)) continue;
+    if (!/\.([cm]?[jt]sx?|jsonc?|json5)$/.test(name)) continue;
     try {
       files[name] = fs.readFileSync(path.join(root, name), "utf8");
     } catch {}
@@ -53,7 +53,7 @@ const normalize = text =>
     .split("\n")
     .filter(line => !/does not support yet|^Formatted \d+ files?/.test(line))
     // A file in another language.
-    .filter(line => !/^(\[warn\] )?\S+\.(css|json|md|ya?ml|html)$/.test(line))
+    .filter(line => !/^(\[warn\] )?\S+\.(css|md|ya?ml|html)$/.test(line))
     .join("\n")
     .replace("Run Prettier with --write to fix.", "Run bun format to fix.");
 

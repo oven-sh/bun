@@ -12,6 +12,7 @@ use crate::run::{Environment, Fatal, Outcome, Pool};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_core::strings;
+use bun_format::pragma::BeforeParsing;
 use bun_format::{FormatError, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::LanguageOptions;
@@ -40,7 +41,6 @@ enum Failure {
     Syntax(Vec<u8>),
     /// A bug in the formatter.
     Bug(&'static str),
-    Unsupported(&'static str),
 }
 
 /// What the file at `path` is parsed as, one after the other until there is no error: a module,
@@ -99,41 +99,41 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
     out
 }
 
-/// Prettier's `hasPragma`: whether the comment that `text` starts with has one of `pragmas`, each
-/// without its `@`, at the start of a line.
-fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
-    let mut text = strings::without_utf8_bom(text);
-    if text.starts_with(b"#!") {
-        text = strings::index_of_char_usize(text, b'\n').map_or(&[], |end| &text[end + 1..]);
-    }
-    let Some(comment) = text.trim_ascii_start().strip_prefix(b"/*") else {
-        return false;
-    };
-    let Some(end) = strings::index_of(comment, b"*/") else {
-        return false;
-    };
-    strings::split(&comment[..end], b"\n").any(|line| {
-        let line = line.trim_ascii_start();
-        let line = line.strip_prefix(b"*").unwrap_or(line).trim_ascii_start();
-        let name = line.strip_prefix(b"@").map(|rest| strings::split_any(rest, b" \t\r").next().unwrap_or_default());
-        name.is_some_and(|name| pragmas.contains(&name))
-    })
+/// What is allocated to format a file, and used again for the next.
+#[derive(Default)]
+struct Scratches {
+    js: Scratch,
+    json: bun_format::json::Scratch,
+}
+
+fn without_final_newline(out: &mut Vec<u8>) {
+    let end = out.strip_suffix(b"\n").map_or(out.len(), |rest| rest.strip_suffix(b"\r").unwrap_or(rest).len());
+    out.truncate(end);
 }
 
 /// The formatted text of the file at `path`. `verifies`: it is parsed and compared with `text`.
-fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratch, verifies: bool) -> Result<Vec<u8>, Failure> {
+fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratches, verifies: bool) -> Result<Vec<u8>, Failure> {
     let options = &how.options;
-    let is_left_alone = (how.requires_pragma && !has_pragma(text, [b"format", b"prettier"]))
-        || (how.checks_ignore_pragma && has_pragma(text, [b"noformat", b"noprettier"]));
-    if is_left_alone {
-        return Ok(text.to_vec());
+    if let Some(parser) = bun_format::json::parser_for_path(path) {
+        let mut out = Vec::new();
+        return match bun_format::json::format(text, parser, options, &mut scratch.json, &mut out) {
+            Ok(()) => {
+                if how.omits_final_newline {
+                    without_final_newline(&mut out);
+                }
+                Ok(out)
+            }
+            Err(FormatError::SyntaxError) => Err(Failure::Syntax(b"SyntaxError: It is not JSON.".to_vec())),
+            Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
+        };
     }
-    if !options.is_supported() {
-        return Err(Failure::Unsupported("experimentalTernaries and experimentalOperatorPosition are not supported yet."));
-    }
+    let text = match bun_format::pragma::before_parsing(text, options) {
+        BeforeParsing::LeaveAsItIs => return Ok(text.to_vec()),
+        BeforeParsing::Format(text) => text,
+    };
     let mut first_failure = None;
     for &dialect in dialects(path) {
-        match format_as(path, text, dialect, how, scratch, verifies) {
+        match format_as(path, &text, dialect, how, &mut scratch.js, verifies) {
             Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
             done => return done,
         }
@@ -141,26 +141,48 @@ fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratch, verif
     Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
 }
 
-fn format_as(path: &[u8], text: &[u8], dialect: Dialect, how: &Resolved, scratch: &mut Scratch, verifies: bool) -> Result<Vec<u8>, Failure> {
-    let options = &how.options;
+/// How a file is parsed and formatted.
+struct How<'h> {
+    path: &'h [u8],
+    dialect: Dialect,
+    resolved: &'h Resolved,
+    verifies: bool,
+}
+
+fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, scratch: &mut Scratch) -> Result<Vec<u8>, Failure> {
+    let mut out = Vec::new();
+    let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how.path, part, how.dialect, |file, _| then(file));
+    match bun_format::range::format(file, &how.resolved.options, scratch, &mut out, parse) {
+        Ok(()) => {}
+        Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
+        Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
+    }
+    if how.resolved.omits_final_newline {
+        without_final_newline(&mut out);
+    }
+    if how.verifies && out != file.text() {
+        let is_same = with_file(how.path, &out, how.dialect, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
+        if !is_same {
+            return Err(Failure::Bug("formatting would change what the code means"));
+        }
+    }
+    Ok(out)
+}
+
+fn format_as(path: &[u8], text: &[u8], dialect: Dialect, resolved: &Resolved, scratch: &mut Scratch, verifies: bool) -> Result<Vec<u8>, Failure> {
+    let how = How {
+        path,
+        dialect,
+        resolved,
+        verifies,
+    };
     with_file(path, text, dialect, |file, first_error| {
-        let mut out = Vec::new();
-        match bun_format::format(file, options, scratch, &mut out) {
-            Ok(()) => {}
-            Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
-            Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
+        // A file whose imports move is parsed again.
+        let how_to_sort = resolved.options.sort_imports.as_deref();
+        match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
+            Some(sorted) => with_file(path, &sorted, dialect, |file, first_error| print(file, first_error, &how, scratch)),
+            None => print(file, first_error, &how, scratch),
         }
-        if how.omits_final_newline {
-            let end = out.strip_suffix(b"\n").map_or(out.len(), |rest| rest.strip_suffix(b"\r").unwrap_or(rest).len());
-            out.truncate(end);
-        }
-        if verifies && out != text {
-            let is_same = with_file(path, &out, dialect, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
-            if !is_same {
-                return Err(Failure::Bug("formatting would change what the code means"));
-            }
-        }
-        Ok(out)
     })
 }
 
@@ -218,7 +240,6 @@ impl Run<'_> {
     fn describe(shown: &[u8], failure: Failure) -> Vec<u8> {
         match failure {
             Failure::Syntax(error) => [shown, b": ", &error].concat(),
-            Failure::Unsupported(why) => [shown, b": ", why.as_bytes()].concat(),
             Failure::Bug(what) => [shown, b": ", what.as_bytes(), b". It is left as it is. This is a bug in Bun."].concat(),
         }
     }
@@ -246,7 +267,7 @@ impl Run<'_> {
         if files::language_of(&path) == Language::Unknown {
             return self.fail(&[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
         }
-        match format(&path, &text, &options, &mut Scratch::default(), self.options.verify) {
+        match format(&path, &text, &options, &mut Scratches::default(), self.options.verify) {
             Err(failure) => self.error(&Self::describe(name, failure)),
             Ok(formatted) if self.options.check || self.options.list_different => {
                 if formatted != text {
@@ -321,7 +342,7 @@ impl Run<'_> {
         // The largest first, so that no thread begins it when the others are nearly done.
         work.sort_by_key(|it| std::cmp::Reverse(it.1.size));
         let started = Instant::now();
-        let scratches: Guarded<Vec<Scratch>> = Guarded::new(Vec::new());
+        let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
         let mut results = Guarded::new(done);
         pool.for_each(work.len(), 1, &|at| {
             let (index, target) = work[at];

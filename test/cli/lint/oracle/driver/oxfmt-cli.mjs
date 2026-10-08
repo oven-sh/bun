@@ -161,7 +161,7 @@ function run(command, root, test, args) {
   });
   const files = {};
   for (const name of Object.keys(test.files)) {
-    if (!/\.[cm]?[jt]sx?$/.test(name) || /config\.ts$/.test(name)) continue;
+    if (!/\.([cm]?[jt]sx?|jsonc?|json5)$/.test(name) || /config\.ts$/.test(name)) continue;
     try {
       files[name] = fs.readFileSync(path.join(root, name), "utf8");
     } catch {}
@@ -184,7 +184,7 @@ for (const test of cases) {
     problems.push(`files differ\n--- expected\n${JSON.stringify(expected.files)}\n--- actual\n${JSON.stringify(actual.files)}`);
   }
   // Without the files in other languages, what oxfmt says about itself, and what it lists twice.
-  const listed = text => [...new Set(text.split("\n").filter(line => line && !/^Finished in |\.(jsonc?|md|ya?ml|css|html|toml)$|(^|\/)\.prettierrc$/.test(line)))].join("\n");
+  const listed = text => [...new Set(text.split("\n").filter(line => line && !/^Finished in |\.(md|ya?ml|css|html|toml)$|(^|\/)\.prettierrc$/.test(line)))].join("\n");
   if (test.stdin !== undefined ? expected.stdout !== actual.stdout : !test.write && listed(expected.stdout) !== listed(actual.stdout)) {
     problems.push(`stdout differs\n--- expected\n${JSON.stringify(expected.stdout)}\n--- actual\n${JSON.stringify(actual.stdout)}`);
   }

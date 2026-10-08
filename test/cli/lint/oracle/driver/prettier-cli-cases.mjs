@@ -68,6 +68,23 @@ export const cases = [
   { name: "syntax error", files: { "a.js": "const = 1;\n", "b.js": ugly }, args: ["--check", "."], ignores: ["stderr"] },
   { name: "syntax error, write", files: { "a.js": "const = 1;\n", "b.js": ugly }, args: ["."] },
 
+  // ───────────── JSON ─────────────
+  ...[[], ["--tab-width", "4"], ["--use-tabs"], ["--print-width", "20"], ["--single-quote", "--quote-props", "consistent"], ["--trailing-comma", "none"], ["--end-of-line", "crlf"]].map(flags => ({
+    name: `json ${flags.join(" ")}`,
+    files: {
+      "a.json": '{"a":1,"b":[1,2,3],"c":{"d":null,"e":[{"f":true}]},\n"long":["aaaaaaaaaaaaaaaaaaaaaaa","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cccccccccccccccccccccccccccc"]}',
+      "b.jsonc": '// comment\n{"a":1, /* c */ "b":[1,2,],}\n',
+      "c.json5": "{a:1,'b':\"two\",c:[1,2,],}\n",
+      "package.json": '{"name":"x","version":"1.0.0","scripts":{"a":"b"},"files":[]}',
+      "package-lock.json": '{"name":"x","lockfileVersion":3,"packages":{}}',
+      "tsconfig.json": '{"compilerOptions":{"strict":true,},// c\n"include":["src"]}',
+      ".babelrc": '{"presets":[]}',
+      "empty.json": "",
+      "bad.json": '{"a":}',
+    },
+    args: [...flags, "."],
+  })),
+
   // ───────────── ignoring ─────────────
   { name: "prettierignore", files: { ...project, ".prettierignore": "src/deep\n*.mjs\n/a.js\n" }, args: ["-l", "."] },
   { name: "prettierignore, the file is named", files: { ...project, ".prettierignore": "a.js\n" }, args: ["-l", "a.js", "src/c.ts"] },

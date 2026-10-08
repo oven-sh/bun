@@ -45,7 +45,7 @@ mod syntax;
 pub use config::{
     Config, ConfigError, FileConfig, Glob, LoadLocatedPlugin, LoadPlugin, RcFlavor, oxlint_category,
 };
-pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fix};
+pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, grows_too_much, max_fixed_len, verify_and_fix};
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use levn::parse_object as parse_levn_object;
 pub use message::{
@@ -81,7 +81,7 @@ pub mod testing {
     pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
     pub use super::schema::{validate_by_id, validate_js};
-    pub use super::syntax::diagnostics;
+    pub use super::syntax::{diagnostics, refusal_of_prettier_by_kind};
 }
 
 /// ESLint's `VerifyOptions`: what the command line says about how to lint.

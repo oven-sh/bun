@@ -6,8 +6,8 @@
 
 use super::Checks;
 use crate::ast::{
-    BinOp, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member, MemberKind, Node, Param,
-    PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag, UnOp, VarKind,
+    BinOp, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member, MemberKind, Node,
+    Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag, UnOp, VarKind,
 };
 use crate::language::SourceType;
 use crate::regex;
@@ -15,7 +15,9 @@ use crate::tokens::skip_trivia;
 use bun_core::strings;
 use bun_sema::bind::Parent;
 use bun_sema::hir::{self, DiagnosticKind, Flags, ModifierKind};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::collections::hash_map::Entry;
 
 /// Patterns nest no deeper than the parser lets them. This bounds the recursion all the same.
 const MAX_DEPTH: u32 = 256;
@@ -53,7 +55,7 @@ fn has_lone_surrogate(written: &[u8]) -> bool {
     is_after_high
 }
 
-impl<'a> Checks<'a> {
+impl<'a> Checks<'a, '_> {
     pub(super) fn early_errors(&mut self) {
         self.decorators();
         self.assignment_targets();
@@ -224,7 +226,7 @@ impl<'a> Checks<'a> {
 
     fn assignment_targets(&mut self) {
         let file = self.file;
-        for it in file.exprs_of_kind(ExprTag::Assign) {
+        for it in self.exprs_of(ExprTag::Assign) {
             let ExprKind::Assign { op, target, .. } = it.kind() else {
                 continue;
             };
@@ -239,7 +241,7 @@ impl<'a> Checks<'a> {
                 Some(_) => checks.check_simple_target(target),
             });
         }
-        for it in file.exprs_of_kind(ExprTag::Unary) {
+        for it in self.exprs_of(ExprTag::Unary) {
             if let ExprKind::Unary {
                 op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                 operand,
@@ -736,7 +738,7 @@ impl<'a> Checks<'a> {
 
     /// `isPrivateFieldAccess`
     fn deleted_private_fields(&mut self) {
-        for it in self.file.exprs_of_kind(ExprTag::Unary) {
+        for it in self.exprs_of(ExprTag::Unary) {
             let ExprKind::Unary {
                 op: UnOp::Delete,
                 operand,
@@ -760,7 +762,7 @@ impl<'a> Checks<'a> {
         let file = self.file;
         let of_import = "The only valid meta property for import is 'import.meta'";
         let of_new = "The only valid meta property for new is 'new.target'";
-        for it in file.exprs_of_kind(ExprTag::ImportCall) {
+        for it in self.exprs_of(ExprTag::ImportCall) {
             let name = self.after_token(self.after_token(it.span().start));
             // Proposals that Prettier has Babel accept, as they are written in the proposal.
             let is_refused = match self.is_babel {
@@ -816,7 +818,7 @@ impl<'a> Checks<'a> {
                 _ => {}
             }
         }
-        for it in file.exprs_of_kind(ExprTag::NewTarget) {
+        for it in self.exprs_of(ExprTag::NewTarget) {
             // acorn throws the first of its three complaints about one `new.target`, wherever the others are.
             let name = self.after_token(self.after_token(it.span().start));
             let is_target = matches!(
@@ -852,7 +854,7 @@ impl<'a> Checks<'a> {
 
     /// `validateRegExpFlags`, `validateRegExpPattern`
     fn regular_expressions(&mut self) {
-        for it in self.file.exprs_of_kind(ExprTag::Regex) {
+        for it in self.exprs_of(ExprTag::Regex) {
             let ExprKind::Regex(literal) = it.kind() else {
                 continue;
             };
@@ -897,7 +899,7 @@ impl<'a> Checks<'a> {
     /// `??` beside `&&` or `||`, a template after an optional chain.
     fn operators(&mut self) {
         let file = self.file;
-        for it in file.exprs_of_kind(ExprTag::Binary) {
+        for it in self.exprs_of(ExprTag::Binary) {
             let ExprKind::Binary { op, left, right } = it.kind() else {
                 continue;
             };
@@ -922,7 +924,7 @@ impl<'a> Checks<'a> {
                 self.fail(operator.start, "Logical expressions and coalesce expressions cannot be mixed. Wrap either by parentheses");
             }
         }
-        for it in file.exprs_of_kind(ExprTag::TaggedTemplate) {
+        for it in self.exprs_of(ExprTag::TaggedTemplate) {
             let ExprKind::TaggedTemplate(call) = it.kind() else {
                 continue;
             };
@@ -947,7 +949,7 @@ impl<'a> Checks<'a> {
 
     /// `parseDynamicImport`
     fn dynamic_imports(&mut self) {
-        for it in self.file.exprs_of_kind(ExprTag::ImportCall) {
+        for it in self.exprs_of(ExprTag::ImportCall) {
             let ExprKind::ImportCall { args } = it.kind() else {
                 continue;
             };
@@ -1075,7 +1077,7 @@ impl<'a> Checks<'a> {
             (ExprTag::Yield, "Yield expression cannot be a default value"),
             (ExprTag::Await, "Await expression cannot be a default value"),
         ] {
-            for it in self.file.exprs_of_kind(tag) {
+            for it in self.exprs_of(tag) {
                 let first = Node::Expr(it)
                     .ancestors()
                     .find(|it| matches!(it, Node::Param(_) | Node::Func(_)));
@@ -1106,7 +1108,7 @@ impl<'a> Checks<'a> {
     }
 
     fn supers(&mut self) {
-        for it in self.file.exprs_of_kind(ExprTag::Super) {
+        for it in self.exprs_of(ExprTag::Super) {
             let start = it.span().start;
             let scope = Self::this_scope(Node::Expr(it));
             let allows_super = match scope {
@@ -1156,15 +1158,24 @@ impl<'a> Checks<'a> {
         if !strings::contains_char(file.text(), b'#') {
             return;
         }
-        let is_declared = |node: Node<'a>, name: &[u8]| {
+        // The private names of a class are collected once: there can be as many of them as there are uses.
+        let mut names_of: FxHashMap<Class<'a>, FxHashSet<&'a [u8]>> = FxHashMap::default();
+        let mut is_declared = |node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             node.ancestors().any(|it| {
                 let from = std::mem::replace(&mut inside, it);
                 match it {
                     // What a class extends is outside of it.
-                    Node::Class(class) if class.extends().map(Node::Expr) != Some(from) => class.members().iter().any(
-                        |member| matches!(member.key().map(|it| it.kind()), Some(KeyKind::Private(declared)) if declared.bytes() == name),
-                    ),
+                    Node::Class(class) if class.extends().map(Node::Expr) != Some(from) => {
+                        let private = |member: Member<'a>| match member.key().map(|it| it.kind()) {
+                            Some(KeyKind::Private(declared)) => Some(declared.bytes()),
+                            _ => None,
+                        };
+                        names_of
+                            .entry(class)
+                            .or_insert_with(|| class.members().iter().filter_map(private).collect())
+                            .contains(name)
+                    }
                     _ => false,
                 }
             })
@@ -1177,7 +1188,7 @@ impl<'a> Checks<'a> {
             ]
             .concat()
         };
-        for it in file.exprs_of_kind(ExprTag::Dot) {
+        for it in self.exprs_of(ExprTag::Dot) {
             let ExprKind::Dot { name, .. } = it.kind() else {
                 continue;
             };
@@ -1202,7 +1213,7 @@ impl<'a> Checks<'a> {
                 });
             }
         }
-        for it in file.exprs_of_kind(ExprTag::PrivateIdentifier) {
+        for it in self.exprs_of(ExprTag::PrivateIdentifier) {
             let ExprKind::PrivateIdentifier(name) = it.kind() else {
                 continue;
             };
@@ -1220,11 +1231,11 @@ impl<'a> Checks<'a> {
     /// `parseClass`, `parseClassElement`
     fn classes(&mut self) {
         let file = self.file;
+        // The private names of the class so far, each with the accessor that another can complete.
+        let mut private: FxHashMap<&'a [u8], Option<(bool, MemberKind)>> = FxHashMap::default();
         for class in file.classes() {
             let mut has_constructor = false;
-            // The private names so far, each with the accessor that another can complete.
-            let mut private: SmallVec<[(&'a [u8], Option<(bool, MemberKind)>); 8]> =
-                SmallVec::new();
+            private.clear();
             for member in class.members() {
                 self.class_element(member);
                 if member.is_constructor() && member.func().is_some_and(Func::has_body) {
@@ -1242,11 +1253,13 @@ impl<'a> Checks<'a> {
                 };
                 let half = matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
                     .then(|| (member.is_static(), member.kind()));
-                match private.iter_mut().find(|it| it.0 == name.bytes()) {
-                    None => private.push((name.bytes(), half)),
-                    Some(seen) => {
-                        let completes = matches!((seen.1, half), (Some(a), Some(b)) if a.0 == b.0 && a.1 != b.1);
-                        seen.1 = None;
+                match private.entry(name.bytes()) {
+                    Entry::Vacant(place) => {
+                        place.insert(half);
+                    }
+                    Entry::Occupied(mut seen) => {
+                        let completes = matches!((*seen.get(), half), (Some(a), Some(b)) if a.0 == b.0 && a.1 != b.1);
+                        seen.insert(None);
                         if !completes {
                             let message = [
                                 b"Identifier '",
@@ -1306,7 +1319,7 @@ impl<'a> Checks<'a> {
     /// `canAwait`. Where it cannot, `await` is a name.
     fn awaits(&mut self) {
         let file = self.file;
-        for it in file.exprs_of_kind(ExprTag::Await) {
+        for it in self.exprs_of(ExprTag::Await) {
             let ExprKind::Await(operand) = it.kind() else {
                 continue;
             };
@@ -1445,7 +1458,8 @@ impl<'a> Checks<'a> {
     /// `checkExport`, `checkLocalExport`
     fn exports(&mut self) {
         let file = self.file;
-        if file.language().source_type != SourceType::Module {
+        // To Prettier a file is a module, also one that `bun format` could only parse as a script.
+        if !self.is_babel && file.language().source_type != SourceType::Module {
             return;
         }
         let mut exported: Vec<(&'a [u8], u32)> = Vec::new();

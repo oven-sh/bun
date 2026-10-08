@@ -1,9 +1,38 @@
 //! Applies the fixes of messages: ESLint's `SourceCodeFixer.applyFixes` and `Linter.verifyAndFix`.
 
 use super::{LintMessage, LintResult};
+use crate::context::Severity;
 
 /// ESLint's `MAX_AUTOFIX_PASSES`.
 pub const MAX_AUTOFIX_PASSES: usize = 10;
+
+/// A text that fixes have made larger than this, and than [`MAX_GROWTH`] times what it was, is given up: see [`max_fixed_len`].
+const MAX_FIXED_BYTES: usize = 64 << 20;
+const MAX_GROWTH: usize = 64;
+
+/// How large fixes can make a text of `original` bytes. To indent n things that are in each other takes room in proportion to
+/// n², and each pass parses the whole of it: 87 KB of nested `if` become 370 MB. ESLint has no such limit.
+pub fn max_fixed_len(original: usize) -> usize {
+    MAX_FIXED_BYTES.max(original.saturating_mul(MAX_GROWTH))
+}
+
+/// What is said about a file of `original` bytes that fixes would make larger than [`max_fixed_len`]. It is reported with what
+/// is wrong with the file as it is, which is not changed.
+pub fn grows_too_much(original: usize) -> LintMessage {
+    let size = |bytes: usize| match bytes {
+        0..1024 => format!("{bytes} bytes"),
+        1024..0x10_0000 => format!("{} KB", bytes >> 10),
+        _ => format!("{} MB", bytes >> 20),
+    };
+    let (from, to) = (size(original), size(max_fixed_len(original)));
+    LintMessage {
+        severity: Severity::Warn,
+        message: format!("Fixes would grow this file from {from} to more than {to}. It is left as it is.").into_bytes(),
+        line: 1,
+        column: 1,
+        ..LintMessage::default()
+    }
+}
 
 /// What [`apply_fixes`] returns.
 pub struct Fixed {
@@ -71,7 +100,7 @@ pub struct FixReport {
 }
 
 /// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, ten times at most.
-/// `lint` parses and lints the text that it is given.
+/// `lint` parses and lints the text that it is given. Unlike ESLint, it fixes nothing if the text [grows too much](max_fixed_len).
 pub fn verify_and_fix(
     text: &[u8],
     should_fix: &dyn Fn(&LintMessage) -> bool,
@@ -93,6 +122,16 @@ pub fn verify_and_fix(
                 output: current,
                 result,
                 is_circular,
+            };
+        }
+        if fixed.output.len() > max_fixed_len(text.len()) {
+            let mut result = lint(text);
+            result.messages.insert(0, grows_too_much(text.len()));
+            return FixReport {
+                is_fixed: false,
+                output: text.to_vec(),
+                result,
+                is_circular: false,
             };
         }
         is_fixed |= fixed.is_fixed;

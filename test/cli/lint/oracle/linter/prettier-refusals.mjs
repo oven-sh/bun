@@ -360,6 +360,51 @@ const typescriptSnippets = [
 const cases = snippets.map((code, i) => ({ path: `snippet ${i}: ${code}`, code, filename: "snippet.js" }));
 for (const code of typescriptSnippets)
   cases.push({ path: `TypeScript snippet: ${code}`, code, filename: "snippet.ts" });
+// Comments like those of HTML, which only a script has, and what looks like one. What a file is depends on its name.
+// `bun format` takes them in `.js` and `.jsx` on purpose, where Prettier's `babel` does not: Prettier's own snapshots of such
+// files are made with `acorn`, which parses them as scripts.
+const likeHtml = [
+  "<!--a",
+  "<!--a\n",
+  "<!-- a -->",
+  "a;\n<!--b\nc;",
+  "a;\n--> b\nc;",
+  "--> a",
+  "/* a */ --> b",
+  "/*\n*/ --> b",
+  "a <!--b;",
+  "a --> b;",
+  "a-->b",
+  "x = a <! --b;",
+  "'<!--a'",
+  "// <!--a",
+  "/* <!--a */",
+  "/* --> */",
+  "`<!--a`",
+  "<a>{/* <!--b */}</a>;",
+  "<a>&lt;!--b</a>;",
+  "<a><!--b</a>;",
+  "a < !--b;",
+  // What else is a script only.
+  "with (a) b;",
+  "var await;",
+  "010;",
+  "delete a;",
+  "var yield, let, static;",
+  // What is wrong in a module, in a file that is parsed as a script for another reason.
+  "export default 1; export default 2;",
+  "with (a) b; export default 1; export default 2;",
+  'export { "a" }',
+  "export var a; export var a;",
+  "export var a; export { a };",
+  "export default 1;",
+  "export var a;",
+];
+for (const code of likeHtml) {
+  for (const extension of [".js", ".jsx", ".mjs", ".cjs"]) {
+    cases.push({ path: `snippet${extension}: ${code}`, code, filename: `snippet${extension}` });
+  }
+}
 for (const root of args.map(it => resolve(it))) {
   for (const path of filesOf(root)) {
     const code = readFileSync(path, "utf8");
@@ -395,7 +440,9 @@ for (let start = 0; start < cases.length; start += 1000) {
   batch.forEach((it, i) => {
     const expected = refusal(it);
     if (expected !== null) refused++;
-    const [isRefused, parser, , isRefusedWithTypes, why] = actual[i];
+    const [isRefused, parser, , isRefusedWithTypes, why, isSameTheLongWay] = actual[i];
+    if (!isSameTheLongWay)
+      tolerant.push(`another refusal with the candidates than with all expressions by kind: ${it.path}`);
     if ((why !== null) !== isRefused) tolerant.push(`refused without a reason, or the other way round: ${it.path}`);
     if (expected !== null && why !== null) {
       // The place is for a reader, not for a verdict: it is counted, and no difference.

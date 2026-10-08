@@ -859,56 +859,89 @@ fn diagnostics(args: &[String]) {
 
 /// `prettier <cases.json>`: for each `{ code, filename }`, whether Prettier refuses it, whether the parser has reported
 /// something, what it has left in the HIR, whether Prettier refuses it if types in JavaScript are tolerated, and
-/// the words, the line and the column of the refusal. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
+/// the words, the line and the column of the refusal, and whether the refusal is the same the long way. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
 fn prettier(args: &[String]) {
     let mut all = Vec::new();
     for case in &read_cases(args) {
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = (case.get(b"filename").and_then(Json::as_str)).unwrap_or(b"file.js");
-        let language = LanguageOptions::default();
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let arena = session.arena();
-        let options = language.parse_options(path);
-        let mut hir = bun_js_parser::sema::summarize_as(
-            bun_sema::resolve::Dialect::babel(false),
-            arena,
-            path,
-            options.script_kind,
-            code,
-            &atoms,
-            options.experimental_decorators,
-            options.every_file_is_a_module,
-        )
-        .0;
-        hir.text = code.to_vec().into();
-        let bind_options = BindOptions {
-            emit_standard_class_fields: true,
-            before_es2020: false,
-            before_es2017: false,
+        // A module, then a script, until it is not refused, as `bun format` does. What is said is about the first.
+        let attempt = |is_script: bool| {
+            let language = LanguageOptions {
+                source_type: if is_script {
+                    SourceType::Script
+                } else {
+                    SourceType::Module
+                },
+                ..LanguageOptions::default()
+            };
+            let session = Session::new();
+            let atoms = Interner::new_in(&session);
+            let arena = session.arena();
+            let options = language.parse_options(path);
+            let mut hir = bun_js_parser::sema::summarize_as(
+                bun_sema::resolve::Dialect::babel(is_script),
+                arena,
+                path,
+                options.script_kind,
+                code,
+                &atoms,
+                options.experimental_decorators,
+                options.every_file_is_a_module,
+            )
+            .0;
+            hir.text = code.to_vec().into();
+            let bind_options = BindOptions {
+                emit_standard_class_fields: true,
+                before_es2020: false,
+                before_es2017: false,
+            };
+            let bound = bun_sema::bind::bind_for_format(&hir, bind_options, &atoms, arena);
+            let file = File::new(path, &hir, &bound, &atoms, &language, None);
+            vec![
+                Json::Bool(bun_lint::linter::refused_by_prettier_with(
+                    &file,
+                    TypesInJavaScript::Refused,
+                )),
+                Json::Bool(file.has_parse_errors()),
+                Json::Array(testing::diagnostics(&file)),
+                Json::Bool(bun_lint::linter::refused_by_prettier(&file)),
+                match bun_lint::linter::refusal_of_prettier(&file, TypesInJavaScript::Refused) {
+                    Some(it) => {
+                        let at = file.position(it.at);
+                        Json::Array(vec![
+                            Json::String(it.message),
+                            Json::Number(f64::from(at.line)),
+                            Json::Number(f64::from(at.column + 1)),
+                        ])
+                    }
+                    None => Json::Null,
+                },
+                Json::Bool({
+                    let brief =
+                        |it: Option<bun_lint::linter::Refusal>| it.map(|it| (it.message, it.at));
+                    brief(bun_lint::linter::refusal_of_prettier(
+                        &file,
+                        TypesInJavaScript::Refused,
+                    )) == brief(testing::refusal_of_prettier_by_kind(
+                        &file,
+                        TypesInJavaScript::Refused,
+                    ))
+                }),
+            ]
         };
-        let bound = bun_sema::bind::bind_for_format(&hir, bind_options, &atoms, arena);
-        let file = File::new(path, &hir, &bound, &atoms, &language, None);
-        all.push(Json::Array(vec![
-            Json::Bool(bun_lint::linter::refused_by_prettier_with(
-                &file,
-                TypesInJavaScript::Refused,
-            )),
-            Json::Bool(file.has_parse_errors()),
-            Json::Array(testing::diagnostics(&file)),
-            Json::Bool(bun_lint::linter::refused_by_prettier(&file)),
-            match bun_lint::linter::refusal_of_prettier(&file, TypesInJavaScript::Refused) {
-                Some(it) => {
-                    let at = file.position(it.at);
-                    Json::Array(vec![
-                        Json::String(it.message),
-                        Json::Number(f64::from(at.line)),
-                        Json::Number(f64::from(at.column + 1)),
-                    ])
-                }
-                None => Json::Null,
-            },
-        ]));
+        let kinds: &[bool] = match path {
+            _ if path.ends_with(b".mjs") || path.ends_with(b".mts") => &[false],
+            _ if path.ends_with(b".cjs") || path.ends_with(b".cts") => &[true],
+            _ => &[false, true],
+        };
+        let mut attempts = kinds.iter().map(|&is_script| attempt(is_script));
+        let first = attempts.next().unwrap_or_default();
+        let is_accepted = |it: &Vec<Json>| matches!(it.first(), Some(Json::Bool(false)));
+        let accepted = (!is_accepted(&first))
+            .then(|| attempts.find(is_accepted))
+            .flatten();
+        all.push(Json::Array(accepted.unwrap_or(first)));
     }
     let mut out = Vec::new();
     testing::write_json(&mut out, &Json::Array(all));

@@ -191,6 +191,23 @@ pub struct Refusal {
 
 /// [`refused_by_prettier_with`], with the reason.
 pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
+    refusal(file, types, true)
+}
+
+/// [`refusal_of_prettier`] the long way, for a test to compare.
+#[doc(hidden)]
+pub fn refusal_of_prettier_by_kind<'a>(
+    file: &'a File<'a>,
+    types: TypesInJavaScript,
+) -> Option<Refusal> {
+    refusal(file, types, false)
+}
+
+fn refusal<'a>(
+    file: &'a File<'a>,
+    types: TypesInJavaScript,
+    finds_candidates: bool,
+) -> Option<Refusal> {
     let of_diagnostic = |it: &Diagnostic| {
         let mut message = Vec::new();
         match bun_sema::messages::message(it.code) {
@@ -226,7 +243,7 @@ pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> 
     if !file.is_javascript() {
         return typescript_estree::first_error(file, true).map(of_check);
     }
-    let of_babel = || espree::refusal_of_babel(file).map(of_check);
+    let of_babel = || espree::refusal_of_babel(file, finds_candidates).map(of_check);
     if file.is_flow() || goes_to_flow(file.text(), file.path()) {
         return of_babel();
     }

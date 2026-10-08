@@ -20,11 +20,15 @@ use crate::semantic::{Declaration, Scope, ScopeKind};
 use crate::tokens::{skip_trivia, token_len};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
-use bun_sema::hir::{self, Diagnostic, DiagnosticKind, Flags, FnKind, ModifierKind, UnOp};
+use bun_sema::hir::{
+    self, BinOp, Chain, Diagnostic, DiagnosticKind, Flags, FnKind, ModifierKind, UnOp,
+};
 use smallvec::SmallVec;
 
-struct Checks<'a> {
+struct Checks<'a, 'c> {
     file: &'a File<'a>,
+    /// In place of the expressions of the file by kind.
+    candidates: Option<&'c Candidates>,
     /// The first error so far, and how far acorn has read when it throws it.
     first: Option<(u32, SyntaxError)>,
     /// acorn notices what is being checked only when it has read this far.
@@ -94,6 +98,7 @@ const REFUSED_BY_BABEL: [&str; 48] = [
 pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
+        candidates: None,
         first: None,
         noticed: 0,
         is_all_strict: true,
@@ -176,9 +181,16 @@ pub(super) fn module_syntax_in_commonjs<'a>(
 /// Prettier lets Babel go on after an error, and lets pass what is only wrong in strict mode, names that are declared twice or
 /// not at all, `return`, `import` and `export` where they do not belong, and more. It is meant to format code that is not quite
 /// right. So only errors count here of which it is known that it throws. Nothing is asked of the scopes of the file.
-pub(super) fn refusal_of_babel<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+///
+/// `finds_candidates`: `false` for a test, which wants to know that it makes no difference.
+pub(super) fn refusal_of_babel<'a>(
+    file: &'a File<'a>,
+    finds_candidates: bool,
+) -> Option<SyntaxError> {
+    let candidates = finds_candidates.then(|| Candidates::of(file));
     let mut checks = Checks {
         file,
+        candidates: candidates.as_ref(),
         first: None,
         noticed: 0,
         is_all_strict: false,
@@ -190,6 +202,84 @@ pub(super) fn refusal_of_babel<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     checks.first.map(|it| it.1)
 }
 
+/// The expressions that [`refusal_of_babel`] has a question about. Nothing else of `bun format` wants all expressions of a file by
+/// kind, and to sort them all costs ten times what the checks cost.
+///
+/// A check that asks for more of a kind than it did has to be given more HERE. `prettier-refusals.mjs` compares the two ways.
+struct Candidates {
+    /// Twice the kind, plus one in an optional chain, and the index of the expression. Sorted, which is the order of
+    /// [`File::exprs_of_kind`].
+    found: Vec<(u8, u32)>,
+}
+
+impl Candidates {
+    /// Of other kinds there are no candidates: who asks for one gets all of the file.
+    const KINDS: [ExprTag; 13] = [
+        ExprTag::Assign,
+        ExprTag::Await,
+        ExprTag::Binary,
+        ExprTag::Dot,
+        ExprTag::Ident,
+        ExprTag::ImportCall,
+        ExprTag::NewTarget,
+        ExprTag::PrivateIdentifier,
+        ExprTag::Regex,
+        ExprTag::Super,
+        ExprTag::TaggedTemplate,
+        ExprTag::Unary,
+        ExprTag::Yield,
+    ];
+
+    fn of(file: &File) -> Candidates {
+        use hir::ExprKind as Kind;
+        let text = file.text();
+        let has_private_names = strings::contains_char(text, b'#');
+        let has_nullish = strings::contains(text, b"??");
+        let mut found = Vec::new();
+        for (i, raw) in file.hir.exprs.iter().enumerate() {
+            let is_candidate = match raw.kind {
+                // `keywords_as_names`
+                Kind::Ident(name) => name.is_keyword_identifier(),
+                // `private_names`: `a.#b`
+                Kind::Dot { name_pos, .. } => {
+                    has_private_names && text.get(name_pos as usize) == Some(&b'#')
+                }
+                // `operators`: `??` beside `&&` or `||`
+                Kind::Binary { op, .. } => {
+                    has_nullish && matches!(op, BinOp::Nullish | BinOp::And | BinOp::Or)
+                }
+                // `assignment_targets`, `deleted_private_fields`
+                Kind::Unary { op, .. } => matches!(
+                    op,
+                    UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete
+                ),
+                Kind::Assign { .. }
+                | Kind::Await(_)
+                | Kind::ImportCall { .. }
+                | Kind::NewTarget(_)
+                | Kind::PrivateIdentifier(_)
+                | Kind::Regex
+                | Kind::Super
+                | Kind::TaggedTemplate(_)
+                | Kind::Yield { .. } => true,
+                _ => false,
+            };
+            if is_candidate && let Some(tag) = file.expr_in_tree(i) {
+                let is_chained = matches!(raw.kind, Kind::Dot { chain, .. } if chain != Chain::No);
+                found.push((2 * tag as u8 + u8::from(is_chained), i as u32));
+            }
+        }
+        found.sort_unstable();
+        Candidates { found }
+    }
+
+    fn of_kind(&self, tag: ExprTag) -> &[(u8, u32)] {
+        let start = self.found.partition_point(|it| it.0 < 2 * tag as u8);
+        let len = self.found[start..].partition_point(|it| it.0 < 2 * tag as u8 + 2);
+        &self.found[start..start + len]
+    }
+}
+
 /// `of_parser`: the error of TypeScript's parser, if it has one, and where it is.
 pub(super) fn first_error<'a>(
     file: &'a File<'a>,
@@ -198,6 +288,7 @@ pub(super) fn first_error<'a>(
     let language = file.language();
     let mut checks = Checks {
         file,
+        candidates: None,
         first: None,
         noticed: 0,
         is_all_strict: language.source_type == SourceType::Module || language.implied_strict,
@@ -227,7 +318,17 @@ fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..)
 }
 
-impl<'a> Checks<'a> {
+impl<'a, 'c> Checks<'a, 'c> {
+    /// [`File::exprs_of_kind`], or those of them that are [`Candidates`].
+    fn exprs_of(&self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> + use<'a, 'c> {
+        let file = self.file;
+        let candidates = self.candidates.filter(|_| Candidates::KINDS.contains(&tag));
+        let of_file = candidates.is_none().then(|| file.exprs_of_kind(tag));
+        let found = candidates.map_or(&[][..], |it| it.of_kind(tag));
+        (of_file.into_iter().flatten())
+            .chain(found.iter().map(move |it| Expr::from_raw(file, it.1)))
+    }
+
     /// Of two errors that acorn would notice at one place, the one that is found first counts.
     fn fail(&mut self, at: u32, message: impl Into<Vec<u8>>) {
         let message = message.into();
@@ -764,7 +865,7 @@ impl<'a> Checks<'a> {
     /// The names that are keywords in some places: one comparison for each identifier of the file.
     fn keywords_as_names(&mut self) {
         let file = self.file;
-        for it in file.exprs_of_kind(ExprTag::Ident) {
+        for it in self.exprs_of(ExprTag::Ident) {
             let Some(hir::ExprKind::Ident(name)) = it.try_raw().map(|it| it.kind) else {
                 continue;
             };

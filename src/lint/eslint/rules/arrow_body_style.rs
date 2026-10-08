@@ -47,15 +47,28 @@ fn has_asi_problem(token: Option<Token<'_>>) -> bool {
 
 /// Where things are that few fixes ask for.
 #[derive(Default)]
-pub struct State {
+pub struct State<'a> {
     /// The start of the initializer of each `for`, in source order, with the greatest end of this
     /// one and those before it.
     for_loop_initializers: OnceCell<Vec<(u32, u32)>>,
     /// The end of the left side of each `in` operator, in ascending order.
     in_operators: OnceCell<Vec<u32>>,
+    /// The object literals, in source order.
+    objects: OnceCell<Vec<Expr<'a>>>,
 }
 
-impl State {
+impl<'a> State<'a> {
+    /// The object literal that starts at `offset`.
+    fn object_at(&self, file: &'a File<'a>, offset: u32) -> Option<Expr<'a>> {
+        let objects = self.objects.get_or_init(|| {
+            let mut objects: Vec<_> = file.exprs_of_kind(ExprTag::Object).collect();
+            objects.sort_unstable_by_key(|it| it.span().start);
+            objects
+        });
+        let at = objects.binary_search_by_key(&offset, |it| it.span().start).ok()?;
+        objects.get(at).copied()
+    }
+
     /// ESLint's `isInsideForLoopInitializer`.
     fn is_inside_for_loop_initializer(&self, e: Expr<'_>) -> bool {
         let initializers = self.for_loop_initializers.get_or_init(|| {
@@ -99,7 +112,7 @@ impl State {
 /// Makes an expression of the body `{ return argument; }`, which is at `body`.
 fn remove_block<'a>(
     fixer: Fixer<'a>,
-    state: &State,
+    state: &State<'a>,
     arrow: Expr<'a>,
     body: Span,
     statement: Stmt<'a>,
@@ -156,7 +169,7 @@ fn remove_block<'a>(
 }
 
 /// Makes the block `{return body}` of the body of `arrow`, which is `func`.
-fn add_block<'a>(fixer: Fixer<'a>, arrow: Expr<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
+fn add_block<'a>(fixer: Fixer<'a>, state: &State<'a>, arrow: Expr<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
     let file = fixer.file();
     let text = file.text();
     let first = skip_trivia(text, func.arrow_span()?.end);
@@ -166,9 +179,9 @@ fn add_block<'a>(fixer: Fixer<'a>, arrow: Expr<'a>, func: Func<'a>) -> Option<Ve
     let is_paren_and_brace =
         text.get(first as usize) == Some(&b'(') && text.get(second as usize) == Some(&b'{');
     let parenthesised_object_literal = is_paren_and_brace
-        .then(|| utils::get_node_by_range_index(file, second))
-        .and_then(Node::as_expr)
-        .filter(|it| it.tag() == ExprTag::Object && !utils::is_assignment_target(*it));
+        .then(|| state.object_at(file, second))
+        .flatten()
+        .filter(|it| !utils::is_assignment_target(*it));
 
     let Some(object) = parenthesised_object_literal else {
         return Some(vec![
@@ -210,7 +223,7 @@ impl ArrowBodyStyle {
                         && self.require_return_for_object_literal
                         && body.tag() == ExprTag::Object)
                 {
-                    cx.report(body, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, e, func));
+                    cx.report(body, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, &cx.state, e, func));
                 }
             }
             FnBody::None => {}
@@ -267,7 +280,7 @@ impl ArrowBodyStyle {
 
 impl Rule for ArrowBodyStyle {
     const META: Meta = Meta::eslint("arrow-body-style", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = State;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         ArrowBodyStyle {
@@ -282,7 +295,7 @@ impl Rule for ArrowBodyStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.exprs([ExprTag::Fn], Self::check);
         State::default()
     }

@@ -7,37 +7,41 @@ use crate::ast::{
 use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
-use crate::rule::{Entry, Listeners, Meta, NodeTags, Rule};
+use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
 use std::cell::OnceCell;
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
 
 /// Indices into one vector of the HIR, grouped by the kind of the node.
 pub(crate) struct Grouped<const KINDS: usize> {
+    /// After the nodes of all kinds come those that are left out.
     ids: Vec<u32>,
-    /// Where each kind starts in `ids`. One more than there are kinds.
-    starts: Vec<u32>,
+    /// Where each kind starts in `ids`, and where the last ends.
+    starts: [u32; MOST_KINDS + 2],
 }
+
+const MOST_KINDS: usize = 40;
 
 impl<const KINDS: usize> Grouped<KINDS> {
     /// `kind_of(i)`: the kind of the node at `i`, or `None` to leave it out.
     fn new(len: usize, kind_of: impl Fn(usize) -> Option<usize>) -> Self {
-        let mut starts = vec![0u32; KINDS + 1];
-        for i in 0..len {
-            if let Some(kind) = kind_of(i) {
-                starts[kind + 1] += 1;
-            }
+        const { assert!(KINDS <= MOST_KINDS) };
+        let mut starts = [0u32; MOST_KINDS + 2];
+        let kinds: Vec<u8> = (0..len).map(|i| kind_of(i).map_or(KINDS, |kind| kind.min(KINDS)) as u8).collect();
+        for &kind in &kinds {
+            starts[kind as usize + 1] += 1;
         }
-        for kind in 0..KINDS {
+        for kind in 0..=KINDS {
             starts[kind + 1] += starts[kind];
         }
-        let mut next = starts.clone();
-        let mut ids = vec![0u32; starts[KINDS] as usize];
-        for i in 0..len {
-            if let Some(kind) = kind_of(i) {
-                ids[next[kind] as usize] = i as u32;
-                next[kind] += 1;
+        let mut next = starts;
+        let mut ids = vec![0u32; len];
+        for (i, &kind) in kinds.iter().enumerate() {
+            let at = &mut next[kind as usize];
+            if let Some(id) = ids.get_mut(*at as usize) {
+                *id = i as u32;
             }
+            *at += 1;
         }
         Grouped { ids, starts }
     }
@@ -57,6 +61,17 @@ pub(crate) struct ByKind {
     stmts: OnceCell<Grouped<{ StmtTag::COUNT }>>,
     types: OnceCell<Grouped<{ TypeTag::COUNT }>>,
     pats: OnceCell<Grouped<{ PatTag::COUNT }>>,
+    fns: OnceCell<Vec<u32>>,
+    classes: OnceCell<Vec<u32>>,
+    members: OnceCell<Vec<u32>>,
+    props: OnceCell<Vec<u32>>,
+    params: OnceCell<Vec<u32>>,
+    type_params: OnceCell<Vec<u32>>,
+    var_decls: OnceCell<Vec<u32>>,
+    cases: OnceCell<Vec<u32>>,
+    enum_members: OnceCell<Vec<u32>>,
+    import_specs: OnceCell<Vec<u32>>,
+    export_specs: OnceCell<Vec<u32>>,
 }
 
 impl File<'_> {
@@ -77,7 +92,7 @@ impl File<'_> {
         grouped.of(tag as usize)
     }
 
-    fn types_of(&self, tag: TypeTag) -> &[u32] {
+    pub(crate) fn types_of(&self, tag: TypeTag) -> &[u32] {
         let grouped = (self.by_kind().types)
             .get_or_init(|| Grouped::new(self.hir.types.len(), |i| self.type_in_tree(i).map(|tag| tag as usize)));
         grouped.of(tag as usize)
@@ -106,18 +121,20 @@ impl File<'_> {
     }
 }
 
-/// Declares `File::$method`, which calls a function with every `$handle` of the file that is part of the tree.
+/// Declares `File::$method`, which calls a function with every `$handle` of the file that is part of the tree. Which these are
+/// is found out once for all rules.
 macro_rules! every {
     ($($method:ident $handle:ident $field:ident;)*) => {
         impl<'a> File<'a> {
             $(
                 #[inline]
                 pub(crate) fn $method(&'a self, mut visit: impl FnMut($handle<'a>)) {
-                    for i in 0..self.hir.$field.len() {
-                        let it = <$handle as Handle>::from_raw(self, i as u32);
-                        if it.is_in_tree() {
-                            visit(it);
-                        }
+                    let ids = self.by_kind().$field.get_or_init(|| {
+                        let all = 0..self.hir.$field.len() as u32;
+                        all.filter(|&id| <$handle as Handle>::from_raw(self, id).is_in_tree()).collect()
+                    });
+                    for &id in ids {
+                        visit(<$handle as Handle>::from_raw(self, id));
                     }
                 }
             )*
@@ -262,8 +279,9 @@ impl<'a> File<'a> {
 pub trait AnyRule: Send + Sync {
     fn meta(&self) -> &'static Meta;
 
+    /// `None`: it listens for nothing that the file has.
     #[doc(hidden)]
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Box<dyn Running<'a> + 'r>;
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>>;
 }
 
 /// What a rule is given to start on a file.
@@ -280,10 +298,13 @@ impl<R: Rule> AnyRule for R {
         &R::META
     }
 
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Box<dyn Running<'a> + 'r> {
-        let mut on = Listeners::new();
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
+        let mut on = Listeners::new(start.file);
         let state = self.register(&mut on, start.file);
-        Box::new(Run {
+        if on.entries.is_empty() {
+            return None;
+        }
+        Some(Box::new(Run {
             rule: self,
             entries: on.entries,
             cx: Cx {
@@ -292,7 +313,7 @@ impl<R: Rule> AnyRule for R {
                 rule: start.rule,
                 severity: start.severity,
             },
-        })
+        }))
     }
 }
 
@@ -352,7 +373,7 @@ fn event_index(event: &Event) -> usize {
 
 struct Run<'r, 'a, R: Rule> {
     rule: &'r R,
-    entries: Vec<Entry<'a, R>>,
+    entries: Entries<'a, R>,
     cx: Cx<'a, R>,
 }
 
@@ -475,39 +496,73 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
 
 // ───────────────────────────── the walk ─────────────────────────────
 
+/// The listeners for each kind of node: the rule and its listener.
+#[derive(Default)]
+struct ByTag {
+    /// In the order in which they are registered.
+    registered: Vec<(NodeTags, u16, u16)>,
+    /// By `NodeTags::index_of`: where those for the kind start in `listeners`. One more than there are kinds.
+    starts: Vec<u16>,
+    listeners: Vec<(u16, u16)>,
+    tags: NodeTags,
+}
+
+impl ByTag {
+    fn finish(&mut self) {
+        self.starts = vec![0; NodeTags::COUNT + 1];
+        for &(tags, ..) in &self.registered {
+            self.tags = self.tags | tags;
+            tags.indices().for_each(|index| self.starts[index as usize + 1] += 1);
+        }
+        for index in 0..NodeTags::COUNT {
+            self.starts[index + 1] += self.starts[index];
+        }
+        let mut next = self.starts.clone();
+        self.listeners = vec![(0, 0); self.starts[NodeTags::COUNT] as usize];
+        for &(tags, rule, entry) in &self.registered {
+            for index in tags.indices() {
+                self.listeners[next[index as usize] as usize] = (rule, entry);
+                next[index as usize] += 1;
+            }
+        }
+    }
+
+    #[inline]
+    fn of(&self, node: Node) -> &[(u16, u16)] {
+        let index = NodeTags::index_of(node) as usize;
+        &self.listeners[self.starts[index] as usize..self.starts[index + 1] as usize]
+    }
+}
+
 /// Calls the listeners that depend on the order of the nodes.
 struct Walk<'w, 'r, 'a> {
     running: &'w mut [Box<dyn Running<'a> + 'r>],
-    /// By `NodeTags::index_of`: the rule and its listener.
-    enter: Vec<Vec<(u16, u16)>>,
-    exit: Vec<Vec<(u16, u16)>>,
+    enter: ByTag,
+    exit: ByTag,
     /// By `event_index`.
     code_path: [Vec<(u16, u16)>; EVENTS],
 }
 
 impl<'a> Walk<'_, '_, 'a> {
+    #[inline]
     fn enter(&mut self, node: Node<'a>) {
-        for &(rule, entry) in &self.enter[NodeTags::index_of(node) as usize] {
+        for &(rule, entry) in self.enter.of(node) {
             self.running[rule as usize].call(entry, node);
         }
     }
 
+    #[inline]
     fn exit(&mut self, node: Node<'a>) {
-        for &(rule, entry) in &self.exit[NodeTags::index_of(node) as usize] {
+        for &(rule, entry) in self.exit.of(node) {
             self.running[rule as usize].call(entry, node);
         }
     }
 
+    #[inline]
     fn event(&mut self, event: Event<'a>) {
         for &(rule, entry) in &self.code_path[event_index(&event)] {
             self.running[rule as usize].code_path_event(entry, event);
         }
-    }
-
-    /// The kinds of nodes that `table` has a listener for.
-    fn tags_of(table: &[Vec<(u16, u16)>]) -> NodeTags {
-        let listened = table.iter().enumerate().filter(|(_, listeners)| !listeners.is_empty());
-        listened.fold(NodeTags::EMPTY, |tags, (index, _)| tags | NodeTags::from_index(index as u32))
     }
 }
 
@@ -546,7 +601,7 @@ fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
         }
     }
     let mut found: Vec<Found<'a>> = Vec::new();
-    file.every_node_of(Walk::tags_of(&walk.enter) | Walk::tags_of(&walk.exit), |node| {
+    file.every_node_of(walk.enter.tags | walk.exit.tags, |node| {
         let span = node.span();
         found.push(Found {
             start: span.start,
@@ -614,7 +669,7 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
         if enabled.severity == Severity::Off || enabled.rule.meta().requires_types && !has_types {
             continue;
         }
-        running.push(enabled.rule.start(Start {
+        running.extend(enabled.rule.start(Start {
             file,
             rule: i as u16,
             severity: enabled.severity,
@@ -625,30 +680,19 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
         rule.run_unordered();
     }
 
-    let (mut enter, mut exit): (Vec<Vec<(u16, u16)>>, Vec<Vec<(u16, u16)>>) = (Vec::new(), Vec::new());
+    let (mut enter, mut exit) = (ByTag::default(), ByTag::default());
     let mut code_path: [Vec<(u16, u16)>; EVENTS] = Default::default();
-    let mut needs_walk = false;
     for (i, rule) in running.iter().enumerate() {
-        rule.listeners_of_walk(&mut |listener| {
-            if !needs_walk {
-                needs_walk = true;
-                enter.resize(NodeTags::COUNT, Vec::new());
-                exit.resize(NodeTags::COUNT, Vec::new());
-            }
-            let (table, tags, entry) = match listener {
-                WalkListener::Enter(tags, entry) => (&mut enter, tags, entry),
-                WalkListener::Exit(tags, entry) => (&mut exit, tags, entry),
-                WalkListener::CodePath(event, entry) => return code_path[event].push((i as u16, entry)),
-            };
-            for (index, listeners) in table.iter_mut().enumerate() {
-                if tags.has_index(index as u32) {
-                    listeners.push((i as u16, entry));
-                }
-            }
+        rule.listeners_of_walk(&mut |listener| match listener {
+            WalkListener::Enter(tags, entry) => enter.registered.push((tags, i as u16, entry)),
+            WalkListener::Exit(tags, entry) => exit.registered.push((tags, i as u16, entry)),
+            WalkListener::CodePath(event, entry) => code_path[event].push((i as u16, entry)),
         });
     }
-    if needs_walk {
-        let has_code_paths = code_path.iter().any(|listeners| !listeners.is_empty());
+    let has_code_paths = code_path.iter().any(|listeners| !listeners.is_empty());
+    if has_code_paths || !enter.registered.is_empty() || !exit.registered.is_empty() {
+        enter.finish();
+        exit.finish();
         let mut listeners = Walk {
             running: &mut running,
             enter,
@@ -656,8 +700,7 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
             code_path,
         };
         if has_code_paths {
-            let (enter, exit) = (Walk::tags_of(&listeners.enter), Walk::tags_of(&listeners.exit));
-            for step in steps(file, enter, exit) {
+            for step in steps(file, listeners.enter.tags, listeners.exit.tags) {
                 match step {
                     Step::Enter(node) => listeners.enter(node),
                     Step::Exit(node) => listeners.exit(node),

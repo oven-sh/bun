@@ -46,6 +46,7 @@ use crate::context::Cx;
 use crate::literal::Literal;
 use crate::options::Options;
 use crate::semantic::Symbol;
+use smallvec::SmallVec;
 
 /// A message that a rule reports. `{{name}}` in `text` is replaced by what
 /// [`Report::data`](crate::context::Report::data) provides.
@@ -246,17 +247,20 @@ pub trait Rule: Send + Sync + Sized + 'static {
 /// A function of the rule `R` that is called with an `N`.
 pub type Listener<'a, R, N> = fn(&R, N, &mut Cx<'a, R>);
 
-/// What a rule listens for in one file.
+/// What a rule listens for in one file. What the file has no node for is not kept.
 pub struct Listeners<'a, R: Rule> {
-    pub(crate) entries: Vec<Entry<'a, R>>,
+    pub(crate) entries: Entries<'a, R>,
+    file: &'a File<'a>,
 }
+
+pub(crate) type Entries<'a, R> = SmallVec<[Entry<'a, R>; 4]>;
 
 type OnCodePath<'a, R> = fn(&R, CodePath<'a>, Node<'a>, &mut Cx<'a, R>);
 type OnSegment<'a, R> = fn(&R, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
 type OnSegmentLoop<'a, R> = fn(&R, Segment<'a>, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
 
 macro_rules! sorts {
-    ($($(#[$doc:meta])* $method:ident $variant:ident $handle:ident;)*) => {
+    ($($(#[$doc:meta])* $method:ident $variant:ident $handle:ident $has_any:expr;)*) => {
         pub(crate) enum Entry<'a, R: Rule> {
             Exprs(ExprTag, Listener<'a, R, Expr<'a>>),
             Stmts(StmtTag, Listener<'a, R, Stmt<'a>>),
@@ -282,7 +286,10 @@ macro_rules! sorts {
                 /// In no particular order.
                 #[inline]
                 pub fn $method(&mut self, listener: Listener<'a, R, $handle<'a>>) {
-                    self.entries.push(Entry::$variant(listener));
+                    let has_any: fn(&File) -> bool = $has_any;
+                    if has_any(self.file) {
+                        self.entries.push(Entry::$variant(listener));
+                    }
                 }
             )*
         }
@@ -292,41 +299,42 @@ macro_rules! sorts {
 sorts! {
     /// Every function-like: declarations, expressions, arrow functions, methods, accessors,
     /// constructors, static blocks, signatures, function types.
-    funcs Funcs Func;
+    funcs Funcs Func |file| !file.hir.fns.is_empty();
     /// Every class declaration and expression.
-    classes Classes Class;
+    classes Classes Class |file| !file.hir.classes.is_empty();
     /// Every member of a class, an interface or a type literal.
-    members Members Member;
+    members Members Member |file| !file.hir.members.is_empty();
     /// Every property of an object literal and every attribute of a JSX element.
-    props Props Prop;
+    props Props Prop |file| !file.hir.props.is_empty();
     /// Every parameter.
-    params Params Param;
+    params Params Param |file| !file.hir.params.is_empty();
     /// Every type parameter.
-    type_params TypeParams TypeParam;
+    type_params TypeParams TypeParam |file| !file.hir.type_params.is_empty();
     /// Every `pat: ty = init` of a variable statement, and every `catch` parameter.
-    var_decls VarDecls VarDecl;
+    var_decls VarDecls VarDecl |file| !file.hir.var_decls.is_empty();
     /// Every `case` and `default` clause.
-    cases Cases Case;
+    cases Cases Case |file| !file.hir.cases.is_empty();
     /// Every member of an enum.
-    enum_members EnumMembers EnumMember;
+    enum_members EnumMembers EnumMember |file| !file.hir.enum_members.is_empty();
     /// Every `a as b` in the braces of an import.
-    import_specs ImportSpecs ImportSpec;
+    import_specs ImportSpecs ImportSpec |file| !file.hir.import_specs.is_empty();
     /// Every `a as b` in the braces of an export.
-    export_specs ExportSpecs ExportSpec;
+    export_specs ExportSpecs ExportSpec |file| !file.hir.export_specs.is_empty();
     /// Everything that the file declares in a scope: variables, functions, classes, parameters,
     /// imports, types, namespaces, enums.
-    symbols Symbols Symbol;
+    symbols Symbols Symbol |_| true;
     /// Every string in quotes, which is a `Literal` for ESLint: not only the expressions, also the keys of properties and
     /// members, literal types, module specifiers, the names in quotes of imports and exports. Not the text in JSX.
-    string_literals StringLiterals Literal;
+    string_literals StringLiterals Literal |_| true;
     /// The same for numbers, including `1n`.
-    number_literals NumberLiterals Literal;
+    number_literals NumberLiterals Literal |_| true;
 }
 
 impl<'a, R: Rule> Listeners<'a, R> {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(file: &'a File<'a>) -> Self {
         Listeners {
-            entries: Vec::new(),
+            entries: SmallVec::new(),
+            file,
         }
     }
 
@@ -336,7 +344,7 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = ExprTag>,
         listener: Listener<'a, R, Expr<'a>>,
     ) {
-        let tags = tags.into_iter();
+        let tags = tags.into_iter().filter(|&tag| self.file.has_exprs([tag]));
         self.entries.extend(tags.map(|tag| Entry::Exprs(tag, listener)));
     }
 
@@ -346,7 +354,7 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = StmtTag>,
         listener: Listener<'a, R, Stmt<'a>>,
     ) {
-        let tags = tags.into_iter();
+        let tags = tags.into_iter().filter(|&tag| self.file.has_stmts([tag]));
         self.entries.extend(tags.map(|tag| Entry::Stmts(tag, listener)));
     }
 
@@ -356,7 +364,7 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = TypeTag>,
         listener: Listener<'a, R, TypeNode<'a>>,
     ) {
-        let tags = tags.into_iter();
+        let tags = tags.into_iter().filter(|&tag| !self.file.types_of(tag).is_empty());
         self.entries.extend(tags.map(|tag| Entry::Types(tag, listener)));
     }
 
@@ -366,7 +374,7 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = PatTag>,
         listener: Listener<'a, R, Pat<'a>>,
     ) {
-        let tags = tags.into_iter();
+        let tags = tags.into_iter().filter(|&tag| !self.file.pats_of(tag).is_empty());
         self.entries.extend(tags.map(|tag| Entry::Pats(tag, listener)));
     }
 
@@ -481,13 +489,21 @@ impl NodeTags {
     }
 
     #[inline]
-    pub(crate) const fn from_index(index: u32) -> NodeTags {
-        NodeTags(1 << index)
-    }
-
-    #[inline]
     pub(crate) const fn has_index(self, index: u32) -> bool {
         self.0 & (1 << index) != 0
+    }
+
+    /// The numbers of the bits that are set: see [`NodeTags::index_of`].
+    #[inline]
+    pub(crate) fn indices(self) -> impl Iterator<Item = u32> {
+        let mut rest = self.0 & ((1 << NodeTags::COUNT) - 1);
+        std::iter::from_fn(move || {
+            (rest != 0).then(|| {
+                let index = rest.trailing_zeros();
+                rest &= rest - 1;
+                index
+            })
+        })
     }
 
     #[inline]
@@ -522,7 +538,7 @@ impl NodeTags {
     }
 }
 
-const _: () = assert!(NodeTags::COUNT <= 128);
+const _: () = assert!(NodeTags::COUNT < 128);
 
 impl std::ops::BitOr for NodeTags {
     type Output = NodeTags;

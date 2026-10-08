@@ -2,8 +2,9 @@
 
 use super::registry::{Registry, parse_rule_id};
 use crate::context::Severity;
-use crate::language::LanguageOptions;
+use crate::language::{LanguageOptions, Parser};
 use crate::options::{Json, Options};
+use crate::rule::Plugin;
 use crate::runner::{AnyRule, RuleEntry};
 use std::sync::Arc;
 
@@ -99,6 +100,12 @@ impl ResolvedConfig {
         self.rules.iter().find(|it| it.entry.meta.plugin == plugin && it.entry.meta.name == name)
     }
 
+    pub(crate) fn validate_language_options(&mut self, language_options: &Json) {
+        if let Err(message) = LanguageOptions::validate_json(language_options) {
+            self.error = Some([&b"Key \"languageOptions\": "[..], &message].concat());
+        }
+    }
+
     /// ESLint's `validateRulesConfig` for one rule. The first error is kept.
     pub(crate) fn validate(&mut self, entry: &'static RuleEntry, severity: Severity, options: &[Json]) {
         if severity != Severity::Off
@@ -112,7 +119,14 @@ impl ResolvedConfig {
 
     /// The rule that the configuration, or a comment of a file that it is for, calls `id`.
     pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
-        registry.find_preferring(id, self.prefers_typescript_rules)
+        let found = registry.find_preferring(id, self.prefers_typescript_rules);
+        if found.is_some() || !self.prefers_typescript_rules {
+            return found;
+        }
+        // oxlint goes by the name without the plugin: `no-explicit-any` is
+        // `typescript/no-explicit-any`, and `@typescript-eslint/no-undef` is `no-undef`.
+        let name = parse_rule_id(id).1;
+        registry.get(Plugin::TypeScript, name).or_else(|| registry.get(Plugin::Eslint, name))
     }
 
     /// Whether the rule called `id`, which does not exist here, is skipped silently: it is of a
@@ -122,9 +136,13 @@ impl ResolvedConfig {
         self.skips_unknown_rules || self.foreign_plugins.iter().any(|it| **it == *plugin)
     }
 
-    /// Whether the file can be linted: it is JavaScript or TypeScript, as it is.
-    pub fn is_supported(&self) -> bool {
-        self.processor.is_none() && self.language_name.as_deref().is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
+    /// Whether the file at `path` can be linted: it is JavaScript or TypeScript, as it is. Not if a
+    /// processor is to take the code out of it, if its `language` is another, or if a parser that is
+    /// not known here is to read what is not called like JavaScript (`.vue`, `.svelte`).
+    pub fn is_supported(&self, path: &[u8]) -> bool {
+        self.processor.is_none()
+            && self.language_name.as_deref().is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
+            && (self.language.parser != Parser::Other || bun_sema::resolve::ScriptKind::from_file_name(path).is_some())
     }
 }
 
@@ -164,6 +182,7 @@ impl ResolvedConfig {
             ),
             ..ResolvedConfig::default()
         };
+        config.validate_language_options(json.get(b"languageOptions").unwrap_or(&null));
         if let Some(linter) = json.get(b"linterOptions") {
             config.linter.merge_json(linter);
         }

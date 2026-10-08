@@ -148,6 +148,40 @@ impl LanguageOptions {
         }
     }
 
+    /// ESLint's `validateLanguageOptions`. `Err`: the message, which ESLint prefixes with
+    /// `Key "languageOptions": `.
+    pub fn validate_json(language_options: &Json) -> Result<(), Vec<u8>> {
+        match language_options.get(b"ecmaVersion") {
+            None | Some(Json::Number(_)) => {}
+            Some(Json::String(version)) if version == b"latest" => {}
+            Some(_) => return Err(b"Key \"ecmaVersion\": Expected a number or \"latest\".".to_vec()),
+        }
+        if language_options.get(b"sourceType").is_some() && source_type_of(language_options.get(b"sourceType")).is_none() {
+            return Err(b"Key \"sourceType\": Expected \"script\", \"module\", or \"commonjs\".".to_vec());
+        }
+        if let Some(globals) = language_options.get(b"globals") {
+            let Some(globals) = globals.as_object() else {
+                return Err(b"Key \"globals\": Expected an object.".to_vec());
+            };
+            for (name, value) in globals.iter().filter(|it| it.0 != b"__proto__") {
+                if crate::linter::trim_js_space(name) != &name[..] {
+                    return Err([b"Key \"globals\": Global \"", &name[..], b"\" has leading or trailing whitespace."].concat());
+                }
+                if Global::of_json(value).is_none() {
+                    return Err([b"Key \"globals\": Key \"", &name[..], b"\": Expected \"readonly\", \"writable\", or \"off\"."].concat());
+                }
+            }
+        }
+        if language_options.get(b"parserOptions").is_some_and(|it| it.as_object().is_none()) {
+            return Err(b"Key \"parserOptions\": Expected an object.".to_vec());
+        }
+        let known: [&[u8]; 6] = [b"ecmaVersion", b"sourceType", b"globals", b"parser", b"parserOptions", b"$env"];
+        match language_options.as_object().unwrap_or_default().iter().find(|it| !known.contains(&&it.0[..])) {
+            Some((key, _)) => Err([b"Unexpected key \"", &key[..], b"\" found."].concat()),
+            None => Ok(()),
+        }
+    }
+
     /// From ESLint's `languageOptions` and `settings` after all configuration objects are merged.
     /// What is missing has ESLint's default. What is invalid is ignored.
     ///

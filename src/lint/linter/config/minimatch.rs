@@ -1046,9 +1046,9 @@ impl Minimatch {
             let between = &file[at.min(file.len() - tail_len)..file.len() - tail_len];
             return !between.iter().any(|name| stops_globstar(name)) && (tail_len > 0 || !between.is_empty());
         }
-        let sections: Vec<&[Part]> = body.split(is_globstar).collect();
+        let sections: SmallVec<[&[Part]; 4]> = body.split(is_globstar).collect();
         // How many parts are before each section.
-        let mut before = Vec::with_capacity(sections.len());
+        let mut before: SmallVec<[usize; 4]> = SmallVec::new();
         let mut count = 0;
         for section in &sections {
             before.push(count);
@@ -1057,7 +1057,7 @@ impl Minimatch {
         // The last position at which each section is looked for. `minimatch` takes the counts in
         // reverse order.
         let file_len = (file.len() - tail_len) as isize;
-        let with_last: Vec<(&[Part], isize)> = (sections.iter().zip(before.iter().rev()))
+        let with_last: SmallVec<[(&[Part], isize); 4]> = (sections.iter().zip(before.iter().rev()))
             .map(|(section, before)| (*section, file_len - (before + section.len()) as isize))
             .collect();
         Self::match_sections(file, &with_last, at, 0, tail_len > 0) == Some(true)

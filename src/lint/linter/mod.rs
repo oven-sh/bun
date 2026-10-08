@@ -6,12 +6,29 @@
 //! - [`ResolvedConfig`]: what is configured for one file.
 //! - [`Linter::lint`]: ESLint's `Linter.verify` for a file that is parsed already.
 //! - [`LintMessage`]: what it reports.
+//! - [`verify_and_fix`]: ESLint's `Linter.verifyAndFix`.
 //! - [`globals`]: the global variables that a file does not declare.
+//!
+//! What finds the files, reads the configuration from disk, parses, prints and writes fixes is built
+//! on top:
+//!
+//! ```ignore
+//! let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES]));
+//! let config = Config::from_flat_json(linter.registry(), directory_of_the_configuration, &json)?;
+//! // On any thread, for each file:
+//! let FileConfig::Matched(resolved) = config.get(linter.registry(), path) else { continue };
+//! if let Some(message) = &resolved.error { /* ESLint refuses to run */ }
+//! if !resolved.is_supported(path) { continue }
+//! let how = resolved.language.parse_options(path); // The arguments of `summarize`.
+//! let file = File::new(path, &hir, &bound, &atoms, &resolved.language, types);
+//! let result = linter.lint(&file, &resolved, &LintOptions::default());
+//! ```
 
 mod comment;
 pub mod config;
 mod directives;
 mod disable;
+mod fixer;
 pub mod globals;
 mod json_v8;
 mod levn;
@@ -23,15 +40,17 @@ mod schema;
 mod space;
 
 pub use config::{Config, ConfigError, FileConfig, RcFlavor};
+pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fix};
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use message::{LintMessage, RuleId, Suppression, Utf16Offsets};
 pub(crate) use per_file::PerFile;
+pub(crate) use space::trim as trim_js_space;
 pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
-use crate::language::Parser;
+use crate::language::{Parser, SourceType};
 use crate::options::{Json, Options};
 use crate::runner::{AnyRule, Enabled, RuleEntry};
 use directives::{ConfigComment, Label};
@@ -42,6 +61,7 @@ use message::Locator;
 #[doc(hidden)]
 pub mod testing {
     pub use super::comment::{parse_directive, parse_json_like_config, parse_list_config, parse_string_config};
+    pub use super::directives::candidates;
     pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
     pub use super::schema::validate_by_id;
@@ -157,11 +177,11 @@ impl Linter {
         }
         let comments = match options.allow_inline_config {
             true => file.config_comments(),
-            false => Default::default(),
+            false => &[],
         };
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
-            for comment in &comments[..] {
+            for comment in comments {
                 let message = quoted(&[
                     b"'",
                     file.slice(comment.span),
@@ -179,11 +199,18 @@ impl Linter {
                 skipped: &mut result.skipped_rules,
                 configured: Vec::new(),
             };
-            for comment in &comments[..] {
+            for comment in comments {
                 inline.apply(comment, &mut running);
             }
-            for comment in &comments[..] {
+            for comment in comments {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
+            }
+        }
+
+        // ESLint's `markExportedVariables`.
+        for name in file.exported_in_comments() {
+            if let Some(symbol) = std::str::from_utf8(name).ok().and_then(|name| file.scope().get(name)) {
+                symbol.mark_exported();
             }
         }
 
@@ -197,6 +224,11 @@ impl Linter {
                 }
                 runs
             });
+        }
+        // Nor can what disables a rule that does not run for lack of types be called unused.
+        if file.types.is_none() {
+            let without_types = running.iter().filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
+            rules_to_ignore.extend(without_types.map(|it| RuleId::Known(it.entry.meta)));
         }
         let enabled: Vec<Enabled> = (running.iter())
             .map(|it| Enabled {
@@ -263,8 +295,21 @@ fn parse_error(file: &File, locator: &Locator) -> Option<LintMessage> {
     if !file.has_parse_errors() {
         return None;
     }
-    let diagnostics = file.hir.diagnostics.iter();
-    let first = diagnostics.clone().find(|it| it.kind == DiagnosticKind::Parse).or_else(|| diagnostics.clone().next());
+    let language = file.language();
+    // What is an error in strict mode only. TypeScript's parser always reports it.
+    let is_sloppy = language.parser == Parser::Espree && language.source_type != SourceType::Module && !language.implied_strict;
+    let is_tolerated = |code: u32| match code {
+        // Octal literals and escapes, `\8`, `08`.
+        1121 | 1487 | 1488 | 1489 => is_sloppy,
+        // `import a from "a" assert { .. }`, which typescript-estree accepts.
+        2880 => true,
+        _ => false,
+    };
+    let parse_errors = || file.hir.diagnostics.iter().filter(|it| it.kind == DiagnosticKind::Parse);
+    if parse_errors().next().is_some() && parse_errors().all(|it| is_tolerated(it.code)) {
+        return None;
+    }
+    let first = parse_errors().find(|it| !is_tolerated(it.code)).or_else(|| file.hir.diagnostics.first());
     let mut message = b"Parsing error: ".to_vec();
     match first.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
         Some((diagnostic, text)) => bun_sema::messages::format(&mut message, text, &diagnostic.args),
@@ -272,7 +317,7 @@ fn parse_error(file: &File, locator: &Locator) -> Option<LintMessage> {
     }
     let (line, column) = locator.position(first.map_or(0, |it| it.start));
     // typescript-estree counts the column of an error from 0, espree from 1.
-    let from_zero = file.language().parser == Parser::TypeScript;
+    let from_zero = language.parser == Parser::TypeScript;
     Some(LintMessage {
         rule_id: None,
         severity: Severity::Error,
@@ -401,8 +446,10 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             }
             // The options of a rule that the configuration enables are validated already.
             let is_validated = inline.len() == 1 && existing.is_some_and(|it| it.severity != Severity::Off);
+            // ESLint leaves out what is off only if that is written `0`.
+            let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
             if !is_validated
-                && severity != Severity::Off
+                && !is_zero
                 && let Err(lines) = schema::validate(entry.meta, options)
             {
                 let message = quoted(&[b"Inline configuration for rule \"", &id, b"\" is invalid:\n\t", space::trim(&lines), b"\n"]);
@@ -484,7 +531,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             return self.error(comment, None, message);
         }
         let list = self.file.slice(comment.value);
-        let names = comment::parse_list_config(list);
+        let mut names = comment::parse_list_config(list);
         let (line, column) = if kind == disable::Kind::DisableNextLine { end } else { start };
         let parent = parents.len() as u32;
         let mut push = |rule: Option<RuleId>, name: &'a [u8]| {
@@ -500,11 +547,19 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
         if names.is_empty() {
             push(None, b"");
         }
-        for &name in &names {
-            if let Some(entry) = self.find(comment, name) {
+        // Two names for one rule count once.
+        let mut rules: Vec<&'static RuleEntry> = Vec::new();
+        names.retain(|&name| {
+            let Some(entry) = self.find(comment, name) else {
+                return true;
+            };
+            let is_new = !rules.iter().any(|it| is_same_rule(it, entry));
+            if is_new {
+                rules.push(entry);
                 push(Some(RuleId::Known(entry.meta)), name);
             }
-        }
+            is_new
+        });
         parents.push(disable::Parent {
             comment: comment.span,
             list,
@@ -514,3 +569,11 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
         });
     }
 }
+
+/// All threads share these.
+const _: fn() = || {
+    fn is_shared<T: Send + Sync>() {}
+    is_shared::<Linter>();
+    is_shared::<Config>();
+    is_shared::<ResolvedConfig>();
+};

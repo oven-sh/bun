@@ -20,7 +20,8 @@ pub enum RcFlavor {
     /// `.oxlintrc.json`:
     /// - The rules of the category `correctness` warn unless `categories` says otherwise.
     /// - A rule setting that is only a severity resets the options of the rule.
-    /// - What is extended passes on its rules, categories, plugins and overrides only.
+    /// - What is extended passes on its rules, categories, plugins and overrides only. All overrides
+    ///   come after all rules, and their patterns are relative to the file that extends.
     /// - A rule of ESLint that typescript-eslint extends (`no-unused-vars`) understands TypeScript:
     ///   the extension runs in its place, and is reported under its own name.
     Oxlint,
@@ -112,6 +113,8 @@ struct Rc<'r, 'l> {
     categories: Vec<(Vec<u8>, Severity)>,
     /// `plugins` names typescript, or nothing has `plugins`.
     plugins: Option<Vec<Vec<u8>>>,
+    /// In oxlint the overrides of all files come after the rules of all files.
+    overrides: Vec<ConfigObject>,
 }
 
 impl Rc<'_, '_> {
@@ -186,7 +189,8 @@ impl Rc<'_, '_> {
             all.extend(plugins.iter().filter_map(Json::as_str).map(<[u8]>::to_vec));
         }
         self.note_js_plugins(json);
-        let base_path = (directory != &self.reader.base_path[..]).then(|| directory.to_vec());
+        // oxlint takes all patterns relative to the file that extends.
+        let base_path = (self.flavor == RcFlavor::Eslint && directory != &self.reader.base_path[..]).then(|| directory.to_vec());
         let passes_everything_on = !is_extended || self.flavor == RcFlavor::Eslint;
 
         let ignore_patterns = strings_of(json.get(b"ignorePatterns"));
@@ -237,7 +241,10 @@ impl Rc<'_, '_> {
                 rules: self.rules(item)?,
                 ..ConfigObject::default()
             };
-            self.reader.objects.push(object);
+            match self.flavor {
+                RcFlavor::Oxlint => self.overrides.push(object),
+                RcFlavor::Eslint => self.reader.objects.push(object),
+            }
         }
         Ok(())
     }
@@ -302,13 +309,22 @@ impl Config {
                 RcFlavor::Eslint => Vec::new(),
             },
             plugins: None,
+            overrides: Vec::new(),
         };
         rc.reader.objects.push(ConfigObject {
             files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
             ..ConfigObject::default()
         });
+        // What each ignores by itself. For ESLint these are patterns of a `.gitignore`.
+        let ignored: Vec<Vec<u8>> = match flavor {
+            RcFlavor::Eslint => [&b".*"[..], b"!.eslintrc.*", b"/**/node_modules/*"].iter().map(|it| ignore_pattern_to_minimatch(it)).collect(),
+            RcFlavor::Oxlint => [&b"**/node_modules/"[..], b"**/.git/", b"**/.jj/", b"**/*.min.*", b"**/*-min.*", b"**/*_min.*"]
+                .iter()
+                .map(|it| it.to_vec())
+                .collect(),
+        };
         rc.reader.objects.push(ConfigObject {
-            ignores: Some(vec![Pattern::new(b"**/node_modules/"), Pattern::new(b".git/")]),
+            ignores: Some(ignored.iter().map(|it| Pattern::new(it)).collect()),
             is_global_ignores: true,
             ..ConfigObject::default()
         });
@@ -317,6 +333,7 @@ impl Config {
         rc.reader.objects.push(ConfigObject::default());
         rc.file(json, &base_path, false, 0)?;
         rc.reader.objects[categories_at].rules = rc.category_rules();
+        rc.reader.objects.append(&mut rc.overrides);
         Ok(rc.reader.finish(flavor == RcFlavor::Eslint, true))
     }
 }

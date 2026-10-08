@@ -8,6 +8,8 @@
 //! | `variable.eslintImplicitGlobalSetting` | [`GlobalVariable::implicit_setting`] |
 //! | `variable.eslintExplicitGlobal` | [`GlobalVariable::is_explicit`] |
 //! | `variable.eslintExplicitGlobalComments` | [`GlobalVariable::comments`] |
+//! | `variable.eslintExported` | [`GlobalVariable::is_exported`] |
+//! | `variable instanceof ImplicitLibVariable` | [`GlobalVariable::is_in_lib`] |
 //! | `variable.isTypeVariable`, `isValueVariable` | [`GlobalVariable::is_type`], [`GlobalVariable::is_value`] |
 //! | the variables with `eslintExplicitGlobal` | [`File::globals_in_comments`] |
 //! | `astUtils.getNameLocationInGlobalDirectiveComment` | [`File::name_in_global_comment`] |
@@ -145,7 +147,7 @@ impl ConfigGlobals {
         if name == b"const" {
             return TYPE;
         }
-        id_of(name).map_or(0, |id| self.libs[id / 4] >> (id % 4 * 2) & 3)
+        id_of(name).map_or(0, |id| (self.libs[id / 4] >> (id % 4 * 2)) & 3)
     }
 }
 
@@ -191,9 +193,15 @@ pub struct GlobalVariable<'f> {
     pub is_type: bool,
     /// typescript-eslint's `variable.isValueVariable`.
     pub is_value: bool,
+    /// A library of TypeScript defines it, whatever else does: typescript-eslint's
+    /// `variable instanceof ImplicitLibVariable`.
+    pub is_in_lib: bool,
     /// Only a library of TypeScript defines it. Then a reference resolves to it only if it asks
     /// for what the variable is: a type, a value.
     pub is_only_in_lib: bool,
+    /// ESLint's `variable.eslintExported`, with which `variable.eslintUsed` is set: an
+    /// `/* exported */` comment names it.
+    pub is_exported: bool,
 }
 
 impl GlobalVariable<'_> {
@@ -233,6 +241,7 @@ impl<'a> File<'a> {
         let implicit = config.setting(name);
         let comment = self.globals_in_comments().iter().find(|it| *it.name == *name);
         let lib = if self.uses_typescript_parser() { config.lib(name) } else { 0 };
+        let is_exported = self.exported_in_comments().iter().any(|it| **it == *name);
         match comment.map(|it| it.setting).or(implicit) {
             None | Some(Global::Off) if lib == 0 => None,
             None | Some(Global::Off) => Some(GlobalVariable {
@@ -241,7 +250,9 @@ impl<'a> File<'a> {
                 comments: &[],
                 is_type: lib & TYPE != 0,
                 is_value: lib & VALUE != 0,
+                is_in_lib: true,
                 is_only_in_lib: true,
+                is_exported,
             }),
             Some(setting) => Some(GlobalVariable {
                 is_writable: setting == Global::Writable,
@@ -249,7 +260,9 @@ impl<'a> File<'a> {
                 comments: comment.map_or(&[], |it| &it.comments),
                 is_type: lib == 0 || lib & TYPE != 0,
                 is_value: lib == 0 || lib & VALUE != 0,
+                is_in_lib: lib != 0,
                 is_only_in_lib: false,
+                is_exported,
             }),
         }
     }

@@ -62,7 +62,7 @@ pub(crate) struct ConfigComment {
 /// follows. Whether it is in a string or in another comment is not known yet.
 ///
 /// A file without any costs three searches for a substring.
-fn candidates(text: &[u8]) -> Vec<u32> {
+pub fn candidates(text: &[u8]) -> Vec<u32> {
     let mut found = Vec::new();
     for needle in [&b"lint"[..], b"global", b"exported"] {
         let mut from = 0;

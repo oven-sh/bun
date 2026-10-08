@@ -68,6 +68,41 @@ fn number_of(schema: &Json, key: &[u8]) -> Option<f64> {
     }
 }
 
+/// The types that have keywords of their own, in the order in which Ajv checks them, and these
+/// keywords.
+const GROUPS: [(&[u8], &[&[u8]]); 4] = [
+    (b"number", &[b"maximum", b"minimum", b"multipleOf", b"format"]),
+    (b"string", &[b"maxLength", b"minLength", b"pattern", b"format"]),
+    (b"array", &[b"maxItems", b"minItems", b"items", b"contains", b"uniqueItems"]),
+    (
+        b"object",
+        &[
+            b"maxProperties",
+            b"minProperties",
+            b"required",
+            b"dependencies",
+            b"propertyNames",
+            b"properties",
+            b"additionalProperties",
+            b"patternProperties",
+        ],
+    ),
+];
+
+fn uses_group(schema: &Json, keywords: &[&[u8]]) -> bool {
+    keywords.iter().any(|keyword| schema.get(keyword).is_some())
+}
+
+/// Whether there is a `$ref` anywhere in a schema.
+fn has_reference(schema: &Json, depth: usize) -> bool {
+    match schema {
+        _ if depth > MAX_DEPTH => false,
+        Json::Array(items) => items.iter().any(|it| has_reference(it, depth + 1)),
+        Json::Object(entries) => entries.iter().any(|it| it.0 == b"$ref" || has_reference(&it.1, depth + 1)),
+        _ => false,
+    }
+}
+
 /// `schemaHasRules`: whether a schema has a keyword that validates.
 fn has_rules(schema: &Json) -> bool {
     schema.as_object().unwrap_or_default().iter().any(|(key, _)| {
@@ -129,30 +164,48 @@ impl<'s> Validator<'s> {
             depth: cx.depth + 1,
             ..cx
         };
-        // Next to `$ref`, other keywords are ignored. What is referred to is compiled by itself,
-        // as if nothing were around it.
+        // Next to `$ref`, other keywords are ignored.
         if let Some(reference) = schema.get(b"$ref").and_then(Json::as_str) {
             let Some(target) = self.resolve(reference) else {
                 return true;
             };
-            return self.check(target, data, cx);
+            // What has references itself is compiled to a function of its own, which does not know
+            // what it is called from.
+            let is_composite = cx.is_composite && !has_reference(target, 0);
+            return self.check(target, data, Context { is_composite, ..cx });
         }
-        match schema.get(b"type") {
-            Some(Json::String(name)) if !has_type(data, name) => return self.error(cx, data, &[b"should be ", name]),
-            Some(Json::Array(names)) if !names.iter().filter_map(Json::as_str).any(|name| has_type(data, name)) => {
-                let names: Vec<&[u8]> = names.iter().filter_map(Json::as_str).collect();
-                return self.error(cx, data, &[b"should be ", &names.join(&b',')]);
-            }
-            _ => {}
-        }
-        let is_valid = match data {
-            Json::Number(_) => self.check_number(schema, data, cx),
-            Json::String(_) => self.check_string(schema, data, cx),
-            Json::Array(_) => self.check_array(schema, data, cx),
-            Json::Object(_) => self.check_object(schema, data, cx),
-            _ => true,
+        let types: Vec<&[u8]> = match schema.get(b"type") {
+            Some(Json::String(name)) => vec![name],
+            Some(Json::Array(names)) => names.iter().filter_map(Json::as_str).collect(),
+            _ => Vec::new(),
         };
-        is_valid && self.check_any(schema, data, cx)
+        if !types.is_empty() && !types.iter().any(|name| has_type(data, name)) {
+            self.error(cx, data, &[b"should be ", &types.join(&b',')]);
+            // The type is checked before everything else unless it is one type that has keywords of
+            // its own in the schema. Nothing stops the keywords of the first group from being
+            // checked after that, where an error does not end the validation.
+            let is_checked_first = schema.get(b"type").is_some_and(|it| it.as_array().is_some())
+                || GROUPS.iter().find(|group| group.0 == types[0]).is_none_or(|group| !uses_group(schema, group.1));
+            if cx.is_composite && is_checked_first {
+                match GROUPS.iter().find(|group| uses_group(schema, group.1)) {
+                    Some(group) => self.check_typed(group.0, schema, data, cx),
+                    None => self.check_any(schema, data, cx),
+                };
+            }
+            return false;
+        }
+        GROUPS.iter().all(|group| self.check_typed(group.0, schema, data, cx)) && self.check_any(schema, data, cx)
+    }
+
+    /// The keywords for the values of one type, if `data` is one.
+    fn check_typed(&mut self, group: &[u8], schema: &'s Json, data: &mut Json, cx: Context) -> bool {
+        match (group, &*data) {
+            (b"number", Json::Number(_)) => self.check_number(schema, data, cx),
+            (b"string", Json::String(_)) => self.check_string(schema, data, cx),
+            (b"array", Json::Array(_)) => self.check_array(schema, data, cx),
+            (b"object", Json::Object(_)) => self.check_object(schema, data, cx),
+            _ => true,
+        }
     }
 
     fn check_number(&mut self, schema: &'s Json, data: &Json, cx: Context) -> bool {
@@ -335,7 +388,11 @@ impl<'s> Validator<'s> {
         let has_schema = |name: &[u8]| properties.iter().any(|it| it.0 == name && has_rules(&it.1));
         for name in required.iter().filter(|name| !has_schema(name)) {
             if data.get(name).is_none() {
-                return self.error(cx, data, &[b"should have required property '", name, b"'"]);
+                // Here Ajv names the property as it is accessed: `getProperty`.
+                let is_identifier = name.first().is_some_and(|b| b.is_ascii_alphabetic() || matches!(b, b'$' | b'_'))
+                    && name.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'$' | b'_'));
+                let (before, after): (&[u8], &[u8]) = if is_identifier { (b".", b"") } else { (b"['", b"']") };
+                return self.error(cx, data, &[b"should have required property '", before, name, after, b"'"]);
             }
         }
         let patterns: Vec<(Option<Regex>, &'s Json)> = (schema.get(b"patternProperties").and_then(Json::as_object).unwrap_or_default().iter())

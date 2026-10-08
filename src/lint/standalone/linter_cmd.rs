@@ -9,11 +9,12 @@
 //! - `minimatch <cases.json>`: for each `{ pattern, path, flipNegate }`, whether it matches.
 //! - `config <cases.json>`: for each `{ basePath, config, flavor, files, directories }`, the configuration of each file, and
 //!   whether each directory is ignored.
+//! - `project <cases.json>`: for each `{ basePath, config, flavor, extended, sources: { path: code } }`, what is reported for
+//!   each file with the configuration that it has.
+//! - `bench <directory>`: how long it takes to find out that the files have no comments that configure.
 //! - `validate <cases.json>`: for each `{ rule, options }`, the message of ESLint if the options are invalid.
 //! - `parse-fixtures <fixtures>`: the test cases that the parser rejects, all of which ESLint parses.
 //! - `rules`: the names of the rules that exist.
-//! - `conformance <fixtures> [--rule=r] [--verbose]`: the test cases of ESLint and typescript-eslint, each linted as its
-//!   `languageOptions`, its `settings` and the comments in its code say.
 
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
@@ -163,6 +164,20 @@ fn verify(args: &[String]) {
             testing::write_json(&mut out, &Json::Object(vec![(b"error".to_vec(), Json::String(error.clone()))]));
             continue;
         }
+        if given.get(b"fix").and_then(Json::as_bool) == Some(true) {
+            let mut lint = |text: &[u8]| with_file(&filename, text, &config.language, |file| linter().lint(file, &config, &options));
+            let report = bun_lint::linter::verify_and_fix(code, &|_| true, &mut lint);
+            out.extend_from_slice(b"{\"fixed\":");
+            out.extend_from_slice(if report.is_fixed { b"true" } else { b"false" });
+            out.extend_from_slice(b",\"output\":");
+            testing::write_json(&mut out, &Json::String(report.output.clone()));
+            out.extend_from_slice(b",\"messages\":");
+            write_messages(&mut out, &report.result.messages, &report.output);
+            out.extend_from_slice(b",\"suppressedMessages\":");
+            write_messages(&mut out, &report.result.suppressed, &report.output);
+            out.push(b'}');
+            continue;
+        }
         let result = with_file(&filename, code, &config.language, |file| linter().lint(file, &config, &options));
         out.extend_from_slice(b"{\"messages\":");
         write_messages(&mut out, &result.messages, code);
@@ -305,27 +320,65 @@ fn describe(config: &ResolvedConfig) -> Vec<(Vec<u8>, Json)> {
         (b"globals".to_vec(), Json::Array(globals.collect())),
         (b"parserOptions".to_vec(), language.parser_options.clone()),
         (b"settings".to_vec(), language.settings.clone()),
+        (b"language".to_vec(), config.language_name.as_ref().map_or(Json::Null, |it| Json::String(it.to_vec()))),
+        (b"processor".to_vec(), config.processor.as_ref().map_or(Json::Null, |it| Json::String(it.to_vec()))),
         (b"noInlineConfig".to_vec(), Json::Bool(config.linter.no_inline_config)),
         (b"reportUnusedDisableDirectives".to_vec(), number(config.linter.report_unused_disable_directives)),
         (b"reportUnusedInlineConfigs".to_vec(), number(config.linter.report_unused_inline_configs)),
     ]
 }
 
+/// The configuration of a case: `basePath`, `config`, `flavor`, and `extended`, which has the files that `extends` names.
+fn config_of(case: &Json) -> Result<Config, bun_lint::linter::ConfigError> {
+    let null = Json::Null;
+    let registry = linter().registry();
+    let base_path = case.get(b"basePath").and_then(Json::as_str).unwrap_or(b"/");
+    let json = case.get(b"config").unwrap_or(&null);
+    let extended = case.get(b"extended");
+    let mut load = |_: &[u8], name: &[u8]| extended.and_then(|it| it.get(name)).cloned();
+    match case.get(b"flavor").and_then(Json::as_str) {
+        Some(b"oxlint") => Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load),
+        Some(b"eslintrc") => Config::from_rc_json(registry, base_path, json, RcFlavor::Eslint, &mut load),
+        _ => Config::from_flat_json(registry, base_path, json),
+    }
+}
+
+fn project(args: &[String]) {
+    let cases = read_cases(args);
+    let results = cases.iter().map(|case| {
+        let config = match config_of(case) {
+            Ok(config) => config,
+            Err(error) => return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]),
+        };
+        let sources = case.get(b"sources").and_then(Json::as_object).unwrap_or_default().iter();
+        let files = sources.map(|(path, code)| {
+            let FileConfig::Matched(resolved) = config.get(linter().registry(), path) else {
+                return (path.clone(), Json::Null);
+            };
+            let code = code.as_str().unwrap_or_default();
+            let result = with_file(&text(path), code, &resolved.language, |file| linter().lint(file, &resolved, &LintOptions::default()));
+            let messages = result.messages.iter().map(|it| {
+                Json::Array(vec![
+                    it.rule_id.as_ref().map_or(Json::Null, |id| Json::String(id.to_vec())),
+                    Json::Number(f64::from(it.severity as u8)),
+                    Json::Number(f64::from(it.line)),
+                ])
+            });
+            (path.clone(), Json::Array(messages.collect()))
+        });
+        Json::Object(files.collect())
+    });
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Array(results.collect()));
+    out.push(b'\n');
+    print(&out);
+}
+
 fn config(args: &[String]) {
     let cases = read_cases(args);
     let registry = linter().registry();
     let results = cases.iter().map(|case| {
-        let null = Json::Null;
-        let base_path = case.get(b"basePath").and_then(Json::as_str).unwrap_or(b"/");
-        let json = case.get(b"config").unwrap_or(&null);
-        let extended = case.get(b"extended");
-        let mut load = |_: &[u8], name: &[u8]| extended.and_then(|it| it.get(name)).cloned();
-        let config = match case.get(b"flavor").and_then(Json::as_str) {
-            Some(b"oxlint") => Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load),
-            Some(b"eslintrc") => Config::from_rc_json(registry, base_path, json, RcFlavor::Eslint, &mut load),
-            _ => Config::from_flat_json(registry, base_path, json),
-        };
-        let config = match config {
+        let config = match config_of(case) {
             Ok(config) => config,
             Err(error) => return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]),
         };
@@ -354,6 +407,38 @@ fn config(args: &[String]) {
     testing::write_json(&mut out, &Json::Array(results.collect()));
     out.push(b'\n');
     print(&out);
+}
+
+fn bench(args: &[String]) {
+    fn walk(directory: &std::path::Path, texts: &mut Vec<Vec<u8>>) {
+        for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if path.is_dir() {
+                if name != "node_modules" && name != ".git" {
+                    walk(&path, texts);
+                }
+            } else if path.extension().is_some_and(|it| ["js", "ts", "tsx", "jsx", "mjs", "cjs", "mts", "cts"].iter().any(|ext| it == *ext)) {
+                texts.extend(std::fs::read(&path));
+            }
+        }
+    }
+    let mut texts = Vec::new();
+    walk(std::path::Path::new(args.first().expect("a directory")), &mut texts);
+    let bytes: usize = texts.iter().map(Vec::len).sum();
+    for _ in 0..3 {
+        let start = std::time::Instant::now();
+        let with_candidates = texts.iter().filter(|text| !testing::candidates(text).is_empty()).count();
+        let elapsed = start.elapsed();
+        println!(
+            "{} files, {:.1} MB, {with_candidates} with candidates: {:.2} ms, {:.1} GB/s, {:.2} us per file",
+            texts.len(),
+            bytes as f64 / 1e6,
+            elapsed.as_secs_f64() * 1e3,
+            bytes as f64 / 1e9 / elapsed.as_secs_f64(),
+            elapsed.as_secs_f64() * 1e6 / texts.len() as f64,
+        );
+    }
 }
 
 fn validate(args: &[String]) {
@@ -411,115 +496,8 @@ fn parse_fixtures(args: &[String]) {
     println!("{parsed} parsed, {rejected} rejected");
 }
 
-/// A message as a fixture has it, for comparing.
-#[derive(PartialEq, Eq, Debug)]
-struct Reported {
-    /// `None`: the rule that is tested. Empty: the linter itself.
-    rule_id: Option<String>,
-    message_id: String,
-    message: String,
-    start: (u32, u32),
-    end: Option<(u32, u32)>,
-    /// The code after each suggestion.
-    suggestions: Vec<(String, String)>,
-}
-
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
-}
-
-fn reported(message: &LintMessage, entry: &RuleEntry, code: &[u8]) -> Reported {
-    let apply = |fix: &bun_lint::fix::Fix| bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec());
-    Reported {
-        rule_id: match &message.rule_id {
-            Some(id) if *id == RuleId::Known(entry.meta) => None,
-            Some(id) => Some(text(&id.to_vec())),
-            None => Some(String::new()),
-        },
-        message_id: message.message_id.unwrap_or_default().to_owned(),
-        message: text(&message.message),
-        start: (message.line, message.column),
-        end: message.end,
-        suggestions: (message.suggestions.iter()).map(|it| (it.message_id.to_owned(), text(&apply(&it.fix)))).collect(),
-    }
-}
-
-fn expected(message: &Json) -> Reported {
-    let string = |json: &Json, key: &str| json.get(key.as_bytes()).and_then(Json::as_str).map(text).unwrap_or_default();
-    let number = |key: &str| match message.get(key.as_bytes()) {
-        Some(Json::Number(n)) => Some(*n as u32),
-        _ => None,
-    };
-    Reported {
-        rule_id: message.get(b"ruleId").map(|id| id.as_str().map(text).unwrap_or_default()),
-        message_id: string(message, "messageId"),
-        message: string(message, "message"),
-        start: (number("line").unwrap_or(0), number("column").unwrap_or(0)),
-        end: number("endLine").zip(number("endColumn")),
-        suggestions: (message.get(b"suggestions").and_then(Json::as_array).unwrap_or_default().iter())
-            .map(|it| (string(it, "messageId"), string(it, "output")))
-            .collect(),
-    }
-}
-
-fn conformance(args: &[String]) {
-    let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
-    let root = args.iter().find(|a| !a.starts_with("--")).expect("the fixtures directory");
-    let is_verbose = args.iter().any(|a| a == "--verbose");
-    std::panic::set_hook(Box::new(|_| {}));
-    let (mut passed, mut failed, mut rejected, mut skipped) = (0, 0, 0, 0);
-    for entry in linter().registry().all() {
-        let directory = match entry.meta.plugin {
-            Plugin::Eslint => "eslint",
-            Plugin::TypeScript => "typescript-eslint",
-        };
-        let name = entry.meta.name;
-        if flag("--rule=").is_some_and(|only| only != name) {
-            continue;
-        }
-        let Some(fixture) = std::fs::read(format!("{root}/{directory}/{name}.json")).ok().and_then(|it| bun_lint::json::parse(&it)) else {
-            continue;
-        };
-        let before = (passed, failed, rejected);
-        for (index, case) in fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default().iter().enumerate() {
-            if !matches!(case.get(b"skip"), None | Some(Json::Null)) || case.get(b"typeAware").and_then(Json::as_bool) == Some(true) {
-                skipped += 1;
-                continue;
-            }
-            let null = Json::Null;
-            let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-            let filename = case.get(b"filename").and_then(Json::as_str).map(text).unwrap_or_default();
-            let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
-            let language = case.get(b"languageOptions").unwrap_or(&null);
-            let settings = case.get(b"settings").unwrap_or(&null);
-            let outcome = std::panic::catch_unwind(|| lint_case(entry, code, &filename, options, language, settings));
-            let wanted: Vec<_> = case.get(b"messages").and_then(Json::as_array).unwrap_or_default().iter().map(expected).collect();
-            let problem = match &outcome {
-                Err(_) => "panicked".to_owned(),
-                Ok(outcome) if outcome.messages.iter().any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")) => {
-                    rejected += 1;
-                    let mut written = Vec::new();
-                    testing::write_json(&mut written, language);
-                    println!("REJECTED {directory}/{name}#{index} {} {} {:?}", text(&outcome.messages[0].message), text(&written), text(code));
-                    continue;
-                }
-                Ok(outcome) => {
-                    let actual: Vec<_> = outcome.messages.iter().map(|it| reported(it, entry, code)).collect();
-                    if actual == wanted && outcome.output.as_deref() == case.get(b"output").and_then(Json::as_str) {
-                        passed += 1;
-                        continue;
-                    }
-                    format!("expected: {wanted:#?}\nactual: {actual:#?}\noutput: {:?}", outcome.output.as_deref().map(text))
-                }
-            };
-            failed += 1;
-            if is_verbose {
-                println!("──── {directory}/{name}#{index} {filename}\n{}\n{problem}\n", text(code));
-            }
-        }
-        println!("{directory}/{name}: {} passed, {} failed, {} rejected by the parser", passed - before.0, failed - before.1, rejected - before.2);
-    }
-    println!("{passed} passed, {failed} failed, {rejected} rejected by the parser, {skipped} skipped");
 }
 
 pub(crate) fn run(args: &[String]) {
@@ -527,13 +505,14 @@ pub(crate) fn run(args: &[String]) {
         Some("verify") => verify(&args[1..]),
         Some("comment-parser") => comment_parser(&args[1..]),
         Some("json-parse") => json_parse(&args[1..]),
-        Some("conformance") => conformance(&args[1..]),
         Some("globals") => globals(&args[1..]),
         Some("environments") => environments(),
         Some("minimatch") => minimatch(&args[1..]),
         Some("validate") => validate(&args[1..]),
+        Some("bench") => bench(&args[1..]),
         Some("parse-fixtures") => parse_fixtures(&args[1..]),
         Some("config") => config(&args[1..]),
+        Some("project") => project(&args[1..]),
         Some("rules") => {
             let ids = linter().registry().all().iter().map(|it| Json::String(RuleId::Known(it.meta).to_vec()));
             let mut out = Vec::new();

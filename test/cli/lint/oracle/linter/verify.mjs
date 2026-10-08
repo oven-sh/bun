@@ -44,7 +44,7 @@ function generated() {
   const cases = [];
   const ruleNames = ["no-debugger", "eqeqeq", "no-cond-assign", "max-depth", "no-such-rule", "foo/bar", "no-comma-dangle",
     "@typescript-eslint/no-non-null-assertion"];
-  const statements = ["debugger;", "a == b;", "if (a = b) {}", "debugger; a == b;", "foo();", "if (a == (b = c)) { debugger }", "x != y"];
+  const statements = ["typeof a == 'string';", "'a' != 'b';", "debugger;", "a == b;", "if (a = b) {}", "debugger; a == b;", "foo();", "if (a == (b = c)) { debugger }", "x != y"];
   const lists = () => {
     const n = rng.int(4);
     const quote = () => rng.pick(["", "", "", "'", '"']);
@@ -64,7 +64,7 @@ function generated() {
     return `//${rng.pick(["", " ", "  "])}${label} ${lists()}${justification().replace("\n", " ")}`;
   };
   const severity = () => rng.pick(["0", "1", "2", "off", "warn", "error", '"error"', "'warn'", "3", "foo", "true", "[2]", "[1]", "[0]",
-    '[2, "smart"]', "[2, always]", "[error, 2]", "[]", "{}", "null", '["error", "always", {"null": "ignore"}]', "[warn, {max: 1}]"]);
+    '[2, "smart"]', "[2, always]", "[error, 2]", "[]", "{}", "null", '["error", "always", {"null": "ignore"}]', "[warn, {max: 1}]", '["off", "bogus"]', '[0, "bogus"]', "[off, {x: 1}]", "[0, 1, 2, 3]"]);
   const inline = () => {
     const n = 1 + rng.int(3);
     const entries = Array.from({ length: n }, () => `${rng.pick(ruleNames)}${rng.pick([":", ": ", " : "])}${severity()}`);
@@ -88,6 +88,13 @@ function generated() {
     { rules: { "no-debugger": 2, eqeqeq: [1, "smart"] }, linterOptions: { reportUnusedInlineConfigs: "error" } },
     { rules: { "no-debugger": 1, eqeqeq: [2, "always", { null: "ignore" }] }, linterOptions: { reportUnusedInlineConfigs: "warn" } },
   ];
+  const invalidConfigs = [
+    { rules: { eqeqeq: [2, "sometimes"] } },
+    { rules: { "no-debugger": [2, {}] }, languageOptions: { ecmaVersion: "2020" } },
+    ...[{ ecmaVersion: null }, { sourceType: "esm" }, { sourceType: 1 }, { globals: [] }, { globals: null }, { globals: { " a": true } }, { globals: { a: "yes" } }, { globals: { a: 1 } },
+      { parserOptions: [] }, { parserOptions: null }, { parserOptions: "x" }, { env: {} }, { foo: 1, bar: 2 }, { ecmaVersion: 2.5, sourceType: "script" }, { ecmaVersion: 1e9 },
+    ].map(languageOptions => ({ rules: { "no-debugger": 2 }, languageOptions })),
+  ];
   const options = [{}, {}, {}, {}, { allowInlineConfig: false }, { reportUnusedDisableDirectives: true }, { reportUnusedDisableDirectives: "off" },
     { reportUnusedDisableDirectives: "warn" }, { disableFixes: true }, { quiet: true }];
   for (let i = 0; i < 30000; i++) {
@@ -98,7 +105,11 @@ function generated() {
       parts.push(rng.pick([" ", "\n", "\n", "\r\n", "", "\n\n"]));
     }
     const bom = rng.int(40) === 0 ? "﻿" : "";
-    cases.push({ code: bom + parts.join(""), filename: "file.js", config: rng.pick(configs), options: rng.pick(options) });
+    const code = bom + parts.join("");
+    // ESLint has to see the same text in every pass, so not where `oxlint-` is rewritten for it.
+    const fix = rng.int(5) === 0 && !code.includes("oxlint-") ? { fix: true } : {};
+    const { quiet, ...given } = rng.pick(options);
+    cases.push({ code, filename: "file.js", config: rng.pick(rng.int(20) === 0 ? invalidConfigs : configs), options: fix.fix ? { ...given, ...fix } : { ...given, ...(quiet ? { quiet } : {}) } });
   }
   return cases;
 }
@@ -162,16 +173,42 @@ function upstream() {
   return cases;
 }
 
+// ───────────────────────────── other names for the same rules ─────────────────────────────
+
+/**
+ * The names that oxlint has for the plugins are understood in comments and in the configuration. ESLint is given the
+ * names that it knows, so only what does not depend on the length of a comment is compared.
+ */
+function aliases() {
+  const rng = random(9);
+  const names = { "no-debugger": ["eslint/no-debugger"], "@typescript-eslint/no-non-null-assertion": ["typescript/no-non-null-assertion", "typescript-eslint/no-non-null-assertion"] };
+  const cases = [];
+  for (let i = 0; i < 2000; i++) {
+    const name = () => rng.pick(Object.keys(names));
+    const lines = Array.from({ length: 1 + rng.int(6) }, () => rng.pick([
+      "debugger;", "a!;", "debugger; a!;", `// eslint-disable-next-line ${name()}`, `debugger; // eslint-disable-line ${name()}, ${name()}`, `/* eslint-disable ${name()} */`,
+      `/* eslint-enable ${name()} */`, `/* eslint ${name()}: ${rng.pick([0, 1, 2])} */`, `a!; // oxlint-disable-line ${name()}`,
+    ]));
+    const rules = Object.fromEntries(Object.keys(names).filter(() => rng.int(3) !== 0).map(id => [id, rng.pick([1, 2])]));
+    cases.push({ code: lines.join("\n"), filename: "file.ts", config: { rules, languageOptions: { parser: "typescript" } }, options: {}, names });
+  }
+  return cases;
+}
+
 // ───────────────────────────── the comparison ─────────────────────────────
 
 function eslintAnswer({ code, filename, config, options }) {
   const linter = new Linter({ configType: "flat", cwd: "/" });
-  const { quiet, ...rest } = options;
+  const { quiet, fix, ...rest } = options;
   const own = structuredClone(config);
   if (own.languageOptions?.parser === "typescript") own.languageOptions.parser = typescriptParser;
   const configs = new FlatConfigArray([own], { baseConfig, basePath: "/" });
   configs.normalizeSync();
   // `oxlint-disable` means `eslint-disable` here, and nothing to ESLint.
+  if (fix) {
+    const { fixed, output, messages } = linter.verifyAndFix(code, configs, { filename, ...rest });
+    return { fixed, output, messages, suppressedMessages: linter.getSuppressedMessages() };
+  }
   const messages = linter.verify(code.replaceAll("oxlint-", "eslint-"), configs, { filename, ...rest, ...(quiet ? { ruleFilter: ({ severity }) => severity === 2 } : {}) });
   return { messages, suppressedMessages: linter.getSuppressedMessages() };
 }
@@ -185,10 +222,10 @@ function normalize(answer) {
     ...(m.fatal && m.message.startsWith("Parsing error:") ? { message: "Parsing error", line: 0, column: 0 } : {}),
     ...(suggestions ? { suggestions: suggestions.map(({ messageId, desc, fix }) => ({ messageId, desc, fix })) } : {}),
   });
-  return { messages: answer.messages.map(message), suppressedMessages: answer.suppressedMessages.map(message) };
+  return { ...answer, messages: answer.messages.map(message), suppressedMessages: answer.suppressedMessages.map(message) };
 }
 
-for (const [name, make] of Object.entries({ generated, upstream })) {
+for (const [name, make] of Object.entries({ generated, upstream, aliases })) {
   if (only && only !== name) continue;
   const cases = [], expected = [];
   let invalid = 0;
@@ -197,8 +234,8 @@ for (const [name, make] of Object.entries({ generated, upstream })) {
       expected.push(normalize(eslintAnswer(it)));
       cases.push(it);
     } catch (error) {
-      // The configuration is invalid. Only what is said about the options of a rule is compared.
-      if (!error.message.includes("\tValue ")) {
+      // The configuration is invalid. What is said about the options of a rule and about `languageOptions` is compared.
+      if (!error.message.includes("\tValue ") && !error.message.startsWith('Key "languageOptions"')) {
         invalid++;
         continue;
       }
@@ -207,7 +244,18 @@ for (const [name, make] of Object.entries({ generated, upstream })) {
     }
   }
   if (invalid > 0) console.log(`${name}: ${invalid} cases left out, ESLint throws`);
-  const actual = runBunLint("verify", cases).map(normalize);
+  let actual;
+  if (name === "aliases") {
+    const rng = random(10);
+    const renamed = cases.map(({ names, ...it }) => JSON.parse(JSON.stringify(it).replace(
+      new RegExp(Object.keys(names).join("|"), "g"), id => rng.pick([id, ...names[id]]))));
+    const brief = answer => Object.fromEntries(Object.entries(normalize(answer)).map(([key, messages]) =>
+      [key, messages.map(({ ruleId, severity, line, messageId }) => ({ ruleId, severity, line, messageId }))]));
+    actual = runBunLint("verify", renamed).map(brief);
+    expected.forEach((answer, i) => (expected[i] = brief(answer)));
+  } else {
+    actual = runBunLint("verify", cases).map(normalize);
+  }
   // What espree rejects and the parser here accepts is counted by itself.
   const isFatal = answer => answer.messages?.[0]?.message === "Parsing error";
   const lenient = cases.filter((_, i) => isFatal(expected[i]) && !isFatal(actual[i]));

@@ -22,7 +22,7 @@ impl Cache {
         if let Ok(all) = self.resolved.read()
             && let Ok(at) = find(&all)
         {
-            return all[at].1.clone();
+            return Arc::clone(&all[at].1);
         }
         // Not under the lock: it takes the other one. Two threads may do the same work once.
         let made = Arc::new(make());
@@ -30,9 +30,9 @@ impl Cache {
             return made;
         };
         match find(&all) {
-            Ok(at) => all[at].1.clone(),
+            Ok(at) => Arc::clone(&all[at].1),
             Err(at) => {
-                all.insert(at, (indices.into(), made.clone()));
+                all.insert(at, (indices.into(), Arc::clone(&made)));
                 made
             }
         }
@@ -55,10 +55,10 @@ impl Cache {
             rules.resize_with(index + 1, Vec::new);
         }
         if let Some(found) = rules[index].iter().find(|it| it.0 == *options) {
-            return found.1.clone();
+            return Arc::clone(&found.1);
         }
         let made = make();
-        rules[index].push((options.clone(), made.clone()));
+        rules[index].push((Arc::clone(options), Arc::clone(&made)));
         made
     }
 }

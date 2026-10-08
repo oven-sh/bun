@@ -255,7 +255,7 @@ fn extend_files(base: &[Json], extension: &[Json]) -> Vec<Json> {
 
 /// ESLint's `defaultConfig`.
 const DEFAULT_CONFIG: &[u8] = br#"[
-    { "linterOptions": { "reportUnusedDisableDirectives": 1 } },
+    { "language": "@/js", "linterOptions": { "reportUnusedDisableDirectives": 1 } },
     { "ignores": ["**/node_modules/", ".git/"] },
     { "files": ["**/*.js", "**/*.mjs"] },
     { "files": ["**/*.cjs"], "languageOptions": { "sourceType": "commonjs", "ecmaVersion": "latest" } }

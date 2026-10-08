@@ -314,6 +314,7 @@ impl Config {
                 config.processor.clone_from(&object.processor);
             }
         }
+        config.validate_language_options(&language_options);
         config.language = LanguageOptions::from_json(&language_options, &settings);
         config.linter = linter;
         for setting in rules {

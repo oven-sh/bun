@@ -213,7 +213,7 @@ pub struct Utf16Offsets<'t> {
 }
 
 impl<'t> Utf16Offsets<'t> {
-    /// A byte order mark at the start of `text` is not counted, as in ESLint.
+    /// A byte order mark at the start of `text` is not counted, as in ESLint: it is at -1.
     pub fn new(text: &'t [u8]) -> Self {
         Utf16Offsets {
             text,
@@ -222,18 +222,21 @@ impl<'t> Utf16Offsets<'t> {
         }
     }
 
-    pub fn convert(&mut self, offset: u32) -> u32 {
+    pub fn convert(&mut self, offset: u32) -> i64 {
         if self.is_ascii {
-            return offset;
+            return i64::from(offset);
         }
         let start = if self.text.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
-        let offset = offset.clamp(start, self.text.len() as u32);
+        if offset < start {
+            return -1;
+        }
+        let offset = offset.min(self.text.len() as u32);
         if offset < self.last.0 || self.last.0 < start {
             self.last = (start, 0);
         }
         let between = &self.text[self.last.0 as usize..offset as usize];
         self.last = (offset, self.last.1 + crate::source::utf16_len(between));
-        self.last.1
+        i64::from(self.last.1)
     }
 }
 

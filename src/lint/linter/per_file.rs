@@ -11,7 +11,7 @@ use std::cell::{Cell, OnceCell};
 #[derive(Default)]
 pub(crate) struct PerFile {
     /// Comments configure nothing: `noInlineConfig`, `--no-inline-config`.
-    pub(crate) ignores_comments: Cell<bool>,
+    ignores_comments: Cell<bool>,
     comments: OnceCell<Vec<ConfigComment>>,
     variables: OnceCell<CommentVariables>,
 }
@@ -54,28 +54,19 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
 }
 
 impl<'a> File<'a> {
-    fn per_file(&self) -> Option<&PerFile> {
-        None
-    }
-
     /// Comments of the file configure nothing from now on.
     pub(crate) fn ignore_config_comments(&self) {
-        if let Some(per_file) = self.per_file() {
-            per_file.ignores_comments.set(true);
-        }
+        self.lazy.linter.ignores_comments.set(true);
     }
 
     /// ESLint's `getInlineConfigNodes()`.
-    pub(crate) fn config_comments(&'a self) -> std::borrow::Cow<'a, [ConfigComment]> {
-        match self.per_file() {
-            Some(per_file) => (&per_file.comments.get_or_init(|| directives::config_comments(self))[..]).into(),
-            None => directives::config_comments(self).into(),
-        }
+    pub(crate) fn config_comments(&'a self) -> &'a [ConfigComment] {
+        self.lazy.linter.comments.get_or_init(|| directives::config_comments(self))
     }
 
     fn comment_variables(&'a self) -> Option<&'a CommentVariables> {
-        let per_file = self.per_file().filter(|it| !it.ignores_comments.get())?;
-        Some(per_file.variables.get_or_init(|| variables_in(self, &self.config_comments())))
+        let per_file = &self.lazy.linter;
+        (!per_file.ignores_comments.get()).then(|| per_file.variables.get_or_init(|| variables_in(self, self.config_comments())))
     }
 
     /// The variables that `/* global */` comments of the file name, in the order they are first

@@ -74,6 +74,8 @@ function describe(config) {
     globals: Object.entries(languageOptions.globals ?? {}).map(([name, value]) => [name, setting(value)]).sort(),
     parserOptions: languageOptions.parserOptions ?? null,
     settings: settings ?? null,
+    language: config.language ?? null,
+    processor: null,
     noInlineConfig: linterOptions.noInlineConfig ?? false,
     reportUnusedDisableDirectives: unused === undefined ? 0 : number(unused),
     reportUnusedInlineConfigs: number(linterOptions.reportUnusedInlineConfigs ?? 0),

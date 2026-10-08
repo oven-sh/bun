@@ -47,7 +47,10 @@ for (let i = 0; i < 3000; i++) {
   };
   const files = list(() => `${basePath}/${path()}`, 10);
   const factory = new Legacy.ConfigArrayFactory({ cwd: basePath, builtInRules: new Map() });
-  const array = factory.create(structuredClone(config), { filePath: `${basePath}/.eslintrc.json`, name: "test" });
+  const array = new Legacy.ConfigArray(
+    ...factory.create({ ignorePatterns: Legacy.IgnorePattern.DefaultPatterns }, { filePath: `${basePath}/default`, name: "default" }),
+    ...factory.create(structuredClone(config), { filePath: `${basePath}/.eslintrc.json`, name: "test" }),
+  );
   cases.push({ basePath, flavor: "eslintrc", config, files, directories: [] });
   expected.push(files.map(file => {
     const extracted = array.extractConfig(file);
@@ -70,8 +73,9 @@ for (let i = 0; i < 3000; i++) {
     };
   }));
 }
-const actual = runBunLint("config", cases).map(it => it.files?.map(({ ecmaVersion, reportUnusedInlineConfigs, rules, ...rest }) =>
-  (rules ? { ...rest, rules: rules.sort() } : rest)) ?? it);
+const emptyAsNull = value => (value && Object.keys(value).length === 0 ? null : value);
+const actual = runBunLint("config", cases).map(it => it.files?.map(({ ecmaVersion, reportUnusedInlineConfigs, language, processor, rules, ...rest }) =>
+  (rules ? { ...rest, rules: rules.sort(), parserOptions: emptyAsNull(rest.parserOptions), settings: emptyAsNull(rest.settings) } : rest)) ?? it);
 // One case for each file, so that what differs can be read.
 const flat = { cases: [], expected: [], actual: [] };
 cases.forEach(({ files, config }, i) => files.forEach((file, j) => {

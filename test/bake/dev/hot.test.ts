@@ -642,3 +642,64 @@ devTest("dev.write resolves only after the new module body has run", {
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });
+
+devTest("import.meta.hot.accept(dep) takes an update reaching dep through its imports", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    "list.ts": `
+      import item from "./item.ts";
+      export default "list:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:a");
+    // item.ts is not imported by index.ts: the update reaches the accept through list.ts,
+    // which is loaded again, so the callback sees the new item.
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("accepted list:b");
+    await dev.write("item.ts", `export default "c";`);
+    await c.expectMessage("accepted list:c");
+  },
+});
+devTest("a file served can be saved by renaming another over it", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import dep from "./dep.ts";
+      console.log(dep);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export default "save 0";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("save 0");
+    // As editors that save atomically do: a temp file beside the target, renamed over it.
+    // On Windows a file can be replaced so only while no one has it open, and the dev
+    // server kept each file it read open for its watcher, which watches by path there.
+    for (let round = 1; round <= 3; round++) {
+      const target = dev.join("dep.ts");
+      {
+        await using _wait = await dev.batchChanges();
+        writeFileSync(`${target}.tmp`, `export default "save ${round}";\n`);
+        renameSync(`${target}.tmp`, target);
+      }
+      await c.expectMessage(`save ${round}`);
+    }
+  },
+});

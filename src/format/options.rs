@@ -56,6 +56,8 @@ pub struct FormatOptions {
     pub check_ignore_pragma: bool,
     /// Whose output to produce where the two differ.
     pub flavor: Flavor,
+    /// How imports are sorted, if they are.
+    pub sort_imports: Option<std::sync::Arc<crate::sort_imports::SortImports>>,
 }
 
 /// An option has a value that Prettier does not accept, or there is no such option.

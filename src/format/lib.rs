@@ -14,7 +14,13 @@ mod ir;
 mod js;
 pub mod json;
 pub mod options;
+pub mod pragma;
 pub mod verify;
+
+/// Sorting imports.
+pub mod sort_imports {
+    pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};
+}
 
 pub use ir::run::{Scratch, dump_document, format};
 pub use options::FormatOptions;

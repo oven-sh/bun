@@ -9,6 +9,7 @@ pub(crate) mod format;
 pub(crate) mod parentheses;
 pub(crate) mod print;
 pub(crate) mod siblings;
+pub(crate) mod sort_imports;
 pub(crate) mod source_text;
 pub(crate) mod trivia;
 pub(crate) mod utils;

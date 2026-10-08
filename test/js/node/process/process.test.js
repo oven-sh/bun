@@ -2869,21 +2869,26 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
   ];
 
   for (const { name, script, stdout, stderr = "", exitCode = 0, posix = false, serial = false } of cases) {
-    // A worker takes seconds to start in a debug build: those cases run one at a time.
-    (serial ? it.serial : it.skipIf(posix && isWindows))(name, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: out.split(/\r?\n/).filter(Boolean), stderr: err, exitCode: code }).toEqual({
-        stdout,
-        stderr: stderr ? expect.stringContaining(stderr) : "",
-        exitCode,
-      });
-    });
+    // A worker needs about 3 s to start in a debug build, too close to the 5 s default. Those cases run
+    // one at a time and get 30 s.
+    (serial ? it.serial : it.skipIf(posix && isWindows))(
+      name,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: out.split(/\r?\n/).filter(Boolean), stderr: err, exitCode: code }).toEqual({
+          stdout,
+          stderr: stderr ? expect.stringContaining(stderr) : "",
+          exitCode,
+        });
+      },
+      serial ? 30_000 : undefined,
+    );
   }
 });
 

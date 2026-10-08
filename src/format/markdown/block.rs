@@ -1347,7 +1347,8 @@ impl<'t> Parser<'t> {
                 self.set_end(node, end);
                 return self.extend_containers(end);
             }
-            Leaf::Html { node, kind, .. } if kind <= 5 => {
+            // For remark-parse 8, only a line with nothing on it ends HTML.
+            Leaf::Html { node, kind, .. } if kind <= 5 || (self.is_mdx && cursor.offset < end) => {
                 self.segments.push(self.line.segment(cursor));
                 self.set_end(node, end);
                 return self.extend_containers(end);

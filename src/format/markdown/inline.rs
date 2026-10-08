@@ -1033,7 +1033,7 @@ impl Context<'_> {
         }
         // In a table, `\|` is a pipe.
         let code = &bytes[start..end];
-        if self.tree.kind(parent) == Some(Kind::TableCell) && bun_core::strings::contains(code, b"\\|") {
+        if !self.is_mdx && self.tree.kind(parent) == Some(Kind::TableCell) && bun_core::strings::contains(code, b"\\|") {
             return self.tree.owned(|out| {
                 let mut rest = code;
                 while let Some(at) = bun_core::strings::index_of(rest, b"\\|") {

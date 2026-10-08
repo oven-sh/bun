@@ -364,9 +364,12 @@ fn format(
             );
             if verifies
                 && done.is_ok()
+                && out != text
                 && !bun_format::html::has_same_content(text, &out, parser, options)
             {
-                return Err(Failure::Bug("formatting would change what is in the file"));
+                return Err(Failure::Loss(
+                    "formatting it the way Prettier does would change what is in it",
+                ));
             }
             let cursor = done.as_ref().ok().copied().flatten();
             return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
@@ -818,10 +821,13 @@ impl Run<'_> {
                     ]
                     .concat()
                 })?;
-                // What a template would lose is known without a second look.
+                // What a template would lose is known without a second look, and the second look at HTML is a short
+                // one, which only a file that changes gets.
                 let is_free = || {
-                    Kind::of(&target.path, options.options.parser.as_deref())
-                        == Some(Kind::Handlebars)
+                    matches!(
+                        Kind::of(&target.path, options.options.parser.as_deref()),
+                        Some(Kind::Handlebars | Kind::Html(_))
+                    )
                 };
                 let (formatted, _) = format(
                     &target.path,

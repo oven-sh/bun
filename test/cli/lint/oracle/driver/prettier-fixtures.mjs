@@ -18,9 +18,9 @@ const bin = flag("bin").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 
-const compared = /\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars)$/;
+const compared = /\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars|html?|vue|mjml)$/;
 // The languages that `bun format` leaves alone.
-const notCompared = /\.(mdx|html?|vue)$/;
+const notCompared = /\.mdx$/;
 // What `bun format` does not have, or has on purpose in another way.
 const leftOut = /^--(cache|debug-|file-info|support-info|plugin|help|version|experimental-cli|no-plugin-search|log-level=?debug|find-config-path|(no-)?unknown)|^-[hva]$/;
 // Plugins do not load.

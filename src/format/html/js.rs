@@ -187,12 +187,13 @@ fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
 
 /// What Prettier makes of a `Program`, without the line break at the end.
 fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
-    // Nothing that a comment could belong to.
-    if file
+    // Nothing that a comment could belong to. Without a statement at all the comments keep the empty lines between
+    // them, as in `write_program`, which counts on being at the start of a line.
+    let is_all_empty = file
         .body()
         .iter()
-        .all(|it| matches!(it.kind(), StmtKind::Empty))
-    {
+        .all(|it| matches!(it.kind(), StmtKind::Empty));
+    if is_all_empty && (!file.body().is_empty() || f.options().in_html.is_in_attribute) {
         let comments = f.comments().unprinted_comments();
         let indent = DanglingIndentMode::None;
         return write!(f, FormatDanglingComments::Comments { comments, indent });

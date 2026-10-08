@@ -20,7 +20,7 @@ const show = process.argv.includes("--show");
 
 // Commands that `bun format` does not have, and languages that it leaves alone.
 const leftOut = /^(init|migrate_|external_formatter|svelte|stdin_svelte|toml|vite_|error_reports)/;
-const compared = /\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars)$/;
+const compared = /\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars|html?|vue|mjml)$/;
 
 function readAll(root) {
   const files = {};

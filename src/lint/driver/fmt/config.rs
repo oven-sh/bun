@@ -60,7 +60,7 @@ pub(crate) enum Flavor {
 }
 
 /// The options that the formatter has.
-const OPTIONS: [&[u8]; 25] = [
+const OPTIONS: [&[u8]; 28] = [
     b"cursorOffset",
     b"parser",
     b"jsxBracketSameLine",
@@ -86,6 +86,9 @@ const OPTIONS: [&[u8]; 25] = [
     b"experimentalOperatorPosition",
     b"experimentalTernaries",
     b"embeddedLanguageFormatting",
+    b"proseWrap",
+    b"htmlWhitespaceSensitivity",
+    b"vueIndentScriptAndStyle",
 ];
 
 /// Options by name, with their values as they are written in JSON, a string without its quotes.
@@ -774,6 +777,7 @@ impl<'c> Configs<'c> {
         let _ = resolved.options.set(b"filepath", path);
         resolved.options.format_javascript = Some(super::format_javascript);
         resolved.options.parse_javascript = Some(super::parse_javascript);
+        resolved.options.embedded_html = true;
         if self.flavor == Flavor::Oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // It sorts the keys of a `package.json` unless it is told not to.

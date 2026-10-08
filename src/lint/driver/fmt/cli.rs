@@ -63,7 +63,17 @@ pub const PARAMS: &[Param] = &[
     clap::param!(
         "--object-wrap <how>             <b>preserve<r> <d>(default)<r> or <b>collapse<r>"
     ),
-    clap::param!("--single-attribute-per-line     One attribute per line in JSX"),
+    clap::param!("--single-attribute-per-line     One attribute per line in HTML, Vue, and JSX"),
+    clap::param!(
+        "--html-whitespace-sensitivity <how>  <b>css<r> <d>(default)<r>, <b>strict<r>, or <b>ignore<r>"
+    ),
+    clap::param!(
+        "--vue-indent-script-and-style   Indent what is in the script and style tags of Vue files"
+    ),
+    clap::param!(
+        "--prose-wrap <how>              <b>preserve<r> <d>(default)<r>, <b>always<r>, or <b>never<r>"
+    ),
+    clap::param!("--embedded-language-formatting <which>  <b>auto<r> <d>(default)<r> or <b>off<r>"),
     clap::param!(
         "--end-of-line <which>           <b>lf<r> <d>(default)<r>, <b>crlf<r>, <b>cr<r>, or <b>auto<r>"
     ),
@@ -93,11 +103,7 @@ pub const PARAMS: &[Param] = &[
     // Prettier's, with little or nothing to do here.
     clap::param!("--experimental-ternaries"),
     clap::param!("--experimental-operator-position <where>"),
-    clap::param!("--embedded-language-formatting <which>"),
     clap::param!("--jsx-bracket-same-line"),
-    clap::param!("--prose-wrap <how>"),
-    clap::param!("--html-whitespace-sensitivity <how>"),
-    clap::param!("--vue-indent-script-and-style"),
     clap::param!("--cursor-offset <offset>"),
     clap::param!("--parser <name>"),
     clap::param!("--plugin <name>..."),
@@ -238,6 +244,9 @@ fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
         b"experimental-ternaries" => b"experimentalTernaries",
         b"experimental-operator-position" => b"experimentalOperatorPosition",
         b"embedded-language-formatting" => b"embeddedLanguageFormatting",
+        b"prose-wrap" => b"proseWrap",
+        b"html-whitespace-sensitivity" => b"htmlWhitespaceSensitivity",
+        b"vue-indent-script-and-style" => b"vueIndentScriptAndStyle",
         b"require-pragma" => b"requirePragma",
         b"insert-pragma" => b"insertPragma",
         b"check-ignore-pragma" => b"checkIgnorePragma",

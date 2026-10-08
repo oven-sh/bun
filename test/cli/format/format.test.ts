@@ -223,17 +223,208 @@ describe.concurrent("bun format", () => {
     });
   });
 
-  test("other languages are left alone, with a warning", async () => {
-    const result = await format(
-      { "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": ugly },
-      [],
-      {
-        reads: ["a.html", "b.vue", "c.js"],
+  test("HTML, Vue, Angular templates, MJML", async () => {
+    const files = {
+      "a.html": '<div   class="b  a"><p>c</p><script>let d=1</script><style>e{f:g}</style></div>\n',
+      "b.vue":
+        '<template><a   :b="c+d" @e="f( )">{{g|h}}</a></template>\n<script setup lang="ts">\nconst i:number=1\n</script>\n',
+      "c.component.html": '@if (a;as b) {<p   [c]="d|e:f" (g)="h( )">{{i|j}}</p>}\n',
+      "d.mjml": "<mjml><mj-body><mj-text   >a</mj-text></mj-body></mjml>\n",
+    };
+    const result = await format(files, [], { reads: Object.keys(files) });
+    expect(result.files).toEqual({
+      "a.html":
+        '<div class="b a">\n  <p>c</p>\n  <script>\n    let d = 1;\n  </script>\n  <style>\n    e {\n      f: g;\n    }\n  </style>\n</div>\n',
+      "b.vue":
+        '<template>\n  <a :b="c + d" @e="f()">{{ g | h }}</a>\n</template>\n<script setup lang="ts">\nconst i: number = 1;\n</script>\n',
+      "c.component.html": '@if (a; as b) {\n  <p [c]="d | e: f" (g)="h()">{{ i | j }}</p>\n}\n',
+      "d.mjml": "<mjml\n  ><mj-body><mj-text>a</mj-text></mj-body></mjml\n>\n",
+    });
+    expect(result.stdout.split("\n")).toEqual(Object.keys(files));
+    expect(result.exitCode).toBe(0);
+  });
+
+  describe("the options that HTML and Vue read, from wherever they are set", () => {
+    const long = Buffer.alloc(40, "j").toString();
+    // The option, its value, the flag, a file that is formatted without it, and the same with it.
+    const options = [
+      [
+        "vueIndentScriptAndStyle",
+        true,
+        "--vue-indent-script-and-style",
+        "<script>\nlet a = 1;\n</script>\n",
+        "<script>\n  let a = 1;\n</script>\n",
+      ],
+      [
+        "htmlWhitespaceSensitivity",
+        "strict",
+        "--html-whitespace-sensitivity=strict",
+        "<template>\n  <div>a</div>\n</template>\n",
+        "<template>\n  <div> a </div>\n</template>\n",
+      ],
+      [
+        "bracketSameLine",
+        true,
+        "--bracket-same-line",
+        `<template>\n  <div\n    i="${long}"\n    k="${long}"\n    m="${long}"\n  >\n    o\n  </div>\n</template>\n`,
+        `<template>\n  <div\n    i="${long}"\n    k="${long}"\n    m="${long}">\n    o\n  </div>\n</template>\n`,
+      ],
+      [
+        "singleAttributePerLine",
+        true,
+        "--single-attribute-per-line",
+        '<template>\n  <b c="d" e="f"></b>\n</template>\n',
+        '<template>\n  <b\n    c="d"\n    e="f"\n  ></b>\n</template>\n',
+      ],
+      [
+        "embeddedLanguageFormatting",
+        "off",
+        "--embedded-language-formatting=off",
+        "<style>\np {\n  q: r;\n}\n</style>\n",
+        "<style>\np{q:r}\n</style>\n",
+      ],
+    ] as const;
+    const sources = {
+      "a flag": (_name: string, _value: unknown, flag: string) => [{}, [flag]],
+      ".prettierrc": (name: string, value: unknown) => [{ ".prettierrc": JSON.stringify({ [name]: value }) }, []],
+      "overrides of .prettierrc": (name: string, value: unknown) => [
+        { ".prettierrc": JSON.stringify({ overrides: [{ files: "a.vue", options: { [name]: value } }] }) },
+        [],
+      ],
+      ".oxfmtrc.json": (name: string, value: unknown) => [{ ".oxfmtrc.json": JSON.stringify({ [name]: value }) }, []],
+      "overrides of .oxfmtrc.json": (name: string, value: unknown) => [
+        { ".oxfmtrc.json": JSON.stringify({ overrides: [{ files: ["a.vue"], options: { [name]: value } }] }) },
+        [],
+      ],
+    } as Record<string, (name: string, value: unknown, flag: string) => [Record<string, string>, string[]]>;
+
+    test.each(Object.keys(sources).flatMap(source => options.map(option => [source, ...option] as const)))(
+      "%s: %s",
+      async (source, name, value, flag, without, withIt) => {
+        const [files, args] = sources[source](name, value, flag);
+        // What is formatted with the option is not without it. The other way round too, except that nothing is wrong with
+        // formatted code that is left alone, or with no white space where it would count.
+        const result = await format({ ...files, "a.vue": withIt, "b.vue": without }, [...args, "-l", "a.vue", "b.vue"]);
+        const isOneWay = name === "embeddedLanguageFormatting" || name === "htmlWhitespaceSensitivity";
+        const isForBoth = !source.startsWith("overrides") && !isOneWay;
+        expect(result.stdout.split("\n").filter(Boolean)).toEqual(isForBoth ? ["b.vue"] : []);
       },
     );
+
+    test.each(options)("without %s", async (_name, _value, _flag, without, withIt) => {
+      const result = await format({ "a.vue": withIt, "b.vue": without }, ["-l"]);
+      expect(result.stdout.split("\n").filter(Boolean)).toEqual(["a.vue"]);
+    });
+  });
+
+  test("HTML with a syntax error is reported", async () => {
+    const result = await format({ "a.html": "<div></span>\n", "b.html": "<p   >a</p>\n" }, [], {
+      reads: ["a.html", "b.html"],
+    });
+    expect(result.files).toEqual({ "a.html": "<div></span>\n", "b.html": "<p>a</p>\n" });
+    expect(result.stderr).toContain("[error] a.html: SyntaxError:");
+    expect(result.exitCode).toBe(2);
+  });
+
+  describe("HTML of which something would be lost is left as it is", () => {
+    // Prettier 3.9.9 writes a media query in lower case, which makes a `k` of the Kelvin sign.
+    const lossy = "<style>@media (\u212Aa){a{b:c}}</style>\n";
+    const error = (name: string) =>
+      `[error] ${name}: formatting it the way Prettier does would change what is in it. It is left as it is.`;
+
+    test.each([[[] as string[]], [["--check"]], [["-l"]]])("%j", async args => {
+      const result = await format({ "a.html": lossy, "b.html": "<p   >a</p>\n" }, args, {
+        reads: ["a.html", "b.html"],
+      });
+      expect(result.files).toEqual({ "a.html": lossy, "b.html": args.length > 0 ? "<p   >a</p>\n" : "<p>a</p>\n" });
+      expect(result.stderr.split("\n").filter(line => line.startsWith("[error] "))).toEqual([error("a.html")]);
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("standard input", async () => {
+      const result = await format({}, ["--stdin-filepath", "a.html"], { stdin: lossy });
+      expect(result.raw).toBe("");
+      expect(result.stderr.split("\n").filter(line => line.startsWith("[error] "))).toEqual([error("a.html")]);
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("--no-verify", async () => {
+      const result = await format({ "a.html": lossy }, ["--no-verify"], { reads: ["a.html"] });
+      expect(result.files).toEqual({
+        "a.html": "<style>\n  @media (ka) {\n    a {\n      b: c;\n    }\n  }\n</style>\n",
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  test("HTML in templates", async () => {
+    const result = await format(
+      {
+        "a.js":
+          'const a = html`<div   class="b"><p>${c}</p>\n</div>`;\nconst d = /* HTML */ `<ul><li>${e}</li><li>f</li></ul>`;\n',
+        "b.ts": '@Component({ selector: "a", template: `<b   [c]="d+e">{{f|g}}</b>` })\nclass A {}\n',
+      },
+      [],
+      { reads: ["a.js", "b.ts"] },
+    );
     expect(result.files).toEqual({
-      "a.html": "<a   >b</a>\n",
-      "b.vue": "<template><a   /></template>\n",
+      "a.js":
+        'const a = html`<div class="b"><p>${c}</p></div>`;\nconst d = /* HTML */ `<ul>\n  <li>${e}</li>\n  <li>f</li>\n</ul>`;\n',
+      "b.ts": '@Component({ selector: "a", template: `<b [c]="d + e">{{ f | g }}</b>` })\nclass A {}\n',
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a template whose HTML cannot be parsed stays as it is, the rest of the file is formatted", async () => {
+    const result = await format({ "a.js": 'const a = html`<div   class="b"></p>`;\nconst   b = 1;\n' }, [], {
+      reads: ["a.js"],
+    });
+    expect(result.files).toEqual({ "a.js": 'const a = html`<div   class="b"></p>`;\nconst b = 1;\n' });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("--embedded-language-formatting=off leaves HTML in templates and in Markdown as it is", async () => {
+    const files = {
+      "a.js": 'const a = html`<div   class="b"></div>`;\n',
+      "b.md": '```html\n<div   class="b"></div>\n```\n',
+    };
+    const result = await format(files, ["--embedded-language-formatting=off"], { reads: ["a.js", "b.md"] });
+    expect(result.files).toEqual(files);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a file is left as it is if a template would get an expression twice", async () => {
+    // Like Prettier 3.9.9, the formatter closes the element: html`<${b}>c</${b}>`.
+    const text = "const a = html`<${b}>c`;\n";
+    const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": text });
+    expect(result.stderr).toContain("[error] a.js: formatting would change what the code means.");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("HTML and Vue in blocks of code in Markdown", async () => {
+    const result = await format(
+      {
+        "a.md":
+          '# a\n\n```html\n<div   class="b"><p>c</p>\n</div>\n```\n\n```vue\n<template><a   :b="c+d"></a></template>\n```\n\n```html\n<div></p>\n```\n',
+      },
+      [],
+      { reads: ["a.md"] },
+    );
+    expect(result.files).toEqual({
+      "a.md":
+        '# a\n\n```html\n<div class="b"><p>c</p></div>\n```\n\n```vue\n<template><a :b="c + d"></a></template>\n```\n\n```html\n<div></p>\n```\n',
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("other languages are left alone, with a warning", async () => {
+    const result = await format({ "a.mdx": "#   a\n", "b.wxs": "var a   = 1\n", "c.js": ugly }, [], {
+      reads: ["a.mdx", "b.wxs", "c.js"],
+    });
+    expect(result.files).toEqual({
+      "a.mdx": "#   a\n",
+      "b.wxs": "var a   = 1\n",
       "c.js": formatted,
     });
     expect(result.stderr).toContain("2 files are in a language that bun format does not support yet");

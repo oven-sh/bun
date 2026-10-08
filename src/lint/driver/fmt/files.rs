@@ -138,8 +138,6 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
     match Kind::of(path, None) {
         // Prettier reads MDX 1, and damages what is written today. Only for who asks: `--parser mdx`.
         Some(Kind::Mdx) => return Language::Other,
-        // Not by itself yet. Only for who asks: `--parser html`, `vue`, `angular`, `lwc`, `mjml`.
-        Some(Kind::Html(_)) => return Language::Other,
         Some(_) => return Language::Supported,
         None => {}
     }
@@ -147,9 +145,7 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
     let extension =
         strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
     match extension {
-        b"mdx" | b"html" | b"htm" | b"xhtml" | b"vue" | b"es6" | b"jsm" | b"wxs" | b"mjml" => {
-            Language::Other
-        }
+        b"mdx" | b"es6" | b"jsm" | b"wxs" => Language::Other,
         _ if matches!(
             name,
             b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format"

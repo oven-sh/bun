@@ -1,12 +1,12 @@
 # `bun format`
 
-A formatter for JavaScript, JSX and TypeScript whose output is byte for byte that of Prettier. The target is the released **3.9.9**: its source, its snapshots, and the npm package as an oracle.
+A formatter for JavaScript, JSX, TypeScript, JSON and CSS whose output is byte for byte that of Prettier. The target is the released **3.9.9**: its source, its snapshots, and the npm package as an oracle.
 
 - **The specification is Prettier**: `src/language-js/**`, `src/document/**`, `src/main/comments/**`, and its snapshot tests, `tests/format/{js,jsx,typescript}/**/__snapshots__/format.test.js.snap`.
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
 - **There is no AST of its own**. It prints straight from the type checker's HIR through the handles of `bun_lint::ast` (`src/lint/CLAUDE.md` has the table ESTree → handles).
 
-Not there, on purpose: formatting of embedded languages (CSS, GraphQL, HTML, Markdown in templates: they are printed as they are), JSDoc formatting, import sorting, Tailwind class sorting, Vue/Svelte/Angular, range formatting, pragmas, `experimentalTernaries`, `experimentalOperatorPosition: "start"`.
+Not there: formatting of embedded languages (CSS, GraphQL, HTML, Markdown in templates: they are printed as they are), JSDoc formatting, Tailwind class sorting, Vue/Svelte/Angular, Flow, Babel-only proposals, plugins.
 
 ## The pipeline
 
@@ -18,7 +18,9 @@ File (HIR + binder tables)                     bun_lint::ast
   └─ ir::printer::print    → bytes           decides which groups fit on the line
 ```
 
-`lib.rs` has the entry points: `format(file, &options, &mut scratch, &mut out)`. `Scratch` holds every buffer, so that formatting the next file allocates nothing.
+`ir/run.rs` has the entry point, `format(file, &options, &mut scratch, &mut out)`. `Scratch` holds every buffer, so that formatting the next file allocates nothing.
+
+What a caller does with a file, in this order, is `format_text` in `src/lint/standalone/format_cmd.rs`: JSON and CSS by `options.parser` or the name of the file (`json::format`, `css::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format` (which is `format` if there is no range).
 
 | directory | what | oxc |
 | --- | --- | --- |
@@ -30,6 +32,9 @@ File (HIR + binder tables)                     bun_lint::ast
 | `js/parentheses/` | `needs_parentheses` | `parentheses/` |
 | `js/print/` | one function per kind of node | `print/` |
 | `js/utils/` | what several kinds of nodes share: assignments, member chains, conditionals, strings, numbers | `utils/` |
+| `js/sort_imports/` | import sorting: `@trivago`/`@ianvs` `importOrder*`, oxfmt's `sortImports` | |
+| `json/`, `css/` | JSON (`json`, `json5`, `jsonc`, `json-stringify`) and style sheets, each with a parser of its own | |
+| `pragma.rs`, `range.rs`, `cursor.rs` | `insertPragma`/`requirePragma`/`checkIgnorePragma`, `rangeStart`/`rangeEnd`, `cursorOffset`: Prettier's `src/main/core.js` | |
 | `verify.rs` | a check that formatting did not change the tokens | `detect_code_removal` (different) |
 
 ## oxc file → our file
@@ -106,7 +111,7 @@ Every variant has one field, the handle. It emulates the nodes that oxc has and 
 | `node.format_leading_comments(f)` | `format_leading_comments(span).fmt(f)` |
 | `node.format_trailing_comments(f)` | `write_trailing_comments_of(node, f)` |
 | `self.id()`, `member.property()`: an identifier node | `identifier(ident, parent_node)`. Names are `Ident`s, not nodes |
-| `property.key()` | `FormatKey::new(key, parent_node)`, `format_property_key(key, parent_node, f)` in `utils/object.rs` |
+| `property.key()` | `FormatKey::new(key, parent_node)`, `format_computed_or_property_key(..)` in `utils/object.rs` |
 | `self.type_annotation()` (`: T`) | `x.ty().map(FormatTypeAnnotation)` |
 | `self.type_parameters()`, `self.type_arguments()` | `type_parameters(list, owner)`, `type_arguments(list, owner)` in `print/type_parameters.rs`. They write nothing for an empty list |
 | `self.params()`, `self.body()` of a function | `FormatFormalParameters(func)`, `FormatFunctionBody(func)` |
@@ -136,7 +141,8 @@ The algorithm is oxc's, not Prettier's: comments are not attached to nodes up fr
 - `impl Format for <handle>` prints leading comments (all unprinted ones before `span.start`), the node, then trailing comments: `Comments::get_trailing_comments(enclosing_span, preceding_span, following_span_start)` decides how many of the next comments belong to this node and not to the next sibling. The parent's span and the next sibling come from `AstNodes::parent()` and `siblings.rs`, and are only computed if there is a comment nearby.
 - Dangling comments (`{ /* here */ }`) are printed by the function that writes the node: `format_dangling_comments(span).with_block_indent()`.
 - `FormatNodeWithoutTrailingComments(&x)` leaves the comments after `x` to the caller.
-- `// prettier-ignore`: `f.comments().is_suppressed(span.start)` → `FormatSuppressedNode(span)` prints the source text.
+- `// prettier-ignore` and `// oxfmt-ignore`: `f.comments().is_suppressed(span.start)` → `FormatSuppressedNode(span)` prints the source text.
+- Where Prettier attaches a comment to a node that it is not next to (`handleMemberExpressionComments`, a comment before the `(` of a signature), `comments::collect` ends with `move_comments`: the comment gets a position that it counts as being at, `Comment::start()`/`end()` (zero width, `is_moved()`), and the list is sorted by that. `comment.span` stays where the text is. All queries of `Comments` go by `start()`/`end()`. A moved comment at the very end of a node is behind it: `comments_before_end_of(span)`.
 - `/** @type {T} */ (e)`: `utils/typecast.rs` keeps the parentheses.
 
 ### `f.is_quiet()`
@@ -157,7 +163,7 @@ The goal is to be faster per core than oxfmt and Biome.
 - No `String`, no `format!`, no `to_vec()` on the path of ordinary code. Text is `&[u8]`.
 - `format_with` closures and `format_args!` are static dispatch and cost nothing. `&dyn Format` only where oxc needs it (`best_fitting!`).
 - `as_ast_nodes()`, `ast_parent()` are cheap but not free (a table lookup and a `match`). Ask once, keep the result in a `let`.
-- `memoized()`/`intern` move elements to the pool: use them where content is written twice or inspected, not by default.
+- `memoized()`/`intern`/`capture` move nothing: the elements stay where they are written, behind a `FormatElement::Skip(len)`, and an `Interned` is a range of the one vector. What is formatted and thrown away stays there too.
 - Decide from the syntax first, look at the source text or the comments last.
 
 ## Conventions
@@ -173,24 +179,35 @@ A node that is not ported yet is written as it is in the source: `write!(f, Form
 ```sh
 $B format file a.ts --semi=false --printWidth=100     # format one file
 $B format ir a.ts                                      # the document
-$B format conformance $P/tests/format                  # table per directory, totals
+$B format conformance $P/tests/format                  # table per directory, totals, what is not run and why
+$B format conformance $P/tests/format --languages=css --verbose
 $B format conformance $P/tests/format --filter=js/arrow --report=report
 diff -u report/<case>.expected report/<case>.actual
 $B format check-idempotent <files or directories>
 $B format verify <files or directories>                # same tokens before and after
 $B format bench <files or directories>
 bun test/cli/format/oracle/compare.ts --bin=$B --prettier=<dir with node_modules/prettier> --options='{"semi":false}' <dirs>
+bun test/cli/format/oracle/oxfmt-fixtures.ts run --bin=$B --list      # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
 ```
 
+`conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `format_cmd/conformance.rs` is all that it leaves out, with the reason.
+
+Fixtures show a fraction of what differs. What found the rest: real code through `compare.ts`, and fuzzers that put every kind of expression into every kind of parent, a comment of every form into every gap of a statement, and random JSX children at narrow widths, each against the npm package.
+
 To see Prettier's document for a snippet: `prettier --parser babel --debug-print-doc a.js`. It maps one to one: `group`, `indent`, `line` (`soft_line_break_or_space`), `softline` (`soft_line_break`), `hardline`, `ifBreak(a, b)` (`if_group_breaks(a)`, `if_group_fits_on_line(b)`), `conditionalGroup` (`best_fitting!`), `fill`, `lineSuffix`, `lineSuffixBoundary`, `breakParent` (`expand_parent`), `indentIfBreak`, `align`, `label`.
+
+## The oxfmt flavor
+
+`f.options().flavor.is_oxfmt()`: whoever has an `.oxfmtrc.json` gets what oxfmt prints where that is not what Prettier 3.9.9 prints, so that switching gives no diff. oxfmt follows Prettier 3.8 in those places, or has a rule of its own. Each is behind a function next to its use that is named after the behaviour (`union_breaks_one_per_line(f)`), to be deleted when oxfmt catches up. The default flavor must not change because of one.
 
 ## Pitfalls
 
 - oxc tracks an older release of Prettier (3.8). Where they differ, the snapshot of 3.9.9 is right.
 - `Expr::span()` is without parentheses, like in ESTree. `e.outer_span()` has them.
 - A backtick string without substitutions is `ExprKind::Template`. JSX text is `ExprKind::String` with `e.is_jsx_text()`.
-- `a, b, c` is `Binary { op: Comma }`, left-nested. `e.sequence()` are the operands. `BinaryLikeExpression::new(e)` is `None` for it, and for `#a in b`.
+- `a, b, c` is `Binary { op: Comma }`, left-nested. `e.sequence()` are the operands. `BinaryLikeExpression::new(e)` is `None` for it. `#a in b` is a binary-like expression (`AstNodes::PrivateInExpression` tells it apart).
 - Patterns in declarations are `Pat`. In assignments they are expressions: `is_assignment_target(e)`, and `as_ast_nodes()` says `ArrayAssignmentTarget`, ..
 - `export` is a modifier of the declaration. `stmt.as_ast_nodes()` is the `ExportNamedDeclaration`, `FormatDeclaration(stmt)` the declaration in it, `stmt.span_without_export()` its span.
 - Methods: `member.func()` / `prop.func()` is the function, whose span starts at the parameters in ESTree.
 - Elements of `implements` and of the `extends` of an interface are `TypeKind::Ref`, or `TypeKind::Heritage` if they are not names.
+- `x!!` is one `ExprKind::NonNull(x)`. `FormatNonNullMarks(e)` writes every `!` and the comments between them.

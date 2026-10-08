@@ -254,8 +254,11 @@ macro_rules! every {
                 #[inline(never)]
                 fn $list(&'a self) -> &'a [u32] {
                     self.by_kind().$field.get_or_init(|| {
+                        // Nearly all are in the tree: room for all of them is made at once.
                         let all = 0..self.hir.$field.len() as u32;
-                        all.filter(|&id| <$handle as Handle>::from_raw(self, id).is_in_tree()).collect()
+                        let mut in_tree = Vec::with_capacity(all.len());
+                        in_tree.extend(all.filter(|&id| <$handle as Handle>::from_raw(self, id).is_in_tree()));
+                        in_tree
                     })
                 }
 

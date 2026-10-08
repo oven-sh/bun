@@ -446,7 +446,7 @@ impl Run<'_> {
         let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES]));
         let pool = Pool::new(options.threads);
         // Nothing is started unless a configuration has a plugin in JavaScript.
-        let js_plugins = Host::with_engine(environment.js_engine, &environment.cwd);
+        let js_plugins = Host::with_engine(environment.js_engine, &paths::to_native(environment.cwd.clone()));
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let modules = bun_lint_graph::Graph::new(&store);
         let loader = Loader::new(&linter, options, environment, &js_plugins);

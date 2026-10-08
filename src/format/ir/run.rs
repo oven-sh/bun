@@ -1,7 +1,9 @@
 //! From a file to its formatted text.
 
+use super::element::Interned;
 use super::formatter::Formatter;
 use crate::cursor::CursorRegion;
+use crate::js::context::JsFormatContext;
 use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
 
@@ -43,17 +45,22 @@ pub(crate) fn format_with_marks<'a>(
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<[Option<u32>; 2], FormatError> {
     let root = write_document(file, options, cursor, scratch, write)?;
-    out.reserve(file.text().len() + file.text().len() / 8);
-    super::printer::print(
-        root,
-        &scratch.formatter.storage,
-        file.text(),
-        super::printer::PrinterOptions::new(options, file.text()),
-        &mut scratch.printer,
-        out,
-    )
-    .map_err(|_| FormatError::InvalidDocument)?;
+    print(root, file.text(), options, scratch, out)?;
     Ok(scratch.printer.marks)
+}
+
+/// Appends the text of the document `root`, which [`write_with`] has returned, to `out`.
+pub(crate) fn print(
+    root: Interned,
+    source: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
+    out.reserve(source.len() + source.len() / 8);
+    let printer_options = super::printer::PrinterOptions::new(options, source);
+    super::printer::print(root, &scratch.formatter.storage, source, printer_options, &mut scratch.printer, out)
+        .map_err(|_| FormatError::InvalidDocument)
 }
 
 /// The document of `file`, for debugging.
@@ -72,7 +79,7 @@ fn write_document<'a>(
     cursor: CursorRegion,
     scratch: &mut Scratch,
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
-) -> Result<super::element::Interned, FormatError> {
+) -> Result<Interned, FormatError> {
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
     }
@@ -83,11 +90,22 @@ fn write_document<'a>(
         comments
     });
     let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| comments);
-    let mut context = crate::js::context::JsFormatContext::new(file, options.clone(), comments);
+    let mut context = JsFormatContext::new(file, options.clone(), comments);
     context.cursor = cursor;
+    write_with(context, file.text(), scratch, |f| write(file, f))
+}
+
+/// Calls `write` to write a document whose source text is `source`. For a text that is not
+/// JavaScript, `context` is one [without a file](JsFormatContext::without_file).
+pub(crate) fn write_with<'a>(
+    context: JsFormatContext<'a>,
+    source: &'a [u8],
+    scratch: &mut Scratch,
+    write: impl FnOnce(&mut Formatter<'a>),
+) -> Result<Interned, FormatError> {
     let buffers = std::mem::take(&mut scratch.formatter);
-    let mut formatter = Formatter::new(context, buffers);
-    write(file, &mut formatter);
+    let mut formatter = Formatter::new(context, source, buffers);
+    write(&mut formatter);
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
     let (root, buffers) = formatter.finish();
     scratch.formatter = buffers;

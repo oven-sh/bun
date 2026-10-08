@@ -335,7 +335,8 @@ pub(crate) struct Formatter<'a> {
 }
 
 impl<'a> Formatter<'a> {
-    pub(crate) fn new(context: JsFormatContext<'a>, buffers: FormatterBuffers) -> Self {
+    /// `source`: what [`FormatElement::SourceText`] is a range of.
+    pub(crate) fn new(context: JsFormatContext<'a>, source: &'a [u8], buffers: FormatterBuffers) -> Self {
         let FormatterBuffers {
             mut storage,
             mut tracker,
@@ -345,7 +346,6 @@ impl<'a> Formatter<'a> {
         storage.clear();
         tracker.clear();
         cleaned.clear();
-        let source = context.file().text();
         // Measured by oxc on the sources of VS Code: the median is 0.19 elements per byte, and
         // 95% of the files are below 0.4.
         storage.pool.reserve(source.len() * 2 / 5);
@@ -795,7 +795,7 @@ impl<'a> Formatter<'a> {
     pub(crate) fn print_to_text(&mut self, content: &(impl Format<'a> + ?Sized)) -> Vec<u8> {
         use super::printer::{PrinterBuffers, PrinterOptions, print};
         let document = self.capture(content);
-        let source = self.file().text();
+        let source = self.source;
         let mut out = Vec::new();
         let options = PrinterOptions::new(self.options(), source);
         if print(document, &self.storage, source, options, &mut PrinterBuffers::default(), &mut out).is_err() {

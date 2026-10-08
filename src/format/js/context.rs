@@ -10,7 +10,8 @@ use bun_lint::span::{Span, Spanned};
 use rustc_hash::FxHashMap;
 
 pub(crate) struct JsFormatContext<'a> {
-    file: &'a File<'a>,
+    /// `None` for a document that is not written for JavaScript.
+    file: Option<&'a File<'a>>,
     options: FormatOptions,
     comments: Comments<'a>,
     /// What has been formatted ahead of its turn, by the span of the node: an argument that was
@@ -31,9 +32,18 @@ pub(crate) struct JsFormatContext<'a> {
 impl<'a> JsFormatContext<'a> {
     pub(crate) fn new(file: &'a File<'a>, options: FormatOptions, comments: &'a [Comment]) -> Self {
         Self {
-            file,
+            file: Some(file),
+            ..Self::without_file(file.text(), options, comments)
+        }
+    }
+
+    /// For a document that is written for `source`, which is in another language. Nothing that
+    /// writes it asks for the [file](JsFormatContext::file).
+    pub(crate) fn without_file(source: &'a [u8], options: FormatOptions, comments: &'a [Comment]) -> Self {
+        Self {
+            file: None,
             options,
-            comments: Comments::new(SourceText::new(file.text()), comments),
+            comments: Comments::new(SourceText::new(source), comments),
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),
             is_quiet: false,
@@ -45,7 +55,7 @@ impl<'a> JsFormatContext<'a> {
 
     #[inline]
     pub(crate) fn file(&self) -> &'a File<'a> {
-        self.file
+        self.file.expect("only what writes JavaScript asks for the file, and there is one then")
     }
 
     /// Whether there is stack left to write one more expression, statement or type in what is being

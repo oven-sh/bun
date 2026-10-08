@@ -1805,7 +1805,7 @@ impl<'a> Printer<'a> {
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        let env_suffix = env_loader.default_suffix();
+        let env_suffix = crate::package_manager_real::default_env_file_suffix(&env_loader);
         env_loader.load(&entries, &[] as &[&[u8]], env_suffix, false)?;
         let mut log = bun_ast::Log::init();
         options.load(

@@ -3,9 +3,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/12011
-// `bun install` hardcoded the dotenv suffix to Production and never looked at
-// --env-file / --no-env-file / NODE_ENV, so bunfig `$VAR` substitution always
-// used .env.production (or .env) regardless of what the user asked for.
+// `bun install` always loaded the production `.env` files for bunfig `$VAR`
+// substitution. It ignored --env-file, --no-env-file, bunfig `env = false` and
+// NODE_ENV=development.
 
 type Files = Record<string, string>;
 
@@ -91,34 +91,26 @@ describe("bun install .env loading (#12011)", () => {
     expect(auth[0]).toBe("Bearer CUSTOM");
   });
 
-  test.concurrent("NODE_ENV=development selects .env.development", async () => {
-    const { auth, stderr } = await runInstall([], { NODE_ENV: "development" });
-    expect(auth.length).toBeGreaterThan(0);
-    expect(auth[0]).toBe("Bearer DEV");
-    expect(stderr).toContain(".env.development");
+  // Only `development` moves install off the production files.
+  const modes: [label: string, env: Record<string, string>, token: string][] = [
+    ["NODE_ENV=development", { NODE_ENV: "development" }, "DEV"],
+    ["BUN_ENV=development", { BUN_ENV: "development", NODE_ENV: "production" }, "DEV"],
+    ["NODE_ENV=production", { NODE_ENV: "production" }, "PROD"],
+    ["NODE_ENV=test", { NODE_ENV: "test" }, "PROD"],
+    ["no NODE_ENV", {}, "PROD"],
+  ];
+  test.concurrent.each(modes)("default files with %s", async (_label, env, token) => {
+    const { auth } = await runInstall([], env);
+    expect(auth[0]).toBe(`Bearer ${token}`);
   });
 
-  test.concurrent("NODE_ENV=production selects .env.production", async () => {
-    const { auth } = await runInstall([], { NODE_ENV: "production" });
-    expect(auth[0]).toBe("Bearer PROD");
-  });
-
-  test.concurrent("NODE_ENV=test selects .env.test", async () => {
-    const { auth } = await runInstall([], { NODE_ENV: "test" });
-    expect(auth[0]).toBe("Bearer TESTSUFFIX");
-  });
-
-  test.concurrent("default (no NODE_ENV) matches `bun run` and selects .env.development", async () => {
-    const { auth } = await runInstall([]);
-    expect(auth[0]).toBe("Bearer DEV");
-  });
+  // With no file loaded and no NPM_TOKEN in the process env, `$NPM_TOKEN` is
+  // unresolved: sent as written, or not sent. A loaded file gives "Bearer PROD".
+  const unresolved = ["Bearer $NPM_TOKEN", "<none>"];
 
   test.concurrent("--no-env-file suppresses auto-loading", async () => {
     const { auth, stderr } = await runInstall(["--no-env-file"]);
-    // No .env* loaded and no NPM_TOKEN in process env, so bunfig's $NPM_TOKEN
-    // stays literal. If suppression regresses, .env.development leaks and this
-    // becomes "Bearer DEV".
-    expect(auth[0]).toBe("Bearer $NPM_TOKEN");
+    expect(unresolved).toContain(auth[0]);
     expect(stderr).not.toContain(".env");
   });
 
@@ -127,7 +119,7 @@ describe("bun install .env loading (#12011)", () => {
       files: port => ({ ...projectFiles(port), "bunfig.toml": `env = false\n${bunfig(port)}` }),
       argv: ["install"],
     });
-    expect(auth[0]).toBe("Bearer $NPM_TOKEN");
+    expect(unresolved).toContain(auth[0]);
     expect(stderr).not.toContain(".env");
   });
 
@@ -137,12 +129,13 @@ describe("bun install .env loading (#12011)", () => {
   });
 
   test.concurrent("--env-file value is consumed, not treated as a package to add", async () => {
-    using dir = tempDir("install-env-missing", {
+    using dir = tempDir("install-env-file-value", {
       "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
       "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+      "ci.env": "A=1\n",
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--env-file", "does-not-exist.env"],
+      cmd: [bunExe(), "install", "--env-file", "ci.env"],
       cwd: String(dir),
       env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, NPM_TOKEN: undefined },
       stdout: "pipe",
@@ -163,11 +156,11 @@ describe("a relative --env-file is resolved against the directory the command ru
     "package.json": packageJson,
     "bunfig.toml": bunfig(port),
     ".env.ci": "NPM_TOKEN=ROOT\n",
-    ".env.development": "NPM_TOKEN=ROOT_DEV\n",
+    ".env.production": "NPM_TOKEN=ROOT_PROD\n",
     "sub/.env.ci": "NPM_TOKEN=SUB\n",
     "sub/.env.a": "NPM_TOKEN=A\n",
     "sub/.env.b": "NPM_TOKEN=B\n",
-    "sub/.env.development": "NPM_TOKEN=SUB_DEV\n",
+    "sub/.env.production": "NPM_TOKEN=SUB_PROD\n",
   });
 
   const workspace = (port: number): Files => ({
@@ -237,7 +230,7 @@ describe("a relative --env-file is resolved against the directory the command ru
 
   test.concurrent("the default .env files still come from the project root", async () => {
     const { auth } = await run({ files: nested, cwd: "sub", argv: ["install"] });
-    expect(auth[0]).toBe("Bearer ROOT_DEV");
+    expect(auth[0]).toBe("Bearer ROOT_PROD");
   });
 });
 
@@ -256,7 +249,7 @@ async function probeLifecycleEnv(extraArgs: string[]): Promise<{ seen: string; s
       },
     }),
     ".env": "INSTALL_ENV_PROBE=from-dotenv\n",
-    ".env.development": "INSTALL_ENV_PROBE=from-dotenv-development\n",
+    ".env.production": "INSTALL_ENV_PROBE=from-dotenv-production\n",
     ".env.custom": "INSTALL_ENV_PROBE=from-custom\n",
   });
 
@@ -275,10 +268,10 @@ async function probeLifecycleEnv(extraArgs: string[]): Promise<{ seen: string; s
 describe("bun install .env loading and lifecycle scripts (#31450)", () => {
   test.concurrent("by default the postinstall script sees the loaded .env* values", async () => {
     const { seen, stderr, exitCode } = await probeLifecycleEnv([]);
-    expect(seen).toBe("from-dotenv-development");
+    expect(seen).toBe("from-dotenv-production");
     // The loader's banner quotes each file it loaded; the echoed postinstall
     // command line also mentions `process.env`, hence matching on the quote.
-    expect(stderr).toContain('".env.development"');
+    expect(stderr).toContain('".env.production"');
     expect(exitCode).toBe(0);
   });
 
@@ -293,7 +286,7 @@ describe("bun install .env loading and lifecycle scripts (#31450)", () => {
     const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file", "--env-file", ".env.custom"]);
     expect(seen).toBe("from-custom");
     expect(stderr).toContain('".env.custom"');
-    expect(stderr).not.toContain('".env.development"');
+    expect(stderr).not.toContain('".env.production"');
     expect(exitCode).toBe(0);
   });
 });

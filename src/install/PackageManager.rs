@@ -1476,6 +1476,15 @@ fn new_env_loader() -> &'static mut dot_env::Loader {
     unsafe { &mut *loader_ptr }
 }
 
+/// The default `.env` files are the production set unless `BUN_ENV` or `NODE_ENV` is `development`.
+pub(crate) fn default_env_file_suffix(env: &dot_env::Loader) -> dot_env::DotEnvFileSuffix {
+    if env.get_node_env() == Some(b"development") {
+        dot_env::DotEnvFileSuffix::Development
+    } else {
+        dot_env::DotEnvFileSuffix::Production
+    }
+}
+
 /// Reads the `--env-file` paths before `init()` changes the cwd they are relative to.
 #[cold]
 #[inline(never)]
@@ -1486,7 +1495,7 @@ fn load_explicit_env_files(env_files: &[&[u8]]) -> Result<(), Error> {
     }
     let env = new_env_loader();
     env.load_process()?;
-    let env_suffix = env.default_suffix();
+    let env_suffix = default_env_file_suffix(env);
     env.load(
         &dot_env::DirEntryKeys(Vec::new()),
         env_files,
@@ -1920,7 +1929,7 @@ pub fn init(
     let env: &mut dot_env::Loader = if cli.env_files.is_empty() {
         let env = new_env_loader();
         env.load_process()?;
-        let env_suffix = env.default_suffix();
+        let env_suffix = default_env_file_suffix(env);
         let skip_default_env = cli.no_env_file || ctx.args.disable_default_env_files;
         // Copy the listing's basenames out under `entries_mutex`; `.data` must
         // only be probed while the lock is held.

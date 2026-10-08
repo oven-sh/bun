@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow duplicate arguments in `function` definitions.
@@ -27,9 +28,20 @@ impl NoDupeArgs {
         for param in params {
             param.pat().for_each_binding(&mut |binding| names.extend(binding.as_ident()));
         }
+        // How often each name is declared, if there are too many to compare each with each.
+        let mut counts: FxHashMap<Name<'a>, u32> = FxHashMap::default();
+        if names.spilled() {
+            for name in &names {
+                *counts.entry(*name).or_default() += 1;
+            }
+        }
         for (i, name) in names.iter().enumerate() {
             // Once for each name, where it is first declared.
-            if names[..i].contains(name) || !names[i + 1..].contains(name) {
+            let is_first_of_several = match names.spilled() {
+                true => counts.get_mut(name).is_some_and(|count| std::mem::take(count) > 1),
+                false => !names[..i].contains(name) && names[i + 1..].contains(name),
+            };
+            if !is_first_of_several {
                 continue;
             }
             let (Some(open), Some(body)) = (ast_utils::get_opening_paren_of_params(func), func.body_span()) else {

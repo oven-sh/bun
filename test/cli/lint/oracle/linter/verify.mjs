@@ -111,11 +111,8 @@ function generated() {
     }
     const bom = rng.int(40) === 0 ? "﻿" : "";
     const code = bom + parts.join("");
-    // ESLint has to see the same text in every pass, so not where `oxlint-` is rewritten for it.
-    const fix = rng.int(5) === 0 && !code.includes("oxlint-") ? { fix: true } : {};
+    const fix = rng.int(5) === 0 ? { fix: true } : {};
     const { quiet, ...given } = rng.pick(options);
-    // As with a configuration of oxlint, or as with one of ESLint, which ignores these comments.
-    if (code.includes("oxlint-") && rng.int(3) !== 0) given.oxlintComments = true;
     cases.push({ code, filename: "file.js", config: rng.pick(rng.int(20) === 0 ? invalidConfigs : configs), options: fix.fix ? { ...given, ...fix } : { ...given, ...(quiet ? { quiet } : {}) } });
   }
   return cases;
@@ -194,10 +191,10 @@ function aliases() {
     const name = () => rng.pick(Object.keys(names));
     const lines = Array.from({ length: 1 + rng.int(6) }, () => rng.pick([
       "debugger;", "a!;", "debugger; a!;", `// eslint-disable-next-line ${name()}`, `debugger; // eslint-disable-line ${name()}, ${name()}`, `/* eslint-disable ${name()} */`,
-      `/* eslint-enable ${name()} */`, `/* eslint ${name()}: ${rng.pick([0, 1, 2])} */`, `a!; // oxlint-disable-line ${name()}`,
+      `/* eslint-enable ${name()} */`, `/* eslint ${name()}: ${rng.pick([0, 1, 2])} */`,
     ]));
     const rules = Object.fromEntries(Object.keys(names).filter(() => rng.int(3) !== 0).map(id => [id, rng.pick([1, 2])]));
-    cases.push({ code: lines.join("\n"), filename: "file.ts", config: { rules, languageOptions: { parser: "typescript" } }, options: { oxlintComments: true }, names });
+    cases.push({ code: lines.join("\n"), filename: "file.ts", config: { rules, languageOptions: { parser: "typescript" } }, options: {}, names });
   }
   return cases;
 }
@@ -226,15 +223,13 @@ function refusals() {
 
 function eslintAnswer({ code, filename, config, options }) {
   const linter = new Linter({ configType: "flat", cwd: "/" });
-  const { quiet, fix, oxlintComments, ...rest } = options;
+  const { quiet, fix, ...rest } = options;
   const own = structuredClone(config);
   if (own.languageOptions?.parser === "typescript") own.languageOptions.parser = typescriptParser;
   // As the command line does it, which shows in the messages about an invalid configuration.
   const configs = new FlatConfigArray([], { baseConfig, basePath: "/" });
   configs.push({}, own); // The harness has an object of its own before it.
   configs.normalizeSync();
-  // With a configuration of oxlint, `oxlint-disable` means `eslint-disable` here. It means nothing to ESLint.
-  if (oxlintComments) code = code.replaceAll("oxlint-", "eslint-");
   if (fix) {
     const { fixed, output, messages } = linter.verifyAndFix(code, configs, { filename, ...rest });
     return { fixed, output, messages, suppressedMessages: linter.getSuppressedMessages() };
@@ -247,7 +242,6 @@ function normalize(answer) {
   if (answer.error) return answer;
   const message = ({ suggestions, ...m }) => ({
     ...m,
-    message: m.message.replaceAll("oxlint-", "eslint-"),
     ...(suggestions ? { suggestions } : {}),
   });
   return { ...answer, messages: answer.messages.map(message), suppressedMessages: answer.suppressedMessages.map(message) };

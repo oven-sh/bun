@@ -63,7 +63,8 @@ use crate::rule::Plugin;
 use cache::Cache;
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
-use minimatch::{Minimatch, split_path};
+use minimatch::{Minimatch, SplitPath};
+pub(crate) use rc::is_rule_of_oxlint;
 pub use rc::{LoadPlugin, RcFlavor, oxlint_category};
 use std::sync::Arc;
 
@@ -199,7 +200,7 @@ pub struct Config {
 }
 
 /// `shouldIgnorePath` for the `ignores` of one object.
-fn is_ignored_by(ignores: &[Pattern], path: &[&[u8]], mut is_ignored: bool) -> bool {
+fn is_ignored_by(ignores: &[Pattern], path: &SplitPath, mut is_ignored: bool) -> bool {
     for pattern in ignores {
         match (is_ignored, pattern.is_negated) {
             (false, false) => is_ignored = pattern.matcher.matches(path, false),
@@ -214,7 +215,7 @@ fn is_ignored_by(ignores: &[Pattern], path: &[&[u8]], mut is_ignored: bool) -> b
 fn path_matches<'o>(
     files: impl IntoIterator<Item = &'o Vec<Pattern>>,
     ignores: Option<&[Pattern]>,
-    path: &[&[u8]],
+    path: &SplitPath,
 ) -> bool {
     files.into_iter().any(|all| {
         all.iter()
@@ -237,7 +238,7 @@ impl Config {
     /// `shouldIgnorePath(this.ignores, ..)`. `relative` is relative to the base path, and ends with
     /// a slash if it is a directory.
     fn is_ignored_globally(&self, relative: &[u8]) -> bool {
-        let parts = split_path(relative);
+        let parts = SplitPath::new(relative);
         let mut is_ignored = false;
         // See `Config::relative`.
         let is_outside = relative.starts_with(b"/");
@@ -257,7 +258,7 @@ impl Config {
             if relative.ends_with(b"/") {
                 own.push(b'/');
             }
-            is_ignored = is_ignored_by(ignores, &split_path(&own), is_ignored);
+            is_ignored = is_ignored_by(ignores, &SplitPath::new(&own), is_ignored);
         }
         is_ignored
     }
@@ -331,7 +332,7 @@ impl Config {
     /// whoever walks the directories has asked [`Config::is_directory_ignored`] on the way.
     pub fn get_unless_ignored(&self, registry: &Registry, file: &[u8]) -> FileConfig {
         let relative = self.relative(file);
-        let parts = split_path(&relative);
+        let parts = SplitPath::new(&relative);
         let mut matching: Vec<u32> = Vec::new();
         let mut is_matched = false;
         for (index, object) in self.objects.iter().enumerate() {
@@ -342,24 +343,30 @@ impl Config {
             if own.as_ref().is_some_and(|it| path::is_external(it)) {
                 continue;
             }
-            let own_parts = own.as_ref().map(|it| split_path(it));
-            let parts: &[&[u8]] = own_parts.as_ref().map_or(&parts, |it| &it[..]);
             let ignores = object.ignores.as_deref();
-            let Some(files) = &object.files else {
-                if !object.is_global_ignores
-                    && !ignores.is_some_and(|it| is_ignored_by(it, parts, false))
-                {
-                    matching.push(index as u32);
+            // Whether the object applies, and whether that makes ESLint lint the file.
+            let status = |parts: &SplitPath| -> (bool, bool) {
+                let Some(files) = &object.files else {
+                    let is_ignored = ignores.is_some_and(|it| is_ignored_by(it, parts, false));
+                    return (!object.is_global_ignores && !is_ignored, false);
+                };
+                let is_universal = |all: &&Vec<Pattern>| all.iter().all(|it| it.is_universal);
+                match path_matches(files.iter().filter(|it| !is_universal(it)), ignores, parts) {
+                    true => (true, true),
+                    false => (
+                        path_matches(files.iter().filter(is_universal), ignores, parts),
+                        false,
+                    ),
                 }
-                continue;
             };
-            let is_universal = |all: &&Vec<Pattern>| all.iter().all(|it| it.is_universal);
-            if path_matches(files.iter().filter(|it| !is_universal(it)), ignores, parts) {
-                matching.push(index as u32);
-                is_matched = true;
-            } else if path_matches(files.iter().filter(is_universal), ignores, parts) {
+            let (applies, is_linted) = match &own {
+                Some(own) => status(&SplitPath::new(own)),
+                None => status(&parts),
+            };
+            if applies {
                 matching.push(index as u32);
             }
+            is_matched |= is_linted;
         }
         if !is_matched {
             return FileConfig::Unconfigured;
@@ -466,6 +473,7 @@ impl Config {
         config.language = LanguageOptions::from_json(&language_options, &settings);
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
+        config.language.is_oxlint = self.prefers_typescript_rules;
         config.linter = linter;
         for setting in rules {
             // ESLint's `throwRuleNotFoundError`, where it can be known that ESLint has no such rule.

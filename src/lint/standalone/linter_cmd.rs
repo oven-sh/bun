@@ -184,14 +184,6 @@ fn verify(args: &[String]) {
             }
         };
         let given = case.get(b"options").unwrap_or(&null);
-        // Not an option of ESLint: as with a configuration of oxlint.
-        let config = match given.get(b"oxlintComments").and_then(Json::as_bool) {
-            Some(true) => std::sync::Arc::new(ResolvedConfig {
-                understands_oxlint_comments: true,
-                ..(*config).clone()
-            }),
-            _ => config,
-        };
         let only_errors = |_: &RuleId, severity: Severity| severity == Severity::Error;
         let options = LintOptions {
             allow_inline_config: given.get(b"allowInlineConfig").and_then(Json::as_bool)
@@ -536,6 +528,8 @@ fn project(args: &[String]) {
             js_plugins: host.as_ref(),
             ..LintOptions::default()
         };
+        // `detailed: true`: also the column and the text of each message.
+        let is_detailed = case.get(b"detailed").and_then(Json::as_bool) == Some(true);
         let config = match config_of(case, host.as_ref()) {
             Ok(config) => config,
             Err(error) => {
@@ -569,13 +563,18 @@ fn project(args: &[String]) {
                 );
             }
             let messages = result.messages.iter().map(|it| {
-                Json::Array(vec![
+                let mut row = vec![
                     it.rule_id
                         .as_ref()
                         .map_or(Json::Null, |id| Json::String(id.to_vec())),
                     Json::Number(f64::from(it.severity as u8)),
                     Json::Number(f64::from(it.line)),
-                ])
+                ];
+                if is_detailed {
+                    row.push(Json::Number(f64::from(it.column)));
+                    row.push(Json::String(it.message.clone()));
+                }
+                Json::Array(row)
             });
             (path.clone(), Json::Array(messages.collect()))
         });

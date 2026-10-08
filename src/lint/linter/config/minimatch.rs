@@ -964,8 +964,24 @@ impl Ast {
 /// A path, split at its slashes.
 pub(crate) type PathParts<'p> = SmallVec<[&'p [u8]; 16]>;
 
+/// A path to match patterns with.
+pub(crate) struct SplitPath<'p> {
+    /// The path, if its parts are separated by one slash each.
+    text: Option<&'p [u8]>,
+    parts: PathParts<'p>,
+}
+
+impl<'p> SplitPath<'p> {
+    pub(crate) fn new(path: &'p [u8]) -> SplitPath<'p> {
+        SplitPath {
+            text: (!strings::contains(path, b"//")).then_some(path),
+            parts: split_path(path),
+        }
+    }
+}
+
 /// `slashSplit`: `path.split(/\/+/)`
-pub(crate) fn split_path(path: &[u8]) -> PathParts<'_> {
+fn split_path(path: &[u8]) -> PathParts<'_> {
     let mut parts = PathParts::new();
     let mut rest = path;
     while let Some(slash) = strings::index_of_char_usize(rest, b'/') {
@@ -991,6 +1007,37 @@ struct Expansion {
     parts: Vec<Part>,
     /// Where the first `**` is, and the last one.
     globstars: Option<(usize, usize)>,
+    /// The parts at the start that are without magic, joined by slashes: what matches starts with them.
+    head: Vec<u8>,
+    /// What the last part ends with, and so what matches, unless that ends with a slash.
+    tail: Vec<u8>,
+}
+
+impl Expansion {
+    fn new(parts: Vec<Part>) -> Expansion {
+        let is_globstar = |part: &Part| matches!(part, Part::GlobStar);
+        let literals = parts.iter().map_while(|it| match it {
+            Part::Literal(literal) => Some(&literal[..]),
+            _ => None,
+        });
+        Expansion {
+            globstars: (parts.iter().position(is_globstar))
+                .zip(parts.iter().rposition(is_globstar)),
+            head: literals.collect::<Vec<_>>().join(&b'/'),
+            tail: match parts.last() {
+                Some(Part::Literal(end) | Part::StarExt(end)) => end.clone(),
+                _ => Vec::new(),
+            },
+            parts,
+        }
+    }
+
+    /// Whether `path` can match, as far as that shows without looking at its parts.
+    fn can_match(&self, path: &[u8]) -> bool {
+        path.starts_with(&self.head)
+            && (self.head.is_empty() || matches!(path.get(self.head.len()), None | Some(b'/')))
+            && (path.ends_with(&self.tail) || path.ends_with(b"/"))
+    }
 }
 
 /// `/\{(?:(?!\{).)*\}/.test(pattern)`
@@ -1061,13 +1108,8 @@ impl Minimatch {
             if parts.is_empty() {
                 parts.push(b"");
             }
-            let parts: Vec<Part> = parts.into_iter().map(Part::parse).collect();
-            let is_globstar = |part: &Part| matches!(part, Part::GlobStar);
-            it.set.push(Expansion {
-                globstars: (parts.iter().position(is_globstar))
-                    .zip(parts.iter().rposition(is_globstar)),
-                parts,
-            });
+            it.set
+                .push(Expansion::new(parts.into_iter().map(Part::parse).collect()));
         }
         it
     }
@@ -1197,24 +1239,27 @@ impl Minimatch {
 
     /// `match(path)`. `flip_negate`: the option `flipNegate`, with which a `!` at the start of the
     /// pattern is ignored.
-    pub(crate) fn matches(&self, path: &[&[u8]], flip_negate: bool) -> bool {
+    pub(crate) fn matches(&self, path: &SplitPath, flip_negate: bool) -> bool {
         self.matches_with(path, flip_negate, false)
     }
 
     /// `match(path, partial)`
     pub(crate) fn matches_path(&self, path: &[u8], flip_negate: bool, partial: bool) -> bool {
         let is_root = partial && path == b"/" && !self.is_comment && !self.is_empty;
-        is_root || self.matches_with(&split_path(path), flip_negate, partial)
+        is_root || self.matches_with(&SplitPath::new(path), flip_negate, partial)
     }
 
-    fn matches_with(&self, path: &[&[u8]], flip_negate: bool, partial: bool) -> bool {
+    fn matches_with(&self, path: &SplitPath, flip_negate: bool, partial: bool) -> bool {
         if self.is_comment {
             return false;
         }
+        let text = path.text.filter(|_| !partial);
+        let path = &path.parts[..];
         if self.is_empty {
             return matches!(path, [b""]);
         }
         let hit = self.set.iter().any(|it| match it.globstars {
+            _ if text.is_some_and(|text| !it.can_match(text)) => false,
             Some(globstars) => Self::match_globstar(path, &it.parts, globstars, partial),
             None => Self::match_plain(path, &it.parts, partial),
         });

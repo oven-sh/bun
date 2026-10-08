@@ -213,6 +213,7 @@ impl Reader<'_> {
                 settings.push(setting);
                 continue;
             }
+            setting.written_for = Plugin::of_prefix(prefix);
             if !matches!(prefix, b"eslint" | b"typescript" | b"typescript-eslint") {
                 setting.plugin = parse_rule_id(id).0.into();
             }

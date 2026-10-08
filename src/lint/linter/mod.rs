@@ -29,6 +29,7 @@ mod comment;
 pub mod config;
 mod directives;
 mod disable;
+mod disable_oxlint;
 mod fixer;
 pub mod globals;
 mod json_v8;
@@ -300,7 +301,8 @@ impl Linter {
         };
         // ESLint takes `oxlint-disable` and the like for ordinary comments.
         let is_understood = |it: &&ConfigComment| {
-            config.understands_oxlint_comments || !file.slice(it.label_span).starts_with(b"oxlint")
+            config.understands_oxlint_comments
+                || !it.is_only_of_oxlint && !file.slice(it.label_span).starts_with(b"oxlint")
         };
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
@@ -325,8 +327,10 @@ impl Linter {
             for comment in comments.iter().filter(is_understood) {
                 inline.apply(comment, &mut running, &mut running_js);
             }
-            for comment in comments.iter().filter(is_understood) {
-                inline.disable_directives(comment, &mut parents, &mut disable_directives);
+            if !config.understands_oxlint_comments {
+                for comment in comments.iter().filter(is_understood) {
+                    inline.disable_directives(comment, &mut parents, &mut disable_directives);
+                }
             }
         }
 
@@ -437,20 +441,55 @@ impl Linter {
         }
         problems.sort_by_key(|it| (it.line, it.column));
 
-        disable::apply_disable_directives(
-            &disable::Input {
-                file,
-                parents: &parents,
-                directives: &disable_directives,
-                report_unused: (options.report_unused_disable_directives)
-                    .unwrap_or(config.linter.report_unused_disable_directives),
-                wants_fixes: options.wants_fixes,
-                rules_to_ignore: &rules_to_ignore,
-                has_skipped_rules: config.has_skipped_rules,
-            },
-            &mut problems,
-        );
-        if disable_directives.is_empty() {
+        let report_unused = (options.report_unused_disable_directives)
+            .unwrap_or(config.linter.report_unused_disable_directives);
+        let mut has_directives = !disable_directives.is_empty();
+        if config.understands_oxlint_comments && !config.linter.no_inline_config {
+            let is_directive = |it: &&ConfigComment| {
+                matches!(
+                    it.label,
+                    Label::Disable | Label::Enable | Label::DisableLine | Label::DisableNextLine
+                )
+            };
+            has_directives = comments.iter().any(|it| is_directive(&it));
+            let can_tell = |name: &[u8]| {
+                let slash = bun_core::strings::last_index_of_char(name, b'/');
+                match config.find_js_rule(name) {
+                    Some(_) => true,
+                    None if config.find_rule(&self.registry, name).is_some() => true,
+                    // One of a plugin that is skipped.
+                    None if slash.is_some() && config.has_skipped_rules => false,
+                    None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
+                }
+            };
+            disable_oxlint::apply(
+                &disable_oxlint::Input {
+                    file,
+                    report_unused,
+                    wants_fixes: options.wants_fixes,
+                    rules_to_ignore: &rules_to_ignore,
+                    has_skipped_rules: config.has_skipped_rules,
+                    can_tell: &can_tell,
+                },
+                comments.iter().filter(is_directive),
+                &mut problems,
+            );
+            problems.sort_by_key(|it| (it.line, it.column));
+        } else {
+            disable::apply_disable_directives(
+                &disable::Input {
+                    file,
+                    parents: &parents,
+                    directives: &disable_directives,
+                    report_unused,
+                    wants_fixes: options.wants_fixes,
+                    rules_to_ignore: &rules_to_ignore,
+                    has_skipped_rules: config.has_skipped_rules,
+                },
+                &mut problems,
+            );
+        }
+        if !has_directives {
             result.messages = problems;
         } else {
             let (suppressed, messages) = problems

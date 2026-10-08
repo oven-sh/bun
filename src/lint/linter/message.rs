@@ -155,6 +155,26 @@ pub struct LintMessage {
     pub suppressions: Vec<Suppression>,
 }
 
+impl Default for LintMessage {
+    /// An error of the linter itself, without a text and without a place. For `..LintMessage::default()`, with which code that
+    /// makes a message goes on compiling when there are more fields.
+    fn default() -> LintMessage {
+        LintMessage {
+            rule_id: None,
+            severity: Severity::Error,
+            message: Vec::new(),
+            message_id: None,
+            line: 0,
+            column: 0,
+            end: None,
+            is_fatal: false,
+            fix: None,
+            suggestions: Vec::new(),
+            suppressions: Vec::new(),
+        }
+    }
+}
+
 /// Converts offsets to what ESLint reports.
 pub(crate) struct Locator<'a> {
     file: &'a File<'a>,

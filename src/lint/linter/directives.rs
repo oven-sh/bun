@@ -57,6 +57,9 @@ pub(crate) struct ConfigComment {
     pub(crate) value: Span,
     /// What follows ` -- `, trimmed.
     pub(crate) justification: Span,
+    /// `// eslint-disable`, `// eslint-enable`: a comment to the end of the line, which for ESLint cannot be about more than a
+    /// line. It is a comment like any other for ESLint.
+    pub(crate) is_only_of_oxlint: bool,
 }
 
 /// Where comments that may configure the linter start, in order: every `/*` and `//` that a label
@@ -119,10 +122,15 @@ pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
         let Some(label) = Label::of(directive.label) else {
             continue;
         };
-        if is_line && !matches!(label, Label::DisableLine | Label::DisableNextLine) {
+        let is_only_of_oxlint = is_line && matches!(label, Label::Disable | Label::Enable);
+        if is_line
+            && !is_only_of_oxlint
+            && !matches!(label, Label::DisableLine | Label::DisableNextLine)
+        {
             continue;
         }
         comments.push(ConfigComment {
+            is_only_of_oxlint,
             span,
             label,
             label_span: range_in(text, directive.label),

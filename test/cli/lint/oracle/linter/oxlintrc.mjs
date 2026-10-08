@@ -14,7 +14,7 @@ const oxlint = resolve(process.env.OXLINT ?? "oxlint");
 const implemented = new Set(JSON.parse(execFileSync(bunLint, ["linter", "rules"]).toString()));
 
 // A line for each rule, and one that `eqeqeq` reports unless it has the option "smart".
-const probes = { "no-debugger": "debugger;", eqeqeq: "a == b;\na == null;", "no-cond-assign": "if (a = b) {}" };
+const probes = { "no-debugger": "debugger;", eqeqeq: "a == b;\na == null;", "no-cond-assign": "if (a = b) {}", "@typescript-eslint/no-this-alias": "const self = this;" };
 for (const id of Object.keys(probes)) if (!implemented.has(id)) delete probes[id];
 const code = `${Object.values(probes).join("\n")}\n`;
 // After them, what oxlint parses and ESLint's default parser refuses: a file is not refused because of it.
@@ -31,7 +31,10 @@ const path = () => [...Array.from({ length: rng.int(3) }, () => rng.pick(dirs)),
 const glob = () => rng.pick(["*.js", "*.ts", "*.{js,ts}", "**/*.js", "src/**", "src/**/*.js", "src/*.js", "test/**/*.js", "*.test.js", "**/a/**", "./src/a.js", "lib/*", "*.d.ts", "index.js", "a/b/*.js", "**/*.{ts,tsx}"]);
 const ignorePattern = () => rng.pick(["dist", "dist/", "/dist", "build/**", "*.test.js", "**/a/*.js", "!dist/a.js", "/src/a.js", "lib/*.js", ".hidden", "a", "*.d.ts", "/a/", "**/build/**"]);
 const severity = () => rng.pick([0, 1, 2, "off", "warn", "error", "allow", "deny"]);
-const alias = id => rng.pick([id, id, `eslint/${id}`]);
+const alias = id => {
+  const [, name] = /^@typescript-eslint\/(.*)$/.exec(id) ?? [];
+  return name ? rng.pick([id, `typescript/${name}`, `typescript/${name}`, `typescript-eslint/${name}`]) : rng.pick([id, id, `eslint/${id}`]);
+};
 const ruleValue = id => rng.pick([severity(), severity(), [severity()], ...(id === "eqeqeq" ? [[severity(), "smart"], [severity(), "always"]] : [])]);
 // A rule is named once: which of two names for it counts is an accident in oxlint.
 const rules = () => Object.fromEntries([...new Set(list(() => rng.pick(ids), 3))].map(id => [alias(id), ruleValue(id)]));
@@ -40,7 +43,7 @@ const file = canExtend => ({
   ...(rng.int(2) ? { categories: categories() } : {}),
   ...(rng.int(4) ? { rules: rules() } : {}),
   ...(rng.int(3) === 0 ? { ignorePatterns: list(ignorePattern, 3) } : {}),
-  ...(rng.int(5) === 0 ? { plugins: rng.pick([[], ["typescript"], ["unicorn"]]) } : {}),
+  ...(rng.int(3) === 0 ? { plugins: rng.pick([[], ["typescript"], ["unicorn"]]) } : {}),
   overrides: Array.from({ length: rng.int(4) }, () => ({
     files: list(glob, 2),
     ...(rng.int(3) === 0 ? { excludeFiles: list(glob, 2) } : {}),
@@ -77,7 +80,8 @@ try {
     }
     const byFile = Object.fromEntries(Object.keys(sources).map(name => [name, []]));
     for (const { code, severity, filename, labels } of answer.diagnostics) {
-      const id = /^eslint\((.*)\)$/.exec(code)?.[1];
+      const [, plugin, name] = /^(.*)\((.*)\)$/.exec(code ?? "") ?? [];
+      const id = plugin === "typescript" ? `@typescript-eslint/${name}` : plugin === "eslint" ? name : undefined;
       if (ids.includes(id)) byFile[join(project, filename)].push([id, severity === "error" ? 2 : 1, labels[0].span.line]);
     }
     cases.push({ basePath, flavor: "oxlint", config, extended, sources });

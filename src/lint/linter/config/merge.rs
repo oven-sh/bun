@@ -3,6 +3,7 @@
 use crate::context::Severity;
 use crate::linter::resolved::severity_of;
 use crate::options::Json;
+use crate::rule::Plugin;
 
 type Entries = Vec<(Vec<u8>, Json)>;
 
@@ -42,6 +43,9 @@ pub(crate) struct RuleSetting {
     /// The plugin that ESLint takes the rule from, as it is written. Empty for a rule of ESLint
     /// itself, and for the names that only oxlint has.
     pub(crate) plugin: Box<[u8]>,
+    /// The plugin that the name as it is written is of, by any of its names, if it is one that is implemented here. Not for
+    /// a rule of a JavaScript plugin.
+    pub(crate) written_for: Option<Plugin>,
     pub(crate) severity: Severity,
     pub(crate) options: Vec<Json>,
     /// It has no options of its own, so it keeps those of the setting that it overrides.
@@ -58,6 +62,7 @@ impl RuleSetting {
         Some(RuleSetting {
             id: id.into(),
             plugin: Box::default(),
+            written_for: None,
             severity: severity_of(value.first()?)?,
             options: value[1..].to_vec(),
             has_only_severity: value.len() == 1,

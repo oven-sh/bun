@@ -30,7 +30,65 @@ function locate(plugin) {
       } catch {}
     }
   }
-  return located.get(plugin) ?? null;
+  return located.get(plugin) ?? locateWrapped(plugin);
+}
+
+// `fixupPluginRules` of the `@eslint/compat` that the configuration has loaded, if it has.
+let fixupPluginRules = null;
+
+// Where the plugin is that `fixupPluginRules` has made `plugin` of. What it adds to a rule is for an ESLint without the methods
+// of ESLint 8, and the workers have these: the plugin runs as it is, and the configuration file need not be run to get at it.
+function locateWrapped(plugin) {
+  if (fixupPluginRules === null || !plugin?.rules) return null;
+  const names = Object.keys(plugin.rules).join();
+  for (const [candidate, where] of located) {
+    // It answers with what it has made of a plugin before.
+    if (candidate.rules && Object.keys(candidate.rules).join() === names && fixupPluginRules(candidate) === plugin) {
+      return where;
+    }
+  }
+  return null;
+}
+
+// JSON, or `undefined` for what is not.
+function asJson(value) {
+  try {
+    return JSON.parse(stringify(value));
+  } catch {
+    return undefined;
+  }
+}
+
+// `JSON.stringify` that keeps an infinite number, which default options have: as a number too large for a double.
+function stringify(value) {
+  let hasInfinity = false;
+  const json = JSON.stringify(value, (_, it) => {
+    if (it !== Infinity && it !== -Infinity) return it;
+    hasInfinity = true;
+    return it > 0 ? "\0+Infinity" : "\0-Infinity";
+  });
+  return hasInfinity
+    ? json.replace(/"\\u0000([+-])Infinity"/g, (_, sign) => (sign === "+" ? "1e999" : "-1e999"))
+    : json;
+}
+
+// What the linter has to know of a plugin before any of its rules runs, as JSON: `plugin_of` in `js_plugin/host.rs` reads it.
+// The rules are in the order in which a worker numbers them.
+function describe(name, plugin) {
+  const rules = Object.keys(plugin.rules)
+    .sort()
+    .map(ruleName => {
+      const meta = plugin.rules[ruleName]?.meta;
+      return {
+        name: ruleName,
+        type: meta?.type,
+        fixable: Boolean(meta?.fixable),
+        hasSuggestions: meta?.hasSuggestions === true,
+        schema: asJson(meta?.schema),
+        defaultOptions: asJson(meta?.defaultOptions),
+      };
+    });
+  return stringify({ name, rules });
 }
 
 function serialize(value, ancestors = []) {
@@ -72,6 +130,14 @@ function serializeLanguageOptions({ parser, parserOptions, ...rest }) {
   return out;
 }
 
+// Many objects have the same plugins: only the first says what is in one.
+const described = new Set();
+function describedOnce(prefix, plugin) {
+  if (described.has(prefix)) return undefined;
+  described.add(prefix);
+  return describe(prefix, plugin);
+}
+
 function serializeConfigObject(config, index) {
   if (config === null || typeof config !== "object") return serialize(config) ?? null;
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
@@ -84,7 +150,10 @@ function serializeConfigObject(config, index) {
     );
     // `index`: that of the object in what the file exports.
     out.$jsPlugins = Object.fromEntries(
-      withRules.map(([prefix, plugin]) => [prefix, locate(plugin) ?? { config: path, index }]),
+      withRules.map(([prefix, plugin]) => [
+        prefix,
+        { ...(locate(plugin) ?? { config: path, index }), described: describedOnce(prefix, plugin) },
+      ]),
     );
   }
   if (languageOptions && typeof languageOptions === "object") {
@@ -105,6 +174,8 @@ function serializeConfigObject(config, index) {
 let exported = (await import(pathToFileURL(path).href)).default;
 if (typeof exported === "function") exported = exported();
 exported = await exported;
+const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
+if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
 let config = null;
 if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
 else if (exported !== undefined) config = serializeConfigObject(exported, 0);

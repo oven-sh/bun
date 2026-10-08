@@ -12,6 +12,7 @@
 const { pathToFileURL } = require("node:url");
 const { createRequire } = require("node:module");
 const nodePath = require("node:path");
+const { statSync } = require("node:fs");
 
 const LOAD = 1;
 const LINT = 2;
@@ -31,6 +32,7 @@ const MATCHES = 6;
 const TOKENS = 7;
 const COMMENTS = 8;
 const SCOPES = 9;
+const LOADED = 10;
 
 // By what was asked for: the last answer, which the next one overwrites.
 const buffers = [];
@@ -51,7 +53,7 @@ function askForJson(kind, details) {
 // ───────────── plugins ─────────────
 
 let cwd = "";
-// The rules of all plugins: `{ rule, id }`, by the number that the other side knows them by.
+// The rules of the plugins that are loaded: `{ plugin, name, id }`, by the number that the other side knows them by.
 const rules = [];
 // The positions of the plugins whose rules are in `rules`.
 const loadedPlugins = new Set();
@@ -104,7 +106,13 @@ const configurations = new Map();
 async function locatedPlugin(location, prefix) {
   if (location.module !== undefined) {
     // As `require.cache` has it, which is where it was found.
-    let found = require(location.module);
+    let found;
+    try {
+      found = require(location.module);
+    } catch {
+      // A module that awaits something.
+      found = await load(pathToFileURL(location.module).href);
+    }
     for (const name of location.export) found = found[name];
     return found;
   }
@@ -149,18 +157,20 @@ async function findPlugin([directory, specifier, alias]) {
 async function loadPlugin([location, position, firstRule]) {
   const key = JSON.stringify(location);
   let found = pluginsByLocation.get(key);
-  if (found === undefined) pluginsByLocation.set(key, (found = await findPlugin(location)));
+  if (found === undefined) {
+    const started = performance.now();
+    pluginsByLocation.set(key, (found = await findPlugin(location)));
+    loadingTime += performance.now() - started;
+  }
   const { name, plugin } = found;
   const described = [];
   // Sorted: a plugin that imports its rules all at once has them in another order each time.
   const names = Object.keys(plugin.rules ?? {}).sort();
   names.forEach((ruleName, i) => {
-    const rule = plugin.rules[ruleName];
-    // A function is a rule without `meta`, as for ESLint until version 8.
-    const definition = typeof rule === "function" ? { create: rule } : rule;
-    const meta = definition.meta;
-    if (position !== null) rules[firstRule + i] = { rule: definition, id: `${name}/${ruleName}` };
+    // A plugin can load a rule when it is asked for it.
+    if (position !== null) rules[firstRule + i] = { plugin, name: ruleName, id: `${name}/${ruleName}` };
     else {
+      const meta = plugin.rules[ruleName].meta;
       described.push({
         name: ruleName,
         type: meta?.type,
@@ -178,6 +188,8 @@ async function loadPlugin([location, position, firstRule]) {
 // ───────────── ESLint's `context` ─────────────
 
 let filename = "";
+// The file on the disk, if `filename` is that of a block which a processor has found in it.
+let physicalFilename = "";
 // `{ settings, languageOptions }` of the file.
 let fileSettings = null;
 const allSettings = new Map();
@@ -201,7 +213,7 @@ const fileContext = Object.freeze({
     return filename;
   },
   get physicalFilename() {
-    return filename;
+    return physicalFilename;
   },
   get sourceCode() {
     return sourceCode;
@@ -228,7 +240,7 @@ const fileContext = Object.freeze({
     return filename;
   },
   getPhysicalFilename() {
-    return filename;
+    return physicalFilename;
   },
   getSourceCode() {
     return sourceCode;
@@ -253,7 +265,9 @@ const fileContext = Object.freeze({
 // The rule with its options that has `id`, and is at `position` among those that run on the file.
 function configure(id, position) {
   const [index, options] = askForJson(CONFIGURED, String(position));
-  const { rule, id: ruleId } = rules[index];
+  const { plugin, name, id: ruleId } = rules[index];
+  // A function is a rule without `meta`, as for ESLint until version 8.
+  const rule = typeof plugin.rules[name] === "function" ? { create: plugin.rules[name] } : plugin.rules[name];
   // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
   const entry = { rule, ruleId, own: null, position: 0, once: null };
   const meta = rule.meta;
@@ -533,16 +547,17 @@ function reset() {
 function lint() {
   const length = ask(MESSAGE);
   const buffer = buffers[MESSAGE];
-  const [flags, plugins, settingsId, count, pathLength] = new Uint32Array(buffer, 0, 5);
-  if (loadedPlugins.size < plugins) {
-    return Array.from({ length: plugins }, (_, position) => position).filter(position => !loadedPlugins.has(position));
-  }
-  const ids = new Uint32Array(buffer, 20, count);
-  const pathStart = 20 + 4 * count;
+  const [flags, plugins, settingsId, count, pathLength, physicalLength] = new Uint32Array(buffer, 0, 6);
+  // Only the plugins whose rules run on the file.
+  const missing = Array.from(new Uint32Array(buffer, 24, plugins)).filter(position => !loadedPlugins.has(position));
+  if (missing.length > 0) return missing;
+  const ids = new Uint32Array(buffer, 24 + 4 * plugins, count);
+  const pathStart = 24 + 4 * (plugins + count);
   wantsFixes = (flags & 1) !== 0;
   hasBOM = (flags & 2) !== 0;
   fileDialect = (flags >> 2) & 1;
   filename = decode(buffer, pathStart, pathStart + pathLength);
+  physicalFilename = physicalLength === pathLength ? filename : decode(buffer, pathStart, pathStart + physicalLength);
   text = decode(buffer, pathStart + pathLength, length);
   fileSettings = allSettings.get(settingsId);
   if (fileSettings === undefined) allSettings.set(settingsId, (fileSettings = deepFreeze(askForJson(SETTINGS))));
@@ -603,9 +618,31 @@ function runAfterHooks() {
 
 let hasStarted = false;
 
+// ───────────── what is loaded ─────────────
+
+let measuresLoading = false;
+// The time that it took to load plugins and processors and that the other side has not been told.
+let loadingTime = 0;
+// The files that the other side has been told of.
+const countedModules = new Set();
+
+function reportLoading() {
+  let bytes = 0;
+  const before = countedModules.size;
+  for (const file of Object.keys(require.cache)) {
+    if (countedModules.has(file) || !nodePath.isAbsolute(file)) continue;
+    countedModules.add(file);
+    bytes += statSync(file, { throwIfNoEntry: false })?.size ?? 0;
+  }
+  const modules = countedModules.size - before;
+  if (modules > 0 || loadingTime > 0) ask(LOADED, JSON.stringify([modules, bytes, loadingTime]));
+  loadingTime = 0;
+}
+
 function start() {
-  const { cwd: directory, types, strings } = askForJson(START);
+  const { cwd: directory, measures, types, strings } = askForJson(START);
   cwd = directory;
+  measuresLoading = measures;
   defineTypes(types, strings);
   hasStarted = true;
 }
@@ -621,6 +658,14 @@ function describeLoadError(error) {
 // What the other side calls, with what the message is. Returns the result, or a promise of it.
 function handle(kind) {
   if (!hasStarted) start();
+  const returned = respond(kind);
+  if (!measuresLoading) return returned;
+  if (typeof returned !== "string") return returned.finally(reportLoading);
+  reportLoading();
+  return returned;
+}
+
+function respond(kind) {
   if (kind === LOAD) {
     return loadPlugin(askForJson(MESSAGE)).then(
       described => DONE + stringify(described),

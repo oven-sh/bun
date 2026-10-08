@@ -33,6 +33,8 @@ pub struct Rule {
     pub schema: Schema,
     /// `meta.defaultOptions`
     pub default_options: Vec<Json>,
+    /// No module exports the plugin: a realm has to run the whole configuration file to get at the rule.
+    pub needs_the_configuration: bool,
     /// Its number among the rules of all plugins.
     pub(super) index: u32,
 }

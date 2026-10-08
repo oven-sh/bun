@@ -28,7 +28,7 @@ mod tokens;
 mod wire;
 
 pub use engine::{Engine, Serve, Vm};
-pub use host::{Failure, Host, Report, Suggested};
+pub use host::{Failure, Host, Loading, Report, Suggested};
 pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::PROGRAM;

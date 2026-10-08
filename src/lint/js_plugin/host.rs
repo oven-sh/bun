@@ -64,10 +64,26 @@ impl From<Vec<u8>> for Failure {
     }
 }
 
+/// The JavaScript that a run has loaded, in all realms together.
+#[derive(Clone, Default, Debug)]
+pub struct Loading {
+    pub realms: u32,
+    /// Files. One that two realms load counts twice.
+    pub modules: u64,
+    /// Their size.
+    pub bytes: u64,
+    /// The time it took to load plugins and processors.
+    pub milliseconds: f64,
+    /// The plugins that only the configuration file has, so that a realm has to run all of that to get at them.
+    pub need_the_configuration: Vec<Box<[u8]>>,
+}
+
 /// A plugin that is loaded.
 struct Loaded {
     /// JSON: where it is.
     location: Vec<u8>,
+    /// Only the configuration file has it.
+    needs_the_configuration: bool,
     /// The number of its first rule.
     first_rule: u32,
     plugin: Arc<Plugin>,
@@ -81,16 +97,19 @@ struct State {
     selectors: Vec<Option<Arc<Selector>>>,
     /// By their text.
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
+    loading: Loading,
 }
 
 /// The plugins of a run. All threads share it.
 pub struct Host<'e> {
-    engine: &'e dyn Engine,
+    pub(super) engine: &'e dyn Engine,
     cwd: Vec<u8>,
+    /// Whether [`Host::loading`] is read.
+    measures: bool,
     state: Guarded<State>,
 }
 
-fn number(json: Option<&Json>) -> Option<u32> {
+pub(super) fn number(json: Option<&Json>) -> Option<u32> {
     match json {
         // A column of -1, which ESLint has, is `u32::MAX`.
         Some(Json::Number(n)) if *n < 0.0 => Some((*n as i64) as u32),
@@ -160,8 +179,47 @@ impl<'e> Host<'e> {
         Host {
             engine,
             cwd: cwd.to_vec(),
+            measures: false,
             state: Guarded::new(State::default()),
         }
+    }
+
+    /// The same host, which keeps track of what is loaded.
+    pub fn measuring(self, measures: bool) -> Host<'e> {
+        Host { measures, ..self }
+    }
+
+    /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
+    pub fn loading(&self) -> Loading {
+        self.state.lock().loading.clone()
+    }
+
+    /// Answers what a realm asks for whatever it is called with. Returns whether that is what was asked for.
+    pub(super) fn serve_any(&self, asked: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
+        match asked {
+            ask::START => {
+                self.state.lock().loading.realms += 1;
+                schema::write_start(&self.cwd, self.measures, out);
+            }
+            ask::LOADED => {
+                let parts = crate::json::parse(details);
+                if let Some(
+                    [
+                        Json::Number(modules),
+                        Json::Number(bytes),
+                        Json::Number(time),
+                    ],
+                ) = parts.as_ref().and_then(Json::as_array)
+                {
+                    let loading = &mut self.state.lock().loading;
+                    loading.modules += *modules as u64;
+                    loading.bytes += *bytes as u64;
+                    loading.milliseconds += *time;
+                }
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// Whether any plugin has been loaded.
@@ -193,13 +251,45 @@ impl<'e> Host<'e> {
 
     /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location`: what the script that
     /// evaluates such a file says about where the plugin is, in `$jsPlugins`.
+    /// With `described`, which is what the plugin consists of as JSON in a string, nothing is loaded yet.
     pub fn load_located(&self, location: &Json, prefix: &[u8]) -> Result<Arc<Plugin>, Vec<u8>> {
+        let entries = location.as_object().unwrap_or_default().iter();
+        let place = entries.filter(|it| it.0 != b"described").cloned().collect();
         let mut written = b"[".to_vec();
-        write_json(&mut written, location);
+        write_json(&mut written, &Json::Object(place));
         written.extend_from_slice(b",null,");
         write_json_string(&mut written, prefix);
         written.push(b']');
-        self.load_from(written)
+        let described = location.get(b"described").and_then(Json::as_str);
+        match described.and_then(crate::json::parse) {
+            Some(described) => {
+                Ok(self.register(written, &described, location.get(b"config").is_some()))
+            }
+            None => self.load_from(written),
+        }
+    }
+
+    /// Takes note of the plugin at `location`, which is `described`.
+    fn register(
+        &self,
+        location: Vec<u8>,
+        described: &Json,
+        needs_the_configuration: bool,
+    ) -> Arc<Plugin> {
+        let mut state = self.state.lock();
+        if let Some(known) = state.plugins.iter().find(|it| it.location == location) {
+            return Arc::clone(&known.plugin);
+        }
+        let plugin = Arc::new(plugin_of(described, state.rules, needs_the_configuration));
+        let first_rule = state.rules;
+        state.rules += plugin.rules.len() as u32;
+        state.plugins.push(Loaded {
+            location,
+            needs_the_configuration,
+            first_rule,
+            plugin: Arc::clone(&plugin),
+        });
+        plugin
     }
 
     fn load_from(&self, location: Vec<u8>) -> Result<Arc<Plugin>, Vec<u8>> {
@@ -217,20 +307,7 @@ impl<'e> Host<'e> {
         self.engine
             .with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
         let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
-        let mut state = self.state.lock();
-        // Another thread was faster.
-        if let Some(plugin) = known(&state) {
-            return Ok(plugin);
-        }
-        let plugin = Arc::new(plugin_of(&described, state.rules));
-        let first_rule = state.rules;
-        state.rules += plugin.rules.len() as u32;
-        state.plugins.push(Loaded {
-            location,
-            first_rule,
-            plugin: Arc::clone(&plugin),
-        });
-        Ok(plugin)
+        Ok(self.register(location, &described, false))
     }
 
     /// Has `vm` load the plugin at `location`. `place`: its position among the plugins and the number of its first rule, once
@@ -246,10 +323,8 @@ impl<'e> Host<'e> {
             |(position, first_rule)| format!("{position},{first_rule}"),
         );
         let message = [b"[", location, b",", place.as_bytes(), b"]"].concat();
-        let returned = vm.call(call::LOAD, &message, &mut |asked, _, out| {
-            if asked == ask::START {
-                schema::write_start(&self.cwd, out);
-            }
+        let returned = vm.call(call::LOAD, &message, &mut |asked, details, out| {
+            self.serve_any(asked, details, out);
         })?;
         match returned.split_first() {
             Some((&result::DONE, described)) => Ok(described.to_vec()),
@@ -319,6 +394,22 @@ impl<'e> Host<'e> {
             .collect()
     }
 
+    /// The positions of the plugins that have the rules `enabled`, in ascending order.
+    fn plugins_of(&self, enabled: &[&Configured]) -> Vec<u32> {
+        let state = self.state.lock();
+        let mut positions: Vec<u32> = enabled
+            .iter()
+            .map(|it| {
+                let after =
+                    (state.plugins).partition_point(|plugin| plugin.first_rule <= it.rule.index);
+                after.saturating_sub(1) as u32
+            })
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
+
     /// Runs the rules `enabled` on `file`. `wants_fixes`: whether anything reads [`Report::fix`] and
     /// [`Report::suggestions`].
     pub fn run<'a>(
@@ -328,9 +419,22 @@ impl<'e> Host<'e> {
         enabled: &[&Configured],
         wants_fixes: bool,
     ) -> Result<Vec<Report>, Failure> {
+        self.run_on_block(file, settings, enabled, wants_fixes, None)
+    }
+
+    /// The same. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if not all of it.
+    pub fn run_on_block<'a>(
+        &self,
+        file: &'a File<'a>,
+        settings: &FileSettings,
+        enabled: &[&Configured],
+        wants_fixes: bool,
+        physical_path_len: Option<usize>,
+    ) -> Result<Vec<Report>, Failure> {
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        self.engine
-            .with_vm(&mut |vm| outcome = self.run_in(vm, file, settings, enabled, wants_fixes))?;
+        self.engine.with_vm(&mut |vm| {
+            outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
+        })?;
         outcome
     }
 
@@ -341,12 +445,15 @@ impl<'e> Host<'e> {
         settings: &FileSettings,
         enabled: &[&Configured],
         wants_fixes: bool,
+        physical_path_len: Option<usize>,
     ) -> Result<Vec<Report>, Failure> {
         let text = file.text();
         let offsets = Offsets::new(text);
         let has_mark = text.starts_with(b"\xEF\xBB\xBF");
-        let (path, plugins) = (file.path(), self.state.lock().plugins.len());
-        let mut message = Vec::with_capacity(24 + enabled.len() * 4 + path.len() + text.len());
+        let path = file.path();
+        let plugins = self.plugins_of(enabled);
+        let mut message =
+            Vec::with_capacity(24 + (plugins.len() + enabled.len()) * 4 + path.len() + text.len());
         let is_espree = Dialect::of(file) == Dialect::Espree;
         let flags =
             u32::from(wants_fixes) | (u32::from(has_mark) << 1) | (u32::from(is_espree) << 2);
@@ -354,12 +461,14 @@ impl<'e> Host<'e> {
             &mut message,
             &[
                 flags,
-                plugins as u32,
+                plugins.len() as u32,
                 settings.id,
                 enabled.len() as u32,
                 path.len() as u32,
+                physical_path_len.unwrap_or(path.len()).min(path.len()) as u32,
             ],
         );
+        wire::words(&mut message, &plugins);
         for configured in enabled {
             wire::words(&mut message, &[configured.id]);
         }
@@ -368,7 +477,7 @@ impl<'e> Host<'e> {
 
         let mut ids = None;
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
-            ask::START => schema::write_start(&self.cwd, out),
+            _ if self.serve_any(asked, details, out) => {}
             ask::SETTINGS => out.extend_from_slice(&settings.json),
             ask::CONFIGURED => {
                 let position = std::str::from_utf8(details)
@@ -430,11 +539,17 @@ impl<'e> Host<'e> {
                 }
                 result::NEEDS_PLUGINS if !parts.is_empty() => {
                     for position in parts.iter().filter_map(|it| number(Some(it))) {
-                        let state = self.state.lock();
+                        let mut state = self.state.lock();
                         let Some(plugin) = state.plugins.get(position as usize) else {
                             return Err(OUT_OF_STEP.to_vec().into());
                         };
                         let (location, first_rule) = (plugin.location.clone(), plugin.first_rule);
+                        let name =
+                            (plugin.needs_the_configuration).then(|| plugin.plugin.name.clone());
+                        let forced = &mut state.loading.need_the_configuration;
+                        if let Some(name) = name.filter(|name| !forced.contains(name)) {
+                            forced.push(name);
+                        }
                         drop(state);
                         self.load_in(vm, &location, Some((position as usize, first_rule)))?;
                     }
@@ -446,8 +561,8 @@ impl<'e> Host<'e> {
 }
 
 /// `{ name, rules: [{ name, type, fixable, hasSuggestions, schema, defaultOptions }] }`. The rules are
-/// numbered from `first`, in that order.
-fn plugin_of(described: &Json, first: u32) -> Plugin {
+/// numbered from `first`, in that order. `needs_the_configuration`: see [`Rule`].
+fn plugin_of(described: &Json, first: u32, needs_the_configuration: bool) -> Plugin {
     let name = described
         .get(b"name")
         .and_then(Json::as_str)
@@ -483,6 +598,7 @@ fn plugin_of(described: &Json, first: u32) -> Plugin {
                 .and_then(Json::as_array)
                 .unwrap_or_default()
                 .to_vec(),
+            needs_the_configuration,
             index: first + i as u32,
         })
     };

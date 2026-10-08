@@ -21,7 +21,7 @@ pub(super) mod result {
 
 /// What the program asks for.
 pub(super) mod ask {
-    /// JSON: see `write_start` in `schema.rs`.
+    /// JSON: see `write_start` in `schema.rs`. A realm asks once.
     pub(crate) const START: u32 = 1;
     /// JSON: `{ settings, languageOptions, globals }` for the file.
     pub(crate) const SETTINGS: u32 = 2;
@@ -39,6 +39,9 @@ pub(super) mod ask {
     pub(crate) const COMMENTS: u32 = 8;
     /// Only after [`AST`].
     pub(crate) const SCOPES: u32 = 9;
+    /// Not a question. Given JSON, `[modules, bytes, milliseconds]`: what has been loaded since the last time, if that is
+    /// measured.
+    pub(crate) const LOADED: u32 = 10;
 }
 
 pub(super) fn words(out: &mut Vec<u8>, words: &[u32]) {

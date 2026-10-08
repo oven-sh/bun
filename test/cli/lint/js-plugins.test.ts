@@ -712,4 +712,66 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     },
     timeout,
   );
+
+  // As much of the package as a configuration uses.
+  const compat = {
+    "node_modules/@eslint/compat/package.json": JSON.stringify({
+      name: "@eslint/compat",
+      type: "module",
+      exports: "./dist/esm/index.js",
+    }),
+    "node_modules/@eslint/compat/dist/esm/index.js": `
+      const made = new WeakMap();
+      export function fixupPluginRules(plugin) {
+        if (made.has(plugin)) return made.get(plugin);
+        const rules = Object.entries(plugin.rules).map(([name, rule]) => [name, { ...rule, create: rule.create.bind(rule) }]);
+        const fixed = { ...plugin, rules: Object.fromEntries(rules) };
+        made.set(plugin, fixed);
+        return fixed;
+      }`,
+  };
+
+  test(
+    "the configuration file is not run again for a plugin that a module exports, also through fixupPluginRules",
+    async () => {
+      const { stdout, stderr, exitCode } = await lint(
+        {
+          ...compat,
+          "eslint.config.mjs": `
+          import { fixupPluginRules } from "@eslint/compat";
+          import demo from "./plugin.mjs";
+          console.error("The configuration file runs.");
+          export default [
+            { plugins: { demo }, rules: { "demo/no-foo": "error" } },
+            { files: ["b.js"], plugins: { fixed: fixupPluginRules(demo) }, rules: { "fixed/no-foo": "warn" } },
+          ];`,
+          "plugin.mjs": noFoo,
+          "a.js": "foo;\n",
+          "b.js": "foo;\n",
+        },
+        ["-f", "unix", "--timing", "a.js", "b.js"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
+        <dir>/b.js:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
+        <dir>/b.js:1:1: No foo in a ExpressionStatement. [Warning/fixed/no-foo]
+
+        3 problems"
+      `);
+      // What the process prints that evaluates the file is not shown.
+      expect(stderr).not.toContain("The configuration file runs.");
+      expect(stderr).toMatch(/JavaScript: [12] engines, which have loaded [12] modules, /);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test("without rules in JavaScript there is no engine", async () => {
+    const { stderr, exitCode } = await lint(
+      { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];`, "a.js": "debugger;\n" },
+      ["--timing", "a.js"],
+    );
+    expect(stderr).toContain("JavaScript: 0 engines, which have loaded 0 modules, 0.0 MB of source, in 0.0ms");
+    expect(exitCode).toBe(1);
+  });
 });

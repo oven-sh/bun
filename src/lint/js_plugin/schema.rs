@@ -15,12 +15,17 @@ pub const PROGRAM: &[(&str, &str)] = &[
     ("main.js", include_str!("worker/main.js")),
 ];
 
-/// `{ cwd, strings, types }`. `types`: for each [`NodeType`] `[name, [[field, flags], ..]]`, where the
+/// `{ cwd, measures, strings, types }`. `measures`: whether the program is to say what it loads. `types`: for each [`NodeType`] `[name, [[field, flags], ..]]`, where the
 /// flags are 1 for a visitor key, 2 for what only typescript-estree has, 4 for what only espree has,
 /// 8 for what is not enumerable.
-pub(super) fn write_start(cwd: &[u8], out: &mut Vec<u8>) {
+pub(super) fn write_start(cwd: &[u8], measures: bool, out: &mut Vec<u8>) {
     out.extend_from_slice(b"{\"cwd\":");
     write_json_string(out, cwd);
+    out.extend_from_slice(if measures {
+        b",\"measures\":true"
+    } else {
+        b",\"measures\":false"
+    });
     out.extend_from_slice(b",\"strings\":[");
     for (i, string) in STRINGS.iter().enumerate() {
         if i > 0 {

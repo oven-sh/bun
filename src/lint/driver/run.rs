@@ -11,7 +11,7 @@ use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::{Engine, Host};
+use bun_lint::js_plugin::{Engine, Host, Loading};
 use bun_lint::linter::{FileConfig, Linter, Registry};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
@@ -559,7 +559,8 @@ impl Run<'_> {
         let js_plugins = Host::with_engine(
             environment.js_engine,
             &paths::to_native(environment.cwd.clone()),
-        );
+        )
+        .measuring(options.timing);
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let modules = bun_lint_graph::Graph::new(&store);
         let loader = Loader::new(&linter, options, environment, &js_plugins);
@@ -812,7 +813,7 @@ impl Run<'_> {
             self.write_summary(counts, files, fixed);
         }
         if options.timing {
-            self.write_timing(&timing, &phases, &pool);
+            self.write_timing(&timing, &phases, &pool, &js_plugins.loading());
         }
         if has_unused_suppressions && !options.pass_on_unpruned_suppressions {
             self.error(
@@ -912,7 +913,7 @@ impl Run<'_> {
         }
     }
 
-    fn write_timing(&mut self, timing: &Timing, phases: &Phases, pool: &Pool) {
+    fn write_timing(&mut self, timing: &Timing, phases: &Phases, pool: &Pool, loading: &Loading) {
         let cpu = |nanos: &AtomicU64| nanos.load(Ordering::Relaxed) as f64 / 1e6;
         let _ = writeln!(
             self.out.stderr,
@@ -927,6 +928,22 @@ impl Run<'_> {
             cpu(&timing.parse),
             cpu(&timing.rules),
         );
+        let _ = write!(
+            self.out.stderr,
+            "  JavaScript: {} engines, which have loaded {} modules, {:.1} MB of source, in {:.1}ms",
+            loading.realms,
+            loading.modules,
+            loading.bytes as f64 / 1e6,
+            loading.milliseconds,
+        );
+        for (i, plugin) in loading.need_the_configuration.iter().enumerate() {
+            let before = match i {
+                0 => "; with the whole configuration file, which alone has the plugin ",
+                _ => ", ",
+            };
+            let _ = write!(self.out.stderr, "{before}\"{}\"", BStr::new(plugin));
+        }
+        self.out.stderr.push(b'\n');
         // Every file that is valid and goes to the parser that recovers from errors is a defect of the other.
         let counts = &bun_js_parser::sema::DIRECT_PARSER_COUNTS;
         let _ = write!(

@@ -15,9 +15,10 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
-import { Duplex, duplexPair, finished, Readable } from "node:stream";
+import { Duplex, duplexPair, finished, Readable, Writable } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
+import { WebSocketServer } from "ws";
 
 describe("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
@@ -2316,15 +2317,25 @@ describe("backpressure", () => {
     });
   });
 
-  // In Node the socket of a server connection is a net.Socket (a TLSSocket for https), and a raw
-  // write() on it follows the kernel: write() returns false from the first chunk that does not
-  // leave in full, the callback of that chunk waits for its bytes, the chunks behind it wait in
-  // the stream (writableLength), and one 'drain' follows when the stream holds nothing.
+  // In Node the socket of a server connection is a net.Socket, and a raw write() on it follows the
+  // kernel: write() returns false from the first chunk that does not leave in full, the callback of
+  // that chunk waits for its bytes, the chunks behind it wait in the stream (writableLength), and
+  // one 'drain' follows when the stream holds nothing. For https the socket is a TLSSocket, which
+  // holds back more in Node: see the todo at the end of this block.
   describe("a raw socket.write() on a server connection follows the socket's backpressure", () => {
-    const CHUNK = Buffer.alloc(64 * 1024, "x");
+    const SIZE = 64 * 1024;
     // 16 MiB in one turn: more than a loopback connection takes while its peer reads nothing.
     const COUNT = 256;
-    const TOTAL = COUNT * CHUNK.length;
+    const TOTAL = COUNT * SIZE;
+    // Chunk i of a burst holds the byte i: a chunk that is lost, repeated or out of place shows.
+    const CHUNKS = Array.from({ length: COUNT }, (_, i) => Buffer.alloc(SIZE, i));
+    // The first chunk that did not arrive as it was written. -1: every one of `count` did.
+    function firstWrongChunk(received: Buffer, count = COUNT) {
+      for (let i = 0; i < count; i++) {
+        if (!received.subarray(i * SIZE, (i + 1) * SIZE).equals(CHUNKS[i])) return i;
+      }
+      return -1;
+    }
 
     const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
     const tlsOptions = {
@@ -2355,11 +2366,13 @@ describe("backpressure", () => {
     type Source = keyof typeof sources;
     type Protocol = "http" | "https";
     type Respond = (req: http.IncomingMessage, res: http.ServerResponse) => void;
+    type Coded = Error & { code?: string; syscall?: string };
 
     // Gives the server socket of one connection to `onSocket`. For 'request', `onSocket` also gets the
     // response, which stays open unless `onSocket` ends it. The client of that connection sends
     // `head` and reads nothing until read(). `respond` answers the requests of that connection that
-    // are not the source.
+    // are not the source. `errors` lists every 'error' of that socket and of the client, and every
+    // 'clientError' of the server.
     async function open(
       protocol: Protocol,
       source: Source,
@@ -2370,11 +2383,18 @@ describe("backpressure", () => {
       const { event } = sources[source];
       const module = protocol === "https" ? https : http;
       const server: http.Server = protocol === "https" ? https.createServer(tlsOptions) : http.createServer();
+      const errors: string[] = [];
+      // A listener replaces the default of the server, which is to destroy the socket.
+      server.on("clientError", (err: Coded, socket: Duplex) => {
+        errors.push(`clientError ${err.code}`);
+        socket.destroy(err);
+      });
       let given = false;
       // Every later connection is a turn().
       const give = (socket: Duplex, res?: http.ServerResponse) => {
         if (given) return;
         given = true;
+        socket.on("error", (err: Coded) => void errors.push(`socket error ${err.code}`));
         onSocket(socket, res, server);
       };
       server.on("request", (req, res) => {
@@ -2393,12 +2413,14 @@ describe("backpressure", () => {
           ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true })
           : net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
       client.pause();
-      client.on("error", () => {});
+      client.on("error", (err: Coded) => void errors.push(`client error ${err.code}`));
       await once(client, protocol === "https" ? "secureConnect" : "connect");
       client.write(head);
 
       return {
         client,
+        server,
+        errors,
         // At least one whole turn of the server's event loop: an exchange on a second connection.
         turn() {
           const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -2443,17 +2465,21 @@ describe("backpressure", () => {
         needDrain: [] as boolean[],
         // The chunks whose callback ran, in that order, and the ones whose callback got an error.
         callbacks: [] as number[],
-        failed: [] as number[],
+        failed: [] as string[],
+        // writableLength and the number of 'drain' events so far, when the callback of each chunk ran.
+        heldAtCallback: [] as number[],
+        drainsAtCallback: [] as number[],
         // writableLength at each 'drain'.
         drains: [] as number[],
         flushed: flushed.promise,
       };
-      socket.on("error", () => {});
       socket.on("drain", () => burst.drains.push(socket.writableLength));
       for (let i = 0; i < COUNT; i++) {
         burst.returned.push(
-          socket.write(CHUNK, err => {
-            if (err) burst.failed.push(i);
+          socket.write(CHUNKS[i], (err?: Coded | null) => {
+            if (err) burst.failed.push(`${i}: ${err.code}`);
+            burst.heldAtCallback[i] = socket.writableLength;
+            burst.drainsAtCallback[i] = burst.drains.length;
             if (burst.callbacks.push(i) === COUNT) flushed.resolve();
           }),
         );
@@ -2492,7 +2518,7 @@ describe("backpressure", () => {
             expect(taken).toBeGreaterThanOrEqual(0);
             expect({ returned: burst.returned, lengths: burst.lengths, needDrain: burst.needDrain }).toEqual({
               returned: inOrder(COUNT).map(i => i < taken),
-              lengths: inOrder(COUNT).map(i => (i < taken ? 0 : (i - taken + 1) * CHUNK.length)),
+              lengths: inOrder(COUNT).map(i => (i < taken ? 0 : (i - taken + 1) * SIZE)),
               needDrain: inOrder(COUNT).map(i => i >= taken),
             });
 
@@ -2508,24 +2534,34 @@ describe("backpressure", () => {
               drains: burst.drains,
             }).toEqual({
               callbacks: inOrder(completed),
-              writableLength: (COUNT - completed) * CHUNK.length,
+              writableLength: (COUNT - completed) * SIZE,
               writableNeedDrain: true,
               drains: [],
             });
 
             const { received, ended } = await connection.read(TOTAL);
-            expect({ bytes: received.length, ended }).toEqual({ bytes: TOTAL, ended: false });
+            expect({ bytes: received.length, wrong: firstWrongChunk(received), ended }).toEqual({
+              bytes: TOTAL,
+              wrong: -1,
+              ended: false,
+            });
             await burst.flushed;
             await connection.turn();
-            expect({ callbacks: burst.callbacks, failed: burst.failed }).toEqual({
+            // One 'drain', and the stream held nothing when it came.
+            expect({
+              callbacks: burst.callbacks,
+              failed: burst.failed,
+              drains: burst.drains,
+              writableLength: socket.writableLength,
+              writableNeedDrain: socket.writableNeedDrain,
+              errors: connection.errors,
+            }).toEqual({
               callbacks: inOrder(COUNT),
               failed: [],
-            });
-            // One 'drain', and the stream held nothing when it came.
-            expect(burst.drains).toEqual([0]);
-            expect({ writableLength: socket.writableLength, writableNeedDrain: socket.writableNeedDrain }).toEqual({
+              drains: [0],
               writableLength: 0,
               writableNeedDrain: false,
+              errors: [],
             });
           } finally {
             connection.close();
@@ -2559,14 +2595,19 @@ describe("backpressure", () => {
 
             // The FIN follows the last byte.
             const { received, ended } = await connection.read();
-            expect({ bytes: received.length, ended }).toEqual({ bytes: TOTAL, ended: true });
-            await finished.promise;
-            expect({ callbacks: burst.callbacks, failed: burst.failed }).toEqual({
-              callbacks: inOrder(COUNT),
-              failed: [],
+            expect({ bytes: received.length, wrong: firstWrongChunk(received), ended }).toEqual({
+              bytes: TOTAL,
+              wrong: -1,
+              ended: true,
             });
-            expect(burst.drains).toEqual([]);
-            expect(socket.writableFinished).toBe(true);
+            await finished.promise;
+            expect({
+              callbacks: burst.callbacks,
+              failed: burst.failed,
+              drains: burst.drains,
+              writableFinished: socket.writableFinished,
+              errors: connection.errors,
+            }).toEqual({ callbacks: inOrder(COUNT), failed: [], drains: [], writableFinished: true, errors: [] });
           } finally {
             connection.close();
           }
@@ -2587,11 +2628,16 @@ describe("backpressure", () => {
           await connection.turn();
 
           const { received, ended } = await connection.read();
-          expect({ bytes: received.length, ended }).toEqual({ bytes: TOTAL, ended: true });
+          expect({ bytes: received.length, wrong: firstWrongChunk(received), ended }).toEqual({
+            bytes: TOTAL,
+            wrong: -1,
+            ended: true,
+          });
           await burst.flushed;
-          expect({ callbacks: burst.callbacks, failed: burst.failed }).toEqual({
+          expect({ callbacks: burst.callbacks, failed: burst.failed, errors: connection.errors }).toEqual({
             callbacks: inOrder(COUNT),
             failed: [],
+            errors: [],
           });
         } finally {
           connection.close();
@@ -2613,16 +2659,19 @@ describe("backpressure", () => {
           await connection.turn();
 
           const { received, ended } = await connection.read();
-          expect({ ...offsets(received, [response]), tail: received.subarray(-4).toString(), ended }).toEqual({
-            [response]: TOTAL,
-            tail: "done",
-            ended: true,
-          });
+          expect({
+            wrong: firstWrongChunk(received),
+            ...offsets(received, [response]),
+            tail: received.subarray(-4).toString(),
+            ended,
+          }).toEqual({ wrong: -1, [response]: TOTAL, tail: "done", ended: true });
           await burst.flushed;
-          expect({ callbacks: burst.callbacks, failed: burst.failed }).toEqual({
-            callbacks: inOrder(COUNT),
-            failed: [],
-          });
+          expect({
+            callbacks: burst.callbacks,
+            failed: burst.failed,
+            drains: burst.drains,
+            errors: connection.errors,
+          }).toEqual({ callbacks: inOrder(COUNT), failed: [], drains: [0], errors: [] });
         } finally {
           connection.close();
         }
@@ -2647,46 +2696,54 @@ describe("backpressure", () => {
           await connection.turn();
 
           const { received, ended } = await connection.read();
-          expect({ ...offsets(received, [response]), tail: received.subarray(-4).toString(), ended }).toEqual({
-            [response]: TOTAL,
-            tail: "late",
-            ended: true,
-          });
+          expect({
+            wrong: firstWrongChunk(received),
+            ...offsets(received, [response]),
+            tail: received.subarray(-4).toString(),
+            ended,
+          }).toEqual({ wrong: -1, [response]: TOTAL, tail: "late", ended: true });
           await burst.flushed;
-          expect({ callbacks: burst.callbacks, failed: burst.failed }).toEqual({
-            callbacks: inOrder(COUNT),
-            failed: [],
-          });
+          expect({
+            callbacks: burst.callbacks,
+            failed: burst.failed,
+            drains: burst.drains,
+            errors: connection.errors,
+          }).toEqual({ callbacks: inOrder(COUNT), failed: [], drains: [0], errors: [] });
         } finally {
           connection.close();
         }
       });
     });
 
+    type Write = (chunk: Buffer | string, callback?: (err?: Error | null) => void) => boolean;
+
     // Writes chunks until write() returns false. From there a write waits for the client on every
     // platform: a kernel can take one large write whole and refuse the next one.
-    function fill(socket: Duplex) {
-      let filled = 0;
+    function fill(write: Write) {
+      let chunks = 0;
       let waits = false;
-      while (!waits && filled < TOTAL) {
-        waits = !socket.write(CHUNK);
-        filled += CHUNK.length;
-      }
-      return { filled, waits };
+      while (!waits && chunks < COUNT) waits = !write(CHUNKS[chunks++]);
+      return { chunks, filled: chunks * SIZE, waits };
     }
 
     // One order of calls behind a write that waits, and what the client then receives behind the
-    // bytes of fill(). `write` is the socket's write() from before the first write that waited.
+    // chunks of fill(). `writer` gives the function that every write of the test goes through.
+    // `intact` says that the chunks of fill() arrived as they were written.
     async function wire(
       source: Source,
       act: (
         socket: Duplex,
         done: (name: string) => (err?: Error | null) => void,
         res: http.ServerResponse | undefined,
-        write: Duplex["write"],
+        write: Write,
         server: http.Server,
       ) => void,
-      { protocol = "http", respond, head }: { protocol?: Protocol; respond?: Respond; head?: string } = {},
+      {
+        protocol = "http",
+        respond,
+        head,
+        writer = socket => (chunk, callback) => socket.write(chunk, callback),
+      }: { protocol?: Protocol; respond?: Respond; head?: string; writer?: (socket: Duplex) => Write } = {},
     ) {
       const callbacks: string[] = [];
       const done = (name: string) => (err?: Error | null) => void callbacks.push(err ? `${name}: error` : name);
@@ -2695,9 +2752,8 @@ describe("backpressure", () => {
         protocol,
         source,
         (socket, res, server) => {
-          socket.on("error", () => {});
-          const write = socket.write;
-          const result = fill(socket);
+          const write = writer(socket);
+          const result = fill(write);
           act(socket, done, res, write, server);
           filling.resolve(result);
         },
@@ -2705,9 +2761,16 @@ describe("backpressure", () => {
         head,
       );
       try {
-        const { filled, waits } = await filling.promise;
+        const { chunks, filled, waits } = await filling.promise;
         const { received, ended } = await connection.read();
-        return { waits, received: received.subarray(filled), ended, callbacks };
+        return {
+          waits,
+          intact: firstWrongChunk(received, chunks) === -1,
+          received: received.subarray(filled),
+          ended,
+          callbacks,
+          errors: connection.errors,
+        };
       } finally {
         connection.close();
       }
@@ -2717,58 +2780,63 @@ describe("backpressure", () => {
       it("a response that ends behind two raw writes", async () => {
         const first = piece("first", 4096);
         const second = piece("second", 1024);
-        const { waits, received, ended, callbacks } = await wire(
-          "req.socket in a 'request' listener",
-          (socket, done, res) => {
-            socket.write(first, done("first"));
-            socket.write(second, done("second"));
-            res!.writeHead(200, { "Connection": "close", "Content-Length": 2 });
-            res!.end("ok");
-          },
-        );
-        expect({ waits, ...offsets(received, ["first", "second", response]), ended, callbacks }).toEqual({
+        const { received, ...rest } = await wire("req.socket in a 'request' listener", (socket, done, res) => {
+          socket.write(first, done("first"));
+          socket.write(second, done("second"));
+          res!.on("finish", done("'finish' of the response"));
+          res!.writeHead(200, { "Connection": "close", "Content-Length": 2 });
+          res!.end("ok", done("end() of the response"));
+        });
+        // The callbacks of the raw writes run first: their bytes are ahead of the response.
+        expect({ ...rest, ...offsets(received, ["first", "second", response]) }).toEqual({
           waits: true,
+          intact: true,
           first: 0,
           second: first.length,
           [response]: first.length + second.length,
           ended: true,
-          callbacks: ["first", "second"],
+          callbacks: ["first", "second", "'finish' of the response", "end() of the response"],
+          errors: [],
         });
       });
 
       it("end(chunk)", async () => {
         const first = piece("first", 4096);
         const last = piece("last", 1024);
-        const { waits, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
+        const { received, ...rest } = await wire("the socket of 'connection'", (socket, done) => {
           socket.write(first, done("first"));
           socket.end(last, done("end"));
         });
-        expect({ waits, bytes: received.length, ...offsets(received, ["first", "last"]), ended, callbacks }).toEqual({
+        expect({ ...rest, bytes: received.length, ...offsets(received, ["first", "last"]) }).toEqual({
           waits: true,
+          intact: true,
           bytes: first.length + last.length,
           first: 0,
           last: first.length,
           ended: true,
           callbacks: ["first", "end"],
+          errors: [],
         });
       });
 
       it("an empty write() between two writes", async () => {
         const first = piece("first", 4096);
         const third = piece("third", 1024);
-        const { waits, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
+        const { received, ...rest } = await wire("the socket of 'connection'", (socket, done) => {
           socket.write(first, done("first"));
           socket.write("", done("empty"));
           socket.write(third, done("third"));
           socket.end();
         });
-        expect({ waits, bytes: received.length, ...offsets(received, ["first", "third"]), ended, callbacks }).toEqual({
+        expect({ ...rest, bytes: received.length, ...offsets(received, ["first", "third"]) }).toEqual({
           waits: true,
+          intact: true,
           bytes: first.length + third.length,
           first: 0,
           third: first.length,
           ended: true,
           callbacks: ["first", "empty", "third"],
+          errors: [],
         });
       });
 
@@ -2776,7 +2844,7 @@ describe("backpressure", () => {
         const first = piece("first", 4096);
         const second = piece("second", 1024);
         const third = piece("third", 1024);
-        const { waits, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
+        const { received, ...rest } = await wire("the socket of 'connection'", (socket, done) => {
           socket.cork();
           socket.write(first, done("first"));
           socket.write(second, done("second"));
@@ -2784,85 +2852,133 @@ describe("backpressure", () => {
           socket.write(third, done("third"));
           socket.end();
         });
-        expect({
-          waits,
-          bytes: received.length,
-          ...offsets(received, ["first", "second", "third"]),
-          ended,
-          callbacks,
-        }).toEqual({
+        expect({ ...rest, bytes: received.length, ...offsets(received, ["first", "second", "third"]) }).toEqual({
           waits: true,
+          intact: true,
           bytes: first.length + second.length + third.length,
           first: 0,
           second: first.length,
           third: first.length + second.length,
           ended: true,
           callbacks: ["first", "second", "third"],
+          errors: [],
         });
       });
 
-      it("a write through a reference to write() from before the first write that waited", async () => {
+      // Every way to reach the write() of the stream. The response is written last, and the socket's
+      // own bytes are ahead of it on the wire whichever way they took.
+      const writers: Record<string, (socket: Duplex) => Write> = {
+        "a write() that was bound when the listener got the socket": socket => socket.write.bind(socket) as Write,
+        "Writable.prototype.write.call()": socket => (chunk, callback) =>
+          Writable.prototype.write.call(socket, chunk, callback),
+        "socket.write() after `delete socket.write`": socket => (chunk, callback) => {
+          delete (socket as { write?: unknown }).write;
+          return socket.write(chunk, callback);
+        },
+        "a wrapper of socket.write() that the caller takes away again": socket => {
+          const write = socket.write;
+          let calls = 0;
+          socket.write = function (this: Duplex, ...args: Parameters<Duplex["write"]>) {
+            // Behind the first write that waits the wrapper is gone.
+            if (++calls === 2) socket.write = write;
+            return write.apply(this, args);
+          } as Duplex["write"];
+          return (chunk, callback) => socket.write(chunk, callback);
+        },
+      };
+      it.each(Object.keys(writers))("a response behind raw writes through %s", async name => {
         const first = piece("first", 4096);
         const second = piece("second", 1024);
-        const third = piece("third", 1024);
-        const { waits, received, ended, callbacks } = await wire(
-          "the socket of 'connection'",
-          (socket, done, _res, write) => {
-            socket.write(first, done("first"));
-            write.call(socket, second, done("second"));
-            socket.write(third, done("third"));
-            socket.end();
+        const { received, ...rest } = await wire(
+          "req.socket in a 'request' listener",
+          (_socket, done, res, write) => {
+            write(first, done("first"));
+            write(second, done("second"));
+            res!.writeHead(200, { "Connection": "close", "Content-Length": 2 });
+            res!.end("ok");
           },
+          { writer: writers[name] },
         );
-        expect({
-          waits,
-          bytes: received.length,
-          ...offsets(received, ["first", "second", "third"]),
-          ended,
-          callbacks,
-        }).toEqual({
+        expect({ ...rest, ...offsets(received, ["first", "second", response]) }).toEqual({
           waits: true,
-          bytes: first.length + second.length + third.length,
+          intact: true,
           first: 0,
           second: first.length,
-          third: first.length + second.length,
+          [response]: first.length + second.length,
           ended: true,
-          callbacks: ["first", "second", "third"],
+          callbacks: ["first", "second"],
+          errors: [],
         });
+      });
+
+      it("a wrapper of socket.write() that writes a header ahead of each chunk", async () => {
+        const header = (length: number) => Buffer.from(`[${length}]`);
+        const last = piece("last", 1024);
+        const filling = Promise.withResolvers<{ chunks: number; waits: boolean }>();
+        const connection = await open("http", "the socket of 'connection'", socket => {
+          const write = socket.write;
+          socket.write = function (this: Duplex, chunk: Buffer, callback?: (err?: Error | null) => void) {
+            write.call(this, header(chunk.length));
+            return write.call(this, chunk, callback);
+          } as Duplex["write"];
+          const { chunks, waits } = fill((chunk, callback) => socket.write(chunk, callback));
+          // Behind the write that waits: two writes of the stream for each call.
+          for (let i = 0; i < 8; i++) socket.write(CHUNKS[i]);
+          socket.write(last);
+          socket.end();
+          filling.resolve({ chunks, waits });
+        });
+        try {
+          const { chunks, waits } = await filling.promise;
+          const { received, ended } = await connection.read();
+          const expected = Buffer.concat([
+            ...[...inOrder(chunks), ...inOrder(8)].flatMap(i => [header(SIZE), CHUNKS[i]]),
+            header(last.length),
+            last,
+          ]);
+          expect({
+            waits,
+            bytes: received.length,
+            intact: received.equals(expected),
+            ended,
+            errors: connection.errors,
+          }).toEqual({ waits: true, bytes: expected.length, intact: true, ended: true, errors: [] });
+        } finally {
+          connection.close();
+        }
       });
     });
 
     // In Node a tunnel and the response to the request ahead of it leave through the stream of one socket.
     describe.each(["http", "https"] as const)("%s: a tunnel write that waits for the client", protocol => {
       const tunnel = "the socket of 'connect'";
+      // The request and the CONNECT behind it arrive in one read.
+      const behindRequest = "GET /pending HTTP/1.1\r\nHost: localhost\r\n\r\n" + sources[tunnel].head;
 
       it("the response to the request ahead of the tunnel arrives behind that write", async () => {
         const tail = piece("tail", 1024);
         let pending: http.ServerResponse;
-        const { waits, received, ended } = await wire(
+        const { received, ...rest } = await wire(
           tunnel,
           socket => {
             pending.end("response");
             socket.end(tail);
           },
-          {
-            protocol,
-            respond: (_req, res) => void (pending = res),
-            // The request and the CONNECT behind it arrive in one read.
-            head: "GET /pending HTTP/1.1\r\nHost: localhost\r\n\r\n" + sources[tunnel].head,
-          },
+          { protocol, respond: (_req, res) => void (pending = res), head: behindRequest },
         );
         expect({
-          waits,
+          ...rest,
           ...offsets(received, [response, "tail"]),
           body: received.subarray(received.indexOf("\r\n\r\n") + 4, -tail.length).toString(),
-          ended,
         }).toEqual({
           waits: true,
+          intact: true,
           [response]: 0,
           tail: received.length - tail.length,
           body: "response",
           ended: true,
+          callbacks: [],
+          errors: [],
         });
       });
 
@@ -2870,15 +2986,18 @@ describe("backpressure", () => {
         const got = Promise.withResolvers<string>();
         const filling = Promise.withResolvers<ReturnType<typeof fill>>();
         const connection = await open(protocol, tunnel, socket => {
-          socket.on("error", () => {});
           socket.once("data", data => got.resolve(data.toString()));
-          filling.resolve(fill(socket));
+          filling.resolve(fill((chunk, callback) => socket.write(chunk, callback)));
         });
         try {
           const { waits } = await filling.promise;
           // After the listener: bytes in the read of the CONNECT head would be its `head` argument.
           connection.client.write("from the client");
-          expect({ waits, data: await got.promise }).toEqual({ waits: true, data: "from the client" });
+          expect({ waits, data: await got.promise, errors: connection.errors }).toEqual({
+            waits: true,
+            data: "from the client",
+            errors: [],
+          });
         } finally {
           connection.close();
         }
@@ -2887,7 +3006,7 @@ describe("backpressure", () => {
       it("server.close() leaves the tunnel to deliver it", async () => {
         const last = piece("last", 1024);
         const tail = piece("tail", 1024);
-        const { waits, received, ended, callbacks } = await wire(
+        const { received, ...rest } = await wire(
           tunnel,
           (socket, done, _res, _write, server) => {
             socket.write(last, done("write"));
@@ -2896,14 +3015,47 @@ describe("backpressure", () => {
           },
           { protocol },
         );
-        expect({ waits, bytes: received.length, ...offsets(received, ["last", "tail"]), ended, callbacks }).toEqual({
+        expect({ ...rest, bytes: received.length, ...offsets(received, ["last", "tail"]) }).toEqual({
           waits: true,
+          intact: true,
           bytes: last.length + tail.length,
           last: 0,
           tail: last.length,
           ended: true,
           callbacks: ["write", "end"],
+          errors: [],
         });
+      });
+
+      it("end() with no write, behind response bytes that wait: the FIN follows them, and the tunnel still reads", async () => {
+        const events: string[] = [];
+        const closed = Promise.withResolvers<void>();
+        const connection = await open(
+          protocol,
+          tunnel,
+          socket => {
+            socket.on("data", chunk => events.push(`data ${chunk}`));
+            socket.on("end", () => events.push("end"));
+            socket.on("close", () => {
+              events.push("close");
+              closed.resolve();
+            });
+            socket.end();
+          },
+          // The response stays open, and most of its bytes wait for the client.
+          (_req, res) => void res.write(Buffer.alloc(TOTAL, "a")),
+          behindRequest,
+        );
+        try {
+          const { received, ended } = await connection.read();
+          expect({ ended, errors: connection.errors }).toEqual({ ended: true, errors: [] });
+          expect(received.length).toBeGreaterThanOrEqual(TOTAL);
+          connection.client.end("later");
+          await closed.promise;
+          expect(events).toEqual(["data later", "end", "close"]);
+        } finally {
+          connection.close();
+        }
       });
     });
 
@@ -2916,7 +3068,7 @@ describe("backpressure", () => {
         const finished = Promise.withResolvers<void>();
         const connection = await open(protocol, "req.socket in a 'request' listener", (socket, res) => {
           res!.writeHead(200, { "Content-Length": TOTAL });
-          for (let i = 0; i < COUNT; i++) res!.write(CHUNK);
+          for (const chunk of CHUNKS) res!.write(chunk);
           socket.on("finish", () => events.push("finish"));
           socket.end(() => {
             events.push("end callback");
@@ -2944,10 +3096,11 @@ describe("backpressure", () => {
           await read.promise;
           await finished.promise;
           await connection.turn();
-          expect({ before, events, writableFinished: socket.writableFinished }).toEqual({
+          expect({ before, events, writableFinished: socket.writableFinished, errors: connection.errors }).toEqual({
             before: { events: [], writableFinished: false },
             events: ["end callback", "finish"],
             writableFinished: true,
+            errors: [],
           });
         } finally {
           connection.close();
@@ -2955,76 +3108,496 @@ describe("backpressure", () => {
       });
     });
 
-    describe("the writes that wait fail when the connection dies, before 'close'", () => {
-      // Both callbacks, in either order, then 'close'.
-      async function settled(kill: (socket: Duplex, client: Duplex) => void) {
-        const events: string[] = [];
-        const closed = Promise.withResolvers<void>();
-        const written = Promise.withResolvers<{ socket: Duplex; waits: boolean }>();
-        const connection = await open("http", "the socket of 'connection'", socket => {
-          socket.on("error", () => {});
-          socket.on("close", () => {
-            events.push("close");
-            closed.resolve();
+    describe("callbacks of writes that wait", () => {
+      // Node: the write request of the first chunk that waits completes alone, and the chunks behind it
+      // leave in one request.
+      it("the first write that waits calls back before 'drain', while the stream holds the chunks behind it", async () => {
+        const started = Promise.withResolvers<Burst>();
+        const connection = await open("http", "the socket of 'connection'", socket =>
+          started.resolve(writeBurst(socket)),
+        );
+        try {
+          const burst = await started.promise;
+          const taken = burst.returned.indexOf(false);
+          expect(taken).toBeGreaterThanOrEqual(0);
+          await connection.read(TOTAL);
+          await burst.flushed;
+          // What the stream held, and how many 'drain' events it had emitted, when each callback ran.
+          expect({ held: burst.heldAtCallback, drains: burst.drainsAtCallback, errors: connection.errors }).toEqual({
+            held: inOrder(COUNT).map(i =>
+              i < taken ? (COUNT - taken) * SIZE : i === taken ? (COUNT - taken - 1) * SIZE : 0,
+            ),
+            drains: inOrder(COUNT).map(i => (i <= taken ? 0 : 1)),
+            errors: [],
           });
-          const { waits } = fill(socket);
-          socket.write("a", err => events.push(err ? "first: error" : "first"));
-          socket.write("b", err => events.push(err ? "second: error" : "second"));
-          written.resolve({ socket, waits });
+        } finally {
+          connection.close();
+        }
+      });
+
+      it("a 'finish' listener of the response that destroys the socket finds every raw write done", async () => {
+        const started = Promise.withResolvers<Burst>();
+        const connection = await open("http", "req.socket in a 'request' listener", (socket, res) => {
+          const burst = writeBurst(socket);
+          res!.on("finish", () => socket.destroy());
+          res!.writeHead(200, { "Connection": "close", "Content-Length": 4 });
+          res!.end("done");
+          started.resolve(burst);
         });
         try {
-          const { socket, waits } = await written.promise;
-          kill(socket, connection.client);
-          await closed.promise;
-          return { waits, callbacks: events.slice(0, -1).sort(), last: events.at(-1) };
+          const burst = await started.promise;
+          expect(burst.returned).toContain(false);
+          const { received } = await connection.read();
+          await burst.flushed;
+          expect({
+            wrong: firstWrongChunk(received),
+            ...offsets(received, [response]),
+            tail: received.subarray(-4).toString(),
+            callbacks: burst.callbacks,
+            failed: burst.failed,
+            errors: connection.errors,
+          }).toEqual({ wrong: -1, [response]: TOTAL, tail: "done", callbacks: inOrder(COUNT), failed: [], errors: [] });
         } finally {
           connection.close();
         }
-      }
-      const expected = { waits: true, callbacks: ["first: error", "second: error"], last: "close" };
-
-      it("socket.destroy()", async () => {
-        expect(await settled(socket => socket.destroy())).toEqual(expected);
       });
 
-      it("a reset from the client", async () => {
-        expect(await settled((_socket, client) => (client as net.Socket).resetAndDestroy())).toEqual(expected);
+      it("a raw write behind response bytes calls back while the response goes on from its 'drain' events", async () => {
+        const PER_DRAIN = 16;
+        const done = Promise.withResolvers<number>();
+        const connection = await open("http", "req.socket in a 'request' listener", (socket, res) => {
+          res!.writeHead(200, { "Connection": "close" });
+          let written = 0;
+          let out = false;
+          for (; written < COUNT; written++) res!.write(CHUNKS[0]);
+          socket.write("a", () => void (out = true));
+          res!.on("drain", () => {
+            if (out) {
+              res!.end();
+              done.resolve(written);
+              return;
+            }
+            for (let i = 0; i < PER_DRAIN; i++, written++) res!.write(CHUNKS[0]);
+          });
+        });
+        try {
+          await connection.read();
+          // At most two rounds: the callback runs at the first 'drain' of the response, or at the one after it.
+          expect(await done.promise).toBeLessThanOrEqual(COUNT + 2 * PER_DRAIN);
+          expect(connection.errors).toEqual([]);
+        } finally {
+          connection.close();
+        }
+      });
+
+      it("run in the async context of their write, and so does 'drain'", async () => {
+        const storage = new AsyncLocalStorage<string>();
+        const stores = { callbacks: new Set<string | undefined>(), drains: [] as (string | undefined)[] };
+        const written = Promise.withResolvers<{ returned: boolean[]; flushed: Promise<void> }>();
+        // The server listens in a context of its own: a callback that runs in the context of the
+        // socket's events shows up as "listen".
+        const connection = await storage.run("listen", open, "http", "the socket of 'connection'", socket => {
+          const flushed = Promise.withResolvers<void>();
+          socket.on("drain", () => stores.drains.push(storage.getStore()));
+          const returned: boolean[] = [];
+          let callbacks = 0;
+          storage.run("write", () => {
+            for (let i = 0; i < COUNT; i++) {
+              returned.push(
+                socket.write(CHUNKS[i], () => {
+                  stores.callbacks.add(storage.getStore());
+                  if (++callbacks === COUNT) flushed.resolve();
+                }),
+              );
+            }
+          });
+          written.resolve({ returned, flushed: flushed.promise });
+        });
+        try {
+          const { returned, flushed } = await written.promise;
+          expect(returned).toContain(false);
+          await connection.read(TOTAL);
+          await flushed;
+          await connection.turn();
+          expect({ callbacks: [...stores.callbacks], drains: stores.drains }).toEqual({
+            callbacks: ["write"],
+            drains: ["write"],
+          });
+        } finally {
+          connection.close();
+        }
+      });
+
+      it("a socket waits three times, with two, one and no write behind the one that waits", async () => {
+        const storage = new AsyncLocalStorage<string>();
+        const behind = [["a1", "a2"], ["b1"], []];
+        const stores: string[] = [];
+        const cycles = behind.map(() => Promise.withResolvers<{ chunks: number; waits: boolean }>());
+        const connection = await open("http", "the socket of 'connection'", async socket => {
+          for (const [cycle, names] of behind.entries()) {
+            const drained = once(socket, "drain");
+            storage.run(`cycle ${cycle}`, () => {
+              const { chunks, waits } = fill((chunk, callback) => socket.write(chunk, callback));
+              for (const name of names) {
+                socket.write(piece(name, 1024), () => void stores.push(`${name}: ${storage.getStore()}`));
+              }
+              cycles[cycle].resolve({ chunks, waits });
+            });
+            await drained;
+          }
+        });
+        try {
+          const { client } = connection;
+          const chunks: Buffer[] = [];
+          let length = 0;
+          let wanted = 0;
+          let arrived = Promise.withResolvers<void>();
+          client.on("data", (chunk: Buffer) => {
+            chunks.push(chunk);
+            length += chunk.length;
+            if (length >= wanted) arrived.resolve();
+          });
+          const seen: object[] = [];
+          let from = 0;
+          for (const [cycle, names] of behind.entries()) {
+            const { chunks: filled, waits } = await cycles[cycle].promise;
+            // The client reads what this cycle wrote, and the server then starts the next one.
+            wanted = from + filled * SIZE + names.length * 1024;
+            if (length < wanted) {
+              arrived = Promise.withResolvers<void>();
+              client.resume();
+              await arrived.promise;
+            }
+            const received = Buffer.concat(chunks).subarray(from, wanted);
+            seen.push({
+              waits,
+              wrong: firstWrongChunk(received, filled),
+              ...offsets(received.subarray(filled * SIZE), names),
+            });
+            from = wanted;
+          }
+          expect({ seen, stores, errors: connection.errors }).toEqual({
+            seen: [
+              { waits: true, wrong: -1, a1: 0, a2: 1024 },
+              { waits: true, wrong: -1, b1: 0 },
+              { waits: true, wrong: -1 },
+            ],
+            stores: ["a1: cycle 0", "a2: cycle 0", "b1: cycle 1"],
+            errors: [],
+          });
+        } finally {
+          connection.close();
+        }
       });
     });
 
-    it("a callback and a 'drain' listener that waited run in the async context of the write", async () => {
-      const storage = new AsyncLocalStorage<string>();
-      const stores = { callbacks: new Set<string | undefined>(), drains: [] as (string | undefined)[] };
-      const written = Promise.withResolvers<{ returned: boolean[]; flushed: Promise<void> }>();
-      // The server listens in a context of its own: a callback that runs in the context of the
-      // socket's events shows up as "listen".
-      const connection = await storage.run("listen", open, "http", "the socket of 'connection'", socket => {
-        const flushed = Promise.withResolvers<void>();
-        socket.on("error", () => {});
-        socket.on("drain", () => stores.drains.push(storage.getStore()));
-        const returned: boolean[] = [];
-        let callbacks = 0;
-        storage.run("write", () => {
-          for (let i = 0; i < COUNT; i++) {
-            returned.push(
-              socket.write(CHUNK, () => {
-                stores.callbacks.add(storage.getStore());
-                if (++callbacks === COUNT) flushed.resolve();
-              }),
-            );
+    // Node fails the write that was in flight with the error of its write request (ECANCELED for a
+    // socket that this process closes), and the writes behind it with the error of the stream.
+    describe.each(["the socket of 'connection'", "req.socket in a 'request' listener"] as const)(
+      "%s: the writes that wait fail when the connection dies, before 'close'",
+      source => {
+        // What the write that waits, a write behind it and an end() behind both get, and the stream at 'close'.
+        async function settled(kill: (socket: Duplex, client: Duplex, server: http.Server) => void) {
+          const callbacks: string[] = [];
+          const closed = Promise.withResolvers<string>();
+          const written = Promise.withResolvers<{ socket: Duplex; waits: boolean }>();
+          const show = (err?: Coded | null) => (err ? `${err.code} ${err.syscall ?? ""}`.trim() : "ok");
+          const record = (name: string) => (err?: Coded | null) => void callbacks.push(`${name}: ${show(err)}`);
+          const connection = await open("http", source, socket => {
+            socket.on("close", () => closed.resolve(`${callbacks.length} callbacks, errored: ${show(socket.errored)}`));
+            // The last write of fill() is the one that waits. The ones ahead of it are done.
+            const { waits } = fill(chunk => socket.write(chunk, err => void (err && record("waits")(err))));
+            socket.write("a", record("behind"));
+            socket.end(record("end"));
+            written.resolve({ socket, waits });
+          });
+          try {
+            const { socket, waits } = await written.promise;
+            kill(socket, connection.client, connection.server);
+            return { waits, atClose: await closed.promise, callbacks, errors: connection.errors };
+          } finally {
+            connection.close();
           }
+        }
+        const canceled = {
+          waits: true,
+          atClose: "3 callbacks, errored: ECANCELED write",
+          callbacks: ["waits: ECANCELED write", "behind: ECANCELED write", "end: ECANCELED write"],
+          errors: [],
+        };
+
+        it("socket.destroy()", async () => {
+          expect(await settled(socket => socket.destroy())).toEqual(canceled);
         });
-        written.resolve({ returned, flushed: flushed.promise });
+
+        it("server.closeAllConnections()", async () => {
+          expect(await settled((_socket, _client, server) => server.closeAllConnections())).toEqual(canceled);
+        });
+
+        it("socket.destroy(error)", async () => {
+          const error = Object.assign(new Error("mine"), { code: "MINE" });
+          expect(await settled(socket => socket.destroy(error))).toEqual({
+            waits: true,
+            atClose: "3 callbacks, errored: MINE",
+            callbacks: ["waits: ECANCELED write", "behind: MINE", "end: MINE"],
+            errors: ["clientError MINE", "socket error MINE"],
+          });
+        });
+
+        it("a reset from the client", async () => {
+          const { callbacks, ...rest } = await settled((_socket, client) => (client as net.Socket).resetAndDestroy());
+          // The error of the transport, which depends on what the kernel reported first.
+          const transport = /^(ECONNRESET|EPIPE|ECANCELED)( |$)/;
+          expect({
+            ...rest,
+            callbacks: callbacks.map(entry => {
+              const [name, error] = entry.split(": ");
+              return `${name}: ${transport.test(error) ? "transport error" : error}`;
+            }),
+            errors: rest.errors.map(entry => entry.replace(/(ECONNRESET|EPIPE)$/, "transport error")),
+            atClose: rest.atClose.replace(/errored: (ECONNRESET|EPIPE|ECANCELED).*$/, "errored: transport error"),
+          }).toEqual({
+            waits: true,
+            atClose: "3 callbacks, errored: transport error",
+            callbacks: ["waits: transport error", "behind: transport error", "end: transport error"],
+            // None when the kernel reported the reset as a close.
+            errors: rest.errors.length === 0 ? [] : ["clientError transport error", "socket error transport error"],
+          });
+        });
+      },
+    );
+
+    // Two clients go away in one turn. The socket of the second one still looks open to the listeners
+    // of the first one, and a write on it must not become an 'error'.
+    describe.each(["connection", "upgrade"] as const)("a write on a %s socket whose client has just left", event => {
+      it("raises no 'error' and leaves 'end' and 'close' as they are", async () => {
+        const events: string[] = [];
+        const errors: string[] = [];
+        const sockets: Duplex[] = [];
+        const clients: net.Socket[] = [];
+        const allClosed = Promise.withResolvers<void>();
+        const server = http.createServer();
+        server.on("clientError", (err: Coded, socket: Duplex) => {
+          errors.push(`clientError ${err.code}`);
+          socket.destroy(err);
+        });
+        server.on(event, (...args: unknown[]) => {
+          const socket = (event === "connection" ? args[0] : args[1]) as Duplex;
+          const id = sockets.push(socket) - 1;
+          // Not on a socket of 'upgrade': there an 'error' with no listener is an uncaught exception.
+          if (event === "connection") socket.on("error", (err: Coded) => void errors.push(`error ${id}: ${err.code}`));
+          socket.on("end", () => {
+            events.push(`end ${id}`);
+            const other = sockets[1 - id];
+            if (other.writable) other.write("the other client left");
+            socket.end();
+          });
+          socket.on("close", () => {
+            if (events.push(`close ${id}`) === 4) allClosed.resolve();
+          });
+          socket.resume();
+          if (sockets.length === 2) for (const client of clients) client.end();
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const { port } = server.address() as AddressInfo;
+        try {
+          for (let i = 0; i < 2; i++) {
+            const client = net.connect(port, "127.0.0.1");
+            client.on("error", () => {});
+            client.resume();
+            clients.push(client);
+            await once(client, "connect");
+            client.write(event === "connection" ? "\r\n" : sources["the socket of 'upgrade'"].head);
+          }
+          await allClosed.promise;
+          expect({ errors, events: events.toSorted() }).toEqual({
+            errors: [],
+            events: ["close 0", "close 1", "end 0", "end 1"],
+          });
+        } finally {
+          for (const client of clients) client.destroy();
+          server.close();
+          server.closeAllConnections();
+        }
+      });
+    });
+
+    it("end(chunk, callback) with a destroy() in the callback delivers the chunk", async () => {
+      const chunk = Buffer.concat(CHUNKS);
+      const connection = await open("http", "req.socket in a 'request' listener", socket => {
+        socket.end(chunk, () => socket.destroy());
       });
       try {
-        const { returned, flushed } = await written.promise;
-        expect(returned).toContain(false);
-        await connection.read(TOTAL);
-        await flushed;
+        const { received } = await connection.read();
+        expect({ bytes: received.length, wrong: firstWrongChunk(received), errors: connection.errors }).toEqual({
+          bytes: TOTAL,
+          wrong: -1,
+          errors: [],
+        });
+      } finally {
+        connection.close();
+      }
+    });
+
+    // Node's net.Socket does not time out while the kernel takes bytes of a write that waits:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
+    it("the inactivity timer of the socket does not fire while a write that waits makes progress", async () => {
+      const started = Promise.withResolvers<Duplex>();
+      let timeouts = 0;
+      const connection = await open("http", "the socket of 'connection'", socket => {
+        socket.on("timeout", () => timeouts++);
+        for (const chunk of CHUNKS) socket.write(chunk);
+        started.resolve(socket);
+      });
+      // With a listener the server leaves the socket open at a timeout.
+      connection.server.on("timeout", () => {});
+      try {
+        const socket = await started.promise;
+        // What the timer of the socket calls. The first call only records how far the write is.
+        const onTimeout = () => (socket as unknown as { _onTimeout(): void })._onTimeout();
+        onTimeout();
+        timeouts = 0;
+        // The client takes a part of the bytes, and the server sends more of them.
+        const { client } = connection;
+        const taken = Promise.withResolvers<void>();
+        let received = 0;
+        client.on("data", (chunk: Buffer) => {
+          if ((received += chunk.length) >= 4 * SIZE) {
+            client.pause();
+            taken.resolve();
+          }
+        });
+        client.resume();
+        await taken.promise;
         await connection.turn();
-        expect({ callbacks: [...stores.callbacks], drains: stores.drains }).toEqual({
-          callbacks: ["write"],
-          drains: ["write"],
+        await connection.turn();
+        onTimeout();
+        const withProgress = timeouts;
+        onTimeout();
+        expect({ withProgress, withoutProgress: timeouts, errors: connection.errors }).toEqual({
+          withProgress: 0,
+          withoutProgress: 1,
+          errors: [],
+        });
+      } finally {
+        connection.close();
+      }
+    });
+
+    it("a stream piped to the response behind raw writes that wait reaches the client", async () => {
+      const filling = Promise.withResolvers<ReturnType<typeof fill>>();
+      const connection = await open("http", "req.socket in a 'request' listener", (socket, res) => {
+        const result = fill((chunk, callback) => socket.write(chunk, callback));
+        res!.writeHead(200, { "Connection": "close", "Content-Length": 10 });
+        Readable.from([Buffer.from("piped "), Buffer.from("body")]).pipe(res!);
+        filling.resolve(result);
+      });
+      try {
+        const { chunks, filled, waits } = await filling.promise;
+        const { received, ended } = await connection.read();
+        expect({
+          waits,
+          wrong: firstWrongChunk(received, chunks),
+          ...offsets(received, [response]),
+          tail: received.subarray(-10).toString(),
+          ended,
+          errors: connection.errors,
+        }).toEqual({ waits: true, wrong: -1, [response]: filled, tail: "piped body", ended: true, errors: [] });
+      } finally {
+        connection.close();
+      }
+    });
+
+    // ws.handleUpgrade() writes the 101 response and the frames of the WebSocket to the connection.
+    describe.each(["http", "https"] as const)("%s: handleUpgrade() on a socket whose raw writes wait", protocol => {
+      it("the raw bytes, the 101 response and the first frame arrive in that order, and the callbacks run", async () => {
+        const server = protocol === "https" ? https.createServer(tlsOptions) : http.createServer();
+        const wss = new WebSocketServer({ noServer: true });
+        const callbacks: string[] = [];
+        const settled = Promise.withResolvers<void>();
+        const adopted = Promise.withResolvers<{ chunks: number; waits: boolean }>();
+        const first = piece("first", 4096);
+        const second = piece("second", 1024);
+        server.on("upgrade", (req, socket, head) => {
+          socket.on("error", () => {});
+          const { chunks, waits } = fill((chunk, callback) => socket.write(chunk, callback));
+          const done = (name: string) => (err?: Error | null) => {
+            if (callbacks.push(err ? `${name}: error` : name) === 2) settled.resolve();
+          };
+          socket.write(first, done("first"));
+          socket.write(second, done("second"));
+          wss.handleUpgrade(req, socket, head, ws => {
+            ws.send("frame");
+            adopted.resolve({ chunks, waits });
+          });
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const { port } = server.address() as AddressInfo;
+        const client: Duplex =
+          protocol === "https"
+            ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+            : net.connect(port, "127.0.0.1");
+        client.pause();
+        client.on("error", () => {});
+        try {
+          await once(client, protocol === "https" ? "secureConnect" : "connect");
+          client.write(
+            "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+              "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+          );
+          const { chunks, waits } = await adopted.promise;
+          // An unmasked text frame: FIN and the text opcode, the length 5, "frame".
+          const frame = Buffer.from([0x81, 0x05, ...Buffer.from("frame")]);
+          const parts: Buffer[] = [];
+          const got = Promise.withResolvers<Buffer>();
+          client.on("data", (part: Buffer) => {
+            parts.push(part);
+            const all = Buffer.concat(parts);
+            if (all.includes(frame, chunks * SIZE)) got.resolve(all);
+          });
+          client.on("close", () => got.resolve(Buffer.concat(parts)));
+          client.resume();
+          const received = await got.promise;
+          await settled.promise;
+          const behind = received.subarray(chunks * SIZE);
+          expect({
+            waits,
+            wrong: firstWrongChunk(received, chunks),
+            ...offsets(behind, ["first", "second"]),
+            switching: behind.indexOf("HTTP/1.1 101 Switching Protocols"),
+            frame: behind.indexOf(frame) > first.length + second.length,
+            callbacks,
+          }).toEqual({
+            waits: true,
+            wrong: -1,
+            first: 0,
+            second: first.length,
+            switching: first.length + second.length,
+            frame: true,
+            callbacks: ["first", "second"],
+          });
+        } finally {
+          client.destroy();
+          wss.close();
+          server.close();
+          server.closeAllConnections();
+        }
+      });
+    });
+
+    // In Node a TLSSocket completes no write in the call, so write() returns false from the first
+    // chunk of highWaterMark bytes and the stream holds that chunk. Bun completes a TLS write that the
+    // kernel takes whole in the call, as it does for a plain socket.
+    it.todo("https: write() returns false from the first chunk, as for a TLSSocket in Node", async () => {
+      const started = Promise.withResolvers<Burst>();
+      const connection = await open("https", "the socket of 'connection'", socket =>
+        started.resolve(writeBurst(socket)),
+      );
+      try {
+        const burst = await started.promise;
+        expect({ returned: burst.returned[0], writableLength: burst.lengths[0] }).toEqual({
+          returned: false,
+          writableLength: SIZE,
         });
       } finally {
         connection.close();

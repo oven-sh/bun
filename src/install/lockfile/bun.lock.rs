@@ -525,11 +525,16 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if let Some(trusted_name) =
-                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
-                        {
-                            if **trusted_name == *dep.name.slice(buf) {
-                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                        let by_alias = (dep.name, dep.name_hash);
+                        let checked = res.trusted_name(by_alias, (pkg_name, pkg_name_hash));
+                        // The alias still matches, so a recorded section does not lose a name.
+                        for (name, name_hash) in [checked, by_alias] {
+                            if let Some(trusted_name) =
+                                trusted_dependencies.get(&(name_hash as TruncatedPackageNameHash))
+                            {
+                                if **trusted_name == *name.slice(buf) {
+                                    found_trusted_dependencies.insert(name_hash, name);
+                                }
                             }
                         }
                     }

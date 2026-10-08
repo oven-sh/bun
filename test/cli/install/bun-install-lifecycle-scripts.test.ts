@@ -260,6 +260,71 @@ test.concurrent(
   },
 );
 
+// electron's preinstall writes preinstall.txt. It is installed under the alias "x" and trusted by its own name.
+test.concurrent("bun.lock records a trustedDependencies entry for a package behind an npm: alias", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  const preinstall = join(packageDir, "node_modules", "x", "preinstall.txt");
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({ name: "foo", dependencies: { x: "npm:electron@1.0.0" }, trustedDependencies: ["electron"] }),
+  );
+  await runBunInstall(env, packageDir);
+  expect(await exists(preinstall)).toBeTrue();
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies": [\n    "electron",\n  ],');
+
+  await using untrusted = spawn({
+    cmd: [bunExe(), "pm", "untrusted"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [out, untrustedErr, code] = await Promise.all([
+    untrusted.stdout.text(),
+    untrusted.stderr.text(),
+    untrusted.exited,
+  ]);
+  expect(untrustedErr).not.toContain("error:");
+  expect(out).toContain("Found 0 untrusted dependencies with scripts");
+  expect(code).toBe(0);
+
+  // The entry is in bun.lock, so it is not new on the next install and the script does not run again.
+  await rm(preinstall);
+  const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await exists(preinstall)).toBeFalse();
+  expect(err).not.toContain("Saved lockfile");
+});
+
+test.concurrent(
+  "a trustedDependencies entry added for an installed package behind an npm: alias runs its scripts once",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const preinstall = join(packageDir, "node_modules", "x", "preinstall.txt");
+    const dependencies = { x: "npm:electron@1.0.0" };
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: [] }));
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "node_modules", "x", "package.json"))).toBeTrue();
+    expect(await exists(preinstall)).toBeFalse();
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: ["electron"] }));
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await exists(preinstall)).toBeTrue();
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(
+      '"trustedDependencies": [\n    "electron",\n  ],',
+    );
+
+    await rm(preinstall);
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await exists(preinstall)).toBeFalse();
+    expect(err).not.toContain("Saved lockfile");
+  },
+);
+
 test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

@@ -43,9 +43,11 @@ fn multibyte_at(s: &[u8], i: usize, b: u8) -> (u32, usize) {
             }
         }
         0xF0..=0xF4 => {
-            if let (Some(c1), Some(c2), Some(c3)) =
-                (continuation(s, i + 1), continuation(s, i + 2), continuation(s, i + 3))
-            {
+            if let (Some(c1), Some(c2), Some(c3)) = (
+                continuation(s, i + 1),
+                continuation(s, i + 2),
+                continuation(s, i + 3),
+            ) {
                 let cp = (u32::from(b & 0x07) << 18) | (c1 << 12) | (c2 << 6) | c3;
                 if (0x10000..=0x10FFFF).contains(&cp) {
                     return (cp, 4);
@@ -65,7 +67,9 @@ pub(crate) fn code_point_before(s: &[u8], i: usize) -> (u32, usize) {
         return (u32::from(b), 1);
     }
     for len in 2..=4 {
-        let Some(start) = i.checked_sub(len) else { break };
+        let Some(start) = i.checked_sub(len) else {
+            break;
+        };
         let lead = s.get(start).copied().unwrap_or(0);
         if lead & 0xC0 != 0x80 {
             let (cp, found) = multibyte_at(s, start, lead);
@@ -76,6 +80,14 @@ pub(crate) fn code_point_before(s: &[u8], i: usize) -> (u32, usize) {
         }
     }
     (REPLACEMENT, 1)
+}
+
+/// Where the code point starts that `i` is in the middle of. `i` itself if it is not.
+pub(crate) fn code_point_start(s: &[u8], i: usize) -> usize {
+    (1..=3)
+        .filter_map(|back| i.checked_sub(back))
+        .find(|start| code_point_at(s, *start).1 > i - start)
+        .unwrap_or(i)
 }
 
 #[inline]

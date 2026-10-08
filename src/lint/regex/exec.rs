@@ -96,21 +96,32 @@ impl<'p, 't> Machine<'p, 't> {
 
     #[inline]
     fn step(&self, pos: u32, back: bool) -> Option<(u32, u32)> {
-        if back { self.previous(pos) } else { self.next(pos) }
+        if back {
+            self.previous(pos)
+        } else {
+            self.next(pos)
+        }
     }
 
     #[inline]
     fn matches(&self, what: Single, c: u32) -> bool {
         match what {
             Single::Char(wanted) => c == wanted,
-            Single::Set(set) => self.program.sets.get(set as usize).is_some_and(|set| set.contains(c)),
+            Single::Set(set) => self
+                .program
+                .sets
+                .get(set as usize)
+                .is_some_and(|set| set.contains(c)),
         }
     }
 
     #[inline]
     fn set_slot(&mut self, slot: u32, value: u32) {
         if let Some(place) = self.slots.get_mut(slot as usize) {
-            self.stack.push(Frame::Restore { slot, value: *place });
+            self.stack.push(Frame::Restore {
+                slot,
+                value: *place,
+            });
             *place = value;
         }
     }
@@ -170,7 +181,11 @@ impl<'p, 't> Machine<'p, 't> {
     /// Matches `repeat` as often as it must and, if it is greedy, as it can. The position after
     /// that, and after the least number of characters, and the number of characters.
     fn repeat(&mut self, repeat: &Repeat, mut pos: u32) -> Option<(u32, u32, u32)> {
-        let limit = if repeat.greedy { repeat.max } else { repeat.min };
+        let limit = if repeat.greedy {
+            repeat.max
+        } else {
+            repeat.min
+        };
         let mut count = 0;
         let mut bound = pos;
         if !repeat.back
@@ -180,7 +195,9 @@ impl<'p, 't> Machine<'p, 't> {
             let ascii = set.ascii();
             let tail = self.text.get(pos as usize..).unwrap_or_default();
             let run = tail.iter().take(limit as usize);
-            count = run.take_while(|byte| **byte < 0x80 && (ascii >> **byte) & 1 != 0).count() as u32;
+            count = run
+                .take_while(|byte| **byte < 0x80 && (ascii >> **byte) & 1 != 0)
+                .count() as u32;
             pos += count;
             bound += count.min(repeat.min);
         }
@@ -199,9 +216,13 @@ impl<'p, 't> Machine<'p, 't> {
     }
 
     /// The last position in `from..to` where `byte` is.
-    fn last_before(&self, byte: u8, from: u32, to: u32) -> Option<u32> {
-        let text = self.text.get(from as usize..(to as usize).min(self.text.len()))?;
-        strings::last_index_of_char(text, byte).map(|found| from + found as u32)
+    fn last_before(&mut self, byte: u8, from: u32, to: u32) -> Option<u32> {
+        let text = self
+            .text
+            .get(from as usize..(to as usize).min(self.text.len()))?;
+        let found = strings::last_index_of_char(text, byte);
+        self.steps += (text.len() - found.unwrap_or(0)) as u64 / 16;
+        found.map(|found| from + found as u32)
     }
 
     /// For a lazy `repeat` that has matched `count` characters, up to `pos`: the next position where
@@ -214,7 +235,11 @@ impl<'p, 't> Machine<'p, 't> {
         mut more: bool,
     ) -> Option<(u32, u32)> {
         loop {
-            if !more && repeat.then.is_none_or(|byte| self.text.get(pos as usize) == Some(&byte)) {
+            if !more
+                && repeat
+                    .then
+                    .is_none_or(|byte| self.text.get(pos as usize) == Some(&byte))
+            {
                 return Some((pos, count));
             }
             more = false;
@@ -241,7 +266,9 @@ impl<'p, 't> Machine<'p, 't> {
             if self.steps > STEP_LIMIT || self.stack.len() > STACK_LIMIT {
                 return Err(LimitExceeded);
             }
-            let Some(inst) = program.insts.get(pc as usize) else { return Ok(None) };
+            let Some(inst) = program.insts.get(pc as usize) else {
+                return Ok(None);
+            };
             let ok = match *inst {
                 Inst::Match => return Ok(Some(pos)),
                 Inst::Char { c, back } => match self.step(pos, back) {
@@ -262,8 +289,10 @@ impl<'p, 't> Machine<'p, 't> {
                     let literal = program.literals.get(start as usize..(start + len) as usize);
                     let literal = literal.unwrap_or_default();
                     if back {
-                        let found =
-                            self.text.get(..pos as usize).is_some_and(|head| head.ends_with(literal));
+                        let found = self
+                            .text
+                            .get(..pos as usize)
+                            .is_some_and(|head| head.ends_with(literal));
                         if found {
                             pos -= len;
                         }
@@ -308,7 +337,9 @@ impl<'p, 't> Machine<'p, 't> {
                 }
                 Inst::Progress(slot) => self.slot(slot) != pos,
                 Inst::LoopHead(index) => {
-                    let Some(it) = program.loops.get(index as usize) else { return Ok(None) };
+                    let Some(it) = program.loops.get(index as usize) else {
+                        return Ok(None);
+                    };
                     let count = self.slot(it.counter);
                     if count >= it.min {
                         if count >= it.max {
@@ -326,7 +357,9 @@ impl<'p, 't> Machine<'p, 't> {
                     true
                 }
                 Inst::LoopTail(index) => {
-                    let Some(it) = program.loops.get(index as usize) else { return Ok(None) };
+                    let Some(it) = program.loops.get(index as usize) else {
+                        return Ok(None);
+                    };
                     let count = self.slot(it.counter);
                     if it.mark != NONE && count >= it.min && self.slot(it.mark) == pos {
                         false
@@ -337,7 +370,9 @@ impl<'p, 't> Machine<'p, 't> {
                     }
                 }
                 Inst::Repeat(index) => {
-                    let Some(it) = program.repeats.get(index as usize) else { return Ok(None) };
+                    let Some(it) = program.repeats.get(index as usize) else {
+                        return Ok(None);
+                    };
                     let stop = self.repeat(it, pos).and_then(|(end, bound, count)| {
                         if !it.greedy {
                             return self.longer(it, end, count, false);
@@ -351,14 +386,22 @@ impl<'p, 't> Machine<'p, 't> {
                     match stop {
                         Some((end, bound)) if it.greedy => {
                             if end != bound {
-                                self.stack.push(Frame::Greedy { pc, bound, pos: end });
+                                self.stack.push(Frame::Greedy {
+                                    pc,
+                                    bound,
+                                    pos: end,
+                                });
                             }
                             pos = end;
                             true
                         }
                         Some((end, count)) => {
                             if count < it.max {
-                                self.stack.push(Frame::Lazy { pc, pos: end, count });
+                                self.stack.push(Frame::Lazy {
+                                    pc,
+                                    pos: end,
+                                    count,
+                                });
                             }
                             pos = end;
                             true
@@ -370,7 +413,8 @@ impl<'p, 't> Machine<'p, 't> {
                     pos == 0 || (multiline && self.is_line_terminator_before(pos))
                 }
                 Inst::End { multiline } => {
-                    pos as usize == self.text.len() || (multiline && self.is_line_terminator_at(pos))
+                    pos as usize == self.text.len()
+                        || (multiline && self.is_line_terminator_at(pos))
                 }
                 Inst::WordBoundary { negate, folded } => {
                     let before = self.is_word(self.previous(pos), folded);
@@ -378,17 +422,26 @@ impl<'p, 't> Machine<'p, 't> {
                     (before != after) != negate
                 }
                 Inst::Look(index) => {
-                    let Some(it) = program.looks.get(index as usize) else { return Ok(None) };
+                    let Some(it) = program.looks.get(index as usize) else {
+                        return Ok(None);
+                    };
                     if let Some(height) = self.slots.get_mut(it.height as usize) {
                         *height = self.stack.len() as u32;
                     }
-                    self.stack.push(Frame::Look { pc: it.next, pos, negate: it.negate });
+                    self.stack.push(Frame::Look {
+                        pc: it.next,
+                        pos,
+                        negate: it.negate,
+                    });
                     true
                 }
                 Inst::LookEnd(index) => {
-                    let Some(it) = program.looks.get(index as usize) else { return Ok(None) };
+                    let Some(it) = program.looks.get(index as usize) else {
+                        return Ok(None);
+                    };
                     let height = self.slot(it.height) as usize;
-                    let Some(Frame::Look { pos: before, .. }) = self.stack.get(height).copied() else {
+                    let Some(Frame::Look { pos: before, .. }) = self.stack.get(height).copied()
+                    else {
                         return Ok(None);
                     };
                     if it.negate {
@@ -408,8 +461,15 @@ impl<'p, 't> Machine<'p, 't> {
                         true
                     }
                 }
-                Inst::Backreference { start, len, ignore_case, back } => {
-                    let groups = program.groups.get(start as usize..start as usize + usize::from(len));
+                Inst::Backreference {
+                    start,
+                    len,
+                    ignore_case,
+                    back,
+                } => {
+                    let groups = program
+                        .groups
+                        .get(start as usize..start as usize + usize::from(len));
                     let captured = groups.unwrap_or_default().iter().find_map(|slot| {
                         let range = (self.slot(*slot), self.slot(*slot + 1));
                         (range.0 != NONE && range.1 != NONE).then_some(range)
@@ -436,7 +496,9 @@ impl<'p, 't> Machine<'p, 't> {
 
             // Back to the last choice.
             loop {
-                let Some(frame) = self.stack.pop() else { return Ok(None) };
+                let Some(frame) = self.stack.pop() else {
+                    return Ok(None);
+                };
                 match frame {
                     Frame::Restore { slot, value } => {
                         if let Some(place) = self.slots.get_mut(slot as usize) {
@@ -447,7 +509,11 @@ impl<'p, 't> Machine<'p, 't> {
                         (pc, pos) = (to, at);
                         continue 'run;
                     }
-                    Frame::Greedy { pc: at, bound, pos: end } => {
+                    Frame::Greedy {
+                        pc: at,
+                        bound,
+                        pos: end,
+                    } => {
                         let Some(it) = program.repeats.get(repeat_index(program, at)) else {
                             return Ok(None);
                         };
@@ -457,25 +523,41 @@ impl<'p, 't> Machine<'p, 't> {
                         };
                         let Some(shorter) = shorter else { continue };
                         if shorter != bound {
-                            self.stack.push(Frame::Greedy { pc: at, bound, pos: shorter });
+                            self.stack.push(Frame::Greedy {
+                                pc: at,
+                                bound,
+                                pos: shorter,
+                            });
                         }
                         (pc, pos) = (at + 1, shorter);
                         continue 'run;
                     }
-                    Frame::Lazy { pc: at, pos: end, count } => {
+                    Frame::Lazy {
+                        pc: at,
+                        pos: end,
+                        count,
+                    } => {
                         let Some(it) = program.repeats.get(repeat_index(program, at)) else {
                             return Ok(None);
                         };
                         if let Some((longer, count)) = self.longer(it, end, count, true) {
                             if count < it.max {
-                                self.stack.push(Frame::Lazy { pc: at, pos: longer, count });
+                                self.stack.push(Frame::Lazy {
+                                    pc: at,
+                                    pos: longer,
+                                    count,
+                                });
                             }
                             (pc, pos) = (at + 1, longer);
                             continue 'run;
                         }
                     }
                     Frame::Look { negate: false, .. } => {}
-                    Frame::Look { pc: to, pos: at, negate: true } => {
+                    Frame::Look {
+                        pc: to,
+                        pos: at,
+                        negate: true,
+                    } => {
                         (pc, pos) = (to, at);
                         continue 'run;
                     }
@@ -525,14 +607,7 @@ impl<'p, 't> Machine<'p, 't> {
         self.stack.clear();
         let mut pos = start;
         if self.program.unicode {
-            // A position in the middle of a character stands for its start.
-            let is_inside =
-                |pos: u32| self.text.get(pos as usize).is_some_and(|byte| byte & 0xC0 == 0x80);
-            for _ in 0..3 {
-                if pos > 0 && is_inside(pos) {
-                    pos -= 1;
-                }
-            }
+            pos = wtf8::code_point_start(self.text, pos as usize) as u32;
         }
         loop {
             match self.candidate(pos) {

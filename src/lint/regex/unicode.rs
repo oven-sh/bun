@@ -56,8 +56,15 @@ pub(super) fn is_valid_lone_unicode_property_of_string(version: u32, value: &[u8
 
 /// The ranges of a table of `start << bits | value`, which covers all code points.
 fn partition(table: &'static [u32], bits: u32) -> impl Iterator<Item = (u32, u32, u32)> {
-    let ends = table.iter().skip(1).map(move |next| (next >> bits) - 1).chain([MAX]);
-    table.iter().zip(ends).map(move |(entry, end)| (entry >> bits, end, entry & ((1 << bits) - 1)))
+    let ends = table
+        .iter()
+        .skip(1)
+        .map(move |next| (next >> bits) - 1)
+        .chain([MAX]);
+    table
+        .iter()
+        .zip(ends)
+        .map(move |(entry, end)| (entry >> bits, end, entry & ((1 << bits) - 1)))
 }
 
 /// The code points whose General_Category is one of `mask`.
@@ -85,8 +92,13 @@ fn script_extensions(wanted: u8) -> CharSet {
     for pair in tables::SCRIPT_EXTENSIONS.chunks_exact(2) {
         let [first, hi] = *pair else { continue };
         let (lo, set) = (first >> 11, (first & 0x7FF) as usize);
-        let bounds = (tables::SCRIPT_SET_OFFSETS.get(set), tables::SCRIPT_SET_OFFSETS.get(set + 1));
-        let (Some(from), Some(to)) = bounds else { continue };
+        let bounds = (
+            tables::SCRIPT_SET_OFFSETS.get(set),
+            tables::SCRIPT_SET_OFFSETS.get(set + 1),
+        );
+        let (Some(from), Some(to)) = bounds else {
+            continue;
+        };
         let scripts = tables::SCRIPT_SETS.get(usize::from(*from)..usize::from(*to));
         if strings::contains_char(scripts.unwrap_or_default(), wanted) {
             with.push((lo, hi));
@@ -117,13 +129,19 @@ pub(super) fn property(key: &[u8], value: Option<&[u8]>) -> Option<CharSet> {
     };
     if is_general_category(key) {
         let index = index_of_name(tables::GENERAL_CATEGORY_NAMES, value)?;
-        return Some(general_category(*tables::GENERAL_CATEGORY_MASKS.get(index)?));
+        return Some(general_category(
+            *tables::GENERAL_CATEGORY_MASKS.get(index)?,
+        ));
     }
     let (_, index) = versioned(tables::SCRIPT_NAMES, tables::SCRIPT_VALUES, value)?;
     if index == UNSUPPORTED {
         return None;
     }
-    Some(if matches!(key, b"Script" | b"sc") { script(index) } else { script_extensions(index) })
+    Some(if matches!(key, b"Script" | b"sc") {
+        script(index)
+    } else {
+        script_extensions(index)
+    })
 }
 
 /// What `\p{name}` matches with the `v` flag, for a property of strings: the strings of one code point
@@ -134,7 +152,10 @@ pub(super) fn property_of_strings(name: &[u8]) -> (CharSet, Vec<Vec<u32>>) {
     const ANY_TONE: u8 = 255;
     let members = |toggles: &[u32]| {
         let set = CharSet::from_toggles(toggles);
-        set.ranges().iter().flat_map(|(lo, hi)| *lo..=*hi).collect::<Vec<u32>>()
+        set.ranges()
+            .iter()
+            .flat_map(|(lo, hi)| *lo..=*hi)
+            .collect::<Vec<u32>>()
     };
     let wants = |part: &[u8]| name == part || name == b"RGI_Emoji";
     let mut chars = CharSet::new();
@@ -145,7 +166,11 @@ pub(super) fn property_of_strings(name: &[u8]) -> (CharSet, Vec<Vec<u32>>) {
         strings.extend(bases.into_iter().map(|c| vec![c, VARIATION_SELECTOR]));
     }
     if wants(b"Emoji_Keycap_Sequence") {
-        strings.extend(b"#*0123456789".iter().map(|c| vec![u32::from(*c), VARIATION_SELECTOR, 0x20E3]));
+        strings.extend(
+            b"#*0123456789"
+                .iter()
+                .map(|c| vec![u32::from(*c), VARIATION_SELECTOR, 0x20E3]),
+        );
     }
     if wants(b"RGI_Emoji_Flag_Sequence") {
         for (first, mask) in (0x1F1E6..).zip(tables::EMOJI_FLAGS) {
@@ -212,7 +237,11 @@ impl Fold {
         if self.stride == 1 {
             out.push((moved(lo), moved(hi)));
         } else {
-            out.extend((lo..=hi).step_by(self.stride as usize).map(|cp| (moved(cp), moved(cp))));
+            out.extend(
+                (lo..=hi)
+                    .step_by(self.stride as usize)
+                    .map(|cp| (moved(cp), moved(cp))),
+            );
         }
     }
 }
@@ -222,11 +251,17 @@ fn folds(unicode: bool) -> impl Iterator<Item = Fold> {
 }
 
 fn fold_table(unicode: bool) -> &'static [i32] {
-    if unicode { tables::FOLD_UNICODE } else { tables::FOLD_LEGACY }
+    if unicode {
+        tables::FOLD_UNICODE
+    } else {
+        tables::FOLD_LEGACY
+    }
 }
 
 fn fold_at(triple: &[i32]) -> Option<Fold> {
-    let [first, last, delta] = *triple else { return None };
+    let [first, last, delta] = *triple else {
+        return None;
+    };
     Some(Fold {
         first: first as u32,
         last: (last >> 1) as u32,
@@ -240,14 +275,20 @@ fn fold_at(triple: &[i32]) -> Option<Fold> {
 /// regular expression has the `u` or the `v` flag.
 pub(super) fn canonicalize(cp: u32, unicode: bool) -> u32 {
     if cp < 0x80 {
-        return if (0x61..=0x7A).contains(&cp) { cp - 0x20 } else { cp };
+        return if (0x61..=0x7A).contains(&cp) {
+            cp - 0x20
+        } else {
+            cp
+        };
     }
     let table = fold_table(unicode);
     let count = table.len() / 3;
     let (mut lo, mut hi) = (0, count);
     while lo < hi {
         let mid = usize::midpoint(lo, hi);
-        let Some(fold) = table.get(mid * 3..mid * 3 + 3).and_then(fold_at) else { return cp };
+        let Some(fold) = table.get(mid * 3..mid * 3 + 3).and_then(fold_at) else {
+            return cp;
+        };
         if cp < fold.first {
             hi = mid;
         } else if cp > fold.last {

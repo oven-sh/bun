@@ -14,7 +14,9 @@ impl CharSet {
     }
 
     pub(super) fn all() -> Self {
-        CharSet { ranges: vec![(0, MAX)] }
+        CharSet {
+            ranges: vec![(0, MAX)],
+        }
     }
 
     /// `ranges` in any order, overlapping or not.
@@ -59,7 +61,9 @@ impl CharSet {
         let mut merged = 0usize;
         for i in 0..self.ranges.len() {
             let (lo, hi) = self.ranges[i];
-            if let Some(last) = merged.checked_sub(1).and_then(|last| self.ranges.get_mut(last))
+            if let Some(last) = merged
+                .checked_sub(1)
+                .and_then(|last| self.ranges.get_mut(last))
                 && lo <= last.1.saturating_add(1)
             {
                 last.1 = last.1.max(hi);
@@ -138,6 +142,11 @@ impl CharSet {
     /// The ranges that have a code point in `lo..=hi`.
     pub(super) fn overlapping(&self, lo: u32, hi: u32) -> impl Iterator<Item = (u32, u32)> {
         let first = self.ranges.partition_point(|range| range.1 < lo);
-        self.ranges.get(first..).unwrap_or_default().iter().copied().take_while(move |r| r.0 <= hi)
+        self.ranges
+            .get(first..)
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .take_while(move |r| r.0 <= hi)
     }
 }

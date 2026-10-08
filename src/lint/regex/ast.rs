@@ -23,7 +23,7 @@ use smallvec::SmallVec;
 /// The `max` of `*`, `+` and `{n,}`.
 pub const INFINITY: u32 = u32::MAX;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct NodeId(pub(super) u32);
 
 impl NodeId {
@@ -43,7 +43,10 @@ pub(super) struct Run {
 }
 
 impl Run {
-    pub(super) const NONE: Run = Run { start: u32::MAX, len: 0 };
+    pub(super) const NONE: Run = Run {
+        start: u32::MAX,
+        len: 0,
+    };
 }
 
 /// `/pattern/flags`
@@ -90,28 +93,93 @@ pub struct ModifierFlags {
 
 #[derive(Copy, Clone, Debug)]
 pub(super) enum Data {
-    RegExpLiteral { pattern: NodeId, flags: NodeId },
-    Pattern { alternatives: Run },
-    Alternative { elements: Run },
-    Group { modifiers: NodeId, alternatives: Run },
-    CapturingGroup { name: Run, alternatives: Run, references: Run },
-    Lookaround { behind: bool, negate: bool, alternatives: Run },
-    Edge { end: bool },
-    WordBoundary { negate: bool },
-    Quantifier { min: u32, max: u32, greedy: bool, element: NodeId },
-    CharacterClass { unicode_sets: bool, negate: bool, elements: Run, expression: NodeId },
-    CharacterClassRange { min: NodeId, max: NodeId },
+    RegExpLiteral {
+        pattern: NodeId,
+        flags: NodeId,
+    },
+    Pattern {
+        alternatives: Run,
+    },
+    Alternative {
+        elements: Run,
+    },
+    Group {
+        modifiers: NodeId,
+        alternatives: Run,
+    },
+    CapturingGroup {
+        name: Run,
+        alternatives: Run,
+        references: Run,
+    },
+    Lookaround {
+        behind: bool,
+        negate: bool,
+        alternatives: Run,
+    },
+    Edge {
+        end: bool,
+    },
+    WordBoundary {
+        negate: bool,
+    },
+    Quantifier {
+        min: u32,
+        max: u32,
+        greedy: bool,
+        element: NodeId,
+    },
+    CharacterClass {
+        unicode_sets: bool,
+        negate: bool,
+        elements: Run,
+        expression: NodeId,
+    },
+    CharacterClassRange {
+        min: NodeId,
+        max: NodeId,
+    },
     Any,
-    Escape { set: EscapeSet, negate: bool },
-    Property { key: Run, value: Run, negate: bool, strings: bool },
-    ExpressionCharacterClass { negate: bool, expression: NodeId },
-    ClassIntersection { left: NodeId, right: NodeId },
-    ClassSubtraction { left: NodeId, right: NodeId },
-    ClassStringDisjunction { alternatives: Run },
-    StringAlternative { elements: Run },
-    Character { value: u32 },
-    Backreference { number: u32, name: Run, resolved: Run },
-    Modifiers { add: NodeId, remove: NodeId },
+    Escape {
+        set: EscapeSet,
+        negate: bool,
+    },
+    Property {
+        key: Run,
+        value: Run,
+        negate: bool,
+        strings: bool,
+    },
+    ExpressionCharacterClass {
+        negate: bool,
+        expression: NodeId,
+    },
+    ClassIntersection {
+        left: NodeId,
+        right: NodeId,
+    },
+    ClassSubtraction {
+        left: NodeId,
+        right: NodeId,
+    },
+    ClassStringDisjunction {
+        alternatives: Run,
+    },
+    StringAlternative {
+        elements: Run,
+    },
+    Character {
+        value: u32,
+    },
+    Backreference {
+        number: u32,
+        name: Run,
+        resolved: Run,
+    },
+    Modifiers {
+        add: NodeId,
+        remove: NodeId,
+    },
     ModifierFlags(ModifierFlags),
     Flags(Flags),
 }
@@ -207,7 +275,10 @@ impl<'s> Ast<'s> {
     /// [`parse_pattern`](super::parse_pattern).
     #[inline]
     pub fn root(&self) -> Node<'_> {
-        Node { ast: self, id: self.root }
+        Node {
+            ast: self,
+            id: self.root,
+        }
     }
 
     /// The `Pattern`.
@@ -236,7 +307,9 @@ impl<'s> Ast<'s> {
 
     /// The capturing groups, in the order of their `(`.
     pub fn capturing_groups(&self) -> impl Iterator<Item = Node<'_>> {
-        self.root().descendants().filter(|node| node.ty() == NodeType::CapturingGroup)
+        self.root()
+            .descendants()
+            .filter(|node| node.ty() == NodeType::CapturingGroup)
     }
 }
 
@@ -266,38 +339,86 @@ impl std::fmt::Debug for Node<'_> {
 #[derive(Copy, Clone, Debug)]
 pub enum Kind<'a> {
     /// `/pattern/flags`
-    RegExpLiteral { pattern: Node<'a>, flags: Node<'a> },
-    Pattern { alternatives: Nodes<'a> },
+    RegExpLiteral {
+        pattern: Node<'a>,
+        flags: Node<'a>,
+    },
+    Pattern {
+        alternatives: Nodes<'a>,
+    },
     /// What is between two `|`.
-    Alternative { elements: Nodes<'a> },
+    Alternative {
+        elements: Nodes<'a>,
+    },
     /// `(?:a)`, `(?i-s:a)`
-    Group { modifiers: Option<Node<'a>>, alternatives: Nodes<'a> },
+    Group {
+        modifiers: Option<Node<'a>>,
+        alternatives: Nodes<'a>,
+    },
     /// `(a)`, `(?<name>a)`
-    CapturingGroup { name: Option<&'a [u8]>, alternatives: Nodes<'a>, references: Nodes<'a> },
+    CapturingGroup {
+        name: Option<&'a [u8]>,
+        alternatives: Nodes<'a>,
+        references: Nodes<'a>,
+    },
     Assertion(Assertion<'a>),
     /// `a*`, `a{1,2}?`. `min` and `max` are at most `INFINITY - 1` when they are written out.
-    Quantifier { min: u32, max: u32, greedy: bool, element: Node<'a> },
+    Quantifier {
+        min: u32,
+        max: u32,
+        greedy: bool,
+        element: Node<'a>,
+    },
     /// `[ab]`, `[^ab]`
-    CharacterClass { unicode_sets: bool, negate: bool, elements: Nodes<'a> },
+    CharacterClass {
+        unicode_sets: bool,
+        negate: bool,
+        elements: Nodes<'a>,
+    },
     /// `a-b` in a class.
-    CharacterClassRange { min: Node<'a>, max: Node<'a> },
+    CharacterClassRange {
+        min: Node<'a>,
+        max: Node<'a>,
+    },
     CharacterSet(CharacterSet<'a>),
     /// `[a--b]`, `[a&&b]`
-    ExpressionCharacterClass { negate: bool, expression: Node<'a> },
+    ExpressionCharacterClass {
+        negate: bool,
+        expression: Node<'a>,
+    },
     /// `a&&b`
-    ClassIntersection { left: Node<'a>, right: Node<'a> },
+    ClassIntersection {
+        left: Node<'a>,
+        right: Node<'a>,
+    },
     /// `a--b`
-    ClassSubtraction { left: Node<'a>, right: Node<'a> },
+    ClassSubtraction {
+        left: Node<'a>,
+        right: Node<'a>,
+    },
     /// `\q{a|b}`
-    ClassStringDisjunction { alternatives: Nodes<'a> },
+    ClassStringDisjunction {
+        alternatives: Nodes<'a>,
+    },
     /// What is between two `|` in `\q{}`.
-    StringAlternative { elements: Nodes<'a> },
+    StringAlternative {
+        elements: Nodes<'a>,
+    },
     /// A code point, or a code unit without the `u` and `v` flags.
-    Character { value: u32 },
+    Character {
+        value: u32,
+    },
     /// `\1`, `\k<name>`. `resolved` has one group unless `ambiguous`.
-    Backreference { reference: Reference<'a>, ambiguous: bool, resolved: Nodes<'a> },
+    Backreference {
+        reference: Reference<'a>,
+        ambiguous: bool,
+        resolved: Nodes<'a>,
+    },
     /// `i-s` in `(?i-s:a)`
-    Modifiers { add: Node<'a>, remove: Option<Node<'a>> },
+    Modifiers {
+        add: Node<'a>,
+        remove: Option<Node<'a>>,
+    },
     ModifierFlags(ModifierFlags),
     Flags(Flags),
 }
@@ -312,9 +433,15 @@ pub enum Assertion<'a> {
     /// `\b`, `\B`
     Word { negate: bool },
     /// `(?=a)`, `(?!a)`
-    Lookahead { negate: bool, alternatives: Nodes<'a> },
+    Lookahead {
+        negate: bool,
+        alternatives: Nodes<'a>,
+    },
     /// `(?<=a)`, `(?<!a)`
-    Lookbehind { negate: bool, alternatives: Nodes<'a> },
+    Lookbehind {
+        negate: bool,
+        alternatives: Nodes<'a>,
+    },
 }
 
 /// regexpp's `kind` of a `CharacterSet`.
@@ -329,7 +456,12 @@ pub enum CharacterSet<'a> {
     /// `\w`, `\W`
     Word { negate: bool },
     /// `\p{key=value}`, `\p{key}`, `\P{..}`. `\p{Lu}` has the key `General_Category`.
-    Property { key: &'a [u8], value: Option<&'a [u8]>, negate: bool, strings: bool },
+    Property {
+        key: &'a [u8],
+        value: Option<&'a [u8]>,
+        negate: bool,
+        strings: bool,
+    },
 }
 
 /// regexpp's `ref` of a `Backreference`.
@@ -342,8 +474,12 @@ pub enum Reference<'a> {
 impl<'a> Node<'a> {
     #[inline]
     fn data(self) -> &'a NodeData {
-        const MISSING: NodeData =
-            NodeData { data: Data::Any, parent: NodeId::NONE, start: 0, end: 0 };
+        const MISSING: NodeData = NodeData {
+            data: Data::Any,
+            parent: NodeId::NONE,
+            start: 0,
+            end: 0,
+        };
         self.ast.nodes.get(self.id.0 as usize).unwrap_or(&MISSING)
     }
 
@@ -357,13 +493,20 @@ impl<'a> Node<'a> {
         let start = run.start as usize;
         Nodes {
             ast: self.ast,
-            ids: self.ast.lists.get(start..start + run.len as usize).unwrap_or_default(),
+            ids: self
+                .ast
+                .lists
+                .get(start..start + run.len as usize)
+                .unwrap_or_default(),
         }
     }
 
     fn text(self, run: Run) -> &'a [u8] {
         let start = run.start as usize;
-        self.ast.text.get(start..start + run.len as usize).unwrap_or_default()
+        self.ast
+            .text
+            .get(start..start + run.len as usize)
+            .unwrap_or_default()
     }
 
     #[inline]
@@ -411,7 +554,10 @@ impl<'a> Node<'a> {
     /// The source text of the node.
     #[inline]
     pub fn raw(self) -> &'a [u8] {
-        self.ast.source.get(self.start() as usize..self.end() as usize).unwrap_or_default()
+        self.ast
+            .source
+            .get(self.start() as usize..self.end() as usize)
+            .unwrap_or_default()
     }
 
     pub fn ty(self) -> NodeType {
@@ -443,75 +589,126 @@ impl<'a> Node<'a> {
 
     pub fn kind(self) -> Kind<'a> {
         match self.data().data {
-            Data::RegExpLiteral { pattern, flags } => {
-                Kind::RegExpLiteral { pattern: self.at(pattern), flags: self.at(flags) }
-            }
-            Data::Pattern { alternatives } => {
-                Kind::Pattern { alternatives: self.list(alternatives) }
-            }
-            Data::Alternative { elements } => Kind::Alternative { elements: self.list(elements) },
-            Data::Group { modifiers, alternatives } => Kind::Group {
+            Data::RegExpLiteral { pattern, flags } => Kind::RegExpLiteral {
+                pattern: self.at(pattern),
+                flags: self.at(flags),
+            },
+            Data::Pattern { alternatives } => Kind::Pattern {
+                alternatives: self.list(alternatives),
+            },
+            Data::Alternative { elements } => Kind::Alternative {
+                elements: self.list(elements),
+            },
+            Data::Group {
+                modifiers,
+                alternatives,
+            } => Kind::Group {
                 modifiers: modifiers.get().map(|id| self.at(id)),
                 alternatives: self.list(alternatives),
             },
-            Data::CapturingGroup { name, alternatives, references } => Kind::CapturingGroup {
+            Data::CapturingGroup {
+                name,
+                alternatives,
+                references,
+            } => Kind::CapturingGroup {
                 name: (name.start != Run::NONE.start).then(|| self.text(name)),
                 alternatives: self.list(alternatives),
                 references: self.list(references),
             },
-            Data::Lookaround { behind: false, negate, alternatives } => Kind::Assertion(
-                Assertion::Lookahead { negate, alternatives: self.list(alternatives) },
-            ),
-            Data::Lookaround { behind: true, negate, alternatives } => Kind::Assertion(
-                Assertion::Lookbehind { negate, alternatives: self.list(alternatives) },
-            ),
+            Data::Lookaround {
+                behind: false,
+                negate,
+                alternatives,
+            } => Kind::Assertion(Assertion::Lookahead {
+                negate,
+                alternatives: self.list(alternatives),
+            }),
+            Data::Lookaround {
+                behind: true,
+                negate,
+                alternatives,
+            } => Kind::Assertion(Assertion::Lookbehind {
+                negate,
+                alternatives: self.list(alternatives),
+            }),
             Data::Edge { end: false } => Kind::Assertion(Assertion::Start),
             Data::Edge { end: true } => Kind::Assertion(Assertion::End),
             Data::WordBoundary { negate } => Kind::Assertion(Assertion::Word { negate }),
-            Data::Quantifier { min, max, greedy, element } => {
-                Kind::Quantifier { min, max, greedy, element: self.at(element) }
-            }
-            Data::CharacterClass { unicode_sets, negate, elements, .. } => {
-                Kind::CharacterClass { unicode_sets, negate, elements: self.list(elements) }
-            }
-            Data::CharacterClassRange { min, max } => {
-                Kind::CharacterClassRange { min: self.at(min), max: self.at(max) }
-            }
+            Data::Quantifier {
+                min,
+                max,
+                greedy,
+                element,
+            } => Kind::Quantifier {
+                min,
+                max,
+                greedy,
+                element: self.at(element),
+            },
+            Data::CharacterClass {
+                unicode_sets,
+                negate,
+                elements,
+                ..
+            } => Kind::CharacterClass {
+                unicode_sets,
+                negate,
+                elements: self.list(elements),
+            },
+            Data::CharacterClassRange { min, max } => Kind::CharacterClassRange {
+                min: self.at(min),
+                max: self.at(max),
+            },
             Data::Any => Kind::CharacterSet(CharacterSet::Any),
-            Data::Escape { set: EscapeSet::Digit, negate } => {
-                Kind::CharacterSet(CharacterSet::Digit { negate })
-            }
-            Data::Escape { set: EscapeSet::Space, negate } => {
-                Kind::CharacterSet(CharacterSet::Space { negate })
-            }
-            Data::Escape { set: EscapeSet::Word, negate } => {
-                Kind::CharacterSet(CharacterSet::Word { negate })
-            }
-            Data::Property { key, value, negate, strings } => {
-                Kind::CharacterSet(CharacterSet::Property {
-                    key: self.text(key),
-                    value: (value.start != Run::NONE.start).then(|| self.text(value)),
-                    negate,
-                    strings,
-                })
-            }
+            Data::Escape {
+                set: EscapeSet::Digit,
+                negate,
+            } => Kind::CharacterSet(CharacterSet::Digit { negate }),
+            Data::Escape {
+                set: EscapeSet::Space,
+                negate,
+            } => Kind::CharacterSet(CharacterSet::Space { negate }),
+            Data::Escape {
+                set: EscapeSet::Word,
+                negate,
+            } => Kind::CharacterSet(CharacterSet::Word { negate }),
+            Data::Property {
+                key,
+                value,
+                negate,
+                strings,
+            } => Kind::CharacterSet(CharacterSet::Property {
+                key: self.text(key),
+                value: (value.start != Run::NONE.start).then(|| self.text(value)),
+                negate,
+                strings,
+            }),
             Data::ExpressionCharacterClass { negate, expression } => {
-                Kind::ExpressionCharacterClass { negate, expression: self.at(expression) }
+                Kind::ExpressionCharacterClass {
+                    negate,
+                    expression: self.at(expression),
+                }
             }
-            Data::ClassIntersection { left, right } => {
-                Kind::ClassIntersection { left: self.at(left), right: self.at(right) }
-            }
-            Data::ClassSubtraction { left, right } => {
-                Kind::ClassSubtraction { left: self.at(left), right: self.at(right) }
-            }
-            Data::ClassStringDisjunction { alternatives } => {
-                Kind::ClassStringDisjunction { alternatives: self.list(alternatives) }
-            }
-            Data::StringAlternative { elements } => {
-                Kind::StringAlternative { elements: self.list(elements) }
-            }
+            Data::ClassIntersection { left, right } => Kind::ClassIntersection {
+                left: self.at(left),
+                right: self.at(right),
+            },
+            Data::ClassSubtraction { left, right } => Kind::ClassSubtraction {
+                left: self.at(left),
+                right: self.at(right),
+            },
+            Data::ClassStringDisjunction { alternatives } => Kind::ClassStringDisjunction {
+                alternatives: self.list(alternatives),
+            },
+            Data::StringAlternative { elements } => Kind::StringAlternative {
+                elements: self.list(elements),
+            },
             Data::Character { value } => Kind::Character { value },
-            Data::Backreference { number, name, resolved } => Kind::Backreference {
+            Data::Backreference {
+                number,
+                name,
+                resolved,
+            } => Kind::Backreference {
                 reference: if name.start == Run::NONE.start {
                     Reference::Number(number)
                 } else {
@@ -520,9 +717,10 @@ impl<'a> Node<'a> {
                 ambiguous: resolved.len != 1,
                 resolved: self.list(resolved),
             },
-            Data::Modifiers { add, remove } => {
-                Kind::Modifiers { add: self.at(add), remove: remove.get().map(|id| self.at(id)) }
-            }
+            Data::Modifiers { add, remove } => Kind::Modifiers {
+                add: self.at(add),
+                remove: remove.get().map(|id| self.at(id)),
+            },
             Data::ModifierFlags(flags) => Kind::ModifierFlags(flags),
             Data::Flags(flags) => Kind::Flags(flags),
         }
@@ -565,7 +763,10 @@ impl<'a> Node<'a> {
     fn each_child(self, mut f: impl FnMut(NodeId)) {
         let list = |run: Run| self.list(run).ids.iter().copied();
         match self.data().data {
-            Data::RegExpLiteral { pattern: a, flags: b }
+            Data::RegExpLiteral {
+                pattern: a,
+                flags: b,
+            }
             | Data::CharacterClassRange { min: a, max: b }
             | Data::ClassIntersection { left: a, right: b }
             | Data::ClassSubtraction { left: a, right: b } => {
@@ -573,13 +774,20 @@ impl<'a> Node<'a> {
                 f(b);
             }
             Data::Pattern { alternatives: run }
-            | Data::CapturingGroup { alternatives: run, .. }
-            | Data::Lookaround { alternatives: run, .. }
+            | Data::CapturingGroup {
+                alternatives: run, ..
+            }
+            | Data::Lookaround {
+                alternatives: run, ..
+            }
             | Data::ClassStringDisjunction { alternatives: run }
             | Data::Alternative { elements: run }
             | Data::CharacterClass { elements: run, .. }
             | Data::StringAlternative { elements: run } => list(run).for_each(f),
-            Data::Group { modifiers, alternatives } => {
+            Data::Group {
+                modifiers,
+                alternatives,
+            } => {
                 if let Some(modifiers) = modifiers.get() {
                     f(modifiers);
                 }
@@ -629,7 +837,10 @@ impl<'a> Node<'a> {
     pub fn descendants(self) -> Descendants<'a> {
         let mut stack = SmallVec::new();
         stack.push(self.id);
-        Descendants { ast: self.ast, stack }
+        Descendants {
+            ast: self.ast,
+            stack,
+        }
     }
 }
 
@@ -649,7 +860,10 @@ impl<'a> Iterator for Descendants<'a> {
     type Item = Node<'a>;
 
     fn next(&mut self) -> Option<Node<'a>> {
-        let node = Node { ast: self.ast, id: self.stack.pop()? };
+        let node = Node {
+            ast: self.ast,
+            id: self.stack.pop()?,
+        };
         let first = self.stack.len();
         node.each_child(|child| self.stack.push(child));
         if let Some(children) = self.stack.get_mut(first..) {
@@ -685,7 +899,10 @@ impl<'a> Nodes<'a> {
 
     #[inline]
     pub fn get(self, index: usize) -> Option<Node<'a>> {
-        self.ids.get(index).map(|id| Node { ast: self.ast, id: *id })
+        self.ids.get(index).map(|id| Node {
+            ast: self.ast,
+            id: *id,
+        })
     }
 
     #[inline]
@@ -700,7 +917,10 @@ impl<'a> Nodes<'a> {
 
     #[inline]
     pub fn iter(self) -> NodesIter<'a> {
-        NodesIter { ast: self.ast, ids: self.ids.iter() }
+        NodesIter {
+            ast: self.ast,
+            ids: self.ids.iter(),
+        }
     }
 }
 
@@ -725,7 +945,10 @@ impl<'a> Iterator for NodesIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Node<'a>> {
-        self.ids.next().map(|id| Node { ast: self.ast, id: *id })
+        self.ids.next().map(|id| Node {
+            ast: self.ast,
+            id: *id,
+        })
     }
 
     #[inline]
@@ -737,7 +960,10 @@ impl<'a> Iterator for NodesIter<'a> {
 impl DoubleEndedIterator for NodesIter<'_> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.ids.next_back().map(|id| Node { ast: self.ast, id: *id })
+        self.ids.next_back().map(|id| Node {
+            ast: self.ast,
+            id: *id,
+        })
     }
 }
 

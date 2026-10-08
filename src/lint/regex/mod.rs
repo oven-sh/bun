@@ -47,12 +47,19 @@
 //! valid UTF-8 on its own, just as `"\ud83d"` is not a valid string in JavaScript. Use the `u` flag, as
 //! upstream mostly does, and none of this matters.
 //!
-//! # Time
+//! # Limits
 //!
 //! The machine backtracks, as those of JavaScript engines do, so there are patterns that take
 //! exponential time. A search is given up after 2^27 steps, about a second: it then counts as no
-//! match. [`Regex::try_exec_at`] tells the difference. Patterns that start with `^`, a literal or a small set
-//! of bytes skip to where a match can start with `bun_core::strings`.
+//! match. [`Regex::try_exec_at`] tells the difference. Nothing recurses on the text.
+//!
+//! Groups and classes nest at most 250 deep: beyond that a pattern is a [`SyntaxError`], for the
+//! parser as well.
+//!
+//! Patterns that start with `^`, a literal or a small set of bytes skip to where a match can start
+//! with `bun_core::strings`, and `^_` on an identifier takes about 20 ns.
+//!
+//! The scripts in test/cli/lint/oracle/regex compare all of this with regexpp, JavaScriptCore and V8.
 
 pub mod ast;
 mod charset;
@@ -86,8 +93,8 @@ pub fn escape(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     for &byte in text {
         match byte {
-            b'|' | b'\\' | b'{' | b'}' | b'(' | b')' | b'[' | b']' | b'^' | b'$' | b'+' | b'*' | b'?'
-            | b'.' => out.extend_from_slice(&[b'\\', byte]),
+            b'|' | b'\\' | b'{' | b'}' | b'(' | b')' | b'[' | b']' | b'^' | b'$' | b'+' | b'*'
+            | b'?' | b'.' => out.extend_from_slice(&[b'\\', byte]),
             b'-' => out.extend_from_slice(b"\\x2d"),
             _ => out.push(byte),
         }
@@ -168,7 +175,10 @@ impl Regex {
     /// `new RegExp(pattern, flags)`
     pub fn from_bytes(pattern: &[u8], flags: &[u8]) -> Result<Regex, SyntaxError> {
         let flags = parse_flags(flags, Options::default())?;
-        let mode = Mode { unicode: flags.unicode, unicode_sets: flags.unicode_sets };
+        let mode = Mode {
+            unicode: flags.unicode,
+            unicode_sets: flags.unicode_sets,
+        };
         let ast = parse_pattern(pattern, mode, Options::default())?;
         Ok(Regex {
             program: compile::compile(&ast, flags)?,
@@ -222,9 +232,13 @@ impl Regex {
         start: usize,
         captures: bool,
     ) -> Result<Option<Slots>, LimitExceeded> {
-        let Ok(start) = u32::try_from(start) else { return Ok(None) };
+        let Ok(start) = u32::try_from(start) else {
+            return Ok(None);
+        };
         let mut machine = Machine::new(&self.program, text, captures);
-        Ok(machine.search(start, self.flags.sticky)?.then_some(machine.slots))
+        Ok(machine
+            .search(start, self.flags.sticky)?
+            .then_some(machine.slots))
     }
 
     /// `regex.test(text)`, from the start of the text.
@@ -242,7 +256,11 @@ impl Regex {
     /// The first match that starts at `start` or after it. With the `y` flag, only at `start`.
     pub fn find_at<'t>(&self, text: &'t [u8], start: usize) -> Option<Match<'t>> {
         let slots = self.run(text, start, false).ok()??;
-        Some(Match { text, start: *slots.first()?, end: *slots.get(1)? })
+        Some(Match {
+            text,
+            start: *slots.first()?,
+            end: *slots.get(1)?,
+        })
     }
 
     /// `regex.exec(text)`, from the start of the text.
@@ -262,7 +280,11 @@ impl Regex {
         text: &'t [u8],
         start: usize,
     ) -> Result<Option<Captures<'_, 't>>, LimitExceeded> {
-        Ok(self.run(text, start, true)?.map(|slots| Captures { regex: self, text, slots }))
+        Ok(self.run(text, start, true)?.map(|slots| Captures {
+            regex: self,
+            text,
+            slots,
+        }))
     }
 
     /// `text.search(regex)`
@@ -288,21 +310,28 @@ impl Regex {
         let mut next = Some(0);
         std::iter::from_fn(move || {
             let found = self.find_at(text, next?);
-            next = found.map(|m| if m.is_empty() { self.advance(text, m.end()) } else { m.end() });
+            next = found.map(|m| {
+                if m.is_empty() {
+                    self.advance(text, m.end())
+                } else {
+                    m.end()
+                }
+            });
             found
         })
     }
 
     /// `text.matchAll(regex)`: all matches, whether it has the `g` flag or not.
-    pub fn exec_iter<'r, 't>(
-        &'r self,
-        text: &'t [u8],
-    ) -> impl Iterator<Item = Captures<'r, 't>> {
+    pub fn exec_iter<'r, 't>(&'r self, text: &'t [u8]) -> impl Iterator<Item = Captures<'r, 't>> {
         let mut next = Some(0);
         std::iter::from_fn(move || {
             let found = self.exec_at(text, next?);
             next = found.as_ref().map(|m| {
-                if m.start() == m.end() { self.advance(text, m.end()) } else { m.end() }
+                if m.start() == m.end() {
+                    self.advance(text, m.end())
+                } else {
+                    m.end()
+                }
             });
             found
         })
@@ -325,7 +354,10 @@ impl Regex {
     ) -> Cow<'t, [u8]> {
         let mut out = Vec::new();
         let mut copied = 0;
-        for captures in self.exec_iter(text).take(if self.flags.global { usize::MAX } else { 1 }) {
+        for captures in self
+            .exec_iter(text)
+            .take(if self.flags.global { usize::MAX } else { 1 })
+        {
             out.extend_from_slice(text.get(copied..captures.start()).unwrap_or_default());
             replacer(&captures, &mut out);
             copied = captures.end();
@@ -350,8 +382,14 @@ impl Regex {
         let mut from = 0;
         let mut at = 0;
         while at < text.len() {
-            let Ok(Some(slots)) = self.run_unanchored(text, at) else { break };
-            let captures = Captures { regex: self, text, slots };
+            let Ok(Some(slots)) = self.run_unanchored(text, at) else {
+                break;
+            };
+            let captures = Captures {
+                regex: self,
+                text,
+                slots,
+            };
             let end = captures.end().min(text.len());
             if captures.start() >= text.len() {
                 break;
@@ -361,7 +399,9 @@ impl Regex {
                 continue;
             }
             parts.push(text.get(from..captures.start()).unwrap_or_default());
-            parts.extend((1..captures.len()).map(|i| captures.get(i).map_or(&[][..], Match::as_bytes)));
+            parts.extend(
+                (1..captures.len()).map(|i| captures.get(i).map_or(&[][..], Match::as_bytes)),
+            );
             from = end;
             at = end;
         }
@@ -370,13 +410,18 @@ impl Regex {
     }
 
     fn matches_at(&self, text: &[u8], start: u32) -> bool {
-        matches!(Machine::new(&self.program, text, false).search(start, true), Ok(true))
+        matches!(
+            Machine::new(&self.program, text, false).search(start, true),
+            Ok(true)
+        )
     }
 
     /// `split` ignores the `y` flag.
     fn run_unanchored(&self, text: &[u8], start: usize) -> Result<Option<Slots>, LimitExceeded> {
         let mut machine = Machine::new(&self.program, text, true);
-        Ok(machine.search(start as u32, false)?.then_some(machine.slots))
+        Ok(machine
+            .search(start as u32, false)?
+            .then_some(machine.slots))
     }
 }
 
@@ -437,12 +482,20 @@ impl<'t> Captures<'_, 't> {
             return None;
         }
         let (start, end) = (*self.slots.get(index * 2)?, *self.slots.get(index * 2 + 1)?);
-        (start != NONE && end != NONE).then_some(Match { text: self.text, start, end })
+        (start != NONE && end != NONE).then_some(Match {
+            text: self.text,
+            start,
+            end,
+        })
     }
 
     /// `match.groups[name]`
     pub fn name(&self, name: impl AsRef<[u8]>) -> Option<Match<'t>> {
-        let (_, groups) = self.regex.names.iter().find(|(known, _)| **known == *name.as_ref())?;
+        let (_, groups) = self
+            .regex
+            .names
+            .iter()
+            .find(|(known, _)| **known == *name.as_ref())?;
         groups.iter().find_map(|group| self.get(*group as usize))
     }
 
@@ -481,13 +534,21 @@ impl<'t> Captures<'_, 't> {
         while let Some(dollar) = strings::index_of_char_usize(rest, b'$') {
             out.extend_from_slice(rest.get(..dollar).unwrap_or_default());
             rest = rest.get(dollar..).unwrap_or_default();
-            let digit = |i: usize| rest.get(i).filter(|b| b.is_ascii_digit()).map(|b| usize::from(b - b'0'));
+            let digit = |i: usize| {
+                rest.get(i)
+                    .filter(|b| b.is_ascii_digit())
+                    .map(|b| usize::from(b - b'0'))
+            };
             let mut used = 2;
             match rest.get(1) {
                 Some(b'$') => out.push(b'$'),
                 Some(b'&') => out.extend_from_slice(self.as_bytes()),
-                Some(b'`') => out.extend_from_slice(self.text.get(..self.start()).unwrap_or_default()),
-                Some(b'\'') => out.extend_from_slice(self.text.get(self.end()..).unwrap_or_default()),
+                Some(b'`') => {
+                    out.extend_from_slice(self.text.get(..self.start()).unwrap_or_default())
+                }
+                Some(b'\'') => {
+                    out.extend_from_slice(self.text.get(self.end()..).unwrap_or_default())
+                }
                 Some(b'0'..=b'9') => {
                     let one = digit(1).unwrap_or(0);
                     let two = digit(2).map(|second| one * 10 + second);

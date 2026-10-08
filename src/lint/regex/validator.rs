@@ -19,13 +19,19 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { strict: false, ecma_version: 2025 }
+        Options {
+            strict: false,
+            ecma_version: 2025,
+        }
     }
 }
 
 impl Options {
     pub fn ecma_version(ecma_version: u32) -> Self {
-        Options { strict: false, ecma_version }
+        Options {
+            strict: false,
+            ecma_version,
+        }
     }
 }
 
@@ -70,7 +76,12 @@ impl SyntaxError {
         let mut message = String::from("Invalid regular expression: ");
         let start = message.len() as u32;
         message.push_str(reason);
-        SyntaxError { message, offset: 0, index: 0, reason: start }
+        SyntaxError {
+            message,
+            offset: 0,
+            index: 0,
+            reason: start,
+        }
     }
 }
 
@@ -151,7 +162,9 @@ pub fn validate_literal(
     handler: &mut dyn Handler,
 ) -> Result<(), SyntaxError> {
     let mut validator = Validator::new(source, SourceKind::Literal, options, handler);
-    let result = validator.check_size().and_then(|()| validator.validate_literal());
+    let result = validator
+        .check_size()
+        .and_then(|()| validator.validate_literal());
     validator.finish(result)
 }
 
@@ -163,7 +176,9 @@ pub fn validate_pattern(
     handler: &mut dyn Handler,
 ) -> Result<(), SyntaxError> {
     let mut validator = Validator::new(source, SourceKind::Pattern, options, handler);
-    let result = validator.check_size().and_then(|()| validator.validate_pattern(0, source.len(), mode));
+    let result = validator
+        .check_size()
+        .and_then(|()| validator.validate_pattern(0, source.len(), mode));
     validator.finish(result)
 }
 
@@ -174,7 +189,9 @@ pub fn validate_flags(
     handler: &mut dyn Handler,
 ) -> Result<(), SyntaxError> {
     let mut validator = Validator::new(source, SourceKind::Flags, options, handler);
-    let result = validator.check_size().and_then(|()| validator.validate_flags(0, source.len()));
+    let result = validator
+        .check_size()
+        .and_then(|()| validator.validate_flags(0, source.len()));
     validator.finish(result)
 }
 
@@ -257,7 +274,20 @@ struct Validator<'s, 'h> {
 fn is_syntax_character(cp: i32) -> bool {
     matches!(
         u8::try_from(cp),
-        Ok(b'^' | b'$' | b'\\' | b'.' | b'*' | b'+' | b'?' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'|')
+        Ok(b'^'
+            | b'$'
+            | b'\\'
+            | b'.'
+            | b'*'
+            | b'+'
+            | b'?'
+            | b'('
+            | b')'
+            | b'['
+            | b']'
+            | b'{'
+            | b'}'
+            | b'|')
     )
 }
 
@@ -296,7 +326,20 @@ fn is_class_set_syntax_character(cp: i32) -> bool {
 fn is_class_set_reserved_punctuator(cp: i32) -> bool {
     matches!(
         u8::try_from(cp),
-        Ok(b'&' | b'-' | b'!' | b'#' | b'%' | b',' | b':' | b';' | b'<' | b'=' | b'>' | b'@' | b'`' | b'~')
+        Ok(b'&'
+            | b'-'
+            | b'!'
+            | b'#'
+            | b'%'
+            | b','
+            | b':'
+            | b';'
+            | b'<'
+            | b'='
+            | b'>'
+            | b'@'
+            | b'`'
+            | b'~')
     )
 }
 
@@ -333,7 +376,9 @@ fn is_hex_digit(cp: i32) -> bool {
 }
 
 fn digit_to_int(cp: i32) -> i32 {
-    char::from_u32(cp as u32).and_then(|c| c.to_digit(16)).unwrap_or(0) as i32
+    char::from_u32(cp as u32)
+        .and_then(|c| c.to_digit(16))
+        .unwrap_or(0) as i32
 }
 
 fn is_line_terminator(cp: i32) -> bool {
@@ -365,11 +410,20 @@ fn is_regular_expression_modifier(cp: i32) -> bool {
 }
 
 fn count(number: f64) -> u32 {
-    if number.is_infinite() { INFINITY } else { number.min(f64::from(INFINITY - 1)) as u32 }
+    if number.is_infinite() {
+        INFINITY
+    } else {
+        number.min(f64::from(INFINITY - 1)) as u32
+    }
 }
 
 fn push_char(out: &mut String, cp: i32) {
-    out.push(u32::try_from(cp).ok().and_then(char::from_u32).unwrap_or(char::REPLACEMENT_CHARACTER));
+    out.push(
+        u32::try_from(cp)
+            .ok()
+            .and_then(char::from_u32)
+            .unwrap_or(char::REPLACEMENT_CHARACTER),
+    );
 }
 
 impl<'s, 'h> Validator<'s, 'h> {
@@ -456,7 +510,11 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
         }
         if unicode && unicode_sets {
-            return self.raise_at("Invalid regular expression flags", end + 1, Some((true, true)));
+            return self.raise_at(
+                "Invalid regular expression flags",
+                end + 1,
+                Some((true, true)),
+            );
         }
 
         self.unicode_mode = unicode || unicode_sets;
@@ -477,7 +535,8 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     fn validate_flags(&mut self, start: usize, end: usize) -> Consumed<()> {
         let flags = self.parse_flags(start, end)?;
-        self.handler.on_regexp_flags(start as u32, end as u32, flags);
+        self.handler
+            .on_regexp_flags(start as u32, end as u32, flags);
         Ok(())
     }
 
@@ -590,8 +649,10 @@ impl<'s, 'h> Validator<'s, 'h> {
         index: usize,
         flags: Option<(bool, bool)>,
     ) -> Consumed<T> {
-        let (unicode, unicode_sets) =
-            flags.unwrap_or((self.unicode_mode && !self.unicode_sets_mode, self.unicode_sets_mode));
+        let (unicode, unicode_sets) = flags.unwrap_or((
+            self.unicode_mode && !self.unicode_sets_mode,
+            self.unicode_sets_mode,
+        ));
         let mut message = String::from("Invalid regular expression");
         match self.kind {
             SourceKind::Literal if !self.source.is_empty() => {
@@ -644,7 +705,10 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     fn clear_group_specifiers(&mut self) {
         self.branches.clear();
-        self.branches.push(Branch { parent: NO_BRANCH, base: 0 });
+        self.branches.push(Branch {
+            parent: NO_BRANCH,
+            base: 0,
+        });
         self.branch = 0;
         self.names.clear();
         self.group_names.clear();
@@ -657,7 +721,10 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     fn new_branch(&mut self, parent: u32, base: Option<u32>) {
         let id = self.branches.len() as u32;
-        self.branches.push(Branch { parent, base: base.unwrap_or(id) });
+        self.branches.push(Branch {
+            parent,
+            base: base.unwrap_or(id),
+        });
         self.branch = id;
     }
 
@@ -688,19 +755,25 @@ impl<'s, 'h> Validator<'s, 'h> {
     fn separated(&self, a: u32, b: u32) -> bool {
         let up = |id: &u32| self.branches.get(*id as usize).map(|branch| branch.parent);
         let base = |id: u32| self.branches.get(id as usize).map(|branch| branch.base);
-        std::iter::successors(Some(a), up).take_while(|id| *id != NO_BRANCH).any(|x| {
-            std::iter::successors(Some(b), up)
-                .take_while(|id| *id != NO_BRANCH)
-                .any(|y| x != y && base(x) == base(y))
-        })
+        std::iter::successors(Some(a), up)
+            .take_while(|id| *id != NO_BRANCH)
+            .any(|x| {
+                std::iter::successors(Some(b), up)
+                    .take_while(|id| *id != NO_BRANCH)
+                    .any(|y| x != y && base(x) == base(y))
+            })
     }
 
     fn name(&self, start: u32, len: u32) -> &[u8] {
-        self.names.get(start as usize..(start + len) as usize).unwrap_or_default()
+        self.names
+            .get(start as usize..(start + len) as usize)
+            .unwrap_or_default()
     }
 
     fn has_in_pattern(&self, name: &[u8]) -> bool {
-        self.group_names.iter().any(|group| self.name(group.start, group.len) == name)
+        self.group_names
+            .iter()
+            .any(|group| self.name(group.start, group.len) == name)
     }
 
     fn has_in_scope(&self, name: &[u8]) -> bool {
@@ -862,19 +935,23 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.last_assertion_is_quantifiable = false;
 
         if self.eat(b'^') {
-            self.handler.on_edge_assertion(start as u32, self.pos(), false);
+            self.handler
+                .on_edge_assertion(start as u32, self.pos(), false);
             return Ok(true);
         }
         if self.eat(b'$') {
-            self.handler.on_edge_assertion(start as u32, self.pos(), true);
+            self.handler
+                .on_edge_assertion(start as u32, self.pos(), true);
             return Ok(true);
         }
         if self.eat2(b'\\', b'B') {
-            self.handler.on_word_boundary_assertion(start as u32, self.pos(), true);
+            self.handler
+                .on_word_boundary_assertion(start as u32, self.pos(), true);
             return Ok(true);
         }
         if self.eat2(b'\\', b'b') {
-            self.handler.on_word_boundary_assertion(start as u32, self.pos(), false);
+            self.handler
+                .on_word_boundary_assertion(start as u32, self.pos(), false);
             return Ok(true);
         }
 
@@ -885,13 +962,19 @@ impl<'s, 'h> Validator<'s, 'h> {
                 negate = self.eat(b'!');
                 negate
             } {
-                self.handler.on_lookaround_assertion_enter(start as u32, behind, negate);
+                self.handler
+                    .on_lookaround_assertion_enter(start as u32, behind, negate);
                 self.consume_disjunction()?;
                 if !self.eat(b')') {
                     return self.raise("Unterminated group");
                 }
                 self.last_assertion_is_quantifiable = !behind && !self.strict();
-                self.handler.on_lookaround_assertion_leave(start as u32, self.pos(), behind, negate);
+                self.handler.on_lookaround_assertion_leave(
+                    start as u32,
+                    self.pos(),
+                    behind,
+                    negate,
+                );
                 return Ok(true);
             }
             self.rewind(start);
@@ -916,7 +999,8 @@ impl<'s, 'h> Validator<'s, 'h> {
 
         let greedy = !self.eat(b'?');
         if !no_consume {
-            self.handler.on_quantifier(start, self.pos(), count(min), count(max), greedy);
+            self.handler
+                .on_quantifier(start, self.pos(), count(min), count(max), greedy);
         }
         Ok(true)
     }
@@ -928,7 +1012,11 @@ impl<'s, 'h> Validator<'s, 'h> {
                 let min = self.last_number;
                 let mut max = min;
                 if self.eat(b',') {
-                    max = if self.eat_decimal_digits() { self.last_number } else { f64::INFINITY };
+                    max = if self.eat_decimal_digits() {
+                        self.last_number
+                    } else {
+                        f64::INFINITY
+                    };
                 }
                 if self.eat(b'}') {
                     if !no_error && max < min {
@@ -957,7 +1045,8 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     fn consume_dot(&mut self) -> bool {
         if self.eat(b'.') {
-            self.handler.on_any_character_set(self.pos() - 1, self.pos());
+            self.handler
+                .on_any_character_set(self.pos() - 1, self.pos());
             return true;
         }
         false
@@ -1005,7 +1094,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         }
         self.handler.on_modifiers_enter(start as u32);
         let add = self.parse_modifiers(start, add_modifiers_end)?;
-        self.handler.on_add_modifiers(start as u32, add_modifiers_end as u32, add);
+        self.handler
+            .on_add_modifiers(start as u32, add_modifiers_end as u32, add);
 
         if has_hyphen {
             let modifiers_start = self.index;
@@ -1022,7 +1112,8 @@ impl<'s, 'h> Validator<'s, 'h> {
                     return self.raise(flag);
                 }
             }
-            self.handler.on_remove_modifiers(modifiers_start as u32, self.pos(), remove);
+            self.handler
+                .on_remove_modifiers(modifiers_start as u32, self.pos(), remove);
         }
 
         self.handler.on_modifiers_leave(start as u32, self.pos());
@@ -1049,7 +1140,9 @@ impl<'s, 'h> Validator<'s, 'h> {
             let name = named.then(|| self.group_names.last().map_or((0, 0), |g| (g.start, g.len)));
             {
                 let text = name.map(|(s, l)| {
-                    self.names.get(s as usize..(s + l) as usize).unwrap_or_default()
+                    self.names
+                        .get(s as usize..(s + l) as usize)
+                        .unwrap_or_default()
                 });
                 self.handler.on_capturing_group_enter(start as u32, text);
             }
@@ -1057,9 +1150,13 @@ impl<'s, 'h> Validator<'s, 'h> {
             if !self.eat(b')') {
                 return self.raise("Unterminated group");
             }
-            let text =
-                name.map(|(s, l)| self.names.get(s as usize..(s + l) as usize).unwrap_or_default());
-            self.handler.on_capturing_group_leave(start as u32, self.index as u32, text);
+            let text = name.map(|(s, l)| {
+                self.names
+                    .get(s as usize..(s + l) as usize)
+                    .unwrap_or_default()
+            });
+            self.handler
+                .on_capturing_group_leave(start as u32, self.index as u32, text);
             return Ok(true);
         }
         Ok(false)
@@ -1081,7 +1178,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         if self.is(b'\\') && self.next_code_point() == i32::from(b'c') {
             self.last_int_value = self.cp;
             self.advance();
-            self.handler.on_character(start, self.pos(), u32::from(b'\\'));
+            self.handler
+                .on_character(start, self.pos(), u32::from(b'\\'));
             return true;
         }
         false
@@ -1127,7 +1225,11 @@ impl<'s, 'h> Validator<'s, 'h> {
             if self.eat_group_name()? {
                 if !self.has_in_scope(&self.last_str_value) {
                     let (name_start, len) = self.intern_last_str();
-                    self.group_names.push(GroupName { start: name_start, len, branch: self.branch });
+                    self.group_names.push(GroupName {
+                        start: name_start,
+                        len,
+                        branch: self.branch,
+                    });
                     return Ok(true);
                 }
                 return self.raise("Duplicate capture group name");
@@ -1184,7 +1286,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         ] {
             if self.eat(byte) {
                 self.last_int_value = -1;
-                self.handler.on_escape_character_set(start - 1, self.pos(), set, negate);
+                self.handler
+                    .on_escape_character_set(start - 1, self.pos(), set, negate);
                 return Ok(Some(SetResult::default()));
             }
         }
@@ -1215,7 +1318,9 @@ impl<'s, 'h> Validator<'s, 'h> {
                     negate,
                     result.strings,
                 );
-                return Ok(Some(SetResult { may_contain_strings: result.strings }));
+                return Ok(Some(SetResult {
+                    may_contain_strings: result.strings,
+                }));
             }
             return self.raise("Invalid property name");
         }
@@ -1232,7 +1337,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             || (!self.strict() && self.eat_legacy_octal_escape_sequence())
             || self.eat_identity_escape()
         {
-            self.handler.on_character(start - 1, self.pos(), self.last_int_value as u32);
+            self.handler
+                .on_character(start - 1, self.pos(), self.last_int_value as u32);
             return Ok(true);
         }
         Ok(false)
@@ -1260,7 +1366,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         let start = self.pos();
         if self.eat(b'[') {
             let negate = self.eat(b'^');
-            self.handler.on_character_class_enter(start, negate, self.unicode_sets_mode);
+            self.handler
+                .on_character_class_enter(start, negate, self.unicode_sets_mode);
             let result = self.consume_class_contents()?;
             if !self.eat(b']') {
                 if self.cp == EOF {
@@ -1271,7 +1378,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             if negate && result.may_contain_strings {
                 return self.raise("Negated character class may contain strings");
             }
-            self.handler.on_character_class_leave(start, self.pos(), negate);
+            self.handler
+                .on_character_class_leave(start, self.pos(), negate);
             return Ok(Some(result));
         }
         Ok(None)
@@ -1295,7 +1403,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             if !self.eat(b'-') {
                 continue;
             }
-            self.handler.on_character(self.pos() - 1, self.pos(), u32::from(b'-'));
+            self.handler
+                .on_character(self.pos() - 1, self.pos(), u32::from(b'-'));
 
             if !self.consume_class_atom()? {
                 break;
@@ -1311,7 +1420,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             if min > max {
                 return self.raise("Range out of order in character class");
             }
-            self.handler.on_character_class_range(range_start, self.pos(), min as u32, max as u32);
+            self.handler
+                .on_character_class_range(range_start, self.pos(), min as u32, max as u32);
         }
         Ok(SetResult::default())
     }
@@ -1323,7 +1433,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         if cp != EOF && !self.is(b'\\') && !self.is(b']') {
             self.advance();
             self.last_int_value = cp;
-            self.handler.on_character(start as u32, self.pos(), cp as u32);
+            self.handler
+                .on_character(start as u32, self.pos(), cp as u32);
             return Ok(true);
         }
 
@@ -1333,7 +1444,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             if !self.strict() && self.is(b'c') {
                 self.last_int_value = i32::from(b'\\');
-                self.handler.on_character(start as u32, self.pos(), u32::from(b'\\'));
+                self.handler
+                    .on_character(start as u32, self.pos(), u32::from(b'\\'));
                 return Ok(true);
             }
             if self.strict() {
@@ -1355,7 +1467,8 @@ impl<'s, 'h> Validator<'s, 'h> {
 
         if self.unicode_mode && self.eat(b'-') {
             self.last_int_value = i32::from(b'-');
-            self.handler.on_character(start - 1, self.pos(), u32::from(b'-'));
+            self.handler
+                .on_character(start - 1, self.pos(), u32::from(b'-'));
             return Ok(true);
         }
 
@@ -1365,7 +1478,8 @@ impl<'s, 'h> Validator<'s, 'h> {
                 self.advance();
                 self.advance();
                 self.last_int_value = cp % 0x20;
-                self.handler.on_character(start - 1, self.pos(), self.last_int_value as u32);
+                self.handler
+                    .on_character(start - 1, self.pos(), self.last_int_value as u32);
                 return Ok(true);
             }
         }
@@ -1408,7 +1522,9 @@ impl<'s, 'h> Validator<'s, 'h> {
                 if self.eat2(b'&', b'&') {
                     continue;
                 }
-                return Ok(SetResult { may_contain_strings });
+                return Ok(SetResult {
+                    may_contain_strings,
+                });
             }
             return self.raise("Invalid character in character class");
         }
@@ -1418,11 +1534,15 @@ impl<'s, 'h> Validator<'s, 'h> {
                 if self.eat2(b'-', b'-') {
                     continue;
                 }
-                return Ok(SetResult { may_contain_strings });
+                return Ok(SetResult {
+                    may_contain_strings,
+                });
             }
             return self.raise("Invalid character in character class");
         }
-        self.consume_class_union_right(SetResult { may_contain_strings })
+        self.consume_class_union_right(SetResult {
+            may_contain_strings,
+        })
     }
 
     fn consume_class_union_right(&mut self, left: SetResult) -> Consumed<SetResult> {
@@ -1441,7 +1561,9 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             break;
         }
-        Ok(SetResult { may_contain_strings })
+        Ok(SetResult {
+            may_contain_strings,
+        })
     }
 
     fn consume_class_set_range_from_operator(&mut self, start: u32) -> Consumed {
@@ -1456,7 +1578,8 @@ impl<'s, 'h> Validator<'s, 'h> {
                 if min > max {
                     return self.raise("Range out of order in character class");
                 }
-                self.handler.on_character_class_range(start, self.pos(), min as u32, max as u32);
+                self.handler
+                    .on_character_class_range(start, self.pos(), min as u32, max as u32);
                 return Ok(true);
             }
             self.rewind(current_start);
@@ -1482,7 +1605,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         if self.eat(b'[') {
             let negate = self.eat(b'^');
             self.enter()?;
-            self.handler.on_character_class_enter(start as u32, negate, true);
+            self.handler
+                .on_character_class_enter(start as u32, negate, true);
             let result = self.consume_class_contents()?;
             if !self.eat(b']') {
                 return self.raise("Unterminated character class");
@@ -1490,7 +1614,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             if negate && result.may_contain_strings {
                 return self.raise("Negated character class may contain strings");
             }
-            self.handler.on_character_class_leave(start as u32, self.pos(), negate);
+            self.handler
+                .on_character_class_leave(start as u32, self.pos(), negate);
             self.depth -= 1;
             return Ok(Some(result));
         }
@@ -1521,8 +1646,11 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
 
             if self.eat(b'}') {
-                self.handler.on_class_string_disjunction_leave(start, self.pos());
-                return Ok(Some(SetResult { may_contain_strings }));
+                self.handler
+                    .on_class_string_disjunction_leave(start, self.pos());
+                return Ok(Some(SetResult {
+                    may_contain_strings,
+                }));
             }
             return self.raise("Unterminated class string disjunction");
         }
@@ -1536,8 +1664,11 @@ impl<'s, 'h> Validator<'s, 'h> {
         while self.cp != EOF && self.consume_class_set_character()? {
             count = count.saturating_add(1);
         }
-        self.handler.on_string_alternative_leave(start, self.pos(), i);
-        Ok(SetResult { may_contain_strings: count != 1 })
+        self.handler
+            .on_string_alternative_leave(start, self.pos(), i);
+        Ok(SetResult {
+            may_contain_strings: count != 1,
+        })
     }
 
     fn consume_class_set_character(&mut self) -> Consumed {
@@ -1549,7 +1680,8 @@ impl<'s, 'h> Validator<'s, 'h> {
         {
             self.last_int_value = cp;
             self.advance();
-            self.handler.on_character(start as u32, self.pos(), cp as u32);
+            self.handler
+                .on_character(start as u32, self.pos(), cp as u32);
             return Ok(true);
         }
         if self.eat(b'\\') {
@@ -1559,7 +1691,8 @@ impl<'s, 'h> Validator<'s, 'h> {
             if is_class_set_reserved_punctuator(self.cp) {
                 self.last_int_value = self.cp;
                 self.advance();
-                self.handler.on_character(start as u32, self.pos(), self.last_int_value as u32);
+                self.handler
+                    .on_character(start as u32, self.pos(), self.last_int_value as u32);
                 return Ok(true);
             }
             if self.eat(b'b') {
@@ -1608,7 +1741,11 @@ impl<'s, 'h> Validator<'s, 'h> {
             self.advance();
         }
 
-        if if first { is_identifier_start_char(cp) } else { is_identifier_part_char(cp) } {
+        if if first {
+            is_identifier_start_char(cp)
+        } else {
+            is_identifier_part_char(cp)
+        } {
             self.last_int_value = cp;
             return Ok(true);
         }
@@ -1640,7 +1777,13 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     fn eat_control_escape(&mut self) -> bool {
-        for (byte, value) in [(b'f', 0x0C), (b'n', 0x0A), (b'r', 0x0D), (b't', 0x09), (b'v', 0x0B)] {
+        for (byte, value) in [
+            (b'f', 0x0C),
+            (b'n', 0x0A),
+            (b'r', 0x0D),
+            (b't', 0x09),
+            (b'v', 0x0B),
+        ] {
             if self.eat(byte) {
                 self.last_int_value = value;
                 return true;
@@ -1783,15 +1926,27 @@ impl<'s, 'h> Validator<'s, 'h> {
             let range = (start, self.index);
             let name = self.source.get(start..self.index).unwrap_or_default();
             if unicode::is_valid_unicode_property(version, b"General_Category", name) {
-                return Ok(Some(PropertyResult { key: None, value: Some(range), strings: false }));
+                return Ok(Some(PropertyResult {
+                    key: None,
+                    value: Some(range),
+                    strings: false,
+                }));
             }
             if unicode::is_valid_lone_unicode_property(version, name) {
-                return Ok(Some(PropertyResult { key: Some(range), value: None, strings: false }));
+                return Ok(Some(PropertyResult {
+                    key: Some(range),
+                    value: None,
+                    strings: false,
+                }));
             }
             if self.unicode_sets_mode
                 && unicode::is_valid_lone_unicode_property_of_string(version, name)
             {
-                return Ok(Some(PropertyResult { key: Some(range), value: None, strings: true }));
+                return Ok(Some(PropertyResult {
+                    key: Some(range),
+                    value: None,
+                    strings: true,
+                }));
             }
             return self.raise("Invalid property name");
         }
@@ -1835,8 +1990,10 @@ impl<'s, 'h> Validator<'s, 'h> {
         let start = self.index;
         self.last_int_value = 0;
         while is_hex_digit(self.cp) {
-            self.last_int_value =
-                self.last_int_value.saturating_mul(16).saturating_add(digit_to_int(self.cp));
+            self.last_int_value = self
+                .last_int_value
+                .saturating_mul(16)
+                .saturating_add(digit_to_int(self.cp));
             self.advance();
         }
         self.index != start

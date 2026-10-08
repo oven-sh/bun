@@ -1,8 +1,6 @@
 //! `RegExpParser` of `@eslint-community/regexpp`: builds the [`Ast`] from what the validator finds.
 
-use super::ast::{
-    Ast, Data, EscapeSet, Flags, ModifierFlags, NodeData, NodeId, Reference, Run,
-};
+use super::ast::{Ast, Data, EscapeSet, Flags, ModifierFlags, NodeData, NodeId, Reference, Run};
 use super::validator::{self, Handler, Mode, Options, SyntaxError};
 
 /// `new RegExpParser(options).parseLiteral(source)`, `parseRegExpLiteral(source, options)`
@@ -82,7 +80,12 @@ impl<'s> Builder<'s> {
 
     fn push(&mut self, data: Data, parent: NodeId, start: u32, end: u32) -> NodeId {
         let id = NodeId(self.ast.nodes.len() as u32);
-        self.ast.nodes.push(NodeData { data, parent, start, end });
+        self.ast.nodes.push(NodeData {
+            data,
+            parent,
+            start,
+            end,
+        });
         id
     }
 
@@ -103,12 +106,18 @@ impl<'s> Builder<'s> {
     fn text(&mut self, text: &[u8]) -> Run {
         let start = self.ast.text.len() as u32;
         self.ast.text.extend_from_slice(text);
-        Run { start, len: text.len() as u32 }
+        Run {
+            start,
+            len: text.len() as u32,
+        }
     }
 
     /// An empty list for a node that starts.
     fn open_list(&self) -> Run {
-        Run { start: self.pending.len() as u32, len: 0 }
+        Run {
+            start: self.pending.len() as u32,
+            len: 0,
+        }
     }
 
     /// A child of the current node that has no children itself.
@@ -134,14 +143,22 @@ impl<'s> Builder<'s> {
         let id = self.node;
         let lists = self.ast.lists.len() as u32;
         let pending = self.pending.len() as u32;
-        let Some(node) = self.ast.nodes.get_mut(id.0 as usize) else { return };
+        let Some(node) = self.ast.nodes.get_mut(id.0 as usize) else {
+            return;
+        };
         node.end = end;
         self.node = node.parent;
         let (Data::Pattern { alternatives: list }
         | Data::Alternative { elements: list }
-        | Data::Group { alternatives: list, .. }
-        | Data::CapturingGroup { alternatives: list, .. }
-        | Data::Lookaround { alternatives: list, .. }
+        | Data::Group {
+            alternatives: list, ..
+        }
+        | Data::CapturingGroup {
+            alternatives: list, ..
+        }
+        | Data::Lookaround {
+            alternatives: list, ..
+        }
         | Data::CharacterClass { elements: list, .. }
         | Data::ClassStringDisjunction { alternatives: list }
         | Data::StringAlternative { elements: list }) = &mut node.data
@@ -149,7 +166,10 @@ impl<'s> Builder<'s> {
             return;
         };
         let first = list.start.min(pending);
-        *list = Run { start: lists, len: pending - first };
+        *list = Run {
+            start: lists,
+            len: pending - first,
+        };
         self.ast.lists.extend(self.pending.drain(first as usize..));
     }
 
@@ -169,28 +189,45 @@ impl<'s> Builder<'s> {
     fn list(&mut self, ids: impl Iterator<Item = NodeId>) -> Run {
         let start = self.ast.lists.len() as u32;
         self.ast.lists.extend(ids);
-        Run { start, len: self.ast.lists.len() as u32 - start }
+        Run {
+            start,
+            len: self.ast.lists.len() as u32 - start,
+        }
     }
 
     fn class_operation(&mut self, start: u32, end: u32, data: fn(NodeId, NodeId) -> Data) {
         let class = self.node;
-        let Some(Data::CharacterClass { expression, .. }) = self.data(class) else { return };
-        let Some(right) = self.pop_child() else { return };
-        let left = if expression == NodeId::NONE { self.pop_child() } else { Some(expression) };
+        let Some(Data::CharacterClass { expression, .. }) = self.data(class) else {
+            return;
+        };
+        let Some(right) = self.pop_child() else {
+            return;
+        };
+        let left = if expression == NodeId::NONE {
+            self.pop_child()
+        } else {
+            Some(expression)
+        };
         let Some(left) = left else { return };
         let id = self.push(data(left, right), class, start, end);
         self.set_parent(left, id);
         self.set_parent(right, id);
-        if let Some(NodeData { data: Data::CharacterClass { expression, .. }, .. }) =
-            self.get_mut(class)
+        if let Some(NodeData {
+            data: Data::CharacterClass { expression, .. },
+            ..
+        }) = self.get_mut(class)
         {
             *expression = id;
         }
     }
 
     fn group_name(&self, group: NodeId) -> Option<&[u8]> {
-        let Data::CapturingGroup { name, .. } = self.data(group)? else { return None };
-        self.ast.text.get(name.start as usize..(name.start as usize) + name.len as usize)
+        let Data::CapturingGroup { name, .. } = self.data(group)? else {
+            return None;
+        };
+        self.ast
+            .text
+            .get(name.start as usize..(name.start as usize) + name.len as usize)
     }
 }
 
@@ -201,15 +238,25 @@ impl Handler for Builder<'_> {
 
     fn on_pattern_enter(&mut self, start: u32) {
         // The flags of a literal come first and stay.
-        let keep = if self.flags == NodeId::NONE { 0 } else { self.flags.0 as usize + 1 };
+        let keep = if self.flags == NodeId::NONE {
+            0
+        } else {
+            self.flags.0 as usize + 1
+        };
         self.ast.nodes.truncate(keep);
         self.ast.lists.clear();
         self.ast.text.clear();
         self.pending.clear();
         self.backreferences.clear();
         self.capturing_groups.clear();
-        self.node =
-            self.push(Data::Pattern { alternatives: Run::default() }, NodeId::NONE, start, start);
+        self.node = self.push(
+            Data::Pattern {
+                alternatives: Run::default(),
+            },
+            NodeId::NONE,
+            start,
+            start,
+        );
     }
 
     fn on_pattern_leave(&mut self, _start: u32, end: u32) {
@@ -226,7 +273,9 @@ impl Handler for Builder<'_> {
             };
             let first = pairs.len();
             if name.start == Run::NONE.start {
-                let group = (number as usize).checked_sub(1).and_then(|i| self.capturing_groups.get(i));
+                let group = (number as usize)
+                    .checked_sub(1)
+                    .and_then(|i| self.capturing_groups.get(i));
                 pairs.extend(group.map(|group| (*group, reference)));
             } else {
                 let start = name.start as usize;
@@ -238,9 +287,17 @@ impl Handler for Builder<'_> {
                         .map(|group| (*group, reference)),
                 );
             }
-            let groups = self.list(pairs.get(first..).unwrap_or_default().iter().map(|pair| pair.0));
-            if let Some(NodeData { data: Data::Backreference { resolved, .. }, .. }) =
-                self.get_mut(reference)
+            let groups = self.list(
+                pairs
+                    .get(first..)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|pair| pair.0),
+            );
+            if let Some(NodeData {
+                data: Data::Backreference { resolved, .. },
+                ..
+            }) = self.get_mut(reference)
             {
                 *resolved = groups;
             }
@@ -249,8 +306,10 @@ impl Handler for Builder<'_> {
         for same in pairs.chunk_by(|a, b| a.0 == b.0) {
             let list = self.list(same.iter().map(|pair| pair.1));
             if let Some((group, _)) = same.first()
-                && let Some(NodeData { data: Data::CapturingGroup { references, .. }, .. }) =
-                    self.get_mut(*group)
+                && let Some(NodeData {
+                    data: Data::CapturingGroup { references, .. },
+                    ..
+                }) = self.get_mut(*group)
             {
                 *references = list;
             }
@@ -266,7 +325,10 @@ impl Handler for Builder<'_> {
     }
 
     fn on_group_enter(&mut self, start: u32) {
-        self.open(start, |alternatives| Data::Group { modifiers: NodeId::NONE, alternatives });
+        self.open(start, |alternatives| Data::Group {
+            modifiers: NodeId::NONE,
+            alternatives,
+        });
     }
 
     fn on_group_leave(&mut self, _start: u32, end: u32) {
@@ -276,12 +338,19 @@ impl Handler for Builder<'_> {
     fn on_modifiers_enter(&mut self, start: u32) {
         let group = self.node;
         let id = self.push(
-            Data::Modifiers { add: NodeId::NONE, remove: NodeId::NONE },
+            Data::Modifiers {
+                add: NodeId::NONE,
+                remove: NodeId::NONE,
+            },
             group,
             start,
             start,
         );
-        if let Some(NodeData { data: Data::Group { modifiers, .. }, .. }) = self.get_mut(group) {
+        if let Some(NodeData {
+            data: Data::Group { modifiers, .. },
+            ..
+        }) = self.get_mut(group)
+        {
             *modifiers = id;
         }
         self.node = id;
@@ -293,14 +362,21 @@ impl Handler for Builder<'_> {
 
     fn on_add_modifiers(&mut self, start: u32, end: u32, flags: ModifierFlags) {
         let id = self.push(Data::ModifierFlags(flags), self.node, start, end);
-        if let Some(NodeData { data: Data::Modifiers { add, .. }, .. }) = self.get_mut(self.node) {
+        if let Some(NodeData {
+            data: Data::Modifiers { add, .. },
+            ..
+        }) = self.get_mut(self.node)
+        {
             *add = id;
         }
     }
 
     fn on_remove_modifiers(&mut self, start: u32, end: u32, flags: ModifierFlags) {
         let id = self.push(Data::ModifierFlags(flags), self.node, start, end);
-        if let Some(NodeData { data: Data::Modifiers { remove, .. }, .. }) = self.get_mut(self.node)
+        if let Some(NodeData {
+            data: Data::Modifiers { remove, .. },
+            ..
+        }) = self.get_mut(self.node)
         {
             *remove = id;
         }
@@ -321,17 +397,42 @@ impl Handler for Builder<'_> {
     }
 
     fn on_quantifier(&mut self, _start: u32, end: u32, min: u32, max: u32, greedy: bool) {
-        let Some(element) = self.pop_child() else { return };
-        let start = self.ast.nodes.get(element.0 as usize).map_or(0, |node| node.start);
-        let id = self.leaf(Data::Quantifier { min, max, greedy, element }, start, end);
+        let Some(element) = self.pop_child() else {
+            return;
+        };
+        let start = self
+            .ast
+            .nodes
+            .get(element.0 as usize)
+            .map_or(0, |node| node.start);
+        let id = self.leaf(
+            Data::Quantifier {
+                min,
+                max,
+                greedy,
+                element,
+            },
+            start,
+            end,
+        );
         self.set_parent(element, id);
     }
 
     fn on_lookaround_assertion_enter(&mut self, start: u32, behind: bool, negate: bool) {
-        self.open(start, |alternatives| Data::Lookaround { behind, negate, alternatives });
+        self.open(start, |alternatives| Data::Lookaround {
+            behind,
+            negate,
+            alternatives,
+        });
     }
 
-    fn on_lookaround_assertion_leave(&mut self, _start: u32, end: u32, _behind: bool, _negate: bool) {
+    fn on_lookaround_assertion_leave(
+        &mut self,
+        _start: u32,
+        end: u32,
+        _behind: bool,
+        _negate: bool,
+    ) {
         self.close(end);
     }
 
@@ -362,7 +463,16 @@ impl Handler for Builder<'_> {
     ) {
         let key = self.text(key);
         let value = value.map_or(Run::NONE, |value| self.text(value));
-        self.leaf(Data::Property { key, value, negate, strings }, start, end);
+        self.leaf(
+            Data::Property {
+                key,
+                value,
+                negate,
+                strings,
+            },
+            start,
+            end,
+        );
     }
 
     fn on_character(&mut self, start: u32, end: u32, value: u32) {
@@ -374,7 +484,15 @@ impl Handler for Builder<'_> {
             Reference::Number(number) => (number, Run::NONE),
             Reference::Name(name) => (0, self.text(name)),
         };
-        let id = self.leaf(Data::Backreference { number, name, resolved: Run::default() }, start, end);
+        let id = self.leaf(
+            Data::Backreference {
+                number,
+                name,
+                resolved: Run::default(),
+            },
+            start,
+            end,
+        );
         self.backreferences.push(id);
     }
 
@@ -391,7 +509,9 @@ impl Handler for Builder<'_> {
         let class = self.node;
         self.close(end);
         if let Some(node) = self.get_mut(class)
-            && let Data::CharacterClass { negate, expression, .. } = node.data
+            && let Data::CharacterClass {
+                negate, expression, ..
+            } = node.data
             && expression != NodeId::NONE
         {
             node.data = Data::ExpressionCharacterClass { negate, expression };
@@ -399,7 +519,9 @@ impl Handler for Builder<'_> {
     }
 
     fn on_character_class_range(&mut self, start: u32, end: u32, _min: u32, _max: u32) {
-        let Some(Data::CharacterClass { unicode_sets, .. }) = self.data(self.node) else { return };
+        let Some(Data::CharacterClass { unicode_sets, .. }) = self.data(self.node) else {
+            return;
+        };
         let Some(max) = self.pop_child() else { return };
         if !unicode_sets {
             self.pop_child();
@@ -411,15 +533,23 @@ impl Handler for Builder<'_> {
     }
 
     fn on_class_intersection(&mut self, start: u32, end: u32) {
-        self.class_operation(start, end, |left, right| Data::ClassIntersection { left, right });
+        self.class_operation(start, end, |left, right| Data::ClassIntersection {
+            left,
+            right,
+        });
     }
 
     fn on_class_subtraction(&mut self, start: u32, end: u32) {
-        self.class_operation(start, end, |left, right| Data::ClassSubtraction { left, right });
+        self.class_operation(start, end, |left, right| Data::ClassSubtraction {
+            left,
+            right,
+        });
     }
 
     fn on_class_string_disjunction_enter(&mut self, start: u32) {
-        self.open(start, |alternatives| Data::ClassStringDisjunction { alternatives });
+        self.open(start, |alternatives| Data::ClassStringDisjunction {
+            alternatives,
+        });
     }
 
     fn on_class_string_disjunction_leave(&mut self, _start: u32, end: u32) {

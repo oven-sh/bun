@@ -25,7 +25,10 @@ struct ClassValue {
 /// A part of an alternative.
 enum Item<'a> {
     /// Characters that only match themselves, as bytes in `Program::literals`.
-    Literal { start: u32, len: u32 },
+    Literal {
+        start: u32,
+        len: u32,
+    },
     Char(u32),
     Node(Node<'a>),
 }
@@ -79,9 +82,9 @@ pub(super) fn compile(ast: &Ast<'_>, flags: Flags) -> Compiled<Program> {
         {
             repeat.then = match program.insts.get(pc + 1) {
                 Some(Inst::Char { c, back: false }) => first_byte(*c, program.unicode),
-                Some(Inst::Literal { start, back: false, .. }) => {
-                    program.literals.get(*start as usize).copied()
-                }
+                Some(Inst::Literal {
+                    start, back: false, ..
+                }) => program.literals.get(*start as usize).copied(),
                 _ => None,
             };
         }
@@ -106,7 +109,10 @@ impl Compiler {
     fn patch(&mut self, at: u32, first: u32, second: u32) {
         match self.program.insts.get_mut(at as usize) {
             Some(Inst::Jump(target)) => *target = first,
-            Some(Inst::Split { first: a, second: b }) => (*a, *b) = (first, second),
+            Some(Inst::Split {
+                first: a,
+                second: b,
+            }) => (*a, *b) = (first, second),
             _ => {}
         }
     }
@@ -120,7 +126,12 @@ impl Compiler {
     fn set(&mut self, set: CharSet) -> u32 {
         // Only the last few are looked at, so that this takes constant time.
         let recent = self.charsets.len().saturating_sub(32);
-        if let Some(index) = self.charsets.iter().skip(recent).position(|known| *known == set) {
+        if let Some(index) = self
+            .charsets
+            .iter()
+            .skip(recent)
+            .position(|known| *known == set)
+        {
             return (recent + index) as u32;
         }
         self.program.sets.push(Set::new(&set));
@@ -137,8 +148,14 @@ impl Compiler {
 
     fn emit_single(&mut self, single: Single, context: Context) {
         self.emit(match single {
-            Single::Char(c) => Inst::Char { c, back: context.back },
-            Single::Set(set) => Inst::Set { set, back: context.back },
+            Single::Char(c) => Inst::Char {
+                c,
+                back: context.back,
+            },
+            Single::Set(set) => Inst::Set {
+                set,
+                back: context.back,
+            },
         });
     }
 
@@ -170,7 +187,10 @@ impl Compiler {
                 emit(self, item)?;
                 break;
             }
-            let split = self.emit(Inst::Split { first: 0, second: 0 });
+            let split = self.emit(Inst::Split {
+                first: 0,
+                second: 0,
+            });
             emit(self, item)?;
             jumps.push(self.emit(Inst::Jump(0)));
             self.patch(split, split + 1, self.pc());
@@ -208,10 +228,17 @@ impl Compiler {
         for item in items {
             match item {
                 Item::Literal { start, len } => {
-                    self.emit(Inst::Literal { start, len, back: context.back });
+                    self.emit(Inst::Literal {
+                        start,
+                        len,
+                        back: context.back,
+                    });
                 }
                 Item::Char(c) => {
-                    self.emit(Inst::Char { c, back: context.back });
+                    self.emit(Inst::Char {
+                        c,
+                        back: context.back,
+                    });
                 }
                 Item::Node(node) => self.element(node, context)?,
             }
@@ -264,13 +291,17 @@ impl Compiler {
 
     /// The slots of the capturing groups in `node`.
     fn group_slots(&self, node: Node<'_>) -> (u32, u32) {
-        let before = |offset: u32| self.group_starts.partition_point(|start| *start < offset) as u32;
+        let before =
+            |offset: u32| self.group_starts.partition_point(|start| *start < offset) as u32;
         ((before(node.start()) + 1) * 2, (before(node.end()) + 1) * 2)
     }
 
     fn element(&mut self, node: Node<'_>, context: Context) -> Compiled {
         match node.kind() {
-            Kind::Group { modifiers, alternatives } => {
+            Kind::Group {
+                modifiers,
+                alternatives,
+            } => {
                 let mut inner = context;
                 if let Some(Kind::Modifiers { add, remove }) = modifiers.map(Node::kind) {
                     if let Kind::ModifierFlags(flags) = add.kind() {
@@ -288,18 +319,26 @@ impl Compiler {
             }
             Kind::CapturingGroup { alternatives, .. } => {
                 let (start, _) = self.group_slots(node);
-                let (first, second) = if context.back { (start + 1, start) } else { (start, start + 1) };
+                let (first, second) = if context.back {
+                    (start + 1, start)
+                } else {
+                    (start, start + 1)
+                };
                 self.emit(Inst::Save(first));
                 self.alternatives(alternatives, context)?;
                 self.emit(Inst::Save(second));
                 Ok(())
             }
             Kind::Assertion(Assertion::Start) => {
-                self.emit(Inst::Start { multiline: context.multiline });
+                self.emit(Inst::Start {
+                    multiline: context.multiline,
+                });
                 Ok(())
             }
             Kind::Assertion(Assertion::End) => {
-                self.emit(Inst::End { multiline: context.multiline });
+                self.emit(Inst::End {
+                    multiline: context.multiline,
+                });
                 Ok(())
             }
             Kind::Assertion(Assertion::Word { negate }) => {
@@ -307,15 +346,34 @@ impl Compiler {
                 self.emit(Inst::WordBoundary { negate, folded });
                 Ok(())
             }
-            Kind::Assertion(Assertion::Lookahead { negate, alternatives }) => {
-                self.look(negate, alternatives, Context { back: false, ..context })
-            }
-            Kind::Assertion(Assertion::Lookbehind { negate, alternatives }) => {
-                self.look(negate, alternatives, Context { back: true, ..context })
-            }
-            Kind::Quantifier { min, max, greedy, element } => {
-                self.quantifier(min, max, greedy, element, context)
-            }
+            Kind::Assertion(Assertion::Lookahead {
+                negate,
+                alternatives,
+            }) => self.look(
+                negate,
+                alternatives,
+                Context {
+                    back: false,
+                    ..context
+                },
+            ),
+            Kind::Assertion(Assertion::Lookbehind {
+                negate,
+                alternatives,
+            }) => self.look(
+                negate,
+                alternatives,
+                Context {
+                    back: true,
+                    ..context
+                },
+            ),
+            Kind::Quantifier {
+                min,
+                max,
+                greedy,
+                element,
+            } => self.quantifier(min, max, greedy, element, context),
             Kind::Backreference { resolved, .. } => {
                 let start = self.program.groups.len() as u32;
                 for group in resolved {
@@ -343,7 +401,11 @@ impl Compiler {
     fn look(&mut self, negate: bool, alternatives: Nodes<'_>, context: Context) -> Compiled {
         let index = self.program.looks.len() as u32;
         let height = self.slot();
-        self.program.looks.push(Look { negate, height, next: 0 });
+        self.program.looks.push(Look {
+            negate,
+            height,
+            next: 0,
+        });
         self.emit(Inst::Look(index));
         self.alternatives(alternatives, context)?;
         self.emit(Inst::LookEnd(index));
@@ -371,14 +433,25 @@ impl Compiler {
                 let what = self.single(value.chars);
                 let index = self.program.repeats.len() as u32;
                 let back = context.back;
-                self.program.repeats.push(Repeat { what, min, max, greedy, back, then: None });
+                self.program.repeats.push(Repeat {
+                    what,
+                    min,
+                    max,
+                    greedy,
+                    back,
+                    then: None,
+                });
                 self.emit(Inst::Repeat(index));
                 return Ok(());
             }
         }
 
         let (from, to) = self.group_slots(element);
-        let mark = if can_be_empty(element) { self.slot() } else { NONE };
+        let mark = if can_be_empty(element) {
+            self.slot()
+        } else {
+            NONE
+        };
         let order = |body: u32, exit: u32| if greedy { (body, exit) } else { (exit, body) };
         // One iteration that may be left out.
         let optional = |this: &mut Self| -> Compiled {
@@ -396,13 +469,19 @@ impl Compiler {
         };
         match (min, max) {
             (0, 1) => {
-                let split = self.emit(Inst::Split { first: 0, second: 0 });
+                let split = self.emit(Inst::Split {
+                    first: 0,
+                    second: 0,
+                });
                 optional(self)?;
                 let (first, second) = order(split + 1, self.pc());
                 self.patch(split, first, second);
             }
             (0, INFINITY) => {
-                let split = self.emit(Inst::Split { first: 0, second: 0 });
+                let split = self.emit(Inst::Split {
+                    first: 0,
+                    second: 0,
+                });
                 optional(self)?;
                 self.emit(Inst::Jump(split));
                 let (first, second) = order(split + 1, self.pc());
@@ -414,7 +493,10 @@ impl Compiler {
                     self.emit(Inst::Clear { from, to });
                 }
                 self.element(element, context)?;
-                let split = self.emit(Inst::Split { first: 0, second: 0 });
+                let split = self.emit(Inst::Split {
+                    first: 0,
+                    second: 0,
+                });
                 let (first, second) = order(body, self.pc());
                 self.patch(split, first, second);
             }
@@ -423,7 +505,15 @@ impl Compiler {
                 let index = self.program.loops.len() as u32;
                 self.emit(Inst::Zero(counter));
                 let head = self.emit(Inst::LoopHead(index));
-                self.program.loops.push(Loop { counter, mark, min, max, greedy, head, exit: 0 });
+                self.program.loops.push(Loop {
+                    counter,
+                    mark,
+                    min,
+                    max,
+                    greedy,
+                    head,
+                    exit: 0,
+                });
                 if mark != NONE {
                     self.emit(Inst::Save(mark));
                 }
@@ -448,7 +538,9 @@ impl Compiler {
             self.emit_single(single, context);
             return Ok(());
         }
-        value.strings.sort_by_key(|string| std::cmp::Reverse(string.len()));
+        value
+            .strings
+            .sort_by_key(|string| std::cmp::Reverse(string.len()));
         let has_empty = value.strings.last().is_some_and(Vec::is_empty);
         if has_empty {
             value.strings.pop();
@@ -477,7 +569,9 @@ impl Compiler {
     /// What a `Character`, a `CharacterSet` or a class matches as an element of an alternative.
     fn atom(&mut self, node: Node<'_>, context: Context) -> Compiled<ClassValue> {
         let (negate, mut value) = match node.kind() {
-            Kind::CharacterClass { negate, elements, .. } => (negate, self.union(elements, context)?),
+            Kind::CharacterClass {
+                negate, elements, ..
+            } => (negate, self.union(elements, context)?),
             Kind::ExpressionCharacterClass { negate, expression } => {
                 (negate, self.class_value(expression, context)?)
             }
@@ -526,7 +620,9 @@ impl Compiler {
         match node.kind() {
             Kind::Character { value: c } => value.chars.add(c, c),
             Kind::CharacterClassRange { min, max } => {
-                value.chars.add(min.character().unwrap_or(0), max.character().unwrap_or(0));
+                value
+                    .chars
+                    .add(min.character().unwrap_or(0), max.character().unwrap_or(0));
             }
             Kind::CharacterSet(CharacterSet::Any) => {
                 value.chars = if context.dot_all {
@@ -548,17 +644,26 @@ impl Compiler {
                 }
                 value.chars = complement_if(negate, word);
             }
-            Kind::CharacterSet(CharacterSet::Property { key, strings: true, .. }) => {
+            Kind::CharacterSet(CharacterSet::Property {
+                key, strings: true, ..
+            }) => {
                 (value.chars, value.strings) = unicode::property_of_strings(key);
                 value.strings.sort_unstable();
             }
-            Kind::CharacterSet(CharacterSet::Property { key, value: name, negate, .. }) => {
+            Kind::CharacterSet(CharacterSet::Property {
+                key,
+                value: name,
+                negate,
+                ..
+            }) => {
                 let mut set = unicode::property(key, name)
                     .ok_or_else(|| SyntaxError::unsupported("Invalid property name"))?;
                 self.fold(&mut set, context);
                 value.chars = complement_if(negate, set);
             }
-            Kind::CharacterClass { negate, elements, .. } => {
+            Kind::CharacterClass {
+                negate, elements, ..
+            } => {
                 value = self.union(elements, context)?;
                 self.fold(&mut value.chars, context);
                 value.chars = complement_if(negate, value.chars);
@@ -572,14 +677,18 @@ impl Compiler {
                 let right = self.class_value(right, context)?;
                 value.chars = left.chars.intersection(&right.chars);
                 value.strings = left.strings;
-                value.strings.retain(|string| right.strings.binary_search(string).is_ok());
+                value
+                    .strings
+                    .retain(|string| right.strings.binary_search(string).is_ok());
             }
             Kind::ClassSubtraction { left, right } => {
                 let left = self.class_value(left, context)?;
                 let right = self.class_value(right, context)?;
                 value.chars = left.chars.difference(&right.chars);
                 value.strings = left.strings;
-                value.strings.retain(|string| right.strings.binary_search(string).is_err());
+                value
+                    .strings
+                    .retain(|string| right.strings.binary_search(string).is_err());
             }
             Kind::ClassStringDisjunction { alternatives } => {
                 let mut ranges = Vec::new();
@@ -637,7 +746,9 @@ fn can_be_empty(node: Node<'_>) -> bool {
         Kind::CharacterClass { unicode_sets, .. } => unicode_sets,
         Kind::Quantifier { min, element, .. } => min == 0 || can_be_empty(element),
         Kind::Group { alternatives, .. } | Kind::CapturingGroup { alternatives, .. } => {
-            alternatives.iter().any(|alternative| alternative.elements().iter().all(can_be_empty))
+            alternatives
+                .iter()
+                .any(|alternative| alternative.elements().iter().all(can_be_empty))
         }
         _ => true,
     }
@@ -647,7 +758,12 @@ fn can_be_empty(node: Node<'_>) -> bool {
 pub(super) fn group_names(ast: &Ast<'_>) -> Vec<(Box<[u8]>, Vec<u32>)> {
     let mut names: Vec<(Box<[u8]>, Vec<u32>)> = Vec::new();
     for (index, group) in ast.capturing_groups().enumerate() {
-        let Kind::CapturingGroup { name: Some(name), .. } = group.kind() else { continue };
+        let Kind::CapturingGroup {
+            name: Some(name), ..
+        } = group.kind()
+        else {
+            continue;
+        };
         let index = index as u32 + 1;
         match names.iter_mut().find(|known| *known.0 == *name) {
             Some(known) => known.1.push(index),
@@ -748,7 +864,11 @@ fn prefilter(program: &Program) -> Prefilter {
         return Prefilter::Anchored;
     }
     match program.insts.first() {
-        Some(Inst::Literal { start, len, back: false }) => {
+        Some(Inst::Literal {
+            start,
+            len,
+            back: false,
+        }) => {
             let (start, len) = (*start as usize, *len as usize);
             if let Some(bytes) = program.literals.get(start..start + len) {
                 return Prefilter::Prefix(bytes.into());
@@ -775,7 +895,9 @@ fn prefilter(program: &Program) -> Prefilter {
             Some(seen) if !*seen => *seen = true,
             _ => continue,
         }
-        let Some(inst) = program.insts.get(pc as usize) else { continue };
+        let Some(inst) = program.insts.get(pc as usize) else {
+            continue;
+        };
         match *inst {
             Inst::Match | Inst::Backreference { .. } => first.any = true,
             Inst::Char { back: true, .. }
@@ -789,7 +911,10 @@ fn prefilter(program: &Program) -> Prefilter {
                 None => first.any = true,
             },
             Inst::Jump(target) => todo.push(target),
-            Inst::Split { first: a, second: b } => todo.extend([a, b]),
+            Inst::Split {
+                first: a,
+                second: b,
+            } => todo.extend([a, b]),
             Inst::Save(_)
             | Inst::Clear { .. }
             | Inst::Zero(_)
@@ -823,6 +948,7 @@ fn prefilter(program: &Program) -> Prefilter {
     if count > 3 {
         return Prefilter::ByteSet(Box::new(first.bytes));
     }
-    let bytes = (0..=255u8).filter(|byte| first.bytes[usize::from(byte >> 6)] & (1 << (byte & 63)) != 0);
+    let bytes =
+        (0..=255u8).filter(|byte| first.bytes[usize::from(byte >> 6)] & (1 << (byte & 63)) != 0);
     Prefilter::Bytes(bytes.collect())
 }

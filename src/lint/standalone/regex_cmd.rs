@@ -13,12 +13,14 @@
 //! - `charset <file>`: `pattern  flags`. The characters `c` for which `^(?:pattern)$` matches the string of only `c`, as
 //!   `"first-last first-last .."` in hexadecimal.
 //! - `raw <file>`: `pattern  flags  text`, each as hexadecimal bytes, which need not be UTF-8. Parses, compiles and runs all
-//!   operations, and prints `true`: nothing may panic or go on forever.
+//!   operations on a thread with a stack of 512 KiB, and prints `true`: nothing may panic, overflow or go on forever.
 //! - `bench <file> <repeat>`: requests as for `exec`. Compiles each once, and prints the time of `repeat` searches.
 
-use bun_lint::regex::ast::{Assertion, CharacterSet, INFINITY, Kind, Node, NodeId, Nodes, Reference, Visitor};
+use bun_lint::regex::ast::{
+    Assertion, CharacterSet, INFINITY, Kind, Node, NodeId, Nodes, Reference, Visitor,
+};
 use bun_lint::regex::{self, Ast, Captures, Mode, Options, Regex, SyntaxError};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
 
@@ -62,7 +64,12 @@ fn quote_units(out: &mut String, units: &[u16]) {
 }
 
 fn quote(out: &mut String, text: &[u8]) {
-    quote_units(out, &String::from_utf8_lossy(text).encode_utf16().collect::<Vec<_>>());
+    quote_units(
+        out,
+        &String::from_utf8_lossy(text)
+            .encode_utf16()
+            .collect::<Vec<_>>(),
+    );
 }
 
 fn error(out: &mut String, error: &SyntaxError) {
@@ -73,7 +80,7 @@ fn error(out: &mut String, error: &SyntaxError) {
 
 struct Dump<'a> {
     units: &'a [u16],
-    paths: HashMap<NodeId, String>,
+    paths: BTreeMap<NodeId, String>,
     out: String,
 }
 
@@ -81,19 +88,28 @@ impl<'a> Dump<'a> {
     fn children(node: Node<'a>) -> Vec<(String, Node<'a>)> {
         let mut all = Vec::new();
         let mut list = |name: &str, nodes: Nodes<'a>| {
-            all.extend(nodes.iter().enumerate().map(|(i, node)| (format!("{name}/{i}"), node)));
+            all.extend(
+                nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, node)| (format!("{name}/{i}"), node)),
+            );
         };
         match node.kind() {
             Kind::Pattern { alternatives }
             | Kind::CapturingGroup { alternatives, .. }
             | Kind::ClassStringDisjunction { alternatives }
             | Kind::Assertion(
-                Assertion::Lookahead { alternatives, .. } | Assertion::Lookbehind { alternatives, .. },
+                Assertion::Lookahead { alternatives, .. }
+                | Assertion::Lookbehind { alternatives, .. },
             ) => list("alternatives", alternatives),
             Kind::Alternative { elements }
             | Kind::CharacterClass { elements, .. }
             | Kind::StringAlternative { elements } => list("elements", elements),
-            Kind::Group { modifiers, alternatives } => {
+            Kind::Group {
+                modifiers,
+                alternatives,
+            } => {
                 list("alternatives", alternatives);
                 all.extend(modifiers.map(|node| ("modifiers".to_owned(), node)));
             }
@@ -127,7 +143,11 @@ impl<'a> Dump<'a> {
     }
 
     fn path(&mut self, node: Node<'a>) {
-        let path = self.paths.get(&node.id()).cloned().unwrap_or_else(|| "?".to_owned());
+        let path = self
+            .paths
+            .get(&node.id())
+            .cloned()
+            .unwrap_or_else(|| "?".to_owned());
         quote(&mut self.out, path.as_bytes());
     }
 
@@ -137,7 +157,11 @@ impl<'a> Dump<'a> {
             if i > 0 {
                 self.out.push(',');
             }
-            if by_path { self.path(node) } else { self.node(node) }
+            if by_path {
+                self.path(node)
+            } else {
+                self.node(node)
+            }
         }
         self.out.push(']');
     }
@@ -295,7 +319,9 @@ impl History<'_> {
         if !self.out.is_empty() {
             self.out.push(',');
         }
-        let mut text: Vec<u16> = format!("{what}:{}:", node.ty().name()).encode_utf16().collect();
+        let mut text: Vec<u16> = format!("{what}:{}:", node.ty().name())
+            .encode_utf16()
+            .collect();
         text.extend_from_slice(&self.units[node.utf16_start() as usize..node.utf16_end() as usize]);
         quote_units(&mut self.out, &text);
     }
@@ -316,11 +342,17 @@ fn parse(line: &str) -> String {
     let [kind, strict, version, source, rest @ ..] = &fields[..] else {
         return "null".to_owned();
     };
-    let options = Options { strict: *strict == "1", ecma_version: version.parse().unwrap_or(2025) };
+    let options = Options {
+        strict: *strict == "1",
+        ecma_version: version.parse().unwrap_or(2025),
+    };
     let units = units(source);
     let source = bytes(&units);
     let ast: Result<Ast<'_>, SyntaxError> = if *kind == "pattern" {
-        let flags = rest.first().map(|flags| bytes(&self::units(flags))).unwrap_or_default();
+        let flags = rest
+            .first()
+            .map(|flags| bytes(&self::units(flags)))
+            .unwrap_or_default();
         regex::parse_pattern(&source, Mode::of_flags(&flags), options)
     } else {
         regex::parse_literal(&source, options)
@@ -329,12 +361,19 @@ fn parse(line: &str) -> String {
     match ast {
         Err(it) => error(&mut out, &it),
         Ok(ast) if *kind == "visit" => {
-            let mut history = History { units: &units, out: String::new() };
+            let mut history = History {
+                units: &units,
+                out: String::new(),
+            };
             ast.root().visit(&mut history);
             write!(out, "[{}]", history.out).unwrap();
         }
         Ok(ast) => {
-            let mut dump = Dump { units: &units, paths: HashMap::new(), out: String::new() };
+            let mut dump = Dump {
+                units: &units,
+                paths: BTreeMap::new(),
+                out: String::new(),
+            };
             dump.locate(ast.root(), String::new());
             dump.node(ast.root());
             write!(out, "{{\"ast\":{}}}", dump.out).unwrap();
@@ -379,9 +418,13 @@ fn compile(out: &mut String, pattern: &str, flags: &str) -> Option<Regex> {
 
 fn exec(line: &str) -> String {
     let fields: Vec<&str> = line.split('\t').collect();
-    let [pattern, flags, text, last_index] = &fields[..] else { return "null".to_owned() };
+    let [pattern, flags, text, last_index] = &fields[..] else {
+        return "null".to_owned();
+    };
     let mut out = String::new();
-    let Some(regex) = compile(&mut out, pattern, flags) else { return out };
+    let Some(regex) = compile(&mut out, pattern, flags) else {
+        return out;
+    };
     let units = units(text);
     let text = bytes(&units);
     let start = match last_index.parse() {
@@ -422,9 +465,13 @@ fn list<'a>(out: &mut String, items: impl Iterator<Item = &'a [u8]>) {
 
 fn ops(line: &str) -> String {
     let fields: Vec<&str> = line.split('\t').collect();
-    let [op, pattern, flags, text, rest @ ..] = &fields[..] else { return "null".to_owned() };
+    let [op, pattern, flags, text, rest @ ..] = &fields[..] else {
+        return "null".to_owned();
+    };
     let mut out = String::new();
-    let Some(regex) = compile(&mut out, pattern, flags) else { return out };
+    let Some(regex) = compile(&mut out, pattern, flags) else {
+        return out;
+    };
     let text = bytes(&units(text));
     if regex.try_exec_at(&text, 0).is_err() {
         return "\"limit\"".to_owned();
@@ -459,7 +506,9 @@ fn ops(line: &str) -> String {
 
 fn charset(line: &str) -> String {
     let fields: Vec<&str> = line.split('\t').collect();
-    let [pattern, flags] = &fields[..] else { return "null".to_owned() };
+    let [pattern, flags] = &fields[..] else {
+        return "null".to_owned();
+    };
     let mut source = b"^(?:".to_vec();
     source.extend_from_slice(&bytes(&units(pattern)));
     source.extend_from_slice(b")$");
@@ -472,7 +521,11 @@ fn charset(line: &str) -> String {
             return out;
         }
     };
-    let limit = if regex.flags().unicode || regex.flags().unicode_sets { 0x10FFFF } else { 0xFFFF };
+    let limit = if regex.flags().unicode || regex.flags().unicode_sets {
+        0x10FFFF
+    } else {
+        0xFFFF
+    };
     let mut start = None;
     out.push('"');
     for cp in 0..=limit + 1 {
@@ -505,25 +558,42 @@ fn raw(line: &str) -> String {
             .collect()
     };
     let fields: Vec<Vec<u8>> = line.split('\t').map(decode).collect();
-    let [pattern, flags, text] = &fields[..] else { return "null".to_owned() };
+    let [pattern, flags, text] = &fields[..] else {
+        return "null".to_owned();
+    };
     for version in [5, 2015, 2018, 2024, 2025] {
         for strict in [false, true] {
-            let options = Options { strict, ecma_version: version };
+            let options = Options {
+                strict,
+                ecma_version: version,
+            };
             if let Ok(ast) = regex::parse_pattern(pattern, Mode::of_flags(flags), options) {
                 for node in ast.root().descendants().take(500) {
-                    std::hint::black_box((node.raw(), node.utf16_start(), node.utf16_end(), node.kind()));
+                    std::hint::black_box((
+                        node.raw(),
+                        node.utf16_start(),
+                        node.utf16_end(),
+                        node.kind(),
+                    ));
                 }
             }
             std::hint::black_box(regex::parse_literal(pattern, options).is_ok());
         }
     }
     if let Ok(regex) = Regex::from_bytes(pattern, flags) {
-        for start in (0..=text.len() + 1).take(20) {
-            std::hint::black_box(regex.exec_at(text, start).map(|m| (m.start(), m.end(), m.as_bytes().len())));
+        // One search that is given up takes a second: that is enough of them.
+        let in_time = (0..=text.len() + 1).all(|start| {
+            let found = regex.try_exec_at(text, start);
+            let in_time = found.is_ok();
+            std::hint::black_box(found.map(|m| m.map(|m| (m.start(), m.end(), m.as_bytes().len()))))
+                .is_ok()
+                && in_time
+        });
+        if in_time {
+            std::hint::black_box(regex.find_iter(text).count());
+            std::hint::black_box(regex.split(text).len());
+            std::hint::black_box(regex.replace(text, b"[$1$&$<a>]").len());
         }
-        std::hint::black_box(regex.find_iter(text).count());
-        std::hint::black_box(regex.split(text).len());
-        std::hint::black_box(regex.replace(text, b"[$1$&$<a>]").len());
     }
     for offset in 0..=text.len() + 1 {
         std::hint::black_box(regex::byte_offset(text, regex::utf16_index(text, offset)));
@@ -535,9 +605,13 @@ fn bench(requests: &str, repeat: usize) {
     let mut total = std::time::Duration::ZERO;
     for line in requests.lines() {
         let fields: Vec<&str> = line.split('\t').collect();
-        let [pattern, flags, text, ..] = &fields[..] else { continue };
+        let [pattern, flags, text, ..] = &fields[..] else {
+            continue;
+        };
         let started = std::time::Instant::now();
-        let Some(regex) = compile(&mut String::new(), pattern, flags) else { continue };
+        let Some(regex) = compile(&mut String::new(), pattern, flags) else {
+            continue;
+        };
         let compiled = started.elapsed();
         let text = bytes(&units(text));
         let started = std::time::Instant::now();
@@ -562,12 +636,15 @@ fn bench(requests: &str, repeat: usize) {
 
 pub(crate) fn run(args: &[String]) {
     let (Some(command), Some(path)) = (args.first(), args.get(1)) else {
-        eprintln!("usage: bun-lint regex parse|exec|ops|bench <requests>");
+        eprintln!("usage: bun-lint regex parse|exec|ops|charset|raw|bench <requests>");
         return;
     };
     let requests = std::fs::read_to_string(path).unwrap_or_default();
     if command == "bench" {
-        return bench(&requests, args.get(2).and_then(|n| n.parse().ok()).unwrap_or(1000));
+        return bench(
+            &requests,
+            args.get(2).and_then(|n| n.parse().ok()).unwrap_or(1000),
+        );
     }
     let stdout = std::io::stdout();
     let mut stdout = std::io::BufWriter::new(stdout.lock());
@@ -577,7 +654,14 @@ pub(crate) fn run(args: &[String]) {
             "exec" => exec(line),
             "ops" => ops(line),
             "charset" => charset(line),
-            "raw" => raw(line),
+            "raw" => std::thread::scope(|scope| {
+                let small = std::thread::Builder::new().stack_size(512 << 10);
+                small
+                    .spawn_scoped(scope, || raw(line))
+                    .unwrap()
+                    .join()
+                    .unwrap()
+            }),
             _ => "null".to_owned(),
         };
         writeln!(stdout, "{answer}").unwrap();

@@ -15,18 +15,34 @@ pub(super) enum Inst {
     /// The whole pattern has matched.
     Match,
     /// One character: a code point with the `u` or `v` flag, otherwise a code unit.
-    Char { c: u32, back: bool },
+    Char {
+        c: u32,
+        back: bool,
+    },
     /// One character that is in `Program::sets[set]`.
-    Set { set: u32, back: bool },
+    Set {
+        set: u32,
+        back: bool,
+    },
     /// The bytes `Program::literals[start..start + len]`.
-    Literal { start: u32, len: u32, back: bool },
+    Literal {
+        start: u32,
+        len: u32,
+        back: bool,
+    },
     Jump(u32),
     /// Continues at `first`, and at `second` if that fails.
-    Split { first: u32, second: u32 },
+    Split {
+        first: u32,
+        second: u32,
+    },
     /// Stores the position in a slot.
     Save(u32),
     /// Sets the slots `from..to` to `NONE`.
-    Clear { from: u32, to: u32 },
+    Clear {
+        from: u32,
+        to: u32,
+    },
     /// Sets a slot to 0.
     Zero(u32),
     /// Fails if the position is the one in the slot: an iteration that may be left out matched
@@ -38,16 +54,28 @@ pub(super) enum Inst {
     /// All iterations of `Program::repeats[..]`.
     Repeat(u32),
     /// `^`
-    Start { multiline: bool },
+    Start {
+        multiline: bool,
+    },
     /// `$`
-    End { multiline: bool },
+    End {
+        multiline: bool,
+    },
     /// `\b`, `\B`. `folded`: with the flags `iu` or `iv`, when U+017F and U+212A are word characters.
-    WordBoundary { negate: bool, folded: bool },
+    WordBoundary {
+        negate: bool,
+        folded: bool,
+    },
     /// The start and the end of `Program::looks[..]`.
     Look(u32),
     LookEnd(u32),
     /// What one of the groups `Program::groups[start..start + len]` matched.
-    Backreference { start: u32, len: u16, ignore_case: bool, back: bool },
+    Backreference {
+        start: u32,
+        len: u16,
+        ignore_case: bool,
+        back: bool,
+    },
 }
 
 /// A quantifier whose iterations are counted.
@@ -114,7 +142,10 @@ impl Set {
                 ranges.push((lo.max(0x80), hi));
             }
         }
-        Set { ascii, ranges: ranges.into_boxed_slice() }
+        Set {
+            ascii,
+            ranges: ranges.into_boxed_slice(),
+        }
     }
 
     #[inline]
@@ -127,7 +158,10 @@ impl Set {
 
     fn contains_non_ascii(&self, c: u32) -> bool {
         let after = self.ranges.partition_point(|(lo, _)| *lo <= c);
-        after.checked_sub(1).and_then(|i| self.ranges.get(i)).is_some_and(|(_, hi)| c <= *hi)
+        after
+            .checked_sub(1)
+            .and_then(|i| self.ranges.get(i))
+            .is_some_and(|(_, hi)| c <= *hi)
     }
 
     #[inline]

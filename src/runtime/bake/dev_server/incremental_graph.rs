@@ -1631,19 +1631,25 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         ) {
                             entry_points.append_css(owned_path)?;
                         }
+                        // A CSS module's importers hold its class names (see
+                        // `convert_stmts_for_chunk_for_dev_server`): bundled again with it.
+                        let css_module = owned_path.ends_with(b".module.css");
                         let mut it = self.edge_lists[index].first_dep;
                         while let Some(edge_index) = it {
                             let entry = self.edges[edge_index.get() as usize];
                             let dep = entry.dependency;
                             self.stale_files.set(dep.get() as usize);
-                            if matches!(
-                                self.bundled_files.values()[dep.get() as usize].content,
-                                Content::CssRoot(_),
-                            ) {
-                                let k = bun_ptr::RawSlice::new(
-                                    &*self.bundled_files.keys()[dep.get() as usize],
-                                );
-                                entry_points.append_css(k.slice())?;
+                            match self.bundled_files.values()[dep.get() as usize].content {
+                                Content::CssRoot(_) => {
+                                    let k = bun_ptr::RawSlice::new(
+                                        &*self.bundled_files.keys()[dep.get() as usize],
+                                    );
+                                    entry_points.append_css(k.slice())?;
+                                }
+                                Content::Js(_) | Content::Unknown if css_module => {
+                                    self.append_client_entry_point(entry_points, dep.get() as usize)?;
+                                }
+                                _ => {}
                             }
                             it = entry.next_dependency;
                         }

@@ -59,11 +59,13 @@ pub fn is_merged_type_value_variable(variable: Symbol) -> bool {
 /// typescript-eslint's `isTypeOnlyReference`: a use of `variable` that does not need its value at
 /// run time.
 pub fn is_type_only_reference(variable: Symbol, reference: Reference) -> bool {
-    if reference_contains_type_query(reference) || reference_contains_type_predicate(reference) {
-        return true;
-    }
-    !reference.is_value()
-        && variable
-            .declarations()
-            .any(is_variable_declarator_definition)
+    let is_in_type = match reference.expr().is_some() {
+        true => reference_contains_type_query(reference),
+        false => reference_contains_type_predicate(reference),
+    };
+    is_in_type
+        || !reference.is_value()
+            && variable
+                .declarations()
+                .any(is_variable_declarator_definition)
 }

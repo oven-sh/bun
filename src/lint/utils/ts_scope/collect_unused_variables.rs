@@ -10,21 +10,22 @@
 
 use super::estree::is_expression_statement;
 use super::{
-    is_type_definition, is_type_import, is_type_only_reference, is_variable_declarator_definition,
-    is_variable_definition,
+    is_type_definition, is_type_import, is_type_only_reference, is_variable_definition,
 };
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Handle, Key, KeyKind, Module,
-    ModuleName, Name, Node, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
-    TypeTag, UnOp,
+    ModuleName, Name, Node, Param, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
+    UnOp, VarDecl,
 };
-use crate::semantic::{Declaration, Reference, Scope, ScopeKind, SymFlags, Symbol};
+use crate::semantic::{Declaration, Reference, ReferenceFlags, Scope, ScopeKind, Symbol};
 use crate::span::Span;
 use crate::tokens::TokenKind;
 use crate::utils::directives::match_directives_pattern;
 use crate::utils::estree_compat::is_assignment_target;
 use crate::utils::text::{code_points, is_js_whitespace, trim};
 use bun_core::strings;
+use bun_sema::atom::known;
+use bun_sema::bind::PatParent;
 use bun_sema::hir;
 use smallvec::SmallVec;
 
@@ -38,7 +39,7 @@ pub struct SymbolSet {
 
 impl SymbolSet {
     pub fn insert(&mut self, symbol: Symbol) {
-        let at = symbol.id().idx();
+        let at = symbol.key();
         if self.words.len() <= at / 64 {
             self.words.resize(at / 64 + 1, 0);
         }
@@ -47,8 +48,9 @@ impl SymbolSet {
         }
     }
 
+    #[inline]
     pub fn contains(&self, symbol: Symbol) -> bool {
-        let at = symbol.id().idx();
+        let at = symbol.key();
         self.words
             .get(at / 64)
             .is_some_and(|word| word & (1 << (at % 64)) != 0)
@@ -153,11 +155,11 @@ pub struct Variable<'a> {
     class: Option<Class<'a>>,
 }
 
-/// Whether what is written at `span` is in the scope of `class`: after its name.
-fn is_in_class_scope(class: Class, span: Span) -> bool {
+/// Whether the name that is written at `start` is in the scope of `class`: after its name.
+fn is_in_class_scope(class: Class, start: u32) -> bool {
     let whole = class.span();
     let after_name = class.name().map_or(whole.start, |name| name.span().end);
-    after_name <= span.start && span.end <= whole.end
+    after_name <= start && start < whole.end
 }
 
 /// The `A` or the `B` of `namespace A.B {}`, which declare nothing in scope-manager.
@@ -170,31 +172,140 @@ fn is_part_of_qualified_name(module: Module) -> bool {
 }
 
 /// Whether scope-manager has a definition for `declaration` in the scope around it.
+#[inline]
 fn is_definition(declaration: Declaration) -> bool {
-    match declaration {
-        Declaration::Fn(func) => func.kind() == FnKind::Decl && func.name().is_some(),
-        Declaration::Class(class) => {
-            class.name().is_some() && matches!(class.owner(), Node::Stmt(_))
-        }
-        Declaration::Module(module) => {
-            matches!(module.name(), ModuleName::Ident(_)) && !is_part_of_qualified_name(module)
-        }
-        Declaration::Param(pat) => !matches!(
-            pat.parent(),
-            Node::Param(param) if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature)
-        ),
-        Declaration::Other => false,
-        _ => true,
-    }
+    Facts::of_declaration(declaration) & Facts::DEFINED != 0
 }
 
 /// Whether one of the declarations of `symbol` is a class. The flags do not tell if the class is in
 /// conflict with an earlier declaration.
 fn is_class(symbol: Symbol) -> bool {
-    symbol.flags().contains(SymFlags::CLASS)
-        || symbol
-            .declarations()
-            .any(|it| matches!(it, Declaration::Class(_)))
+    symbol
+        .declarations()
+        .any(|it| matches!(it, Declaration::Class(_)))
+}
+
+/// The `VarDecl` that `pat`, which a `var`, `let`, `const`, `using` or `catch` binds, is part of.
+fn declarator_of(pat: Pat<'_>) -> Option<VarDecl<'_>> {
+    let file = pat.file();
+    let mut at = pat.id();
+    loop {
+        match *file.bound.pat_parent.get(at.idx())? {
+            PatParent::Var(declarator) => return Some(VarDecl::new(file, declarator)),
+            PatParent::Prop(outer, _) | PatParent::Elem(outer, _) if outer != at => at = outer,
+            _ => return None,
+        }
+    }
+}
+
+/// What the declarations of a variable say about it, from one pass over them.
+#[derive(Copy, Clone)]
+struct Facts(u16);
+
+impl Facts {
+    /// [`Variable::defs`] is not empty.
+    const DEFINED: u16 = 1 << 0;
+    /// A declaration is a class: the references are those of two variables.
+    const CLASS: u16 = 1 << 1;
+    /// `UnusedVarsVisitor` marks it because of how it is declared: an enum member, the key of a mapped
+    /// type, a parameter property, a `this` parameter.
+    const MARKED: u16 = 1 << 2;
+    /// [`self_reference_range`] can be something for a definition.
+    const HAS_RANGES: u16 = 1 << 3;
+    /// [`is_type_import`] does not hold for a definition.
+    const NOT_IMPORTED_AS_TYPE: u16 = 1 << 4;
+    /// `variable.isTypeVariable`
+    const TYPE: u16 = 1 << 5;
+    /// `variable.isValueVariable`
+    const VALUE: u16 = 1 << 6;
+    /// A definition is of a kind that can start with `export`.
+    const EXPORTABLE: u16 = 1 << 7;
+    /// Of the variable that the name of a class is inside it. Its only definition is the class, also
+    /// if that is an expression.
+    const IN_CLASS_SCOPE: u16 = Self::DEFINED
+        | Self::CLASS
+        | Self::NOT_IMPORTED_AS_TYPE
+        | Self::TYPE
+        | Self::VALUE
+        | Self::EXPORTABLE;
+
+    #[inline]
+    fn has(self, fact: u16) -> bool {
+        self.0 & fact != 0
+    }
+
+    /// 0 for a declaration that scope-manager has no definition for in the scope around it.
+    fn of_declaration(declaration: Declaration) -> u16 {
+        let declared = Self::DEFINED | Self::NOT_IMPORTED_AS_TYPE;
+        let both = Self::TYPE | Self::VALUE;
+        match declaration {
+            Declaration::Var(_) => declared | Self::VALUE | Self::HAS_RANGES | Self::EXPORTABLE,
+            Declaration::Param(pat) => {
+                let file = pat.file();
+                let param = match file.bound.pat_parent.get(pat.id().idx()) {
+                    Some(&PatParent::Param(param)) => Some(Param::new(file, param)),
+                    _ => None,
+                };
+                let is_this = pat.as_ident().is_some_and(|name| name.atom() == known::this);
+                match param.and_then(Param::func).map(Func::kind) {
+                    Some(FnKind::IndexSignature) => 0,
+                    _ if is_this || param.is_some_and(Param::is_parameter_property) => {
+                        declared | Self::VALUE | Self::MARKED
+                    }
+                    _ => declared | Self::VALUE,
+                }
+            }
+            Declaration::Fn(func) => match func.kind() == FnKind::Decl && func.name().is_some() {
+                true => declared | Self::VALUE | Self::HAS_RANGES | Self::EXPORTABLE,
+                false => 0,
+            },
+            Declaration::Class(class) => {
+                match class.name().is_some() && matches!(class.owner(), Node::Stmt(_)) {
+                    true => declared | Self::CLASS | both | Self::EXPORTABLE,
+                    false => Self::CLASS,
+                }
+            }
+            Declaration::Interface(_) | Declaration::TypeAlias(_) => {
+                declared | Self::TYPE | Self::HAS_RANGES | Self::EXPORTABLE
+            }
+            Declaration::Enum(_) => declared | both | Self::HAS_RANGES | Self::EXPORTABLE,
+            Declaration::Module(module) => {
+                match matches!(module.name(), ModuleName::Ident(_))
+                    && !is_part_of_qualified_name(module)
+                {
+                    true => declared | both | Self::HAS_RANGES | Self::EXPORTABLE,
+                    false => 0,
+                }
+            }
+            Declaration::EnumMember(_) => declared | both | Self::MARKED,
+            // Few files have a mapped type, and those that do have few.
+            Declaration::TypeParam(param) => {
+                match (param.file().hir.mapped.iter()).any(|it| it.param == param.id()) {
+                    true => declared | Self::TYPE | Self::MARKED,
+                    false => declared | Self::TYPE,
+                }
+            }
+            Declaration::ImportDefault(_)
+            | Declaration::ImportNamespace(_)
+            | Declaration::ImportSpec(_) => match is_type_import(declaration) {
+                true => Self::DEFINED | both,
+                false => declared | both,
+            },
+            Declaration::ImportEquals(_) => match is_type_import(declaration) {
+                true => Self::DEFINED | both | Self::EXPORTABLE,
+                false => declared | both | Self::EXPORTABLE,
+            },
+            Declaration::Other => 0,
+        }
+    }
+
+    fn of(variable: Variable) -> Facts {
+        if variable.class.is_some() {
+            return Facts(Self::IN_CLASS_SCOPE);
+        }
+        let declarations = variable.symbol.declarations();
+        Facts(declarations.fold(0, |facts, it| facts | Self::of_declaration(it)))
+    }
 }
 
 impl<'a> Variable<'a> {
@@ -248,14 +359,15 @@ impl<'a> Variable<'a> {
         let is_class = is_class(self.symbol);
         self.symbol
             .references()
-            .filter(move |it| !is_class || self.has_reference_at(it.span()))
+            .filter(move |it| !is_class || self.has_reference_at(it.ident().start()))
     }
 
-    fn has_reference_at(self, span: Span) -> bool {
+    /// Whether a reference to the symbol that is written at `start` is one to this variable.
+    fn has_reference_at(self, start: u32) -> bool {
         match self.class {
-            Some(class) => is_in_class_scope(class, span),
+            Some(class) => is_in_class_scope(class, start),
             None => !self.symbol.declarations().any(
-                |it| matches!(it, Declaration::Class(class) if is_in_class_scope(class, span)),
+                |it| matches!(it, Declaration::Class(class) if is_in_class_scope(class, start)),
             ),
         }
     }
@@ -289,44 +401,35 @@ fn head_of_loop_that_only_returns(statement: Stmt<'_>) -> Option<Stmt<'_>> {
         .then_some(left)
 }
 
-/// Whether `pat` is the first name that the head of such a loop declares.
-fn is_declared_by_loop_that_only_returns<'a>(pat: Pat<'a>, declaration: Declaration<'a>) -> bool {
-    let Some(Node::VarDecl(declarator)) = declaration.node() else {
-        return false;
-    };
-    let Node::Stmt(head) = declarator.parent() else {
-        return false;
-    };
-    if head
-        .parent()
-        .as_stmt()
-        .and_then(head_of_loop_that_only_returns)
-        != Some(head)
-    {
-        return false;
-    }
-    let mut first = None;
-    declarator.pat().for_each_binding(&mut |binding| {
-        first.get_or_insert(binding);
-    });
-    first == Some(pat)
-}
-
-/// What `UnusedVarsVisitor` marks because of how it is declared: enum members, the key of a mapped
-/// type, parameter properties, `this` parameters, and the variable of a loop that only returns.
-fn is_declaration_marked_as_used(declaration: Declaration) -> bool {
-    match declaration {
-        Declaration::EnumMember(_) => true,
-        Declaration::TypeParam(param) => {
-            matches!(param.parent(), Node::Type(ty) if ty.tag() == TypeTag::Mapped)
+/// Upstream's `visitForInForOf`: the first name that the head of such a loop declares, or the
+/// variable that it assigns to.
+fn variables_of_loops_that_only_return<'a>(file: &'a File<'a>) -> SymbolSet {
+    let mut variables = SymbolSet::default();
+    let loops = (file.stmts_of_kind(StmtTag::ForIn)).chain(file.stmts_of_kind(StmtTag::ForOf));
+    for head in loops.filter_map(head_of_loop_that_only_returns) {
+        let symbol = match head.kind() {
+            StmtKind::Var(declarators) => {
+                let mut first = None;
+                if let Some(declarator) = declarators.first() {
+                    declarator.pat().for_each_binding(&mut |binding| {
+                        first.get_or_insert(binding);
+                    });
+                }
+                first.and_then(Pat::symbol)
+            }
+            StmtKind::Expr(target) => target
+                .reference()
+                .filter(|it| is_assigned_by_loop_that_only_returns(*it))
+                .and_then(|it| Some((it.symbol()?, it.ident().start())))
+                .filter(|&(symbol, start)| Variable::new(symbol).has_reference_at(start))
+                .map(|it| it.0),
+            _ => None,
+        };
+        if let Some(symbol) = symbol {
+            variables.insert(symbol);
         }
-        Declaration::Param(pat) => {
-            matches!(pat.parent(), Node::Param(param) if param.is_parameter_property())
-                || pat.as_ident().is_some_and(|name| name.is("this"))
-        }
-        Declaration::Var(pat) => is_declared_by_loop_that_only_returns(pat, declaration),
-        _ => false,
     }
+    variables
 }
 
 /// The `x` of `for (x in y) return;`
@@ -344,15 +447,39 @@ fn is_assigned_by_loop_that_only_returns(reference: Reference) -> bool {
     matches!(head.map(Stmt::kind), Some(StmtKind::Expr(target)) if target == id)
 }
 
-fn is_marked_as_used(variable: Variable) -> bool {
-    variable.defs().any(is_declaration_marked_as_used)
-        || variable
-            .references()
-            .any(is_assigned_by_loop_that_only_returns)
+/// [`UsedMarks`] that other rules see only at the end: as long as nothing is marked for them,
+/// [`Symbol::is_marked_used`] costs nothing.
+struct Marker<'a> {
+    marks: UsedMarks,
+    unshared: Vec<Symbol<'a>>,
+}
+
+impl<'a> Marker<'a> {
+    #[inline]
+    fn contains(&self, symbol: Symbol<'a>) -> bool {
+        self.marks.contains(symbol)
+    }
+
+    #[inline]
+    fn mark(&mut self, symbol: Symbol<'a>) {
+        self.marks.marked.insert(symbol);
+        self.unshared.push(symbol);
+    }
+
+    fn mark_variable_as_used(&mut self, name: &str, node: Node<'a>) {
+        if let Some(symbol) = node.scope().resolve(name) {
+            self.mark(symbol);
+        }
+    }
+
+    fn share(self) -> UsedMarks {
+        self.unshared.into_iter().for_each(Symbol::mark_used);
+        self.marks
+    }
 }
 
 /// `declare global {}` marks what `global` means around it.
-fn mark_global_augmentations<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
+fn mark_global_augmentations<'a>(file: &'a File<'a>, marks: &mut Marker<'a>) {
     for id in 0..file.hir.modules.len() {
         let module = Module::new(file, hir::ModuleId(id as u32));
         if matches!(module.name(), ModuleName::Global) {
@@ -371,16 +498,17 @@ fn has_marked_parameters(func: Func) -> bool {
     }
 }
 
-fn mark_identifier<'a>(name: Name<'a>, holder: Node<'a>, marks: &mut UsedMarks) {
+fn mark_identifier<'a>(name: Name<'a>, holder: Node<'a>, marks: &mut Marker<'a>) {
     // Inside a class its name is the other variable, which counts as used anyway.
     if let Some(symbol) = holder.scope().resolve_name(name)
-        && (!is_class(symbol) || Variable::new(symbol).has_reference_at(holder.span()))
+        && !marks.contains(symbol)
+        && Variable::new(symbol).has_reference_at(holder.span().start)
     {
         marks.mark(symbol);
     }
 }
 
-fn mark_key<'a>(key: Option<Key<'a>>, holder: Node<'a>, marks: &mut UsedMarks) {
+fn mark_key<'a>(key: Option<Key<'a>>, holder: Node<'a>, marks: &mut Marker<'a>) {
     if let Some(KeyKind::Ident(name)) = key.map(Key::kind) {
         mark_identifier(name, holder, marks);
     }
@@ -388,7 +516,7 @@ fn mark_key<'a>(key: Option<Key<'a>>, holder: Node<'a>, marks: &mut UsedMarks) {
 
 /// Marks what the name of every `Identifier` of ESTree in `node` means where it is written, whether
 /// it refers to that or not: the `b` of `a.b`, a key, a label.
-fn mark_identifiers<'a>(node: Node<'a>, marks: &mut UsedMarks) {
+fn mark_identifiers<'a>(node: Node<'a>, marks: &mut Marker<'a>) {
     match node {
         Node::Expr(e) => match e.kind() {
             ExprKind::Ident(name) => mark_identifier(name, node, marks),
@@ -476,7 +604,7 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut UsedMarks) {
 /// Upstream's `visitFunctionTypeSignature` and `visitSetter`. They mean to mark the parameters, and
 /// visit each with a `PatternVisitor` that, with the option `visitChildrenEvenIfSelectorExists` of
 /// the visitor around it, goes on into type annotations and default values.
-fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
+fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut Marker<'a>) {
     for id in 0..file.hir.fns.len() {
         let func = Func::new(file, hir::FnId(id as u32));
         if has_marked_parameters(func)
@@ -496,7 +624,10 @@ fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut UsedMarks)
 /// `ExportDefaultDeclaration` around it.
 fn exported_statement(declaration: Declaration<'_>) -> Option<Stmt<'_>> {
     let statement = match declaration {
-        Declaration::Var(_) => declaration.node()?.parent(),
+        Declaration::Var(pat) => {
+            let statement = *pat.file().bound.var_stmt.get(declarator_of(pat)?.id().idx())?;
+            Node::Stmt(Stmt::some(pat.file(), statement)?)
+        }
         Declaration::Fn(func) => func.owner(),
         Declaration::Class(class) => class.owner(),
         Declaration::Interface(_)
@@ -513,20 +644,32 @@ fn exported_statement(declaration: Declaration<'_>) -> Option<Stmt<'_>> {
 
 /// typescript-eslint's `isMergedTypeDeclaration`: an interface or a type alias whose name is also
 /// that of a value.
-fn is_merged_type_declaration(variable: Variable, declaration: Declaration) -> bool {
+fn is_merged_type_declaration(facts: Facts, declaration: Declaration) -> bool {
     matches!(
         declaration,
         Declaration::Interface(_) | Declaration::TypeAlias(_)
-    ) && variable.is_type_variable()
-        && variable.is_value_variable()
+    ) && facts.has(Facts::TYPE)
+        && facts.has(Facts::VALUE)
+}
+
+fn is_exported_with(variable: Variable, facts: Facts) -> bool {
+    if !facts.has(Facts::EXPORTABLE) {
+        return false;
+    }
+    match variable.class {
+        Some(class) => exported_statement(Declaration::Class(class)).is_some(),
+        None => variable.symbol.declarations().any(|it| {
+            exported_statement(it).is_some()
+                && is_definition(it)
+                && !is_merged_type_declaration(facts, it)
+        }),
+    }
 }
 
 /// typescript-eslint's `isExported` of `collectUnusedVariables`: one of the declarations starts
 /// with `export`. `export { a }` is a reference instead.
 pub fn is_exported(variable: Variable) -> bool {
-    variable
-        .defs()
-        .any(|it| exported_statement(it).is_some() && !is_merged_type_declaration(variable, it))
+    is_exported_with(variable, Facts::of(variable))
 }
 
 /// typescript-eslint's `isMergeableExported` (`isMergableExported`): the first declaration that is
@@ -550,7 +693,7 @@ pub fn is_mergeable_exported(variable: Variable) -> bool {
     variable
         .defs()
         .find(decides)
-        .is_some_and(|it| !is_merged_type_declaration(variable, it))
+        .is_some_and(|it| !is_merged_type_declaration(Facts::of(variable), it))
 }
 
 // ───────────────────────────── uses ─────────────────────────────
@@ -605,7 +748,7 @@ pub fn get_rhs_node<'a>(
     prev_rhs_node: Option<Expr<'a>>,
 ) -> Option<Expr<'a>> {
     if let Some(previous) = prev_rhs_node
-        && previous.span().contains(reference.span())
+        && previous.span().contains_offset(reference.ident().start())
     {
         return prev_rhs_node;
     }
@@ -698,26 +841,54 @@ pub fn is_read_for_itself<'a>(reference: Reference<'a>, rhs_node: Option<Expr<'a
     });
     is_self_update
         || rhs_node.is_some_and(|rhs| {
-            rhs.span().contains(reference.span())
+            rhs.span().contains_offset(reference.ident().start())
                 && !is_inside_of_storable_function(reference.node(), rhs)
         })
 }
 
 /// Whether one of `references`, those to one variable in source order, is a read that is not for
 /// the variable itself and that `counts`.
+#[inline]
 fn has_use<'a>(
     references: impl Iterator<Item = Reference<'a>>,
     counts: impl Fn(Reference<'a>) -> bool,
 ) -> bool {
     let mut rhs_node = None;
     for reference in references {
-        let is_for_itself = is_read_for_itself(reference, rhs_node);
-        rhs_node = get_rhs_node(reference, rhs_node);
-        if reference.is_read() && !is_for_itself && counts(reference) {
+        let flags = reference.flags();
+        // Only what is written to is on the left of an assignment or the operand of an update, and
+        // without an assignment before there is no right side to be in.
+        if flags.contains(ReferenceFlags::WRITE) || rhs_node.is_some() {
+            let is_for_itself = is_read_for_itself(reference, rhs_node);
+            rhs_node = get_rhs_node(reference, rhs_node);
+            if is_for_itself {
+                continue;
+            }
+        }
+        if flags.contains(ReferenceFlags::READ) && counts(reference) {
             return true;
         }
     }
     false
+}
+
+/// The range in which a reference to what `definition` defines is one from its own declaration: a
+/// function declaration, the function that a variable is initialized with, an interface, a type
+/// alias, a namespace, an enum.
+fn self_reference_range(definition: Declaration) -> Option<Span> {
+    match definition {
+        Declaration::Fn(func) => Some(func.span()),
+        // The parameter of a `catch` has no initializer.
+        Declaration::Var(pat) => {
+            let init = declarator_of(pat)?.init()?;
+            (init.tag() == ExprTag::Fn).then(|| init.span())
+        }
+        Declaration::Interface(_)
+        | Declaration::TypeAlias(_)
+        | Declaration::Module(_)
+        | Declaration::Enum(_) => definition.node().map(Node::span),
+        _ => None,
+    }
 }
 
 /// typescript-eslint's `isSelfReference` and `isInsideOneOf`, for what `isUsedVariable` passes to
@@ -725,39 +896,33 @@ fn has_use<'a>(
 /// its function declarations, the functions that it is initialized with, its interfaces, type
 /// aliases, namespaces and enums.
 pub fn get_self_reference_ranges(variable: Variable) -> SmallVec<[Span; 2]> {
-    let mut ranges = SmallVec::new();
-    for declaration in variable.defs() {
-        match declaration {
-            Declaration::Fn(func) => ranges.push(func.span()),
-            Declaration::Var(_) if is_variable_declarator_definition(declaration) => {
-                if let Some(Node::VarDecl(declarator)) = declaration.node()
-                    && let Some(init) = declarator.init()
-                    && init.tag() == ExprTag::Fn
-                {
-                    ranges.push(init.span());
-                }
-            }
-            Declaration::Interface(_)
-            | Declaration::TypeAlias(_)
-            | Declaration::Module(_)
-            | Declaration::Enum(_) => ranges.extend(declaration.node().map(Node::span)),
-            _ => {}
-        }
-    }
-    ranges
+    variable.defs().filter_map(self_reference_range).collect()
+}
+
+fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
+    let is_split = facts.has(Facts::CLASS);
+    let references = (variable.symbol.references())
+        .filter(|it| !is_split || variable.has_reference_at(it.ident().start()));
+    has_use(references, |reference| {
+        let is_from_outside = || {
+            let start = reference.ident().start();
+            !variable.symbol.declarations().any(|it| {
+                self_reference_range(it).is_some_and(|range| range.contains_offset(start))
+                    && is_definition(it)
+            })
+        };
+        (!facts.has(Facts::NOT_IMPORTED_AS_TYPE)
+            || !is_type_only_reference(variable.symbol, reference))
+            && (!facts.has(Facts::HAS_RANGES) || is_from_outside())
+            // It is written where the name is declared, and is in the scope around that.
+            || reference.is_jsx_pragma()
+    })
 }
 
 /// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it,
 /// from outside of its own declaration, and for more than its type unless it is a type.
 pub fn is_used_variable(variable: Variable) -> bool {
-    let own = get_self_reference_ranges(variable);
-    let is_imported_as_type = variable.defs().all(is_type_import);
-    has_use(variable.references(), |reference| {
-        // It is written where the name is declared, and is in the scope around that.
-        reference.is_jsx_pragma()
-            || (is_imported_as_type || !is_type_only_reference(variable.symbol(), reference))
-                && !own.iter().any(|range| range.contains(reference.span()))
-    })
+    is_used_variable_with(variable, Facts::of(variable))
 }
 
 /// typescript-eslint's `isUsedVariable` for a variable of the global scope that the file does not
@@ -817,16 +982,21 @@ impl<'a> VariableAnalysis<'a> {
 /// declares at its top level under a name that a library of TypeScript defines. And the globals
 /// that the file does not declare, which are no [`Symbol`]s: see [`is_used_global_variable`].
 pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> VariableAnalysis<'a> {
-    let mut analysis = VariableAnalysis {
-        eslint_used,
-        ..VariableAnalysis::default()
+    let mut analysis = VariableAnalysis::default();
+    analysis.used_variables.reserve(file.symbols().size_hint().1.unwrap_or(0));
+    let mut marks = Marker {
+        marks: eslint_used,
+        unshared: Vec::new(),
     };
-    analysis.eslint_used.mark_exported_variables(file);
-    mark_global_augmentations(file, &mut analysis.eslint_used);
-    mark_identifiers_in_parameters(file, &mut analysis.eslint_used);
+    marks.marks.mark_exported_variables(file);
+    mark_global_augmentations(file, &mut marks);
+    mark_identifiers_in_parameters(file, &mut marks);
+    let marked_by_loops = variables_of_loops_that_only_return(file);
     let declares_globals = file.scope().symbols().len() != 0;
     for symbol in file.symbols() {
-        if is_class(symbol) {
+        let variable = Variable::new(symbol);
+        let facts = Facts::of(variable);
+        if facts.has(Facts::CLASS) {
             let classes = symbol.declarations().filter_map(|it| match it {
                 Declaration::Class(class) if class.name().is_some() => Some(Variable {
                     symbol,
@@ -836,8 +1006,7 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
             });
             analysis.used_variables.extend(classes);
         }
-        let variable = Variable::new(symbol);
-        if variable.defs().next().is_none() {
+        if !facts.has(Facts::DEFINED) {
             continue;
         }
         // In a script, `var Array` is one more definition of an `ImplicitLibVariable`.
@@ -849,14 +1018,18 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
         {
             continue;
         }
-        if !analysis.eslint_used.contains(symbol)
-            && (symbol.is_marked_used() || is_marked_as_used(variable))
+        let mut is_marked = marks.contains(symbol);
+        if !is_marked
+            && (facts.has(Facts::MARKED)
+                || marked_by_loops.contains(symbol)
+                || symbol.is_marked_used())
         {
-            analysis.eslint_used.mark(symbol);
+            marks.mark(symbol);
+            is_marked = true;
         }
-        if analysis.eslint_used.contains(symbol)
-            || is_exported(variable)
-            || is_used_variable(variable)
+        if is_marked
+            || is_used_variable_with(variable, facts)
+            || is_exported_with(variable, facts)
         {
             analysis.used_variables.push(variable);
         } else {
@@ -864,6 +1037,7 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
             analysis.unused.insert(symbol);
         }
     }
+    analysis.eslint_used = marks.share();
     analysis
 }
 

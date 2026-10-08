@@ -1,7 +1,7 @@
 //! The document of a Markdown text: Prettier's `src/language-markdown/print/*.js`.
 
 use super::ast::{Align, Kind, NONE, Node, NodeId, ReferenceType, Str, Tree};
-use super::preprocess::{self, Token, TokenKind, is_indented_code, is_punctuation_unit, ordered_item_info};
+use super::preprocess::{self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit, ordered_item_info};
 use super::strings::{first_char, is_in, last_char};
 use super::unicode_tables::SPACE_SEPARATOR;
 use crate::FormatOptions;
@@ -28,6 +28,7 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) embed: &'e mut dyn FnMut(&Embedded<'_>) -> Option<Vec<u8>>,
     /// The document is for a template in JavaScript: no backticks.
     pub(crate) is_in_template: bool,
+    pub(crate) is_mdx: bool,
     /// How many columns what is being written is indented by.
     pub(crate) indentation: usize,
     /// What is being written is in a reference whose label is its text, which has to stay as it is.
@@ -281,9 +282,19 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `isPrettierIgnore`
     fn prettier_ignore(&self, id: NodeId) -> Option<Ignore> {
-        let node = self.node(id).filter(|node| node.kind == Kind::Html)?;
-        let comment = self.str(node.value).strip_prefix(b"<!--")?.strip_suffix(b"-->")?;
-        match crate::range::trim_end(crate::range::trim_start(comment)) {
+        let node = self.node(id)?;
+        let comment = match node.kind {
+            Kind::Html => {
+                let comment = self.str(node.value).strip_prefix(b"<!--")?.strip_suffix(b"-->")?;
+                crate::range::trim_end(crate::range::trim_start(comment))
+            }
+            Kind::EsComment => self.str(node.value),
+            Kind::Paragraph if self.is_mdx && node.first_child == node.last_child => {
+                self.str(self.node(node.first_child).filter(|child| child.kind == Kind::EsComment)?.value)
+            }
+            _ => return None,
+        };
+        match comment {
             b"prettier-ignore" => Some(Ignore::Next),
             b"prettier-ignore-start" => Some(Ignore::Start),
             b"prettier-ignore-end" => Some(Ignore::End),
@@ -319,11 +330,28 @@ impl<'a> Printer<'a, '_> {
         let Some(node) = self.node(id).filter(|node| node.kind == Kind::ListItem) else {
             return false;
         };
+        if self.is_mdx {
+            return self.is_loose_list_item_legacy(node);
+        }
         node.spread
             || (self.kind(node.parent) == Some(Kind::List)
                 && self
                     .node(node.next)
                     .is_some_and(|next| next.kind == Kind::ListItem && self.end_line(node) + 1 < self.start_line(next)))
+    }
+
+    /// Prettier's `isLooseListItemLegacy`, with what remark-parse 8 says about an item: it is spread out if there
+    /// is an empty line in it that something follows, and it ends behind the empty lines before the next item.
+    fn is_loose_list_item_legacy(&self, item: &Node) -> bool {
+        let source = self.source(item);
+        let mut from = 0;
+        while let Some(at) = bun_core::strings::index_of(&source[from..], b"\n\n") {
+            from += at + 2;
+            if !crate::range::trim_start(&source[from..]).is_empty() {
+                return true;
+            }
+        }
+        self.node(item.next).is_some_and(|next| self.end_line(item) + 1 < self.start_line(next))
     }
 
     fn is_inline(kind: Kind) -> bool {
@@ -332,6 +360,7 @@ impl<'a> Printer<'a, '_> {
             Kind::LiquidNode
                 | Kind::InlineCode
                 | Kind::Emphasis
+                | Kind::EsComment
                 | Kind::Strong
                 | Kind::Delete
                 | Kind::WikiLink
@@ -361,7 +390,7 @@ impl<'a> Printer<'a, '_> {
         let (Some(previous), Some(parent)) = (self.node(node.previous), self.node(node.parent)) else {
             return false;
         };
-        if self.is_setext_heading(node) && self.start_line(node) < self.end_line(previous) {
+        if !self.is_mdx && self.is_setext_heading(node) && self.start_line(node) < self.end_line(previous) {
             return false;
         }
         let follows_directly = self.end_line(previous) + 1 == self.start_line(node);
@@ -377,8 +406,13 @@ impl<'a> Printer<'a, '_> {
         let is_in_tight_list_item =
             parent.kind == Kind::ListItem && (node.kind == Kind::List || !self.is_loose_list_item(node.parent));
         let is_previous_ignore = self.prettier_ignore(node.previous) == Some(Ignore::Next);
-        let is_html_after_html_or_paragraph =
-            node.kind == Kind::Html && matches!(previous.kind, Kind::Html | Kind::Paragraph) && follows_directly;
+        let is_html_after_html_or_paragraph = node.kind == Kind::Html
+            && follows_directly
+            && match previous.kind {
+                Kind::Html => true,
+                Kind::Paragraph => !self.is_mdx || parent.kind == Kind::ListItem,
+                _ => false,
+            };
         let is_liquid_without_blank_line =
             (node.kind == Kind::LiquidNode || previous.kind == Kind::LiquidNode) && follows_directly;
         !(is_sibling_node
@@ -439,6 +473,7 @@ impl<'a> Printer<'a, '_> {
     fn print_ignored(&self, id: NodeId, node: &Node) -> Doc<'a> {
         let mut source = self.source(node);
         if node.kind == Kind::List
+            && !self.is_mdx
             && self.options.prose_wrap != ProseWrap::Always
             && self.has_ancestor(id, |it| it.kind == Kind::Blockquote)
         {
@@ -457,7 +492,7 @@ impl<'a> Printer<'a, '_> {
     fn is_on_single_line(&self, id: NodeId) -> bool {
         self.has_ancestor(id, |node| {
             matches!(node.kind, Kind::TableCell | Kind::Link | Kind::WikiLink)
-                || (node.kind == Kind::Heading && !self.is_setext_heading(node))
+                || (node.kind == Kind::Heading && (self.is_mdx || !self.is_setext_heading(node)))
         })
     }
 
@@ -631,7 +666,8 @@ impl<'a> Printer<'a, '_> {
             let is_fake_setext_line = !word.is_empty()
                 && is_whole_line
                 && (word.iter().all(|&byte| byte == b'=') || word.iter().all(|&byte| byte == b'-'))
-                && !node.is_aligned;
+                && !node.is_aligned
+                && !self.is_mdx;
             if is_fake_setext_line {
                 parts.content(Doc::from("\\"));
             }
@@ -674,6 +710,9 @@ impl<'a> Printer<'a, '_> {
     /// Prettier's `printWord`. `emphasis`: the emphasis or strong emphasis that it is in.
     fn print_word(&self, sentence: &Node, tokens: &[Token], index: usize, emphasis: Option<NodeId>) -> Doc<'a> {
         let text = self.str(tokens[index].value);
+        if self.is_mdx {
+            return self.print_word_legacy(sentence, text);
+        }
         let is_newline = |token: Option<&Token>| token.is_some_and(|it| it.kind == TokenKind::Newline);
         let previous = index.checked_sub(1).and_then(|it| tokens.get(it));
         let next = tokens.get(index + 1);
@@ -714,6 +753,91 @@ impl<'a> Printer<'a, '_> {
         };
         let escaped = escape_delimiter_runs(&units, unit_of(previous, true), unit_of(next, false));
         Doc::from(String::from_utf16_lossy(&escaped).into_bytes())
+    }
+
+    /// Prettier's `printWordLegacy`: every `*` is escaped, and `_` at the ends of a word and next to punctuation.
+    fn print_word_legacy(&self, sentence: &Node, text: &'a [u8]) -> Doc<'a> {
+        if bun_core::strings::index_of_any(text, b"*_").is_none() {
+            return Doc::from(text);
+        }
+        let mut chars: Vec<char> = Vec::with_capacity(text.len() + 4);
+        for c in bstr::ByteSlice::chars(text) {
+            if c == '*' {
+                chars.push('\\');
+            }
+            chars.push(c);
+        }
+        // `(^|punctuation)(_+)|(_+)(punctuation|$)`
+        let mut escaped = String::with_capacity(chars.len() + 4);
+        let run_at = |from: usize| chars[from.min(chars.len())..].iter().take_while(|&&c| c == '_').count();
+        let push_escaped = |escaped: &mut String, c: char| {
+            if c == '_' {
+                escaped.push('\\');
+            }
+            escaped.push(c);
+        };
+        let mut index = 0;
+        while let Some(&c) = chars.get(index) {
+            let len = if index == 0 && c == '_' {
+                run_at(0)
+            } else if is_punctuation(c) && run_at(index + 1) > 0 {
+                1 + run_at(index + 1)
+            } else if c == '_' {
+                let run = run_at(index);
+                match chars.get(index + run) {
+                    None => run,
+                    Some(&next) if is_punctuation(next) => run + 1,
+                    // The last of them is punctuation itself.
+                    Some(_) if run > 1 => run,
+                    Some(_) => 0,
+                }
+            } else {
+                0
+            };
+            match len {
+                0 => escaped.push(c),
+                _ => chars[index..index + len].iter().for_each(|&c| push_escaped(&mut escaped, c)),
+            }
+            index += len.max(1);
+        }
+
+        // Behind an autolink, a backslash would become a part of it.
+        let index_of = |node: &Node| {
+            let mut index = 0usize;
+            let mut previous = node.previous;
+            while let Some(sibling) = self.node(previous) {
+                index += 1;
+                previous = sibling.previous;
+            }
+            index
+        };
+        let follows_autolink = |node: Option<&Node>| {
+            node.is_some_and(|node| {
+                let mut children = std::iter::successors(Some(node.first_child), |&child| self.node(child).map(|it| it.next));
+                index_of(node).checked_sub(1).and_then(|at| children.nth(at)).is_some_and(|child| self.is_autolink(child))
+            })
+        };
+        let parent = self.node(sentence.parent);
+        if sentence.previous == NONE
+            && (follows_autolink(parent)
+                || parent.is_some_and(|parent| {
+                    parent.kind == Kind::Emphasis && parent.previous == NONE && follows_autolink(self.node(parent.parent))
+                }))
+        {
+            let bytes = escaped.as_bytes();
+            let mut prefix = 0;
+            loop {
+                let marker = prefix + usize::from(bytes.get(prefix) == Some(&b'\\'));
+                if !matches!(bytes.get(marker), Some(b'*' | b'_')) {
+                    break;
+                }
+                prefix = marker + 1;
+            }
+            let rest = escaped.split_off(prefix);
+            escaped.retain(|c| c != '\\');
+            escaped.push_str(&rest);
+        }
+        Doc::from(escaped.into_bytes())
     }
 
     /// What is in a reference whose label is its text: as it is, but for where its lines break.
@@ -761,8 +885,8 @@ impl<'a> Printer<'a, '_> {
     // ───────────────────────────── strings ─────────────────────────────
 
     /// Prettier's `printUrl`. `is_in_parentheses`: a `)` cannot be in it as it is.
-    fn print_url(url: &'a [u8], is_in_parentheses: bool) -> Doc<'a> {
-        if url.is_empty() {
+    fn print_url(&self, url: &'a [u8], is_in_parentheses: bool) -> Doc<'a> {
+        if url.is_empty() && !self.is_mdx {
             return Doc::from("<>");
         }
         let is_dangerous = bun_core::strings::contains_char(url, b' ')
@@ -832,7 +956,7 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
             let len = first_char(rest).map_or(1, |it| it.1);
-            if matches!(rest[0], b'\\' | b'[' | b']') {
+            if matches!(rest[0], b'\\' | b'[' | b']') && !self.is_mdx {
                 printed.push(b'\\');
             }
             printed.extend_from_slice(&rest[..len]);
@@ -869,7 +993,7 @@ impl<'a> Printer<'a, '_> {
     }
 
     fn print_image_alt(&self, node: &Node) -> Doc<'a> {
-        match self.bracket_content(node).filter(|it| !it.is_empty()) {
+        match self.bracket_content(node).filter(|it| !it.is_empty() && !self.is_mdx) {
             Some(alt) => Doc::from(alt),
             None => Doc::from(self.str(node.third)),
         }
@@ -946,7 +1070,7 @@ impl<'a> Printer<'a, '_> {
                     "[",
                     self.print_children(id),
                     "](",
-                    Self::print_url(self.str(node.value), true),
+                    self.print_url(self.str(node.value), true),
                     self.print_title(node.second, true),
                     ")"
                 ],
@@ -956,7 +1080,7 @@ impl<'a> Printer<'a, '_> {
                 "![",
                 self.print_image_alt(node),
                 "](",
-                Self::print_url(self.str(node.value), true),
+                self.print_url(self.str(node.value), true),
                 self.print_title(node.second, true),
                 ")"
             ],
@@ -965,7 +1089,7 @@ impl<'a> Printer<'a, '_> {
                 docs!["> ", Doc::Align(Alignment::Text("> "), Box::new(children))]
             }
             Kind::Heading => {
-                if self.is_setext_heading(node) {
+                if !self.is_mdx && self.is_setext_heading(node) {
                     let last_line = &self.original[self.tree.line_start(node.end.saturating_sub(1)) as usize..node.end as usize];
                     let find = |marker: u8| bun_core::strings::index_of_char_usize(last_line, marker);
                     let underline = &last_line[find(b'=').max(find(b'-')).unwrap_or_else(|| last_line.len().saturating_sub(1))..];
@@ -980,10 +1104,17 @@ impl<'a> Printer<'a, '_> {
                     value = crate::range::trim_end(value);
                 }
                 let is_comment = value.len() >= 7 && value.starts_with(b"<!--") && value.ends_with(b"-->");
-                self.lines(value, !is_comment)
+                // In a line, what follows it is measured from its last line break on.
+                match (self.kind(node.parent).is_some_and(Self::is_inline_wrapper), is_comment) {
+                    (false, _) => self.lines(value, !is_comment),
+                    (true, true) => replace_end_of_line(value, hardline),
+                    (true, false) => replace_end_of_line(value, || mark_as_root(literalline())),
+                }
             }
             Kind::List => self.print_list(id, node),
             Kind::ListItem | Kind::TableRow => Doc::EMPTY,
+            Kind::Import | Kind::Export | Kind::Jsx => Doc::from(crate::range::trim_end(self.str(node.value))),
+            Kind::EsComment => docs!["{/* ", self.str(node.value), " */}"],
             Kind::ThematicBreak => match self.find_ancestor(id, |it| it.kind == Kind::List) {
                 Some(list) if self.nth_list_sibling_index(list).is_multiple_of(2) => Doc::from("***"),
                 _ => Doc::from("---"),
@@ -1006,6 +1137,8 @@ impl<'a> Printer<'a, '_> {
             }
             Kind::ImageReference => match node.reference_type {
                 ReferenceType::Full => docs!["![", self.print_image_alt(node), "]", self.print_label(node.value)],
+                ReferenceType::Collapsed if self.is_mdx => docs!["![", self.print_image_alt(node), "][]"],
+                ReferenceType::Shortcut if self.is_mdx => docs!["![", self.print_image_alt(node), "]"],
                 ReferenceType::Collapsed => docs!["!", self.print_label(node.value), "[]"],
                 ReferenceType::Shortcut => docs!["!", self.print_label(node.value)],
             },
@@ -1021,7 +1154,7 @@ impl<'a> Printer<'a, '_> {
                 group(docs![
                     self.print_label(node.third),
                     ":",
-                    indent(docs![line_or_space(), Self::print_url(self.str(node.value), false), title])
+                    indent(docs![line_or_space(), self.print_url(self.str(node.value), false), title])
                 ])
             }
             Kind::FootnoteReference => docs!["[^", self.str(node.value), "]"],
@@ -1082,7 +1215,10 @@ impl<'a> Printer<'a, '_> {
         if self.options.prose_wrap != ProseWrap::Preserve && bun_core::strings::contains_char(value, b'\n') {
             code = Cow::Owned(value.iter().map(|&byte| if byte == b'\n' { b' ' } else { byte }).collect());
         }
-        if bun_core::strings::contains_char(&code, b'|') && self.has_ancestor(id, |it| it.kind == Kind::TableCell) {
+        if !self.is_mdx
+            && bun_core::strings::contains_char(&code, b'|')
+            && self.has_ancestor(id, |it| it.kind == Kind::TableCell)
+        {
             let mut escaped = Vec::with_capacity(code.len() + 4);
             for &byte in code.iter() {
                 if byte == b'|' {
@@ -1123,6 +1259,15 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `embed`
     fn print_embedded(&mut self, id: NodeId, node: &Node) -> Option<Doc<'a>> {
+        if matches!(node.kind, Kind::Import | Kind::Export | Kind::Jsx) {
+            let code = self.str(node.value);
+            let formatted = (self.embed)(&Embedded {
+                language: if node.kind == Kind::Jsx { super::MDX_JSX } else { super::MDX_ES_SYNTAX },
+                code,
+                width: (self.options.line_width.value() as usize).saturating_sub(self.indentation),
+            })?;
+            return Some(lines_of(crate::range::trim_end(&formatted)));
+        }
         if node.kind != Kind::Code || node.second.is_null() {
             return None;
         }
@@ -1205,10 +1350,15 @@ impl<'a> Printer<'a, '_> {
                 if child == start {
                     is_in_range = true;
                     let (start, end) = (printer.node(start)?, printer.node(end)?);
+                    // Prettier's `printIgnoreComment`
+                    let comment = |node: &Node| match printer.node(node.first_child) {
+                        Some(comment) => docs!["{/* ", printer.str(comment.value), " */}"],
+                        None => Doc::from(printer.str(node.value)),
+                    };
                     return Some(docs![
-                        printer.str(start.value),
-                        &printer.text[start.end as usize..end.start as usize],
-                        printer.str(end.value)
+                        comment(start),
+                        &printer.original[start.end as usize..end.start as usize],
+                        comment(end)
                     ]);
                 }
                 if child == end {
@@ -1271,12 +1421,12 @@ impl<'a> Printer<'a, '_> {
                 false => (if nth_sibling_index.is_multiple_of(2) { b"- " } else { b"* " }).to_vec(),
             };
             index += 1;
-            if list.is_aligned && list.ordered {
+            if (list.is_aligned || (printer.is_mdx && list.checked != 0)) && list.ordered {
                 // Prettier's `alignListPrefix`. Four or more would make it indented code.
                 let additional = (tab_width - prefix.len() % tab_width) % tab_width;
                 prefix.resize(prefix.len() + if additional >= 4 { 0 } else { additional }, b' ');
             }
-            if prefix.len() < min_indent {
+            if prefix.len() < min_indent && !printer.is_mdx {
                 prefix.truncate(prefix.trim_ascii_end().len());
                 let trailing = (min_indent - prefix.len()).min(4);
                 prefix.resize(prefix.len() + trailing, b' ');
@@ -1310,7 +1460,7 @@ impl<'a> Printer<'a, '_> {
         let tab_width = usize::from(self.options.indent_width.value());
         let children = self.print_children_with(id, |printer, child| {
             let kind = printer.kind(child)?;
-            if (child == first && kind != Kind::List) || kind == Kind::Html {
+            if (child == first && kind != Kind::List) || (kind == Kind::Html && !printer.is_mdx) {
                 let doc = printer.indented(prefix.len(), |printer| printer.print(child));
                 return Some(align_with_spaces(prefix.len() as u32, doc));
             }
@@ -1350,7 +1500,7 @@ impl<'a> Printer<'a, '_> {
             }
             rows.push(cells);
         }
-        let head_len = rows.first().map_or(0, Vec::len);
+        let head_len = if self.is_mdx { usize::MAX } else { rows.first().map_or(0, Vec::len) };
 
         let print_contents = |is_compact: bool| -> Doc<'a> {
             let mut lines = Vec::new();

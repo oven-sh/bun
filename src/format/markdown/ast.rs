@@ -36,6 +36,11 @@ pub(crate) enum Kind {
     FootnoteReference,
     InlineMath,
     WikiLink,
+    /// MDX: `import ..`, `export ..`, HTML that is not a comment, `{/* .. */}`.
+    Import,
+    Export,
+    Jsx,
+    EsComment,
     /// What Prettier's `splitText` makes of a `Text`: words and white space, which are not nodes here.
     Sentence,
 }
@@ -73,6 +78,10 @@ impl Kind {
             Kind::FootnoteReference => "footnoteReference",
             Kind::InlineMath => "inlineMath",
             Kind::WikiLink => "wikiLink",
+            Kind::Import => "import",
+            Kind::Export => "export",
+            Kind::Jsx => "jsx",
+            Kind::EsComment => "esComment",
             Kind::Sentence => "sentence",
         }
     }
@@ -417,7 +426,16 @@ pub(crate) fn dump(text: &[u8], tree: &Tree, root: NodeId, out: &mut Vec<u8>) {
             ReferenceType::Full => "full",
         };
         match node.kind {
-            Kind::Text | Kind::InlineCode | Kind::Html | Kind::LiquidNode | Kind::InlineMath | Kind::WikiLink => {
+            Kind::Text
+            | Kind::InlineCode
+            | Kind::Html
+            | Kind::LiquidNode
+            | Kind::InlineMath
+            | Kind::WikiLink
+            | Kind::Import
+            | Kind::Export
+            | Kind::Jsx
+            | Kind::EsComment => {
                 field("value", node.value);
             }
             Kind::Code => {

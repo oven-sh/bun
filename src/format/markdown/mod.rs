@@ -35,6 +35,14 @@ pub fn is_markdown_path(path: &[u8]) -> bool {
         || name.ends_with(b".workbook")
 }
 
+pub fn is_mdx_path(path: &[u8]) -> bool {
+    path.len() >= 4 && path[path.len() - 4..].eq_ignore_ascii_case(b".mdx")
+}
+
+/// In the place of the language of a block of code: JSX in MDX, `import` and `export` in MDX.
+const MDX_JSX: &[u8] = b"\0jsx";
+const MDX_ES_SYNTAX: &[u8] = b"\0es";
+
 /// Everything that is allocated to format a text. It is reused for the next one.
 #[derive(Default)]
 pub struct Scratch {
@@ -46,7 +54,7 @@ pub fn dump_ast(text: &[u8], out: &mut Vec<u8>) {
     let mut tree = ast::Tree::default();
     let blanked = block::blank_front_matter(text);
     let content = blanked.as_deref().unwrap_or(text);
-    if let Some(root) = block::parse(content, text, &mut tree) {
+    if let Some(root) = block::parse(content, text, block::Syntax::Markdown, &mut tree) {
         ast::dump(content, &tree, root, out);
     }
 }
@@ -97,7 +105,16 @@ fn format_embedded(
     if language.is_empty() {
         return Some(Vec::new());
     }
-    let parser = infer_parser(language)?;
+    let is_mdx_jsx = language == MDX_JSX;
+    let parser = if is_mdx_jsx || language == MDX_ES_SYNTAX { b"babel" } else { infer_parser(language)? };
+    let in_fragment;
+    let code = match is_mdx_jsx {
+        true => {
+            in_fragment = [b"<$>", code, b"</$>"].concat();
+            &in_fragment[..]
+        }
+        false => code,
+    };
     // To the parsers of Prettier it is white space.
     let code = code.strip_prefix(BOM).unwrap_or(code);
     // To these parsers, nothing is a syntax error. Only a whole file with nothing in it does not get to them.
@@ -116,6 +133,7 @@ fn format_embedded(
         require_pragma: false,
         check_ignore_pragma: false,
         is_in_markdown: true,
+        is_mdx_jsx,
         ..options.clone()
     };
     let mut out = Vec::new();
@@ -131,7 +149,13 @@ fn format_embedded(
         match parser {
             b"graphql" => crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok(),
             b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok(),
-            b"markdown" => format_in(code, &options, &mut Default::default(), &mut out, is_in_template).is_ok(),
+            b"markdown" | b"mdx" => {
+                let mode = Mode {
+                    is_in_template,
+                    is_mdx: parser == b"mdx",
+                };
+                format_in(code, &options, &mut Default::default(), &mut out, mode).is_ok()
+            }
             b"babel" => format_javascript(b"dummy.jsx", &mut out),
             _ if language == b"tsx" => format_javascript(b"dummy.tsx", &mut out),
             _ => format_javascript(b"dummy.ts", &mut out),
@@ -189,16 +213,31 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
 
 /// Appends the formatted `text` to `out`.
 pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
-    format_in(text, options, scratch, out, false)
+    format_in(text, options, scratch, out, Mode::default())
 }
 
-/// `is_in_template`: see [`with_document`].
+/// The same for MDX.
+pub fn format_mdx(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
+    let mode = Mode {
+        is_mdx: true,
+        ..Mode::default()
+    };
+    format_in(text, options, scratch, out, mode)
+}
+
+#[derive(Copy, Clone, Default)]
+struct Mode {
+    /// The document is for a template in JavaScript.
+    is_in_template: bool,
+    is_mdx: bool,
+}
+
 fn format_in(
     text: &[u8],
     options: &FormatOptions,
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
-    is_in_template: bool,
+    mode: Mode,
 ) -> Result<(), FormatError> {
     let original = text;
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
@@ -242,26 +281,27 @@ fn format_in(
         return Ok(());
     }
 
-    with_document(text, &options, &mut scratch.tree, is_in_template, |document| doc::print(document, &options, text, out))
+    with_document(text, &options, &mut scratch.tree, mode, |document| doc::print(document, &options, text, out))
 }
 
-/// Calls `then` with the document for `text`, in which every line break is `\n`. `is_in_template`: it is for a
-/// template in JavaScript.
+/// Calls `then` with the document for `text`, in which every line break is `\n`.
 fn with_document<R>(
     text: &[u8],
     options: &FormatOptions,
     tree: &mut ast::Tree,
-    is_in_template: bool,
+    mode: Mode,
     then: impl FnOnce(doc::Doc<'_>) -> R,
 ) -> Result<R, FormatError> {
     let blanked = block::blank_front_matter(text);
     let original = text;
     let text = blanked.as_deref().unwrap_or(text);
-    let root = block::parse(text, original, tree).ok_or(FormatError::NestedTooDeeply)?;
+    let syntax = if mode.is_mdx { block::Syntax::Mdx } else { block::Syntax::Markdown };
+    let root = block::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
         original,
         wraps_lines: options.prose_wrap == crate::options::ProseWrap::Always,
+        is_mdx: mode.is_mdx,
         tree,
         tab_width: usize::from(options.indent_width.value()),
         stack_check: bun_core::StackCheck::init(),
@@ -274,7 +314,7 @@ fn with_document<R>(
 
     let formats_embedded = matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Auto);
     let mut embed = |embedded: &printer::Embedded<'_>| match formats_embedded {
-        true => format_embedded(embedded.language, embedded.code, embedded.width, options, is_in_template),
+        true => format_embedded(embedded.language, embedded.code, embedded.width, options, mode.is_in_template),
         false => None,
     };
     let mut printer = printer::Printer {
@@ -283,7 +323,8 @@ fn with_document<R>(
         tree,
         options,
         embed: &mut embed,
-        is_in_template,
+        is_in_template: mode.is_in_template,
+        is_mdx: mode.is_mdx,
         indentation: 0,
         is_in_label: false,
         stack_check: bun_core::StackCheck::init(),

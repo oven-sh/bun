@@ -296,6 +296,7 @@ pub(crate) struct Preprocessor<'x> {
     pub(crate) original: &'x [u8],
     /// Lines are wrapped: `proseWrap: "always"`.
     pub(crate) wraps_lines: bool,
+    pub(crate) is_mdx: bool,
     pub(crate) tree: &'x mut Tree,
     pub(crate) tab_width: usize,
     pub(crate) stack_check: bun_core::StackCheck,
@@ -315,7 +316,9 @@ struct Around {
 
 impl Preprocessor<'_> {
     pub(crate) fn run(&mut self, root: NodeId) {
-        self.mark_risky_paragraphs(root);
+        if !self.is_mdx {
+            self.mark_risky_paragraphs(root);
+        }
         let around = Around {
             is_in_aligned_lists: true,
             paragraph: None,
@@ -385,7 +388,7 @@ impl Preprocessor<'_> {
             Kind::Text => return self.split_into_sentence(id, around),
             Kind::List if node.first_child != super::ast::NONE => {
                 let is_aligned = around.is_in_aligned_lists
-                    && !is_indented_code(self.original, self.tree, node.next)
+                    && (self.is_mdx || !is_indented_code(self.original, self.tree, node.next))
                     && self.is_aligned(id);
                 around.is_in_aligned_lists = is_aligned;
                 if let Some(node) = self.tree.get_mut(id) {
@@ -397,6 +400,30 @@ impl Preprocessor<'_> {
             }
             Kind::Blockquote => around.is_in_blockquote = true,
             Kind::Emphasis | Kind::Strong => around.is_in_emphasis = true,
+            // Prettier's `htmlToJsx`
+            Kind::Html
+                if self.is_mdx
+                    && around.paragraph.is_none()
+                    && self.tree.kind(node.parent) != Some(Kind::TableCell)
+                    && !super::inline::has_html_comment(self.tree.str(self.text, node.value)) =>
+            {
+                if let Some(node) = self.tree.get_mut(id) {
+                    node.kind = Kind::Jsx;
+                }
+            }
+            // Prettier's `transformIndentedCodeblockAndMarkItsParentList`: `hasIndentedCodeblock` is `checked` here.
+            Kind::Code if self.is_mdx && is_indented_code(self.original, self.tree, id) => {
+                let mut parent = node.parent;
+                while let Some(ancestor) = self.tree.get_mut(parent) {
+                    if ancestor.kind == Kind::List {
+                        if ancestor.checked != 0 {
+                            break;
+                        }
+                        ancestor.checked = 1;
+                    }
+                    parent = ancestor.parent;
+                }
+            }
             _ => {}
         }
         let mut child = node.first_child;
@@ -460,8 +487,32 @@ impl Preprocessor<'_> {
             }
         }
 
+        // remark-parse 8 gives the characters that are meant, and Prettier's `restoreUnescapedCharacter` puts back
+        // how they are written, except for `*` and `_`, which are escaped anew where they are written.
+        let mut unescaped = Vec::new();
+        if self.is_mdx && (bun_core::strings::contains(text, b"\\*") || bun_core::strings::contains(text, b"\\_")) {
+            let mut index = 0;
+            while let Some(&byte) = text.get(index) {
+                match (byte, text.get(index + 1)) {
+                    (b'\\', Some(&next @ (b'*' | b'_'))) => {
+                        unescaped.push(next);
+                        index += 2;
+                    }
+                    (b'\\', Some(next)) if next.is_ascii_punctuation() => {
+                        unescaped.extend_from_slice(&[byte, *next]);
+                        index += 2;
+                    }
+                    _ => {
+                        unescaped.push(byte);
+                        index += 1;
+                    }
+                }
+            }
+            text = &unescaped;
+        }
+
         // The strings are parts of the file, or of a copy if something has been taken out.
-        let is_copy = !without_markers.is_empty();
+        let is_copy = !without_markers.is_empty() || !unescaped.is_empty();
         let base = match is_copy {
             true => self.tree.owned(|out| out.extend_from_slice(text)),
             false => {
@@ -482,7 +533,7 @@ impl Preprocessor<'_> {
         // escapes.
         if !self.wraps_lines
             && text.is_ascii()
-            && !(around.is_in_emphasis && bun_core::strings::index_of_any(text, b"*_").is_some())
+            && !((around.is_in_emphasis || self.is_mdx) && bun_core::strings::index_of_any(text, b"*_").is_some())
         {
             if let Some(node) = self.tree.get_mut(id) {
                 (node.kind, node.value, node.number, node.is_aligned) = (Kind::Sentence, base, PLAIN, around.is_in_emphasis);

@@ -103,6 +103,7 @@ struct Line<'t> {
 pub(crate) struct Parser<'t> {
     text: &'t [u8],
     is_plain: bool,
+    is_mdx: bool,
     has: inline::Has,
     line: Line<'t>,
     tree: &'t mut Tree,
@@ -132,6 +133,15 @@ pub(crate) fn is_blank(text: &[u8]) -> bool {
     text.iter().all(|&byte| is_space(byte))
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Syntax {
+    Markdown,
+    /// See [`parse_content`].
+    Plain,
+    /// What Prettier makes of MDX, with remark-parse 8: `import` and `export`, any tag starts HTML, which is JSX.
+    Mdx,
+}
+
 /// What Prettier parses has blanks in the place of the front matter. That only makes a difference if something
 /// follows the front matter on its last line. Then this is the text with the blanks.
 pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
@@ -148,13 +158,13 @@ pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
 
 /// Fills `tree` with the syntax of `text`, in which every line break is `\n`. Returns the root. `original`: the
 /// same, or the text that `text` is for [`blank_front_matter`].
-pub(crate) fn parse(text: &[u8], original: &[u8], tree: &mut Tree) -> Option<NodeId> {
+pub(crate) fn parse(text: &[u8], original: &[u8], syntax: Syntax, tree: &mut Tree) -> Option<NodeId> {
     let Some(front_matter) = super::front_matter::parse(original) else {
-        return parse_lines(text, tree, false, 0);
+        return parse_lines(text, tree, syntax, 0);
     };
     let is_blanked = !matches!(original.get(front_matter.end), None | Some(b'\n'));
     let first_line = if is_blanked { front_matter.end - 3 } else { front_matter.end + 1 };
-    let root = parse_lines(text, tree, false, first_line)?;
+    let root = parse_lines(text, tree, syntax, first_line)?;
     let node = tree.add(Kind::FrontMatter, 0, front_matter.end as u32);
     tree.prepend(root, node);
     Some(root)
@@ -163,12 +173,14 @@ pub(crate) fn parse(text: &[u8], original: &[u8], tree: &mut Tree) -> Option<Nod
 /// `is_plain`: CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
 /// wiki links, or links that are not marked as such.
 pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Option<NodeId> {
-    parse_lines(text, tree, is_plain, 0)
+    let syntax = if is_plain { Syntax::Plain } else { Syntax::Markdown };
+    parse_lines(text, tree, syntax, 0)
 }
 
 /// `first_line`: where the first line starts that is looked at.
-fn parse_lines(text: &[u8], tree: &mut Tree, is_plain: bool, first_line: usize) -> Option<NodeId> {
+fn parse_lines(text: &[u8], tree: &mut Tree, syntax: Syntax, first_line: usize) -> Option<NodeId> {
     tree.clear();
+    let is_plain = syntax == Syntax::Plain;
     if u32::try_from(text.len()).is_err() || text.len() >= (1 << 30) {
         return None;
     }
@@ -176,6 +188,7 @@ fn parse_lines(text: &[u8], tree: &mut Tree, is_plain: bool, first_line: usize) 
     let mut parser = Parser {
         text,
         is_plain,
+        is_mdx: syntax == Syntax::Mdx,
         has: inline::Has::new(text, is_plain),
         line: Line { text, end: 0 },
         tree,
@@ -762,6 +775,8 @@ enum LeafStart {
     Html(u8),
     /// Where it ends.
     Liquid(usize),
+    /// `import` or `export`, and where it ends.
+    EsSyntax(Kind, usize),
 }
 
 const HTML_BLOCK_NAMES: [&[u8]; 62] = [
@@ -848,7 +863,7 @@ fn is_complete_tag(rest: &[u8], is_closing: bool) -> bool {
 }
 
 /// The kind of HTML that `rest` starts, which starts with `<`, and where to go on looking for its end.
-fn html_start(rest: &[u8], interrupts: bool, is_lazy: bool) -> Option<(u8, usize, bool)> {
+fn html_start(rest: &[u8], interrupts: bool, is_lazy: bool, is_mdx: bool) -> Option<(u8, usize, bool)> {
     match *rest.get(1)? {
         b'!' => match *rest.get(2)? {
             b'-' => (rest.get(3) == Some(&b'-')).then_some((2, 4, true)),
@@ -859,6 +874,24 @@ fn html_start(rest: &[u8], interrupts: bool, is_lazy: bool) -> Option<(u8, usize
         byte => {
             let is_closing = byte == b'/';
             let name_start = if is_closing { 2 } else { 1 };
+            // `[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*|`: any name, with dots, or none.
+            if is_mdx {
+                let mut after = name_start;
+                while rest.get(after).is_some_and(u8::is_ascii_alphabetic) {
+                    after += rest[after..].iter().take_while(|byte| byte.is_ascii_alphanumeric()).count();
+                    if rest.get(after) == Some(&b'.') && rest.get(after + 1).is_some_and(u8::is_ascii_alphabetic) {
+                        after += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let is_raw = !is_closing && is_name_in(&HTML_RAW_NAMES[..3], &rest[name_start..after]);
+                match rest[after..] {
+                    [] | [b' ' | b'\t' | b'>', ..] => return Some((if is_raw { 1 } else { 6 }, after, false)),
+                    [b'/', b'>', ..] => return Some((6, after, false)),
+                    _ => {}
+                }
+            }
             if !rest.get(name_start)?.is_ascii_alphabetic() {
                 return None;
             }
@@ -970,7 +1003,7 @@ impl<'t> Parser<'t> {
                 Some(LeafStart::SetextUnderline)
             }
             b'*' | b'-' | b'_' => self.line.is_thematic_break(cursor).then_some(LeafStart::ThematicBreak),
-            b'<' => html_start(rest, interrupts, is_lazy).map(|(kind, ..)| LeafStart::Html(kind)),
+            b'<' => html_start(rest, interrupts, is_lazy, self.is_mdx).map(|(kind, ..)| LeafStart::Html(kind)),
             marker @ (b'`' | b'~') => {
                 let size = rest.iter().take_while(|&&byte| byte == marker).count();
                 let is_fence = size >= 3 && (marker != b'`' || !bun_core::strings::contains_char(&rest[size..], b'`'));
@@ -981,9 +1014,25 @@ impl<'t> Parser<'t> {
                 let is_fence = size >= 2 && !bun_core::strings::contains_char(&rest[size..], b'$');
                 is_fence.then_some(LeafStart::Fenced(b'$', size))
             }
-            b'{' if !self.is_plain => self.find_liquid_end(cursor).map(LeafStart::Liquid),
+            b'{' if !self.is_plain && !self.is_mdx => self.find_liquid_end(cursor).map(LeafStart::Liquid),
+            b'i' | b'e' if self.is_mdx && !interrupts => self.find_es_syntax(cursor),
             _ => None,
         }
+    }
+
+    /// Prettier's `tokenizeEsSyntax`: `import` or `export` at the start of a line that is not in a container, up to
+    /// the next empty line.
+    fn find_es_syntax(&self, cursor: Cursor) -> Option<LeafStart> {
+        if !self.containers.is_empty() || cursor.column > 0 {
+            return None;
+        }
+        let rest = &self.text[cursor.offset..];
+        let kind = if rest.starts_with(b"import") { Kind::Import } else { Kind::Export };
+        if !(kind == Kind::Import || rest.starts_with(b"export")) || !rest.get(6).is_some_and(u8::is_ascii_whitespace) {
+            return None;
+        }
+        let len = bun_core::strings::index_of(rest, b"\n\n").unwrap_or(rest.len());
+        Some(LeafStart::EsSyntax(kind, cursor.offset + len))
     }
 
     /// Where the `{{ .. }}` or `{% .. %}` at `cursor` ends, if nothing follows it on its last line.
@@ -1403,12 +1452,19 @@ impl<'t> Parser<'t> {
                     kind,
                     first_segment,
                 };
-                if let Some((_, from, in_declaration)) = html_start(rest, false, true)
+                if let Some((_, from, in_declaration)) = html_start(rest, false, true, self.is_mdx)
                     && kind <= 5
                     && html_ends(kind, &rest[from..], in_declaration)
                 {
                     self.close_leaf();
                 }
+            }
+            LeafStart::EsSyntax(kind, es_end) => {
+                let node = self.add_block(kind, cursor.offset, es_end);
+                if let Some(node) = self.tree.get_mut(node) {
+                    node.value = Str::source(cursor.offset as u32, es_end as u32);
+                }
+                self.skip_to = es_end;
             }
             LeafStart::Liquid(liquid_end) => {
                 let node = self.add_block(Kind::LiquidNode, cursor.offset, liquid_end);
@@ -1671,6 +1727,7 @@ impl<'t> Parser<'t> {
             let mut context = inline::Context {
                 text: self.text,
                 is_plain: self.is_plain,
+                is_mdx: self.is_mdx,
                 has: self.has,
                 tree: self.tree,
                 content: &content,

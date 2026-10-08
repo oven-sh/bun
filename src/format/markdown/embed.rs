@@ -212,7 +212,11 @@ pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Fo
 
     let options = f.options().clone();
     let mut tree = super::ast::Tree::default();
-    let is_written = super::with_document(&text, &options, &mut tree, true, |document| {
+    let mode = super::Mode {
+        is_in_template: true,
+        is_mdx: false,
+    };
+    let is_written = super::with_document(&text, &options, &mut tree, mode, |document| {
         let document = doc::strip_trailing_hardline(doc::clean(document));
         let mut ops = Vec::new();
         if !flatten(&document, &mut ops) {

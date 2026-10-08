@@ -506,6 +506,7 @@ pub(crate) struct Context<'c> {
     pub(crate) text: &'c [u8],
     /// See `block::parse_content`.
     pub(crate) is_plain: bool,
+    pub(crate) is_mdx: bool,
     pub(crate) has: Has,
     pub(crate) tree: &'c mut Tree,
     pub(crate) content: &'c Content,
@@ -768,7 +769,11 @@ impl Context<'_> {
                 },
                 b'`' | b'$' if byte == b'`' || !self.is_plain => {
                     let size = bytes[index..].iter().take_while(|&&it| it == byte).count();
-                    let end = if byte == b'$' && size < 2 { None } else { find_closing_run(bytes, index + size, byte, size) };
+                    let end = match byte {
+                        b'$' if self.is_mdx => find_math_end(bytes, index),
+                        b'$' if size < 2 => None,
+                        _ => find_closing_run(bytes, index + size, byte, size),
+                    };
                     match end {
                         Some(end) => {
                             flush!(index);
@@ -948,7 +953,7 @@ impl Context<'_> {
                         }
                     }
                 }
-                b'{' => match self.liquid(index, &mut has_no_liquid_end) {
+                b'{' => match self.es_comment(index).or_else(|| self.liquid(index, &mut has_no_liquid_end)) {
                     Some((node, end)) => {
                         flush!(index);
                         items.push(Item::Node(node));
@@ -1094,6 +1099,37 @@ impl Context<'_> {
         Some((node, label_end + 1))
     }
 
+    /// Prettier's `tokenizeEsComment`: `{/* .. */}` on one line.
+    fn es_comment(&mut self, start: usize) -> Option<(NodeId, usize)> {
+        if !self.is_mdx {
+            return None;
+        }
+        let bytes = &self.content.bytes;
+        let skip = |from: usize| from + bytes[from..].iter().take_while(|byte| byte.is_ascii_whitespace()).count();
+        let open = skip(start + 1);
+        if !bytes[open..].starts_with(b"/*") {
+            return None;
+        }
+        let value_start = open + 2;
+        let line_end = bun_core::strings::index_of_char_usize(&bytes[value_start..], b'\n').map_or(bytes.len(), |at| value_start + at);
+        // The last `*/` on the line that `}` follows.
+        let mut limit = line_end;
+        loop {
+            let close = value_start + bun_core::strings::last_index_of(&bytes[value_start..limit], b"*/")?;
+            let brace = skip(close + 2);
+            if bytes.get(brace) == Some(&b'}') {
+                let value = &bytes[value_start..close];
+                let leading = value.len() - crate::range::trim_start(value).len();
+                let len = crate::range::trim_end(crate::range::trim_start(value)).len();
+                let node = self.new_node(Kind::EsComment, start, brace + 1);
+                let value = self.raw(value_start + leading, value_start + leading + len);
+                self.set_value(node, value);
+                return Some((node, brace + 1));
+            }
+            limit = close + 1;
+        }
+    }
+
     /// `{{ .. }}`, `{% .. %}`. `has_no_end`: for each of the two, that its end has been looked for in vain.
     fn liquid(&mut self, start: usize, has_no_end: &mut [bool; 2]) -> Option<(NodeId, usize)> {
         let bytes = &self.content.bytes;
@@ -1115,6 +1151,51 @@ impl Context<'_> {
         self.set_value(node, value);
         Some((node, end))
     }
+}
+
+/// Prettier's `COMMENT_REGEX`, anywhere in `html`: `<!---->|<!---?[^>-](?:-?[^-])*-->`
+pub(crate) fn has_html_comment(html: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(at) = bun_core::strings::index_of(&html[from..], b"<!--") {
+        let start = from + at + 4;
+        if html[start..].starts_with(b"-->") {
+            return true;
+        }
+        // An optional dash, something that is neither `>` nor a dash, then no two dashes in a row before `-->`.
+        let first = start + usize::from(html.get(start) == Some(&b'-'));
+        if html.get(first).is_some_and(|byte| !matches!(byte, b'>' | b'-'))
+            && let Some(dashes) = bun_core::strings::index_of(&html[first..], b"--")
+            && html[first + dashes + 2..].starts_with(b">")
+        {
+            return true;
+        }
+        from = start;
+    }
+    false
+}
+
+/// remark-math 3: where the `$ .. $` or `$$ .. $$` at `start` ends.
+fn find_math_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let is_double = bytes.get(start + 1) == Some(&b'$');
+    let mut index = start + 1 + usize::from(is_double);
+    if matches!(bytes.get(index), Some(b' ' | b'\t')) {
+        return None;
+    }
+    while let Some(&byte) = bytes.get(index) {
+        let next = bytes.get(index + 1).copied();
+        match byte {
+            b'$' if !matches!(bytes[index - 1], b' ' | b'\t')
+                && !next.is_some_and(|next| next.is_ascii_digit())
+                && (!is_double || next == Some(b'$')) =>
+            {
+                return Some(index + 1 + usize::from(is_double));
+            }
+            b'\\' => index += 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
 }
 
 /// Where the run of exactly `size` times `marker` ends that closes code or math whose content starts at `from`.

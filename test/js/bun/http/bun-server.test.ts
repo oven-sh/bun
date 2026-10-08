@@ -2271,20 +2271,20 @@ describe.concurrent("HEAD requests #15355", () => {
     });
 
     {
-      const response = await fetch(server.url + "/content-length");
+      const response = await fetch(new URL("/content-length", server.url));
       expect(response.status).toBe(200);
       expect(response.headers.get("content-length")).toBe("11");
       expect(await response.text()).toBe("Hello World");
     }
     {
-      const response = await fetch(server.url + "/chunked");
+      const response = await fetch(new URL("/chunked", server.url));
       expect(response.status).toBe(200);
       expect(response.headers.get("transfer-encoding")).toBe("chunked");
       expect(await response.text()).toBe("Hello World");
     }
 
     {
-      const response = await fetch(server.url + "/content-length", {
+      const response = await fetch(new URL("/content-length", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
@@ -2292,7 +2292,7 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("");
     }
     {
-      const response = await fetch(server.url + "/chunked", {
+      const response = await fetch(new URL("/chunked", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
@@ -2333,20 +2333,20 @@ describe.concurrent("HEAD requests #15355", () => {
     });
 
     {
-      const response = await fetch(server.url + "/content-length");
+      const response = await fetch(new URL("/content-length", server.url));
       expect(response.status).toBe(200);
       expect(response.headers.get("content-length")).toBe("11");
       expect(await response.text()).toBe("Hello World");
     }
     {
-      const response = await fetch(server.url + "/chunked");
+      const response = await fetch(new URL("/chunked", server.url));
       expect(response.status).toBe(200);
       expect(response.headers.get("transfer-encoding")).toBe("chunked");
       expect(await response.text()).toBe("Hello World");
     }
 
     {
-      const response = await fetch(server.url + "/content-length", {
+      const response = await fetch(new URL("/content-length", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
@@ -2354,7 +2354,7 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("");
     }
     {
-      const response = await fetch(server.url + "/chunked", {
+      const response = await fetch(new URL("/chunked", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
@@ -2403,7 +2403,7 @@ describe.concurrent("HEAD requests #15355", () => {
       },
     });
     {
-      const response = await fetch(server.url + "/content-length", {
+      const response = await fetch(new URL("/content-length", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
@@ -2412,7 +2412,7 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("");
     }
     {
-      const response = await fetch(server.url + "/chunked", {
+      const response = await fetch(new URL("/chunked", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
@@ -2421,7 +2421,7 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("");
     }
     {
-      const response = await fetch(server.url + "/null", {
+      const response = await fetch(new URL("/null", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);
@@ -2454,7 +2454,7 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("Hello World");
     }
     {
-      const response = await fetch(server.url + "/file");
+      const response = await fetch(new URL("/file", server.url));
       expect(response.status).toBe(200);
       expect(response.headers.get("content-length")).toBe("11");
       expect(await response.text()).toBe("Hello World");
@@ -2499,7 +2499,7 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("");
     }
     {
-      const response = await fetch(server.url + "/file", {
+      const response = await fetch(new URL("/file", server.url), {
         method: "HEAD",
       });
       expect(response.status).toBe(200);

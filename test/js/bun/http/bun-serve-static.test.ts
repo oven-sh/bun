@@ -51,7 +51,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
     it("GET", async () => {
       const previousCallCount = handler.mock.calls.length;
 
-      const res = await fetch(`${server.url}${path}`);
+      const res = await fetch(new URL(path, server.url));
       expect(res.status).toBe(200);
       expect(await res.bytes()).toEqual(await static_responses[path].bytes());
       expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
@@ -60,7 +60,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
     it("HEAD", async () => {
       const previousCallCount = handler.mock.calls.length;
 
-      const res = await fetch(`${server.url}${path}`, { method: "HEAD" });
+      const res = await fetch(new URL(path, server.url), { method: "HEAD" });
       expect(res.status).toBe(200);
       expect(await res.bytes()).toHaveLength(0);
       expect(res.headers.get("Content-Length")).toBe(static_responses[path].size.toString());
@@ -70,7 +70,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 
   it("/redirect", async () => {
     const previousCallCount = handler.mock.calls.length;
-    const res = await fetch(`${server.url}/redirect`, { redirect: "manual" });
+    const res = await fetch(new URL("/redirect", server.url), { redirect: "manual" });
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/foo/bar");
     expect(handler.mock.calls.length, "Handler should not be called").toBe(previousCallCount);
@@ -78,7 +78,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 
   it("/redirect (follow)", async () => {
     const previousCallCount = handler.mock.calls.length;
-    const res = await fetch(`${server.url}/redirect`);
+    const res = await fetch(new URL("/redirect", server.url));
     expect(res.status).toBe(200);
     expect(res.url).toBe(`${server.url}foo/bar`);
     expect(await res.text()).toBe("/foo/bar");
@@ -88,7 +88,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 
   it("/redirect/fallback", async () => {
     const previousCallCount = handler.mock.calls.length;
-    const res = await fetch(`${server.url}/redirect/fallback`);
+    const res = await fetch(new URL("/redirect/fallback", server.url));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(`${server.url}foo/bar/fallback`);
     expect(handler.mock.calls.length, "Handler should be called").toBe(previousCallCount + 1);

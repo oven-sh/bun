@@ -898,7 +898,7 @@ it("should add dependency with package.json in it and http tarball", async () =>
       version: "0.0.1",
 
       dependencies: {
-        booop: `${server.url.href}/booop-0.0.1.tgz`,
+        booop: `${server.url.href}booop-0.0.1.tgz`,
       },
     }),
   );
@@ -945,7 +945,7 @@ it("should add dependency with package.json in it and http tarball", async () =>
     version: "0.0.1",
     dependencies: {
       bap: "npm:baz@0.0.5",
-      booop: `${server.url.href}/booop-0.0.1.tgz`,
+      booop: `${server.url.href}booop-0.0.1.tgz`,
     },
   });
   await access(join(package_dir, "bun.lockb"));

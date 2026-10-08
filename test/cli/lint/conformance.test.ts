@@ -15,11 +15,12 @@ const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env:
 // A debug build is 10 to 100 times slower, so it runs a sample. It is always the same sample.
 const isSample = isDebug || isASAN;
 
-// Every n-th case that needs no types, and every n-th that does. One that does takes a hundred times as long: a program is
-// loaded for it.
+// Every n-th case that needs no types, and every n-th that does. One that does takes a thousand times as long, since a
+// program is loaded for it: all 144,000 without types take 8 seconds of CPU time, the 8,200 of "upstream" with types 600.
+// `expected*.txt` are written with [1, 1] and [1, 10].
 const suites = [
-  { suite: "upstream", expected: "expected.txt", every: isSample ? [50, 400] : [1, 1] },
-  { suite: "more", expected: "expected-more.txt", every: isSample ? [100, 1000] : [1, 10] },
+  { suite: "upstream", expected: "expected.txt", every: isSample ? [50, 400] : [1, 20] },
+  { suite: "more", expected: "expected-more.txt", every: isSample ? [100, 1000] : [1, 200] },
 ];
 
 let dir: ReturnType<typeof tempDir> | undefined;
@@ -61,14 +62,12 @@ test.skipIf(!hasRunner).each(suites)(
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const expected = await Bun.file(join(import.meta.dir, "conformance", file)).text();
 
-    if (isSample || isWindows) {
-      // Nothing fails that is not known to.
-      const known = new Set(expected.split("\n"));
-      expect(stdout.split("\n").filter(line => line.startsWith("FAIL ") && !known.has(line))).toEqual([]);
-      expect(stdout).toMatch(/\n[1-9]\d* cases passed, /);
-    } else {
-      expect(stdout).toBe(expected);
-    }
+    // Nothing fails that is not known to.
+    const known = new Set(expected.split("\n"));
+    expect(stdout.split("\n").filter(line => line.startsWith("FAIL ") && !known.has(line))).toEqual([]);
+    expect(stdout).toMatch(/\n[1-9]\d* cases passed, /);
+    // No more is skipped than is known to be. What is skipped is counted whether or not it is in the sample.
+    if (!isWindows) expect(/, \d+ skipped\n/.exec(stdout)?.[0]).toBe(/, \d+ skipped\n/.exec(expected)![0]);
     expect(exitCode).toBe(0);
   },
   10 * 60_000,

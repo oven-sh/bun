@@ -683,9 +683,15 @@ if (typeof Bun !== "undefined") {
 
       const testFile = fileURLToPath(import.meta.url);
 
+      // Run the file directly rather than via `node --test`: the runner mode
+      // forks a second node process for the file, and under CI's parallel
+      // batch that extra process frequently fails uv_thread_create (EAGAIN)
+      // at startup. A direct run uses one process and still exits non-zero on
+      // any node:test failure. The pool-size knobs keep Node's V8 and libuv
+      // worker pools minimal for the same reason.
       await using proc = Bun.spawn({
-        cmd: [node, "--test", testFile],
-        env: bunEnv,
+        cmd: [node, "--v8-pool-size=1", testFile],
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
         stdout: "pipe",
         stderr: "pipe",
       });

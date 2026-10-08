@@ -21,12 +21,6 @@ export class DataViewReader {
     return value;
   }
 
-  u16() {
-    const value = this.view.getUint16(this.cursor, true);
-    this.cursor += 2;
-    return value;
-  }
-
   u8() {
     const value = this.view.getUint8(this.cursor);
     this.cursor += 1;
@@ -56,17 +50,15 @@ export class DataViewWriter {
   view: DataView<ArrayBuffer>;
   uint8ArrayView: Uint8Array;
   cursor: number;
-  capacity: number;
 
   static initCapacity(capacity: number) {
     const view = new DataView(new ArrayBuffer(capacity));
-    return new DataViewWriter(view, 0, capacity);
+    return new DataViewWriter(view, 0);
   }
 
-  constructor(view: DataView<ArrayBuffer>, cursor: number, capacity: number) {
+  constructor(view: DataView<ArrayBuffer>, cursor: number) {
     this.view = view;
     this.cursor = cursor;
-    this.capacity = capacity;
     this.uint8ArrayView = new Uint8Array(view.buffer);
   }
 

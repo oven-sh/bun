@@ -942,6 +942,112 @@ describe("Bun.wrapAnsi", () => {
     });
   });
 
+  // A 64 KiB synthetic allocation limit: 2048 rows in a line, 65,536 Latin-1 or 32,768 UTF-16 characters in a row.
+  describe("a row or a row list that cannot grow", () => {
+    const outOfMemory = "RangeError: Out of memory";
+
+    // `cases` is the source of { name: [input, columns, options?] }. The child reports each result's length, or the
+    // error. It builds the inputs with repeat(), which does not depend on the limit the child runs under.
+    async function wrapWithSyntheticLimit(cases: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const cases = ${cases};
+          const results = {};
+          for (const [name, args] of Object.entries(cases)) {
+            try {
+              results[name] = Bun.wrapAnsi(...args).length;
+            } catch (e) {
+              results[name] = e.name + ": " + e.message;
+            }
+          }
+          console.log(JSON.stringify(results));`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+    }
+
+    test.concurrent("throws when the list of rows cannot grow", async () => {
+      const result = await wrapWithSyntheticLimit(`{
+        rowsAtBound: ["a ".repeat(2048), 1],
+        rowsPastBound: ["a ".repeat(2049), 1],
+        wideRowsAtBound: ["あ ".repeat(2048), 2],
+        wideRowsPastBound: ["あ ".repeat(2049), 2],
+        // In each case below a different statement of wrapAnsi.cpp starts the row that does not fit.
+        // placeWord(): the row is full and wordWrap is off.
+        wordsNoWordWrap: ["a ".repeat(3000), 1, { wordWrap: false }],
+        // placeWord(): a hard-wrapped word starts on a row of its own.
+        hardWords: ["bb ".repeat(1500), 1, { hard: true }],
+        // wrapWord(): the row is full and the word goes on.
+        hardWord: ["a".repeat(3000), 1, { hard: true }],
+        // wrapWord(): a wide character does not fit in the row.
+        wideHardWord: ["あ".repeat(3000), 1, { hard: true }],
+        // The other two callers of wrapWord().
+        wordNoWordWrap: ["a".repeat(3000), 1, { wordWrap: false }],
+        wordNoWordWrapAfterText: ["a " + "b".repeat(7000), 3, { wordWrap: false }],
+      }`);
+      expect(result).toEqual({
+        stdout: {
+          rowsAtBound: 4095,
+          rowsPastBound: outOfMemory,
+          wideRowsAtBound: 4095,
+          wideRowsPastBound: outOfMemory,
+          wordsNoWordWrap: outOfMemory,
+          hardWords: outOfMemory,
+          hardWord: outOfMemory,
+          wideHardWord: outOfMemory,
+          wordNoWordWrap: outOfMemory,
+          wordNoWordWrapAfterText: outOfMemory,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("throws when one row cannot grow", async () => {
+      // No text here is wider than columns before a row passes the bound, so one row takes all of it.
+      const result = await wrapWithSyntheticLimit(`{
+        wordAtBound: ["a".repeat(65536), 100000],
+        wordPastBound: ["a".repeat(65537), 100000],
+        wideWordAtBound: ["あ".repeat(32768), 100000],
+        wideWordPastBound: ["あ".repeat(32769), 100000],
+        // The last space is character 65,536 of its row, then character 65,537.
+        spaceAtBound: ["a" + " a".repeat(32767) + " ", 100000],
+        spacePastBound: ["aa" + " a".repeat(32767) + " ", 100000],
+        // In each case below a different statement of wrapAnsi.cpp adds the text that does not fit.
+        // placeWord(): a word after other words.
+        words: ["ab ".repeat(30000), 100000],
+        // wrapWord(): one character of a hard-wrapped word.
+        hardWord: ["a".repeat(70000), 69999, { hard: true }],
+        // wrapWord(): an escape sequence in a hard-wrapped word.
+        escapesInHardWord: ["\\x1b[31m".repeat(14000) + "a".repeat(11), 10, { hard: true }],
+        // wrapWord(): a last row of only escape sequences goes back into the row before it.
+        trailingEscapeFoldedBack: ["a".repeat(2 * 65534) + "\\x1b[39m", 65534, { hard: true }],
+      }`);
+      expect(result).toEqual({
+        stdout: {
+          wordAtBound: 65536,
+          wordPastBound: outOfMemory,
+          wideWordAtBound: 32768,
+          wideWordPastBound: outOfMemory,
+          spaceAtBound: 65535,
+          spacePastBound: outOfMemory,
+          words: outOfMemory,
+          hardWord: outOfMemory,
+          escapesInHardWord: outOfMemory,
+          trailingEscapeFoldedBack: outOfMemory,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   describe("long inputs", () => {
     test("wraps a long run of color escape sequences on one line", async () => {
       await using proc = Bun.spawn({

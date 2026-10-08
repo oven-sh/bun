@@ -103,22 +103,9 @@ bool JSNodePerformanceHooksHistogram::record(int64_t value)
 {
     if (!m_histogramData.histogram) return false;
 
-    // Try to record in the HDR histogram first
-    bool recorded = hdr_record_value(m_histogramData.histogram, value);
-
-    if (recorded) {
-        // Value was within range - count it and update min/max
+    if (hdr_record_value(m_histogramData.histogram, value)) {
         m_histogramData.totalCount++;
-
-        // Update manual min/max tracking for in-range values only
-        if (value < m_histogramData.manualMin) {
-            m_histogramData.manualMin = value;
-        }
-        if (value > m_histogramData.manualMax) {
-            m_histogramData.manualMax = value;
-        }
     } else {
-        // Value was out of range
         m_histogramData.exceedsCount++;
     }
 
@@ -145,29 +132,20 @@ void JSNodePerformanceHooksHistogram::reset()
     hdr_reset(m_histogramData.histogram);
     m_histogramData.prevDeltaTime = 0;
     m_histogramData.totalCount = 0;
-    m_histogramData.manualMin = std::numeric_limits<int64_t>::max();
-    m_histogramData.manualMax = 0;
     m_histogramData.exceedsCount = 0;
 }
 
+// Bucket bounds, not raw values, like Node.js: https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L34-L42
 int64_t JSNodePerformanceHooksHistogram::getMin() const
 {
-    if (m_histogramData.totalCount == 0) {
-        // Return the same initial value as Node.js when no values recorded
-        // Node.js returns 9223372036854776000 which is 0x8000000000000000
-        // This is exactly INT64_MIN when interpreted as signed
-        return INT64_MIN;
-    }
-    return m_histogramData.manualMin;
+    if (!m_histogramData.histogram) return std::numeric_limits<int64_t>::max();
+    return hdr_min(m_histogramData.histogram);
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMax() const
 {
-    if (m_histogramData.totalCount == 0) {
-        // Return 0 when no values recorded (Node.js behavior)
-        return 0;
-    }
-    return m_histogramData.manualMax;
+    if (!m_histogramData.histogram) return 0;
+    return hdr_max(m_histogramData.histogram);
 }
 
 double JSNodePerformanceHooksHistogram::getMean() const
@@ -208,23 +186,6 @@ double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* oth
     m_histogramData.totalCount += other->m_histogramData.totalCount;
     m_histogramData.exceedsCount += other->m_histogramData.exceedsCount;
 
-    // Update manual min/max from the other histogram
-    if (other->m_histogramData.totalCount > 0) {
-        if (m_histogramData.totalCount == other->m_histogramData.totalCount) {
-            // This was empty, so take the other's values
-            m_histogramData.manualMin = other->m_histogramData.manualMin;
-            m_histogramData.manualMax = other->m_histogramData.manualMax;
-        } else {
-            // Merge min/max values
-            if (other->m_histogramData.manualMin < m_histogramData.manualMin) {
-                m_histogramData.manualMin = other->m_histogramData.manualMin;
-            }
-            if (other->m_histogramData.manualMax > m_histogramData.manualMax) {
-                m_histogramData.manualMax = other->m_histogramData.manualMax;
-            }
-        }
-    }
-
     // hdr_add returns number of dropped values
     return hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
 }
@@ -241,10 +202,10 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
 
     while (hdr_iter_next(&iter)) {
         double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
+        // The lowest value of the bucket, like Node.js: https://github.com/nodejs/node/blob/v26.3.0/src/histogram-inl.h#L61-L70
+        int64_t value = iter.value;
         JSValue jsKey = jsNumber(percentile);
-        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, );
+        JSValue jsValue = jsNumber(static_cast<double>(value));
         map->set(globalObject, jsKey, jsValue);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -262,7 +223,7 @@ void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globa
 
     while (hdr_iter_next(&iter)) {
         double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
+        int64_t value = iter.value;
         JSValue jsKey = jsNumber(percentile);
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
         RETURN_IF_EXCEPTION(scope, );

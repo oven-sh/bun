@@ -604,8 +604,7 @@ fn parent_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
         Node::Case(case) => N::SwitchCase(case),
         Node::Stmt(parent) => match parent.kind() {
             StmtKind::Try { handler, .. } if handler == Some(statement) => N::CatchClause(parent),
-            // The `B` of `namespace A.B {}` is directly in `A`.
-            StmtKind::Module(module) if module.nested().is_some() => inner_of_stmt(parent),
+            // `namespace A.B { .. }` is one node, and what is between the braces is in it.
             StmtKind::Module(_) => N::TSModuleBlock(parent),
             _ => inner_of_stmt(parent),
         },
@@ -1118,7 +1117,7 @@ impl<'a> AstNodes<'a> {
                 _ => statement.span(),
             },
             N::TSModuleBlock(statement) => match statement.kind() {
-                StmtKind::Module(module) => module.body_span().unwrap_or_else(|| statement.span()),
+                StmtKind::Module(module) => module.innermost().body_span().unwrap_or_else(|| statement.span()),
                 _ => statement.span(),
             },
             N::Directive(statement)

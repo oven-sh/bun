@@ -340,7 +340,7 @@ pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
         }
         N::TSModuleBlock(statement) => {
             if let StmtKind::Module(module) = statement.kind() {
-                f.list(module.body(), false);
+                f.list(module.innermost().body(), false);
             }
         }
         N::TSInterfaceBody(statement) => {
@@ -476,9 +476,7 @@ pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
                         ModuleName::Ident(name) | ModuleName::String(name) => Some(name.span()),
                         ModuleName::Global => None,
                     };
-                    f.one(name)
-                        .one(module.nested().map(|it| it.span()))
-                        .one(module.body_span());
+                    f.one(name).one(module.innermost().body_span());
                 }
                 StmtKind::ImportEquals(import) => {
                     f.one(Some(import.name().span())).one(match import.target() {

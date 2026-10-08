@@ -70,16 +70,21 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
         | AstNodes::ContinueStatement(_)
         | AstNodes::DebuggerStatement(_)
         | AstNodes::VariableDeclaration(_)
-        | AstNodes::IfStatement(_)
-        | AstNodes::ForStatement(_)
-        | AstNodes::ForInStatement(_)
-        | AstNodes::ForOfStatement(_)
-        | AstNodes::WhileStatement(_)
-        | AstNodes::WithStatement(_)
-        | AstNodes::LabeledStatement(_)
         | AstNodes::PropertyDefinition(_)
         | AstNodes::AccessorProperty(_)
         | AstNodes::MethodDefinition(_) => f.comments().without_semicolon(span),
+        // These end where their last body ends. An empty statement is its `;`.
+        AstNodes::IfStatement(statement)
+        | AstNodes::ForStatement(statement)
+        | AstNodes::ForInStatement(statement)
+        | AstNodes::ForOfStatement(statement)
+        | AstNodes::WhileStatement(statement)
+        | AstNodes::WithStatement(statement)
+        | AstNodes::LabeledStatement(statement)
+            if ends_before_semicolon(statement) =>
+        {
+            f.comments().without_semicolon(span)
+        }
         // What is exported ends where the `export` around it ends.
         AstNodes::TSTypeAliasDeclaration(statement) | AstNodes::TSImportEqualsDeclaration(statement)
             if statement.is_exported() =>
@@ -92,6 +97,34 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
             f.comments().without_semicolon(span)
         }
         _ => span,
+    }
+}
+
+/// Whether Prettier's `locEnd` of `statement` is before the `;` at its end.
+fn ends_before_semicolon(mut statement: Stmt<'_>) -> bool {
+    loop {
+        statement = match statement.kind() {
+            StmtKind::If { yes, no, .. } => no.unwrap_or(yes),
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::With { body, .. }
+            | StmtKind::Labeled { body, .. } => body,
+            StmtKind::Expr(_)
+            | StmtKind::Import(_)
+            | StmtKind::ExportNamed(_)
+            | StmtKind::ExportStar { .. }
+            | StmtKind::ExportDefault(_)
+            | StmtKind::Return(_)
+            | StmtKind::Throw(_)
+            | StmtKind::DoWhile { .. }
+            | StmtKind::Break(_)
+            | StmtKind::Continue(_)
+            | StmtKind::Debugger
+            | StmtKind::Var(_) => return true,
+            _ => return false,
+        };
     }
 }
 

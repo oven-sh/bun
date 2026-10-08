@@ -280,6 +280,9 @@ impl<'a> Format<'a> for Comment {
         if self.is_line() {
             return write!(f, text(content.trim_ascii_end()));
         }
+        if super::jsdoc::write_comment(self, f) {
+            return;
+        }
         if self.is_indentable_block() {
             // In Markdown, two spaces at the end of a line are a line break.
             let is_jsdoc = content.starts_with(b"/**") && content.get(3) != Some(&b'*');

@@ -238,6 +238,7 @@ impl Input<'_, '_> {
             fix: self.wants_fixes.then_some(fix),
             suggestions: Vec::new(),
             suppressions: Vec::new(),
+            comments_apply_at: None,
         }
     }
 

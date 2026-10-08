@@ -311,8 +311,9 @@ pub(crate) fn apply<'a>(
         let Some(id) = &problem.rule_id else {
             continue;
         };
-        let start = (problem.line, problem.column);
-        let end = problem.end.unwrap_or(start);
+        let shown = (problem.line, problem.column);
+        let (start, end) =
+            (problem.comments_apply_at).unwrap_or((shown, problem.end.unwrap_or(shown)));
         for (range, &(from, to)) in ranges.iter_mut().zip(&places) {
             let overlaps = from < end && to > start;
             if overlaps

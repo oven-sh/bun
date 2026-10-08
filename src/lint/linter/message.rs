@@ -153,6 +153,10 @@ pub struct LintMessage {
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
     pub suppressions: Vec<Suppression>,
+    /// Where the message starts and ends for the comments that disable rules, if that is another place than the one that is
+    /// shown: [`Report::comments_apply_at`](crate::context::Report::comments_apply_at). Only oxlint has such messages, and only
+    /// with a configuration of oxlint it counts.
+    pub comments_apply_at: Option<((u32, u32), (u32, u32))>,
 }
 
 impl Default for LintMessage {
@@ -171,6 +175,7 @@ impl Default for LintMessage {
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
+            comments_apply_at: None,
         }
     }
 }
@@ -212,6 +217,7 @@ impl<'a> Locator<'a> {
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
+            comments_apply_at: None,
         }
     }
 }

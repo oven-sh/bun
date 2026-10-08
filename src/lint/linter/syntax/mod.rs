@@ -100,6 +100,7 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         fix: None,
         suggestions: Vec::new(),
         suppressions: Vec::new(),
+        comments_apply_at: None,
     })
 }
 
@@ -125,6 +126,7 @@ pub fn not_in_a_project(path: &[u8]) -> LintMessage {
         fix: None,
         suggestions: Vec::new(),
         suppressions: Vec::new(),
+        comments_apply_at: None,
     }
 }
 

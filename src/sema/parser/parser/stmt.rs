@@ -181,7 +181,7 @@ impl Parser<'_> {
     fn next_is_binding_on_same_line(&mut self, disallow_of: bool) -> bool {
         self.next();
         if disallow_of && self.token() == T::Of {
-            return false;
+            return matches!(self.peek(), T::Equals | T::Semicolon | T::Colon);
         }
         (self.is_binding_identifier() || self.token() == T::OpenBrace) && !self.newline_before()
     }

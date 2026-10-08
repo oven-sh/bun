@@ -1183,6 +1183,9 @@ impl Parser<'_> {
             }
             // `parsePropertyOrMethodSignature`
             let name_token = self.token();
+            if name_token == T::BigInt {
+                self.refuse(Refusal::Unsupported);
+            }
             let (mut key, name_kind, name_pos) = self.property_name();
             // `getDeclarationName`: a private name outside a class declares nothing.
             if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
@@ -1208,7 +1211,8 @@ impl Parser<'_> {
                     member.kind = MemberKind::Method;
                 }
                 let name = key.name().unwrap_or(Atom::NONE);
-                member.func = self.signature(fn_kind, member.flags, name, name_pos, start.pos);
+                let flags = member.flags - Flags::LITERAL_NAME;
+                member.func = self.signature(fn_kind, flags, name, name_pos, start.pos);
                 if self.token() == T::OpenBrace {
                     self.refuse(Refusal::Reported);
                 }

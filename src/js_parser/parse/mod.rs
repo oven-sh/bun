@@ -653,7 +653,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 .start
                 .max(p.lexer.previous_backslash_quote_in_jsx.loc.start);
             let estr = p.lexer.to_e_string()?;
-            let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
+            let loc = match p.is_tolerant() {
+                true => p.lexer.loc(),
+                false => *previous_string_with_backslash_loc,
+            };
+            let expr = p.new_expr(estr, loc);
 
             p.lexer.next_inside_jsx_element()?;
             Ok(Some(expr))
@@ -2443,7 +2447,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         );
                     }
                     let ref_ = p.store_name_in_ref(name);
-                    let value = p.b(B::Identifier { r#ref: ref_ }, loc);
+                    let mut value = p.b(B::Identifier { r#ref: ref_ }, loc);
+                    if Self::IS_TYPESCRIPT_ENABLED && !ref_.is_source_contents_slice() {
+                        p.note_token_full_start(&mut value.loc, Mark::PatternEnd);
+                    }
                     let mut default_value: Option<Expr> = None;
                     if p.lexer.token == T::TEquals {
                         p.lexer.next()?;

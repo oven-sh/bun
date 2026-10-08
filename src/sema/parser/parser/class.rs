@@ -70,7 +70,9 @@ impl Parser<'_> {
         let (mut extends, mut extends_args) = (ExprId::NONE, IdList::EMPTY);
         if self.eat(T::Extends) {
             // `isListElement`
-            if !self.is_start_of_left_hand_side_expression() {
+            if !self.is_start_of_left_hand_side_expression()
+                && !(self.is_ecmascript && self.token() == T::LessThan)
+            {
                 self.fail();
             }
             // `parseExpressionWithTypeArguments`
@@ -208,7 +210,11 @@ impl Parser<'_> {
         flags |= self.ambient();
         let is_generator = kind == MemberKind::Property && self.eat(T::Asterisk);
         let name_token = self.token();
-        let (key, name_kind, name_pos) = self.property_name();
+        let (mut key, name_kind, name_pos) = self.property_name();
+        if name_token == T::BigInt {
+            key = PropKey::None;
+            flags |= Flags::LITERAL_NAME;
+        }
         match name_kind {
             NameKind::StringLiteral => flags |= Flags::STRING_NAME | Flags::LITERAL_NAME,
             NameKind::NumericLiteral => flags |= Flags::LITERAL_NAME,

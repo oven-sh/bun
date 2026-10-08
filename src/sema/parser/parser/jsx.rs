@@ -101,7 +101,9 @@ impl Parser<'_> {
             // `tagNamesAreEquivalent`
             let src = self.lx.src;
             let written = |range: (u32, u32)| src.get(range.0 as usize..range.1 as usize);
-            if written(name) != written((closing, self.prev_end())) {
+            if written(name) != written((closing, self.prev_end()))
+                && !self.are_tag_names_equivalent(jsx.tag, jsx.close_tag)
+            {
                 self.refuse(Refusal::Reported);
             }
         }
@@ -109,6 +111,32 @@ impl Parser<'_> {
         self.end_of_jsx_tag(is_in_expression);
         let id = self.f.add_jsx(jsx);
         self.add_expr(ExprKind::Jsx(id), start, jsx.end)
+    }
+
+    /// `tagNamesAreEquivalent`, for names that are not written the same.
+    #[cold]
+    fn are_tag_names_equivalent(&self, mut a: ExprId, mut b: ExprId) -> bool {
+        loop {
+            let (Some(x), Some(y)) = (self.f.exprs.get(a.idx()), self.f.exprs.get(b.idx())) else {
+                return false;
+            };
+            match (x.kind, y.kind) {
+                (
+                    ExprKind::Dot {
+                        obj: left, name, ..
+                    },
+                    ExprKind::Dot {
+                        obj: right,
+                        name: other,
+                        ..
+                    },
+                ) if name == other => (a, b) = (left, right),
+                (ExprKind::Ident(name), ExprKind::Ident(other))
+                | (ExprKind::String(name), ExprKind::String(other)) => return name == other,
+                (ExprKind::This, ExprKind::This) => return true,
+                _ => return false,
+            }
+        }
     }
 
     /// A name in a tag or of an attribute, which may have a namespace: its text, its start and
@@ -212,9 +240,6 @@ impl Parser<'_> {
                 self.lx.scan_jsx_attribute_value();
                 match self.token() {
                     T::String => {
-                        if bun_core::strings::contains_char(self.lx.text(), b'\\') {
-                            self.refuse(Refusal::Unsupported);
-                        }
                         let text = ExprKind::String(self.lx.atom);
                         value = self.add_expr(text, self.lx.start, self.lx.end);
                         self.next();

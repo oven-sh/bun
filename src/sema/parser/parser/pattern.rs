@@ -1,7 +1,6 @@
 //! Binding patterns.
 
 use super::{Parser, take_span};
-use crate::Refusal;
 use crate::token::T;
 use bun_sema::hir::*;
 
@@ -37,6 +36,7 @@ impl Parser<'_> {
         }
         let start = self.pos();
         self.next();
+        let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
         let base = self.s.pat_elems.len();
         while self.is_in_list(T::CloseBracket) {
             // `parseArrayBindingElement`
@@ -71,6 +71,7 @@ impl Parser<'_> {
                 break;
             }
         }
+        self.context = saved;
         self.expect(T::CloseBracket);
         let elements = take_span!(self, pat_elems, base);
         let end = self.prev_end();
@@ -84,6 +85,7 @@ impl Parser<'_> {
         }
         let start = self.pos();
         self.next();
+        let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
         let base = self.s.pat_props.len();
         while self.is_in_list(T::CloseBrace) {
             // `parseObjectBindingElement`
@@ -103,13 +105,15 @@ impl Parser<'_> {
                 }
             } else {
                 let is_identifier = self.is_binding_identifier();
-                let has_escape = is_identifier && self.lx.has_escape;
+                let is_bigint = self.token() == T::BigInt;
                 let name_end = self.lx.end;
-                let (key, name_kind, key_pos) = self.property_name();
+                let (mut key, name_kind, key_pos) = self.property_name();
+                // `name.Text()` ends with the `n`.
+                if is_bigint && let PropKey::Name(digits) = key {
+                    let text = [self.lx.text_of(digits), b"n"].concat();
+                    key = PropKey::Name(self.atom(&text));
+                }
                 let value = if is_identifier && self.token() != T::Colon {
-                    if has_escape {
-                        self.refuse(Refusal::Unsupported);
-                    }
                     match key {
                         PropKey::Name(name) => {
                             self.note_identifier(name, key_pos);
@@ -141,6 +145,7 @@ impl Parser<'_> {
                 self.report();
             }
         }
+        self.context = saved;
         self.expect(T::CloseBrace);
         let properties = take_span!(self, pat_props, base);
         let end = self.prev_end();

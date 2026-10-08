@@ -1233,10 +1233,7 @@ impl Parser<'_> {
                 };
             }
             T::PrivateIdentifier => (PropKey::Private(self.lx.atom), NameKind::Identifier),
-            T::BigInt => {
-                self.refuse(Refusal::Unsupported);
-                (PropKey::None, NameKind::Identifier)
-            }
+            T::BigInt => (PropKey::Name(self.lx.atom), NameKind::Identifier),
             token if token.is_identifier_or_keyword() => {
                 (PropKey::Name(self.lx.atom), NameKind::Identifier)
             }
@@ -1312,10 +1309,12 @@ impl Parser<'_> {
         }
         let is_generator = kind == PropKind::Init && self.eat(T::Asterisk);
         let is_identifier = self.is_identifier();
+        let is_bigint = self.token() == T::BigInt;
         let name_end = self.lx.end;
         let (mut key, name_kind, pos) = self.property_name();
-        // `getDeclarationName`: a private name outside a class declares nothing.
-        if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
+        // `getDeclarationName`: a private name outside a class declares nothing. Neither does a
+        // bigint.
+        if self.classes_around == 0 && matches!(key, PropKey::Private(_)) || is_bigint {
             key = PropKey::None;
         }
         if matches!(self.token(), T::Question | T::Exclamation) {
@@ -1421,9 +1420,11 @@ impl Parser<'_> {
 
     /// `canFollowModifier`, after `get` or `set`.
     pub(crate) fn can_follow_accessor_keyword(&self) -> bool {
-        matches!(
-            self.token(),
-            T::OpenBracket | T::OpenBrace | T::Asterisk | T::DotDotDot | T::PrivateIdentifier
-        ) || self.is_literal_property_name()
+        match self.token() {
+            T::OpenBracket | T::PrivateIdentifier => true,
+            // acorn's `isClassElementNameStart`
+            T::OpenBrace | T::Asterisk | T::DotDotDot => !self.is_ecmascript,
+            _ => self.is_literal_property_name(),
+        }
     }
 }

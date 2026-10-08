@@ -22,9 +22,8 @@
 
 use crate::js::utils::number::format_trimmed_number;
 use bun_lint::ast::walk::{Visitor, walk};
-use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind, TypeKind};
+use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind, StmtTag, TypeKind};
 use bun_lint::span::Span;
-use bun_sema::hir::StmtTag;
 use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
 

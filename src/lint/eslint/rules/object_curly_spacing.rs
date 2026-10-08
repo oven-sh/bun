@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Enforce consistent spacing inside braces.
 pub struct ObjectCurlySpacing {
@@ -16,17 +17,62 @@ const UNEXPECTED_SPACE_BEFORE: Message =
 const UNEXPECTED_SPACE_AFTER: Message =
     Message::new("unexpectedSpaceAfter", "There should be no space after '{{token}}'.");
 
+/// By a node: whether it is out of reach of `utils::get_node_by_range_index`.
+type State<'a> = AncestorMemo<'a, bool>;
+
+/// The range of a node that `utils::get_node_by_range_index` goes by.
+fn searched_span(node: Node<'_>) -> Span {
+    match node {
+        Node::Param(_) => utils::estree_span(node),
+        Node::Stmt(statement) => statement.export_span().unwrap_or_else(|| statement.span()),
+        _ => node.span(),
+    }
+}
+
+/// `utils::get_node_by_range_index(file, offset)` for an `offset` in `node`. It starts at `node`, not at
+/// the file, from where the way is long to each of the braces that are deep in each other.
+fn get_node_by_range_index_in<'a>(node: Node<'a>, offset: u32, state: &mut State<'a>) -> Node<'a> {
+    // The search from the file does not enter what does not have the offset in its range, as with a
+    // decorator that ESTree has outside of the range of what it belongs to.
+    let is_out_of_reach = state.find(node, |child, parent| {
+        (!searched_span(parent).contains_offset(child.span().start)).then_some(true)
+    });
+    if is_out_of_reach == Some(true) {
+        return utils::get_node_by_range_index(node.file(), offset);
+    }
+    let mut at = node;
+    loop {
+        let mut inner = None;
+        at.for_each_child_near(offset, |child| {
+            if inner.is_none() && searched_span(child).contains_offset(offset) {
+                inner = Some(child);
+            }
+        });
+        match inner {
+            Some(child) => at = child,
+            None => return at,
+        }
+    }
+}
+
 impl ObjectCurlySpacing {
-    /// ESLint's `validateBraceSpacing`. `open` and `close` are the positions of the braces, between
+    /// ESLint's `validateBraceSpacing`. `open` and `close` are the positions of the braces in `node`, between
     /// which there is something. What is next to a brace, a token or a comment, is found by
     /// skipping whitespace.
-    fn validate_brace_spacing(&self, open: u32, close: u32, cx: &Cx<'_, Self>) {
-        self.validate_brace_spacing_around(open, close, None, cx);
+    fn validate_brace_spacing<'a>(&self, node: Node<'a>, open: u32, close: u32, cx: &mut Cx<'a, Self>) {
+        self.validate_brace_spacing_around(node, open, close, None, cx);
     }
 
     /// `inner_close`: a `}` that is known to end an `ObjectExpression`.
-    fn validate_brace_spacing_around(&self, open: u32, close: u32, inner_close: Option<u32>, cx: &Cx<'_, Self>) {
-        let source = cx.text();
+    fn validate_brace_spacing_around<'a>(
+        &self,
+        node: Node<'a>,
+        open: u32,
+        close: u32,
+        inner_close: Option<u32>,
+        cx: &mut Cx<'a, Self>,
+    ) {
+        let source = cx.file().text();
         if source.get(open as usize) != Some(&b'{') || source.get(close as usize) != Some(&b'}') {
             return;
         }
@@ -51,7 +97,8 @@ impl ObjectCurlySpacing {
         let gap = Span::new(penultimate_end, close);
         if !text::has_line_break(cx.slice(gap)) {
             let penultimate = penultimate_end.saturating_sub(1);
-            let penultimate_type = || utils::estree_type_name(utils::get_node_by_range_index(cx.file(), penultimate));
+            let mut penultimate_type =
+                || utils::estree_type_name(get_node_by_range_index_in(node, penultimate, &mut cx.state));
             let is_exception = match source.get(penultimate as usize) {
                 Some(b']') if self.arrays_in_objects_exception => penultimate_type() == "ArrayExpression",
                 Some(b'}') if self.objects_in_objects_exception => {
@@ -75,14 +122,14 @@ impl ObjectCurlySpacing {
 
     /// The braces around the specifiers of an import or an export, of which `first` and `last` are
     /// the ranges.
-    fn check_specifiers(&self, first: Span, last: Span, cx: &Cx<'_, Self>) {
-        let source = cx.text();
+    fn check_specifiers<'a>(&self, statement: Stmt<'a>, first: Span, last: Span, cx: &mut Cx<'a, Self>) {
+        let source = cx.file().text();
         let open = cx.file().end_of_token_before(first.start).saturating_sub(1);
         let mut close = skip_trivia(source, last.end);
         if source.get(close as usize) == Some(&b',') {
             close = skip_trivia(source, close + 1);
         }
-        self.validate_brace_spacing(open, close, cx);
+        self.validate_brace_spacing(Node::Stmt(statement), open, close, cx);
     }
 }
 
@@ -90,7 +137,7 @@ impl Rule for ObjectCurlySpacing {
     const META: Meta = Meta::eslint("object-curly-spacing", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let spaced = options.str(0) == Some("always");
@@ -102,17 +149,17 @@ impl Rule for ObjectCurlySpacing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.exprs([ExprTag::Object], |rule, e, cx| {
             if matches!(e.kind(), ExprKind::Object(props) if !props.is_empty()) {
                 let span = e.span();
-                rule.validate_brace_spacing(span.start, span.end.saturating_sub(1), cx);
+                rule.validate_brace_spacing(Node::Expr(e), span.start, span.end.saturating_sub(1), cx);
             }
         });
         on.pats([PatTag::Object], |rule, pat, cx| {
             if matches!(pat.kind(), PatKind::Object(props) if !props.is_empty()) {
                 let span = pat.span();
-                rule.validate_brace_spacing(span.start, span.end.saturating_sub(1), cx);
+                rule.validate_brace_spacing(Node::Pat(pat), span.start, span.end.saturating_sub(1), cx);
             }
         });
         // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
@@ -124,9 +171,10 @@ impl Rule for ObjectCurlySpacing {
             let (outer, inner) = (attributes.options_span(), attributes.braces_span());
             let inner_close = inner.end.saturating_sub(1);
             if !attributes.entries().is_empty() {
-                rule.validate_brace_spacing(inner.start, inner_close, cx);
+                rule.validate_brace_spacing(Node::Type(ty), inner.start, inner_close, cx);
             }
-            rule.validate_brace_spacing_around(outer.start, outer.end.saturating_sub(1), Some(inner_close), cx);
+            let outer_close = outer.end.saturating_sub(1);
+            rule.validate_brace_spacing_around(Node::Type(ty), outer.start, outer_close, Some(inner_close), cx);
         });
         on.stmts([StmtTag::Import, StmtTag::ExportNamed], |rule, statement, cx| {
             let ends = match statement.kind() {
@@ -135,8 +183,9 @@ impl Rule for ObjectCurlySpacing {
                 _ => None,
             };
             if let Some((first, last)) = ends {
-                rule.check_specifiers(first, last, cx);
+                rule.check_specifiers(statement, first, last, cx);
             }
         });
+        State::default()
     }
 }

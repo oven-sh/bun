@@ -925,7 +925,9 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
     // Effects may have more dependencies than they need.
     if !is_effect {
         let unnecessary = |dependency: &Dependency| {
-            cx.report(array, UNNECESSARY_DEPENDENCY).data("hook", hook).data("dependency", dependency.text());
+            if !cx.has_reported_too_much() {
+                cx.report(array, UNNECESSARY_DEPENDENCY).data("hook", hook).data("dependency", dependency.text());
+            }
         };
         // The pairs of which one is a property of the other: the positions of the first and of the second in the array, and that of
         // the property.

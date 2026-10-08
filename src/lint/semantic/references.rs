@@ -8,7 +8,6 @@ use super::scopes::{self, NONE, ScopeTree};
 use super::variables::{TYPE, VALUE, Variables};
 use super::{ReferenceFlags, ScopeKind};
 use crate::ast::File;
-use crate::options::Json;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Parent, PatParent};
 use bun_sema::hir::{self, ExprId, ExprKind, PatKind, PropKind, StmtKind, TypeNodeKind, UnOp};
@@ -62,9 +61,10 @@ pub(crate) struct References {
     /// For each variable, where its references start in `by_variable`. Two more than there are
     /// variables.
     variable_starts: Vec<u32>,
-    /// Indices into `all`, scope by scope, in source order.
-    by_scope: Vec<u32>,
-    scope_starts: Vec<u32>,
+    /// Indices into `all`, scope by scope, in source order, and where those of each scope start.
+    /// Computed on demand.
+    by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
+    scope_count: usize,
     /// What resolves to nothing, by name and then in source order. Computed on demand.
     unresolved_by_name: OnceCell<Vec<u32>>,
 }
@@ -102,7 +102,7 @@ impl Collector<'_, '_> {
 
     /// `/** @type {T} */ (e)` in JavaScript is `e` in parentheses to ESLint.
     fn without_casts(&self, mut e: ExprId) -> ExprId {
-        while self.is_javascript
+        while self.file.is_javascript()
             && let Some(ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. }) =
                 self.file.hir.exprs.get(e.idx()).map(|it| it.kind)
         {
@@ -164,11 +164,11 @@ impl Collector<'_, '_> {
                         return Access::ReadWrite(ExprId::NONE);
                     }
                     Some(ExprKind::Array(_) | ExprKind::Spread(_)) => (at, wrappers, has_satisfies) = (parent, 0, false),
-                    Some(ExprKind::As { .. } | ExprKind::Satisfies { .. }) if self.is_javascript => at = parent,
-                    Some(ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::NonNull(_)) if !self.is_javascript => {
+                    Some(ExprKind::As { .. } | ExprKind::Satisfies { .. }) if self.file.is_javascript() => at = parent,
+                    Some(ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::NonNull(_)) => {
                         (at, wrappers) = (parent, wrappers + 1);
                     }
-                    Some(ExprKind::Satisfies { .. }) if !self.is_javascript => {
+                    Some(ExprKind::Satisfies { .. }) => {
                         (at, wrappers, has_satisfies) = (parent, wrappers + 1, true);
                     }
                     _ => break,
@@ -369,6 +369,7 @@ impl Collector<'_, '_> {
         for (i, ty) in hir.types.iter().enumerate() {
             let id = hir::TypeNodeId(i as u32);
             match ty.kind {
+                _ if file.has_synthetic_nodes() && file.is_in_jsdoc(ty.pos) => {}
                 TypeNodeKind::Ref { name, .. } if bound.type_scope.get(i).is_some_and(|it| it.is_some()) => {
                     if let Some(first) = hir.names.get(name.start as usize).filter(|_| !name.is_empty()) {
                         let flags = ReferenceFlags::READ | ReferenceFlags::TYPE;
@@ -476,19 +477,13 @@ impl Collector<'_, '_> {
     /// "name" in the upper scopes and adds a pseudo-reference from itself to itself".
     fn jsx_pragmas(&mut self, tree: &ScopeTree, variables: &Variables) {
         let file = self.file;
-        let option = |key: &[u8], default: Option<Atom>| match file.language().parser_options.get(key) {
-            Some(Json::String(name)) => Some(file.atoms.intern(name)),
-            Some(Json::Null) => None,
-            _ => default,
-        };
-        let names = [
-            (option(b"jsxPragma", Some(known::React)), false),
-            (option(b"jsxFragmentName", None), true),
-        ];
+        let language = file.language();
+        let names = [(&language.jsx_pragma, false), (&language.jsx_fragment_name, true)];
         for (name, only_fragments) in names {
             let Some(name) = name else {
                 continue;
             };
+            let name = file.atoms.intern(name);
             let mut elements: Vec<u32> = (file.hir.exprs.iter().enumerate())
                 .filter(|(i, e)| {
                     matches!(e.kind, ExprKind::Jsx(jsx)
@@ -614,13 +609,12 @@ impl References {
 
         let unresolved = variables.list.len();
         let (by_variable, variable_starts) = group_by(&all, unresolved + 1, |it| (it.variable as usize).min(unresolved));
-        let (by_scope, scope_starts) = group_by(&all, tree.scopes.len(), |it| it.from as usize);
         References {
             all,
             by_variable,
             variable_starts,
-            by_scope,
-            scope_starts,
+            by_scope: OnceCell::new(),
+            scope_count: tree.scopes.len(),
             unresolved_by_name: OnceCell::new(),
         }
     }
@@ -659,7 +653,8 @@ impl References {
     /// The references that are written in the scopes `first..=last`.
     #[inline]
     pub(crate) fn in_scopes(&self, first: u32, last: u32) -> &[u32] {
-        Self::group(&self.by_scope, &self.scope_starts, first as usize, last as usize)
+        let (by_scope, starts) = self.by_scope.get_or_init(|| group_by(&self.all, self.scope_count, |it| it.from as usize));
+        Self::group(by_scope, starts, first as usize, last as usize)
     }
 
     /// The first reference that is written at `pos`.

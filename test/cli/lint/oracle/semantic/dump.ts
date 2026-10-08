@@ -1,6 +1,8 @@
 // What ESLint's scope analysis says about each case, in the format of `bun-lint semantic dump --batch`.
 //
-//   ESLINT_DIR=<eslint checkout> TYPESCRIPT_ESLINT_DIR=<typescript-eslint checkout, built> bun dump.ts cases.jsonl > expected.jsonl
+//   ESLINT_DIR=<eslint checkout> TYPESCRIPT_ESLINT_DIR=<typescript-eslint checkout, built> bun dump.ts cases.jsonl [--nodes] > expected.jsonl
+//
+// With `--nodes` also `getScope(node)` for every node.
 //
 // A case is `{ id, filename, code, sourceType, ecmaVersion, jsx, globalReturn, impliedStrict, jsxPragma, jsxFragmentName }`.
 // `.js`, `.jsx`, `.mjs`, `.cjs` go through espree and eslint-scope the way ESLint calls them, everything else through
@@ -25,6 +27,9 @@ const eslintScope = fromEslint("eslint-scope");
 const visitorKeys = fromEslint("eslint-visitor-keys");
 const typescriptParser = fromEslint(join(typescriptEslintDir, "packages/parser/dist/index.js"));
 
+const withNodes = process.argv.includes("--nodes");
+const casesPath = process.argv.slice(2).find(it => !it.startsWith("--"))!;
+
 type Case = {
   id: number | string;
   filename: string;
@@ -43,7 +48,12 @@ function analyze(it: Case) {
   const globalReturn = it.globalReturn || sourceType === "commonjs";
   if (/\.[cm]?jsx?$/.test(it.filename)) {
     const ecmaVersion = typeof it.ecmaVersion === "number" ? it.ecmaVersion : espree.latestEcmaVersion;
-    const ecmaFeatures = { jsx: it.jsx || /x$/.test(it.filename), globalReturn, impliedStrict: it.impliedStrict };
+    // `normalizeLanguageOptions` of ESLint turns `globalReturn` off in a module.
+    const ecmaFeatures = {
+      jsx: it.jsx || /x$/.test(it.filename),
+      globalReturn: globalReturn && sourceType !== "module",
+      impliedStrict: it.impliedStrict,
+    };
     const ast = espree.parse(it.code, { ecmaVersion, sourceType, ecmaFeatures, range: true });
     const scopeManager = eslintScope.analyze(ast, {
       ignoreEval: true,
@@ -60,7 +70,8 @@ function analyze(it: Case) {
   const options: Record<string, unknown> = {
     filePath: it.filename,
     sourceType,
-    ecmaFeatures: { jsx: it.jsx, globalReturn },
+    // Only `eslint-scope` knows `"commonjs"`.
+    ecmaFeatures: { jsx: it.jsx, globalReturn: it.globalReturn },
   };
   if (it.jsxPragma !== undefined) options.jsxPragma = it.jsxPragma;
   if (it.jsxFragmentName !== undefined) options.jsxFragmentName = it.jsxFragmentName;
@@ -117,7 +128,11 @@ function variableKey(variable: any): string | number | null {
 function dump(it: Case) {
   const { ast, scopeManager, keys } = analyze(it);
   const declared: unknown[] = [];
+  const nodes: unknown[] = [];
   setParents(ast, keys, node => {
+    if (withNodes && node.type !== "Program") {
+      nodes.push([node.range[0], node.range[1], scopeKey(getScope(scopeManager, node))]);
+    }
     const variables = scopeManager
       .getDeclaredVariables(node)
       .filter((v: any) => !isInnerClassName(v) && v.defs[0].type !== "ImplicitGlobalVariable");
@@ -169,10 +184,10 @@ function dump(it: Case) {
   const implicit = scopeManager.scopes[0].implicit.variables.flatMap((variable: any) =>
     variable.defs.map((def: any) => [variable.name, def.name.range[0]]),
   );
-  return { scopes, variables, references, declared, implicit };
+  return { scopes, variables, references, declared, implicit, nodes: withNodes ? nodes : undefined };
 }
 
-for (const line of readFileSync(process.argv[2], "utf8").split("\n")) {
+for (const line of readFileSync(casesPath, "utf8").split("\n")) {
   if (!line) continue;
   const it: Case = JSON.parse(line);
   let result: object;

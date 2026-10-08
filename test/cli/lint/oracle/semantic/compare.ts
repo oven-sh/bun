@@ -41,6 +41,24 @@ function normalize(part: string, rows: unknown[][]): string[] {
   return texts.sort();
 }
 
+/// The two syntax trees do not have the same nodes. For each range that is a node in both: the scopes of the nodes with that
+/// range.
+function commonNodes(a: [number, number, string][], b: [number, number, string][]) {
+  const byRange = (rows: [number, number, string][]) => {
+    const map = new Map<string, Set<string>>();
+    for (const [start, end, scope] of rows) {
+      const key = `${start}-${end}`;
+      if (!map.has(key)) map.set(key, new Set());
+      map.get(key)!.add(scope);
+    }
+    return map;
+  };
+  const [inA, inB] = [byRange(a), byRange(b)];
+  const rows = (map: Map<string, Set<string>>, other: Map<string, Set<string>>) =>
+    [...map].filter(([key]) => other.has(key)).map(([key, scopes]) => [key, [...scopes].sort().join(" ")]);
+  return [rows(inA, inB), rows(inB, inA)];
+}
+
 /// What a difference is about, to group by.
 function classify(part: string, missing: string[], extra: string[]): string {
   const describe = (text: string) => {
@@ -80,8 +98,10 @@ for (const theirs of read(expectedPath)) {
     continue;
   }
   let isSame = true;
-  for (const part of ["scopes", "variables", "references", "declared", "implicit"]) {
+  for (const part of ["scopes", "variables", "references", "declared", "implicit", "nodes"]) {
     if ((only && only !== part) || !ours[part]) continue;
+    if (!theirs[part]) continue;
+    if (part === "nodes") [theirs.nodes, ours.nodes] = commonNodes(theirs.nodes, ours.nodes);
     const [a, b] = [normalize(part, theirs[part]), normalize(part, ours[part])];
     if (a.join("\n") === b.join("\n")) continue;
     isSame = false;

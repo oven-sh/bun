@@ -1089,6 +1089,12 @@ impl<'a> File<'a> {
         (0..self.reference_list().all.len() as u32).map(move |index| Reference { file: self, index })
     }
 
+    /// The reference whose name starts at `offset`. The first, if it is [several](Reference).
+    pub fn reference_at(&'a self, offset: u32) -> Option<Reference<'a>> {
+        let index = self.reference_list().at(offset)?;
+        Some(Reference { file: self, index })
+    }
+
     /// The references to what the file does not declare, in source order: globals, and mistakes.
     /// ESLint's `globalScope.through` before the globals of the configuration are added.
     pub fn unresolved_references(
@@ -1214,13 +1220,21 @@ impl<'a> Node<'a> {
                 TypeKind::Fn(f) => f.scope(),
                 _ => None,
             },
+            // A signature or a static block. A method is in the scope of the class.
+            Node::Member(m) => m.func().and_then(Func::scope).filter(|it| it.kind() != ScopeKind::Function),
             _ => None,
         };
         if let Some(own) = own {
             return own;
         }
+        let block = match self {
+            Node::Stmt(s) => Some(Block::Stmt(s.id())),
+            Node::Type(t) => Some(Block::Type(t.id())),
+            Node::Expr(e) => Some(Block::Expr(e.id())),
+            _ => None,
+        };
         let span = self.span();
-        let scope = tree.region_around(span.start, span.end).get;
+        let scope = tree.scope_of_node(span.start, span.end, block);
         // As in ESLint, which never answers with the scope of the name of a function expression.
         match tree.scopes.get(scope as usize).map(|it| it.kind) {
             Some(ScopeKind::FunctionExpressionName) => Scope::new(file, ScopeId(scope + 1)),

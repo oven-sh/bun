@@ -7,7 +7,7 @@
 
 use super::ScopeKind;
 use crate::ast::File;
-use crate::language::SourceType;
+use crate::language::{Parser, SourceType};
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
 use bun_sema::hir::{self, FnKind, StmtKind, TypeNodeKind, VarKind};
 
@@ -88,12 +88,13 @@ struct Proto {
 /// `@typescript-eslint/scope-manager` does.
 #[inline]
 pub(crate) fn is_javascript_mode(file: &File) -> bool {
-    file.is_javascript()
+    file.is_javascript() && file.language().parser != Parser::TypeScript
 }
 
 /// ESLint's `scopeManager.isGlobalReturn()`.
+#[inline]
 pub(crate) fn has_top_level_function(file: &File) -> bool {
-    file.language().global_return || file.language().source_type == SourceType::CommonJs
+    file.language().has_function_scope_at_top_level()
 }
 
 /// What kind of scope a function creates.
@@ -191,7 +192,10 @@ impl ScopeTree {
                     outside.push((region, owner));
                     (outer, outer)
                 }
-                What::Lifted => (tree.scopes.get(outer as usize).map_or(outer, |it| it.parent), outer),
+                What::Lifted => match tree.scopes.get(outer as usize) {
+                    Some(it) if it.parent != NONE => (it.parent, outer),
+                    _ => (outer, outer),
+                },
                 What::Scope(kind, block, body_start) => {
                     let id = tree.scopes.len() as u32;
                     scope_of_proto[index as usize] = id;
@@ -313,14 +317,23 @@ impl ScopeTree {
         &self.regions[at]
     }
 
-    /// The innermost region that contains the range.
-    pub(crate) fn region_around(&self, start: u32, end: u32) -> &Region {
+    /// ESLint's `getScope` for a node with this range. `block`: the node, if a node of its sort
+    /// can create a scope.
+    pub(crate) fn scope_of_node(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
         let after = self.regions.partition_point(|it| it.start <= start);
         let mut at = after.saturating_sub(1);
-        while self.regions[at].end < end.max(start + 1) && self.regions[at].parent as usize != at {
-            at = self.regions[at].parent as usize;
+        loop {
+            let region = &self.regions[at];
+            if block.is_some() && self.scopes.get(region.get as usize).map(|it| it.block) == block {
+                return region.get;
+            }
+            // What has the range of the node is created by something in the node.
+            let is_around = end.max(start + 1) <= region.end && (region.start, region.end) != (start, end);
+            if is_around || region.parent as usize == at {
+                return region.get;
+            }
+            at = region.parent as usize;
         }
-        &self.regions[at]
     }
 
     /// Finds the regions of positions that do not decrease.
@@ -408,7 +421,7 @@ fn collect(file: &File) -> Vec<Proto> {
     if has_top_level_function(file) {
         protos.push(scope(ScopeKind::Function, Block::File, 0, u32::MAX));
     }
-    if file.is_module() && has_block_scopes {
+    if file.language().scope_source_type() == SourceType::Module && has_block_scopes {
         protos.push(scope(ScopeKind::Module, Block::File, 0, u32::MAX));
     }
 
@@ -432,8 +445,8 @@ fn collect(file: &File) -> Vec<Proto> {
         let (block, start, end) = (Block::Stmt(hir::StmtId(i as u32)), stmt.start, stmt.loc.end);
         match stmt.kind {
             StmtKind::Block(parts) if is_with_statement(file, stmt) => {
-                let body = hir.ids.get(parts.start as usize + 1).and_then(|&it| hir.stmts.get(it as usize));
-                let inside = body.map_or(end, |it| it.start);
+                let object = hir.ids.get(parts.start as usize).and_then(|&it| hir.stmts.get(it as usize));
+                let inside = object.map_or(start, |it| it.loc.end);
                 scope_from!(ScopeKind::With, block, start, inside, end);
             }
             StmtKind::Block(_) if has_block_scopes => protos.push(scope(ScopeKind::Block, block, start, end)),
@@ -467,7 +480,7 @@ fn collect(file: &File) -> Vec<Proto> {
         let Some(kind) = kind_of_function(file, i) else {
             continue;
         };
-        if is_javascript && (kind == ScopeKind::FunctionType || is_synthetic(func.start)) {
+        if is_synthetic(func.start) || (is_javascript && kind == ScopeKind::FunctionType) {
             continue;
         }
         let (whole_start, end) = match bound.fns.get(i).map(|it| it.owner) {
@@ -492,8 +505,8 @@ fn collect(file: &File) -> Vec<Proto> {
         let block = Block::Fn(hir::FnId(i as u32));
         // After the name.
         let from_params = match hir.type_params.get(func.type_params.start as usize) {
-            // In JavaScript they are from a `@template` tag.
-            Some(first) if !func.type_params.is_empty() && !is_javascript => first.start,
+            // Not those of a `@template` tag.
+            Some(first) if !func.type_params.is_empty() && !is_synthetic(first.start) => first.start,
             _ => func.anchor,
         };
         let owner = protos.len() as u32;
@@ -605,6 +618,7 @@ fn collect(file: &File) -> Vec<Proto> {
     for (i, ty) in hir.types.iter().enumerate() {
         if !matches!(ty.kind, TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_))
             || bound.type_scope.get(i).is_none_or(|it| it.is_none())
+            || is_synthetic(ty.pos)
         {
             continue;
         }
@@ -627,6 +641,7 @@ fn collect(file: &File) -> Vec<Proto> {
     let mut declaration = |kind: ScopeKind, s: hir::StmtId, name_pos: u32| {
         if let Some(stmt) = hir.stmts.get(s.idx())
             && !matches!(bound.stmt_parent.get(s.idx()), None | Some(Parent::None))
+            && !is_synthetic(name_pos)
         {
             scope_from!(kind, Block::Stmt(s), stmt.start, name_pos + 1, stmt.loc.end);
         }

@@ -18,6 +18,14 @@ The commits of eslint and typescript-eslint are `main`, a few commits after the 
 from the same commit. The cases of a plugin's rule are those of the plugin, of eslint-plugin-import-x for `import`, and
 of oxlint's port of the rule: see `extract-plugins.ts`.
 
+`more/` has cases from elsewhere in the same format, each with what the same ESLint reports for it:
+
+| directory                | cases | what                                                                                             |
+| ------------------------ | ----- | ------------------------------------------------------------------------------------------------ |
+| `more/reviews`           | 68062 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
+| `more/oxlint-tsgolint`   | 8728  | the tests that oxlint and tsgolint have for their ports of the rules. What those expect is not used |
+| `more/typescript-parser` | 30880 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                     |
+
 Versions that were resolved at generation time and can change what is reported:
 
 - eslint checkout (no lockfile upstream): espree 11.2.0, eslint-scope 9.1.2, @eslint-community/regexpp 4.12.2,
@@ -32,7 +40,7 @@ Versions that were resolved at generation time and can change what is reported:
 bun bd test test/cli/lint/conformance.test.ts
 # The same by hand. A line for each case that fails, and the totals.
 zstd -dc test/cli/lint/conformance/bundle.zst > /tmp/bundle.txt
-bun bd lint --run-eslint-tests /tmp/bundle.txt --projects=/tmp/projects --extract --types --threads=8 [--plugin=eslint] [--rule=no-undef] [--verbose] [--report=dir]
+bun bd lint --run-eslint-tests /tmp/bundle.txt --projects=/tmp/projects --extract --types --threads=8 [--suite=upstream] [--plugin=eslint] [--rule=no-undef] [--verbose] [--report=dir]
 # The files, to look at them or to run them from a directory
 bun test/cli/lint/conformance/sync.ts --extract "" /tmp/fixtures
 bun test/cli/lint/conformance/sync.ts --extract eslint/no-undef.json /tmp/fixtures
@@ -42,8 +50,9 @@ bun-lint conformance /tmp/fixtures [--plugin=eslint] [--rule=no-undef] [--verbos
 
 The runner is the crate `bun_lint_conformance` (`src/lint/conformance`): it says what is compared.
 
-`expected.txt` is what `bun lint --run-eslint-tests` prints for all of it: the cases that fail, and the totals. Whoever
-changes that writes the file again, in the same commit.
+`expected.txt` is what `bun lint --run-eslint-tests` prints with `--suite=upstream`: the cases that fail, and the totals.
+`expected-more.txt` is the same with `--suite=more --every-typed=10`: there are 22,000 cases with types in `more/`, each of
+which takes a tenth of a second. Whoever changes what is printed writes the file again, in the same commit.
 
 ## Layout
 
@@ -70,6 +79,16 @@ bun extract-typescript-eslint.ts     # fixtures/typescript-eslint, fixtures/type
 node extract-plugins.ts              # the other directories: its first lines say which checkouts it needs
 bun summarize.ts --summary report.md # fixtures/index.json, and a report to read
 bun sync.ts                          # bundle.zst, version.json, licenses/
+```
+
+What is in `more/` is recorded by `extra-cases.ts`, which takes cases as JSON (a fixture is one way to write them), and
+for `more/oxlint-tsgolint` the cases are read from the sources by `extract-oxc.ts` and `extract-tsgolint.ts`. To add cases
+to `more/reviews`, or to record it with other versions:
+
+```sh
+bun sync.ts --extract more/reviews/ /tmp/more              # /tmp/more/more/reviews/<plugin>/<rule>.json
+node extra-cases.ts ..                                     # its first lines say how: writes <directory>/<plugin>/<rule>.json
+bun sync.ts --more reviews <directory>
 ```
 
 The extractors take rule names to redo only those, `--jobs N`, `--out <dir>` and `--report <dir>`. After bumping

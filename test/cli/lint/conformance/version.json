@@ -27,6 +27,9 @@
     "version": "1.70.0",
     "commit": "a4212152daf9908a93c9b1c433e68f8d79a19a1e"
   },
+  "tsgolint": {
+    "commit": "24b18b48c47b7ae0d84e21a0e974575026e27908"
+  },
   "@types/node": {
     "version": "24.19.0"
   },

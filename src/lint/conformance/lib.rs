@@ -1,6 +1,7 @@
 //! Runs the tests of ESLint, of typescript-eslint and of the plugins on `bun lint`. The tests are
 //! in `test/cli/lint/conformance/bundle.zst`: for each rule a file `<plugin>/<rule>.json` with the
-//! cases of upstream's tests and what the real ESLint reports for each. See the README there.
+//! cases of upstream's tests and what the real ESLint reports for each, and in `more/` the same for
+//! cases from elsewhere. See the README there.
 //!
 //! It is compiled into debug and canary builds of Bun (`bun lint --run-eslint-tests`, for
 //! `test/cli/lint/conformance.test.ts`) and into `bun-lint`.
@@ -64,6 +65,9 @@ pub trait Host: Sync {
 /// What is on the command line after the path of the bundle.
 #[derive(Default)]
 pub struct Flags<'a> {
+    /// `--suite=upstream`, `--suite=more`, `--suite=reviews`: only the tests of upstream, only the
+    /// others, only those in this directory of `more`.
+    pub suite: Option<&'a [u8]>,
     /// `--plugin=eslint`: only the rules in this directory.
     pub plugin: Option<&'a [u8]>,
     /// `--rule=no-undef`: only this rule.
@@ -95,6 +99,7 @@ impl<'a> Flags<'a> {
         let number = |name: &[u8]| flag(name).and_then(|it| std::str::from_utf8(it).ok()?.parse().ok());
         let has = |name: &[u8]| args.iter().any(|it| it.strip_prefix(b"--") == Some(name));
         Flags {
+            suite: flag(b"suite"),
             plugin: flag(b"plugin"),
             rule: flag(b"rule"),
             report: flag(b"report"),
@@ -111,7 +116,15 @@ impl<'a> Flags<'a> {
     }
 }
 
-/// The directories of the bundle that have the tests of rules.
+/// The directories of the bundle that have those of `PLUGINS`, by name.
+const SUITES: [(&str, &str); 4] = [
+    ("upstream", ""),
+    ("reviews", "more/reviews/"),
+    ("oxlint-tsgolint", "more/oxlint-tsgolint/"),
+    ("typescript-parser", "more/typescript-parser/"),
+];
+
+/// The directories of a suite that have the tests of rules.
 const PLUGINS: [(&str, Plugin); 6] = [
     ("eslint", Plugin::Eslint),
     ("typescript-eslint", Plugin::TypeScript),
@@ -241,7 +254,7 @@ fn describe(index: usize, case: &Json, problem: &Problem, into: &mut String) {
 
 /// The tests of a rule.
 struct Fixture {
-    /// `<plugin>/<rule>`
+    /// `<plugin>/<rule>`, after the directory of the suite.
     id: String,
     entry: &'static RuleEntry,
     json: Json,
@@ -276,10 +289,16 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         }
     }
     let (mut fixtures, mut missing) = (Vec::new(), 0);
-    for (directory, plugin) in PLUGINS {
+    let suites = SUITES.iter().filter(|(name, prefix)| match flags.suite {
+        Some(b"more") => !prefix.is_empty(),
+        Some(only) => only == name.as_bytes(),
+        None => true,
+    });
+    for ((_, prefix), (directory, plugin)) in suites.flat_map(|suite| PLUGINS.iter().map(move |plugin| (suite, plugin))) {
         if flags.plugin.is_some_and(|only| only != directory.as_bytes()) {
             continue;
         }
+        let directory = format!("{prefix}{directory}");
         let mut rules: Vec<(&[u8], &[u8])> = bundle.paths().filter_map(|path| Some((rule_at(path, directory.as_bytes())?, path))).collect();
         rules.sort_unstable();
         for (name, path) in rules {
@@ -287,7 +306,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 continue;
             }
             let id = format!("{directory}/{}", BStr::new(name));
-            let Some(entry) = host.linter().registry().get(plugin, name) else {
+            let Some(entry) = host.linter().registry().get(*plugin, name) else {
                 missing += 1;
                 continue;
             };

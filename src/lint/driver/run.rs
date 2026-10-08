@@ -10,7 +10,7 @@ use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_lint::context::Severity;
-use bun_lint::linter::{Linter, Registry};
+use bun_lint::linter::{FileConfig, Linter, Registry};
 use bun_threading::Guarded;
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +21,9 @@ macro_rules! pretty {
         let _ = bun_core::write_pretty!($($arg)*);
     };
 }
+
+/// The version of ESLint whose behavior this is.
+const ESLINT_VERSION: &str = "10.12.0";
 
 /// Standard output, or standard error.
 #[derive(Copy, Clone, Default)]
@@ -39,7 +42,7 @@ pub struct Script<'s> {
 
 /// What `bun lint` takes from the process that it runs in.
 pub struct Environment<'e> {
-    /// The working directory: absolute, as the system writes it.
+    /// The working directory: absolute, and through [`from_native_path`](crate::from_native_path).
     pub cwd: Vec<u8>,
     pub stdout: Stream,
     pub stderr: Stream,
@@ -138,6 +141,8 @@ struct Run<'r> {
 struct Linted {
     results: Vec<FileResult>,
     files: usize,
+    /// `--list-files`
+    listed: Option<Vec<Vec<u8>>>,
 }
 
 impl Run<'_> {
@@ -158,16 +163,11 @@ impl Run<'_> {
 
     fn format(&self) -> Result<Format, Vec<u8>> {
         let Some(name) = &self.options.format else {
-            return Ok(Format::Stylish);
+            // An agent is saved from opening the files.
+            return Ok(if self.environment.is_ai_agent { Format::Agent } else { Format::Stylish });
         };
-        Format::by_name(name).ok_or_else(|| {
-            [
-                b"There is no formatter \"",
-                &name[..],
-                b"\". Those that exist: stylish, json, json-with-metadata, unix.",
-            ]
-            .concat()
-        })
+        Format::by_name(name)
+            .ok_or_else(|| [b"There is no formatter \"", &name[..], b"\". Those that exist: ", Format::NAMES.as_bytes(), b"."].concat())
     }
 
     /// What ESLint's `cli.execute` refuses. `None`: nothing.
@@ -212,6 +212,7 @@ impl Run<'_> {
             return Ok(Linted {
                 results: results.into_iter().collect(),
                 files: 0,
+                listed: None,
             });
         };
         if let Some(error) = &config.error {
@@ -222,6 +223,7 @@ impl Run<'_> {
         Ok(Linted {
             results: vec![context.verify_text(shown, &path, text, config, &on_circular_fixes)],
             files: 1,
+            listed: None,
         })
     }
 
@@ -233,6 +235,7 @@ impl Run<'_> {
                 return Ok(Linted {
                     results: Vec::new(),
                     files: 0,
+                    listed: None,
                 });
             }
             [] => &dot[..],
@@ -244,6 +247,14 @@ impl Run<'_> {
         let started = Instant::now();
         let targets = discover::find_files(loader, pool, patterns, self.options.error_on_unmatched_pattern)?;
         phases.discovery = started.elapsed().as_secs_f64();
+        if self.options.list_files {
+            let listed = targets.into_iter().filter(|it| matches!(it.status, Status::Matched(_)));
+            return Ok(Linted {
+                results: Vec::new(),
+                files: 0,
+                listed: Some(listed.map(|it| it.path).collect()),
+            });
+        }
         // ESLint finds out when it comes to the file.
         let invalid = targets.iter().find_map(|target| match &target.status {
             Status::Matched(config) => config.error.clone(),
@@ -323,11 +334,25 @@ impl Run<'_> {
         Ok(Linted {
             results: std::mem::take(results.get_mut()),
             files,
+            listed: None,
         })
     }
 
     fn execute(mut self) -> Outcome {
         let (options, environment) = (self.options, self.environment);
+        if options.version {
+            self.out.stdout = [environment.version, b"\n"].concat();
+            return self.out;
+        }
+        if options.env_info {
+            let _ = writeln!(
+                self.out.stdout,
+                "Environment Info:\n\nBun version: {}\nESLint version: {ESLINT_VERSION} (the version that bun lint matches)\nTypeScript version: {}",
+                BStr::new(environment.version),
+                BStr::new(bun_sema_driver::TYPESCRIPT_VERSION.to_bytes()),
+            );
+            return self.out;
+        }
         if let Some(refusal) = self.refusal() {
             return self.fail(&refusal);
         }
@@ -348,6 +373,19 @@ impl Run<'_> {
             keeps_text: format.reads_text(),
             timing: &timing,
         };
+        if let Some(file) = &options.print_config {
+            let path = paths::resolve(&environment.cwd, &paths::from_native(file));
+            let config = match loader.for_directory(paths::dirname(&path)) {
+                Ok(loaded) => loaded.config.get(linter.registry(), &path),
+                Err(Fatal(error)) => return self.fail(&error),
+            };
+            self.out.stdout = crate::print_config::print(match &config {
+                FileConfig::Matched(config) => Some(config),
+                _ => None,
+            });
+            self.out.stdout.push(b'\n');
+            return self.out;
+        }
         let pool = Pool::new(options.threads);
         let mut phases = Phases::default();
         let linted = match options.stdin {
@@ -360,10 +398,17 @@ impl Run<'_> {
         for warning in std::mem::take(&mut *loader.warnings.lock()) {
             self.warn(&warning);
         }
-        let Linted { mut results, files } = match linted {
+        let Linted { mut results, files, listed } = match linted {
             Ok(linted) => linted,
             Err(Fatal(error)) => return self.fail(&error),
         };
+        if let Some(listed) = listed {
+            for path in listed {
+                self.out.stdout.extend_from_slice(&path);
+                self.out.stdout.push(b'\n');
+            }
+            return self.out;
+        }
 
         if options.fix {
             for result in results.iter().filter(|it| it.is_fixed) {
@@ -390,6 +435,8 @@ impl Run<'_> {
             color: options.color.unwrap_or(environment.stdout.colors),
             color_option: options.color,
             max_warnings_exceeded: has_too_many_warnings.then_some((options.max_warnings, counts.warnings)),
+            shows_all: options.all,
+            github_annotations: environment.is_github_action,
         };
         let output = if options.silent { Vec::new() } else { format::format(format, &results, &meta) };
         phases.formatting = started.elapsed().as_secs_f64();

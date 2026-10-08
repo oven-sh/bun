@@ -58,7 +58,9 @@ pub(crate) fn run(args: &[String]) {
         std::process::exit(1);
     }
     let libs = std::env::var_os("BUN_SEMA_TS_LIB").unwrap_or_default().into_vec();
-    let is_agent = ["AGENT", "CLAUDECODE", "REPL_ID"].iter().any(|name| std::env::var_os(name).is_some_and(|it| it == "1"));
+    // `Output::is_ai_agent`
+    let is_one = |name: &str| std::env::var_os(name).map(|it| it == "1");
+    let is_agent = is_one("AGENT").unwrap_or_else(|| is_one("CLAUDECODE") == Some(true) || is_one("REPL_ID") == Some(true));
     let environment = Environment {
         cwd: std::env::current_dir().expect("the working directory").into_os_string().into_vec(),
         stdout: stream(std::io::stdout().is_terminal()),

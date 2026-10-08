@@ -27,6 +27,7 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--quiet                         Report errors only"),
     clap::param!("--max-warnings <n>              Exit with 1 if there are more warnings than this"),
     clap::param!("-f, --format <name>             <b>stylish<r> <d>(default)<r>, <b>pretty<r>, <b>json<r>, <b>json-with-metadata<r>, <b>unix<r>, <b>github<r>, <b>agent<r>"),
+    clap::param!("--all                           Show every problem <d>(<b>pretty<r><d> and <b>agent<r><d> group identical problems above 50)<r>"),
     clap::param!("-o, --output-file <path>        Write the report to a file"),
     clap::param!("--color                         Always use colors"),
     clap::param!("--no-color                      Never use colors"),
@@ -52,6 +53,7 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--inline-config"),
     clap::param!("--error-on-unmatched-pattern"),
     // ESLint's, with little or nothing to do here.
+    clap::param!("--list-files"),
     clap::param!("--stats"),
     clap::param!("--env-info"),
     clap::param!("-v, --version"),
@@ -138,6 +140,10 @@ pub struct Options {
     /// `0`: the number of cores.
     pub threads: usize,
     pub timing: bool,
+    /// Identical problems are not grouped.
+    pub all: bool,
+    /// Print the files that would be linted, and lint nothing.
+    pub list_files: bool,
     pub cwd: Option<Vec<u8>>,
     /// oxlint's `-A`, `-W`, `-D`, in order: a rule or a category.
     pub filters: Vec<(Severity, Vec<u8>)>,
@@ -189,6 +195,8 @@ impl Default for Options {
             project: None,
             threads: 0,
             timing: false,
+            all: false,
+            list_files: false,
             cwd: None,
             filters: Vec::new(),
             deny_warnings: false,
@@ -346,6 +354,8 @@ impl Options {
                 },
             },
             b"timing" => self.timing = is_on,
+            b"all" => self.all = is_on,
+            b"list-files" => self.list_files = is_on,
             b"cwd" => self.cwd = owned(),
             b"help" => self.help = is_on,
             b"version" => self.version = is_on,

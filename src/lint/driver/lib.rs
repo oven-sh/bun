@@ -15,8 +15,10 @@ mod fs;
 mod gitignore;
 mod lint;
 mod paths;
+mod print_config;
 mod results;
 mod run;
 mod typed;
 
+pub use paths::from_native as from_native_path;
 pub use run::{Environment, Outcome, Script, Stream, run};

@@ -7,7 +7,7 @@
 use bun_core::strings;
 
 /// A path of the system, or an argument, with `/` for `\` where that is a separator.
-pub(crate) fn from_native(path: &[u8]) -> Vec<u8> {
+pub fn from_native(path: &[u8]) -> Vec<u8> {
     let mut path = path.to_vec();
     if cfg!(windows) {
         for byte in &mut path {

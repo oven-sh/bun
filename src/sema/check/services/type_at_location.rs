@@ -514,6 +514,8 @@ impl Services<'_, '_, '_> {
                 _ => {}
             },
             NodeData::TypeParam(p) => return declared_type_of(self, bound.type_param_symbol[p.idx()]),
+            // A static block and a `;` declare nothing.
+            NodeData::Member(m) if bound.member_symbol[m.idx()].is_none() => return TypeId::ERROR,
             NodeData::EnumMember(m) => return type_of(self, bound.enum_member_symbol[m.idx()]),
             NodeData::ImportSpec(s) => {
                 let symbol = symbol_of(self, Decl::ImportSpec(s));

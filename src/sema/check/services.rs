@@ -520,6 +520,31 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn contextual_type(&mut self, node: NodeRef) -> Option<TypeId> {
+        if let Some((hir, at)) = self.valid(node) {
+            // The name in the tag of a JSX element: `getContextualJsxElementAttributesType`.
+            let tag = hir.parent(at);
+            if matches!(hir.kind(tag), Kind::JsxOpeningElement | Kind::JsxSelfClosingElement)
+                && hir.is_jsx_tag_name(at)
+                && let NodeData::Expr(element) = hir.data(tag.row())
+            {
+                let outer = self.c.begin_recheck();
+                let ty = self.c.contextual_jsx_element_attributes_type(node.file, element);
+                self.c.end_recheck(outer);
+                return ty;
+            }
+            // The name of a property of an object literal: `getContextualTypeForObjectLiteralElement`,
+            // which is what its value gets.
+            if at.part() == Some(crate::node::Part::Name)
+                && let NodeData::Prop(p) = hir.data(at.row())
+                && matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand)
+                && hir.kind(at.row()) != Kind::JsxAttribute
+            {
+                return self.contextual_type(NodeRef {
+                    node: hir.node(hir[p].value),
+                    ..node
+                });
+            }
+        }
         // A `JsxExpression` that is the value of an attribute has the contextual type of what is
         // in it. One that is a child has none.
         let node = match self.valid(node) {

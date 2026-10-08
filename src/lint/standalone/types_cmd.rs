@@ -4,8 +4,8 @@
 //!   the symbol) at every expression, pattern and type of a file, or at every node of TypeScript's
 //!   tree, or what many functions of the checker say about the type of every expression, as JSON
 //!   lines, to compare with TypeScript's.
-//! - `bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file] [--ts-nodes] [--profiles]`: the same for
-//!   the code of every type-aware test case.
+//! - `bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file] [--ts-nodes] [--profiles] [--every-case]`:
+//!   the same for the code of every type-aware test case, or of every test case.
 //! - `bun-lint types run <rule> <file> [options as JSON] [--project=tsconfig.json]`: what one rule
 //!   reports for one file of a project.
 //! - `bun-lint types conformance <fixtures> [--rule=r] [--report=dir] [--verbose] [--jobs=n]`: runs
@@ -529,11 +529,12 @@ fn read_fixtures(root: &str, only_rule: Option<&str>) -> Vec<(String, Json)> {
     fixtures
 }
 
-fn type_aware_cases(fixtures: &[(String, Json)]) -> Vec<Case<'_>> {
+/// `every`: also those that are not type-aware.
+fn cases_of(fixtures: &[(String, Json)], every: bool) -> Vec<Case<'_>> {
     let mut cases = Vec::new();
     for (rule, (_, fixture)) in fixtures.iter().enumerate() {
         let all = fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default();
-        let type_aware = all.iter().enumerate().filter(|it| is_type_aware(it.1));
+        let type_aware = all.iter().enumerate().filter(|it| every || is_type_aware(it.1));
         cases.extend(type_aware.map(|(index, json)| Case { rule, index, json }));
     }
     cases
@@ -547,7 +548,13 @@ fn with_case<R: Send>(
     then: &(dyn for<'a> Fn(&'a File<'a>) -> R + Sync),
 ) -> Option<R> {
     let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-    let files = [format!("{project_root}/{}", str_of(case, "filename").unwrap_or("file.ts"))];
+    // What is not type-aware can have any name. It is made a file that the project includes.
+    let filename = match (is_type_aware(case), str_of(case, "filename").unwrap_or("file.ts")) {
+        (true, filename) => filename,
+        (false, filename) if filename.ends_with('x') => "react.tsx",
+        (false, _) => "file.ts",
+    };
+    let files = [format!("{project_root}/{filename}")];
     let config = format!("{project_root}/{}", str_of(case, "tsconfig").unwrap_or("tsconfig.json"));
     let project = project_of_case(project_root, &config, &files, code);
     lint_project(project, language, then).pop().map(|it| it.1)
@@ -566,7 +573,7 @@ fn dump_fixtures(args: &[String]) {
     let root = absolute(root);
     let project_root = format!("{root}/typescript-eslint-project");
     let fixtures = read_fixtures(&root, flag("--rule="));
-    let cases = type_aware_cases(&fixtures);
+    let cases = cases_of(&fixtures, args.iter().any(|a| a == "--every-case"));
     let dumps: Vec<Mutex<String>> = cases.iter().map(|_| Mutex::new(String::new())).collect();
     let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
     let as_profiles = args.iter().any(|a| a == "--profiles");
@@ -639,7 +646,7 @@ fn conformance(args: &[String]) {
     let project_root = format!("{root}/typescript-eslint-project");
     let fixtures = read_fixtures(&root, flag("--rule="));
     let entries: Vec<Option<&'static RuleEntry>> = fixtures.iter().map(|it| find_rule(&it.0)).collect();
-    let mut cases = type_aware_cases(&fixtures);
+    let mut cases = cases_of(&fixtures, false);
     cases.retain(|case| entries[case.rule].is_some());
     let problems: Vec<Mutex<Option<String>>> = cases.iter().map(|_| Mutex::new(None)).collect();
     std::panic::set_hook(Box::new(|_| {}));
@@ -773,6 +780,17 @@ fn bench(args: &[String]) {
     time("the type of every expression", &|file| expressions(file, &|node| usize::from(node.ty().flags().contains(TypeFlags::ANY))));
     time("the type of every expression, printed", &|file| expressions(file, &|node| node.ty().to_text().len()));
     time("the symbol of every expression", &|file| expressions(file, &|node| usize::from(node.ts_symbol().is_some())));
+    if args.iter().any(|a| a == "--smoke") {
+        std::panic::set_hook(Box::new(|_| {}));
+        time("everything about every node (panics)", &|file| {
+            let everything = || dump_ts_nodes(file).len() + dump_profiles(file).len();
+            let has_panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(everything)).is_err();
+            if has_panicked {
+                println!("panicked: {}", text(file.path()));
+            }
+            usize::from(has_panicked)
+        });
+    }
     if let Some(rules) = flag("--rules=") {
         let rules = rules.split(',').map(|name| (RuleId::Known(find_rule(name).expect("the rule").meta).to_vec(), Json::Number(2.0)));
         let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(rules.collect()))]);

@@ -21,7 +21,7 @@
 //! | `getContextualType.ts` | [`get_contextual_type`] |
 //! | `getDeclaration.ts` | [`get_declaration`] |
 //! | `getSourceFileOfNode.ts` | [`get_source_file_of_node`] |
-//! | `getTypeName.ts` | [`get_type_name`] |
+//! | `getTypeName.ts` | [`get_type_name`], [`is_type_name_string`] |
 //! | `isSymbolFromDefaultLibrary.ts` | [`is_symbol_from_default_library`] |
 //! | `isTypeBrandedLiteralLike.ts` | [`is_type_branded_literal_like`] |
 //! | `isTypeReadonly.ts` | [`is_type_readonly`], [`ReadonlynessOptions`] |

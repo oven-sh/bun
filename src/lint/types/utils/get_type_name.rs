@@ -1,7 +1,6 @@
 //! `getTypeName.ts`
 
 use super::MAX_DEPTH;
-use crate::ast::Node;
 use crate::types::{SyntaxKind, Type, TypeFlags};
 
 /// `getTypeName(typeChecker, type)`: `string` for what is a string, which is also a string literal
@@ -34,15 +33,34 @@ fn get_type_name_at(ty: Type, depth: u32) -> Vec<u8> {
     ty.to_text()
 }
 
+/// `getTypeName(typeChecker, type) === 'string'`, without printing a type.
+pub fn is_type_name_string(ty: Type) -> bool {
+    is_type_name_string_at(ty, 0)
+}
+
+fn is_type_name_string_at(ty: Type, depth: u32) -> bool {
+    if depth > MAX_DEPTH {
+        return false;
+    }
+    let flags = ty.flags();
+    if flags.intersects(TypeFlags::STRING_LIKE) {
+        return true;
+    }
+    if flags.contains(TypeFlags::TYPE_PARAMETER)
+        && let Some(constraint) = declared_constraint(ty)
+    {
+        return is_type_name_string_at(constraint, depth + 1);
+    }
+    let is_string = |value: Type| is_type_name_string_at(value, depth + 1);
+    flags.contains(TypeFlags::UNION) && ty.types().iter().all(is_string)
+        || flags.contains(TypeFlags::INTERSECTION) && ty.types().iter().any(is_string)
+}
+
 /// `getTypeFromTypeNode(declaration.constraint)` for the first declaration of the type parameter.
-/// In another file than the one that is linted, where the syntax is out of reach, its constraint.
 fn declared_constraint(ty: Type<'_>) -> Option<Type<'_>> {
     let type_param_decl = ty.get_symbol()?.declarations().next()?;
     if type_param_decl.kind() != SyntaxKind::TypeParameter {
         return None;
     }
-    match type_param_decl.to_ast() {
-        Some(Node::TypeParam(declaration)) => Some(declaration.constraint()?.ty()),
-        _ => ty.get_constraint(),
-    }
+    Some(type_param_decl.constraint()?.get_type_from_type_node())
 }

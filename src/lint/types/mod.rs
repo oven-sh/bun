@@ -92,9 +92,9 @@ pub use bun_sema::check::services::ReadLibrary;
 pub use flags::*;
 pub use locate::{Locate, NameOf};
 pub use node::{SourceFile, SyntaxKind, TsNode};
-pub use signature::{IndexInfo, Signature, TypePredicate};
-pub use symbol::TsSymbol;
-pub use ty::{Literal, TupleTarget, Type, TypeStructure};
+pub use signature::{IndexInfo, Signature, SignatureIter, SignatureList, TypePredicate};
+pub use symbol::{SymbolIter, SymbolList, TsSymbol};
+pub use ty::{Literal, TupleTarget, Type, TypeIter, TypeList, TypeStructure};
 
 use crate::ast::File;
 use bun_sema::check::services::{

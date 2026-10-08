@@ -151,8 +151,9 @@ pub struct Variable<'a> {
 
 /// Whether what is written at `span` is in the scope of `class`: after its name.
 fn is_in_class_scope(class: Class, span: Span) -> bool {
-    let after_name = class.name().map_or(class.span().start, |name| name.span().end);
-    after_name <= span.start && span.end <= class.span().end
+    let whole = class.span();
+    let after_name = class.name().map_or(whole.start, |name| name.span().end);
+    after_name <= span.start && span.end <= whole.end
 }
 
 /// The `A` or the `B` of `namespace A.B {}`, which declare nothing in scope-manager.
@@ -360,8 +361,7 @@ fn mark_jsx_factories<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
         let Some(name) = name else {
             continue;
         };
-        let mut candidates = file.symbols().filter(|symbol| symbol.name().is(name));
-        if candidates.next().is_none() {
+        if !file.symbols().any(|symbol| symbol.name().is(name)) {
             continue;
         }
         let mut elements: Vec<Expr> = (0..file.hir.exprs.len())
@@ -386,7 +386,7 @@ fn mark_jsx_factories<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
 
 /// The statement of `declaration`, if ESTree has an `ExportNamedDeclaration` or an
 /// `ExportDefaultDeclaration` around it.
-fn exported_statement<'a>(declaration: Declaration<'a>) -> Option<Stmt<'a>> {
+fn exported_statement(declaration: Declaration<'_>) -> Option<Stmt<'_>> {
     let statement = match declaration {
         Declaration::Var(_) => declaration.node()?.parent(),
         Declaration::Fn(func) => func.owner(),

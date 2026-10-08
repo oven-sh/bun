@@ -40,7 +40,8 @@ fn extract_computed_name(computed_name: Expr<'_>) -> Option<ExtractedName<'_>> {
         ExprKind::String(value) => Cow::Borrowed(value.bytes()),
         ExprKind::Number(value) => Cow::Owned(number_to_string(value)),
         ExprKind::BigInt(value) => {
-            Cow::Borrowed(value.bytes().strip_suffix(b"n").unwrap_or(value.bytes()))
+            let digits = value.bytes();
+            Cow::Borrowed(digits.strip_suffix(b"n").unwrap_or(digits))
         },
         ExprKind::True => Cow::Borrowed(&b"true"[..]),
         ExprKind::False => Cow::Borrowed(&b"false"[..]),
@@ -81,13 +82,13 @@ fn extract_name_for_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Extracte
 
 /// typescript-eslint's `extractNameForMember`. `None` if it takes evaluating an expression to know
 /// the name.
-pub fn extract_name_for_member<'a>(node: MemberNode<'a>) -> Option<ExtractedName<'a>> {
+pub fn extract_name_for_member(node: MemberNode<'_>) -> Option<ExtractedName<'_>> {
     match node {
         // `static constructor() {}`, which is a method in ESTree.
         MemberNode::Member(member) if member.kind() == MemberKind::Constructor => {
             let text = member.file().text();
-            let before = member.modifiers().last().map_or(member.span().start, |it| it.span().end);
-            let start = skip_trivia(text, before);
+            let start = member.span().start;
+            let start = skip_trivia(text, member.modifiers().last().map_or(start, |it| it.span().end));
             let len = token_len(text.get(start as usize..).unwrap_or_default());
             Some(ExtractedName {
                 code_name: Cow::Borrowed(b"constructor"),

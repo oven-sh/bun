@@ -63,7 +63,7 @@ fn is_property_definition(member: Member) -> bool {
         && matches!(member.parent(), Node::Class(_))
 }
 
-fn parent_of_expr<'a>(e: Expr<'a>) -> Parent<'a> {
+fn parent_of_expr(e: Expr<'_>) -> Parent<'_> {
     if e.jsx_container_span().is_some() {
         return Parent::Jsx;
     }
@@ -108,7 +108,7 @@ fn parent_of_expr<'a>(e: Expr<'a>) -> Parent<'a> {
     }
 }
 
-fn parent_of_method<'a>(member: Member<'a>) -> Parent<'a> {
+fn parent_of_method(member: Member<'_>) -> Parent<'_> {
     let is_method = matches!(
         member.kind(),
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
@@ -122,7 +122,7 @@ fn parent_of_method<'a>(member: Member<'a>) -> Parent<'a> {
     }
 }
 
-fn parent_of<'a>(func: Func<'a>) -> Parent<'a> {
+fn parent_of(func: Func<'_>) -> Parent<'_> {
     match func.owner() {
         Node::Expr(e) => parent_of_expr(e),
         Node::Member(member) => parent_of_method(member),
@@ -173,7 +173,7 @@ pub fn does_immediately_return_function_expression(func: FunctionInfo) -> bool {
 
 /// typescript-eslint's `isTypedFunctionExpression`: with `allowTypedFunctionExpressions`, what the
 /// function expression is part of gives it a type.
-pub fn is_typed_function_expression(func: Func, options: &ReturnTypeOptions) -> bool {
+pub fn is_typed_function_expression(func: Func, options: ReturnTypeOptions) -> bool {
     if !options.allow_typed_function_expressions {
         return false;
     }
@@ -185,7 +185,7 @@ pub fn is_typed_function_expression(func: Func, options: &ReturnTypeOptions) -> 
 
 /// typescript-eslint's `isValidFunctionExpressionReturnType`: the function expression is typed, or
 /// the options allow it to have no return type.
-pub fn is_valid_function_expression_return_type(func: Func, options: &ReturnTypeOptions) -> bool {
+pub fn is_valid_function_expression_return_type(func: Func, options: ReturnTypeOptions) -> bool {
     if is_typed_function_expression(func, options) {
         return true;
     }
@@ -212,7 +212,7 @@ pub fn is_valid_function_expression_return_type(func: Func, options: &ReturnType
     matches!(body.kind(), ExprKind::AsConst(_))
 }
 
-fn is_valid_function_return_type(func: FunctionInfo, options: &ReturnTypeOptions) -> bool {
+fn is_valid_function_return_type(func: FunctionInfo, options: ReturnTypeOptions) -> bool {
     if options.allow_higher_order_functions && does_immediately_return_function_expression(func) {
         return true;
     }
@@ -232,7 +232,7 @@ fn is_valid_function_return_type(func: FunctionInfo, options: &ReturnTypeOptions
 /// function if it needs a return type and has none.
 pub fn check_function_return_type(
     func: FunctionInfo,
-    options: &ReturnTypeOptions,
+    options: ReturnTypeOptions,
     report: impl FnOnce(Span),
 ) {
     if !is_valid_function_return_type(func, options) {
@@ -244,7 +244,7 @@ pub fn check_function_return_type(
 /// [`is_valid_function_expression_return_type`], then [`check_function_return_type`].
 pub fn check_function_expression_return_type(
     func: FunctionInfo,
-    options: &ReturnTypeOptions,
+    options: ReturnTypeOptions,
     report: impl FnOnce(Span),
 ) {
     if !is_valid_function_expression_return_type(func, options) {

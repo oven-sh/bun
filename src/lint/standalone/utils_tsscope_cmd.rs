@@ -39,15 +39,15 @@ fn row_of(func: Func) -> [i64; 5] {
     };
     let is_expression = func.kind() != FnKind::Decl;
     let mut head = None;
-    ts_scope::check_function_return_type(func, &options, |span| head = Some(span));
+    ts_scope::check_function_return_type(func, options, |span| head = Some(span));
     let mut is_reported_as_higher_order = false;
-    ts_scope::check_function_return_type(func, &higher_order, |_| is_reported_as_higher_order = true);
+    ts_scope::check_function_return_type(func, higher_order, |_| is_reported_as_higher_order = true);
     let bits = [
         ts_scope::does_immediately_return_function_expression(func),
-        is_expression && ts_scope::is_typed_function_expression(func, &typed),
-        is_expression && ts_scope::is_valid_function_expression_return_type(func, &typed),
-        is_expression && ts_scope::is_valid_function_expression_return_type(func, &expressions),
-        is_expression && ts_scope::is_valid_function_expression_return_type(func, &const_assertions),
+        is_expression && ts_scope::is_typed_function_expression(func, typed),
+        is_expression && ts_scope::is_valid_function_expression_return_type(func, typed),
+        is_expression && ts_scope::is_valid_function_expression_return_type(func, expressions),
+        is_expression && ts_scope::is_valid_function_expression_return_type(func, const_assertions),
         ts_scope::ancestor_has_return_type(func),
         head.is_some(),
         is_reported_as_higher_order,
@@ -72,7 +72,7 @@ impl<'a> Visitor<'a> for Functions {
 }
 
 fn write_string(out: &mut String, text: &[u8]) {
-    out.push_str(&String::from_utf8_lossy(&json_stringify(text)));
+    let _ = write!(out, "{}", bstr::BStr::new(&json_stringify(text)));
 }
 
 fn write_rows(out: &mut String, mut rows: Vec<String>) {
@@ -150,7 +150,7 @@ pub(crate) fn run(args: &[String]) {
         println!("cannot read {path}");
         return;
     };
-    for line in input.split(|&c| c == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         match bun_lint::json::parse(line) {
             Some(case) => println!("{}", dump(Object::of(Some(&case)))),
             None => println!("{{\"error\":true}}"),

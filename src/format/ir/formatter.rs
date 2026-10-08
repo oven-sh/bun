@@ -25,6 +25,18 @@ pub(crate) trait Format<'a> {
     fn as_token(&self) -> Option<&'static str> {
         None
     }
+
+    /// The mode, if this is a line break and nothing else.
+    #[inline(always)]
+    fn as_line(&self) -> Option<LineMode> {
+        None
+    }
+
+    /// The mode, if this is an `indent` with a line break and nothing else in it.
+    #[inline(always)]
+    fn as_indented_line(&self) -> Option<LineMode> {
+        None
+    }
 }
 
 impl<'a, T: ?Sized + Format<'a>> Format<'a> for &T {
@@ -36,6 +48,16 @@ impl<'a, T: ?Sized + Format<'a>> Format<'a> for &T {
     #[inline(always)]
     fn as_token(&self) -> Option<&'static str> {
         Format::as_token(&**self)
+    }
+
+    #[inline(always)]
+    fn as_line(&self) -> Option<LineMode> {
+        Format::as_line(&**self)
+    }
+
+    #[inline(always)]
+    fn as_indented_line(&self) -> Option<LineMode> {
+        Format::as_indented_line(&**self)
     }
 }
 
@@ -122,6 +144,12 @@ pub(crate) struct Storage {
 /// The first elements of every pool, which the printer needs to be somewhere.
 pub(crate) const END_LINE_SUFFIX: Interned = Interned { start: 0, len: 1 };
 
+/// What is in a [`FormatElement::IndentedLineGroup`], and the end tag of the group.
+pub(crate) const REST_OF_INDENTED_LINE_GROUP: Interned = Interned {
+    start: 1 + LineMode::ALL.len() as u32,
+    len: 3,
+};
+
 /// A [`FormatElement::Line`] of `mode`.
 #[inline]
 pub(crate) const fn line_break(mode: LineMode) -> Interned {
@@ -133,12 +161,13 @@ pub(crate) const fn line_break(mode: LineMode) -> Interned {
 
 impl Storage {
     /// The number of elements that are in every pool.
-    const RESERVED: u32 = 1 + LineMode::ALL.len() as u32;
+    const RESERVED: u32 = REST_OF_INDENTED_LINE_GROUP.start + REST_OF_INDENTED_LINE_GROUP.len;
 
     pub(crate) fn clear(&mut self) {
         self.pool.clear();
         self.pool.push(FormatElement::Tag(Tag::EndLineSuffix));
         self.pool.extend(LineMode::ALL.map(FormatElement::Line));
+        self.pool.extend([Tag::StartIndentWithLine(LineMode::SoftOrSpace), Tag::EndIndent, Tag::EndGroup].map(FormatElement::Tag));
         self.variants.clear();
         self.text.clear();
     }
@@ -221,6 +250,7 @@ impl Storage {
             FormatElement::BestFitting(it) => self.variants(*it).first().is_some_and(|&flattest| self.summary_of(flattest).1),
             FormatElement::Token(_)
             | FormatElement::TokenIfBreaks(_)
+            | FormatElement::IndentedLineGroup(_)
             | FormatElement::LineSuffixBoundary
             | FormatElement::Space
             | FormatElement::Nop
@@ -268,6 +298,7 @@ impl Storage {
                 }
                 _ if ignore_depth != 0 => {}
                 FormatElement::Line(_)
+                | FormatElement::IndentedLineGroup(_)
                 | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_)) => return true,
                 FormatElement::Interned(it) if self.may_directly_break(self.interned(*it)) => {
                     return true;
@@ -720,6 +751,13 @@ impl<'a> Formatter<'a> {
                 }
                 _ if conditions.last() == Some(&PrintMode::Expanded) => continue,
                 FormatElement::TokenIfBreaks(_) => continue,
+                FormatElement::IndentedLineGroup(id) => {
+                    self.write_element(FormatElement::Tag(Tag::StartGroup(Group::new().with_id(Some(id)))));
+                    self.write_element(FormatElement::Tag(Tag::StartIndent));
+                    self.write_element(FormatElement::Space);
+                    self.write_element(FormatElement::Tag(Tag::EndIndent));
+                    FormatElement::Tag(Tag::EndGroup)
+                }
                 FormatElement::Tag(tag @ (Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode))) if !mode.will_break() => {
                     self.write_element(FormatElement::Tag(if tag.is_start() { Tag::StartIndent } else { Tag::EndIndent }));
                     match mode {
@@ -755,6 +793,7 @@ impl<'a> Formatter<'a> {
                     LineMode::Soft | LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty
                 )
                     | FormatElement::TokenIfBreaks(_)
+                    | FormatElement::IndentedLineGroup(_)
                     | FormatElement::Tag(
                         Tag::StartConditionalContent(_)
                             | Tag::EndConditionalContent

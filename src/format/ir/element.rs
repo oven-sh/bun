@@ -22,6 +22,10 @@ pub(crate) enum FormatElement {
     /// A space, unless it would end up at the start or at the end of a line.
     Space,
     Line(LineMode),
+    /// The same as a group with this id, and in it an indent, and in that a
+    /// [`LineMode::SoftOrSpace`]: a line break that is taken, with one more level of indentation
+    /// after it, if what follows it does not fit on the line.
+    IndentedLineGroup(GroupId),
     /// Forces the enclosing groups to break.
     ExpandParent,
     /// A keyword or a punctuator: ASCII, without line breaks or tabs.

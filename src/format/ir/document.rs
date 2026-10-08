@@ -141,6 +141,10 @@ impl Tracker {
             // It is not there when what encloses it is flat.
             FormatElement::TokenIfBreaks(_) | FormatElement::Nop | FormatElement::Cursor(_) => {}
             FormatElement::Line(mode) => self.line(mode, index),
+            FormatElement::IndentedLineGroup(_) => {
+                self.line(LineMode::SoftOrSpace, index);
+                self.state.last_group_id = index;
+            }
             FormatElement::ExpandParent => self.forced_break(index),
             FormatElement::LineSuffixBoundary => self.state.last_boundary = index,
             FormatElement::Skip(_) => self.state.last_unknown = index,

@@ -20,7 +20,7 @@ use super::element::{
     BestFitting, Condition, CursorMark, DedentMode, Flat, FlatFlags, FormatElement, Group, GroupId, Interned, LineMode,
     PrintMode, Tag, TextWidth,
 };
-use super::formatter::{END_LINE_SUFFIX, Storage, line_break};
+use super::formatter::{END_LINE_SUFFIX, REST_OF_INDENTED_LINE_GROUP, Storage, line_break};
 use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
 use smallvec::SmallVec;
 
@@ -392,6 +392,25 @@ impl<'d> Printer<'d> {
                 FormatElement::SourceText(text) => self.print_text(self.source, text.range(), text.width),
                 FormatElement::OwnedText(text) => self.print_text(self.text, text.range(), text.width),
                 FormatElement::Line(line_mode) => self.print_line(*line_mode),
+                FormatElement::IndentedLineGroup(id) => {
+                    let fits = if self.mode.is_flat() && self.measured_group_fits {
+                        true
+                    } else {
+                        self.measured_group_fits = true;
+                        self.insert_group_mode(*id, PrintMode::Flat);
+                        self.indented_line_group_fits()?
+                    };
+                    if fits {
+                        self.insert_group_mode(*id, PrintMode::Flat);
+                        if self.line_width > 0 {
+                            self.pending_space = true;
+                        }
+                    } else {
+                        self.insert_group_mode(*id, PrintMode::Expanded);
+                        self.push(FrameKind::Group, PrintMode::Expanded);
+                        self.print_next(REST_OF_INDENTED_LINE_GROUP);
+                    }
+                }
                 // `propagate_expand` has taken care of it.
                 FormatElement::ExpandParent => {}
                 FormatElement::LineSuffixBoundary => self.flush_line_suffixes(Some(line_break(LineMode::Hard))),
@@ -579,6 +598,12 @@ impl<'d> Printer<'d> {
                         Tag::StartIndentWithLine(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty)
                         | Tag::EndIndentWithLine(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty),
                     ) => {
+                        if self.line_width > 0 {
+                            self.pending_space = true;
+                        }
+                    }
+                    FormatElement::IndentedLineGroup(id) => {
+                        self.insert_group_mode(*id, PrintMode::Flat);
                         if self.line_width > 0 {
                             self.pending_space = true;
                         }

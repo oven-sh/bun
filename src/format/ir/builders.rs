@@ -80,6 +80,11 @@ impl<'a> Format<'a> for Line {
     fn fmt(&self, f: &mut Formatter<'a>) {
         f.write_element(FormatElement::Line(self.0));
     }
+
+    #[inline(always)]
+    fn as_line(&self) -> Option<LineMode> {
+        Some(self.0)
+    }
 }
 
 /// Content that is written by a closure, which can be called more than once.
@@ -226,6 +231,14 @@ macro_rules! tagged {
                 f.write_element(FormatElement::Tag($start));
                 self.content.fmt(f);
                 f.write_element(FormatElement::Tag($end));
+            }
+
+            #[inline(always)]
+            fn as_indented_line(&self) -> Option<LineMode> {
+                match $start {
+                    Tag::StartIndent => self.content.as_line(),
+                    _ => None,
+                }
             }
         }
     };
@@ -442,6 +455,11 @@ impl<Content: ?Sized> Group<'_, Content> {
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for Group<'_, Content> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if let (Some(LineMode::SoftOrSpace), Some(id), false) =
+            (self.content.as_indented_line(), self.group_id, self.should_expand)
+        {
+            return f.write_element(FormatElement::IndentedLineGroup(id));
+        }
         let mode = match self.should_expand {
             true => GroupMode::Expand,
             false => GroupMode::Flat,

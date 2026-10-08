@@ -128,6 +128,19 @@ impl<'d> Printer<'d> {
         }
     }
 
+    /// The same for a [`FormatElement::IndentedLineGroup`].
+    pub(super) fn indented_line_group_fits(&mut self) -> PrintResult<bool> {
+        let mut measure = Measure::new(self, true);
+        measure.pending_space = true;
+        match self.fits(&mut measure, &mut AllPredicate) {
+            Err(PrintError::MeasureAgain) => {}
+            fits => return fits,
+        }
+        let mut measure = Measure::new(self, false);
+        measure.pending_space = true;
+        self.fits(&mut measure, &mut AllPredicate)
+    }
+
     fn group_fits_by_elements(&mut self, uses_flat: bool) -> PrintResult<bool> {
         let mut measure = Measure::new(self, uses_flat);
         self.measure_push(&mut measure, FrameKind::Group, PrintMode::Flat);
@@ -281,6 +294,14 @@ impl<'d> Printer<'d> {
                     let width = measure.line_width + usize::from(measure.is_space_element_pending);
                     return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
                 }
+            }
+            FormatElement::IndentedLineGroup(id) => {
+                self.insert_group_mode(*id, mode);
+                if !mode.is_flat() {
+                    let width = measure.line_width + usize::from(measure.is_space_element_pending);
+                    return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
+                }
+                measure.pending_space = true;
             }
             FormatElement::TokenIfBreaks(token) => {
                 if !mode.is_flat() {

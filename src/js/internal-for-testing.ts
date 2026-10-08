@@ -804,12 +804,7 @@ export const dnsGetaddrinfoError = $newRustFunction(
 ) as (code: string, hostname: string) => Error & { code: string; errno: number; syscall: string; hostname: string };
 
 export const fetchRequestIdInternals = {
-  /**
-   * Advance the counter that hands out per-request ids (the key the JS thread
-   * uses to abort / resume / write to a request on the HTTP thread) by `count`
-   * and return the id the next request will be given. Lets a test hold two
-   * live requests 2**32 ids apart without issuing 2**32 requests.
-   */
+  /** Adds `count` to the counter that gives each request its id, and returns the next id. */
   skipIds: $newRustFunction("http/AsyncHTTP.rs", "TestingAPIs.skipIds", 1) as (count: number) => number,
 };
 

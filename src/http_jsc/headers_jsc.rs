@@ -1,5 +1,5 @@
-//! JSC bridges for `bun.http.{Headers,AsyncHTTP,H2Client,H3Client}`. Keeps
-//! `src/http/` free of JSC types.
+//! JSC bridges for `bun.http.{Headers,AsyncHTTP,H2Client,H3Client}`. Keeps `src/http/`
+//! free of JSC types.
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -210,14 +210,9 @@ impl H3TestingAPIs {
     }
 }
 
-/// Free-fn aliases of [`AsyncHTTPTestingAPIs::skip_ids`] /
-/// [`H2TestingAPIs::live_counts`] / [`H3TestingAPIs::quic_live_counts`] so
-/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
-/// aren't importable items).
-#[inline]
-pub fn async_http_skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    AsyncHTTPTestingAPIs::skip_ids(global, frame)
-}
+/// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
+/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime::dispatch::js2native`
+/// can `pub use` them (associated fns aren't importable items).
 #[inline]
 pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H2TestingAPIs::live_counts(global, frame)
@@ -225,4 +220,8 @@ pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 #[inline]
 pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H3TestingAPIs::quic_live_counts(global, frame)
+}
+#[inline]
+pub fn async_http_skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    AsyncHTTPTestingAPIs::skip_ids(global, frame)
 }

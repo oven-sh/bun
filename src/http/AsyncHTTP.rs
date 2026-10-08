@@ -69,9 +69,7 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
 
-/// `bun:internal-for-testing`: advance the id counter by `count` and return
-/// the id the next signalled request will be given, so a test can hold two
-/// live requests more than 2^32 ids apart without issuing that many requests.
+/// `fetchRequestIdInternals.skipIds(count)`: adds `count` to the id counter and returns the next id.
 pub fn skip_ids_for_testing(count: u64) -> u64 {
     crate::ASYNC_HTTP_ID_MONOTONIC
         .fetch_add(count, Ordering::Relaxed)

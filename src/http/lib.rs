@@ -252,11 +252,7 @@ impl Default for Flags {
 
 // ───────────────────────────── globals ─────────────────────────────
 
-/// Next `async_http_id`. The id keys the abort tracker and every JS-thread ->
-/// HTTP-thread message for a request, so it must stay unique for the life of
-/// the process; a 32-bit counter wraps within the lifetime of a busy process.
-/// Starts at 1: 0 marks requests without a signal store, which are never
-/// looked up by id.
+/// Starts at 1: 0 is the `async_http_id` of a request without a signal store.
 pub(crate) static ASYNC_HTTP_ID_MONOTONIC: AtomicU64 = AtomicU64::new(1);
 
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP

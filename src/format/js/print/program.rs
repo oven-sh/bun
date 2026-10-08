@@ -142,7 +142,10 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 continue;
             };
             // Nearly always, what is left between two statements starts its line.
-            let comments = f.comments().comments_before(statement.span().start);
+            let comments = match f.is_quiet() {
+                true => &[][..],
+                false => f.comments().comments_before(statement.span().start),
+            };
             let placements = match comments.iter().all(|comment| comment.preceded_by_newline()) {
                 true => SmallVec::new(),
                 false => write_more_trailing_comments(previous_statement, comments, statement, f),
@@ -218,10 +221,15 @@ fn write_more_trailing_comments<'a>(
 
 /// Prettier's `shouldExpressionStatementPrintOwnComments`: without semicolons, the `;` that a
 /// statement has to start with goes before a type cast comment, which has to stay next to its `(`.
+#[inline]
 fn write_semicolon_before_type_cast_comment<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    if f.is_quiet() || !f.comments().has_type_cast_comments() || !f.options().semicolons.is_as_needed() {
-        return;
+    if !f.is_quiet() && f.comments().has_type_cast_comments() && f.options().semicolons.is_as_needed() {
+        write_semicolon_before_type_cast_comment_of(statement, f);
     }
+}
+
+#[cold]
+fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let StmtKind::Expr(expression) = statement.kind() else {
         return;
     };

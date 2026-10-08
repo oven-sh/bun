@@ -123,6 +123,9 @@ impl<'a> SourceText<'a> {
 
     pub(crate) fn contains_newline_between(self, start: u32, end: u32) -> bool {
         let mut rest = self.slice_range(start, end);
+        if matches!(rest, [] | [_, b'\n', ..]) {
+            return !rest.is_empty();
+        }
         // 0xE2 starts U+2028 and U+2029, and many other characters.
         while let Some(at) = bun_core::strings::index_of_any(rest, b"\n\r\xE2") {
             if line_terminator_len(&rest[at..]) != 0 {

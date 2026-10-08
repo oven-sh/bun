@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::{has_line_break, lines};
+use bun_lint::utils::text::lines;
 
 /// Require an empty line before `return` statements.
 pub struct NewlineBeforeReturn;
@@ -21,14 +21,7 @@ fn previous_sibling(stmt: Stmt<'_>) -> Option<Stmt<'_>> {
         },
         _ => return None,
     };
-    let mut previous = None;
-    for sibling in siblings {
-        if sibling == stmt {
-            return previous;
-        }
-        previous = Some(sibling);
-    }
-    None
+    siblings.before(stmt.span().start)
 }
 
 fn line_breaks(text: &[u8]) -> i32 {
@@ -45,8 +38,8 @@ impl NewlineBeforeReturn {
         let gap = Span::new(previous.span().end, stmt.span().start);
         let lines_between = line_breaks(file.slice(gap));
         let has_comments = strings::contains_char(file.slice(gap), b'/');
-        let is_below_previous = |offset: u32| has_line_break(file.slice(Span::new(gap.start, offset)));
-        let is_above_return = |offset: u32| has_line_break(file.slice(Span::new(offset, gap.end)));
+        let is_below_previous = |offset: u32| file.line_of(gap.start) < file.line_of(offset);
+        let is_above_return = |offset: u32| file.line_of(offset) < file.line_of(gap.end);
 
         let mut comment_lines = 0;
         if has_comments {

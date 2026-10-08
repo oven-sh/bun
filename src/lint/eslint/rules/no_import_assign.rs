@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::semantic::DeclarationKinds;
 
 /// Disallow assigning to imported bindings.
 pub struct NoImportAssign;
@@ -87,19 +88,25 @@ fn get_write_node(reference: Reference) -> Span {
 
 impl Rule for NoImportAssign {
     const META: Meta = Meta::eslint("no-import-assign", Kind::Problem).recommended();
-    /// Whether a namespace is imported.
-    type State<'a> = bool;
+    /// Whether an import that is not of a namespace can have something to report: something is assigned to what one imports,
+    /// or declared several times. Found out for the first import.
+    type State<'a> = Option<bool>;
 
     fn new(_: &Options) -> Self {
         NoImportAssign
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Option<bool> {
         on.stmts([StmtTag::Import], |_, stmt, cx| {
+            let file = cx.file();
+            let looks_at_all = *cx.state.get_or_insert_with(|| {
+                let mut imported = file.symbols_declared_as(DeclarationKinds::IMPORT_BINDING);
+                imported.any(|it| it.has_writes() || it.declaration_count() > 1)
+            });
+            if !looks_at_all && !matches!(stmt.kind(), StmtKind::Import(import) if import.namespace().is_some()) {
+                return;
+            }
             for variable in Node::Stmt(stmt).declared_symbols() {
-                if !cx.state && !variable.has_writes() {
-                    continue;
-                }
                 let should_check_members =
                     variable.declarations().any(|it| matches!(it, Declaration::ImportNamespace(_)));
                 if !should_check_members && !variable.has_writes() {
@@ -122,7 +129,6 @@ impl Rule for NoImportAssign {
                 }
             }
         });
-        let mut imports = file.stmts_of_kind(StmtTag::Import);
-        imports.any(|it| matches!(it.kind(), StmtKind::Import(import) if import.namespace().is_some()))
+        None
     }
 }

@@ -302,6 +302,25 @@ macro_rules! sorts {
             Finish(fn(&R, &mut Cx<'a, R>)),
         }
 
+        impl<R: Rule> Entry<'_, R> {
+            /// Whether it is called in the order of the source or at the end.
+            pub(crate) fn is_for_later(&self) -> bool {
+                matches!(
+                    self,
+                    Entry::Enter(..)
+                        | Entry::Exit(..)
+                        | Entry::CodePathStart(_)
+                        | Entry::CodePathEnd(_)
+                        | Entry::SegmentStart(_)
+                        | Entry::SegmentEnd(_)
+                        | Entry::UnreachableSegmentStart(_)
+                        | Entry::UnreachableSegmentEnd(_)
+                        | Entry::SegmentLoop(_)
+                        | Entry::Finish(_)
+                )
+            }
+        }
+
         impl<'a, R: Rule> Listeners<'a, R> {
             $(
                 $(#[$doc])*

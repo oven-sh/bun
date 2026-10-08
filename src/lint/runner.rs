@@ -45,13 +45,13 @@ impl<const KINDS: usize> Grouped<KINDS> {
                 *count += 1;
             }
         }
-        Grouped::of_counted_kinds(all, kinds, counts)
+        Grouped::of_counted_kinds(all, kinds, &counts)
     }
 
     /// `counts`: at `kind + 1`, how many of `kinds` are `kind`.
-    fn of_counted_kinds(all: impl Iterator<Item = u32>, kinds: &[u8], counts: [u32; MOST_KINDS + 2]) -> Self {
+    fn of_counted_kinds(all: impl Iterator<Item = u32>, kinds: &[u8], counts: &[u32; MOST_KINDS + 2]) -> Self {
         const { assert!(KINDS <= MOST_KINDS) };
-        let mut starts = counts;
+        let mut starts = *counts;
         for kind in 0..KINDS {
             starts[kind + 1] += starts[kind];
         }
@@ -94,7 +94,7 @@ impl Exprs {
         }
         let mut counts = [0u32; MOST_KINDS + 2];
         counts.get_mut(1..=counted.len())?.copy_from_slice(counted);
-        let mut grouped: Grouped<{ 2 * ExprTag::COUNT }> = Grouped::of_counted_kinds(0..kinds.len() as u32, kinds, counts);
+        let mut grouped: Grouped<{ 2 * ExprTag::COUNT }> = Grouped::of_counted_kinds(0..kinds.len() as u32, kinds, &counts);
         if bun_core::strings::contains_char(file.text(), b'`') {
             let (strings, templates) = (2 * ExprTag::String as usize, 2 * ExprTag::Template as usize);
             const { assert!((ExprTag::String as usize) < ExprTag::Template as usize) };
@@ -130,7 +130,7 @@ impl Exprs {
             kind
         });
         Exprs {
-            grouped: Grouped::of_counted_kinds(0..kinds.len() as u32, &kinds, counts),
+            grouped: Grouped::of_counted_kinds(0..kinds.len() as u32, &kinds, &counts),
         }
     }
 }
@@ -407,7 +407,7 @@ impl<'a> File<'a> {
 pub trait AnyRule: Send + Sync {
     fn meta(&self) -> &'static Meta;
 
-    /// `None`: it listens for nothing that the file has.
+    /// Calls the listeners that take the nodes in no particular order. `None`: it has no others.
     #[doc(hidden)]
     fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>>;
 }
@@ -432,7 +432,7 @@ impl<R: Rule> AnyRule for R {
         if on.entries.is_empty() {
             return None;
         }
-        Some(Box::new(Run {
+        let mut run = Run {
             rule: self,
             entries: on.entries,
             cx: Cx {
@@ -441,7 +441,12 @@ impl<R: Rule> AnyRule for R {
                 rule: start.rule,
                 severity: start.severity,
             },
-        }))
+        };
+        run.run_unordered();
+        match run.entries.iter().any(Entry::is_for_later) {
+            true => Some(Box::new(run)),
+            false => None,
+        }
     }
 }
 
@@ -472,8 +477,6 @@ fn every_symbol<'a>(file: &'a File<'a>, visit: &mut dyn FnMut(Symbol<'a>)) {
 /// A rule at work on a file.
 #[doc(hidden)]
 pub trait Running<'a> {
-    /// Calls the listeners that take the nodes in no particular order.
-    fn run_unordered(&mut self);
     /// Tells which of its listeners the walk has to call.
     fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener));
     /// Calls the listener at `entry` with `node`.
@@ -510,7 +513,7 @@ struct Run<'r, 'a, R: Rule> {
     cx: Cx<'a, R>,
 }
 
-impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
+impl<'a, R: Rule> Run<'_, 'a, R> {
     fn run_unordered(&mut self) {
         let (rule, cx) = (self.rule, &mut self.cx);
         let file = cx.file;
@@ -579,7 +582,9 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
             }
         }
     }
+}
 
+impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
     fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
         for (i, entry) in self.entries.iter().enumerate() {
             match entry {
@@ -825,10 +830,6 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
             rule: i as u16,
             severity: enabled.severity,
         }));
-    }
-
-    for rule in &mut running {
-        rule.run_unordered();
     }
 
     let (mut enter, mut exit) = (ByTag::default(), ByTag::default());

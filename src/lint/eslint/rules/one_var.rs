@@ -169,14 +169,7 @@ fn previous_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
         },
         _ => return None,
     };
-    let mut previous = None;
-    for sibling in body {
-        if sibling == statement {
-            return previous;
-        }
-        previous = Some(sibling);
-    }
-    None
+    body.before(statement.span().start)
 }
 
 /// The `VariableDeclaration` of the same kind right before `statement`.

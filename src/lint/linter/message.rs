@@ -420,10 +420,15 @@ impl LintMessage {
             Some(id) => write_json_string(out, &id.to_vec()),
             None => out.extend_from_slice(b"null"),
         }
-        if self.is_fatal {
-            out.extend_from_slice(b",\"fatal\":true");
+        // What the linter says itself, other than about a file that cannot be parsed, is made by another function of ESLint.
+        let is_severity_last = self.message_id.is_none() && (!self.is_fatal || self.end.is_some());
+        if !is_severity_last {
+            if self.is_fatal {
+                out.extend_from_slice(b",\"fatal\":true");
+            }
+            let _ = write!(out, ",\"severity\":{}", self.severity as u8);
         }
-        let _ = write!(out, ",\"severity\":{},\"message\":", self.severity as u8);
+        out.extend_from_slice(b",\"message\":");
         write_json_string(out, &self.message);
         if !self.is_fatal || self.line != 0 {
             let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
@@ -434,6 +439,12 @@ impl LintMessage {
         }
         if let Some((line, column)) = self.end {
             let _ = write!(out, ",\"endLine\":{line},\"endColumn\":{column}");
+        }
+        if is_severity_last {
+            let _ = write!(out, ",\"severity\":{}", self.severity as u8);
+            if self.is_fatal {
+                out.extend_from_slice(b",\"fatal\":true");
+            }
         }
         if let Some(fix) = &self.fix {
             out.extend_from_slice(b",\"fix\":");

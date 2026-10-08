@@ -5,7 +5,21 @@
 //! `postcss-media-query-parser` for media queries. What it prints depends on how they take the text
 //! apart, mistakes included. So this has the same four parsers.
 
+mod doc;
+mod media_query;
+mod misc;
+mod parse;
+mod postcss;
+mod printer;
+mod selector_parser;
+mod text;
+mod value_groups;
+mod value_parser;
+
+use self::doc::Doc;
+use crate::options::{QuoteStyle, TrailingCommas};
 use crate::{FormatError, FormatOptions};
+use std::borrow::Cow;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Parser {
@@ -46,14 +60,111 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 #[derive(Default)]
 pub struct Scratch {}
 
+/// Prettier's `parseFrontMatter`: the length of the front matter at the start of `text`.
+fn front_matter_len(text: &[u8]) -> Option<usize> {
+    let delimiter = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++"))?;
+    let first_line_break = text::index_of_char_from(text, b'\n', 3)?;
+    let language = text::trim(&text[3..first_line_break]);
+    let is_yaml = delimiter == b"---" && (language.is_empty() || language == b"yaml");
+    let end = text::index_of_from(text, &[b"\n", delimiter].concat(), first_line_break)
+        .or_else(|| text::index_of_from(text, b"\n...", first_line_break).filter(|_| is_yaml))?;
+    Some(end + 1 + 3)
+}
+
 /// Appends the formatted `text` to `out`.
 pub fn format(
     text: &[u8],
     parser: Parser,
     options: &FormatOptions,
-    scratch: &mut Scratch,
+    _scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    let _ = (text, parser, options, scratch, out);
-    Err(FormatError::SyntaxError)
+    const BOM: &[u8] = "\u{FEFF}".as_bytes();
+    let original = text;
+    let (has_bom, text) = match text.strip_prefix(BOM) {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    // `normalizeEndOfLine`
+    let text: Cow<'_, [u8]> = match bun_core::strings::contains_char(text, b'\r') {
+        false => Cow::Borrowed(text),
+        true => {
+            let mut normalized = Vec::with_capacity(text.len());
+            let mut rest = text;
+            while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
+                normalized.extend_from_slice(&rest[..at]);
+                normalized.push(b'\n');
+                rest = &rest[at + 1..];
+                rest = rest.strip_prefix(b"\n").unwrap_or(rest);
+            }
+            normalized.extend_from_slice(rest);
+            Cow::Owned(normalized)
+        }
+    };
+    let text = &text[..];
+
+    // What is parsed has blanks in the place of the front matter, so that all positions stay.
+    let front_matter = front_matter_len(text).map(|len| &text[..len]);
+    let blanked: Cow<'_, [u8]> = match front_matter {
+        None => Cow::Borrowed(text),
+        Some(front_matter) => {
+            let mut blanked = text.to_vec();
+            for byte in &mut blanked[..front_matter.len()] {
+                if *byte != b'\n' {
+                    *byte = b' ';
+                }
+            }
+            Cow::Owned(blanked)
+        }
+    };
+
+    let root = parse::parse(&blanked, parser).map_err(|_| FormatError::SyntaxError)?;
+    let mut printer = printer::Printer {
+        text,
+        syntax: parser,
+        single_quote: matches!(options.quote_style, QuoteStyle::Single),
+        trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
+        css_stack: Vec::new(),
+        value_stack: Vec::new(),
+    };
+    // Nothing in a style sheet is something that Prettier formats on its own.
+    let is_range = options.range_start.is_some_and(|start| start > 0)
+        || options.range_end.is_some_and(|end| (end as usize) < text.len());
+    if is_range {
+        out.extend_from_slice(original);
+        return Ok(());
+    }
+    let mut document = printer.print_root(&root);
+    if let Some(front_matter) = front_matter {
+        let has_nodes = root.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty());
+        // Prettier's `printEmbedFrontMatter`, for front matter that is empty.
+        let first_line_end = text::index_of_char_from(front_matter, b'\n', 0).unwrap_or(front_matter.len());
+        let last_line_start = bun_core::strings::last_index_of_char(front_matter, b'\n').map_or(0, |at| at + 1);
+        let language = text::trim(&front_matter[3..first_line_end]);
+        let is_embedded = match front_matter.starts_with(b"---") {
+            true => matches!(language, b"" | b"yaml" | b"toml"),
+            false => matches!(language, b"" | b"toml" | b"yaml"),
+        };
+        let is_empty = text::trim(front_matter.get(first_line_end..last_line_start).unwrap_or_default()).is_empty();
+        let front_matter = match is_embedded && is_empty {
+            true => Doc::Array(vec![
+                Doc::from(&front_matter[..3]),
+                Doc::from(language),
+                doc::hardline(),
+                Doc::from(&front_matter[last_line_start..]),
+            ]),
+            false => Doc::from(front_matter),
+        };
+        document = Doc::Array(vec![
+            front_matter,
+            doc::hardline(),
+            if has_nodes { doc::hardline() } else { Doc::EMPTY },
+            document,
+        ]);
+    }
+    if has_bom {
+        out.extend_from_slice(BOM);
+    }
+    doc::print(document, options, original, out);
+    Ok(())
 }

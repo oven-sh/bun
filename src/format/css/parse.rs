@@ -1,0 +1,372 @@
+//! Prettier's `parser-postcss.js`: the tree of `postcss`, with selectors, values and parameters
+//! parsed.
+
+use super::Parser as Syntax;
+use super::media_query::{self, MediaNode};
+use super::postcss::{self, Kind, NodeId, Range, Tree};
+use super::selector_parser::{SelectorNode, parse_selector};
+use super::text;
+use super::value_parser::{ValueNode, parse_value};
+use std::borrow::Cow;
+
+/// `node.value`
+#[derive(Debug)]
+pub(crate) enum Value<'a> {
+    None,
+    Text(Cow<'a, [u8]>),
+    Parsed(ValueNode<'a>),
+    /// `--a: { .. }`: `{ type: "css-rule", nodes }`
+    Rule(Vec<CssNode<'a>>),
+}
+
+/// `node.params`
+#[derive(Debug)]
+pub(crate) enum Params<'a> {
+    None,
+    Text(Cow<'a, [u8]>),
+    Media(MediaNode<'a>),
+    Value(ValueNode<'a>),
+    /// `media-unknown` and `selector-unknown`, which are printed the same way here.
+    Unknown(Cow<'a, [u8]>),
+}
+
+#[derive(Debug)]
+pub(crate) struct CssNode<'a> {
+    pub(crate) kind: Kind,
+    /// `locStart(node)` and `locEnd(node)`
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) nodes: Option<Vec<CssNode<'a>>>,
+    /// `raws.before`, `raws.between`, `raws.after`, `raws.afterName`
+    pub(crate) before: &'a [u8],
+    pub(crate) between: &'a [u8],
+    pub(crate) after: &'a [u8],
+    pub(crate) after_name: &'a [u8],
+    /// Of a comment.
+    pub(crate) text: &'a [u8],
+    pub(crate) inline: bool,
+    pub(crate) selector: Option<SelectorNode<'a>>,
+    /// `raws.selector`
+    pub(crate) raw_selector: &'a [u8],
+    pub(crate) prop: &'a [u8],
+    pub(crate) value: Value<'a>,
+    pub(crate) important: bool,
+    pub(crate) raw_important: Option<&'a [u8]>,
+    pub(crate) scss_default: bool,
+    pub(crate) raw_scss_default: Option<&'a [u8]>,
+    pub(crate) scss_global: bool,
+    pub(crate) raw_scss_global: Option<&'a [u8]>,
+    pub(crate) name: &'a [u8],
+    pub(crate) params: Params<'a>,
+    /// `raws.params`
+    pub(crate) raw_params: &'a [u8],
+    pub(crate) custom_selector: Option<&'a [u8]>,
+}
+
+pub(crate) struct SyntaxError;
+
+impl From<postcss::SyntaxError> for SyntaxError {
+    fn from(_: postcss::SyntaxError) -> Self {
+        SyntaxError
+    }
+}
+
+struct Context<'a> {
+    text: &'a [u8],
+    syntax: Syntax,
+}
+
+/// `/(\s*)(!default).*$/` or the same with `!global`: where the match starts.
+fn find_directive(value: &[u8], directive: &[u8]) -> Option<usize> {
+    let mut from = 0;
+    while let Some(at) = text::index_of_from(value, directive, from) {
+        if bun_core::strings::index_of_any(&value[at..], b"\n\r").is_none() && !text::includes(&value[at..], "\u{2028}".as_bytes())
+        {
+            return Some(text::trim_end(&value[..at]).len());
+        }
+        from = at + 1;
+    }
+    None
+}
+
+/// `/^\s*:?\s*/`: the length of the match.
+fn after_name_prefix_len(after_name: &[u8]) -> usize {
+    let rest = text::trim_start(after_name);
+    let rest = text::trim_start(rest.strip_prefix(b":").unwrap_or(rest));
+    after_name.len() - rest.len()
+}
+
+/// `params.replace(/^(?!if)([^"'\s(]+)(\s+)\(/, "$1($2")`
+fn move_space_behind_parenthesis(params: &[u8]) -> Option<Vec<u8>> {
+    if params.starts_with(b"if") {
+        return None;
+    }
+    let name_len = params
+        .iter()
+        .position(|&b| matches!(b, b'"' | b'\'' | b'(') || text::starts_with_white_space(&[b]))
+        .filter(|&len| len > 0)?;
+    let rest = &params[name_len..];
+    let spaces = text::leading_white_space_len(rest);
+    if spaces == 0 || rest.get(spaces) != Some(&b'(') {
+        return None;
+    }
+    let mut out = Vec::with_capacity(params.len());
+    out.extend_from_slice(&params[..name_len]);
+    out.push(b'(');
+    out.extend_from_slice(&rest[..spaces]);
+    out.extend_from_slice(&rest[spaces + 1..]);
+    Some(out)
+}
+
+/// `params.replace(/(\$\S+?)(\s+)?\.{3}/, "$1...$2")`
+fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
+    let mut from = 0;
+    while let Some(dollar) = text::index_of_char_from(params, b'$', from) {
+        // `\S+?` takes as little as it can, and no white space.
+        let mut at = dollar + 1;
+        while params.get(at).is_some_and(|&b| !text::starts_with_white_space(&[b])) {
+            at += 1;
+            let spaces = text::leading_white_space_len(&params[at..]);
+            if params[at + spaces..].starts_with(b"...") {
+                if spaces == 0 {
+                    return None;
+                }
+                let mut out = Vec::with_capacity(params.len());
+                out.extend_from_slice(&params[..at]);
+                out.extend_from_slice(b"...");
+                out.extend_from_slice(&params[at..at + spaces]);
+                out.extend_from_slice(&params[at + spaces + 3..]);
+                return Some(out);
+            }
+        }
+        from = dollar + 1;
+    }
+    None
+}
+
+impl<'a> Context<'a> {
+    fn of(&self, range: Range) -> &'a [u8] {
+        range.of(self.text)
+    }
+
+    fn convert_children(&self, tree: &Tree, ids: &[NodeId]) -> Result<Vec<CssNode<'a>>, SyntaxError> {
+        ids.iter().map(|&id| self.convert(tree, id)).collect()
+    }
+
+    /// `parseNestedCSS`, and `calculateLoc` for the node.
+    fn convert(&self, tree: &Tree, id: NodeId) -> Result<CssNode<'a>, SyntaxError> {
+        let raw = &tree.nodes[id as usize];
+        let nodes = match &raw.nodes {
+            Some(ids) => Some(self.convert_children(tree, ids)?),
+            None => None,
+        };
+        let mut node = CssNode {
+            kind: raw.kind,
+            start: raw.start as usize,
+            end: 0,
+            nodes,
+            before: self.of(raw.before),
+            between: self.of(raw.between),
+            after: self.of(raw.after),
+            after_name: self.of(raw.after_name),
+            text: self.of(raw.text),
+            inline: false,
+            selector: None,
+            raw_selector: b"",
+            prop: self.of(raw.prop),
+            value: Value::None,
+            important: raw.important,
+            raw_important: raw.raw_important.map(|it| self.of(it)),
+            scss_default: false,
+            raw_scss_default: None,
+            scss_global: false,
+            raw_scss_global: None,
+            name: self.of(raw.name),
+            params: Params::None,
+            raw_params: b"",
+            custom_selector: None,
+        };
+
+        match raw.kind {
+            Kind::Root | Kind::Comment => {}
+            Kind::Rule => {
+                let mut selector = raw.selector;
+                if !text::trim(node.between).is_empty() {
+                    selector = Range::new(selector.start, raw.between.end);
+                }
+                node.raw_selector = self.of(selector);
+                if !text::trim(node.raw_selector).is_empty() {
+                    node.selector = Some(parse_selector(Cow::Borrowed(node.raw_selector)));
+                }
+            }
+            Kind::Decl => self.convert_declaration(raw, &mut node)?,
+            Kind::AtRule => self.convert_at_rule(raw, &mut node)?,
+        }
+
+        // `calculateLocEnd`
+        node.end = match raw.end {
+            Some(end) => end as usize,
+            None => match (raw.kind, node.nodes.as_ref().and_then(|nodes| nodes.last())) {
+                (_, Some(last)) => last.end,
+                (Kind::AtRule, None) => node.start + 1 + node.name.len() + node.after_name.len() + node.raw_params.len(),
+                _ => self.text.len(),
+            },
+        }
+        .min(self.text.len());
+        Ok(node)
+    }
+
+    fn convert_declaration(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<(), SyntaxError> {
+        let value = self.of(raw.value);
+        // `getValueRootOffset`
+        let root_offset = raw.start + node.prop.len() as u32 + node.between.len() as u32;
+
+        // A custom property set looks like a declaration.
+        if node.prop.starts_with(b"--") && value.starts_with(b"{") {
+            let mut rules = None;
+            if text::trim_end(raw.clean_value.as_deref().unwrap_or(value)).ends_with(b"}")
+                && let Some(end) = raw.end
+                && let Ok(tree) = postcss::parse_custom_property_set(&self.text[..end as usize], raw.start)
+                && let [only] = *tree.nodes[0].nodes.as_deref().unwrap_or_default()
+                && tree.nodes[only as usize].kind == Kind::Rule
+            {
+                rules = self.convert(&tree, only).ok().and_then(|rule| rule.nodes);
+            }
+            node.value = match rules {
+                Some(rules) => Value::Rule(rules),
+                // Prettier reads `raws.value.raw`, which is only there if the value has comments.
+                None if raw.clean_value.is_none() => return Err(SyntaxError),
+                None => Value::Parsed(super::value_parser::unknown(Cow::Borrowed(value), root_offset)),
+            };
+            return Ok(());
+        }
+
+        if text::trim(value).is_empty() {
+            node.value = Value::Text(match &raw.clean_value {
+                Some(clean) => Cow::Owned(clean.to_vec()),
+                None => Cow::Borrowed(value),
+            });
+            return Ok(());
+        }
+        let mut value = value;
+        if let Some(at) = find_directive(value, b"!default") {
+            node.scss_default = true;
+            node.raw_scss_default = Some(&value[at..]).filter(|it| text::trim(it) != b"!default");
+            value = &value[..at];
+        }
+        if let Some(at) = find_directive(value, b"!global") {
+            node.scss_global = true;
+            node.raw_scss_global = Some(&value[at..]).filter(|it| text::trim(it) != b"!global");
+            value = &value[..at];
+        }
+        if value.starts_with(b"progid:") {
+            // It stays the string that `postcss` has made of it.
+            node.value = Value::Text(match &raw.clean_value {
+                Some(clean) => Cow::Owned(clean.to_vec()),
+                None => Cow::Borrowed(self.of(raw.value)),
+            });
+            return Ok(());
+        }
+        node.value = Value::Parsed(parse_value(Cow::Borrowed(value), self.syntax, root_offset).map_err(|_| SyntaxError)?);
+        Ok(())
+    }
+
+    fn convert_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<(), SyntaxError> {
+        let mut range = raw.params;
+        if !text::trim(node.after_name).is_empty() {
+            range = Range::new(raw.after_name.start, range.end.max(raw.after_name.end));
+        }
+        if !text::trim(node.between).is_empty() {
+            range = Range::new(if range.is_empty() { raw.between.start } else { range.start }, raw.between.end);
+        }
+        let params = text::trim(self.of(range));
+        node.raw_params = params;
+        let name = node.name;
+        // `getValueRootOffset` and `getAtRuleParamsRootOffset`
+        let root_offset = raw.start + 1 + name.len() as u32 + after_name_prefix_len(node.after_name) as u32;
+        let value = |text: Cow<'a, [u8]>| parse_value(text, self.syntax, root_offset).map_err(|_| SyntaxError);
+
+        if self.syntax == Syntax::Css && name == b"custom-selector" {
+            // `node.params.match(/:--\S+\s+/)[0].trim()`
+            let clean = self.of(raw.params);
+            let start = text::index_of_from(clean, b":--", 0).ok_or(SyntaxError)?;
+            let name_len = clean[start..].iter().position(|&b| text::starts_with_white_space(&[b])).ok_or(SyntaxError)?;
+            if name_len <= 3 {
+                return Err(SyntaxError);
+            }
+            let custom_selector = &clean[start..start + name_len];
+            node.custom_selector = Some(custom_selector);
+            let rest = text::trim(clean.get(custom_selector.len()..).unwrap_or_default());
+            node.selector = Some(parse_selector(Cow::Borrowed(rest)));
+            return Ok(());
+        }
+        if params.is_empty() {
+            return Ok(());
+        }
+        if matches!(name, b"warn" | b"error") {
+            node.params = Params::Unknown(Cow::Borrowed(params));
+        } else if matches!(name, b"extend" | b"nest") {
+            node.selector = Some(parse_selector(Cow::Borrowed(params)));
+        } else if name == b"at-root" {
+            // `/^\(\s*(?:without|with)\s*:.+\)$/s`
+            let is_query = params.strip_prefix(b"(").and_then(|it| it.strip_suffix(b")")).is_some_and(|inner| {
+                let inner = text::trim_start(inner);
+                let rest = inner.strip_prefix(b"without").or_else(|| inner.strip_prefix(b"with"));
+                rest.and_then(|it| text::trim_start(it).strip_prefix(b":")).is_some_and(|it| !it.is_empty())
+            });
+            match is_query {
+                true => node.params = Params::Value(value(Cow::Borrowed(params))?),
+                false => node.selector = Some(parse_selector(Cow::Borrowed(params))),
+            }
+        } else if matches!(&*name.to_ascii_lowercase(), b"import" | b"use" | b"forward") {
+            node.params = Params::Value(value(Cow::Borrowed(params))?);
+        } else if matches!(
+            name,
+            b"namespace"
+                | b"supports"
+                | b"if"
+                | b"else"
+                | b"for"
+                | b"each"
+                | b"while"
+                | b"debug"
+                | b"mixin"
+                | b"include"
+                | b"function"
+                | b"return"
+                | b"define-mixin"
+                | b"add-mixin"
+        ) {
+            let mut text = Cow::Borrowed(params);
+            if let Some(moved) = move_space_behind_dots(&text) {
+                text = Cow::Owned(moved);
+            }
+            if let Some(moved) = move_space_behind_parenthesis(&text) {
+                text = Cow::Owned(moved);
+            }
+            node.value = Value::Parsed(value(text)?);
+        } else if matches!(&*name.to_ascii_lowercase(), b"media" | b"custom-media") {
+            node.params = if text::includes(params, b"#{") {
+                // What Prettier makes of it is lost, and the string of `postcss` stays.
+                Params::Text(match &raw.clean_params {
+                    Some(clean) => Cow::Owned(clean.to_vec()),
+                    None => Cow::Borrowed(self.of(raw.params)),
+                })
+            } else {
+                match media_query::parse(params) {
+                    Ok(list) => Params::Media(list),
+                    Err(_) => Params::Unknown(Cow::Borrowed(params)),
+                }
+            };
+        } else {
+            node.params = Params::Text(Cow::Borrowed(params));
+        }
+        Ok(())
+    }
+}
+
+/// Prettier's `parseCss`. `text` has no front matter.
+pub(crate) fn parse(text: &[u8], syntax: Syntax) -> Result<CssNode<'_>, SyntaxError> {
+    let tree = postcss::parse(text)?;
+    Context { text, syntax }.convert(&tree, 0)
+}

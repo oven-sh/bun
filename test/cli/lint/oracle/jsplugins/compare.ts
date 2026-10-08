@@ -22,7 +22,7 @@ const actual = new Map(read(actualPath).map(it => [it.id, it]));
 function difference(a: any, b: any, path = ""): [string, unknown, unknown] | null {
   if (a === b) return null;
   // With an old `ecmaVersion` espree leaves out the fields that newer syntax has brought.
-  if (a === undefined && /\/(?:optional|async|attributes|computed|await|options|directive|generator|expression|method|shorthand)$/.test(path)) return null;
+  if (a === undefined && /\/(?:optional|async|attributes|computed|await|options|directive|generator|expression|method|shorthand|exported)$/.test(path)) return null;
   if (isRecorded && a === undefined && /\/suggestions\/\d+\/data$/.test(path)) return null;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) {
     return [path, a, b];

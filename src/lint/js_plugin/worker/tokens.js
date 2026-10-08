@@ -96,6 +96,11 @@ function makeToken(list, index) {
       value = text.slice(start, end);
   }
   if ((kind === 1 || kind === 4 || kind === 7) && value.includes("\\") && dialect() === 1) value = decodeName(value);
+  // espree decodes the text in JSX, as in the node that is made of it.
+  if (tokenTypes[kind] === "JSXText" && dialect() === 1 && /[&\r]/.test(value)) {
+    const node = sourceCode.getNodeByRangeIndex(start);
+    if (node?.type === "JSXText" && node.range[0] === start) value = node.value;
+  }
   const token = new Token(tokenTypes[kind], value, start, end);
   if (kind === 9) {
     const slash = value.lastIndexOf("/");

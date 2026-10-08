@@ -680,8 +680,15 @@ class Order {
     this.count = count;
     this.nodeOf = nodeOf;
     // The things by their nodes, where each is in the order, and which is at each place of it.
-    this.sorted = Uint32Array.from({ length: count }, (_, index) => index).sort((a, b) => nodeOf(a) - nodeOf(b));
-    this.place = Uint32Array.from({ length: count }, (_, index) => index);
+    this.place = new Uint32Array(count);
+    // Sorted as numbers, which calls nothing: the node, and below it the index.
+    const keys = new Float64Array(count);
+    for (let index = 0; index < count; index++) {
+      this.place[index] = index;
+      keys[index] = nodeOf(index) * 0x1000000 + index;
+    }
+    keys.sort();
+    this.sorted = Uint32Array.from(keys, key => key % 0x1000000);
     this.order = this.place.slice();
     this.hasMoved = false;
   }
@@ -865,7 +872,7 @@ function scopeManager() {
   const globals = words(2 * globalCount);
   // The scopes keep their numbers. Only the lists of them are in the other order.
   let scopeOrder = null;
-  if (tree.dialect === 0) {
+  if (tree.dialect === 0 && referenceCount < 0x1000000) {
     const ofReferences = new Order(referenceCount, index => references[5 * index]);
     scopeOrder = new Order(scopeCount, index => scopeWords[5 * index + 1]);
     orderAsTypeScriptEslint([ofReferences, scopeOrder]);

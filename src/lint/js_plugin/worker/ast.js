@@ -35,6 +35,16 @@ class Node {
 // espree also leaves out the `directive` of a statement that is none.
 const leftOut = new Set(["Literal.regex", "Literal.bigint", "TSModuleDeclaration.body"]);
 
+// The deprecated properties of typescript-estree that are other properties by an older name. They are not enumerable.
+const deprecated = {
+  ImportDeclaration: { assertions: node => node.attributes },
+  ExportNamedDeclaration: { assertions: node => node.attributes },
+  ExportAllDeclaration: { assertions: node => node.attributes },
+  ImportExpression: { attributes: node => node.options },
+  TSEnumDeclaration: { members: node => node.body.members },
+  TSEnumMember: { computed: node => node.id.type !== "Identifier" && node.id.type !== "Literal" },
+};
+
 // `types`: for each type `[name, [[field, flags], ..]]`. See `write_start` in `schema.rs`.
 function defineTypes(types, strings) {
   knownStrings = strings;
@@ -66,6 +76,18 @@ function defineTypes(types, strings) {
           }
         }`,
       )(Node, value);
+      if (dialect === 1) continue;
+      for (const [key, get] of Object.entries(deprecated[name] ?? {})) {
+        Object.defineProperty(constructors[0][id].prototype, key, {
+          get() {
+            return get(this);
+          },
+          set(value) {
+            Object.defineProperty(this, key, { value, writable: true, enumerable: true, configurable: true });
+          },
+          configurable: true,
+        });
+      }
     }
   });
 }

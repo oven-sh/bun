@@ -394,6 +394,150 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     expect(exitCode).toBe(1);
   }, timeout);
 
+  test("a plugin that cannot be loaded", async () => {
+    const run = (plugin: string, specifier = "./broken.mjs") =>
+      lint({ ".oxlintrc.json": oxlintrc({ jsPlugins: [specifier] }), "broken.mjs": plugin, "a.js": "1;\n" }, ["a.js"]);
+    const [syntax, throws, nameless, missing] = await Promise.all([
+      run("export default { rules: {"),
+      run(`throw new Error("It cannot start.");`),
+      run("export default { rules: {} };"),
+      run("", "eslint-plugin-that-is-not-installed"),
+    ]);
+    expect(syntax.stderr).toContain("Failed to load JS plugin: ./broken.mjs");
+    expect(throws.stderr).toMatchInlineSnapshot(`
+      "error: Cannot use the configuration file <dir>/.oxlintrc.json:
+      Failed to load JS plugin: ./broken.mjs
+        Error: It cannot start.
+          at <dir>/broken.mjs:1:11"
+    `);
+    expect(nameless.stderr).toMatchInlineSnapshot(`
+      "error: Cannot use the configuration file <dir>/.oxlintrc.json:
+      Failed to load JS plugin: ./broken.mjs
+        Error: Plugin must either define \`meta.name\`, be loaded from an NPM package with a \`name\` field in \`package.json\`, or be given an alias in config"
+    `);
+    expect(missing.stderr).toMatchInlineSnapshot(`
+      "error: Cannot use the configuration file <dir>/.oxlintrc.json:
+      Failed to load JS plugin: eslint-plugin-that-is-not-installed
+        ResolveMessage: Cannot find module 'eslint-plugin-that-is-not-installed'"
+    `);
+    for (const it of [syntax, throws, nameless, missing]) expect(it.exitCode).toBe(2);
+  }, timeout);
+
+  test("what a plugin prints is printed, and process.exit() ends the run", async () => {
+    const plugin = `
+      export default {
+        meta: { name: "process" },
+        rules: {
+          exits: {
+            create(context) {
+              return {
+                Program() {
+                  console.log("to stdout");
+                  console.error("to stderr");
+                  process.exit(7);
+                },
+              };
+            },
+          },
+        },
+      };`;
+    const { stdout, stderr, exitCode } = await lint(
+      {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "process/exits": "error" } }),
+        "plugin.mjs": plugin,
+        "a.js": "1;\n",
+      },
+      ["-f", "unix"],
+    );
+    expect(stdout).toBe("to stdout");
+    expect(stderr).toBe("to stderr");
+    expect(exitCode).toBe(7);
+  }, timeout);
+
+  test("what a plugin keeps about a file under its sourceCode or context is not there for the next file", async () => {
+    const plugin = `
+      const bySourceCode = new WeakMap();
+      const byContext = new WeakSet();
+      export default {
+        meta: { name: "caches" },
+        rules: {
+          first: {
+            create(context) {
+              const known = bySourceCode.get(context.sourceCode);
+              bySourceCode.set(context.sourceCode, context.filename);
+              const seen = byContext.has(context);
+              byContext.add(context);
+              return {
+                Program(node) {
+                  context.report({ node, message: "known: " + known + ", seen: " + seen });
+                },
+              };
+            },
+          },
+        },
+      };`;
+    const { stdout } = await lint(
+      {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "caches/first": "error" } }),
+        "plugin.mjs": plugin,
+        "a.js": "1;\n",
+        "b.js": "2;\n",
+      },
+      ["-f", "unix", "--threads", "1"],
+    );
+    expect(stdout).toMatchInlineSnapshot(`
+      "<dir>/a.js:1:1: known: undefined, seen: false [Error/caches/first]
+      <dir>/b.js:1:1: known: undefined, seen: false [Error/caches/first]
+
+      2 problems"
+    `);
+  }, timeout);
+
+  test("code paths, default options that are not JSON, and a plugin whose rules are in no fixed order", async () => {
+    const plugin = `
+      const rules = {};
+      await Promise.all(
+        ["b", "a", "c"].map(async (name, i) => {
+          for (let turns = (3 - i) * (process.pid % 3); turns > 0; turns--) await null;
+          rules[name] = {
+            meta: { schema: [{ type: "object" }], defaultOptions: [{ name, most: Infinity }] },
+            create(context) {
+              const events = [];
+              return {
+                onCodePathStart: codePath => events.push("start " + codePath.origin),
+                onCodePathSegmentStart: segment => events.push(segment.id),
+                onUnreachableCodePathSegmentStart: segment => events.push("unreachable " + segment.id),
+                onCodePathEnd(codePath, node) {
+                  if (node.type !== "Program") return;
+                  const [{ name, most }] = context.options;
+                  context.report({ node, message: [context.id, name, most, ...events].join(" ") });
+                },
+              };
+            },
+          };
+        }),
+      );
+      export default { meta: { name: "paths" }, rules };`;
+    const { stdout } = await lint(
+      {
+        ".oxlintrc.json": oxlintrc({
+          jsPlugins: ["./plugin.mjs"],
+          rules: { "paths/a": "error", "paths/b": "error", "paths/c": "error" },
+        }),
+        "plugin.mjs": plugin,
+        "a.js": "function f(a) { if (a) return 1; else throw a; f(); }\n",
+      },
+      ["-f", "unix"],
+    );
+    // The events are what ESLint 10 gives this rule.
+    const events = "start program s1_1 start function s2_1 s2_2 s2_4 unreachable s2_6";
+    expect(stdout.split("\n").slice(0, 3)).toEqual([
+      `<dir>/a.js:1:1: paths/a a Infinity ${events} [Error/paths/a]`,
+      `<dir>/a.js:1:1: paths/b b Infinity ${events} [Error/paths/b]`,
+      `<dir>/a.js:1:1: paths/c c Infinity ${events} [Error/paths/c]`,
+    ]);
+  }, timeout);
+
   test("more files than threads: every file gets its reports, and nothing else is said", async () => {
     const files: Record<string, string> = {
       ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/no-foo": "error" } }),

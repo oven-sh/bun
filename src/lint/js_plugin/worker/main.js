@@ -604,13 +604,21 @@ function start() {
   hasStarted = true;
 }
 
+// With where in the plugin it was thrown, and without what is not the user's.
+function describeLoadError(error) {
+  const lines = String(error?.stack ?? error).split("\n");
+  const stack = lines.indexOf("Require stack:");
+  if (stack !== -1) lines.length = stack;
+  return lines.filter(it => !/^\s+at .*\bbun-lint-plugins\.js:\d+/.test(it)).join("\n");
+}
+
 // What the other side calls, with what the message is. Returns the result, or a promise of it.
 function handle(kind) {
   if (!hasStarted) start();
   if (kind === LOAD) {
     return loadPlugin(askForJson(MESSAGE)).then(
       described => DONE + stringify(described),
-      error => FAILED + String(error?.stack ?? error),
+      error => FAILED + describeLoadError(error),
     );
   }
   try {

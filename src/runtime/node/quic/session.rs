@@ -1916,10 +1916,14 @@ impl QuicSession {
             if let Some(c) = self.conn() {
                 c.going_away();
             }
-            self.close_after_streams.set(true);
-            self.deferred_close
-                .with_mut(|d| *d = Some((app, code, reason)));
-        } else if self.any_stream_undelivered() {
+            if self.has_opened_stream() {
+                self.close_after_streams.set(true);
+                self.deferred_close
+                    .with_mut(|d| *d = Some((app, code, reason)));
+                return;
+            }
+        }
+        if self.any_stream_undelivered() {
             self.deferred_close
                 .with_mut(|d| *d = Some((app, code, reason)));
         } else {
@@ -1959,11 +1963,19 @@ impl QuicSession {
         Ok(())
     }
 
-    fn any_stream_undelivered(&self) -> bool {
+    /// A pending stream does not hold a graceful close open. Node: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/quic/session.cc#L1952-L1957
+    fn has_opened_stream(&self) -> bool {
         self.streams.get().iter().any(|&s| {
             // SAFETY: pointers in `streams` are unregistered before their
             // owner is destroyed (registry invariant).
-            unsafe { (*s).has_undelivered_outbound() }
+            unsafe { !(*s).is_pending() }
+        })
+    }
+
+    fn any_stream_undelivered(&self) -> bool {
+        self.streams.get().iter().any(|&s| {
+            // SAFETY: as in `has_opened_stream`.
+            unsafe { !(*s).is_pending() && (*s).has_undelivered_outbound() }
         })
     }
 
@@ -1974,7 +1986,7 @@ impl QuicSession {
         if self.any_stream_undelivered() {
             return;
         }
-        if self.close_after_streams.get() && !self.streams.get().is_empty() {
+        if self.close_after_streams.get() && self.has_opened_stream() {
             return;
         }
         if let Some((app, code, reason)) = self.deferred_close.with_mut(Option::take) {

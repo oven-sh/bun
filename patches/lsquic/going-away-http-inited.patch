@@ -1,0 +1,39 @@
+ietf_full_conn_ci_going_away: no effect until HTTP is initialized
+
+lsquic_conn_going_away() and lsquic_engine_cooldown() write the HTTP/3
+GOAWAY through the control stream writer (conn->ifc_hcso). init_http()
+sets that writer up, and a client runs init_http() only once it has the
+peer's transport parameters. Before that the writer is zeroed, and the
+write reads address 0x8 in lsquic_frab_list_write().
+
+Upstream has this code since 0ee6e64 ("Fix HTTP/3 client GOAWAY frame
+generation", #583, v4.4.0). v4.9.4 and master d5929af still have it. It
+reproduces without bun: run bin/http_client against a UDP peer that
+never answers, then send SIGUSR2 (lsquic_engine_cooldown) during the
+handshake. No upstream issue exists for it yet.
+
+The call returns before IFC_GOING_AWAY is set. With the flag set and no
+frame written, service_streams() drops the streams that wait for the
+handshake.
+
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -3354,6 +3354,18 @@
+         return;
+     }
+ 
++    /* bun: init_http() sets up the control stream and its writer (ifc_hcso).
++     * A client runs it once it has the peer's transport parameters.  Before
++     * that there is no control stream to carry a GOAWAY, and
++     * lsquic_hcso_write_goaway() would write through the zeroed writer.
++     * IFC_GOING_AWAY stays clear too: with it set, service_streams() drops
++     * the streams that wait for the handshake. */
++    if (!(conn->ifc_flags & IFC_HTTP_INITED))
++    {
++        LSQ_DEBUG("going away has no effect before HTTP is initialized");
++        return;
++    }
++
+     if (conn->ifc_flags & (IFC_CLOSING|IFC_GOING_AWAY))
+     {
+         LSQ_DEBUG("Already closing or marked as going away");

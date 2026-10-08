@@ -134,6 +134,12 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // lsquic_conn_going_away() wrote the GOAWAY without asking whether the
+    // HTTP control stream exists. A client creates it when the handshake
+    // gives it the peer's transport parameters; before that the write went
+    // through a zeroed list (SIGSEGV at 0x8 in lsquic_frab_list_write). The
+    // call has no effect until HTTP is initialized.
+    "patches/lsquic/going-away-http-inited.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

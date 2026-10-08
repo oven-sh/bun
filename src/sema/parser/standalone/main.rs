@@ -12,6 +12,7 @@ mod compare;
 mod fuzz;
 
 use bun_sema::atom::{Intern, Interner};
+use bun_sema::hir::DiagnosticKind;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema_parser::{Options, Refused, Scratch};
@@ -66,9 +67,11 @@ fn dialect_of(name: &str, script: bool) -> Option<Dialect> {
 enum Outcome {
     /// With the first list that is numbered in another order, if any.
     Identical(Option<&'static str>),
-    /// The reference reports an error, and so the direct parser is right to refuse.
-    BothRefuse,
-    Refused(Refused),
+    /// The reference reports an error, and so the direct parser is right to refuse. With the first
+    /// error.
+    BothRefuse(Refused, String),
+    /// With the first diagnostic of the reference, which is not about the syntax.
+    Refused(Refused, Option<String>),
     /// The direct parser accepts what the reference reports an error about.
     Accepted(String),
     Different(String),
@@ -97,9 +100,10 @@ fn compare_one(
         decorators,
         every_file_is_a_module,
     );
+    // The other diagnostics are about a tree that is the same without them: they are compared.
     let is_refused_by_reference = reference.has_errors
         || reference.has_parse_diagnostics
-        || !reference.diagnostics.is_empty()
+        || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
         || reference.ran_out_of_stack;
     let mut options = options_for(path, dialect);
     let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
@@ -118,8 +122,15 @@ fn compare_one(
         parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
     }
     match parsed {
-        Err(_) if is_refused_by_reference => Outcome::BothRefuse,
-        Err(why) => Outcome::Refused(why),
+        Err(why) if is_refused_by_reference => {
+            let first = reference.diagnostics.first();
+            let first = first.map(|it| (it.kind, it.code, it.start));
+            Outcome::BothRefuse(why, format!("{first:?}"))
+        }
+        Err(why) => {
+            let first = reference.diagnostics.first();
+            Outcome::Refused(why, first.map(|it| format!("{:?}", (it.kind, it.code, it.start))))
+        }
         Ok(parsed) => {
             let outcome = if is_refused_by_reference {
                 let first = reference.diagnostics.first();
@@ -186,7 +197,7 @@ fn difference_with_own_atoms(text: &[u8], options: Options, scratch: &mut Scratc
 struct Totals {
     identical: usize,
     other_order: BTreeMap<&'static str, Vec<String>>,
-    both_refuse: usize,
+    both_refuse: Vec<String>,
     refused: BTreeMap<String, Vec<String>>,
     accepted: Vec<(String, String)>,
     different: Vec<(String, String)>,
@@ -201,12 +212,22 @@ impl Totals {
                     self.other_order.entry(list).or_default().push(name.to_owned());
                 }
             }
-            Outcome::BothRefuse => self.both_refuse += 1,
-            Outcome::Refused(it) => self
-                .refused
-                .entry(format!("{:?}", it.why))
+            Outcome::BothRefuse(it, first) => self.both_refuse.push(format!(
+                "{:?} {name}:{} by {}:{} the reference reports {first}",
+                it.why,
+                it.at,
+                it.by.file(),
+                it.by.line()
+            )),
+            Outcome::Refused(it, first) => (self.refused.entry(format!("{:?}", it.why)))
                 .or_default()
-                .push(format!("{name}:{} by {}:{}", it.at, it.by.file(), it.by.line())),
+                .push(format!(
+                    "{name}:{} by {}:{}{}",
+                    it.at,
+                    it.by.file(),
+                    it.by.line(),
+                    first.map_or_else(String::new, |it| format!(" the reference reports Some({it})"))
+                )),
             Outcome::Accepted(what) => self.accepted.push((name.to_owned(), what)),
             Outcome::Different(what) => self.different.push((name.to_owned(), what)),
         }
@@ -227,6 +248,12 @@ impl Totals {
                 println!("REFUSED {why} {name}");
             }
         }
+        if list {
+            self.both_refuse.sort();
+            for name in &self.both_refuse {
+                println!("BOTH {name}");
+            }
+        }
         let refused: usize = self.refused.values().map(Vec::len).sum();
         let valid = self.identical + refused + self.different.len();
         println!(
@@ -236,8 +263,8 @@ impl Totals {
             self.identical as f64 * 100.0 / valid.max(1) as f64,
             self.different.len(),
             refused,
-            self.both_refuse + self.accepted.len(),
-            self.both_refuse,
+            self.both_refuse.len() + self.accepted.len(),
+            self.both_refuse.len(),
             self.accepted.len(),
         );
         for (why, names) in &self.refused {
@@ -389,7 +416,7 @@ fn fuzz(args: &[String]) {
         }
         match SCRATCH.with_borrow_mut(|scratch| compare_one(path, text, false, dialect, scratch)) {
             Outcome::Identical(_) => fuzz::Verdict::Identical,
-            Outcome::BothRefuse | Outcome::Refused(_) => fuzz::Verdict::Refused,
+            Outcome::BothRefuse(..) | Outcome::Refused(..) => fuzz::Verdict::Refused,
             Outcome::Accepted(what) => fuzz::Verdict::Wrong(format!("accepted: {what}")),
             Outcome::Different(what) => fuzz::Verdict::Wrong(format!("different: {what}")),
         }

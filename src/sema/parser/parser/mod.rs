@@ -122,7 +122,7 @@ file_lists! {
     modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
     decorators, modifiers_of_params, modifiers_of_props, with_bodies, import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
-    mentioned,
+    mentioned, diagnostics,
 }
 
 /// Where a speculative parse returns to.
@@ -412,6 +412,13 @@ impl<'a> Parser<'a> {
             true => ctx::DISALLOW_IN,
             false => 0,
         }
+    }
+
+    /// TypeScript reports an error that is not about the syntax: the tree is the same without it.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn flag(&mut self, kind: DiagnosticKind, code: u32, at: (u32, u32), args: &[&[u8]]) {
+        self.f.diagnostics.push(Diagnostic::new(kind, at, code, args));
     }
 
     #[inline(always)]

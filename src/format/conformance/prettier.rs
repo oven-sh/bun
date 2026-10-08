@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 const PROPOSAL: &str = "syntax of a proposal at stage 2 or below, which only Babel parses";
 const BABEL_TS: &str = "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
 const FLOW: &str = "Flow's type syntax";
-const EMBEDDED: &str = "embedded CSS, GraphQL, HTML or Markdown, which needs a formatter for that language";
+const EMBEDDED: &str = "embedded HTML or Markdown, which needs a formatter for that language";
 
 /// What is not run, and why. A case is left out if its path contains the text.
 const EXCLUDED: &[(&str, &str)] = &[
@@ -55,10 +55,8 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("typescript/definite/without-annotation.ts", BABEL_TS),
     ("js/embeded", EMBEDDED),
     ("js/multiparser-comments", EMBEDDED),
-    ("js/multiparser-graphql", EMBEDDED),
     ("js/multiparser-html", EMBEDDED),
     ("js/multiparser-markdown", EMBEDDED),
-    ("js/multiparser-text", EMBEDDED),
     ("typescript/angular-component-examples", EMBEDDED),
     ("typescript/decorators-ts/angular.ts", EMBEDDED),
     ("typescript/as/as-const-embedded.ts", EMBEDDED),

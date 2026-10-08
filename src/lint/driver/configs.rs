@@ -284,7 +284,8 @@ impl<'l> Loader<'l> {
         if !self.options.ignore {
             all = without_global_ignores(all, 0);
         }
-        Config::from_flat_json(self.linter.registry(), base_path, &all).map_err(|error| Fatal(error.message))
+        let mut load_plugin = |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
+        Config::from_flat_json_with_plugins(self.linter.registry(), base_path, &all, &mut load_plugin).map_err(|error| Fatal(error.message))
     }
 
     /// An `.oxlintrc.json` or `.eslintrc.json`, with what the command line adds.

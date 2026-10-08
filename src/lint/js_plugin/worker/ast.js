@@ -96,7 +96,7 @@ function stringAt(index) {
   const start = tree.strings[2 * index];
   const end = tree.strings[2 * index + 1];
   if (start >= 0x80000000) {
-    tree.extraText ??= decoder.decode(tree.extra);
+    tree.extraText ??= decode(tree.extra.buffer, tree.extra.byteOffset, tree.extra.byteOffset + tree.extra.byteLength);
     return tree.extraText.slice(start - 0x80000000, end);
   }
   return text.slice(start, end);

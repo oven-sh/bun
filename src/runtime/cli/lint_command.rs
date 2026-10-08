@@ -137,6 +137,7 @@ pub(crate) fn run_and_exit(
     let _ = Output::writer().write_all(&outcome.stdout);
     let _ = Output::error_writer().write_all(&outcome.stderr);
     Output::flush();
+    js_engine.end_all();
     Global::exit(u32::from(outcome.exit_code));
 }
 

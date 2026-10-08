@@ -4,6 +4,7 @@
 // - `request(kind, details, buffer)` asks for something, writes the answer into `buffer` and returns its length. If that
 //   is more than fits, nothing is written.
 // - `again(buffer)` then writes it into a larger one.
+// - `decode(buffer, start, end)` is the text that these bytes of `buffer` are in UTF-8.
 //
 // It returns `handle`, which the other side calls. See `wire.rs` for what is said. All of it is synchronous but for loading
 // a plugin.
@@ -11,8 +12,6 @@
 const { pathToFileURL } = require("node:url");
 const { createRequire } = require("node:module");
 const nodePath = require("node:path");
-
-const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 const LOAD = 1;
 const LINT = 2;
@@ -46,7 +45,7 @@ function ask(kind, details = "") {
 
 function askForJson(kind, details) {
   const length = ask(kind, details);
-  return JSON.parse(decoder.decode(new Uint8Array(buffers[kind], 0, length)));
+  return JSON.parse(decode(buffers[kind], 0, length));
 }
 
 // ───────────── plugins ─────────────
@@ -538,8 +537,8 @@ function lint() {
   wantsFixes = (flags & 1) !== 0;
   hasBOM = (flags & 2) !== 0;
   fileDialect = (flags >> 2) & 1;
-  filename = decoder.decode(new Uint8Array(buffer, pathStart, pathLength));
-  text = decoder.decode(new Uint8Array(buffer, pathStart + pathLength, length - pathStart - pathLength));
+  filename = decode(buffer, pathStart, pathStart + pathLength);
+  text = decode(buffer, pathStart + pathLength, length);
   fileSettings = allSettings.get(settingsId);
   if (fileSettings === undefined) allSettings.set(settingsId, (fileSettings = deepFreeze(askForJson(SETTINGS))));
   for (let position = 0; position < count; position++) {

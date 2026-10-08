@@ -432,7 +432,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             create(context) {
               return {
                 Program() {
-                  console.log("to stdout");
+                  console.log("to stdout", ...process.argv.slice(1));
                   console.error("to stderr");
                   process.exit(7);
                 },
@@ -449,9 +449,49 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       },
       ["-f", "unix"],
     );
-    expect(stdout).toBe("to stdout");
+    expect(stdout).toBe("to stdout lint --threads 2 -f unix");
     expect(stderr).toBe("to stderr");
     expect(exitCode).toBe(7);
+  }, timeout);
+
+  test("the exit handlers of a plugin run after the report, once for each thread that has loaded it", async () => {
+    const plugin = `
+      let files = 0;
+      process.on("exit", () => console.log("exit after " + files + " files"));
+      export default {
+        meta: { name: "counts" },
+        rules: {
+          files: {
+            create(context) {
+              files++;
+              return {
+                Program(node) {
+                  context.report({ node, message: "reported" });
+                },
+              };
+            },
+          },
+        },
+      };`;
+    const { stdout, exitCode } = await lint(
+      {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "counts/files": "error" } }),
+        "plugin.mjs": plugin,
+        "a.js": "1;\n",
+        "b.js": "2;\n",
+      },
+      ["-f", "unix", "--threads", "1"],
+    );
+    const lines = stdout.split("\n");
+    expect(lines.slice(0, 4)).toEqual([
+      "<dir>/a.js:1:1: reported [Error/counts/files]",
+      "<dir>/b.js:1:1: reported [Error/counts/files]",
+      "",
+      "2 problems",
+    ]);
+    // The thread that reads the configuration loads the plugin too, to know its rules.
+    expect(lines.slice(4).sort().at(-1)).toBe("exit after 2 files");
+    expect(exitCode).toBe(1);
   }, timeout);
 
   test("what a plugin keeps about a file under its sourceCode or context is not there for the next file", async () => {

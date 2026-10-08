@@ -1,8 +1,8 @@
 //! Where the rules of `bun lint` that are written in JavaScript run: in a VM on the thread that
 //! lints the file. A thread gets its VM the first time it has a file for such a rule.
 //!
-//! The program is `bun_lint::js_plugin::PROGRAM`: the body of a function that is given [`request`]
-//! and [`again`] to ask with, and returns the function that [`ThreadVm::call`] calls.
+//! The program is `bun_lint::js_plugin::PROGRAM`: the body of a function that is given [`request`],
+//! [`again`] and [`decode`], and returns the function that [`ThreadVm::call`] calls.
 
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
@@ -80,9 +80,8 @@ fn request(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         return Err(global.throw_invalid_arguments(format_args!("No file is being linted")));
     };
     let details = details.to_bun_string(global)?;
-    // SAFETY: `ThreadVm::call` has set it to what is on its stack, is waiting for the function
-    // that calls this one, and takes it out before it returns. Nothing else reads it: `serve` does
-    // not run JavaScript.
+    // SAFETY: on the stack of `ThreadVm::call`, which is below this frame and takes it out before
+    // it returns. `serve` runs no JavaScript, so this is the only reference.
     let call = unsafe { call.as_mut() };
     {
         let mut answer = state.answer.borrow_mut();
@@ -104,10 +103,22 @@ fn again(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 }
 
+/// `decode(buffer, start, end)`
+#[bun_jsc::host_fn]
+fn decode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [buffer, start, end] = frame.arguments_as_array::<3>();
+    let buffer = buffer.as_array_buffer(global);
+    let range = start.to_int32() as u32 as usize..end.to_int32() as u32 as usize;
+    match buffer.as_ref().and_then(|it| it.byte_slice().get(range)) {
+        Some(bytes) => jsc::bun_string_jsc::create_utf8_for_js(global, bytes),
+        None => Err(global.throw_invalid_arguments(format_args!("Expected a part of an ArrayBuffer"))),
+    }
+}
+
 /// Runs the program in the VM of this thread, which is new.
 fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let global = vm.global();
-    let mut source = b"(function (request, again) {\n\
+    let mut source = b"(function (request, again, decode) {\n\
         const require = process.getBuiltinModule(\"node:module\").createRequire(process.cwd() + \"/\");\n\
         const load = specifier => import(specifier);\n"
         .to_vec();
@@ -126,6 +137,7 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     let functions = [
         JSFunction::create(global, "request", __jsc_host_request, 3, Default::default()),
         JSFunction::create(global, "again", __jsc_host_again, 1, Default::default()),
+        JSFunction::create(global, "decode", __jsc_host_decode, 3, Default::default()),
     ];
     match program.call(global, JSValue::UNDEFINED, &functions) {
         Ok(handle) => Ok(LintVm {
@@ -154,6 +166,7 @@ fn start_vm() -> Result<(), Vec<u8>> {
     vm.transpiler.options.env.behavior = bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
     vm.transpiler.configure_defines().map_err(|error| failed(error.name()))?;
     vm.load_extra_env_and_source_code_printer();
+    vm.argv = bun_core::argv().iter().skip(1).map(Box::from).collect();
     vm.event_loop_mut().ensure_waker();
     Ok(())
 }
@@ -202,6 +215,47 @@ impl Vm for ThreadVm {
 #[derive(Default)]
 pub(crate) struct ThreadVms {
     initialize: std::sync::Once,
+}
+
+/// Runs the `exit` handlers of the VM of this thread, if it has one. With
+/// `BUN_DESTRUCT_VM_ON_EXIT` the VM is freed too.
+fn end_vm() {
+    if !VirtualMachine::is_loaded() {
+        return;
+    }
+    let vm = VirtualMachine::get();
+    let lock = vm.global().vm().get_api_lock();
+    if !bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false) {
+        return vm.as_mut().on_exit();
+    }
+    core::mem::forget(lock);
+    drop(crate::jsc_hooks::take_lint_vm());
+    drop(core::mem::take(&mut vm.as_mut().argv));
+    // SAFETY: made by `start_vm` on this thread, which holds the lock from above for good. Nobody
+    // else has a pointer to it.
+    unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
+}
+
+impl ThreadVms {
+    /// Ends every VM on its thread. Nothing is being linted any more.
+    pub(crate) fn end_all(&self) {
+        use bun_threading::thread_pool::{CountedTask, Task};
+        unsafe fn end(task: *mut Task) {
+            // SAFETY: allocated below, and queued once.
+            drop(unsafe { bun_core::heap::take(task.cast::<CountedTask>()) });
+            end_vm();
+        }
+        if !self.initialize.is_completed() {
+            return;
+        }
+        let group = bun_threading::WaitGroup::init();
+        bun_threading::WorkPool::get().push_idle_task_to_each_thread(|| {
+            group.add_one();
+            bun_core::heap::into_raw(Box::new(CountedTask::new(end, &group))).cast::<Task>()
+        });
+        group.wait();
+        end_vm();
+    }
 }
 
 impl Engine for ThreadVms {

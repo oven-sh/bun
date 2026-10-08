@@ -51,11 +51,13 @@ receive(headerBytes, 8);
 if (header[1] !== PROGRAM) throw new Error("The first message is not the program.");
 const program = Buffer.allocUnsafe(header[0]);
 receive(program, header[0]);
-const handle = new Function("require", "load", "request", "again", program.toString())(
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const handle = new Function("require", "load", "request", "again", "decode", program.toString())(
   require,
   specifier => import(specifier),
   request,
   again,
+  (buffer, start, end) => decoder.decode(new Uint8Array(buffer, start, end - start)),
 );
 for (;;) {
   receive(headerBytes, 8);

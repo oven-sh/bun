@@ -3021,10 +3021,11 @@ describe("prepared statements refresh cached column names after a schema change"
         set(value) {
           Object.defineProperty(this, "1", { value, writable: true, enumerable: true, configurable: true });
           if (calls++ > 0) return;
-          // End the run of all(), change the schema, then let SQLite re-prepare the statement inside values().
-          q.values();
+          // columnTypes resets the statement, steps it and resets it again. The first read ends the run of all().
+          // The second read lets SQLite re-prepare the statement where no row object is built.
+          q.columnTypes;
           db.run("ALTER TABLE t RENAME COLUMN a TO z");
-          q.values();
+          q.columnTypes;
         },
       });
       const rows = q.all();
@@ -3033,7 +3034,7 @@ describe("prepared statements refresh cached column names after a schema change"
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // all() built two rows, then its next step started the re-prepared statement from the first row.
+    // all() built two rows, then its next step started the reset and re-prepared statement from the first row.
     expect({ rows: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
       rows: [
         { a: 1, b: 2 },

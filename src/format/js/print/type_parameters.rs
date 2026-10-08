@@ -228,6 +228,9 @@ fn is_arrow_function_variable_type_argument(arguments: FormatTypeArguments<'_>) 
     if params.len() == 1 && params.first().is_some_and(is_object_like_type) {
         return false;
     }
+    if !matches!(arguments.owner, Node::Type(ty) if matches!(ty.parent(), Node::VarDecl(_))) {
+        return false;
+    }
     // The parent is the `TSTypeReference`.
     let grand_parent = AstNodes::TSTypeParameterInstantiation(arguments.owner).parent().parent();
     matches!(grand_parent, AstNodes::TSTypeAnnotation(_))

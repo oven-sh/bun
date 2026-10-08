@@ -7,7 +7,9 @@ pub(crate) fn write_block_statement<'a>(statement: Stmt<'a>, body: List<'a, Stmt
     write!(f, "{");
 
     // See `write_catch_clause`.
-    let comments_before_catch_clause = match f.context().has_cached_elements().then(|| statement.ast_parent()) {
+    let can_be_handler = f.context().has_cached_elements()
+        && matches!(statement.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::Try);
+    let comments_before_catch_clause = match can_be_handler.then(|| statement.ast_parent()) {
         Some(parent @ AstNodes::CatchClause(_)) => f.context().get_cached_element(&parent.span()),
         _ => None,
     };

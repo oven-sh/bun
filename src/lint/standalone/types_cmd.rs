@@ -12,6 +12,7 @@
 //!   the type-aware test cases of typescript-eslint.
 //!
 //! - `bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]`: what types cost.
+//! - `bun-lint types smoke <directory> [--jobs=n]`: which files make a query panic.
 //! - `bun-lint types typescript-tests ..`: TypeScript's own tests, as `bun check
 //!   --run-typescript-tests` runs them (test/cli/check/typescript-go/conformance.ts). The types and
 //!   the symbols that they compare are those that the linter is given.
@@ -799,6 +800,36 @@ fn bench(args: &[String]) {
     }
 }
 
+/// `bun-lint types smoke <directory> [--jobs=n]`: asks everything about every node of every TypeScript file in a directory, each as a
+/// program of its own, and says which panic.
+fn smoke(args: &[String]) {
+    let Some(root) = args.iter().find(|a| !a.starts_with("--")) else {
+        return println!("usage: bun-lint types smoke <directory> [--jobs=n]");
+    };
+    let mut paths = Vec::new();
+    crate::collect(std::path::Path::new(&absolute(root)), &mut paths);
+    let files: Vec<String> = paths.iter().map(|it| it.to_string_lossy().into_owned()).collect();
+    let files: Vec<String> = files.into_iter().filter(|it| it.ends_with(".ts") || it.ends_with(".tsx")).collect();
+    std::panic::set_hook(Box::new(|_| {}));
+    let panicked = std::sync::atomic::AtomicUsize::new(0);
+    bun_sema_standalone::for_each_parallel(jobs(args), files.len(), |i| {
+        let directory = std::path::Path::new(&files[i]).parent().map(|it| it.to_string_lossy().into_owned());
+        let project = Project {
+            cwd: directory.as_deref().unwrap_or("/"),
+            config: None,
+            files: &files[i..=i],
+            overlay: Vec::new(),
+            threads: 1,
+        };
+        let everything = || lint_project(project, &LanguageOptions::default(), &|file| dump_ts_nodes(file).len() + dump_profiles(file).len());
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(everything)).is_err() {
+            panicked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            println!("panicked: {}", files[i]);
+        }
+    });
+    println!("{} files, {} panicked", files.len(), panicked.into_inner());
+}
+
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("dump") => dump_file(&args[1..]),
@@ -806,6 +837,7 @@ pub(crate) fn run(args: &[String]) {
         Some("conformance") => conformance(&args[1..]),
         Some("run") => run_one(&args[1..]),
         Some("bench") => bench(&args[1..]),
+        Some("smoke") => smoke(&args[1..]),
         Some("typescript-tests") => {
             let rest: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
             if !bun_sema_standalone::baselines::run_from_command_line(&rest) {

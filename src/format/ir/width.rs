@@ -110,9 +110,33 @@ pub(crate) fn is_all_printable(text: &[u8]) -> bool {
     all_bytes(text, is_printable)
 }
 
-/// Whether the width of every part of `source` that has no tab and no line break is its length.
-pub(crate) fn is_width_len(source: &[u8]) -> bool {
-    all_bytes(source, |byte| is_printable(byte) | (byte == b'\t') | (byte == b'\n') | (byte == b'\r'))
+/// The number of bytes that a bit of [`OddBlocks`] is about.
+const BLOCK: usize = 64;
+
+/// Which blocks of a text have something in them that takes a closer look: a character whose width
+/// is not 1, other than a tab or a line break, or a backslash.
+#[derive(Default)]
+pub(crate) struct OddBlocks(Vec<u64>);
+
+impl OddBlocks {
+    pub(crate) fn mark(&mut self, source: &[u8]) {
+        let is_plain =
+            |byte: u8| (is_printable(byte) & (byte != b'\\')) | (byte == b'\t') | (byte == b'\n') | (byte == b'\r');
+        self.0.clear();
+        self.0.extend(source.chunks(BLOCK * 64).map(|blocks| {
+            let (blocks, rest) = blocks.as_chunks::<BLOCK>();
+            let marks = blocks.iter().rev().fold(0, |marks, block| marks << 1 | u64::from(!all_bytes(block, is_plain)));
+            marks | u64::from(!all_bytes(rest, is_plain)) << (blocks.len() % 64)
+        }));
+    }
+
+    /// Whether the text from `start` to `end`, which has no tab and no line break, is as wide as it
+    /// is long and has no backslash. It can be so without this saying so.
+    #[inline]
+    pub(crate) fn is_plain(&self, start: u32, end: u32) -> bool {
+        let is_odd = |block: usize| self.0.get(block / 64).is_none_or(|marks| marks >> (block % 64) & 1 != 0);
+        !(start as usize / BLOCK..=end as usize / BLOCK).any(is_odd)
+    }
 }
 
 /// `text` has no line breaks. Control characters count as nothing.

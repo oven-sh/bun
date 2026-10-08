@@ -1,6 +1,7 @@
 //! [`Format`], and the [`Formatter`] that it writes to.
 
 use super::document::Tracker;
+use super::width::OddBlocks;
 use super::element::{
     BestFitting, Flat, FlatFlags, FormatElement, Group, GroupId, GroupMode, Interned, LabelId, LineMode, PrintMode,
     Skip, Tag, Text, TextWidth,
@@ -346,6 +347,7 @@ impl FormatElement {
 pub(crate) struct FormatterBuffers {
     pub(crate) storage: Storage,
     tracker: Tracker,
+    odd_blocks: OddBlocks,
     spare: Vec<Vec<FormatElement>>,
     cleaned: FxHashMap<Interned, Interned>,
 }
@@ -362,7 +364,8 @@ pub(crate) struct Formatter<'a> {
     cleaned: FxHashMap<Interned, Interned>,
     next_group_id: Cell<u32>,
     source: &'a [u8],
-    width_is_len: bool,
+    /// Of `source`.
+    odd_blocks: OddBlocks,
     context: JsFormatContext<'a>,
 }
 
@@ -372,11 +375,13 @@ impl<'a> Formatter<'a> {
         let FormatterBuffers {
             mut storage,
             mut tracker,
+            mut odd_blocks,
             spare,
             mut cleaned,
         } = buffers;
         storage.clear();
         tracker.clear();
+        odd_blocks.mark(source);
         cleaned.clear();
         // Measured by oxc on the sources of VS Code: the median is 0.19 elements per byte, and
         // 95% of the files are below 0.4.
@@ -388,7 +393,7 @@ impl<'a> Formatter<'a> {
             cleaned,
             next_group_id: Cell::new(1),
             source,
-            width_is_len: super::width::is_width_len(source) && !bun_core::strings::contains(source, b"\\u"),
+            odd_blocks,
             context,
         }
     }
@@ -402,6 +407,7 @@ impl<'a> Formatter<'a> {
         let buffers = FormatterBuffers {
             storage: self.storage,
             tracker: self.tracker,
+            odd_blocks: self.odd_blocks,
             spare: self.spare,
             cleaned: self.cleaned,
         };
@@ -487,21 +493,26 @@ impl<'a> Formatter<'a> {
     /// Writes the source text of `span`, which has no line break and no tab.
     #[inline]
     pub(crate) fn write_source_token(&mut self, span: Span) {
-        let len = span.len();
-        let width = match self.width_is_len {
-            true => len,
-            false => {
-                let text = self.source.get(span.range()).unwrap_or_default();
-                if bun_core::strings::contains_char(text, b'\\') && self.write_name_without_escapes(text) {
-                    return;
-                }
-                self.string_width(text)
-            }
-        };
+        if !self.odd_blocks.is_plain(span.start, span.end) {
+            return self.write_odd_source_token(span);
+        }
         self.write_element(FormatElement::SourceText(Text {
             start: span.start,
-            len,
-            width: TextWidth::single(width),
+            len: span.len(),
+            width: TextWidth::single(span.len()),
+        }));
+    }
+
+    #[inline(never)]
+    fn write_odd_source_token(&mut self, span: Span) {
+        let text = self.source.get(span.range()).unwrap_or_default();
+        if bun_core::strings::contains_char(text, b'\\') && self.write_name_without_escapes(text) {
+            return;
+        }
+        self.write_element(FormatElement::SourceText(Text {
+            start: span.start,
+            len: span.len(),
+            width: TextWidth::single(self.string_width(text)),
         }));
     }
 

@@ -2,7 +2,7 @@ use crate::js::format::write_trailing_comments_of;
 use crate::js::parentheses::ts_type::{effective_parent, needs_parentheses};
 use crate::js::siblings::following_span_start_in;
 use crate::js::utils::suppressed::FormatSuppressedNode;
-use crate::js::utils::typescript::{should_hug_type, union_leading_comments};
+use crate::js::utils::typescript::{end_of_line_comments, should_hug_type, union_leading_comments};
 use crate::prelude::*;
 use crate::{format_args, write};
 use std::cell::Cell;
@@ -179,17 +179,7 @@ impl<'a> UnionMembers<'a> {
             0 => self.parent.span().end,
             following => following,
         };
-        let comments = f.comments().comments_in_range(span.end, end);
-        let mut count = 0;
-        for (index, comment) in comments.iter().enumerate() {
-            if comment.preceded_by_newline() {
-                break;
-            }
-            if comment.followed_by_newline() {
-                count = index + 1;
-            }
-        }
-        &comments[..count]
+        end_of_line_comments(f.comments().comments_in_range(span.end, end))
     }
 }
 

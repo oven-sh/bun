@@ -30,10 +30,6 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
             if let Some(name_type) = mapped.name_type() {
                 write!(f, [space(), "as", space(), name_type]);
             }
-            if !f.is_quiet() {
-                let comments = f.comments().comments_before_character(key.span().end, b']');
-                write!(f, FormatTrailingComments::Comments(comments));
-            }
         });
         write!(f, group(&format_args!("[", soft_block_indent(&format_key), "]")));
 

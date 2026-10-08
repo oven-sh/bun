@@ -16,6 +16,7 @@ use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::without_lone_operator;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
+use std::cell::Cell;
 
 /// `A.B.C`. `parent`: what it is a name in.
 pub(crate) fn entity_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
@@ -227,14 +228,17 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
             if let Some(key) = member.key() {
                 format_computed_or_property_key(key, node, f);
             }
-            // A comment at the end of the line of the `:` trails the name, unless a union or an
-            // intersection follows (Prettier's `handlePropertySignatureComments`).
+            // The comments before the `:` trail the name. So does one at the end of the line of the
+            // `:`, unless a union or an intersection follows (Prettier's
+            // `handlePropertySignatureComments`).
             if !f.is_quiet()
                 && let Some(ty) = member.ty()
-                && !matches!(without_lone_operator(ty).kind(), TypeKind::Union(_) | TypeKind::Intersection(_))
             {
-                let comments = f.comments().end_of_line_comments_after(ty.annotation_span().start);
-                write!(f, FormatTrailingComments::Comments(comments));
+                let colon = ty.annotation_span().start;
+                write!(f, FormatTrailingComments::Comments(f.comments().comments_before(colon)));
+                if !matches!(without_lone_operator(ty).kind(), TypeKind::Union(_) | TypeKind::Intersection(_)) {
+                    write!(f, FormatTrailingComments::Comments(f.comments().end_of_line_comments_after(colon)));
+                }
             }
             write!(f, [member.flags().contains(Flags::OPTIONAL).then_some("?"), member.ty().map(FormatTypeAnnotation)]);
         }
@@ -279,7 +283,8 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     write!(f, is_typeof.then_some("typeof "));
     match ty.import_attributes() {
         Some(options) => {
-            write!(f, group(&format_args!("import", format_with(|f| write_import_type_arguments(&format_source, options, f)))));
+            let arguments = format_with(|f| write_import_type_arguments(ty, source, options, f));
+            write!(f, group(&format_args!("import", arguments)));
         }
         // A long module name does not break.
         None if !f.comments().has_comment_before(source.start) => write!(f, ["import(", format_source, ")"]),
@@ -292,17 +297,49 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     write!(f, type_arguments(args, Node::Type(ty)));
 }
 
+/// The module specifier of an import type that has options after it.
+struct FormatImportTypeSource<'a>(TypeNode<'a>, Span);
+
+impl Spanned for FormatImportTypeSource<'_> {
+    fn span(&self) -> Span {
+        self.1
+    }
+}
+
+impl<'a> Format<'a> for FormatImportTypeSource<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        FormatStringLiteral {
+            span: self.1,
+            parent: AstNodes::TSImportType(self.0),
+        }
+        .fmt(f);
+    }
+}
+
 /// `("a", { with: { type: "json" } })`. Prettier's `printCallArguments` for a string and an object.
 fn write_import_type_arguments<'a>(
-    format_source: &FormatStringLiteral<'a>,
+    ty: TypeNode<'a>,
+    source: Span,
     options: ImportAttributes<'a>,
     f: &mut Formatter<'a>,
 ) {
     let span = options.options_span();
-    let format_source = format_source.memoized();
+    let format_source = format_with(|f| {
+        let source = FormatImportTypeSource(ty, source);
+        write!(f, [FormatNodeWithoutTrailingComments(&source), format_trailing_comments(ty.span(), source.span(), span.start)]);
+    })
+    .memoized();
     let does_source_break = format_source.inspect(f).will_break();
-    let has_comments = f.comments().has_comment_before(span.start);
-    let format_options = format_with(|f| write_import_type_options(options, f)).memoized();
+
+    let has_comments = Cell::new(f.comments().has_comment_before(span.start));
+    let format_options = format_with(|f| {
+        write!(f, format_leading_comments(span));
+        write_import_type_options(options, f);
+        let comments = f.comments().comments_before_character(span.end, b')');
+        has_comments.set(has_comments.get() || !comments.is_empty());
+        write!(f, FormatTrailingComments::Comments(comments));
+    })
+    .memoized();
     let do_options_break = format_options.inspect(f).will_break();
 
     let head = format_with(|f| write!(f, [format_source, ",", soft_line_break_or_space()]));
@@ -313,7 +350,7 @@ fn write_import_type_arguments<'a>(
             write!(f, group(&format_args!("(", soft_block_indent(&arguments), ")")).should_expand(should_expand));
         })
     };
-    if has_comments {
+    if has_comments.get() {
         return write!(f, all_broken_out(does_source_break || do_options_break));
     }
     if does_source_break {
@@ -341,6 +378,7 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
     let has_space = f.options().bracket_spacing.value();
 
     let format_inner = format_with(|f| {
+        write!(f, format_leading_comments(inner));
         let Some(first) = entries.first() else {
             return write!(f, ["{", format_dangling_comments(inner).with_soft_block_indent(), "}"]);
         };
@@ -354,14 +392,11 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
                 .should_expand(is_expanded(f, inner.start, first.span().start))
         );
     });
-    let format_property = format_args!(
-        format_leading_comments(keyword),
-        source_text(keyword),
-        ":",
-        space(),
-        format_inner,
-        FormatTrailingCommas::ES5
-    );
+    let format_property = format_with(|f| {
+        write!(f, [format_leading_comments(keyword), source_text(keyword), ":", space(), format_inner]);
+        let comments = f.comments().comments_before(outer.end.saturating_sub(1));
+        write!(f, [FormatTrailingComments::Comments(comments), FormatTrailingCommas::ES5]);
+    });
     write!(
         f,
         group(&format_args!("{", soft_block_indent_with_maybe_space(&format_property, has_space), "}"))

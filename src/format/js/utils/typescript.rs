@@ -31,6 +31,21 @@ pub(crate) fn without_lone_operator(mut ty: TypeNode<'_>) -> TypeNode<'_> {
     ty
 }
 
+/// Those at the start of `comments` for which Prettier's `isEndOfLineComment` holds and
+/// `isOwnLineComment` does not: there is code before them on their line, and none after them.
+pub(crate) fn end_of_line_comments(comments: &[Comment]) -> &[Comment] {
+    let mut count = 0;
+    for (index, comment) in comments.iter().enumerate() {
+        if comment.preceded_by_newline() {
+            break;
+        }
+        if comment.followed_by_newline() {
+            count = index + 1;
+        }
+    }
+    &comments[..count]
+}
+
 /// The comments before the union `ty`: those that lead the union, and those that lead its first
 /// type.
 ///

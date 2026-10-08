@@ -56,6 +56,9 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
                 is_type_or_interface_decl: true,
             };
             type_parameters(type_params, Node::Stmt(statement)).with_options(options).write_without_comments(f);
+            if !extends.is_empty() {
+                write_trailing_comments_of(AstNodes::TSTypeParameterDeclaration(Node::Stmt(statement)), f);
+            }
         }
     });
 
@@ -237,7 +240,7 @@ pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: En
     );
     let members = declaration.members();
     if members.is_empty() {
-        write!(f, format_dangling_comments(declaration.body_span()).with_block_indent());
+        write!(f, format_dangling_comments(declaration.body_span()).with_soft_block_indent());
     } else {
         let is_consistent = f.options().quote_properties.is_consistent();
         if is_consistent {

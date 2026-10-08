@@ -393,6 +393,31 @@ describe.concurrent("bun test --changed", () => {
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
     expect(exitCode).toBe(0);
   });
+
+  const importsOne = (specifier: string) =>
+    `import { test, expect } from "bun:test";\nimport { one } from "${specifier}";\ntest("a", () => expect(one).toBe(1));\n`;
+
+  // The scan looks for a file before a preload creates it. The run must not
+  // inherit that answer.
+  test("a file that a preload generates resolves in the test run", async () => {
+    using dir = tempDir("test-changed-generated", {
+      "package.json": JSON.stringify({ name: "p", type: "module", imports: { "#gen/*": "./gen/*.ts" } }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@gen/*": ["./gen/*"] } } }),
+      "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n`,
+      ".gitignore": "gen\n",
+      "setup.ts": `import { mkdirSync, writeFileSync } from "node:fs";\nimport { join } from "node:path";\nmkdirSync(join(import.meta.dir, "gen"), { recursive: true });\nwriteFileSync(join(import.meta.dir, "gen", "x.ts"), "export const one = 1;\\n");\n`,
+      "imports.test.ts": importsOne("#gen/x"),
+      "paths.test.ts": importsOne("@gen/x"),
+    });
+    initRepo(String(dir));
+    const testNames = ["imports.test.ts", "paths.test.ts"];
+    for (const name of testNames) appendFileSync(join(String(dir), name), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, testNames)).toEqual(testNames);
+    expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // On Windows, `bun test --watch` runs as a parent watcher-manager that

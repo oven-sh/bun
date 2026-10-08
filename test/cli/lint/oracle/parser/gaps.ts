@@ -82,5 +82,29 @@ const ts = ["const a = foo<?>;", "type T = typeof foo<?>;", "let g: A<?>;", "foo
 ];
 add("file.ts", "module", ts); add("file.ts", "script", ts); add("file.cts", "script", ["await (x)", "await x"]); add("file.mts", "script", ["await (x)"]); add("file.cts", "module", ["await (x)"]);
 add("file.tsx", "module", ["<Component<<T>(v: T) => void> />", "<a>x< /a>", "<a />.b", "<A<B> />", "<A<B>></A>", "x = a <// c\nb", "<T,>(a: T) => a", "<T extends U>(a: T) => a", "new <a/>", "<>x<\n/>"]);
+// Words that are keywords only for TypeScript, and where TypeScript reads an arrow function or type arguments: lines, labels, names.
+const words = [
+  "global\n{ x }", "module\n{ x }", "namespace\n{ x }", "declare\n{ x }", "type\n{ x }", "type\nFoo = 1", "interface\nFoo\n{}", "abstract\nclass A {}", "declare\nclass A {}", "declare\nconst a = 1", "module\nfoo\n{}",
+  "namespace\nfoo\n{}", "global\nexport_ = 1", "async\nfunction f() {}", "x = async\n(a) => b", "x = async\na => b", "a\nas\nb", "a\nsatisfies\nb", "a\n!b", "a\n!== b", "x = a\n<b />", "class A { declare\n a }",
+  "class A { readonly\n a }", "class A { abstract\n a }", "class A { public\n a }", "class A { override\n a }", "class A { accessor\n a }", "class A { static\n a }", "class A { async\n a() {} }", "class A { get\n a() {} }",
+  "class A { static\n async\n a() {} }", "class A { declare; readonly; abstract; public = 1; override() {} }", "class A { static static; static async; static get; static set }", "class A { in; out; const; }",
+  "class A { get; set; static; async }", "class A { get = 1; set = 2; static = 3; async = 4 }", "class A { static async *a() {} static get get() {} static set set(a) {} }", "class A { 'constructor'() {} }",
+  "class A { static constructor() {} }", "class A { static 'constructor'() {} }", "class A { constructor\n() {} }", "({ get, set, async, static, readonly, declare })", "({ get: 1, set: 2, async: 3, await: 4 })",
+  "({ async\n a() {} })", "({ get\n a() {} })", "({ async *a() {}, get a() {}, set a(b) {} })", "a ? (b) : c => d", "a ? (b, c) : d => e", "a ? (b) => (c) : d => e", "a ? (b) : (c) => d", "a ? (b) : c ? (d) : e => f",
+  "a ? b => (c) : d", "a ? async (b) : c => d", "a ? (b = c) : d => e", "a ? ({ b }) : c => d", "a ? ([b]) : c => d", "a ? (b)\n: c", "x = (a)\n{ b }", "x = ({ a })\n{ b }", "x = ([a])\n{ b }", "x = (a = 1)\n{ b }",
+  "if (a) (b)\n{ c }", "(a)\n{ b }", "x = ()\n=> a", "f(a)\n{ b }", "new (a)\n{ b }", "x = (a, b) / c", "x = (a) < b > (c)", "x = a < b > (c)", "x = a < b > c", "x = a < (b) > (c)", "f(a < b, c > (d))", "f(a < b, c > d)",
+  "x = a << b >> c", "x = a<b>>c", "x = a < b >= c",
+  "var type, of, as, from, async, get, set, global, module, namespace, declare, abstract, readonly, is, keyof, infer, unique, asserts, satisfies, accessor, override, out, using, defer", "type = 1; of = 2; as = 3",
+  "type: for (;;) break type", "declare: x", "namespace: x", "global: x", "abstract: x", "let\nx", "let async\nfunction f() {}", "var yield_, await_", "import type from 'a'", "import type, { a } from 'a'",
+  "import { type } from 'a'", "import { type as b } from 'a'", "import { as } from 'a'", "import { as as as } from 'a'", "import defer from 'a'", "import defer, { a } from 'a'", "import source from 'a'",
+  "export { type }; var type", "export { as as as }; var as", "export default abstract\nclass A {}", "export default async\nfunction f() {}", "export default interface_", "export default type", "export default async",
+  "export default async () => {}", "export default (a)\n{ b }", "for (type of a);", "for (async in a);", "for (let in a);", "for (var of of of);", "for (using in a);", "for (using of of);", "using\nx", "using\n(a)", "using[a]",
+  "using.a", "await\nusing_", "x = a ?.5 : 1", "x = a?.[0]", "x = a ? .5 : 1", "x = y / z / g", "x = y\n/z/g", "x = <a>{b}</a>", "x = <a b=\"c\" />", "x = a\n++b", "a\n(b)", "`a${b}c`", "a`b`", "a\n`b`", "x = { a, b }\n[c] = d",
+  "do x; while (0) y", "if (a) function f() {}", "label: function f() {}", ";({ a, b } = c())\n{\n  d\n}", "async (a)\n{ c }", "x = (a) { c }", "let a,\nif (b);", "let a,\nreturn;", "let a,;", "var a, ", "class A extends B, {}",
+  "class A extends B, C {}", "for await (using => of of of);", "using => a", "{ using => a }", "export {}; var v = { [await [1]]: 0 }", "export {}; class C { [await []] = 0 }",
+];
+add("file.js", "module", words);
+add("file.js", "script", words);
+add("file.ts", "module", words);
 writeFileSync(process.argv[2], out.join("\n") + "\n");
 console.log(out.length);

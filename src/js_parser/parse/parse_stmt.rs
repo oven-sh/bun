@@ -2962,6 +2962,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // `scanStartOfDeclaration`: for TypeScript's parser it is a declaration anywhere, with or without `declare`.
                 if (opts.scope.is_namespace() && opts.is_typescript_declare || p.is_tolerant())
                     && p.lexer.token == T::TOpenBrace
+                    && !p.is_ecmascript()
                 {
                     p.lexer.next()?;
                     let scope_index = p.scopes_in_order.len();
@@ -2983,7 +2984,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     return Ok(Some(p.s(S::TypeScript::default(), loc)));
                 }
                 // `parseAmbientExternalModuleDeclaration`: without a "{" there is no body.
-                if p.is_tolerant() && matches!(p.lexer.token, T::TIdentifier | T::TExport) {
+                if p.is_tolerant()
+                    && matches!(p.lexer.token, T::TIdentifier | T::TExport)
+                    && !p.is_ecmascript()
+                {
                     p.lexer.expect_or_insert_semicolon()?;
                     return Ok(Some(p.keep_global(loc, loc, None, opts.is_export)));
                 }

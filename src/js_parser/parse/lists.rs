@@ -338,7 +338,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     && !p.lexer.has_newline_before;
                             }
                             (Some(Statement::TsStmtGlobal), _) => {
-                                return p.step()
+                                return !p.is_ecmascript()
+                                    && p.step()
                                     && matches!(
                                         p.lexer.token,
                                         T::TOpenBrace | T::TIdentifier | T::TExport

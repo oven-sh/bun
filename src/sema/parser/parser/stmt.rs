@@ -237,7 +237,8 @@ impl Parser<'_> {
                 }
                 T::Global => {
                     self.next();
-                    return matches!(self.token(), T::OpenBrace | T::Identifier | T::Export);
+                    return !self.is_ecmascript
+                        && matches!(self.token(), T::OpenBrace | T::Identifier | T::Export);
                 }
                 T::Import => {
                     self.next();

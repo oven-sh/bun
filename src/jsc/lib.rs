@@ -489,6 +489,8 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
+    /// `bun lint` with plugins in JavaScript: every thread of the pool has a VM of its own and is busy with it.
+    pub vm_per_thread: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -508,6 +510,7 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            options.vm_per_thread,
         )
     };
 }
@@ -1562,6 +1565,7 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        vm_per_thread: bool,
     );
 }
 

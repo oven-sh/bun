@@ -207,11 +207,9 @@ pub(crate) struct ThreadVms {
 impl Engine for ThreadVms {
     fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
         if !VirtualMachine::is_loaded() {
-            // Every thread is busy with its own VM: there is no core left for threads that compile
-            // or collect garbage beside it.
             self.initialize.call_once(|| {
                 jsc::initialize(jsc::InitializeOptions {
-                    one_shot: true,
+                    vm_per_thread: true,
                     ..Default::default()
                 });
             });

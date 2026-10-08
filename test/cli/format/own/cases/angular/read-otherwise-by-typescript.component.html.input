@@ -36,3 +36,5 @@ three)"></a>
 three]"></a>
 <a *x="one > //"></a>
 <a [x]="{ `one`: 1, `two three`: 2 }"></a>
+<a [x]="/*/"></a>
+<a [x]="call(/* one */g)"></a>

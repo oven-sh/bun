@@ -43,6 +43,7 @@
   track $index;
   let three = $index
 ) {}
+<a x="{{  }} one {{  }}"></a>
 
 ------------------
 { printWidth: 80 }
@@ -75,6 +76,7 @@
 <a [x]=""></a>
 @if (one; as two) {}
 @for (one of list | first: "two"; track $index; let three = $index) {}
+<a x="{{  }} one {{  }}"></a>
 
 -------------------
 { printWidth: 100 }
@@ -99,5 +101,6 @@
 <a [x]=""></a>
 @if (one; as two) {}
 @for (one of list | first: "two"; track $index; let three = $index) {}
+<a x="{{  }} one {{  }}"></a>
 
 ===================== End =====================

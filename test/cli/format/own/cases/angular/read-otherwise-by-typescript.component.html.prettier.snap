@@ -51,6 +51,8 @@
 <a [x]="[one < two, three]"></a>
 <a *x="one > //"></a>
 <a [x]="{ one: 1, 'two three': 2 }"></a>
+<a [x]="/*/"></a>
+<a [x]="call(/* one */g)"></a>
 
 ------------------
 { printWidth: 80 }
@@ -91,6 +93,8 @@
 <a [x]="[one < two, three]"></a>
 <a *x="one > //"></a>
 <a [x]="{ one: 1, 'two three': 2 }"></a>
+<a [x]="/*/"></a>
+<a [x]="call(/* one */g)"></a>
 
 -------------------
 { printWidth: 100 }
@@ -131,5 +135,7 @@
 <a [x]="[one < two, three]"></a>
 <a *x="one > //"></a>
 <a [x]="{ one: 1, 'two three': 2 }"></a>
+<a [x]="/*/"></a>
+<a [x]="call(/* one */g)"></a>
 
 ===================== End =====================

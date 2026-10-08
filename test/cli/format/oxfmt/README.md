@@ -10,7 +10,7 @@ which Prettier. oxc is under the MIT license: `LICENSE`.
 
 Every input is formatted with each set of options of the nearest `options.json`, at `printWidth` 80 and 100, as oxc's test harness does.
 
-- `<input>.prettier.snap` is what `bun format` has to print.
+- `<input>.prettier.snap` is what `bun format` has to print. `oxfmt-ignore` is honoured in both flavors, so Prettier is asked with `prettier-ignore` in its place.
 - `<input>.snap` is what it has to print for whoever has an `.oxfmtrc.json` (`flavor: oxfmt`).
 
 ```sh

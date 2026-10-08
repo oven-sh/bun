@@ -55,8 +55,12 @@ if (source === "--extract" && rest.length === 2) {
     for (const options of rowsOfPairs.get(name) ?? rowsOf(name, files)) {
       // Not options of Prettier.
       const known = Object.fromEntries(Object.entries(options).flatMap(([name, value]) => (name.startsWith("jsdoc") ? [] : [[name === "variant" ? "parser" : name, value]])));
-      const output = await prettier.format(Buffer.from(bytes).toString(), { ...known, filepath: name }).catch((error: Error) => `<${error.name}>`);
-      outputs.push([options, output]);
+      // `bun format` honours `oxfmt-ignore` whatever the flavor. Prettier is asked with its own word for it, which is then put back.
+      const words = Buffer.from(bytes).toString().match(/(?:oxfmt|prettier)-ignore/g) ?? [];
+      const input = Buffer.from(bytes).toString().replaceAll("oxfmt-ignore", "prettier-ignore");
+      const output: string = await prettier.format(input, { ...known, filepath: name }).catch((error: Error) => `<${error.name}>`);
+      const isSameWords = output.match(/prettier-ignore/g)?.length === words.length;
+      outputs.push([options, isSameWords ? output.replace(/prettier-ignore/g, () => words.shift()!) : output]);
     }
     files.set(`${name}.prettier.snap`, Buffer.from(render(outputs)));
   }

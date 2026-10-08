@@ -137,8 +137,6 @@ FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 80 }
 FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 100 }
 FAIL oxfmt graphql/graphql/string-escapes.graphql { printWidth: 80 }
 FAIL oxfmt graphql/graphql/string-escapes.graphql { printWidth: 100 }
-FAIL oxfmt graphql/graphql/suppression.graphql { printWidth: 80 }
-FAIL oxfmt graphql/graphql/suppression.graphql { printWidth: 100 }
 FAIL oxfmt js/arrow-function/chain-exact-fill-signature.js { printWidth: 80 }
 FAIL oxfmt js/arrow-function/chain-exact-fill-signature.js { printWidth: 100 }
 FAIL oxfmt js/calls/callee-opener-comment.js { printWidth: 80 }
@@ -151,8 +149,6 @@ FAIL oxfmt js/comments/array-holes.js { printWidth: 80 }
 FAIL oxfmt js/comments/array-holes.js { printWidth: 100 }
 FAIL oxfmt js/comments/arrow.js { printWidth: 80 }
 FAIL oxfmt js/comments/arrow.js { printWidth: 100 }
-FAIL prettier js/comments/assignment-eol-line-comment.js { printWidth: 80 }
-FAIL prettier js/comments/assignment-eol-line-comment.js { printWidth: 100 }
 FAIL oxfmt js/comments/assignment-eol-line-comment.js { printWidth: 80 }
 FAIL oxfmt js/comments/assignment-eol-line-comment.js { printWidth: 100 }
 FAIL oxfmt js/comments/do-while-head.js { printWidth: 80 }
@@ -179,22 +175,14 @@ FAIL oxfmt js/comments/type-cast-with-regex-parens.js { printWidth: 80 }
 FAIL oxfmt js/comments/type-cast-with-regex-parens.js { printWidth: 100 }
 FAIL oxfmt js/comments/unary-argument-parens.js { printWidth: 80 }
 FAIL oxfmt js/comments/unary-argument-parens.js { printWidth: 100 }
-FAIL prettier js/ignore/expression-statement.js { printWidth: 80 }
-FAIL prettier js/ignore/expression-statement.js { printWidth: 100 }
 FAIL oxfmt js/ignore/expression-statement.js { printWidth: 80 }
 FAIL oxfmt js/ignore/expression-statement.js { printWidth: 100 }
 FAIL oxfmt js/ignore/issue-18595.js { printWidth: 80 }
 FAIL oxfmt js/ignore/issue-18595.js { printWidth: 100 }
-FAIL prettier js/ignore/oxfmt.js { printWidth: 80 }
-FAIL prettier js/ignore/oxfmt.js { printWidth: 100 }
 FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 80 }
 FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 100 }
 FAIL oxfmt js/operator-position/comments.js { experimentalOperatorPosition: "start", printWidth: 80 }
 FAIL oxfmt js/operator-position/comments.js { experimentalOperatorPosition: "start", printWidth: 100 }
-FAIL prettier js/semicolons/empty-line.js { printWidth: 80, semi: true }
-FAIL prettier js/semicolons/empty-line.js { printWidth: 100, semi: true }
-FAIL prettier js/semicolons/empty-line.js { printWidth: 80, semi: false }
-FAIL prettier js/semicolons/empty-line.js { printWidth: 100, semi: false }
 FAIL oxfmt js/semicolons/empty-line.js { printWidth: 80, semi: false }
 FAIL oxfmt js/semicolons/empty-line.js { printWidth: 100, semi: false }
 FAIL prettier js/semicolons/suppressed-cast-comment-asi-guard.js { printWidth: 80, semi: false }
@@ -211,10 +199,6 @@ FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 80, semi: true }
 FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 100, semi: true }
 FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 80, semi: false }
 FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 100, semi: false }
-FAIL prettier js/semicolons/suppressed-trailing-semicolon.js { printWidth: 80, semi: true }
-FAIL prettier js/semicolons/suppressed-trailing-semicolon.js { printWidth: 100, semi: true }
-FAIL prettier js/semicolons/suppressed-trailing-semicolon.js { printWidth: 80, semi: false }
-FAIL prettier js/semicolons/suppressed-trailing-semicolon.js { printWidth: 100, semi: false }
 FAIL oxfmt js/semicolons/suppressed-trailing-semicolon.js { printWidth: 80, semi: false }
 FAIL oxfmt js/semicolons/suppressed-trailing-semicolon.js { printWidth: 100, semi: false }
 FAIL oxfmt js/sequence-expression/leading-comment-in-first-element-parens.js { printWidth: 80 }
@@ -223,8 +207,6 @@ FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 80 }
 FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 100 }
 FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 80 }
 FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 100 }
-FAIL oxfmt json/json/comments/oxfmt_ignore_array.json { printWidth: 80 }
-FAIL oxfmt json/json/comments/oxfmt_ignore_array.json { printWidth: 100 }
 FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 80 }
 FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 100 }
 FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 80 }
@@ -327,8 +309,6 @@ FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/class/issue-16259.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 100 }
-FAIL prettier ts/comments/binary-cast-own-line-comment.ts { printWidth: 80 }
-FAIL prettier ts/comments/binary-cast-own-line-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/binary-cast-own-line-comment.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/binary-cast-own-line-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 80 }
@@ -347,8 +327,6 @@ FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 80 }
 FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 100 }
 FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 80 }
 FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 100 }
-FAIL prettier ts/ignore/eol-after-operator.ts { printWidth: 80 }
-FAIL prettier ts/ignore/eol-after-operator.ts { printWidth: 100 }
 FAIL oxfmt ts/ignore/eol-after-operator.ts { printWidth: 80 }
 FAIL oxfmt ts/ignore/eol-after-operator.ts { printWidth: 100 }
 FAIL oxfmt ts/import-phases/issue-22691.ts { printWidth: 80 }
@@ -375,10 +353,6 @@ FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 80, semi: true
 FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 100, semi: true }
 FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 80, semi: false }
 FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 100, semi: false }
-FAIL prettier ts/semicolons/suppressed-declaration-parens.ts { printWidth: 80, semi: true }
-FAIL prettier ts/semicolons/suppressed-declaration-parens.ts { printWidth: 100, semi: true }
-FAIL prettier ts/semicolons/suppressed-declaration-parens.ts { printWidth: 80, semi: false }
-FAIL prettier ts/semicolons/suppressed-declaration-parens.ts { printWidth: 100, semi: false }
 FAIL oxfmt ts/semicolons/suppressed-declaration-parens.ts { printWidth: 80, semi: true }
 FAIL oxfmt ts/semicolons/suppressed-declaration-parens.ts { printWidth: 100, semi: true }
 FAIL oxfmt ts/semicolons/suppressed-declaration-parens.ts { printWidth: 80, semi: false }
@@ -442,5 +416,5 @@ FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
-as Prettier prints them: 1526/1570
-as oxfmt prints them, in its flavor: 1098/1498
+as Prettier prints them: 1548/1570
+as oxfmt prints them, in its flavor: 1102/1498

@@ -249,7 +249,7 @@ impl Builder<'_> {
     fn is_ignored(&self, owner: Owner) -> bool {
         self.has_comment(owner, |this, _, comment| {
             let end = if comment.is_block { comment.end.saturating_sub(2) } else { comment.end };
-            bun_lint::utils::text::trim(this.slice(comment.start + 2, end)) == b"prettier-ignore"
+            matches!(bun_lint::utils::text::trim(this.slice(comment.start + 2, end)), b"prettier-ignore" | b"oxfmt-ignore")
         })
     }
 

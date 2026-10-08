@@ -420,15 +420,21 @@ impl<'a> Uses<'a> {
         };
         offset = offset.max(first.span().start);
         loop {
+            // Whether there is a way from `offset` to the start of `list[at]`. That the end of the one
+            // before it can be reached tells the same of those before that.
+            let is_reached = |at: usize| {
+                let previous = at.checked_sub(1).and_then(|it| list.get(it));
+                previous.is_none_or(|it| it.span().start < offset || it.is_known_to_complete())
+            };
             let Some(next) = self.within(Span::new(offset, last.span().end)).first().copied() else {
                 return match last.tag() {
                     _ if last.is_known_to_complete() => Flow::Through,
-                    StmtTag::Break | StmtTag::Continue if last.is_reachable() => Flow::Leaves(last),
+                    StmtTag::Break | StmtTag::Continue if is_reached(list.len() - 1) => Flow::Leaves(last),
                     _ => Flow::Unknown,
                 };
             };
-            // That it can be reached tells that those before it can be left at their end.
-            let Some(statement) = list.get(index_at(list, next.span.start)).filter(|it| it.is_reachable()) else {
+            let at = index_at(list, next.span.start);
+            let Some(statement) = list.get(at).filter(|_| is_reached(at)) else {
                 return Flow::Unknown;
             };
             match self.statement(statement) {
@@ -594,6 +600,7 @@ impl<'a> Uses<'a> {
             StmtKind::Continue(label) => (label, false),
             _ => return false,
         };
+        let mut inner = jump;
         for ancestor in Node::Stmt(jump).ancestors() {
             let Node::Stmt(target) = ancestor else {
                 if matches!(ancestor, Node::Case(_)) {
@@ -601,6 +608,11 @@ impl<'a> Uses<'a> {
                 }
                 return false;
             };
+            // ESLint does not connect all of what leaves a `finally` block.
+            if matches!(target.kind(), StmtKind::Try { finalizer, .. } if finalizer == Some(inner)) {
+                return false;
+            }
+            inner = target;
             let is_loop = matches!(
                 target.tag(),
                 StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf
@@ -664,15 +676,17 @@ impl<'a> Uses<'a> {
                 StmtKind::If { .. } | StmtKind::Labeled { .. } => {}
                 // What is assigned in the block of a `try` statement is not reported.
                 StmtKind::Try { block, .. } if block == statement => return true,
-                StmtKind::Try { finalizer, .. } => {
-                    if let Some(finalizer) = finalizer.filter(|it| *it != statement) {
-                        match self.statement(finalizer) {
-                            Flow::Read => return true,
-                            Flow::Through => {}
-                            _ => return false,
-                        }
+                // A `finally` block that is only entered by a `return` leads nowhere else.
+                StmtKind::Try { finalizer, .. } if finalizer == Some(statement) => {
+                    if !parent.is_known_to_complete() {
+                        return false;
                     }
                 }
+                StmtKind::Try { finalizer, .. } => match finalizer.map_or(Flow::Through, |it| self.statement(it)) {
+                    Flow::Read => return true,
+                    Flow::Through => {}
+                    _ => return false,
+                },
                 StmtKind::For {
                     init: Some(init),
                     test,

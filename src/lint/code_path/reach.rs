@@ -289,7 +289,7 @@ impl<'a> Quick<'_> {
             StmtKind::While { test, body } => {
                 self.push(Target::Loop, label);
                 // `makeWhileTest` makes the next of all the entries.
-                self.head |= self.rest;
+                self.add_rest();
                 self.may_throw(test.into());
                 let after_test = self.head;
                 self.statement(body);
@@ -443,6 +443,17 @@ impl<'a> Quick<'_> {
         }
     }
 
+    /// In a `catch` block, ESLint lets a `while` loop and the first `case` of a `switch` also follow
+    /// the end of the `try` block. What cannot be reached from what precedes it can be reached that
+    /// way: there, that the end of a statement can be reached does not tell that there is a way
+    /// from its start, which is what [`Reach::is_known_to_complete`] is about.
+    fn add_rest(&mut self) {
+        if self.rest & !self.head != 0 && self.reach.is_some() {
+            self.has_given_up = true;
+        }
+        self.head |= self.rest;
+    }
+
     // ── `switch` ──
 
     fn switch(&mut self, expr: Expr<'a>, cases: List<'a, Case<'a>>, label: Option<Atom>) {
@@ -450,6 +461,9 @@ impl<'a> Quick<'_> {
         self.push(Target::Switch, label);
         let has_case = cases.iter().any(|case| !case.is_default());
         let (tests, rest) = (self.head, self.rest);
+        if has_case {
+            self.add_rest();
+        }
         let (mut end_of_previous, mut has_default_body) = (rest, false);
         let (mut found_empty_default, mut last_is_default) = (false, false);
         for case in cases {

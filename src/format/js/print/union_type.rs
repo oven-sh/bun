@@ -65,7 +65,7 @@ pub(crate) fn write_ts_union_type_in<'a>(
         is_first_type_suppressed: suppression.is_some(),
     };
     if union_breaks_one_per_line(f) {
-        return write_union_one_per_line(members, leading_comments, is_one_of_several_tuple_elements, f);
+        return write_union_one_per_line(members, is_one_of_several_tuple_elements, f);
     }
 
     let printed = format_with(|f| {
@@ -118,16 +118,27 @@ pub(crate) fn union_breaks_one_per_line(f: &Formatter<'_>) -> bool {
 
 /// oxc's `TSUnionType::write`, which is `printUnionType` of Prettier 3.8, for a union that is not
 /// written like an object type.
-fn write_union_one_per_line<'a>(
-    members: UnionMembers<'a>,
-    leading_comments: &'a [Comment],
-    is_one_of_several_tuple_elements: bool,
-    f: &mut Formatter<'a>,
-) {
-    let should_indent = !matches!(
-        members.parent,
-        AstNodes::TSTypeAssertion(_) | AstNodes::TSTupleType(_) | AstNodes::TSTypeParameterInstantiation(_)
-    );
+fn write_union_one_per_line<'a>(members: UnionMembers<'a>, is_one_of_several_tuple_elements: bool, f: &mut Formatter<'a>) {
+    let leading_comments = match f.is_quiet() {
+        true => &[][..],
+        false => f.comments().comments_before(members.ty.span().start),
+    };
+    let is_after_code_at_end_of_line =
+        |comment: &Comment| comment.is_block() && !comment.preceded_by_newline() && comment.followed_by_newline();
+    let is_jsdoc = |comment: &Comment| f.source_text().text_for(comment).starts_with(b"/**");
+    let is_in_type_alias = matches!(members.parent, AstNodes::TSTypeAliasDeclaration(_));
+
+    let should_indent = match members.parent {
+        AstNodes::TSTypeAssertion(_) | AstNodes::TSTupleType(_) | AstNodes::TSTypeParameterInstantiation(_) => false,
+        // The line break after the `=`, which a comment forces, comes with an indentation.
+        AstNodes::TSTypeAliasDeclaration(statement) => {
+            !leading_comments.iter().any(|comment| is_after_code_at_end_of_line(comment) && is_jsdoc(comment))
+                && !f.comments().printed_comments().last().is_some_and(|comment| {
+                    comment.followed_by_newline() && comment.span.start > statement.span_without_export().start
+                })
+        }
+        _ => true,
+    };
     let needs_parentheses = needs_parentheses(members.ty, f);
     let starts_with_line_break = should_indent && leading_comments.is_empty();
     let types = format_with(|f| {
@@ -150,10 +161,27 @@ fn write_union_one_per_line<'a>(
             write!(f, types);
         }
     });
-    let has_own_line_comment = leading_comments.iter().any(|comment| comment.preceded_by_newline());
+
+    // `| (A | B)`
+    let is_only_type = matches!(members.ty.ast_parent(), AstNodes::TSUnionType(_)) && !matches!(members.parent, AstNodes::TSUnionType(_));
+    let has_end_of_line_comment = leading_comments.iter().any(|comment| comment.followed_by_newline());
+    let has_own_line_comment = leading_comments.iter().any(|comment| comment.preceded_by_newline())
+        || (is_in_type_alias && leading_comments.iter().any(|it| is_after_code_at_end_of_line(it) && !is_jsdoc(it)));
+    let breaks_before_comments = match is_only_type {
+        true => has_end_of_line_comment,
+        false => has_own_line_comment,
+    };
+    let breaks_after_comments = is_only_type && has_own_line_comment && !has_end_of_line_comment;
     let inner = format_with(|f| {
-        let leading_comments = FormatLeadingComments::Comments(leading_comments);
-        write!(f, [has_own_line_comment.then_some(soft_line_break()), leading_comments, group(&content)]);
+        write!(
+            f,
+            [
+                breaks_before_comments.then_some(soft_line_break()),
+                FormatLeadingComments::Comments(leading_comments),
+                breaks_after_comments.then_some(soft_line_break()),
+                group(&content)
+            ]
+        );
     });
     match should_indent && !needs_parentheses {
         true => write!(f, group(&indent(&inner))),

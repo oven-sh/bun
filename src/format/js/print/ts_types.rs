@@ -50,7 +50,7 @@ pub(crate) fn write_ts_type_reference<'a>(
     if name.len() > 2 && matches!(node, AstNodes::TSInterfaceHeritage(_) | AstNodes::TSClassImplements(_)) {
         return write!(f, [heritage_name(name, node), type_arguments(args, Node::Type(ty))]);
     }
-    let wrap = is_leftmost_intrinsic_in_type_alias(ty, name, args);
+    let wrap = keeps_parentheses_of_intrinsic(f) && is_leftmost_intrinsic_in_type_alias(ty, name, args);
     write!(f, [wrap.then_some("("), entity_name(name, node), type_arguments(args, Node::Type(ty)), wrap.then_some(")")]);
 }
 
@@ -68,13 +68,19 @@ fn heritage_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<
     })
 }
 
+/// oxfmt keeps the parentheses of `type A = (intrinsic)`. Prettier drops them, which changes what it
+/// means.
+fn keeps_parentheses_of_intrinsic(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `type A = (intrinsic)` is a reference to a type of that name. Without the parentheses it is the
 /// keyword.
 fn is_leftmost_intrinsic_in_type_alias<'a>(ty: TypeNode<'a>, name: EntityName<'a>, args: List<'a, TypeNode<'a>>) -> bool {
     if !name.is("intrinsic") || !args.is_empty() {
         return false;
     }
-    let start = ty.span().start;
+    let start = ty.outer_span().start;
     let mut parent = ty.ast_parent();
     loop {
         match parent {

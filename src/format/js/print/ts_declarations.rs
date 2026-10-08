@@ -139,7 +139,12 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
         write!(f, FormatNodeWithoutTrailingComments(&id));
     }
     if !f.is_quiet() {
-        write!(f, FormatTrailingComments::Comments(comments_before_type_alias_operator(id.span().end, ty, f)));
+        match type_alias_comments_stay_behind_operator(f) {
+            true => write_comments_after_type_alias_left_side(alias, f),
+            false => {
+                write!(f, FormatTrailingComments::Comments(comments_before_type_alias_operator(id.span().end, ty, f)));
+            }
+        }
     }
 
     let layout = type_alias_layout(alias, ty, f);
@@ -162,6 +167,12 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
         }
     });
     match layout {
+        // A line comment that has been written after the `=` stays there.
+        AssignmentLikeLayout::BreakAfterOperator
+            if type_alias_comments_stay_behind_operator(f) && !matches!(ty.kind(), TypeKind::Cond { .. }) =>
+        {
+            write!(f, [line_suffix_boundary(), soft_line_indent_or_space(&right)]);
+        }
         AssignmentLikeLayout::BreakAfterOperator => write!(f, group(&soft_line_indent_or_space(&right))),
         AssignmentLikeLayout::BreakLeftHandSide => write!(f, [space(), group(&right)]),
         _ => {
@@ -180,6 +191,44 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
     write!(f, OptionalSemicolon);
     if let Some(view_limit) = view_limit {
         f.comments_mut().restore_view_limit(view_limit);
+    }
+}
+
+/// oxfmt follows Prettier 3.8: a line comment behind the `=` of a type alias trails the left side.
+/// For 3.9 every comment after the `=` leads the type.
+///
+/// ```ts
+/// type A = // comment      type A =
+///   B;                       // comment
+///                            B;
+/// ```
+fn type_alias_comments_stay_behind_operator(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// What oxc's `AssignmentLike::write_left` does after the left side of a type alias.
+fn write_comments_after_type_alias_left_side<'a>(alias: Alias<'a>, f: &mut Formatter<'a>) {
+    let left_end = alias.type_params().angle_brackets_span().map_or(alias.name().span().end, |it| it.end);
+    let declared = alias.ty();
+    let end_of_line_comments = f.comments().end_of_line_comments_after(left_end);
+    let comments = if end_of_line_comments.is_empty() {
+        let comments = f.comments().comments_before_character(left_end, b'=');
+        if comments.iter().any(|comment| comment.preceded_by_newline()) { &[] } else { comments }
+    } else if matches!(declared.kind(), TypeKind::Object(_)) || end_of_line_comments.last().is_some_and(|it| it.is_block()) {
+        &[]
+    } else {
+        end_of_line_comments
+    };
+    write!(f, FormatTrailingComments::Comments(comments));
+
+    // `type A = /* 1 */ | C` is `type A /* 1 */ = C`.
+    if let TypeKind::Union(types) | TypeKind::Intersection(types) = declared.kind()
+        && types.len() == 1
+        && !types.first().is_some_and(|only| only.tag() == declared.tag() || only.is_parenthesized())
+        && let comments @ [comment] = f.comments().comments_before(declared.span().start)
+        && !comment.preceded_by_newline()
+    {
+        write!(f, FormatTrailingComments::Comments(comments));
     }
 }
 
@@ -207,6 +256,8 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
     };
     let should_break_after_operator = match ty.kind() {
         TypeKind::Union(types) if !should_hug_type(ty, types, f) => !union_breaks_one_per_line(f),
+        TypeKind::Union(_) if type_alias_comments_stay_behind_operator(f) => false,
+        _ if type_alias_comments_stay_behind_operator(f) && f.comments().has_comment_before(ty.span().start) => true,
         TypeKind::Cond { check, extends, .. }
             if f.options().experimental_ternaries || is_generic(check) || is_generic(extends) =>
         {

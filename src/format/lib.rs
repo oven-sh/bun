@@ -18,7 +18,6 @@ pub mod verify;
 pub use options::FormatOptions;
 
 // Not in the prelude: a glob import cannot shadow the macros of the same names in `std`.
-pub(crate) use crate::ir as core;
 pub(crate) use crate::ir::macros::{best_fitting, format_args, write};
 
 use bun_lint::ast::File;

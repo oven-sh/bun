@@ -5,7 +5,6 @@
 //! empty, for a node that has no such field.
 
 use bun_lint::ast::{BinOp, Call, Expr, ExprKind, Func, Stmt, StmtKind, TypeNode, UnOp};
-use smallvec::SmallVec;
 
 pub(crate) trait ExprFields<'a>: Copy {
     /// `MemberExpression.object`
@@ -38,8 +37,6 @@ pub(crate) trait ExprFields<'a>: Copy {
     /// `.typeAnnotation` of a `TSAsExpression`, a `TSSatisfiesExpression` or a `TSTypeAssertion`.
     /// `None` for `as const`.
     fn type_annotation(self) -> Option<TypeNode<'a>>;
-    /// `SequenceExpression.expressions`. Anything else is its own only element.
-    fn expressions(self) -> SmallVec<[Expr<'a>; 4]>;
     /// The function of an `ArrowFunctionExpression`.
     fn arrow_function(self) -> Option<Func<'a>>;
     /// `optional: true`
@@ -146,10 +143,6 @@ impl<'a> ExprFields<'a> for Expr<'a> {
             ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => Some(ty),
             _ => None,
         }
-    }
-
-    fn expressions(self) -> SmallVec<[Expr<'a>; 4]> {
-        self.sequence()
     }
 
     fn arrow_function(self) -> Option<Func<'a>> {

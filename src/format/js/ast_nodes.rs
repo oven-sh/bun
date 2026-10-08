@@ -274,12 +274,6 @@ pub(crate) trait AsAstNodes<'a>: Copy {
         self.as_ast_nodes().parent()
     }
 
-    /// The parent of the parent.
-    #[inline]
-    fn ast_grand_parent(self) -> AstNodes<'a> {
-        self.ast_parent().parent()
-    }
-
     /// The parent, its parent, and so on up to `Program`.
     #[inline]
     fn ast_ancestors(self) -> impl Iterator<Item = AstNodes<'a>> {

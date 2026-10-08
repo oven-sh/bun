@@ -349,10 +349,6 @@ impl<'a> Formatter<'a> {
         self.elements.push(element);
     }
 
-    pub(crate) fn write_elements(&mut self, elements: impl IntoIterator<Item = FormatElement>) {
-        self.elements.extend(elements);
-    }
-
     #[inline(always)]
     pub(crate) fn write_token(&mut self, text: &'static str) {
         match super::element::Token::new(text) {

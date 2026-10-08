@@ -57,7 +57,7 @@ async function fill() {
 async function readLine() {
   let end: number;
   while ((end = buffered.indexOf(10)) < 0) await fill();
-  const line = new TextDecoder().decode(buffered.subarray(0, end));
+  const line = new TextDecoder("utf-8", { ignoreBOM: true }).decode(buffered.subarray(0, end));
   buffered = buffered.subarray(end + 1);
   return line;
 }
@@ -65,7 +65,7 @@ async function readBytes(length: number) {
   while (buffered.length < length) await fill();
   const bytes = buffered.subarray(0, length);
   buffered = buffered.subarray(length);
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
 }
 async function format(path: string): Promise<{ output?: string; error?: string }> {
   server.stdin.write(path + "\n");

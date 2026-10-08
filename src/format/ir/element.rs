@@ -182,10 +182,6 @@ pub(crate) enum LineMode {
 }
 
 impl LineMode {
-    pub(crate) const fn is_hard(self) -> bool {
-        matches!(self, LineMode::Hard)
-    }
-
     pub(crate) const fn will_break(self) -> bool {
         matches!(self, LineMode::Hard | LineMode::Empty)
     }
@@ -290,6 +286,8 @@ pub(crate) enum TagKind {
     ConditionalContent,
     IndentIfGroupBreaks,
     Fill,
+    /// There is no such tag. It is a frame of the printer: see `Printer::print_fill_item`.
+    FillSeparator,
     Entry,
     LineSuffix,
     Labelled,

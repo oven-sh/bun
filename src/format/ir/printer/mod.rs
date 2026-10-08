@@ -442,10 +442,8 @@ impl<'d> Printer<'d> {
     ///
     /// For each item, its separator and the next item:
     /// - All three fit: the item and the separator are printed flat.
-    /// - The item and the separator fit, the next item does not: the item is printed flat and the
+    /// - The item fits, the separator or the next item does not: the item is printed flat and the
     ///   separator expanded.
-    /// - The item fits, the flat separator does not: the same, unless the expanded separator does
-    ///   not fit either, in which case both are printed expanded.
     /// - The item does not fit: both are printed expanded.
     fn print_fill_entries(
         &mut self,
@@ -478,7 +476,7 @@ impl<'d> Printer<'d> {
                     }
                     let separator_fits = measurer.fill_entry_fits(PrintMode::Flat)?;
                     if !separator_fits {
-                        break FillPairLayout::ItemMaybeFlat;
+                        break FillPairLayout::ItemFlatSeparatorExpanded;
                     }
                     if !measurer.is_at_start_entry() {
                         break FillPairLayout::Flat;
@@ -497,32 +495,18 @@ impl<'d> Printer<'d> {
             measurer.finish();
 
             for _ in 0..flat_pairs {
-                self.print_entry(queue, stack, indent_stack, PrintMode::Flat)?;
+                self.print_fill_item(queue, stack, indent_stack, PrintMode::Flat, PrintMode::Flat)?;
                 self.print_entry(queue, stack, indent_stack, PrintMode::Flat)?;
             }
 
-            let item_mode = match last_pair_layout {
-                FillPairLayout::Flat | FillPairLayout::ItemFlatSeparatorExpanded => PrintMode::Flat,
-                FillPairLayout::Expanded => PrintMode::Expanded,
-                FillPairLayout::ItemMaybeFlat => {
-                    let mut measurer = FitsMeasurer::new_flat(queue, stack, indent_stack, self);
-                    // It is known to fit. This moves the measurer to the separator.
-                    measurer.fill_entry_fits(PrintMode::Flat)?;
-                    let separator_fits = measurer.fill_entry_fits(PrintMode::Expanded)?;
-                    measurer.finish();
-                    if separator_fits { PrintMode::Flat } else { PrintMode::Expanded }
-                }
+            let (item_mode, separator_mode) = match last_pair_layout {
+                FillPairLayout::Flat => (PrintMode::Flat, PrintMode::Flat),
+                FillPairLayout::ItemFlatSeparatorExpanded => (PrintMode::Flat, PrintMode::Expanded),
+                FillPairLayout::Expanded => (PrintMode::Expanded, PrintMode::Expanded),
             };
-
-            self.print_entry(queue, stack, indent_stack, item_mode)?;
+            self.print_fill_item(queue, stack, indent_stack, item_mode, separator_mode)?;
 
             if self.is_at_start_entry(queue) {
-                let separator_mode = match last_pair_layout {
-                    FillPairLayout::Flat => PrintMode::Flat,
-                    FillPairLayout::ItemFlatSeparatorExpanded
-                    | FillPairLayout::Expanded
-                    | FillPairLayout::ItemMaybeFlat => PrintMode::Expanded,
-                };
                 // A group in an expanded separator is measured with what follows it flat.
                 stack.push(TagKind::Fill, PrintMode::Flat);
                 self.print_entry(queue, stack, indent_stack, separator_mode)?;
@@ -534,6 +518,21 @@ impl<'d> Printer<'d> {
             Some(FormatElement::Tag(Tag::EndFill)) => Ok(()),
             _ => Err(PrintError::InvalidDocument),
         }
+    }
+
+    /// Prints an item of a fill. Meanwhile, whoever measures past its end finds the mode that has
+    /// been decided for the separator after it on the stack.
+    fn print_fill_item(
+        &mut self,
+        queue: &mut PrintQueue,
+        stack: &mut PrintCallStack,
+        indent_stack: &mut PrintIndentStack,
+        mode: PrintMode,
+        separator_mode: PrintMode,
+    ) -> PrintResult<()> {
+        stack.push(TagKind::FillSeparator, separator_mode);
+        self.print_entry(queue, stack, indent_stack, mode)?;
+        stack.pop(TagKind::FillSeparator)
     }
 
     /// Prints everything from the [`Tag::StartEntry`] that is next in the queue to its
@@ -634,12 +633,10 @@ impl<'d> Printer<'d> {
 enum FillPairLayout {
     /// The item, the separator and the next item fit.
     Flat,
-    /// The item and the separator fit, the next item does not.
+    /// The item fits. The separator or the next item does not.
     ItemFlatSeparatorExpanded,
     /// The item does not fit.
     Expanded,
-    /// The item fits, the flat separator does not.
-    ItemMaybeFlat,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -941,14 +938,20 @@ impl<'d, 'print> FitsMeasurer<'d, 'print> {
                     self.has_line_suffix = true;
                 }
                 Tag::EndLineSuffix => return Err(PrintError::InvalidDocument),
-                Tag::StartFill | Tag::StartLabelled(_) | Tag::StartEntry => {
-                    self.stack.push(tag.kind(), mode);
+                Tag::StartFill | Tag::StartLabelled(_) => self.stack.push(tag.kind(), mode),
+                Tag::StartEntry => {
+                    // After an item that is being printed, `mode` is that of the separator.
+                    let _ = self.stack.pop(TagKind::FillSeparator);
+                    self.stack.push(TagKind::Entry, mode);
+                }
+                Tag::EndFill => {
+                    let _ = self.stack.pop(TagKind::FillSeparator);
+                    self.stack.pop(TagKind::Fill)?;
                 }
                 Tag::EndLabelled
                 | Tag::EndEntry
                 | Tag::EndGroup
-                | Tag::EndConditionalContent
-                | Tag::EndFill => self.stack.pop(tag.kind())?,
+                | Tag::EndConditionalContent => self.stack.pop(tag.kind())?,
                 Tag::EndIndentIfGroupBreaks(id) => {
                     if self.printer.group_mode(*id).unwrap_or(mode) == PrintMode::Expanded {
                         self.indent_stack.pop();

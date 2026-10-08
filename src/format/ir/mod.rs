@@ -14,7 +14,7 @@ mod width_tables;
 pub(crate) mod prelude {
     pub(crate) use super::builders::*;
     pub(crate) use super::element::{
-        FormatElement, GroupId, JsLabels, LabelId, LineMode, Tag,
+        FormatElement, GroupId, JsLabels, LabelId, Tag,
     };
     pub(crate) use super::formatter::{Format, Formatter, MemoizeFormat, Memoized};
 }

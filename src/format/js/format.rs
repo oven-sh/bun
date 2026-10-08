@@ -328,10 +328,14 @@ impl<'a> FormatExpr<'a> {
                 true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
                 false => parentheses::expression::needs_parentheses(expr, f),
             };
-            write!(
-                f,
-                [needs_parentheses.then_some("("), FormatSuppressedNode(span), needs_parentheses.then_some(")")]
-            );
+            // Prettier's `printIgnored`: a class expression with decorators is on lines of its own.
+            let is_decorated_class = matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
+            write!(f, needs_parentheses.then_some("("));
+            match is_decorated_class {
+                true => write!(f, soft_block_indent(&FormatSuppressedNode(span))),
+                false => write!(f, FormatSuppressedNode(span)),
+            }
+            write!(f, needs_parentheses.then_some(")"));
         } else {
             f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
         }
@@ -416,13 +420,6 @@ pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
         ExprKind::Binary {
             op: BinOp::Comma, ..
         } => print::sequence_expression::write_sequence_expression(e, f),
-        ExprKind::Binary {
-            op: BinOp::In,
-            left,
-            right,
-        } if matches!(left.kind(), ExprKind::PrivateIdentifier(_)) => {
-            write!(f, [left, space(), "in", space(), right]);
-        }
         ExprKind::Binary { .. } => print::binary_like_expression::write_binary_like_expression(e, f),
         ExprKind::Assign { .. } => expressions::write_assignment_expression(e, f),
         ExprKind::Cond { .. } => expressions::write_conditional_expression(e, f),
@@ -637,9 +634,10 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 #[cold]
 fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let span = ty.span();
-    let is_suppressed = f.comments().is_suppressed(span.start);
-    // The comments before a union are written with its first `|`.
-    if !matches!(ty.kind(), TypeKind::Union(_)) {
+    // A union writes the comments before it with its first `|`, and deals with `prettier-ignore`.
+    let is_union = matches!(ty.kind(), TypeKind::Union(_));
+    let is_suppressed = !is_union && f.comments().is_suppressed(span.start);
+    if !is_union {
         format_leading_comments(span).fmt(f);
     }
     if is_suppressed {
@@ -694,6 +692,9 @@ impl<'a> Format<'a> for FormatTypeAnnotation<'a> {
             return print::ts_types::write_ts_type_annotation(ty, f);
         }
         let node = AstNodes::TSTypeAnnotation(ty);
+        if f.comments().has_comment_before(node.span().start) {
+            write!(f, space());
+        }
         format_node(node.span(), || node.parent(), f, |f| print::ts_types::write_ts_type_annotation(ty, f));
     }
 }

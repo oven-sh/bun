@@ -199,6 +199,45 @@ pub(crate) fn remove_lines<'a>(doc: Doc<'a>) -> Doc<'a> {
     }
 }
 
+/// `doc` with a copy of every text that it has borrowed.
+pub(crate) fn into_owned(doc: Doc<'_>) -> Doc<'static> {
+    let boxed = |doc: Box<Doc<'_>>| Box::new(into_owned(*doc));
+    match doc {
+        Doc::Text(text) => Doc::Text(Cow::Owned(text.into_owned())),
+        Doc::Array(parts) => Doc::Array(parts.into_iter().map(into_owned).collect()),
+        Doc::Fill(parts) => Doc::Fill(parts.into_iter().map(into_owned).collect()),
+        Doc::Indent(contents) => Doc::Indent(boxed(contents)),
+        Doc::Align(width, contents) => Doc::Align(width, boxed(contents)),
+        Doc::Dedent(contents) => Doc::Dedent(boxed(contents)),
+        Doc::DedentToRoot(contents) => Doc::DedentToRoot(boxed(contents)),
+        Doc::MarkAsRoot(contents) => Doc::MarkAsRoot(boxed(contents)),
+        Doc::LineSuffix(contents) => Doc::LineSuffix(boxed(contents)),
+        Doc::Group {
+            contents,
+            should_break,
+            id,
+            is_conditional,
+        } => Doc::Group {
+            contents: boxed(contents),
+            should_break,
+            id,
+            is_conditional,
+        },
+        Doc::IfBreak {
+            break_contents,
+            flat_contents,
+            group_id,
+        } => Doc::IfBreak {
+            break_contents: boxed(break_contents),
+            flat_contents: boxed(flat_contents),
+            group_id,
+        },
+        Doc::LineSuffixBoundary => Doc::LineSuffixBoundary,
+        Doc::BreakParent => Doc::BreakParent,
+        Doc::Line(line) => Doc::Line(line),
+    }
+}
+
 /// Prettier's `cleanDoc`: no arrays in arrays, no empty strings, strings that follow each other are
 /// one.
 pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
@@ -431,14 +470,14 @@ struct Indent {
     derived: Vec<(IndentCommand, u32)>,
 }
 
-struct Printer<'o> {
-    width: usize,
+pub(crate) struct Printer<'o> {
+    pub(crate) width: usize,
     use_tabs: bool,
     tab_width: usize,
     new_line: &'static [u8],
     /// What a line break in a text and a literal line are written as. See `FormatOptions::is_in_markdown`.
     literal_new_line: &'static [u8],
-    out: &'o mut Vec<u8>,
+    pub(crate) out: &'o mut Vec<u8>,
     /// Where `out` started.
     start: usize,
     /// The first is `ROOT_INDENT`.
@@ -557,7 +596,55 @@ fn fits<'d, 'a>(
     false
 }
 
-impl Printer<'_> {
+impl<'o> Printer<'o> {
+    /// `text`: what is formatted, for `endOfLine: "auto"`.
+    pub(crate) fn new(options: &FormatOptions, text: &[u8], out: &'o mut Vec<u8>) -> Self {
+        let start = out.len();
+        Printer {
+            width: options.line_width.value() as usize,
+            use_tabs: matches!(options.indent_style, IndentStyle::Tab),
+            tab_width: options.indent_width.value() as usize,
+            new_line: match options.line_ending.resolve(text) {
+                LineEnding::Crlf => b"\r\n",
+                LineEnding::Cr => b"\r",
+                _ => b"\n",
+            },
+            literal_new_line: match options.line_ending.resolve(text) {
+                _ if options.is_in_markdown => b"\r\n",
+                LineEnding::Crlf => b"\r\n",
+                LineEnding::Cr => b"\r",
+                _ => b"\n",
+            },
+            out,
+            start,
+            indents: vec![Indent {
+                queue: Vec::new(),
+                value: Vec::new(),
+                length: 0,
+                root: 0,
+                derived: Vec::new(),
+            }],
+            group_modes: Vec::new(),
+        }
+    }
+
+    /// What `indent` makes of the indentation `indent`. That of the root is 0.
+    pub(crate) fn indented(&mut self, indent: u32) -> u32 {
+        self.make_indent(indent, IndentCommand::Indent)
+    }
+
+    /// What `dedent` makes of the indentation `indent`.
+    pub(crate) fn dedented(&mut self, indent: u32) -> u32 {
+        self.make_indent(indent, IndentCommand::Dedent)
+    }
+
+    /// What a `hardline` does. Returns the column behind the indentation.
+    pub(crate) fn write_hard_line(&mut self, indent: u32) -> usize {
+        self.trim();
+        self.out.extend_from_slice(self.new_line);
+        self.write_indent(indent)
+    }
+
     fn trim(&mut self) {
         while self.out.len() > self.start && matches!(self.out.last(), Some(b' ' | b'\t')) {
             self.out.pop();
@@ -620,7 +707,7 @@ impl Printer<'_> {
         indent.length
     }
 
-    fn write_text(&mut self, text: &[u8]) {
+    pub(crate) fn write_text(&mut self, text: &[u8]) {
         if self.literal_new_line == b"\n" || !bun_core::strings::contains_char(text, b'\n') {
             return self.out.extend_from_slice(text);
         }
@@ -632,11 +719,17 @@ impl Printer<'_> {
         }
     }
 
+    /// Prints `doc`, which is a part of a document that no group is around and that a line break follows: with the
+    /// indentation `indent`, from the column `position` on. Returns the column behind it.
+    pub(crate) fn print_part(&mut self, doc: &mut Doc<'_>, indent: u32, position: usize) -> usize {
+        propagate_breaks(doc);
+        self.print(doc, indent, position)
+    }
+
     /// Prettier's `printDocToString`.
-    fn print<'d, 'a>(&mut self, doc: &'d Doc<'a>) {
-        let mut position = 0usize;
+    fn print<'d, 'a>(&mut self, doc: &'d Doc<'a>, indent: u32, mut position: usize) -> usize {
         let mut commands = vec![Command {
-            indent: 0,
+            indent,
             mode: Mode::Break,
             content: Content::Doc(doc),
         }];
@@ -660,9 +753,7 @@ impl Printer<'_> {
                     Doc::Text(text) => {
                         if !text.is_empty() {
                             self.write_text(text);
-                            if !commands.is_empty() {
-                                position += string_width(text);
-                            }
+                            position += string_width(text);
                         }
                     }
                     Doc::Array(parts) => commands.extend(parts.iter().rev().map(|part| with(mode, part))),
@@ -765,6 +856,7 @@ impl Printer<'_> {
                 commands.extend(line_suffix.drain(..).rev());
             }
         }
+        position
     }
 
     fn print_fill<'d, 'a>(
@@ -814,32 +906,5 @@ impl Printer<'_> {
 /// Appends what `doc` prints to `out`. `text`: what is formatted, for `endOfLine: "auto"`.
 pub(crate) fn print(mut doc: Doc<'_>, options: &FormatOptions, text: &[u8], out: &mut Vec<u8>) {
     propagate_breaks(&mut doc);
-    let start = out.len();
-    Printer {
-        width: options.line_width.value() as usize,
-        use_tabs: matches!(options.indent_style, IndentStyle::Tab),
-        tab_width: options.indent_width.value() as usize,
-        new_line: match options.line_ending.resolve(text) {
-            LineEnding::Crlf => b"\r\n",
-            LineEnding::Cr => b"\r",
-            _ => b"\n",
-        },
-        literal_new_line: match options.line_ending.resolve(text) {
-            _ if options.is_in_markdown => b"\r\n",
-            LineEnding::Crlf => b"\r\n",
-            LineEnding::Cr => b"\r",
-            _ => b"\n",
-        },
-        out,
-        start,
-        indents: vec![Indent {
-            queue: Vec::new(),
-            value: Vec::new(),
-            length: 0,
-            root: 0,
-            derived: Vec::new(),
-        }],
-        group_modes: Vec::new(),
-    }
-    .print(&doc);
+    Printer::new(options, text, out).print(&doc, 0, 0);
 }

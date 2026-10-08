@@ -13,11 +13,13 @@ mod parse;
 mod postcss;
 mod printer;
 mod selector_parser;
+mod sink;
 pub(crate) mod text;
 mod value_groups;
 mod value_parser;
 
 use self::doc::Doc;
+use self::sink::Sink;
 use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
 use crate::{FormatError, FormatOptions};
@@ -165,13 +167,8 @@ pub(crate) fn normalize_end_of_line(text: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(normalized)
 }
 
-/// Parses `text`, whose line breaks are `\n`, and calls `with_document` with the document for it.
-fn parse_and_print<R>(
-    text: &[u8],
-    parser: Parser,
-    options: &FormatOptions,
-    with_document: impl FnOnce(Doc<'_>) -> R,
-) -> Result<R, FormatError> {
+/// Parses `text`, whose line breaks are `\n`, and writes it to `sink`.
+fn parse_and_print<'o>(text: &[u8], parser: Parser, options: &FormatOptions, mut sink: Sink<'o>) -> Result<Sink<'o>, FormatError> {
     // What is parsed has blanks in the place of the front matter, so that all positions stay.
     let front_matter = front_matter_len(text).map(|len| &text[..len]);
     let mut blanked: Cow<'_, [u8]> = match front_matter {
@@ -199,19 +196,6 @@ fn parse_and_print<R>(
 
     let tree = postcss::parse(&blanked, parser).map_err(|_| FormatError::SyntaxError)?;
     let root = parse::parse(&tree, &blanked, text, parser).map_err(|_| FormatError::SyntaxError)?;
-    let mut printer = printer::Printer {
-        text,
-        syntax: parser,
-        single_quote: matches!(options.quote_style, QuoteStyle::Single),
-        trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
-        css_stack: Vec::new(),
-        value_stack: Vec::new(),
-        has_failed: false,
-    };
-    let mut document = printer.print_root(&root);
-    if printer.has_failed {
-        return Err(FormatError::SyntaxError);
-    }
     if let Some(front_matter) = front_matter {
         let has_nodes = root.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty());
         // Prettier's `printEmbedFrontMatter`.
@@ -238,14 +222,27 @@ fn parse_and_print<R>(
             ]))),
             None => Doc::from(front_matter),
         };
-        document = Doc::Array(vec![
+        sink.document(Doc::Array(vec![
             front_matter,
             doc::hardline(),
             if has_nodes { doc::hardline() } else { Doc::EMPTY },
-            document,
-        ]);
+        ]));
     }
-    Ok(with_document(document))
+    let mut printer = printer::Printer {
+        text,
+        syntax: parser,
+        single_quote: matches!(options.quote_style, QuoteStyle::Single),
+        trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
+        css_stack: Vec::new(),
+        value_stack: Vec::new(),
+        has_failed: false,
+        sink,
+    };
+    printer.print_root(&root);
+    match printer.has_failed {
+        true => Err(FormatError::SyntaxError),
+        false => Ok(printer.sink),
+    }
 }
 
 /// Appends the formatted `text` to `out`.
@@ -280,14 +277,15 @@ pub fn format(
     // Nothing in a style sheet is something that Prettier formats on its own.
     let is_range = options.range_start.is_some_and(|start| start > 0)
         || options.range_end.is_some_and(|end| (end as usize) < text.len());
-    parse_and_print(text, parser, options, |document| {
-        if has_bom {
-            out.extend_from_slice(BOM);
-        }
-        let document = match is_range {
-            true => doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
-            false => document,
-        };
-        doc::print(document, options, original, out);
-    })
+    let start = out.len();
+    if has_bom {
+        out.extend_from_slice(BOM);
+    }
+    if is_range {
+        parse_and_print(text, parser, options, Sink::to_document()).inspect_err(|_| out.truncate(start))?;
+        doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)), options, original, out);
+        return Ok(());
+    }
+    let result = parse_and_print(text, parser, options, Sink::to_output(doc::Printer::new(options, original, out))).map(drop);
+    result.inspect_err(|_| out.truncate(start))
 }

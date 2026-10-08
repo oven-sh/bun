@@ -1,6 +1,7 @@
 //! Style sheets in the templates of JavaScript: Prettier's `language-js/embed/index.js` and `css.js`.
 
 use super::doc::{self, Doc, Line};
+use super::sink::Sink;
 use super::text;
 use crate::ir::element::{Condition, Group, GroupMode, LineMode, PrintMode, TextWidth};
 use crate::js::print::template::write_embedded_template_expression;
@@ -241,29 +242,29 @@ fn print_embed_css<'a>(template: Template<'a>, options: &FormatOptions, action: 
         text.extend_from_slice(template.raw(index));
     }
     let text = super::normalize_end_of_line(&text);
-    let result = super::parse_and_print(&text, super::Parser::Scss, options, |document| {
-        let document = doc::strip_trailing_hardline(doc::clean(document));
-        if document.is_empty_text() || (count > 0 && count_placeholders(&document, count) != Some(count)) {
-            return false;
-        }
-        if let Action::Write(f) = action {
-            f.write_token("`");
-            f.write_element(FormatElement::Tag(Tag::StartIndent));
-            f.write_element(FormatElement::Line(LineMode::Hard));
-            let mut writer = Writer {
-                has_placeholders: count > 0,
-                template,
-                is_directly_in_fill: false,
-                is_in_line_suffix: false,
-            };
-            writer.write(&document, f);
-            f.write_element(FormatElement::Tag(Tag::EndIndent));
-            f.write_element(FormatElement::Line(LineMode::Soft));
-            f.write_token("`");
-        }
-        true
-    });
-    result == Ok(true)
+    let Ok(sink) = super::parse_and_print(&text, super::Parser::Scss, options, Sink::to_document()) else {
+        return false;
+    };
+    let document = doc::strip_trailing_hardline(doc::clean(sink.into_document()));
+    if document.is_empty_text() || (count > 0 && count_placeholders(&document, count) != Some(count)) {
+        return false;
+    }
+    if let Action::Write(f) = action {
+        f.write_token("`");
+        f.write_element(FormatElement::Tag(Tag::StartIndent));
+        f.write_element(FormatElement::Line(LineMode::Hard));
+        let mut writer = Writer {
+            has_placeholders: count > 0,
+            template,
+            is_directly_in_fill: false,
+            is_in_line_suffix: false,
+        };
+        writer.write(&document, f);
+        f.write_element(FormatElement::Tag(Tag::EndIndent));
+        f.write_element(FormatElement::Line(LineMode::Soft));
+        f.write_token("`");
+    }
+    true
 }
 
 fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {

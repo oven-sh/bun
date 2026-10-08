@@ -1,10 +1,10 @@
 //! Prettier's `print/comma-separated-value-group.js` and `print/parenthesized-value-group.js`.
 
 use super::Parser as Syntax;
-use super::doc::{Doc, dedent, docs, fill, group, group_with, hardline, if_break, indent, join, line_suffix};
 use super::misc::is_next_line_empty;
 use super::postcss::Kind;
 use super::printer::{Printer, is_at_word_placeholder, is_list_with_comma_group};
+use super::sink::Separator;
 use super::text;
 use super::value_parser::{ValueKind, ValueNode};
 
@@ -119,32 +119,40 @@ fn is_key_value_pair_in_paren_group(node: &ValueNode<'_>) -> bool {
     matches!(&node.kind, ValueKind::ParenGroup { groups, .. } if groups.first().is_some_and(is_key_value_pair))
 }
 
-/// Adds `doc` to the last of `parts`: `parts.push([parts.pop(), doc])`.
-fn append<'t>(parts: &mut Vec<Doc<'t>>, doc: Doc<'t>) {
-    match parts.last_mut() {
-        Some(Doc::Array(last)) => last.push(doc),
-        Some(last) if last.is_empty_text() => *last = Doc::Array(vec![doc]),
-        Some(last) => {
-            let first = std::mem::replace(last, Doc::EMPTY);
-            *last = Doc::Array(vec![first, doc]);
-        }
-        None => parts.push(doc),
-    }
+/// What `printCommaSeparatedValueGroup` puts around the parts.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Shape {
+    /// `group(indent(parts))`
+    GroupIndent,
+    /// `group(fill(parts))`
+    GroupFill,
+    /// `group(indent(fill(parts)))`
+    GroupIndentFill,
 }
 
-/// `parts.push(separator, "")`
-fn separate<'t>(parts: &mut Vec<Doc<'t>>, separator: Doc<'t>) {
-    parts.push(separator);
-    parts.push(Doc::EMPTY);
-}
-
-impl<'t, 'a: 't> Printer<'t, 'a> {
+impl<'t, 'a: 't> Printer<'t, 'a, '_> {
     /// `getPropOfDeclNode`
     fn prop_of_declaration(&self) -> Option<Vec<u8>> {
         self.css_ancestor(Kind::Decl).map(|node| text::to_lower_case(&node.prop).into_owned())
     }
 
-    pub(crate) fn print_comma_separated_value_group(&mut self, node: &'t ValueNode<'a>) -> Doc<'t> {
+    /// `node`: a `value-comma_group`.
+    fn shape_of_comma_group(&self, node: &ValueNode<'a>) -> Shape {
+        let groups = node.groups().unwrap_or_default();
+        if self.css_ancestor(Kind::AtRule).is_some_and(|it| self.is_scss_control_directive(it)) {
+            Shape::GroupIndent
+        } else if groups.len() == 2
+            && groups[0].value() == Some(b"url")
+            && self.css_ancestor(Kind::AtRule).is_some_and(|it| it.name == b"import")
+        {
+            // `insideURLFunctionInImportAtRuleNode`: `@import url("very long") projection,tv`
+            Shape::GroupFill
+        } else {
+            Shape::GroupIndentFill
+        }
+    }
+
+    pub(crate) fn print_comma_separated_value_group(&mut self, node: &'t ValueNode<'a>) {
         let groups = node.groups().unwrap_or_default();
         let parent = self.value_stack.last().copied();
         let grandparent = self.value_stack.len().checked_sub(2).and_then(|at| self.value_stack.get(at)).copied();
@@ -156,14 +164,6 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let has_inline_comment = groups.iter().any(is_inline_comment);
         let is_in_paren_group = matches!(parent.map(|it| &it.kind), Some(ValueKind::ParenGroup { .. }));
 
-        self.value_stack.push(node);
-        let mut printed: Vec<Doc<'t>> = Vec::with_capacity(groups.len());
-        for (index, child) in groups.iter().enumerate() {
-            let previous = index.checked_sub(1).and_then(|at| groups.get(at));
-            printed.push(self.print_value(child, previous));
-        }
-        self.value_stack.pop();
-        // What asks about the functions around it asks about those around the group.
         let inside_url = self.inside_value_function(b"url");
         let inside_calc = self.inside_value_function(b"calc");
         let inside_type = self.inside_value_function(b"type");
@@ -171,25 +171,35 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             && is_in_paren_group
             && matches!(grandparent.map(|it| &it.kind), Some(ValueKind::Func { value, .. }) if **value == *b"if");
 
-        // Content and separators take turns, and the first and the last are content.
-        let mut parts: Vec<Doc<'t>> = vec![Doc::EMPTY];
+        let shape = self.shape_of_comma_group(node);
+        self.sink.start_group(false);
+        if shape != Shape::GroupFill {
+            self.sink.start_indent();
+        }
+        self.sink.start_fill(shape != Shape::GroupIndent);
         let mut inside_scss_interpolation_in_string = false;
         let mut did_break = false;
 
-        for (i, printed) in printed.into_iter().enumerate() {
+        for (i, i_node) in groups.iter().enumerate() {
             let prev_node = i.checked_sub(1).and_then(|at| groups.get(at));
-            let i_node = &groups[i];
             let next_node = groups.get(i + 1);
 
-            if is_inline_comment(i_node) && next_node.is_none() {
-                append(&mut parts, line_suffix(docs![" ", printed]));
+            let is_at_end_of_line = is_inline_comment(i_node) && next_node.is_none();
+            if is_at_end_of_line {
+                self.sink.start_line_suffix();
+                self.sink.token(" ");
+            }
+            self.value_stack.push(node);
+            self.print_value(i_node, prev_node);
+            self.value_stack.pop();
+            if is_at_end_of_line {
+                self.sink.end_line_suffix();
                 continue;
             }
-            append(&mut parts, printed);
 
             if inside_url {
                 if next_node.is_some_and(is_addition) || is_addition(i_node) {
-                    append(&mut parts, Doc::from(" "));
+                    self.sink.token(" ");
                 }
                 continue;
             }
@@ -330,7 +340,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 && is_func(next_node)
                 && !ends_where_starts(i_node, next_node)
             {
-                append(&mut parts, Doc::from(" "));
+                self.sink.token(" ");
                 continue;
             }
 
@@ -371,7 +381,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
 
             if is_inline_comment(i_node) {
-                separate(&mut parts, if is_in_paren_group { dedent(hardline()) } else { hardline() });
+                self.sink.fill_separator(if is_in_paren_group { Separator::DedentedHardLine } else { Separator::HardLine });
                 continue;
             }
 
@@ -383,21 +393,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     || is_the_word(i_node, b"in")
                     || is_one_of_the_words(i_node, &[b"from", b"through", b"end"]))
             {
-                append(&mut parts, Doc::from(" "));
+                self.sink.token(" ");
                 continue;
             }
 
             if at_rule.is_some_and(|it| text::eq_lower_case(it.name, b"namespace")) {
-                append(&mut parts, Doc::from(" "));
+                self.sink.token(" ");
                 continue;
             }
 
             if is_grid_value {
                 if i_node.has_source() && next_node.has_source() && i_node.loc.start_line != next_node.loc.start_line {
-                    separate(&mut parts, hardline());
+                    self.sink.fill_separator(Separator::HardLine);
                     did_break = true;
                 } else {
-                    append(&mut parts, Doc::from(" "));
+                    self.sink.token(" ");
                 }
                 continue;
             }
@@ -413,7 +423,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
 
             if is_next_math {
-                append(&mut parts, Doc::from(" "));
+                self.sink.token(" ");
                 continue;
             }
             // `function(returns-list($list)...)`
@@ -424,11 +434,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 continue;
             }
             if is_at_word_placeholder(i_node) && paren_group_open(next_node).is_some_and(|open| ends_where_starts(i_node, open)) {
-                separate(&mut parts, Doc::SOFTLINE);
+                self.sink.fill_separator(Separator::SoftLine);
                 continue;
             }
             if i_node.value() == Some(b"with") && paren_group_open(next_node).is_some() {
-                parts = vec![docs![fill(std::mem::take(&mut parts)), " "]];
+                self.sink.nest_fill();
+                self.sink.token(" ");
                 continue;
             }
             // `--a#{(1) + 2}`
@@ -450,29 +461,23 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 && matches!(i_node.kind, ValueKind::Comment { inline: false, .. })
                 && groups[..i].iter().all(is_comment)
             {
-                separate(&mut parts, dedent(Doc::LINE));
+                self.sink.fill_separator(Separator::DedentedLine);
                 continue;
             }
-            separate(&mut parts, Doc::LINE);
+            self.sink.fill_separator(Separator::Line);
         }
 
         if has_inline_comment {
-            append(&mut parts, Doc::BreakParent);
+            self.sink.break_parent();
         }
         if did_break {
-            parts.splice(0..0, [Doc::EMPTY, hardline()]);
+            self.sink.start_fill_with_hard_line();
         }
-        if is_control_directive {
-            return group(indent(parts));
+        self.sink.end_fill();
+        if shape != Shape::GroupFill {
+            self.sink.end_indent();
         }
-        // `insideURLFunctionInImportAtRuleNode`: `@import url("very long") projection,tv`
-        if groups.len() == 2
-            && groups[0].value() == Some(b"url")
-            && self.css_ancestor(Kind::AtRule).is_some_and(|it| it.name == b"import")
-        {
-            return group(fill(parts));
-        }
-        group(indent(fill(parts)))
+        self.sink.end_group();
     }
 
     /// `isSCSSMapItemNode`, for `node`, which is in `self.value_stack`.
@@ -526,23 +531,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if matches!(root.kind, ValueKind::Root { .. }) && matches!(value.kind, ValueKind::Value { .. }))
     }
 
-    pub(crate) fn print_parenthesized_value_group(&mut self, node: &'t ValueNode<'a>) -> Doc<'t> {
+    pub(crate) fn print_parenthesized_value_group(&mut self, node: &'t ValueNode<'a>) {
         let ValueKind::ParenGroup { open, close, groups } = &node.kind else {
-            return Doc::EMPTY;
+            return;
         };
         let parent = self.value_stack.last().copied();
-
-        self.value_stack.push(node);
-        let mut group_docs: Vec<Doc<'t>> = Vec::with_capacity(groups.len());
-        for child in groups {
-            group_docs.push(self.print_value(child, None));
-        }
-        let print_paren = |paren: &Option<Box<ValueNode<'a>>>| match paren.as_deref().map(|it| &it.kind) {
-            Some(ValueKind::Paren(b'(')) => Doc::from("("),
-            Some(_) => Doc::from(")"),
-            None => Doc::EMPTY,
+        let paren = |paren: &Option<Box<ValueNode<'a>>>| match paren.as_deref().map(|it| &it.kind) {
+            Some(ValueKind::Paren(b'(')) => "(",
+            Some(_) => ")",
+            None => "",
         };
-        self.value_stack.pop();
+        let count = groups.len();
 
         let is_url = matches!(parent.map(|it| &it.kind), Some(ValueKind::Func { value, .. }) if text::eq_lower_case(value, b"url"));
         if is_url
@@ -551,76 +550,53 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     matches!(groups[0].kind, ValueKind::CommaGroup { .. }) && it.starts_with(b"data:")
                 }))
         {
-            return docs![print_paren(open), join(&Doc::from(","), group_docs), print_paren(close)];
+            self.sink.token(paren(open));
+            for (index, child) in groups.iter().enumerate() {
+                if index > 0 {
+                    self.sink.token(",");
+                }
+                self.print_child_value(node, child);
+            }
+            return self.sink.token(paren(close));
         }
 
         if open.is_none() {
             let force_hard_line = self.should_break_list(node);
-            let count = group_docs.len();
-            let with_comma: Vec<Doc<'t>> = group_docs
-                .into_iter()
-                .enumerate()
-                .map(|(index, doc)| if index + 1 == count { docs![doc] } else { docs![doc, ","] })
-                .collect();
-            let parts = join(&if force_hard_line { hardline() } else { Doc::LINE }, with_comma);
             // `shouldPrecededBySoftline`
             let is_preceded_by_softline =
                 self.is_top_level_of_value() && self.css_stack.last().is_some_and(|it| it.kind == Kind::Decl);
-            return indent(match force_hard_line {
-                true => docs![hardline(), parts],
-                false => group(docs![if is_preceded_by_softline { Doc::SOFTLINE } else { Doc::EMPTY }, fill(parts)]),
-            });
+            self.sink.start_indent();
+            match force_hard_line {
+                true => self.sink.hard_line(),
+                false => {
+                    self.sink.start_group(false);
+                    if is_preceded_by_softline {
+                        self.sink.soft_line();
+                    }
+                    self.sink.start_fill(true);
+                }
+            }
+            for (index, child) in groups.iter().enumerate() {
+                if index > 0 {
+                    match force_hard_line {
+                        true => self.sink.hard_line(),
+                        false => self.sink.fill_separator(Separator::Line),
+                    }
+                }
+                self.print_child_value(node, child);
+                if index + 1 < count {
+                    self.sink.token(",");
+                }
+            }
+            if !force_hard_line {
+                self.sink.end_fill();
+                self.sink.end_group();
+            }
+            return self.sink.end_indent();
         }
 
         let is_var = matches!(parent.map(|it| &it.kind), Some(ValueKind::Func { value, .. }) if text::eq_lower_case(value, b"var"));
         let is_scss_map_item = self.is_scss_map_item(node);
-        let count = groups.len();
-        let mut parts: Vec<Doc<'t>> = Vec::with_capacity(count);
-        for (index, (child, mut doc)) in groups.iter().zip(group_docs).enumerate() {
-            let is_last = index + 1 == count;
-            // A pair of a key and a value in parentheses is indented already.
-            if is_key_value_pair(child)
-                && let Some([first, _, third, ..]) = child.groups()
-                && !matches!(first.kind, ValueKind::ParenGroup { .. })
-                && matches!(third.kind, ValueKind::ParenGroup { .. })
-                && matches!(&doc, Doc::Group { contents, .. }
-                    if matches!(&**contents, Doc::Indent(contents) if matches!(**contents, Doc::Fill(_))))
-            {
-                doc = group(dedent(doc));
-            }
-
-            let mut child_parts = vec![doc];
-            if !is_last {
-                child_parts.push(Doc::from(","));
-            } else {
-                // `printTrailingComma`
-                let has_comma = || {
-                    let (Some(start), Some(end)) = (child.loc.start_offset, close.as_ref().and_then(|it| it.loc.start_offset))
-                    else {
-                        return false;
-                    };
-                    text::trim_end(self.text.get(start as usize..end as usize).unwrap_or_default()).ends_with(b",")
-                };
-                let is_only_comments = is_comment(child)
-                    || matches!(&child.kind, ValueKind::CommaGroup { groups } if groups.iter().all(is_comment));
-                if is_var && has_comma() {
-                    child_parts.push(Doc::from(","));
-                } else if !is_only_comments && self.trailing_comma && is_scss_map_item {
-                    child_parts.push(if_break(","));
-                }
-            }
-
-            if !is_last
-                && let ValueKind::CommaGroup { groups } = &child.kind
-                && let Some(last) = groups.last()
-                && let Some(end) = last.loc.end_offset.filter(|_| last.has_source())
-                && is_next_line_empty(self.text, end as usize)
-            {
-                child_parts.push(hardline());
-            }
-            parts.push(Doc::Array(child_parts));
-        }
-
         // `isKeyInValuePairNode`
         let is_key = parent.is_some_and(|parent| {
             is_key_value_pair(parent)
@@ -642,16 +618,69 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let should_break = is_configuration || (is_scss_map_item && !is_key);
         let should_dedent = is_configuration || is_key;
 
-        let doc = group_with(
-            docs![
-                print_paren(open),
-                indent(docs![Doc::SOFTLINE, join(&Doc::LINE, parts)]),
-                Doc::SOFTLINE,
-                Doc::LineSuffixBoundary,
-                print_paren(close),
-            ],
-            should_break,
-        );
-        if should_dedent { dedent(doc) } else { doc }
+        if should_dedent {
+            self.sink.start_dedent();
+        }
+        self.sink.start_group(should_break);
+        self.sink.token(paren(open));
+        self.sink.start_indent();
+        self.sink.soft_line();
+        for (index, child) in groups.iter().enumerate() {
+            let is_last = index + 1 == count;
+            if index > 0 {
+                self.sink.line();
+            }
+            // A pair of a key and a value in parentheses is indented already.
+            let is_dedented = is_key_value_pair(child)
+                && matches!(child.groups(), Some([first, _, third, ..])
+                    if !matches!(first.kind, ValueKind::ParenGroup { .. }) && matches!(third.kind, ValueKind::ParenGroup { .. }))
+                && self.shape_of_comma_group(child) == Shape::GroupIndentFill;
+            if is_dedented {
+                self.sink.start_group(false);
+                self.sink.start_dedent();
+            }
+            self.print_child_value(node, child);
+            if is_dedented {
+                self.sink.end_indent();
+                self.sink.end_group();
+            }
+
+            if !is_last {
+                self.sink.token(",");
+            } else {
+                // `printTrailingComma`
+                let has_comma = || {
+                    let (Some(start), Some(end)) = (child.loc.start_offset, close.as_ref().and_then(|it| it.loc.start_offset))
+                    else {
+                        return false;
+                    };
+                    text::trim_end(self.text.get(start as usize..end as usize).unwrap_or_default()).ends_with(b",")
+                };
+                let is_only_comments = is_comment(child)
+                    || matches!(&child.kind, ValueKind::CommaGroup { groups } if groups.iter().all(is_comment));
+                if is_var && has_comma() {
+                    self.sink.token(",");
+                } else if !is_only_comments && self.trailing_comma && is_scss_map_item {
+                    self.sink.if_break(",");
+                }
+            }
+
+            if !is_last
+                && let ValueKind::CommaGroup { groups } = &child.kind
+                && let Some(last) = groups.last()
+                && let Some(end) = last.loc.end_offset.filter(|_| last.has_source())
+                && is_next_line_empty(self.text, end as usize)
+            {
+                self.sink.hard_line();
+            }
+        }
+        self.sink.end_indent();
+        self.sink.soft_line();
+        self.sink.line_suffix_boundary();
+        self.sink.token(paren(close));
+        self.sink.end_group();
+        if should_dedent {
+            self.sink.end_indent();
+        }
     }
 }

@@ -481,7 +481,9 @@ impl<'s> InternerPerThread<'s> {
     #[cold]
     #[inline(never)]
     fn assign(&self) -> &Interner<'s> {
-        let asked = self.threads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let asked = self
+            .threads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let at = asked % self.all.len();
         OWN.set((self.number, at));
         &self.all[at]

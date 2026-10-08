@@ -41,14 +41,19 @@ impl<'a> JsFormatContext<'a> {
     pub(crate) fn new(file: &'a File<'a>, options: FormatOptions, comments: &'a [Comment]) -> Self {
         Self {
             file: Some(file),
-            has_tree_of_babel: file.is_javascript() || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program),
+            has_tree_of_babel: file.is_javascript()
+                || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program),
             ..Self::without_file(file.text(), options, comments)
         }
     }
 
     /// For a document that is written for `source`, which is in another language. Nothing that
     /// writes it asks for the [file](JsFormatContext::file).
-    pub(crate) fn without_file(source: &'a [u8], options: FormatOptions, comments: &'a [Comment]) -> Self {
+    pub(crate) fn without_file(
+        source: &'a [u8],
+        options: FormatOptions,
+        comments: &'a [Comment],
+    ) -> Self {
         Self {
             file: None,
             has_tree_of_babel: false,
@@ -67,7 +72,8 @@ impl<'a> JsFormatContext<'a> {
 
     #[inline]
     pub(crate) fn file(&self) -> &'a File<'a> {
-        self.file.expect("only what writes JavaScript asks for the file, and there is one then")
+        self.file
+            .expect("only what writes JavaScript asks for the file, and there is one then")
     }
 
     /// Whether Prettier reads the code with a parser that has no `ChainExpression` around an optional chain: Babel, which

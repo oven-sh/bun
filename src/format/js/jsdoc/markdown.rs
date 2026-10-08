@@ -5,7 +5,8 @@ use super::line_buffer::LineBuffer;
 use super::markers::{ListMarker, list_marker};
 use super::normalize::{append_trailing_dot, capitalize_first};
 use super::text::{
-    first_char, is_blank, lines, parse_index, push_number, push_spaces, split_lines, str_width, trim, trim_start, trim_start_matches,
+    first_char, is_blank, lines, parse_index, push_number, push_spaces, split_lines, str_width,
+    trim, trim_start, trim_start_matches,
 };
 use super::wrap::{format_table_block, wrap_paragraph, wrap_plain_paragraphs};
 use crate::markdown::ast::{Kind, Node, NodeId, ReferenceType, Tree};
@@ -35,7 +36,9 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                 // With spaces on both sides it is a product, unless it starts a line: then it can start an item.
                 if !next.is_ascii_whitespace()
                     || !prev.is_ascii_whitespace()
-                    || (byte == b'*' && is_line_start && list_marker(&text[i..]) == Some(ListMarker::Unordered))
+                    || (byte == b'*'
+                        && is_line_start
+                        && list_marker(&text[i..]) == Some(ListMarker::Unordered))
                 {
                     return true;
                 }
@@ -46,7 +49,12 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                 }
                 // `[text](url)` or `[text][ref]` on one line.
                 let mut has_content = false;
-                for (j, &byte) in text.iter().enumerate().skip(i + 1).take_while(|it| *it.1 != b'\n') {
+                for (j, &byte) in text
+                    .iter()
+                    .enumerate()
+                    .skip(i + 1)
+                    .take_while(|it| *it.1 != b'\n')
+                {
                     if byte == b']' {
                         if has_content && matches!(at(j + 1), Some(b'(' | b'[')) {
                             return true;
@@ -58,7 +66,9 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
             }
             b' ' | b'#' | b'>' | b'-' | b'0'..=b'9' | b'|' | b'+' if is_line_start => {
                 // After an empty line or at the start. Only there can code start, or a list with another number than 1.
-                let is_block_start = i == 0 || (i >= 2 && text[i - 2] == b'\n') || (i >= 3 && text[i - 2] == b' ' && text[i - 3] == b'\n');
+                let is_block_start = i == 0
+                    || (i >= 2 && text[i - 2] == b'\n')
+                    || (i >= 3 && text[i - 2] == b' ' && text[i - 3] == b'\n');
                 let spaces = text[i..].iter().take_while(|&&byte| byte == b' ').count();
                 if spaces >= 4 && is_block_start {
                     return true;
@@ -68,18 +78,27 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                     Some(b'#' | b'>') => return true,
                     Some(b'0'..=b'9') => match list_marker(&text[start..]) {
                         Some(ListMarker::LegacyOrdered) => return true,
-                        Some(ListMarker::Ordered { starts_at_one }) if is_block_start || starts_at_one => return true,
+                        Some(ListMarker::Ordered { starts_at_one })
+                            if is_block_start || starts_at_one =>
+                        {
+                            return true;
+                        }
                         _ => {}
                     },
                     Some(b'|') => {
                         // The row of a table starts and ends with a pipe.
-                        let line_end = strings::index_of_char_usize(&text[start..], b'\n').map_or(len, |at| start + at);
+                        let line_end = strings::index_of_char_usize(&text[start..], b'\n')
+                            .map_or(len, |at| start + at);
                         let line = text[start + 1..line_end].trim_ascii_end();
                         if line.ends_with(b"|") {
                             return true;
                         }
                     }
-                    Some(b'-' | b'+' | b'*') if list_marker(&text[start..]) == Some(ListMarker::Unordered) => return true,
+                    Some(b'-' | b'+' | b'*')
+                        if list_marker(&text[start..]) == Some(ListMarker::Unordered) =>
+                    {
+                        return true;
+                    }
                     _ => {}
                 }
             }
@@ -96,7 +115,10 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
 const PLACEHOLDER_PREFIX: &[u8] = b"\x02JDLNK";
 
 /// Makes a text of `text` line by line. `change` appends what is to be in the place of a line, or returns `false`.
-fn map_lines<'a>(text: &'a [u8], mut change: impl FnMut(usize, &'a [u8], &mut Vec<u8>) -> bool) -> Bytes<'a> {
+fn map_lines<'a>(
+    text: &'a [u8],
+    mut change: impl FnMut(usize, &'a [u8], &mut Vec<u8>) -> bool,
+) -> Bytes<'a> {
     let mut result = Vec::with_capacity(text.len());
     let mut has_changed = false;
     for (index, line) in lines(text).enumerate() {
@@ -108,15 +130,26 @@ fn map_lines<'a>(text: &'a [u8], mut change: impl FnMut(usize, &'a [u8], &mut Ve
             false => result.extend_from_slice(line),
         }
     }
-    if has_changed { Cow::Owned(result) } else { Cow::Borrowed(text) }
+    if has_changed {
+        Cow::Owned(result)
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 /// `1- foo` becomes `1. foo`.
 fn normalize_legacy_ordered_list_markers(text: &[u8]) -> Bytes<'_> {
     map_lines(text, |_, line, out| {
         let trimmed = trim_start(line);
-        let digits = trimmed.iter().take_while(|byte| byte.is_ascii_digit()).count();
-        if digits == 0 || digits >= 5 || trimmed.get(digits) != Some(&b'-') || !matches!(trimmed.get(digits + 1), Some(b' ' | b'\t' | b'|')) {
+        let digits = trimmed
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if digits == 0
+            || digits >= 5
+            || trimmed.get(digits) != Some(&b'-')
+            || !matches!(trimmed.get(digits + 1), Some(b' ' | b'\t' | b'|'))
+        {
             return false;
         }
         let rest = trim_start(&trimmed[digits + 1..]);
@@ -193,12 +226,21 @@ fn restore_placeholders(text: Vec<u8>, placeholders: &[&[u8]]) -> Vec<u8> {
     let mut rest = &text[..];
     while let Some(at) = strings::index_of(rest, PLACEHOLDER_PREFIX) {
         let after = &rest[at + PLACEHOLDER_PREFIX.len()..];
-        let digits = after.iter().take_while(|byte| byte.is_ascii_digit()).count();
-        match parse_index(&after[..digits]).filter(|_| digits > 0).and_then(|index| placeholders.get(index)) {
+        let digits = after
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        match parse_index(&after[..digits])
+            .filter(|_| digits > 0)
+            .and_then(|index| placeholders.get(index))
+        {
             Some(original) => {
                 result.extend_from_slice(&rest[..at]);
                 result.extend_from_slice(original);
-                let padding = after[digits..].iter().take_while(|&&byte| byte == 0x01).count();
+                let padding = after[digits..]
+                    .iter()
+                    .take_while(|&&byte| byte == 0x01)
+                    .count();
                 rest = &after[digits + padding..];
             }
             None => {
@@ -228,7 +270,11 @@ fn min_not_present_backtick_run(text: &[u8]) -> usize {
             current = 0;
         }
     }
-    present.iter().skip(1).position(|is_present| !is_present).map_or_else(|| present.len().max(1), |at| at + 1)
+    present
+        .iter()
+        .skip(1)
+        .position(|is_present| !is_present)
+        .map_or_else(|| present.len().max(1), |at| at + 1)
 }
 
 struct Serializer<'a> {
@@ -283,7 +329,11 @@ impl<'a> Serializer<'a> {
             ReferenceType::Collapsed => out.extend_from_slice(b"[]"),
             ReferenceType::Full | ReferenceType::Shortcut => {
                 out.push(b'[');
-                out.extend_from_slice(self.str(if node.value.is_null() { node.identifier } else { node.value }));
+                out.extend_from_slice(self.str(if node.value.is_null() {
+                    node.identifier
+                } else {
+                    node.value
+                }));
                 out.push(b']');
             }
         }
@@ -310,7 +360,9 @@ impl<'a> Serializer<'a> {
                 let is_blank_at = |byte: Option<&u8>| matches!(byte, Some(b' ' | b'\n'));
                 let needs_padding = value.starts_with(b"`")
                     || value.ends_with(b"`")
-                    || (is_blank_at(value.first()) && is_blank_at(value.last()) && value.iter().any(|byte| !matches!(byte, b' ' | b'\n')));
+                    || (is_blank_at(value.first())
+                        && is_blank_at(value.last())
+                        && value.iter().any(|byte| !matches!(byte, b' ' | b'\n')));
                 out.resize(out.len() + delimiter_len, b'`');
                 if needs_padding {
                     out.push(b' ');
@@ -375,14 +427,32 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    fn wrap_and_push(&self, text: &[u8], indent: usize, first_line_offset: usize, lines: &mut LineBuffer) {
+    fn wrap_and_push(
+        &self,
+        text: &[u8],
+        indent: usize,
+        first_line_offset: usize,
+        lines: &mut LineBuffer,
+    ) {
         let mut paragraph = LineBuffer::new();
-        wrap_paragraph(text, self.max_width.saturating_sub(indent), first_line_offset, 0, &mut paragraph);
+        wrap_paragraph(
+            text,
+            self.max_width.saturating_sub(indent),
+            first_line_offset,
+            0,
+            &mut paragraph,
+        );
         self.push_paragraph_lines(&paragraph.into_bytes(), indent, lines);
     }
 
     /// The children of `id`, with empty lines between blocks.
-    fn serialize_children(&self, id: NodeId, indent: usize, first_paragraph_offset: usize, lines: &mut LineBuffer) {
+    fn serialize_children(
+        &self,
+        id: NodeId,
+        indent: usize,
+        first_paragraph_offset: usize,
+        lines: &mut LineBuffer,
+    ) {
         let children: Vec<NodeId> = self.tree.children(id).collect();
         let kind = |index: usize| children.get(index).and_then(|&child| self.tree.kind(child));
         let mut i = 0;
@@ -395,7 +465,11 @@ impl<'a> Serializer<'a> {
                 loop {
                     match kind(run_end) {
                         Some(Kind::Paragraph) => {}
-                        Some(Kind::Html) if self.node(children[run_end]).is_some_and(|html| is_inline_html(self.str(html.value))) => {
+                        Some(Kind::Html)
+                            if self
+                                .node(children[run_end])
+                                .is_some_and(|html| is_inline_html(self.str(html.value))) =>
+                        {
                             has_html = true;
                         }
                         _ => break,
@@ -412,11 +486,20 @@ impl<'a> Serializer<'a> {
                             merged.push(b' ');
                         }
                         match self.node(child) {
-                            Some(html) if html.kind == Kind::Html => merged.extend_from_slice(trim(self.str(html.value))),
-                            _ => merged.extend_from_slice(trim(&self.inline_text_of_children(child))),
+                            Some(html) if html.kind == Kind::Html => {
+                                merged.extend_from_slice(trim(self.str(html.value)))
+                            }
+                            _ => {
+                                merged.extend_from_slice(trim(&self.inline_text_of_children(child)))
+                            }
                         }
                     }
-                    self.wrap_and_push(&merged, indent, if i == 0 { first_paragraph_offset } else { 0 }, lines);
+                    self.wrap_and_push(
+                        &merged,
+                        indent,
+                        if i == 0 { first_paragraph_offset } else { 0 },
+                        lines,
+                    );
                     i = run_end;
                     continue;
                 }
@@ -424,18 +507,31 @@ impl<'a> Serializer<'a> {
             if i > 0 && kind(i).is_some_and(is_block_kind) && !lines.last_is_empty() {
                 lines.push_empty();
             }
-            self.serialize_node(children[i], indent, if i == 0 { first_paragraph_offset } else { 0 }, lines);
+            self.serialize_node(
+                children[i],
+                indent,
+                if i == 0 { first_paragraph_offset } else { 0 },
+                lines,
+            );
             i += 1;
         }
     }
 
-    fn serialize_node(&self, id: NodeId, indent: usize, first_paragraph_offset: usize, lines: &mut LineBuffer) {
+    fn serialize_node(
+        &self,
+        id: NodeId,
+        indent: usize,
+        first_paragraph_offset: usize,
+        lines: &mut LineBuffer,
+    ) {
         let Some(node) = self.node(id) else {
             return;
         };
         match node.kind {
             Kind::Root => self.serialize_children(id, indent, 0, lines),
-            Kind::Paragraph => self.serialize_paragraph(id, node, indent, first_paragraph_offset, lines),
+            Kind::Paragraph => {
+                self.serialize_paragraph(id, node, indent, first_paragraph_offset, lines)
+            }
             Kind::Heading => {
                 if !lines.is_empty() && !lines.last_is_empty() {
                     lines.push_empty();
@@ -467,7 +563,11 @@ impl<'a> Serializer<'a> {
             Kind::Definition => {
                 let out = lines.begin_line();
                 out.push(b'[');
-                out.extend_from_slice(self.str(if node.third.is_null() { node.identifier } else { node.third }));
+                out.extend_from_slice(self.str(if node.third.is_null() {
+                    node.identifier
+                } else {
+                    node.third
+                }));
                 out.extend_from_slice(b"]: ");
                 out.extend_from_slice(self.str(node.value));
             }
@@ -486,13 +586,27 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    fn serialize_paragraph(&self, id: NodeId, node: &Node, indent: usize, first_line_offset: usize, lines: &mut LineBuffer) {
-        let raw = self.source.get(node.start as usize..node.end as usize).unwrap_or_default();
+    fn serialize_paragraph(
+        &self,
+        id: NodeId,
+        node: &Node,
+        indent: usize,
+        first_line_offset: usize,
+        lines: &mut LineBuffer,
+    ) {
+        let raw = self
+            .source
+            .get(node.start as usize..node.end as usize)
+            .unwrap_or_default();
         if self.serialize_pipe_prefixed_paragraph(raw, indent, lines) {
             return;
         }
         // Each part that ends with a hard line break is a line.
-        if self.tree.children(id).any(|child| self.tree.kind(child) == Some(Kind::Break)) {
+        if self
+            .tree
+            .children(id)
+            .any(|child| self.tree.kind(child) == Some(Kind::Break))
+        {
             let mut segment: Vec<u8> = Vec::new();
             for child in self.tree.children(id) {
                 if self.tree.kind(child) != Some(Kind::Break) {
@@ -518,8 +632,15 @@ impl<'a> Serializer<'a> {
         }
         if self.is_balanced {
             let effective_width = self.max_width.saturating_sub(indent);
-            let original_lines: Vec<&[u8]> = super::text::lines(raw).map(trim).filter(|line| !line.is_empty()).collect();
-            if original_lines.len() > 1 && original_lines.iter().all(|line| str_width(line) <= effective_width) {
+            let original_lines: Vec<&[u8]> = super::text::lines(raw)
+                .map(trim)
+                .filter(|line| !line.is_empty())
+                .collect();
+            if original_lines.len() > 1
+                && original_lines
+                    .iter()
+                    .all(|line| str_width(line) <= effective_width)
+            {
                 for (index, line) in original_lines.iter().enumerate() {
                     let mut line = Cow::Borrowed(*line);
                     if index == 0 && self.capitalize {
@@ -535,12 +656,22 @@ impl<'a> Serializer<'a> {
                 return;
             }
         }
-        self.wrap_and_push(&self.inline_text_of_children(id), indent, first_line_offset, lines);
+        self.wrap_and_push(
+            &self.inline_text_of_children(id),
+            indent,
+            first_line_offset,
+            lines,
+        );
     }
 
     /// A paragraph with rows of a table in it, which is not parsed as one. Returns whether `raw` is such a
     /// paragraph.
-    fn serialize_pipe_prefixed_paragraph(&self, raw: &[u8], indent: usize, lines: &mut LineBuffer) -> bool {
+    fn serialize_pipe_prefixed_paragraph(
+        &self,
+        raw: &[u8],
+        indent: usize,
+        lines: &mut LineBuffer,
+    ) -> bool {
         let is_row = |line: &[u8]| {
             let trimmed = trim_start(line);
             trimmed.starts_with(b"|") && trimmed.ends_with(b"|") && trimmed.len() > 2
@@ -563,7 +694,10 @@ impl<'a> Serializer<'a> {
             }
             let is_table = is_row(first);
             let start = index;
-            while raw_lines.get(index).is_some_and(|line| is_row(line) == is_table) {
+            while raw_lines
+                .get(index)
+                .is_some_and(|line| is_row(line) == is_table)
+            {
                 index += 1;
             }
             let segment = &raw_lines[start..index];
@@ -576,12 +710,22 @@ impl<'a> Serializer<'a> {
                     out.extend_from_slice(&line);
                 }
             } else {
-                let parts: Vec<&[u8]> = segment.iter().map(|line| trim(line)).filter(|line| !line.is_empty()).collect();
+                let parts: Vec<&[u8]> = segment
+                    .iter()
+                    .map(|line| trim(line))
+                    .filter(|line| !line.is_empty())
+                    .collect();
                 if parts.is_empty() {
                     continue;
                 }
                 let mut paragraph = LineBuffer::new();
-                wrap_paragraph(&parts.join(&b" "[..]), self.max_width.saturating_sub(indent), 0, 0, &mut paragraph);
+                wrap_paragraph(
+                    &parts.join(&b" "[..]),
+                    self.max_width.saturating_sub(indent),
+                    0,
+                    0,
+                    &mut paragraph,
+                );
                 for (index, line) in split_lines(&paragraph.into_bytes()).enumerate() {
                     let out = lines.begin_line();
                     push_spaces(out, indent);
@@ -596,8 +740,16 @@ impl<'a> Serializer<'a> {
     }
 
     fn serialize_list(&self, id: NodeId, list: &Node, indent: usize, lines: &mut LineBuffer) {
-        let mut counter = if list.ordered { list.number as usize } else { 1 };
-        for item in self.tree.children(id).filter(|&item| self.tree.kind(item) == Some(Kind::ListItem)) {
+        let mut counter = if list.ordered {
+            list.number as usize
+        } else {
+            1
+        };
+        for item in self
+            .tree
+            .children(id)
+            .filter(|&item| self.tree.kind(item) == Some(Kind::ListItem))
+        {
             let mut marker = b"- ".to_vec();
             if list.ordered {
                 marker.clear();
@@ -609,7 +761,10 @@ impl<'a> Serializer<'a> {
             for (child_index, child) in self.tree.children(item).enumerate() {
                 let kind = self.tree.kind(child);
                 if child_index == 0 {
-                    for (line_index, line) in split_lines(&self.serialize_node_for_list_item(child, marker_width, true)).enumerate() {
+                    for (line_index, line) in
+                        split_lines(&self.serialize_node_for_list_item(child, marker_width, true))
+                            .enumerate()
+                    {
                         let out = lines.begin_line();
                         if line_index == 0 {
                             push_spaces(out, indent);
@@ -632,11 +787,16 @@ impl<'a> Serializer<'a> {
                     Some(Kind::Definition) => self.serialize_node(child, 0, 0, lines),
                     // A list in an item is under what is in the item.
                     Some(Kind::List) => {
-                        let nested_indent = indent + marker_width + if indent == 0 { 0 } else { marker_width };
+                        let nested_indent =
+                            indent + marker_width + if indent == 0 { 0 } else { marker_width };
                         self.serialize_node(child, nested_indent, 0, lines);
                     }
                     _ => {
-                        for line in split_lines(&self.serialize_node_for_list_item(child, marker_width, false)) {
+                        for line in split_lines(&self.serialize_node_for_list_item(
+                            child,
+                            marker_width,
+                            false,
+                        )) {
                             let out = lines.begin_line();
                             if !line.is_empty() {
                                 push_spaces(out, indent + marker_width);
@@ -651,12 +811,23 @@ impl<'a> Serializer<'a> {
 
     /// What is in an item of a list. Of the first paragraph, all lines but the first are indented by the width of
     /// the marker.
-    fn serialize_node_for_list_item(&self, id: NodeId, marker_width: usize, is_first_child: bool) -> Vec<u8> {
+    fn serialize_node_for_list_item(
+        &self,
+        id: NodeId,
+        marker_width: usize,
+        is_first_child: bool,
+    ) -> Vec<u8> {
         let mut buffer = LineBuffer::new();
         match self.tree.kind(id) {
             Some(Kind::Paragraph) => {
                 let continuation_indent = if is_first_child { marker_width } else { 0 };
-                wrap_paragraph(&self.inline_text_of_children(id), self.max_width, 0, continuation_indent, &mut buffer);
+                wrap_paragraph(
+                    &self.inline_text_of_children(id),
+                    self.max_width,
+                    0,
+                    continuation_indent,
+                    &mut buffer,
+                );
             }
             _ => self.serialize_node(id, 0, 0, &mut buffer),
         }
@@ -671,7 +842,9 @@ impl<'a> Serializer<'a> {
         let lang = (!code.second.is_null()).then(|| self.str(code.second));
         let width = self.max_width.saturating_sub(4);
         let formatted: Bytes<'_> = match lang {
-            Some(lang) if !is_js_ts_lang(lang) => format_embedded_language(lang, value, width, self.format_options),
+            Some(lang) if !is_js_ts_lang(lang) => {
+                format_embedded_language(lang, value, width, self.format_options)
+            }
             _ => format_embedded_js(value, width, self.format_options),
         }
         .map_or(Cow::Borrowed(value), Cow::Owned);
@@ -738,7 +911,8 @@ pub(super) fn format_description(
     }
     let jsdoc_options = format_options.jsdoc.as_ref();
     let description_with_dot = jsdoc_options.is_some_and(|it| it.description_with_dot);
-    let is_balanced = jsdoc_options.is_some_and(|it| it.line_wrapping_style == LineWrappingStyle::Balance);
+    let is_balanced =
+        jsdoc_options.is_some_and(|it| it.line_wrapping_style == LineWrappingStyle::Balance);
 
     if tag_string_length == 0 && !needs_markdown_parsing(text) {
         let result = wrap_plain_paragraphs(text, max_width, is_balanced);

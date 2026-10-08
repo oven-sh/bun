@@ -68,7 +68,11 @@ pub(super) struct Printer<'m, 'a> {
 }
 
 impl<'m, 'a> Printer<'m, 'a> {
-    pub(super) fn new(model: &'m Model<'a>, attributes_keyword: &'static [u8], end_of_line: &'static [u8]) -> Self {
+    pub(super) fn new(
+        model: &'m Model<'a>,
+        attributes_keyword: &'static [u8],
+        end_of_line: &'static [u8],
+    ) -> Self {
         Printer {
             model,
             attributes_keyword,
@@ -92,17 +96,30 @@ impl<'m, 'a> Printer<'m, 'a> {
 
     /// `generate(file(program(body, directives, "module", interpreter))).code`, with the statements
     /// that stand for empty lines replaced.
-    pub(super) fn generate(mut self, has_interpreter: bool, has_directives: bool, body: &[Node]) -> Self {
+    pub(super) fn generate(
+        mut self,
+        has_interpreter: bool,
+        has_directives: bool,
+        body: &[Node],
+    ) -> Self {
         if has_interpreter && self.model.interpreter.is_some() {
             self.print(Node::Interpreter, false, 0);
         }
         // `Program`
-        let directives = if has_directives { self.model.directives.len() as u32 } else { 0 };
+        let directives = if has_directives {
+            self.model.directives.len() as u32
+        } else {
+            0
+        };
         if directives > 0 {
             let newline = if body.is_empty() { 1 } else { 2 };
             let nodes: Vec<Node> = (0..directives).map(Node::Directive).collect();
             self.print_sequence(&nodes, newline);
-            if self.model.comments_of(Node::Directive(directives - 1), Which::Trailing).is_empty() {
+            if self
+                .model
+                .comments_of(Node::Directive(directives - 1), Which::Trailing)
+                .is_empty()
+            {
                 self.newline(newline);
             }
         }
@@ -153,7 +170,11 @@ impl<'m, 'a> Printer<'m, 'a> {
     }
 
     fn get_last_char(&self, checks_queue: bool) -> i32 {
-        if checks_queue && self.queued != 0 { i32::from(self.queued) } else { self.last }
+        if checks_queue && self.queued != 0 {
+            i32::from(self.queued)
+        } else {
+            self.last
+        }
     }
 
     fn get_newline_count(&self) -> i32 {
@@ -165,7 +186,8 @@ impl<'m, 'a> Printer<'m, 'a> {
     }
 
     fn get_current_column(&self) -> u32 {
-        let line = strings::last_index_of_char(&self.out, b'\n').map_or(&self.out[..], |at| &self.out[at + 1..]);
+        let line = strings::last_index_of_char(&self.out, b'\n')
+            .map_or(&self.out[..], |at| &self.out[at + 1..]);
         utf16_len(line) + u32::from(self.queued != 0)
     }
 
@@ -242,7 +264,11 @@ impl<'m, 'a> Printer<'m, 'a> {
     }
 
     fn should_indent(&self) -> u32 {
-        if self.get_last_char(true) == i32::from(b'\n') { self.indent } else { 0 }
+        if self.get_last_char(true) == i32::from(b'\n') {
+            self.indent
+        } else {
+            0
+        }
     }
 
     fn maybe_indent(&mut self) {
@@ -253,7 +279,12 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
     }
 
-    fn print(&mut self, node: Node, no_line_terminator_after: bool, trailing_comments_line_offset: i32) {
+    fn print(
+        &mut self,
+        node: Node,
+        no_line_terminator_after: bool,
+        trailing_comments_line_offset: i32,
+    ) {
         self.inner_comments_state = 0;
         let parent = self.current.replace(node);
 
@@ -271,15 +302,22 @@ impl<'m, 'a> Printer<'m, 'a> {
                 kind,
                 start: start as u32,
                 end: match node {
-                    Node::Interpreter => start + self.model.span(node).map_or(0, |span| span.len() as usize),
+                    Node::Interpreter => {
+                        start + self.model.span(node).map_or(0, |span| span.len() as usize)
+                    }
                     _ => self.out.len() + usize::from(self.queued == b';'),
                 } as u32,
             });
         }
         if no_line_terminator_after && !self.no_line_terminator {
             // Babel puts the node in parentheses, which is not valid for the source of an import.
-            let trailing = self.model.list(self.model.comments_of(node, Which::Trailing));
-            self.has_failed |= trailing.iter().any(|it| !self.model.comments[*it as usize].is_block || has_newline(self.model.comment_value(*it)));
+            let trailing = self
+                .model
+                .list(self.model.comments_of(node, Which::Trailing));
+            self.has_failed |= trailing.iter().any(|it| {
+                !self.model.comments[*it as usize].is_block
+                    || has_newline(self.model.comment_value(*it))
+            });
             self.no_line_terminator = true;
             self.print_trailing_comments(node, 0);
         } else {
@@ -290,7 +328,13 @@ impl<'m, 'a> Printer<'m, 'a> {
         self.inner_comments_state = 0;
     }
 
-    fn print_join(&mut self, nodes: &[Node], is_statement: bool, has_commas: bool, trailing_comments_line_offset: i32) {
+    fn print_join(
+        &mut self,
+        nodes: &[Node],
+        is_statement: bool,
+        has_commas: bool,
+        trailing_comments_line_offset: i32,
+    ) {
         for (index, &node) in nodes.iter().enumerate() {
             if is_statement && index == 0 && self.has_content() {
                 self.newline(1);
@@ -303,9 +347,13 @@ impl<'m, 'a> Printer<'m, 'a> {
             if !is_statement {
                 continue;
             }
-            let next_line = nodes.get(index + 1).map(|next| self.model.lines(*next).map_or(0, |lines| lines.start));
+            let next_line = nodes
+                .get(index + 1)
+                .map(|next| self.model.lines(*next).map_or(0, |lines| lines.start));
             match next_line {
-                Some(next_line) if self.last_comment_line > 0 && next_line >= self.last_comment_line => {
+                Some(next_line)
+                    if self.last_comment_line > 0 && next_line >= self.last_comment_line =>
+                {
                     self.newline((next_line - self.last_comment_line).max(1));
                 }
                 _ => self.newline(1),
@@ -340,7 +388,10 @@ impl<'m, 'a> Printer<'m, 'a> {
     }
 
     fn print_inner_comments(&mut self, is_indented: bool) {
-        let Some(node) = self.current.filter(|node| !self.model.comments_of(*node, Which::Inner).is_empty()) else {
+        let Some(node) = self
+            .current
+            .filter(|node| !self.model.comments_of(*node, Which::Inner).is_empty())
+        else {
             self.inner_comments_state = 2;
             return;
         };
@@ -380,7 +431,8 @@ impl<'m, 'a> Printer<'m, 'a> {
     fn print_comment(&mut self, id: CommentId, skip_new_lines: SkipNewLines) {
         let comment = self.model.comments[id as usize];
         let no_line_terminator = self.no_line_terminator;
-        let prints_new_lines = comment.is_block && skip_new_lines != SkipNewLines::All && !no_line_terminator;
+        let prints_new_lines =
+            comment.is_block && skip_new_lines != SkipNewLines::All && !no_line_terminator;
         if prints_new_lines && self.has_content() && skip_new_lines != SkipNewLines::Leading {
             self.newline(1);
         }
@@ -391,16 +443,29 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
 
         let written = self.model.file.slice(comment.span);
-        let is_between_statements = matches!(self.current, Some(Node::Interpreter | Node::Directive(_) | Node::Import(_) | Node::Empty));
+        let is_between_statements = matches!(
+            self.current,
+            Some(Node::Interpreter | Node::Directive(_) | Node::Import(_) | Node::Empty)
+        );
         let adjusted = match comment.is_block && has_newline(written) {
             true => {
                 let mut indent_size = self.get_current_column();
                 if self.should_indent() > 0 {
                     indent_size += self.indent;
                 }
-                Some(adjust_multiline_comment(written, if comment.has_loc { comment.start_column } else { 0 }, indent_size))
+                Some(adjust_multiline_comment(
+                    written,
+                    if comment.has_loc {
+                        comment.start_column
+                    } else {
+                        0
+                    },
+                    indent_size,
+                ))
             }
-            false if !comment.is_block && no_line_terminator => Some([b"/*", self.model.comment_value(id), b"*/"].concat()),
+            false if !comment.is_block && no_line_terminator => {
+                Some([b"/*", self.model.comment_value(id), b"*/"].concat())
+            }
             false => None,
         };
         let value = adjusted.as_deref().unwrap_or(written);
@@ -452,13 +517,29 @@ impl<'m, 'a> Printer<'m, 'a> {
                 let offset = match kind {
                     0 if index > 0 => comment.start_line - last_line,
                     0 => {
-                        if self.has_content() && (!comment.is_block || comment.start_line != comment.end_line) {
+                        if self.has_content()
+                            && (!comment.is_block || comment.start_line != comment.end_line)
+                        {
                             leading_comment_newline = 1;
                         }
                         leading_comment_newline
                     }
-                    1 => comment.start_line - if index == 0 { node_lines.start } else { last_line },
-                    _ => comment.start_line - if index == 0 { node_lines.end - line_offset } else { last_line },
+                    1 => {
+                        comment.start_line
+                            - if index == 0 {
+                                node_lines.start
+                            } else {
+                                last_line
+                            }
+                    }
+                    _ => {
+                        comment.start_line
+                            - if index == 0 {
+                                node_lines.end - line_offset
+                            } else {
+                                last_line
+                            }
+                    }
                 };
                 last_line = comment.end_line;
                 if offset > 0 && !no_line_terminator {
@@ -473,7 +554,11 @@ impl<'m, 'a> Printer<'m, 'a> {
                     if count > 0 && !no_line_terminator {
                         self.newline(count);
                     }
-                    last_line = if kind == 0 { node_lines.start } else { node_lines.end };
+                    last_line = if kind == 0 {
+                        node_lines.start
+                    } else {
+                        node_lines.end
+                    };
                 }
                 continue;
             }
@@ -522,10 +607,14 @@ impl<'m, 'a> Printer<'m, 'a> {
                 self.print(Node::DirectiveLiteral(index), false, 0);
                 self.semicolon(false);
             }
-            Node::DirectiveLiteral(index) => self.token(model.file.slice(model.directives[index as usize].literal)),
+            Node::DirectiveLiteral(index) => {
+                self.token(model.file.slice(model.directives[index as usize].literal))
+            }
             Node::Import(index) => self.import_declaration(index),
             Node::Specifier(index) => self.import_specifier(index),
-            Node::Imported(index) => self.module_export_name(model.specifiers[index as usize].imported),
+            Node::Imported(index) => {
+                self.module_export_name(model.specifiers[index as usize].imported)
+            }
             Node::Local(index) => self.module_export_name(model.specifiers[index as usize].local),
             Node::Source(_) | Node::AttributeKey(_) | Node::AttributeValue(_) => {
                 let text = model.file.slice(model.span(node).unwrap_or_default());
@@ -584,7 +673,9 @@ impl<'m, 'a> Printer<'m, 'a> {
                 }
                 self.print(Node::Imported(index), false, 0);
                 // `imported.name` of a string is undefined.
-                if specifier.imported.is_string() || specifier.local.bytes() != specifier.imported.bytes() {
+                if specifier.imported.is_string()
+                    || specifier.local.bytes() != specifier.imported.bytes()
+                {
                     self.space();
                     self.word(b"as");
                     self.space();
@@ -625,7 +716,11 @@ impl<'m, 'a> Printer<'m, 'a> {
                     }
                     let is_string = specifier.imported.is_string();
                     if is_string || specifier.local.bytes() != specifier.imported.bytes() {
-                        out.extend_from_slice(if is_string { model.file.slice(specifier.imported.span()) } else { specifier.imported.bytes() });
+                        out.extend_from_slice(if is_string {
+                            model.file.slice(specifier.imported.span())
+                        } else {
+                            specifier.imported.bytes()
+                        });
                         out.extend_from_slice(b" as ");
                     }
                 }
@@ -641,14 +736,24 @@ impl<'m, 'a> Printer<'m, 'a> {
             out.extend_from_slice(b" from ");
         }
         out.extend_from_slice(model.file.slice(model.source_span(&declaration)));
-        if let Some(attributes) = declaration.import.attributes().filter(|_| declaration.has_attributes) {
+        if let Some(attributes) = declaration
+            .import
+            .attributes()
+            .filter(|_| declaration.has_attributes)
+        {
             let is_legacy = self.attributes_keyword.ends_with(b"-legacy");
             out.push(b' ');
-            out.extend_from_slice(self.attributes_keyword.strip_suffix(b"-legacy").unwrap_or(self.attributes_keyword));
+            out.extend_from_slice(
+                self.attributes_keyword
+                    .strip_suffix(b"-legacy")
+                    .unwrap_or(self.attributes_keyword),
+            );
             out.extend_from_slice(if is_legacy { b" " } else { b" { " });
             let mut is_first = true;
             for attribute in attributes.entries().iter() {
-                let (Some(key), Some(value)) = (attribute_key_span(model.file, attribute), attribute.value()) else {
+                let (Some(key), Some(value)) =
+                    (attribute_key_span(model.file, attribute), attribute.value())
+                else {
                     continue;
                 };
                 if !std::mem::replace(&mut is_first, false) {
@@ -686,7 +791,10 @@ impl<'m, 'a> Printer<'m, 'a> {
 
         let specifiers = model.specifiers_of(&declaration);
         let has_specifiers = !specifiers.is_empty();
-        let special = specifiers.iter().take_while(|it| model.specifiers[**it as usize].kind != SpecifierKind::Named).count();
+        let special = specifiers
+            .iter()
+            .take_while(|it| model.specifiers[**it as usize].kind != SpecifierKind::Named)
+            .count();
         for (at, &specifier) in specifiers[..special].iter().enumerate() {
             self.print(Node::Specifier(specifier), false, 0);
             if at + 1 < specifiers.len() {
@@ -697,7 +805,10 @@ impl<'m, 'a> Printer<'m, 'a> {
         if special < specifiers.len() {
             self.token_char(b'{');
             self.space();
-            let nodes: Vec<Node> = specifiers[special..].iter().map(|it| Node::Specifier(*it)).collect();
+            let nodes: Vec<Node> = specifiers[special..]
+                .iter()
+                .map(|it| Node::Specifier(*it))
+                .collect();
             self.print_list(&nodes);
             self.space();
             self.token_char(b'}');
@@ -712,13 +823,20 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
 
         let source = Node::Source(model.source_span(&declaration).start);
-        let attributes = declaration.import.attributes().filter(|_| declaration.has_attributes);
+        let attributes = declaration
+            .import
+            .attributes()
+            .filter(|_| declaration.has_attributes);
         match attributes {
             Some(attributes) => {
                 self.print(source, true, 0);
                 self.space();
                 // `_printAttributes`
-                self.word(self.attributes_keyword.strip_suffix(b"-legacy").unwrap_or(self.attributes_keyword));
+                self.word(
+                    self.attributes_keyword
+                        .strip_suffix(b"-legacy")
+                        .unwrap_or(self.attributes_keyword),
+                );
                 self.space();
                 let nodes: Vec<Node> = (attributes.entries().iter())
                     .filter(|it| attribute_key_span(model.file, *it).is_some())
@@ -742,7 +860,9 @@ impl<'m, 'a> Printer<'m, 'a> {
 
 /// `/[\n\r  ]/.test(text)`
 fn has_newline(text: &[u8]) -> bool {
-    strings::index_of_any(text, b"\n\r").is_some() || strings::contains(text, b"\xE2\x80\xA8") || strings::contains(text, b"\xE2\x80\xA9")
+    strings::index_of_any(text, b"\n\r").is_some()
+        || strings::contains(text, b"\xE2\x80\xA8")
+        || strings::contains(text, b"\xE2\x80\xA9")
 }
 
 /// How many bytes at the start of `text` are a character that `\s` matches.

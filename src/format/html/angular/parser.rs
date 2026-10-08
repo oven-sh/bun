@@ -89,7 +89,8 @@ const MULTIPLICATIVE: u8 = 7;
 fn is_reserved_word(name: &[u8]) -> bool {
     matches!(
         name,
-        b"as" | b"do"
+        b"as"
+            | b"do"
             | b"if"
             | b"in"
             | b"for"
@@ -143,7 +144,10 @@ fn is_reserved_word(name: &[u8]) -> bool {
 
 /// `Binary.isAssignmentOperation`
 fn is_assignment_operation(operator: &[u8]) -> bool {
-    matches!(operator, b"=" | b"+=" | b"-=" | b"*=" | b"/=" | b"%=" | b"**=" | b"&&=" | b"||=" | b"??=")
+    matches!(
+        operator,
+        b"=" | b"+=" | b"-=" | b"*=" | b"/=" | b"%=" | b"**=" | b"&&=" | b"||=" | b"??="
+    )
 }
 
 /// `Parser._commentStart`: where the comment starts that goes on to the end of `input`.
@@ -190,9 +194,18 @@ const END: Token = Token {
 
 impl<'i> Parser<'i> {
     /// `input`: all of the text. `len`: how much of it is not a comment.
-    pub(crate) fn new(input: &'i [u8], len: usize, is_action: bool, stack_check: bun_core::StackCheck) -> Self {
+    pub(crate) fn new(
+        input: &'i [u8],
+        len: usize,
+        is_action: bool,
+        stack_check: bun_core::StackCheck,
+    ) -> Self {
         let (mut tokens, mut odd_blanks) = (Vec::new(), Vec::new());
-        tokenize(input.get(..len).unwrap_or(input), &mut tokens, &mut odd_blanks);
+        tokenize(
+            input.get(..len).unwrap_or(input),
+            &mut tokens,
+            &mut odd_blanks,
+        );
         Parser {
             input,
             tokens,
@@ -219,7 +232,9 @@ impl<'i> Parser<'i> {
     }
 
     pub(super) fn text_of(&self, token: Token) -> &'i [u8] {
-        self.input.get(token.start as usize..token.end as usize).unwrap_or_default()
+        self.input
+            .get(token.start as usize..token.end as usize)
+            .unwrap_or_default()
     }
 
     /// `inputIndex`
@@ -232,9 +247,16 @@ impl<'i> Parser<'i> {
 
     /// `currentEndIndex`
     fn current_end_index(&self) -> u32 {
-        match self.index.checked_sub(1).and_then(|previous| self.tokens.get(previous)) {
+        match self
+            .index
+            .checked_sub(1)
+            .and_then(|previous| self.tokens.get(previous))
+        {
             Some(previous) => previous.end,
-            None => self.tokens.first().map_or(self.input.len() as u32, |first| first.start),
+            None => self
+                .tokens
+                .first()
+                .map_or(self.input.len() as u32, |first| first.start),
         }
     }
 
@@ -330,7 +352,10 @@ impl<'i> Parser<'i> {
     fn hide_what_is_in_string(&mut self, string: Token) {
         let text = self.text_of(string);
         let mut at = 0;
-        while let Some(found) = text.get(at..).and_then(|rest| strings::index_of_any(rest, b"\\\n")) {
+        while let Some(found) = text
+            .get(at..)
+            .and_then(|rest| strings::index_of_any(rest, b"\\\n"))
+        {
             at += found;
             self.edit(string.start + at as u32, Change::Hide(b'_'));
             at += 1;
@@ -350,7 +375,10 @@ impl<'i> Parser<'i> {
         let (mantissa, exponent) = text.split_at(exponent.unwrap_or(text.len()));
         let is_number = strings::count_char(mantissa, b'.') <= 1
             && !matches!(mantissa, [b'0', b'0'..=b'9' | b'_', ..])
-            && !exponent.iter().skip(1).any(|byte| matches!(byte, b'e' | b'E' | b'.'));
+            && !exponent
+                .iter()
+                .skip(1)
+                .any(|byte| matches!(byte, b'e' | b'E' | b'.'));
         if !is_number {
             for at in number.start..number.end {
                 self.edit(at, Change::Hide(b'1'));
@@ -465,7 +493,10 @@ impl<'i> Parser<'i> {
         if self.is_action {
             return Err(Failed);
         }
-        if matches!(result.shape, Shape::Or | Shape::And | Shape::Nullish | Shape::Arrow | Shape::Assignment) {
+        if matches!(
+            result.shape,
+            Shape::Or | Shape::And | Shape::Nullish | Shape::Arrow | Shape::Assignment
+        ) {
             self.wrap(result);
         }
         while self.consume_optional_operator(b"|") {
@@ -477,7 +508,10 @@ impl<'i> Parser<'i> {
             self.advance();
             let mut has_arguments = false;
             while self.is_character(b':') {
-                self.edit(self.next().start, Change::Put(if has_arguments { b',' } else { b'(' }));
+                self.edit(
+                    self.next().start,
+                    Change::Put(if has_arguments { b',' } else { b'(' }),
+                );
                 self.advance();
                 has_arguments = true;
                 self.parse_conditional()?;
@@ -514,7 +548,8 @@ impl<'i> Parser<'i> {
             (Kind::Operator, b"&&") => AND,
             (Kind::Operator, b"??") => NULLISH,
             (Kind::Operator, b"==" | b"===" | b"!=" | b"!==") => EQUALITY,
-            (Kind::Operator, b"<" | b">" | b"<=" | b">=") | (Kind::Keyword, b"in" | b"instanceof") => RELATIONAL,
+            (Kind::Operator, b"<" | b">" | b"<=" | b">=")
+            | (Kind::Keyword, b"in" | b"instanceof") => RELATIONAL,
             (Kind::Operator, b"+" | b"-") => ADDITIVE,
             (Kind::Operator, b"*" | b"%" | b"/") => MULTIPLICATIVE,
             _ => return None,
@@ -547,7 +582,10 @@ impl<'i> Parser<'i> {
                 }
                 // `a--b`, `a//b/`
                 ADDITIVE if right.shape == Shape::Sign => self.wrap(right),
-                MULTIPLICATIVE if right.start == operator.end && self.input.get(right.start as usize) == Some(&b'/') => {
+                MULTIPLICATIVE
+                    if right.start == operator.end
+                        && self.input.get(right.start as usize) == Some(&b'/') =>
+                {
                     self.wrap(right);
                 }
                 _ => {}
@@ -646,9 +684,17 @@ impl<'i> Parser<'i> {
                 self.advance();
                 let inner = self.parse_pipe()?;
                 self.expect_character(b')')?;
-                self.last_parentheses = (start..self.current_end_index(), self.without_parentheses(inner));
+                self.last_parentheses = (
+                    start..self.current_end_index(),
+                    self.without_parentheses(inner),
+                );
             }
-            Kind::Keyword if matches!(self.text_of(next), b"null" | b"undefined" | b"true" | b"false" | b"this") => {
+            Kind::Keyword
+                if matches!(
+                    self.text_of(next),
+                    b"null" | b"undefined" | b"true" | b"false" | b"this"
+                ) =>
+            {
                 self.advance();
             }
             Kind::Character(b'[') => self.parse_literal_array()?,
@@ -656,7 +702,12 @@ impl<'i> Parser<'i> {
             Kind::Identifier => {
                 self.hide_reserved_word(next);
                 // To TypeScript, `async(...a)` and `async() :` can only be the start of an arrow function.
-                if self.text_of(next) == b"async" && self.tokens.get(self.index + 1).is_some_and(|it| it.kind == Kind::Character(b'(')) {
+                if self.text_of(next) == b"async"
+                    && self
+                        .tokens
+                        .get(self.index + 1)
+                        .is_some_and(|it| it.kind == Kind::Character(b'('))
+                {
                     self.edit(next.start, Change::Hide(b'_'));
                 }
                 return self.parse_access_member(start, false);
@@ -710,7 +761,8 @@ impl<'i> Parser<'i> {
                         self.expect_character(b':')?;
                         self.parse_pipe()?;
                     }
-                    Kind::Identifier | Kind::Keyword => match self.consume_optional_character(b':') {
+                    Kind::Identifier | Kind::Keyword => match self.consume_optional_character(b':')
+                    {
                         true => {
                             self.parse_pipe()?;
                         }
@@ -790,7 +842,8 @@ impl<'i> Parser<'i> {
                 }
                 // The end of what is interpolated.
                 Kind::Character(b'}')
-                    if matches!(self.next().kind, Kind::TemplatePart | Kind::TemplateEnd) && self.next().start == token.end => {}
+                    if matches!(self.next().kind, Kind::TemplatePart | Kind::TemplateEnd)
+                        && self.next().start == token.end => {}
                 // Angular passes over anything else.
                 _ => {
                     for at in token.start..token.end {
@@ -811,7 +864,9 @@ impl<'i> Parser<'i> {
         self.advance();
         let mut seen = [false; 128];
         for &flag in self.text_of(flags) {
-            if !matches!(flag, b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y') || seen[usize::from(flag)] {
+            if !matches!(flag, b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y')
+                || seen[usize::from(flag)]
+            {
                 return Err(Failed);
             }
             seen[usize::from(flag)] = true;
@@ -822,9 +877,14 @@ impl<'i> Parser<'i> {
     fn is_arrow_function(&self) -> bool {
         let rest = self.tokens.get(self.index..).unwrap_or_default();
         match rest {
-            [first, second, ..] if first.kind == Kind::Identifier => self.is_operator_token(*second, b"=>"),
+            [first, second, ..] if first.kind == Kind::Identifier => {
+                self.is_operator_token(*second, b"=>")
+            }
             [first, rest @ ..] if first.kind == Kind::Character(b'(') => {
-                let parameters = rest.iter().take_while(|it| matches!(it.kind, Kind::Identifier | Kind::Character(b','))).count();
+                let parameters = rest
+                    .iter()
+                    .take_while(|it| matches!(it.kind, Kind::Identifier | Kind::Character(b',')))
+                    .count();
                 matches!(rest.get(parameters..), Some([close, arrow, ..])
                     if close.kind == Kind::Character(b')') && self.is_operator_token(*arrow, b"=>"))
             }

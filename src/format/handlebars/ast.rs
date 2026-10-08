@@ -225,11 +225,15 @@ impl Tree {
     }
 
     pub(crate) fn list(&self, range: Range) -> &[NodeId] {
-        self.lists.get(range.start as usize..(range.start + range.len) as usize).unwrap_or_default()
+        self.lists
+            .get(range.start as usize..(range.start + range.len) as usize)
+            .unwrap_or_default()
     }
 
     pub(crate) fn names(&self, range: Range) -> &[Text] {
-        self.names.get(range.start as usize..(range.start + range.len) as usize).unwrap_or_default()
+        self.names
+            .get(range.start as usize..(range.start + range.len) as usize)
+            .unwrap_or_default()
     }
 
     pub(crate) fn add_list(&mut self, nodes: &[NodeId]) -> Range {
@@ -252,7 +256,11 @@ impl Tree {
 
     /// `source`: the template.
     pub(crate) fn text<'a>(&'a self, source: &'a [u8], text: Text) -> &'a [u8] {
-        let bytes = if text.is_owned() { &self.owned[..] } else { source };
+        let bytes = if text.is_owned() {
+            &self.owned[..]
+        } else {
+            source
+        };
         bytes.get(text.range()).unwrap_or_default()
     }
 
@@ -268,7 +276,9 @@ impl Tree {
     pub(crate) fn write_text(&mut self, source: &[u8], text: Text) {
         match text.is_owned() {
             true => self.owned.extend_from_within(text.range()),
-            false => self.owned.extend_from_slice(source.get(text.range()).unwrap_or_default()),
+            false => self
+                .owned
+                .extend_from_slice(source.get(text.range()).unwrap_or_default()),
         }
     }
 
@@ -291,7 +301,13 @@ impl Tree {
     }
 
     /// `text += source[start..end]`. Nothing is copied as long as `text` is one piece of the template.
-    pub(crate) fn append_source(&mut self, source: &[u8], text: &mut Text, start: usize, end: usize) {
+    pub(crate) fn append_source(
+        &mut self,
+        source: &[u8],
+        text: &mut Text,
+        start: usize,
+        end: usize,
+    ) {
         if text.is_empty() {
             *text = Text::source(start, end);
         } else if !text.is_owned() && text.range().end == start {

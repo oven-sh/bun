@@ -131,7 +131,8 @@ fn type_declared_in_file<'a>(
     let absolute_path =
         join_spill::<Posix>(&mut spill, &[current_directory, relative_path]).to_vec();
     let absolute_path = absolute_path.strip_suffix(b"/").unwrap_or(&absolute_path);
-    declaration_files.any(|declaration| is_same_file_name(program, declaration.file_name(), absolute_path))
+    declaration_files
+        .any(|declaration| is_same_file_name(program, declaration.file_name(), absolute_path))
 }
 
 /// `typeDeclaredInLib(declarationFiles, program)`. What has no declaration is intrinsic (`string`,

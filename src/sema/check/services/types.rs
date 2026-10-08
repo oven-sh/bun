@@ -44,7 +44,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 if self.c.is_instantiating(mapper) {
                     flags |= ObjectFlags::INSTANTIATED;
                 }
-                if let Origin::ObjectLiteral(_, _, true, ..) | Origin::WidenedLiteral(_, _, true, ..) = origin {
+                if let Origin::ObjectLiteral(_, _, true, ..)
+                | Origin::WidenedLiteral(_, _, true, ..) = origin
+                {
                     flags |= ObjectFlags::JS_LITERAL;
                 }
             }
@@ -72,7 +74,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     flags |= ObjectFlags::INSTANTIATED;
                 }
             }
-            TypeData::ReverseMapped { .. } => flags |= ObjectFlags::ANONYMOUS | ObjectFlags::REVERSE_MAPPED,
+            TypeData::ReverseMapped { .. } => {
+                flags |= ObjectFlags::ANONYMOUS | ObjectFlags::REVERSE_MAPPED
+            }
             TypeData::EvolvingArray(_) => flags |= ObjectFlags::EVOLVING_ARRAY,
             _ => return flags,
         }
@@ -110,7 +114,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         // `getUnresolvedSymbolForEntityName`
         if let TypeData::UnresolvedName { name, .. } = *self.c.data(ty) {
             let path = self.c.atoms().bytes(name);
-            let last = bun_core::strings::last_index_of_char(path, b'.').map_or(path, |dot| &path[dot + 1..]);
+            let last = bun_core::strings::last_index_of_char(path, b'.')
+                .map_or(path, |dot| &path[dot + 1..]);
             let last = self.c.atoms().intern(last);
             return Some(self.named_symbol(super::symbols::Key::Undeclared(name), last));
         }
@@ -155,7 +160,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn intrinsic_name(&mut self, ty: TypeId) -> Option<&'static str> {
         Some(match *self.c.data(ty) {
             TypeData::Intrinsic(intrinsic) => match intrinsic {
-                Intrinsic::Any | Intrinsic::Auto | Intrinsic::Wildcard | Intrinsic::NonInferrableAny => "any",
+                Intrinsic::Any
+                | Intrinsic::Auto
+                | Intrinsic::Wildcard
+                | Intrinsic::NonInferrableAny => "any",
                 Intrinsic::Error | Intrinsic::Unresolved => "error",
                 Intrinsic::IntrinsicMarker => "intrinsic",
                 Intrinsic::Unknown => "unknown",
@@ -165,7 +173,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 | Intrinsic::ImplicitNever
                 | Intrinsic::UniqueLiteral => "never",
                 Intrinsic::Void => "void",
-                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening => "undefined",
+                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening => {
+                    "undefined"
+                }
                 Intrinsic::Null | Intrinsic::NullWidening => "null",
                 Intrinsic::String => "string",
                 Intrinsic::Number => "number",
@@ -182,17 +192,28 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn tuple_info(&mut self, ty: TypeId) -> Option<TupleInfo<'c>> {
-        let TypeData::Tuple { flags, readonly, .. } = self.c.data(ty) else {
+        let TypeData::Tuple {
+            flags, readonly, ..
+        } = self.c.data(ty)
+        else {
             return None;
         };
-        let element_flags: SmallVec<[ElementFlags; 8]> =
-            flags.iter().map(|it| ElementFlags::from_bits_truncate(it.bits() as u8 & 15)).collect();
+        let element_flags: SmallVec<[ElementFlags; 8]> = flags
+            .iter()
+            .map(|it| ElementFlags::from_bits_truncate(it.bits() as u8 & 15))
+            .collect();
         let is_variable = |it: &ElementFlags| it.intersects(ElementFlags::VARIABLE);
-        let is_required = |it: &&ElementFlags| it.intersects(ElementFlags::REQUIRED | ElementFlags::VARIADIC);
+        let is_required =
+            |it: &&ElementFlags| it.intersects(ElementFlags::REQUIRED | ElementFlags::VARIADIC);
         Some(TupleInfo {
             min_length: element_flags.iter().filter(is_required).count() as u32,
-            fixed_length: element_flags.iter().position(is_variable).unwrap_or(element_flags.len()) as u32,
-            combined_flags: element_flags.iter().fold(ElementFlags::empty(), |all, &it| all | it),
+            fixed_length: element_flags
+                .iter()
+                .position(is_variable)
+                .unwrap_or(element_flags.len()) as u32,
+            combined_flags: element_flags
+                .iter()
+                .fold(ElementFlags::empty(), |all, &it| all | it),
             readonly: *readonly,
             element_flags: self.list(&element_flags),
         })
@@ -214,7 +235,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     root_false_type: self.c.type_from_node(file, no),
                 }
             }
-            TypeData::IndexedAccess { obj, index, .. } => Structure::IndexedAccess { object: obj, index },
+            TypeData::IndexedAccess { obj, index, .. } => {
+                Structure::IndexedAccess { object: obj, index }
+            }
             TypeData::Keyof(of) => Structure::Index { ty: of },
             TypeData::Anon {
                 origin: Origin::Mapped(file, node),
@@ -233,16 +256,24 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     optional: mapped.optional,
                 }
             }
-            TypeData::Template { ref texts, ref types } => {
+            TypeData::Template {
+                ref texts,
+                ref types,
+            } => {
                 let atoms = self.c.atoms();
-                let texts: SmallVec<[&'c [u8]; 4]> = texts.iter().map(|&text| -> &'c [u8] { atoms.bytes(text) }).collect();
+                let texts: SmallVec<[&'c [u8]; 4]> = texts
+                    .iter()
+                    .map(|&text| -> &'c [u8] { atoms.bytes(text) })
+                    .collect();
                 Structure::TemplateLiteral {
                     texts: self.list(&texts),
                     types: self.list(types),
                 }
             }
             TypeData::StringMapping { ty: of, .. } => Structure::StringMapping { ty: of },
-            TypeData::Substitution { base, constraint } => Structure::Substitution { base, constraint },
+            TypeData::Substitution { base, constraint } => {
+                Structure::Substitution { base, constraint }
+            }
             _ => Structure::Other,
         }
     }
@@ -283,7 +314,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 _ => return None,
             },
             TypeOp::ThisType => match *c.data(ty) {
-                TypeData::Ref { target, .. } if c.has_this_type(target) => c.intern(TypeData::ThisParam(target)),
+                TypeData::Ref { target, .. } if c.has_this_type(target) => {
+                    c.intern(TypeData::ThisParam(target))
+                }
                 _ => return None,
             },
             TypeOp::Iterated => return c.iterated_type_if_any(ty, false),
@@ -302,7 +335,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             TypeTest::ArrayLike => c.is_array_like(ty),
             TypeTest::Error => c.is_error_type(ty),
             TypeTest::Unresolved => {
-                ty == TypeId::UNRESOLVED || c.types().object_flags(ty).contains(crate::types::ObjectFlags::HAS_UNRESOLVED)
+                ty == TypeId::UNRESOLVED
+                    || c.types()
+                        .object_flags(ty)
+                        .contains(crate::types::ObjectFlags::HAS_UNRESOLVED)
             }
             TypeTest::ThisTypeParameter => matches!(c.data(ty), TypeData::ThisParam(_)),
             TypeTest::FreshLiteral => c.is_fresh_literal(ty),
@@ -312,7 +348,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 _ => false,
             },
             TypeTest::NonDeferredTypeReference => {
-                matches!(c.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. }) && c.types().deferred(ty).is_none()
+                matches!(c.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. })
+                    && c.types().deferred(ty).is_none()
             }
             TypeTest::EmptyAnonymousObject => c.is_empty_anonymous_object_type(ty),
             TypeTest::Generic => c.is_generic_object_type(ty) || c.is_generic_index_type(ty),
@@ -327,7 +364,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             (TypeFacts::IS_UNDEFINED, facts::IS_UNDEFINED),
             (TypeFacts::IS_NULL, facts::IS_NULL),
         ];
-        let mask = FACTS.iter().filter(|it| asked.contains(it.0)).fold(0, |all, it| all | it.1);
+        let mask = FACTS
+            .iter()
+            .filter(|it| asked.contains(it.0))
+            .fold(0, |all, it| all | it.1);
         self.c.has_type_facts(ty, mask)
     }
 
@@ -340,8 +380,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Relation::Comparable => self.c.is_comparable(source, target),
             Relation::SameTupleTarget => match (self.c.data(source), self.c.data(target)) {
                 (
-                    TypeData::Tuple { flags: a, readonly: a_is_readonly, .. },
-                    TypeData::Tuple { flags: b, readonly: b_is_readonly, .. },
+                    TypeData::Tuple {
+                        flags: a,
+                        readonly: a_is_readonly,
+                        ..
+                    },
+                    TypeData::Tuple {
+                        flags: b,
+                        readonly: b_is_readonly,
+                        ..
+                    },
                 ) => a_is_readonly == b_is_readonly && a[..] == b[..],
                 _ => false,
             },
@@ -407,7 +455,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.c.intersection(types)
     }
 
-    pub fn indexed_access_type(&mut self, object: TypeId, index: TypeId, in_expression: bool) -> Option<TypeId> {
+    pub fn indexed_access_type(
+        &mut self,
+        object: TypeId,
+        index: TypeId,
+        in_expression: bool,
+    ) -> Option<TypeId> {
         let flags = match in_expression {
             true => AccessFlags::EXPRESSION_POSITION,
             false => AccessFlags::empty(),
@@ -441,20 +494,52 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.c.compare_types(a, b))
     }
 
-    pub fn type_to_string(&mut self, ty: TypeId, enclosing: Option<NodeRef>, flags: TypeFormatFlags) -> Vec<u8> {
+    pub fn type_to_string(
+        &mut self,
+        ty: TypeId,
+        enclosing: Option<NodeRef>,
+        flags: TypeFormatFlags,
+    ) -> Vec<u8> {
         const FLAGS: [(TypeFormatFlags, u32); 10] = [
             (TypeFormatFlags::NO_TRUNCATION, print::NO_TRUNCATION),
-            (TypeFormatFlags::WRITE_ARRAY_AS_GENERIC_TYPE, print::WRITE_ARRAY_AS_GENERIC_TYPE),
-            (TypeFormatFlags::USE_STRUCTURAL_FALLBACK, print::USE_STRUCTURAL_FALLBACK),
-            (TypeFormatFlags::USE_FULLY_QUALIFIED_TYPE, print::USE_FULLY_QUALIFIED_TYPE),
-            (TypeFormatFlags::MULTILINE_OBJECT_LITERALS, print::MULTILINE_OBJECT_LITERALS),
-            (TypeFormatFlags::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, print::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL),
-            (TypeFormatFlags::USE_TYPE_OF_FUNCTION, print::USE_TYPE_OF_FUNCTION),
-            (TypeFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE, print::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE),
+            (
+                TypeFormatFlags::WRITE_ARRAY_AS_GENERIC_TYPE,
+                print::WRITE_ARRAY_AS_GENERIC_TYPE,
+            ),
+            (
+                TypeFormatFlags::USE_STRUCTURAL_FALLBACK,
+                print::USE_STRUCTURAL_FALLBACK,
+            ),
+            (
+                TypeFormatFlags::USE_FULLY_QUALIFIED_TYPE,
+                print::USE_FULLY_QUALIFIED_TYPE,
+            ),
+            (
+                TypeFormatFlags::MULTILINE_OBJECT_LITERALS,
+                print::MULTILINE_OBJECT_LITERALS,
+            ),
+            (
+                TypeFormatFlags::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL,
+                print::WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL,
+            ),
+            (
+                TypeFormatFlags::USE_TYPE_OF_FUNCTION,
+                print::USE_TYPE_OF_FUNCTION,
+            ),
+            (
+                TypeFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE,
+                print::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE,
+            ),
             (TypeFormatFlags::NO_TYPE_REDUCTION, print::NO_TYPE_REDUCTION),
-            (TypeFormatFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE, print::ALLOW_UNIQUE_ES_SYMBOL_TYPE),
+            (
+                TypeFormatFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE,
+                print::ALLOW_UNIQUE_ES_SYMBOL_TYPE,
+            ),
         ];
-        let flags = FLAGS.iter().filter(|it| flags.contains(it.0)).fold(0, |all, it| all | it.1);
+        let flags = FLAGS
+            .iter()
+            .filter(|it| flags.contains(it.0))
+            .fold(0, |all, it| all | it.1);
         let enclosing = enclosing.and_then(|node| {
             let scope = self.scope_at(node)?;
             let at = super::super::enclosing_declaration::Enclosing::at_scope(node.file, scope);

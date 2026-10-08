@@ -103,7 +103,12 @@ pub(crate) struct BaseTypeAnswers<'a> {
 
 impl<'a> BaseTypeAnswers<'a> {
     /// The answer for `ty` at `depth`. `ask` finds it out if it is not known.
-    pub(crate) fn get_or_ask(&mut self, ty: Type<'a>, depth: u32, ask: impl FnOnce(&mut Self) -> bool) -> bool {
+    pub(crate) fn get_or_ask(
+        &mut self,
+        ty: Type<'a>,
+        depth: u32,
+        ask: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
         // Closer to the limit of the depth, less is found.
         match self.known.get(&ty) {
             Some(&(true, at)) if depth <= at => return true,
@@ -112,7 +117,10 @@ impl<'a> BaseTypeAnswers<'a> {
         }
         // It extends itself. What it extends besides is still to come where it was begun with.
         if let Some(reopened) = self.open.iter().position(|it| *it == ty) {
-            self.first_reopened = Some(self.first_reopened.map_or(reopened, |first| first.min(reopened)));
+            self.first_reopened = Some(
+                self.first_reopened
+                    .map_or(reopened, |first| first.min(reopened)),
+            );
             return false;
         }
         let reopened_before = self.first_reopened.take();
@@ -144,10 +152,16 @@ fn recurse<'a>(
     }
     let flags = ty.flags();
     if flags.contains(TypeFlags::INTERSECTION) {
-        return ty.types().iter().any(|t| recurse(t, predicate, depth + 1, known));
+        return ty
+            .types()
+            .iter()
+            .any(|t| recurse(t, predicate, depth + 1, known));
     }
     if flags.contains(TypeFlags::UNION) {
-        return ty.types().iter().all(|t| recurse(t, predicate, depth + 1, known));
+        return ty
+            .types()
+            .iter()
+            .all(|t| recurse(t, predicate, depth + 1, known));
     }
     if flags.contains(TypeFlags::TYPE_PARAMETER) {
         // `type.getConstraint()`

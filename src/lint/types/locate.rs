@@ -278,4 +278,3 @@ impl<'a> Func<'a> {
         self.ts_node().get_signature_from_declaration()
     }
 }
-

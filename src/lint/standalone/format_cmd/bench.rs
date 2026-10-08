@@ -2,10 +2,10 @@
 
 use super::{Args, collect_files};
 use bun_format::Scratch;
+use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, InternerPerThread};
-use bun_js_parser::sema::Summary;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
@@ -21,10 +21,20 @@ fn with_file_as<R>(
     (atoms, session): (&dyn Intern, &Session),
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> R {
-    let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
+    let is_typescript = [".ts", ".tsx", ".mts", ".cts"]
+        .iter()
+        .any(|it| path.ends_with(it));
     let language = LanguageOptions {
-        parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
-        source_type: if is_script { SourceType::Script } else { SourceType::Module },
+        parser: if is_typescript {
+            Parser::TypeScript
+        } else {
+            Parser::Espree
+        },
+        source_type: if is_script {
+            SourceType::Script
+        } else {
+            SourceType::Module
+        },
         ..LanguageOptions::default()
     };
     let arena = session.arena();
@@ -43,7 +53,10 @@ fn with_file_as<R>(
             if let Summary::InPlace(hir) = &mut summary
                 && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
             {
-                return then(&File::new(path.as_bytes(), &**hir, bound, atoms, &language, None).with_text(code));
+                return then(
+                    &File::new(path.as_bytes(), &**hir, bound, atoms, &language, None)
+                        .with_text(code),
+                );
             }
             let mut hir = summary.into_arena((arena, session));
             hir.text = std::borrow::Cow::Borrowed(code);
@@ -53,7 +66,14 @@ fn with_file_as<R>(
                 before_es2017: false,
             };
             let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
-            then(&File::new(path.as_bytes(), &hir, bound, atoms, &language, None))
+            then(&File::new(
+                path.as_bytes(),
+                &hir,
+                bound,
+                atoms,
+                &language,
+                None,
+            ))
         },
     )
 }
@@ -71,21 +91,37 @@ pub(super) fn bench(args: &Args) {
     }
     let is_check = args.flag("check").is_some();
     let is_only_parsing = args.flag("only") == Some("parse");
-    let iterations: usize = (args.flag("iterations").and_then(|it| it.parse().ok())).unwrap_or(if is_check { 1 } else { 10 });
-    let threads: usize = args.flag("threads").and_then(|it| it.parse().ok()).unwrap_or(1);
+    let iterations: usize = (args.flag("iterations").and_then(|it| it.parse().ok()))
+        .unwrap_or(if is_check { 1 } else { 10 });
+    let threads: usize = args
+        .flag("threads")
+        .and_then(|it| it.parse().ok())
+        .unwrap_or(1);
     let is_script = |path: &std::path::PathBuf| {
         let extension = path.extension().and_then(|it| it.to_str());
-        matches!(extension, Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts"))
+        matches!(
+            extension,
+            Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts")
+        )
     };
     let is_json = args.flag("json").is_some();
     let json_parser = |path: &str| bun_format::json::parser_for_path(path.as_bytes());
     let paths: Vec<String> = (collect_files(&args.positional).iter())
-        .filter(|it| if is_json { json_parser(&it.to_string_lossy()).is_some() } else { is_script(it) })
+        .filter(|it| {
+            if is_json {
+                json_parser(&it.to_string_lossy()).is_some()
+            } else {
+                is_script(it)
+            }
+        })
         .map(|it| it.to_string_lossy().into_owned())
         .collect();
     let in_memory: Vec<Vec<u8>> = match is_check {
         true => Vec::new(),
-        false => paths.iter().map(|path| std::fs::read(path).unwrap_or_default()).collect(),
+        false => paths
+            .iter()
+            .map(|path| std::fs::read(path).unwrap_or_default())
+            .collect(),
     };
     let (parsing, formatting, bytes) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
     let (changed, failed) = (AtomicU64::new(0), AtomicU64::new(0));
@@ -97,7 +133,11 @@ pub(super) fn bench(args: &Args) {
     for _ in 0..iterations {
         bun_sema_standalone::for_each_parallel(threads, paths.len(), |i| {
             let start = std::time::Instant::now();
-            let read = if is_check { std::fs::read(&paths[i]).unwrap_or_default() } else { Vec::new() };
+            let read = if is_check {
+                std::fs::read(&paths[i]).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let code = if is_check { &read } else { &in_memory[i] };
             bytes.fetch_add(code.len() as u64, Relaxed);
             let note = |result: Result<(), bun_format::FormatError>, out: &Vec<u8>| {
@@ -114,7 +154,9 @@ pub(super) fn bench(args: &Args) {
             if let (true, Some(parser)) = (is_json, json_parser(&paths[i])) {
                 BUFFERS.with_borrow_mut(|(_, out)| {
                     out.clear();
-                    let result = JSON.with_borrow_mut(|scratch| bun_format::json::format(code, parser, &args.options, scratch, out));
+                    let result = JSON.with_borrow_mut(|scratch| {
+                        bun_format::json::format(code, parser, &args.options, scratch, out)
+                    });
                     note(result, out);
                 });
                 formatting.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
@@ -122,22 +164,28 @@ pub(super) fn bench(args: &Args) {
             }
             // As `bun format` does: as a module, and if that is a syntax error, as a script.
             for is_script in [false, true] {
-                let is_done = with_file_as(is_script, &paths[i], code, (atoms.of_this_thread(), &memory), |file| {
-                    if file.has_parse_errors() && !is_script {
-                        return false;
-                    }
-                    parsing.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
-                    if is_only_parsing {
-                        return true;
-                    }
-                    let start = std::time::Instant::now();
-                    BUFFERS.with_borrow_mut(|(scratch, out)| {
-                        out.clear();
-                        note(bun_format::format(file, &args.options, scratch, out), out);
-                    });
-                    formatting.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
-                    true
-                });
+                let is_done = with_file_as(
+                    is_script,
+                    &paths[i],
+                    code,
+                    (atoms.of_this_thread(), &memory),
+                    |file| {
+                        if file.has_parse_errors() && !is_script {
+                            return false;
+                        }
+                        parsing.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
+                        if is_only_parsing {
+                            return true;
+                        }
+                        let start = std::time::Instant::now();
+                        BUFFERS.with_borrow_mut(|(scratch, out)| {
+                            out.clear();
+                            note(bun_format::format(file, &args.options, scratch, out), out);
+                        });
+                        formatting.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
+                        true
+                    },
+                );
                 if is_done {
                     break;
                 }
@@ -146,7 +194,9 @@ pub(super) fn bench(args: &Args) {
     }
     let wall = started.elapsed().as_secs_f64();
     if let Some(file) = args.flag("hashes") {
-        let lines: String = (paths.iter().zip(&hashes)).map(|(path, hash)| format!("{:016x} {path}\n", hash.load(Relaxed))).collect();
+        let lines: String = (paths.iter().zip(&hashes))
+            .map(|(path, hash)| format!("{:016x} {path}\n", hash.load(Relaxed)))
+            .collect();
         std::fs::write(file, lines).expect("the hashes are written");
     }
     let megabytes = bytes.load(Relaxed) as f64 / 1e6;
@@ -159,8 +209,21 @@ pub(super) fn bench(args: &Args) {
         per_pass(&changed),
         per_pass(&failed),
     );
-    println!("format:         {:8.1} MB/s per thread", megabytes / seconds(&formatting));
-    println!("parse + bind:   {:8.1} MB/s per thread", megabytes / seconds(&parsing));
-    println!("all:            {:8.1} MB/s per thread", megabytes / (seconds(&parsing) + seconds(&formatting)));
-    println!("wall:           {:8.1} MB/s, {:.3} s a pass", megabytes / wall, wall / iterations.max(1) as f64);
+    println!(
+        "format:         {:8.1} MB/s per thread",
+        megabytes / seconds(&formatting)
+    );
+    println!(
+        "parse + bind:   {:8.1} MB/s per thread",
+        megabytes / seconds(&parsing)
+    );
+    println!(
+        "all:            {:8.1} MB/s per thread",
+        megabytes / (seconds(&parsing) + seconds(&formatting))
+    );
+    println!(
+        "wall:           {:8.1} MB/s, {:.3} s a pass",
+        megabytes / wall,
+        wall / iterations.max(1) as f64
+    );
 }

@@ -9,14 +9,17 @@
 //!
 //! So does this. The message of a syntax error is not compared.
 
-use crate::{Bundle, Count, Failure, Flags, Format, output_line, show_cursor, trim_bytes, utf16_len};
+use crate::{
+    Bundle, Count, Failure, Flags, Format, output_line, show_cursor, trim_bytes, utf16_len,
+};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::FormatOptions;
 use std::collections::BTreeMap;
 
 const PROPOSAL: &str = "syntax of a proposal at stage 2 or below, which only Babel parses";
-const BABEL_TS: &str = "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
+const BABEL_TS: &str =
+    "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
 const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const FLOW: &str = "Flow's type syntax";
@@ -76,12 +79,30 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("misc/front-matter/with-plugins", PLUGIN),
     ("handlebars/front-matter/toml", PLUGIN),
     ("js/_errors_/html-like-comments.js", HTML_LIKE_COMMENT),
-    ("jsx/jsx-test-suite/rejected-snippets/0/0006-e58e.jsx", HTML_LIKE_COMMENT),
-    ("jsx/jsx-test-suite/rejected-snippets/1/0006-e58e.jsx", HTML_LIKE_COMMENT),
-    ("typescript/_errors_/babel-ts2/multiline-declaration-abstract-class.ts", ONLY_BABEL_TS_REJECTS),
-    ("typescript/_errors_/babel-ts2/multiline-declaration-interface.ts", ONLY_BABEL_TS_REJECTS),
-    ("typescript/_errors_/babel-ts2/multiline-declaration-module.ts", ONLY_BABEL_TS_REJECTS),
-    ("typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts", ONLY_BABEL_TS_REJECTS),
+    (
+        "jsx/jsx-test-suite/rejected-snippets/0/0006-e58e.jsx",
+        HTML_LIKE_COMMENT,
+    ),
+    (
+        "jsx/jsx-test-suite/rejected-snippets/1/0006-e58e.jsx",
+        HTML_LIKE_COMMENT,
+    ),
+    (
+        "typescript/_errors_/babel-ts2/multiline-declaration-abstract-class.ts",
+        ONLY_BABEL_TS_REJECTS,
+    ),
+    (
+        "typescript/_errors_/babel-ts2/multiline-declaration-interface.ts",
+        ONLY_BABEL_TS_REJECTS,
+    ),
+    (
+        "typescript/_errors_/babel-ts2/multiline-declaration-module.ts",
+        ONLY_BABEL_TS_REJECTS,
+    ),
+    (
+        "typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts",
+        ONLY_BABEL_TS_REJECTS,
+    ),
 ];
 
 /// Formatting their output again changes it, in Prettier too: `unstableTests` of
@@ -148,14 +169,20 @@ fn unescape(text: &[u8]) -> Vec<u8> {
 
 /// `====title====`, 80 wide.
 fn is_separator(line: &[u8], title: &[u8]) -> bool {
-    line.len() == 80 && line.starts_with(b"=") && line.ends_with(b"=") && trim_bytes(line, b"=") == title
+    line.len() == 80
+        && line.starts_with(b"=")
+        && line.ends_with(b"=")
+        && trim_bytes(line, b"=") == title
 }
 
 /// The text that a code frame shows: `> 1 | text`, with lines of `^` in between.
 fn text_of_code_frame(frame: &[&[u8]]) -> Vec<u8> {
     let lines = frame.iter().filter_map(|line| {
         let (gutter, text) = strings::split_once_char(line, b'|')?;
-        gutter.iter().any(u8::is_ascii_digit).then(|| text.strip_prefix(b" ").unwrap_or(text))
+        gutter
+            .iter()
+            .any(u8::is_ascii_digit)
+            .then(|| text.strip_prefix(b" ").unwrap_or(text))
     });
     lines.collect::<Vec<_>>().join(&b"\n"[..])
 }
@@ -173,7 +200,10 @@ fn sections(body: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<u8>, Vec<u8>)> {
         if offset == 0 {
             return Some(line.to_vec());
         }
-        let rest = line.get(offset..).filter(|_| line.get(..offset).is_some_and(|it| it.trim_ascii_start() == b":"))?;
+        let rest = line.get(offset..).filter(|_| {
+            line.get(..offset)
+                .is_some_and(|it| it.trim_ascii_start() == b":")
+        })?;
         Some(rest.strip_prefix(b" ").unwrap_or(rest).to_vec())
     };
 
@@ -181,7 +211,9 @@ fn sections(body: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<u8>, Vec<u8>)> {
     let mut section = 0;
     for line in strings::split(body, b"\n") {
         let plain = without_offset(line);
-        let title = [&b"options"[..], b"input", b"output", b""].get(section).copied()?;
+        let title = [&b"options"[..], b"input", b"output", b""]
+            .get(section)
+            .copied()?;
         if plain.as_deref().is_some_and(|it| is_separator(it, title)) {
             section += 1;
             if section == 4 {
@@ -199,7 +231,11 @@ fn sections(body: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<u8>, Vec<u8>)> {
     if section != 4 {
         return None;
     }
-    let input = if offset == 0 { input.join(&b"\n"[..]) } else { text_of_code_frame(&input) };
+    let input = if offset == 0 {
+        input.join(&b"\n"[..])
+    } else {
+        text_of_code_frame(&input)
+    };
     Some((options, input, output.join(&b"\n"[..])))
 }
 
@@ -252,7 +288,10 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
             input,
             expected: Expected::Output(output),
             rejected_by: match cases.remove(&key) {
-                Some(Case { expected: Expected::Error(parsers), .. }) => parsers,
+                Some(Case {
+                    expected: Expected::Error(parsers),
+                    ..
+                }) => parsers,
                 _ => Vec::new(),
             },
         };
@@ -262,11 +301,13 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
             };
             if name == b"parsers" {
                 // `[]`: it is left to the name of the file.
-                let names = strings::split(trim_bytes(value, b"[]"), b", ").filter(|it| !it.is_empty());
+                let names =
+                    strings::split(trim_bytes(value, b"[]"), b", ").filter(|it| !it.is_empty());
                 case.parsers = names.map(|it| trim_bytes(it, b"\"").to_vec()).collect();
             } else {
                 let value = value.strip_suffix(b" (default)").unwrap_or(value);
-                case.options.push((name.to_vec(), trim_bytes(value, b"\"").to_vec()));
+                case.options
+                    .push((name.to_vec(), trim_bytes(value, b"\"").to_vec()));
             }
         }
         cases.insert(key, case);
@@ -277,8 +318,15 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
 /// Takes the placeholders out of `original`. Where they were goes into the options, in UTF-16 code
 /// units.
 fn replace_placeholders(original: &[u8], options: &mut FormatOptions) -> Vec<u8> {
-    let placeholders = [(&b"cursorOffset"[..], CURSOR), (b"rangeStart", RANGE_START), (b"rangeEnd", RANGE_END)];
-    let mut found: Vec<_> = placeholders.iter().filter_map(|it| Some((strings::index_of(original, it.1)?, it.0, it.1))).collect();
+    let placeholders = [
+        (&b"cursorOffset"[..], CURSOR),
+        (b"rangeStart", RANGE_START),
+        (b"rangeEnd", RANGE_END),
+    ];
+    let mut found: Vec<_> = placeholders
+        .iter()
+        .filter_map(|it| Some((strings::index_of(original, it.1)?, it.0, it.1)))
+        .collect();
     found.sort_unstable();
     let mut text = Vec::with_capacity(original.len());
     let mut end_of_previous = 0;
@@ -336,7 +384,16 @@ impl Tally {
 
     fn all(&self) -> Count {
         let mut all = Count::default();
-        [self.format, self.errors, self.second_format, self.crlf, self.cr, self.bom].into_iter().for_each(|it| all.merge(it));
+        [
+            self.format,
+            self.errors,
+            self.second_format,
+            self.crlf,
+            self.cr,
+            self.bom,
+        ]
+        .into_iter()
+        .for_each(|it| all.merge(it));
         all
     }
 }
@@ -381,27 +438,48 @@ fn parser_of_directory(language: &[u8]) -> Option<&'static [u8]> {
 fn is_javascript_parser(name: &[u8]) -> bool {
     matches!(
         name,
-        b"babel" | b"typescript" | b"flow" | b"babel-ts" | b"babel-flow" | b"acorn" | b"espree" | b"meriyah" | b"oxc" | b"oxc-ts"
+        b"babel"
+            | b"typescript"
+            | b"flow"
+            | b"babel-ts"
+            | b"babel-flow"
+            | b"acorn"
+            | b"espree"
+            | b"meriyah"
+            | b"oxc"
+            | b"oxc-ts"
     )
 }
 
 /// Prints `FAIL <check> <case> <options>` for each check that fails, how many pass of each kind,
 /// and how many cases are not run for which reason.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
-    let languages = flags.languages.unwrap_or(b"js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,misc");
+    let languages = flags.languages.unwrap_or(
+        b"js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,mdx,handlebars,misc",
+    );
     let mut by_directory: BTreeMap<Vec<u8>, Tally> = BTreeMap::new();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
-    let fail = |kind: &str, id: &[u8], described: &[u8]| output_line!("FAIL {kind} {}{}", BStr::new(id), BStr::new(described));
+    let fail = |kind: &str, id: &[u8], described: &[u8]| {
+        output_line!("FAIL {kind} {}{}", BStr::new(id), BStr::new(described))
+    };
     let mut index = 0;
 
     for language in strings::split(languages, b",") {
         let prefix = [language, b"/"].concat();
-        for snapshot_file in bundle.paths().filter(|it| it.starts_with(&prefix) && it.ends_with(SNAPSHOT)) {
+        for snapshot_file in bundle
+            .paths()
+            .filter(|it| it.starts_with(&prefix) && it.ends_with(SNAPSHOT))
+        {
             let relative = &snapshot_file[..snapshot_file.len() - SNAPSHOT.len()];
             // `js/arrows`, whatever is below it.
-            let group = strings::split(relative, b"/").take(2).collect::<Vec<_>>().join(&b"/"[..]);
+            let group = strings::split(relative, b"/")
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(&b"/"[..]);
 
-            let filenames = bundle.read(&[relative, b"/snippet-filenames.txt"].concat()).unwrap_or_default();
+            let filenames = bundle
+                .read(&[relative, b"/snippet-filenames.txt"].concat())
+                .unwrap_or_default();
 
             for case in parse_snapshots(bundle.read(snapshot_file).unwrap_or_default()) {
                 let id = [relative, b"/", &case.name].concat();
@@ -410,34 +488,60 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 }
                 // JSON or a style sheet: the parser is not left to the name of the file.
                 let is_named = |it: &&[u8]| match directory_of_new_parser(it) {
-                    Some(directory) => strings::split(languages, b",").any(|asked| asked == directory),
-                    None => it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss" | b"graphql" | b"yaml" | b"markdown" | b"mdx" | b"glimmer"),
+                    Some(directory) => {
+                        strings::split(languages, b",").any(|asked| asked == directory)
+                    }
+                    None => {
+                        it.starts_with(b"json")
+                            || matches!(
+                                *it,
+                                b"css"
+                                    | b"less"
+                                    | b"scss"
+                                    | b"graphql"
+                                    | b"yaml"
+                                    | b"markdown"
+                                    | b"mdx"
+                                    | b"glimmer"
+                            )
+                    }
                 };
                 let first_parser = case.parsers.first().map(Vec::as_slice);
                 // What is rejected says by which parser in its title, or not at all.
                 let rejecting_parser = match &case.expected {
-                    Expected::Error(parsers) => parsers.iter().map(Vec::as_slice).find(is_named).or(parser_of_directory(language)),
+                    Expected::Error(parsers) => parsers
+                        .iter()
+                        .map(Vec::as_slice)
+                        .find(is_named)
+                        .or(parser_of_directory(language)),
                     Expected::Output(_) => None,
                 };
                 let named_parser = first_parser.filter(is_named).or(rejecting_parser);
                 let ours = named_parser.unwrap_or_else(|| parser_of(&case.name, language));
                 // Of a test that names no parser.
-                let inferred_parser: Option<&[u8]> = match strings::rsplit_once_char(&case.name, b'.').map_or(&b""[..], |it| it.1) {
-                    b"html" | b"htm" => Some(b"html"),
-                    b"vue" => Some(b"vue"),
-                    b"mjml" => Some(b"mjml"),
-                    b"hbs" | b"handlebars" => Some(b"glimmer"),
-                    _ => None,
-                };
+                let inferred_parser: Option<&[u8]> =
+                    match strings::rsplit_once_char(&case.name, b'.').map_or(&b""[..], |it| it.1) {
+                        b"html" | b"htm" => Some(b"html"),
+                        b"vue" => Some(b"vue"),
+                        b"mjml" => Some(b"mjml"),
+                        b"hbs" | b"handlebars" => Some(b"glimmer"),
+                        _ => None,
+                    };
                 let is_other_language = match case.parsers.is_empty() {
                     true => inferred_parser.is_some_and(|it| !is_named(&it)),
-                    false => named_parser.is_none() && !case.parsers.iter().any(|it| is_javascript_parser(it)),
+                    false => {
+                        named_parser.is_none()
+                            && !case.parsers.iter().any(|it| is_javascript_parser(it))
+                    }
                 };
                 if is_other_language {
                     *excluded.entry(OTHER_LANGUAGE).or_default() += 1;
                     continue;
                 }
-                if let Some(&(_, reason)) = EXCLUDED.iter().find(|it| strings::contains(&id, it.0.as_bytes())) {
+                if let Some(&(_, reason)) = EXCLUDED
+                    .iter()
+                    .find(|it| strings::contains(&id, it.0.as_bytes()))
+                {
                     *excluded.entry(reason).or_default() += 1;
                     continue;
                 }
@@ -450,31 +554,49 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let mut options = FormatOptions::default();
                 if let Some(parser) = named_parser {
                     let _ = options.set(b"parser", parser);
-                } else if !case.parsers.is_empty() && (case.rejected_by.iter().any(|it| it == ours) || !case.parsers.iter().any(|it| it == ours)) {
+                } else if !case.parsers.is_empty()
+                    && (case.rejected_by.iter().any(|it| it == ours)
+                        || !case.parsers.iter().any(|it| it == ours))
+                {
                     // The output is that of another parser, which takes what `babel` does not: types in a `.js` file.
-                    if let Some(other) = case.parsers.iter().find(|it| !case.rejected_by.contains(it)) {
+                    if let Some(other) = case
+                        .parsers
+                        .iter()
+                        .find(|it| !case.rejected_by.contains(it))
+                    {
                         let _ = options.set(b"parser", other);
                     }
                 }
                 let mut described = Vec::new();
-                for (name, value) in case.options.iter().filter(|it| it.0 != b"printWidth" || it.1 != b"80") {
+                for (name, value) in case
+                    .options
+                    .iter()
+                    .filter(|it| it.0 != b"printWidth" || it.1 != b"80")
+                {
                     described.extend_from_slice(&[b" ", &name[..], b"=", value].concat());
                 }
-                if case.options.iter().any(|(name, value)| options.set(name, value).is_err()) {
+                if case
+                    .options
+                    .iter()
+                    .any(|(name, value)| options.set(name, value).is_err())
+                {
                     tally.format.add(false);
                     fail("unknown-option", &id, &described);
                     continue;
                 }
 
                 // The file has what the snapshot cannot show: line endings, a byte order mark.
-                let on_disk = bundle.read(&id).filter(|it| std::str::from_utf8(it).is_ok());
+                let on_disk = bundle
+                    .read(&id)
+                    .filter(|it| std::str::from_utf8(it).is_ok());
                 let (path, original) = match on_disk {
                     Some(input) => (id.clone(), input),
                     None => {
                         // The name of a file that the test gives the text, which `sync.ts` has noted. Or `snippet: test.cjs`.
                         // It is parsed as the parser of the test says, if it says.
                         let title = case.name.strip_prefix(b"snippet: ");
-                        let noted = strings::split(filenames, b"\n").filter_map(|line| strings::split_once(line, b"\t"));
+                        let noted = strings::split(filenames, b"\n")
+                            .filter_map(|line| strings::split_once(line, b"\t"));
                         let noted = noted.filter(|it| Some(it.0) == title).map(|it| it.1).next();
                         let name = noted.or(title.filter(|it| strings::contains_char(it, b'.')));
                         let _ = options.set(b"filepath", name.unwrap_or_default());
@@ -511,8 +633,11 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     Expected::Output(expected) => expected,
                     Expected::Error(parsers) => {
                         // The text of a snippet that is rejected is not in the snapshot: `sync.ts` writes it to `rejected-snippets`.
-                        if (parsers.is_empty() || parsers.iter().any(|it| it == ours)) && on_disk.is_some() {
-                            let is_rejected = format(original).is_err_and(|it| it == Failure::SyntaxError);
+                        if (parsers.is_empty() || parsers.iter().any(|it| it == ours))
+                            && on_disk.is_some()
+                        {
+                            let is_rejected =
+                                format(original).is_err_and(|it| it == Failure::SyntaxError);
                             tally.errors.add(is_rejected);
                             if !is_rejected {
                                 fail("rejected", &id, &described);
@@ -538,8 +663,13 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     continue;
                 };
 
-                let has_position = options.range_start.is_some() || options.range_end.is_some() || options.cursor_offset.is_some();
-                if !has_position && output != input && !UNSTABLE.iter().any(|it| id == it.as_bytes()) {
+                let has_position = options.range_start.is_some()
+                    || options.range_end.is_some()
+                    || options.cursor_offset.is_some();
+                if !has_position
+                    && output != input
+                    && !UNSTABLE.iter().any(|it| id == it.as_bytes())
+                {
                     let is_stable = format(&output).is_ok_and(|it| it == output);
                     tally.second_format.add(is_stable);
                     if !is_stable {
@@ -552,21 +682,32 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let is_left_alone = options.require_pragma
                     || options.check_ignore_pragma
                     || matches!((options.range_start, options.range_end), (Some(start), Some(end)) if start >= end);
-                let skips_end_of_line = input.trim_ascii().is_empty() || strings::contains_char(&input, b'\r') || is_left_alone;
-                let ends_of_line = [(&b"\r\n"[..], &mut tally.crlf, "CRLF"), (b"\r", &mut tally.cr, "CR")];
-                for (end_of_line, count, kind) in ends_of_line.into_iter().filter(|_| !skips_end_of_line) {
+                let skips_end_of_line = input.trim_ascii().is_empty()
+                    || strings::contains_char(&input, b'\r')
+                    || is_left_alone;
+                let ends_of_line = [
+                    (&b"\r\n"[..], &mut tally.crlf, "CRLF"),
+                    (b"\r", &mut tally.cr, "CR"),
+                ];
+                for (end_of_line, count, kind) in
+                    ends_of_line.into_iter().filter(|_| !skips_end_of_line)
+                {
                     let expected = match options.line_ending {
-                        bun_format::options::LineEnding::Auto => strings::replace_owned(&output, b"\n", end_of_line),
+                        bun_format::options::LineEnding::Auto => {
+                            strings::replace_owned(&output, b"\n", end_of_line)
+                        }
                         _ => output.clone(),
                     };
-                    let is_same = format(&strings::replace_owned(original, b"\n", end_of_line)).is_ok_and(|it| it == expected);
+                    let is_same = format(&strings::replace_owned(original, b"\n", end_of_line))
+                        .is_ok_and(|it| it == expected);
                     count.add(is_same);
                     if !is_same {
                         fail(kind, &id, &described);
                     }
                 }
                 if !input.starts_with(BOM) {
-                    let is_same = format(&[BOM, original].concat()).is_ok_and(|it| it.strip_prefix(BOM) == Some(&output));
+                    let is_same = format(&[BOM, original].concat())
+                        .is_ok_and(|it| it.strip_prefix(BOM) == Some(&output));
                     tally.bom.add(is_same);
                     if !is_same {
                         fail("BOM", &id, &described);
@@ -591,7 +732,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     };
     let mut by_language: BTreeMap<&[u8], Tally> = BTreeMap::new();
     for (directory, tally) in &by_directory {
-        by_language.entry(strings::split(directory, b"/").next().unwrap_or_default()).or_default().merge(tally);
+        by_language
+            .entry(strings::split(directory, b"/").next().unwrap_or_default())
+            .or_default()
+            .merge(tally);
         if flags.table {
             show(directory, tally);
         }
@@ -602,8 +746,16 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
         show(language, tally);
     }
     let percent = |it: Count| 100.0 * it.passed as f64 / it.total.max(1) as f64;
-    output_line!("format: {} ({:.2}%)", everything.format, percent(everything.format));
-    output_line!("all checks: {} ({:.2}%)", everything.all(), percent(everything.all()));
+    output_line!(
+        "format: {} ({:.2}%)",
+        everything.format,
+        percent(everything.format)
+    );
+    output_line!(
+        "all checks: {} ({:.2}%)",
+        everything.all(),
+        percent(everything.all())
+    );
     for (reason, count) in &excluded {
         output_line!("not run: {count}: {reason}");
     }

@@ -22,14 +22,21 @@ pub(crate) struct Attached {
 /// Whether only blanks are between the previous line break and `position`.
 pub(crate) fn has_newline_before(text: &[u8], position: u32) -> bool {
     let before = text.get(..position as usize).unwrap_or_default();
-    let blanks = before.iter().rev().take_while(|byte| matches!(byte, b' ' | b'\t')).count();
+    let blanks = before
+        .iter()
+        .rev()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
     matches!(before[..before.len() - blanks], [.., b'\n' | b'\r'])
 }
 
 /// Whether only blanks are between `position` and the next line break.
 pub(crate) fn has_newline_after(text: &[u8], position: u32) -> bool {
     let after = text.get(position as usize..).unwrap_or_default();
-    let blanks = after.iter().take_while(|byte| matches!(byte, b' ' | b'\t')).count();
+    let blanks = after
+        .iter()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
     matches!(after.get(blanks), Some(b'\n' | b'\r'))
 }
 

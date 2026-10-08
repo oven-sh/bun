@@ -7,7 +7,9 @@
 use crate::cursor::format_with;
 use crate::ir::element::{Align, FormatElement, Tag};
 use crate::ir::prelude::{Format, Formatter, hard_line_break};
-use crate::js::ast_nodes::{AstNodes, ExpressionStatement, Program, node_as_ast_nodes, type_parameters_of};
+use crate::js::ast_nodes::{
+    AstNodes, ExpressionStatement, Program, node_as_ast_nodes, type_parameters_of,
+};
 use crate::js::comments::{self, Comment, Comments};
 use crate::js::print::program::ends_before_semicolon;
 use crate::js::source_text::SourceText;
@@ -45,7 +47,11 @@ pub fn format_with_cursor<'a>(
 ) -> Result<Option<u32>, FormatError> {
     let text = file.text();
     let is_import_or_export = |statement: Stmt<'a>| {
-        statement.is_exported() || matches!(statement.kind(), StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportDefault(_))
+        statement.is_exported()
+            || matches!(
+                statement.kind(),
+                StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportDefault(_)
+            )
     };
     if options.is_mdx_es_syntax && !file.body().iter().all(is_import_or_export) {
         return Err(FormatError::SyntaxError);
@@ -63,9 +69,12 @@ pub fn format_with_cursor<'a>(
         return Err(FormatError::SyntaxError);
     }
 
-    let range = calculate_range(file, options.flavor, start as u32, end as u32).unwrap_or_else(|| Span::empty(first as u32));
+    let range = calculate_range(file, options.flavor, start as u32, end as u32)
+        .unwrap_or_else(|| Span::empty(first as u32));
     let (start, end) = (range.start as usize, range.end as usize);
-    let (Some(before), Some(slice), Some(after)) = (text.get(..start), text.get(start..end), text.get(end..)) else {
+    let (Some(before), Some(slice), Some(after)) =
+        (text.get(..start), text.get(start..end), text.get(end..))
+    else {
         return Err(FormatError::InvalidDocument);
     };
 
@@ -73,20 +82,33 @@ pub fn format_with_cursor<'a>(
     // Where the cursor is in `formatted`, if it is in the range.
     let mut cursor_in_formatted = None;
     if !trim_start(slice).is_empty() {
-        let alignment = alignment_size(before.get(first..).unwrap_or_default(), options.indent_width.value());
-        let cursor_in_slice = cursor.filter(|&cursor| start < cursor && cursor <= end).map(|cursor| cursor - start);
+        let alignment = alignment_size(
+            before.get(first..).unwrap_or_default(),
+            options.indent_width.value(),
+        );
+        let cursor_in_slice = cursor
+            .filter(|&cursor| start < cursor && cursor <= end)
+            .map(|cursor| cursor - start);
         let slice_options = FormatOptions {
             range_start: None,
             range_end: None,
-            cursor_offset: cursor_in_slice.map(|cursor| utf16_len(slice.get(..cursor).unwrap_or(slice)) as u32),
+            cursor_offset: cursor_in_slice
+                .map(|cursor| utf16_len(slice.get(..cursor).unwrap_or(slice)) as u32),
             line_ending: LineEnding::Lf,
             ..options.clone()
         };
         let mut result = Err(FormatError::SyntaxError);
         parse(slice, &mut |slice_file| {
-            result = format_with(slice_file, &slice_options, scratch, &mut formatted, alignment > 0, |file, f| {
-                write_aligned(file, alignment, f);
-            });
+            result = format_with(
+                slice_file,
+                &slice_options,
+                scratch,
+                &mut formatted,
+                alignment > 0,
+                |file, f| {
+                    write_aligned(file, alignment, f);
+                },
+            );
         });
         cursor_in_formatted = result?.and_then(|cursor| offset_of_utf16_index(&formatted, cursor));
         formatted.truncate(trim_end(&formatted).len());
@@ -97,14 +119,16 @@ pub fn format_with_cursor<'a>(
     let mut cursor_in_whole = None;
     write_with_line_ending(before, b"\n", &mut whole);
     if let Some(cursor) = cursor.filter(|&cursor| cursor <= start) {
-        cursor_in_whole = Some(whole.len() - normalized_len(before.get(cursor..).unwrap_or_default()));
+        cursor_in_whole =
+            Some(whole.len() - normalized_len(before.get(cursor..).unwrap_or_default()));
     }
     if let Some(cursor) = cursor_in_formatted {
         cursor_in_whole = Some(whole.len() + cursor);
     }
     whole.extend_from_slice(&formatted);
     if let Some(cursor) = cursor.filter(|&cursor| cursor > end) {
-        cursor_in_whole = Some(whole.len() + normalized_len(text.get(end..cursor).unwrap_or_default()));
+        cursor_in_whole =
+            Some(whole.len() + normalized_len(text.get(end..cursor).unwrap_or_default()));
     }
     write_with_line_ending(after, b"\n", &mut whole);
 
@@ -125,7 +149,9 @@ pub(crate) fn normalized_len(text: &[u8]) -> usize {
 
 /// How many UTF-16 code units `text` is.
 fn utf16_len(text: &[u8]) -> usize {
-    text.iter().map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0)).sum()
+    text.iter()
+        .map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0))
+        .sum()
 }
 
 /// `rangeStart`, `rangeEnd` and `cursorOffset`, which count UTF-16 code units, as offsets in the text.
@@ -145,7 +171,9 @@ impl Offsets {
         };
         // An offset before the byte order mark or behind the end is as good as none.
         let offset_of = |index: Option<u32>| {
-            offset_of_utf16_index(text, index?).map(after_line_break).filter(|&offset| offset >= first)
+            offset_of_utf16_index(text, index?)
+                .map(after_line_break)
+                .filter(|&offset| offset >= first)
         };
         Offsets {
             start: offset_of(options.range_start).unwrap_or(first),
@@ -216,14 +244,20 @@ pub(crate) fn trim_end(mut text: &[u8]) -> &[u8] {
 
 /// Prettier's `getAlignmentSize` of the white space that the last line of `before` starts with.
 pub(crate) fn alignment_size(before: &[u8], tab_width: u8) -> usize {
-    let last = |line_break| bun_core::strings::last_index_of_char(before, line_break).map_or(0, |at| at + 1);
+    let last = |line_break| {
+        bun_core::strings::last_index_of_char(before, line_break).map_or(0, |at| at + 1)
+    };
     let line_start = last(b'\n').max(last(b'\r'));
     let (mut rest, mut size, tab_width) = (&before[line_start..], 0, usize::from(tab_width.max(1)));
     loop {
         match white_space_len(rest) {
             0 => return size,
             len => {
-                size = if rest[0] == b'\t' { size + tab_width - size % tab_width } else { size + 1 };
+                size = if rest[0] == b'\t' {
+                    size + tab_width - size % tab_width
+                } else {
+                    size + 1
+                };
                 rest = &rest[len..];
             }
         }
@@ -235,7 +269,11 @@ pub(crate) fn write_with_line_ending(mut text: &[u8], line_ending: &[u8], out: &
     while let Some(at) = bun_core::strings::index_of_any(text, b"\r\n") {
         out.extend_from_slice(&text[..at]);
         out.extend_from_slice(line_ending);
-        let len = if text[at..].starts_with(b"\r\n") { 2 } else { 1 };
+        let len = if text[at..].starts_with(b"\r\n") {
+            2
+        } else {
+            1
+        };
         text = &text[at + len..];
     }
     out.extend_from_slice(text);
@@ -306,12 +344,11 @@ fn loc_start(node: AstNodes<'_>) -> u32 {
             };
         }
         AstNodes::Class(class) => Some(class),
-        AstNodes::ExportNamedDeclaration(statement) | AstNodes::ExportDefaultDeclaration(statement) => {
-            match statement.kind() {
-                StmtKind::Class(class) => Some(class),
-                _ => None,
-            }
-        }
+        AstNodes::ExportNamedDeclaration(statement)
+        | AstNodes::ExportDefaultDeclaration(statement) => match statement.kind() {
+            StmtKind::Class(class) => Some(class),
+            _ => None,
+        },
         _ => None,
     };
     let start = node.span().start;
@@ -330,7 +367,9 @@ fn loc_end<'a>(node: AstNodes<'a>, comments: &Comments<'a>) -> u32 {
     use AstNodes as N;
     let span = node.span();
     let ends_before_semicolon = match node {
-        N::ExportNamedDeclaration(_) | N::ExportDefaultDeclaration(_) | N::ExportAllDeclaration(_) => true,
+        N::ExportNamedDeclaration(_)
+        | N::ExportDefaultDeclaration(_)
+        | N::ExportAllDeclaration(_) => true,
         N::ExpressionStatement(ExpressionStatement::Stmt(statement))
         | N::Directive(statement)
         | N::ImportDeclaration(statement)
@@ -399,7 +438,9 @@ fn is_source_element(node: AstNodes<'_>) -> bool {
         N::Function(func) => matches!(func.owner(), Node::Stmt(_)),
         N::Class(class) => matches!(class.owner(), Node::Stmt(_)),
         // The `BlockStatement` that is the body of a function.
-        N::FunctionBody(func) => matches!(func.body(), FnBody::Block(_)) && func.kind() != FnKind::StaticBlock,
+        N::FunctionBody(func) => {
+            matches!(func.body(), FnBody::Block(_)) && func.kind() != FnKind::StaticBlock
+        }
         _ => false,
     }
 }
@@ -443,7 +484,12 @@ fn find_node_at_offset<'a>(file: &'a File<'a>, offset: u32, edge: Edge) -> Optio
         let mut next = None;
         innermost.for_each_child(|child| {
             let (span, estree) = (child.span(), full_span(node_as_ast_nodes(child)));
-            if next.is_none() && edge.is_in(offset, Span::new(span.start.min(estree.start), span.end.max(estree.end))) {
+            if next.is_none()
+                && edge.is_in(
+                    offset,
+                    Span::new(span.start.min(estree.start), span.end.max(estree.end)),
+                )
+            {
                 next = Some(child);
             }
         });
@@ -462,7 +508,10 @@ fn find_node_at_offset<'a>(file: &'a File<'a>, offset: u32, edge: Edge) -> Optio
     let type_parameters = type_parameters_of(innermost)
         .filter(|list| !list.is_empty())
         .map(|_| AstNodes::TSTypeParameterDeclaration(innermost));
-    let path = type_parameters.into_iter().chain(inner).chain(node_as_ast_nodes(innermost).ancestors());
+    let path = type_parameters
+        .into_iter()
+        .chain(inner)
+        .chain(node_as_ast_nodes(innermost).ancestors());
     let mut path = path.filter(|&node| is_in_estree(node) && edge.is_in(offset, full_span(node)));
     let first = path.find(|&node| is_source_element(node))?;
     Some(std::iter::once(first).chain(path).collect())
@@ -483,15 +532,30 @@ fn find_sibling_ancestors<'a>(
     }
     // Prettier's `dropRootParents` only leaves out the file if there is anything else.
     let root = [file];
-    let start_ancestors = if start_ancestors.is_empty() { &root[..] } else { start_ancestors };
-    let end_ancestors = if end_ancestors.is_empty() { &root[..] } else { end_ancestors };
+    let start_ancestors = if start_ancestors.is_empty() {
+        &root[..]
+    } else {
+        start_ancestors
+    };
+    let end_ancestors = if end_ancestors.is_empty() {
+        &root[..]
+    } else {
+        end_ancestors
+    };
 
     let start = loc_start(start_node);
-    if let Some(&ancestor) = end_ancestors.iter().take_while(|&&it| loc_start(it) >= start).last() {
+    if let Some(&ancestor) = end_ancestors
+        .iter()
+        .take_while(|&&it| loc_start(it) >= start)
+        .last()
+    {
         end_node = ancestor;
     }
     let end = loc_end(end_node, comments);
-    for &ancestor in start_ancestors.iter().take_while(|&&it| loc_end(it, comments) <= end) {
+    for &ancestor in start_ancestors
+        .iter()
+        .take_while(|&&it| loc_end(it, comments) <= end)
+    {
         start_node = ancestor;
         if start_node == end_node {
             break;
@@ -501,7 +565,12 @@ fn find_sibling_ancestors<'a>(
 }
 
 /// Prettier's `calculateRange`: what to format so that everything from `start` to `end` is.
-fn calculate_range<'a>(file: &'a File<'a>, flavor: Flavor, mut start: u32, mut end: u32) -> Option<Span> {
+fn calculate_range<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    mut start: u32,
+    mut end: u32,
+) -> Option<Span> {
     let text = file.text();
     // The range is narrowed so that it starts and ends with something.
     let selected = text.get(start as usize..end as usize)?;

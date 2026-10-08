@@ -11,9 +11,11 @@ use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::Host;
-use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId};
-use bun_lint_graph::Graph;
+use bun_lint::linter::{
+    Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId,
+};
 use bun_lint::rule::Kind;
+use bun_lint_graph::Graph;
 use bun_sema::atom::Intern;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
@@ -75,7 +77,11 @@ impl Context<'_, '_> {
         if !self.options.fix_suggestions {
             return;
         }
-        for message in result.messages.iter_mut().filter(|it| it.fix.is_none() && !it.suggestions.is_empty()) {
+        for message in result
+            .messages
+            .iter_mut()
+            .filter(|it| it.fix.is_none() && !it.suggestions.is_empty())
+        {
             message.fix = Some(message.suggestions.swap_remove(0).fix);
             message.suggestions.clear();
         }
@@ -141,7 +147,9 @@ impl Context<'_, '_> {
         let path = paths::from_native(&result.path);
         let text = match result.text.take() {
             Some(text) => text,
-            None => fs::read(&path).map_err(|error| Fatal([b"Cannot read ", &path[..], b": ", &fs::describe(&error)].concat()))?,
+            None => fs::read(&path).map_err(|error| {
+                Fatal([b"Cannot read ", &path[..], b": ", &fs::describe(&error)].concat())
+            })?,
         };
         let previous = LintResult {
             messages: std::mem::take(&mut result.messages),
@@ -154,12 +162,24 @@ impl Context<'_, '_> {
         };
         let linted = self.verify_or_again(&path, &text, &config, Some(again));
         let had_types = result.had_types;
-        *result = self.result(std::mem::take(&mut result.path), linted, text, result.is_fixed, &config);
+        *result = self.result(
+            std::mem::take(&mut result.path),
+            linted,
+            text,
+            result.is_fixed,
+            &config,
+        );
         result.had_types = had_types;
         Ok(())
     }
 
-    fn verify_or_again(&self, path: &[u8], text: &[u8], config: &ResolvedConfig, again: Option<Again>) -> LintResult {
+    fn verify_or_again(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        again: Option<Again>,
+    ) -> LintResult {
         let started = self.timing.now();
         let session = self.memory;
         let arena = session.arena();
@@ -217,9 +237,11 @@ impl Context<'_, '_> {
         let (result, text, is_fixed) = match self.fixes() {
             false => (self.verify(path_to_verify, &text, config), text, false),
             true => {
-                let report = bun_lint::linter::verify_and_fix(&text, &|message| self.should_fix(message), &mut |text| {
-                    self.verify(path_to_verify, text, config)
-                });
+                let report = bun_lint::linter::verify_and_fix(
+                    &text,
+                    &|message| self.should_fix(message),
+                    &mut |text| self.verify(path_to_verify, text, config),
+                );
                 if report.is_circular {
                     on_circular_fixes(path_to_verify);
                 }
@@ -266,10 +288,25 @@ impl Context<'_, '_> {
             return Ok(warns.then(|| self.ignored(&target.path, &target.status)));
         };
         let started = self.timing.now();
-        let text = fs::read_sized(&target.path, target.size)
-            .map_err(|error| Fatal([b"Cannot read ", &target.path[..], b": ", &fs::describe(&error)].concat()))?;
+        let text = fs::read_sized(&target.path, target.size).map_err(|error| {
+            Fatal(
+                [
+                    b"Cannot read ",
+                    &target.path[..],
+                    b": ",
+                    &fs::describe(&error),
+                ]
+                .concat(),
+            )
+        })?;
         self.timing.add(&self.timing.read, started);
-        Ok(Some(self.verify_text(paths::to_native(target.path.clone()), &target.path, text, config, on_circular_fixes)))
+        Ok(Some(self.verify_text(
+            paths::to_native(target.path.clone()),
+            &target.path,
+            text,
+            config,
+            on_circular_fixes,
+        )))
     }
 }
 

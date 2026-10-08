@@ -28,8 +28,10 @@ pub(crate) fn last_char(text: &[u8]) -> Option<(char, usize)> {
 
 /// `\s` of a regular expression
 pub(crate) fn is_unicode_whitespace(c: char) -> bool {
-    matches!(c, '\t' | '\n' | '\u{B}' | '\u{C}' | '\r' | ' ' | '\u{FEFF}' | '\u{2028}' | '\u{2029}')
-        || is_in(SPACE_SEPARATOR, c as u32)
+    matches!(
+        c,
+        '\t' | '\n' | '\u{B}' | '\u{C}' | '\r' | ' ' | '\u{FEFF}' | '\u{2028}' | '\u{2029}'
+    ) || is_in(SPACE_SEPARATOR, c as u32)
 }
 
 pub(crate) fn is_unicode_punctuation(c: char) -> bool {
@@ -83,19 +85,25 @@ pub(crate) fn character_reference(text: &[u8], out: Option<&mut Vec<u8>>) -> Opt
             Some(b'x' | b'X') => (&number[1..], 16, 6, 3),
             _ => (number, 10, 7, 2),
         };
-        let count = digits.iter().take_while(|&&byte| (byte as char).is_digit(radix)).count();
+        let count = digits
+            .iter()
+            .take_while(|&&byte| (byte as char).is_digit(radix))
+            .count();
         if count == 0 || count > max || digits.get(count) != Some(&b';') {
             return None;
         }
         if let Some(out) = out {
-            let code = digits[..count]
-                .iter()
-                .fold(0u32, |code, &digit| code * radix + (digit as char).to_digit(radix).unwrap_or(0));
+            let code = digits[..count].iter().fold(0u32, |code, &digit| {
+                code * radix + (digit as char).to_digit(radix).unwrap_or(0)
+            });
             push_char(numeric_character(code), out);
         }
         return Some(prefix + count + 1);
     }
-    let count = body.iter().take_while(|byte| byte.is_ascii_alphanumeric()).count();
+    let count = body
+        .iter()
+        .take_while(|byte| byte.is_ascii_alphanumeric())
+        .count();
     if count == 0 || count > 31 || body.get(count) != Some(&b';') {
         return None;
     }

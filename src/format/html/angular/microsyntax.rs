@@ -22,7 +22,10 @@ pub(crate) enum Part {
         alias: Option<Vec<u8>>,
     },
     /// `NGMicrosyntaxLet`
-    Let { key: Vec<u8>, value: Option<Vec<u8>> },
+    Let {
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+    },
     /// `NGMicrosyntaxAs`
     As { key: Vec<u8>, alias: Vec<u8> },
 }
@@ -93,9 +96,15 @@ impl Parser<'_> {
                 b't' => out.push(b'\t'),
                 b'v' => out.push(0x0B),
                 b'u' => {
-                    let hex = rest.get(..4).and_then(|hex| std::str::from_utf8(hex).ok()).ok_or(Failed)?;
+                    let hex = rest
+                        .get(..4)
+                        .and_then(|hex| std::str::from_utf8(hex).ok())
+                        .ok_or(Failed)?;
                     // Half of a surrogate pair is nothing that can be written.
-                    let character = u32::from_str_radix(hex, 16).ok().and_then(char::from_u32).ok_or(Failed)?;
+                    let character = u32::from_str_radix(hex, 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .ok_or(Failed)?;
                     out.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
                     rest = &rest[4..];
                 }
@@ -157,7 +166,11 @@ impl Parser<'_> {
         Ok(Some(Binding::Variable { start, key, value }))
     }
 
-    fn parse_directive_keyword_bindings(&mut self, key: Identifier, bindings: &mut Vec<Binding>) -> Parsed<()> {
+    fn parse_directive_keyword_bindings(
+        &mut self,
+        key: Identifier,
+        bindings: &mut Vec<Binding>,
+    ) -> Parsed<()> {
         self.consume_optional_character(b':');
         // `getDirectiveBoundTarget`
         let value = match self.is_at_end() || self.is_keyword(b"as") || self.is_keyword(b"let") {
@@ -237,14 +250,20 @@ impl Parser<'_> {
                     last_expression_key = None;
                     if is_alias {
                         match body.last_mut() {
-                            Some(Part::Expression { alias, .. } | Part::KeyedExpression { alias, .. }) => *alias = Some(key.source),
+                            Some(
+                                Part::Expression { alias, .. }
+                                | Part::KeyedExpression { alias, .. },
+                            ) => *alias = Some(key.source),
                             _ => return Err(Failed),
                         }
                         continue;
                     }
                     // `/^let\s$/.test(text.slice(start, start + 4))`
-                    let is_let = (self.input.get(start as usize..).and_then(|rest| rest.strip_prefix(b"let")))
-                        .is_some_and(text::starts_with_white_space);
+                    let is_let = (self
+                        .input
+                        .get(start as usize..)
+                        .and_then(|rest| rest.strip_prefix(b"let")))
+                    .is_some_and(text::starts_with_white_space);
                     body.push(match (is_let, value) {
                         (true, value) => Part::Let {
                             key: key.source,
@@ -252,7 +271,11 @@ impl Parser<'_> {
                         },
                         (false, None) => return Err(Failed),
                         (false, Some(value)) => Part::As {
-                            key: if value.source.is_empty() { b"$implicit".to_vec() } else { value.source },
+                            key: if value.source.is_empty() {
+                                b"$implicit".to_vec()
+                            } else {
+                                value.source
+                            },
                             alias: key.source,
                         },
                     });

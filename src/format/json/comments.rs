@@ -20,11 +20,22 @@ pub(super) struct Attached {
 }
 
 fn skip_spaces(text: &[u8], at: usize) -> usize {
-    at + text.get(at..).unwrap_or_default().iter().take_while(|b| matches!(b, b' ' | b'\t')).count()
+    at + text
+        .get(at..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .count()
 }
 
 fn skip_spaces_backwards(text: &[u8], end: usize) -> usize {
-    end - text.get(..end).unwrap_or_default().iter().rev().take_while(|b| matches!(b, b' ' | b'\t')).count()
+    end - text
+        .get(..end)
+        .unwrap_or_default()
+        .iter()
+        .rev()
+        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .count()
 }
 
 /// The length of the line break at `at`. The text has no `\r`.
@@ -75,7 +86,11 @@ pub(super) fn is_followed_by_empty_line(text: &[u8], at: usize) -> bool {
 fn is_gap(text: &[u8]) -> bool {
     let mut at = 0;
     while let Some(&byte) = text.get(at) {
-        let (c, len) = if byte < 0x80 { (u32::from(byte), 1) } else { code_point_at(text, at) };
+        let (c, len) = if byte < 0x80 {
+            (u32::from(byte), 1)
+        } else {
+            code_point_at(text, at)
+        };
         if c != u32::from(b'(') && !is_js_whitespace(c) {
             return false;
         }
@@ -95,7 +110,11 @@ fn is_blank_without_line_break(text: &[u8]) -> bool {
 
 /// A JSDoc comment with `@type` or `@satisfies`: Prettier's `isTypeCastComment`.
 fn is_type_cast_comment(source: &[u8]) -> bool {
-    let is_word_end = |rest: &[u8]| !rest.first().is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
+    let is_word_end = |rest: &[u8]| {
+        !rest
+            .first()
+            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+    };
     let has_tag = |tag: &[u8]| {
         let mut rest = source;
         while let Some(at) = bun_core::strings::index_of(rest, tag) {
@@ -127,7 +146,9 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
     // Prettier's `breakTies`: those that only have white space between them and the node after
     // them lead it, the others trail the node before them.
     let break_ties = |ties: &mut Ties, attached: &mut Vec<Attached>| {
-        let tied = comments.get(ties.first..ties.first + ties.count).unwrap_or_default();
+        let tied = comments
+            .get(ties.first..ties.first + ties.count)
+            .unwrap_or_default();
         ties.count = 0;
         let Some(first) = tied.first() else {
             return;
@@ -165,7 +186,9 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         let mut start = comment.start;
         if preceding != Owner::NONE {
             for other in comments[..index].iter().rev() {
-                if other.preceding != preceding || !is_blank_without_line_break(slice(other.end, start)) {
+                if other.preceding != preceding
+                    || !is_blank_without_line_break(slice(other.end, start))
+                {
                     break;
                 }
                 start = other.start;
@@ -174,7 +197,9 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         let mut end = comment.end;
         if following != Owner::NONE {
             for other in &comments[index + 1..] {
-                if other.following != following || !is_blank_without_line_break(slice(end, other.start)) {
+                if other.following != following
+                    || !is_blank_without_line_break(slice(end, other.start))
+                {
                     break;
                 }
                 end = other.end;
@@ -183,19 +208,38 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
 
         let (first_choice, second_choice) = if has_newline_backwards(text, start as usize) {
             // On a line of its own
-            ((following, Placement::Leading), (preceding, Placement::Trailing))
+            (
+                (following, Placement::Leading),
+                (preceding, Placement::Trailing),
+            )
         } else if has_newline(text, end as usize) {
             // At the end of a line
-            if following != Owner::NONE && comment.is_block && is_type_cast_comment(slice(comment.start, comment.end)) {
-                ((following, Placement::Leading), (following, Placement::Leading))
+            if following != Owner::NONE
+                && comment.is_block
+                && is_type_cast_comment(slice(comment.start, comment.end))
+            {
+                (
+                    (following, Placement::Leading),
+                    (following, Placement::Leading),
+                )
             } else if enclosing.is_property() {
                 // Prettier's `handlePropertyComments`
-                ((enclosing, Placement::Leading), (enclosing, Placement::Leading))
+                (
+                    (enclosing, Placement::Leading),
+                    (enclosing, Placement::Leading),
+                )
             } else {
-                ((preceding, Placement::Trailing), (following, Placement::Leading))
+                (
+                    (preceding, Placement::Trailing),
+                    (following, Placement::Leading),
+                )
             }
         } else if preceding != Owner::NONE && following != Owner::NONE {
-            if ties.count > 0 && comments.get(ties.first).is_some_and(|tie| tie.following != following) {
+            if ties.count > 0
+                && comments
+                    .get(ties.first)
+                    .is_some_and(|tie| tie.following != following)
+            {
                 break_ties(&mut ties, attached);
             }
             if ties.count == 0 {
@@ -209,10 +253,15 @@ pub(super) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
             ties.count += 1;
             continue;
         } else {
-            ((preceding, Placement::Trailing), (following, Placement::Leading))
+            (
+                (preceding, Placement::Trailing),
+                (following, Placement::Leading),
+            )
         };
         let (owner, placement) = match (first_choice, second_choice) {
-            ((owner, placement), _) | (_, (owner, placement)) if owner != Owner::NONE => (owner, placement),
+            ((owner, placement), _) | (_, (owner, placement)) if owner != Owner::NONE => {
+                (owner, placement)
+            }
             _ => (enclosing, Placement::Dangling),
         };
         attached.push(Attached {

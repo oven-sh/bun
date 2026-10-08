@@ -922,9 +922,7 @@ pub fn summarize_with_recovery<'s>(
         let (file, parse_again) = parse(is_script, &mut statements, arena);
         match parse_again {
             true => parse(true, &mut Vec::new(), arena).0,
-            false if !statements.is_empty() && !is_script => {
-                parse(false, &mut statements, arena).0
-            }
+            false if !statements.is_empty() && !is_script => parse(false, &mut statements, arena).0,
             false => file,
         }
     });

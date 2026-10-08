@@ -278,7 +278,9 @@ impl<'s> Ast<'s> {
 
     /// [`utf16_index`](super::utf16_index) in the source, in constant time after the first time.
     fn utf16_index(&self, offset: u32) -> u32 {
-        let index = self.utf16.get_or_init(|| wtf8::Utf16Index::new(self.source));
+        let index = self
+            .utf16
+            .get_or_init(|| wtf8::Utf16Index::new(self.source));
         index.of(self.source, offset as usize) as u32
     }
 

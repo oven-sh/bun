@@ -34,7 +34,8 @@ fn is_subtraction(node: ValueRef<'_>) -> bool {
 }
 
 fn is_math_operator(node: ValueRef<'_>) -> bool {
-    node.kind() == ValueKind::Operator && matches!(node.node().first_byte, b'*' | b'/' | b'+' | b'-' | b'%')
+    node.kind() == ValueKind::Operator
+        && matches!(node.node().first_byte, b'*' | b'/' | b'+' | b'-' | b'%')
 }
 
 fn word(node: ValueRef<'_>) -> Option<&[u8]> {
@@ -77,7 +78,8 @@ fn has_empty_raw_before(node: ValueRef<'_>) -> bool {
 /// `isParenGroupNode`: the `(`, if it is one.
 fn paren_group_open(node: ValueRef<'_>) -> Option<ValueRef<'_>> {
     let group = node.node();
-    (group.kind == ValueKind::ParenGroup && group.open != 0 && group.close != 0).then(|| node.at(group.open))
+    (group.kind == ValueKind::ParenGroup && group.open != 0 && group.close != 0)
+        .then(|| node.at(group.open))
 }
 
 fn ends_where_starts(a: ValueRef<'_>, b: ValueRef<'_>) -> bool {
@@ -87,19 +89,48 @@ fn ends_where_starts(a: ValueRef<'_>, b: ValueRef<'_>) -> bool {
 /// `isColorAdjusterFuncNode`
 fn is_color_adjuster_func(node: ValueRef<'_>) -> bool {
     const NAMES: [&[u8]; 25] = [
-        b"red", b"green", b"blue", b"alpha", b"a", b"rgb", b"hue", b"h", b"saturation", b"s", b"lightness", b"l",
-        b"whiteness", b"w", b"blackness", b"b", b"tint", b"shade", b"blend", b"blenda", b"contrast", b"hsl", b"hsla",
-        b"hwb", b"hwba",
+        b"red",
+        b"green",
+        b"blue",
+        b"alpha",
+        b"a",
+        b"rgb",
+        b"hue",
+        b"h",
+        b"saturation",
+        b"s",
+        b"lightness",
+        b"l",
+        b"whiteness",
+        b"w",
+        b"blackness",
+        b"b",
+        b"tint",
+        b"shade",
+        b"blend",
+        b"blenda",
+        b"contrast",
+        b"hsl",
+        b"hsla",
+        b"hwb",
+        b"hwba",
     ];
-    is_func(node) && node.value().is_some_and(|value| NAMES.iter().any(|name| text::eq_lower_case(value, name)))
+    is_func(node)
+        && node
+            .value()
+            .is_some_and(|value| NAMES.iter().any(|name| text::eq_lower_case(value, name)))
 }
 
 fn is_possible_font_size(node: Option<ValueRef<'_>>) -> bool {
     match node.map(ValueRef::kind) {
         Some(ValueKind::Number) => true,
         Some(ValueKind::Func) => {
-            let value = node.and_then(ValueRef::value).unwrap_or_default().to_ascii_lowercase();
-            matches!(&value[..], b"var" | b"calc" | b"min" | b"max" | b"clamp") || value.starts_with(b"--")
+            let value = node
+                .and_then(ValueRef::value)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            matches!(&value[..], b"var" | b"calc" | b"min" | b"max" | b"clamp")
+                || value.starts_with(b"--")
         }
         _ => false,
     }
@@ -128,8 +159,14 @@ enum Shape {
 
 impl<'a> Printer<'a, '_> {
     /// The node of the value that what is being printed is in, and the one that that is in, and so on.
-    fn value_ancestor<'v>(&self, statement: Statement<'v, 'a>, level: usize) -> Option<ValueRef<'v>> {
-        let id = *self.value_stack.get(self.value_stack.len().checked_sub(level + 1)?)?;
+    fn value_ancestor<'v>(
+        &self,
+        statement: Statement<'v, 'a>,
+        level: usize,
+    ) -> Option<ValueRef<'v>> {
+        let id = *self
+            .value_stack
+            .get(self.value_stack.len().checked_sub(level + 1)?)?;
         Some(ValueRef {
             values: statement.values,
             id,
@@ -152,7 +189,11 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    pub(crate) fn print_comma_separated_value_group(&mut self, statement: Statement<'_, 'a>, id: ValueId) {
+    pub(crate) fn print_comma_separated_value_group(
+        &mut self,
+        statement: Statement<'_, 'a>,
+        id: ValueId,
+    ) {
         let node = ValueRef {
             values: statement.values,
             id,
@@ -161,9 +202,13 @@ impl<'a> Printer<'a, '_> {
         let parent = self.value_ancestor(statement, 0);
         let grandparent = self.value_ancestor(statement, 1);
         // `getPropOfDeclNode`
-        let declaration_prop = statement.css_ancestor(Kind::Decl).map(|node| text::to_lower_case(&node.prop));
+        let declaration_prop = statement
+            .css_ancestor(Kind::Decl)
+            .map(|node| text::to_lower_case(&node.prop));
         let is_grid_value = parent.is_some_and(|it| it.kind() == ValueKind::Value)
-            && declaration_prop.as_ref().is_some_and(|prop| **prop == *b"grid" || prop.starts_with(b"grid-template"));
+            && declaration_prop
+                .as_ref()
+                .is_some_and(|prop| **prop == *b"grid" || prop.starts_with(b"grid-template"));
         let at_rule = statement.at_rule;
         let is_control_directive = at_rule.is_some_and(|it| self.is_scss_control_directive(it));
         let has_inline_comment = node.groups().any(is_inline_comment);
@@ -223,7 +268,10 @@ impl<'a> Printer<'a, '_> {
                 }
             }
             // `@utility a-*` of Tailwind.
-            if statement.inside_at_rule(&[b"utility"]) && word(i_node).is_some() && next_node.is_some_and(is_multiplication) {
+            if statement.inside_at_rule(&[b"utility"])
+                && word(i_node).is_some()
+                && next_node.is_some_and(is_multiplication)
+            {
                 continue;
             }
             let Some(next_node) = next_node else {
@@ -233,16 +281,24 @@ impl<'a> Printer<'a, '_> {
             if is_in_scss_if && is_the_word(next_node, b";") {
                 continue;
             }
-            if word(i_node).is_some() && is_at_word_placeholder(next_node) && ends_where_starts(i_node, next_node) {
+            if word(i_node).is_some()
+                && is_at_word_placeholder(next_node)
+                && ends_where_starts(i_node, next_node)
+            {
                 continue;
             }
 
             // `"#{my-fn("_")}"`
-            if let Some(value) = i_node.value().filter(|_| i_node.kind() == ValueKind::String) {
+            if let Some(value) = i_node
+                .value()
+                .filter(|_| i_node.kind() == ValueKind::String)
+            {
                 let opening = bun_core::strings::last_index_of(value, b"#{");
                 let closing = bun_core::strings::last_index_of_char(value, b'}');
                 match (opening, closing) {
-                    (Some(opening), Some(closing)) => inside_scss_interpolation_in_string = opening > closing,
+                    (Some(opening), Some(closing)) => {
+                        inside_scss_interpolation_in_string = opening > closing
+                    }
                     (Some(_), None) => inside_scss_interpolation_in_string = true,
                     (None, Some(_)) => inside_scss_interpolation_in_string = false,
                     (None, None) => {}
@@ -256,7 +312,11 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
             // `@@var`, `@var[ @notVarNested ][notVar]` in Less.
-            if i_node.kind() == ValueKind::AtWord && i_node.value().is_some_and(|value| value.is_empty() || value.ends_with(b"[")) {
+            if i_node.kind() == ValueKind::AtWord
+                && i_node
+                    .value()
+                    .is_some_and(|value| value.is_empty() || value.ends_with(b"["))
+            {
                 continue;
             }
             if word(next_node).is_some_and(|it| it.starts_with(b"]")) {
@@ -270,7 +330,9 @@ impl<'a> Printer<'a, '_> {
                 if is_the_word(next_node, b"[") {
                     continue;
                 }
-                if word(i_node).is_some_and(|it| it.ends_with(b"[")) && is_word_or_at_word(next_node) {
+                if word(i_node).is_some_and(|it| it.ends_with(b"["))
+                    && is_word_or_at_word(next_node)
+                {
                     continue;
                 }
             }
@@ -284,7 +346,8 @@ impl<'a> Printer<'a, '_> {
             }
             // An escaped `/`.
             if prev_node.and_then(ValueRef::value).is_some_and(|it| {
-                !it.is_empty() && bun_core::strings::index_of_char_usize(it, b'\\') == Some(it.len() - 1)
+                !it.is_empty()
+                    && bun_core::strings::index_of_char_usize(it, b'\\') == Some(it.len() - 1)
             }) && is_division(i_node)
             {
                 continue;
@@ -322,7 +385,9 @@ impl<'a> Printer<'a, '_> {
             let is_next_math = is_math_operator(next_node);
 
             // Next to an interpolation, the spaces around an operator stay as they are.
-            if ((is_math && is_hash(next_node)) || (is_next_math && is_right_brace(i_node))) && has_empty_raw_before(next_node) {
+            if ((is_math && is_hash(next_node)) || (is_next_math && is_right_brace(i_node)))
+                && has_empty_raw_before(next_node)
+            {
                 continue;
             }
             // `type(<number>+)`
@@ -335,7 +400,10 @@ impl<'a> Printer<'a, '_> {
             }
             // In `calc()`, the spaces around `+` and `-` stay as they are.
             if inside_calc
-                && (is_addition(i_node) || is_addition(next_node) || is_subtraction(i_node) || is_subtraction(next_node))
+                && (is_addition(i_node)
+                    || is_addition(next_node)
+                    || is_subtraction(i_node)
+                    || is_subtraction(next_node))
                 && has_empty_raw_before(next_node)
             {
                 continue;
@@ -356,12 +424,15 @@ impl<'a> Printer<'a, '_> {
             // `color(red l(+ 20%))`
             let is_color_adjuster = (is_addition(i_node) || is_subtraction(i_node))
                 && i == 0
-                && (next_node.kind() == ValueKind::Number || (next_node.kind() == ValueKind::Word && next_node.node().is_hex))
+                && (next_node.kind() == ValueKind::Number
+                    || (next_node.kind() == ValueKind::Word && next_node.node().is_hex))
                 && grandparent.is_some_and(is_color_adjuster_func)
                 && !has_empty_raw_before(next_node);
             let is_func_or_word = |node: ValueRef<'_>| is_func(node) || is_word_or_at_word(node);
-            let require_space_before_operator = next_next_node.is_some_and(is_func_or_word) || is_func_or_word(i_node);
-            let require_space_after_operator = is_func_or_word(next_node) || prev_node.is_some_and(is_func_or_word);
+            let require_space_before_operator =
+                next_next_node.is_some_and(is_func_or_word) || is_func_or_word(i_node);
+            let require_space_after_operator =
+                is_func_or_word(next_node) || prev_node.is_some_and(is_func_or_word);
 
             // `/`, `+`, `-`
             if !(is_multiplication(next_node) || is_multiplication(i_node))
@@ -373,7 +444,8 @@ impl<'a> Printer<'a, '_> {
                     || (is_addition(i_node) && !require_space_after_operator)
                     || is_subtraction(next_node)
                     || is_subtraction(i_node))
-                && (has_empty_raw_before(next_node) || (is_math && prev_node.is_none_or(is_math_operator)))
+                && (has_empty_raw_before(next_node)
+                    || (is_math && prev_node.is_none_or(is_math_operator)))
             {
                 continue;
             }
@@ -388,7 +460,11 @@ impl<'a> Printer<'a, '_> {
             }
 
             if is_inline_comment(i_node) {
-                self.sink.fill_separator(if is_in_paren_group { Separator::DedentedHardLine } else { Separator::HardLine });
+                self.sink.fill_separator(if is_in_paren_group {
+                    Separator::DedentedHardLine
+                } else {
+                    Separator::HardLine
+                });
                 continue;
             }
 
@@ -423,11 +499,20 @@ impl<'a> Printer<'a, '_> {
             }
 
             // `font: 12px/1.5 a`
-            if declaration_prop.as_ref().is_some_and(|prop| **prop == *b"font" || prop.starts_with(b"--")) {
-                if is_division(next_node) && has_empty_raw_before(next_node) && is_possible_font_size(Some(i_node)) {
+            if declaration_prop
+                .as_ref()
+                .is_some_and(|prop| **prop == *b"font" || prop.starts_with(b"--"))
+            {
+                if is_division(next_node)
+                    && has_empty_raw_before(next_node)
+                    && is_possible_font_size(Some(i_node))
+                {
                     continue;
                 }
-                if is_division(i_node) && has_empty_raw_before(i_node) && is_possible_font_size(prev_node) {
+                if is_division(i_node)
+                    && has_empty_raw_before(i_node)
+                    && is_possible_font_size(prev_node)
+                {
                     continue;
                 }
             }
@@ -440,10 +525,15 @@ impl<'a> Printer<'a, '_> {
             if next_node.value() == Some(b"...") {
                 continue;
             }
-            if is_at_word_placeholder(i_node) && is_at_word_placeholder(next_node) && ends_where_starts(i_node, next_node) {
+            if is_at_word_placeholder(i_node)
+                && is_at_word_placeholder(next_node)
+                && ends_where_starts(i_node, next_node)
+            {
                 continue;
             }
-            if is_at_word_placeholder(i_node) && paren_group_open(next_node).is_some_and(|open| ends_where_starts(i_node, open)) {
+            if is_at_word_placeholder(i_node)
+                && paren_group_open(next_node).is_some_and(|open| ends_where_starts(i_node, open))
+            {
                 self.sink.fill_separator(Separator::SoftLine);
                 continue;
             }
@@ -453,9 +543,15 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
             // `--a#{(1) + 2}`
-            if i_node.value().is_some_and(|it| it.ends_with(b"#")) && next_node.value() == Some(b"{") {
+            if i_node.value().is_some_and(|it| it.ends_with(b"#"))
+                && next_node.value() == Some(b"{")
+            {
                 match next_node.kind() {
-                    ValueKind::Func if paren_group_open(next_node.at(next_node.node().group)).is_some() => continue,
+                    ValueKind::Func
+                        if paren_group_open(next_node.at(next_node.node().group)).is_some() =>
+                    {
+                        continue;
+                    }
                     ValueKind::Func => {}
                     // Prettier takes it for a function.
                     _ => self.has_failed = true,
@@ -500,7 +596,12 @@ impl<'a> Printer<'a, '_> {
             return false;
         }
         // `$key: (value)` is not a list.
-        if paren_group_open(node).is_some() && node.groups().len() == 1 && node.group(0).is_some_and(|it| it.kind() != ValueKind::CommaGroup) {
+        if paren_group_open(node).is_some()
+            && node.groups().len() == 1
+            && node
+                .group(0)
+                .is_some_and(|it| it.kind() != ValueKind::CommaGroup)
+        {
             return false;
         }
         let parent = self.value_ancestor(statement, 0);
@@ -513,7 +614,10 @@ impl<'a> Printer<'a, '_> {
             return false;
         }
         // `$map: (key: value, other-key: other-value)`
-        if statement.css_ancestor(Kind::Decl).is_some_and(|it| it.prop.starts_with(b"$")) {
+        if statement
+            .css_ancestor(Kind::Decl)
+            .is_some_and(|it| it.prop.starts_with(b"$"))
+        {
             return true;
         }
         // `$map: (key: (value other-value other-other-value))`
@@ -541,7 +645,11 @@ impl<'a> Printer<'a, '_> {
             if statement.values.node(root).kind == ValueKind::Root && statement.values.node(value).kind == ValueKind::Value)
     }
 
-    pub(crate) fn print_parenthesized_value_group(&mut self, statement: Statement<'_, 'a>, id: ValueId) {
+    pub(crate) fn print_parenthesized_value_group(
+        &mut self,
+        statement: Statement<'_, 'a>,
+        id: ValueId,
+    ) {
         let node = ValueRef {
             values: statement.values,
             id,
@@ -555,11 +663,20 @@ impl<'a> Printer<'a, '_> {
         };
         let count = node.groups().len();
 
-        let is_url = parent.is_some_and(|it| is_func(it) && it.value().is_some_and(|value| text::eq_lower_case(value, b"url")));
+        let is_url = parent.is_some_and(|it| {
+            is_func(it)
+                && it
+                    .value()
+                    .is_some_and(|value| text::eq_lower_case(value, b"url"))
+        });
         if is_url
             && (count == 1
                 || node.group(0).is_some_and(|first| {
-                    first.kind() == ValueKind::CommaGroup && first.group(0).and_then(word).is_some_and(|it| it.starts_with(b"data:"))
+                    first.kind() == ValueKind::CommaGroup
+                        && first
+                            .group(0)
+                            .and_then(word)
+                            .is_some_and(|it| it.starts_with(b"data:"))
                 }))
         {
             self.sink.token(paren(open));
@@ -575,7 +692,8 @@ impl<'a> Printer<'a, '_> {
         if open == 0 {
             let force_hard_line = self.should_break_list(statement, node);
             // `shouldPrecededBySoftline`
-            let is_preceded_by_softline = self.is_top_level_of_value(statement) && statement.node().kind == Kind::Decl;
+            let is_preceded_by_softline =
+                self.is_top_level_of_value(statement) && statement.node().kind == Kind::Decl;
             self.sink.start_indent();
             match force_hard_line {
                 true => self.sink.hard_line(),
@@ -606,18 +724,32 @@ impl<'a> Printer<'a, '_> {
             return self.sink.end_indent();
         }
 
-        let is_var = parent.is_some_and(|it| is_func(it) && it.value().is_some_and(|value| text::eq_lower_case(value, b"var")));
+        let is_var = parent.is_some_and(|it| {
+            is_func(it)
+                && it
+                    .value()
+                    .is_some_and(|value| text::eq_lower_case(value, b"var"))
+        });
         let is_scss_map_item = self.is_scss_map_item(statement, node);
-        let index_in_parent = parent.and_then(|parent| parent.groups().position(|it| it.id == id).map(|index| (parent, index)));
+        let index_in_parent = parent.and_then(|parent| {
+            parent
+                .groups()
+                .position(|it| it.id == id)
+                .map(|index| (parent, index))
+        });
         // `isKeyInValuePairNode`
-        let is_key = index_in_parent
-            .is_some_and(|(parent, index)| is_key_value_pair(parent) && parent.group(index + 1).is_some_and(is_colon));
+        let is_key = index_in_parent.is_some_and(|(parent, index)| {
+            is_key_value_pair(parent) && parent.group(index + 1).is_some_and(is_colon)
+        });
         // `isConfigurationNode`: `@use "a" with (..)`
         let is_configuration = close != 0
             && node.groups().all(|it| it.kind() == ValueKind::CommaGroup)
             && index_in_parent.is_some_and(|(parent, index)| {
                 parent.kind() == ValueKind::CommaGroup
-                    && index.checked_sub(1).and_then(|at| parent.group(at)).is_some_and(|it| is_the_word(it, b"with"))
+                    && index
+                        .checked_sub(1)
+                        .and_then(|at| parent.group(at))
+                        .is_some_and(|it| is_the_word(it, b"with"))
             });
         let should_break = is_configuration || (is_scss_map_item && !is_key);
         let should_dedent = is_configuration || is_key;
@@ -636,8 +768,12 @@ impl<'a> Printer<'a, '_> {
             }
             // A pair of a key and a value in parentheses is indented already.
             let is_dedented = is_key_value_pair(child)
-                && child.group(0).is_some_and(|it| it.kind() != ValueKind::ParenGroup)
-                && child.group(2).is_some_and(|it| it.kind() == ValueKind::ParenGroup)
+                && child
+                    .group(0)
+                    .is_some_and(|it| it.kind() != ValueKind::ParenGroup)
+                && child
+                    .group(2)
+                    .is_some_and(|it| it.kind() == ValueKind::ParenGroup)
                 && self.shape_of_comma_group(statement, child) == Shape::GroupIndentFill;
             if is_dedented {
                 self.sink.start_group(false);
@@ -654,14 +790,23 @@ impl<'a> Printer<'a, '_> {
             } else {
                 // `printTrailingComma`
                 let has_comma = || {
-                    let (Some(start), Some(end)) =
-                        (child.node().loc.start_offset(), Some(close).filter(|&it| it != 0).and_then(|it| node.at(it).node().loc.start_offset()))
-                    else {
+                    let (Some(start), Some(end)) = (
+                        child.node().loc.start_offset(),
+                        Some(close)
+                            .filter(|&it| it != 0)
+                            .and_then(|it| node.at(it).node().loc.start_offset()),
+                    ) else {
                         return false;
                     };
-                    text::trim_end(self.original_text().get(start as usize..end as usize).unwrap_or_default()).ends_with(b",")
+                    text::trim_end(
+                        self.original_text()
+                            .get(start as usize..end as usize)
+                            .unwrap_or_default(),
+                    )
+                    .ends_with(b",")
                 };
-                let is_only_comments = is_comment(child) || (child.kind() == ValueKind::CommaGroup && child.groups().all(is_comment));
+                let is_only_comments = is_comment(child)
+                    || (child.kind() == ValueKind::CommaGroup && child.groups().all(is_comment));
                 if is_var && has_comma() {
                     self.sink.token(",");
                 } else if !is_only_comments && self.trailing_comma && is_scss_map_item {
@@ -672,7 +817,11 @@ impl<'a> Printer<'a, '_> {
             if !is_last
                 && child.kind() == ValueKind::CommaGroup
                 && let Some(last) = child.groups().next_back()
-                && let Some(end) = last.node().loc.end_offset().filter(|_| last.node().has_source())
+                && let Some(end) = last
+                    .node()
+                    .loc
+                    .end_offset()
+                    .filter(|_| last.node().has_source())
             {
                 // It may look at what follows the declaration.
                 self.is_memoizable = false;

@@ -16,5 +16,9 @@ pub(crate) fn is_followed(file: &File) -> bool {
 }
 
 pub(crate) fn flavor_of_modules(file: &File) -> Flavor {
-    if is_followed(file) { Flavor::Oxlint } else { Flavor::EslintPluginImport }
+    if is_followed(file) {
+        Flavor::Oxlint
+    } else {
+        Flavor::EslintPluginImport
+    }
 }

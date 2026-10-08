@@ -62,7 +62,22 @@ fn starts_tag_name(byte: u8) -> bool {
 pub(crate) fn is_void_tag(name: &[u8]) -> bool {
     matches!(
         name,
-        b"area" | b"base" | b"br" | b"col" | b"command" | b"embed" | b"hr" | b"img" | b"input" | b"keygen" | b"link" | b"meta" | b"param" | b"source" | b"track" | b"wbr"
+        b"area"
+            | b"base"
+            | b"br"
+            | b"col"
+            | b"command"
+            | b"embed"
+            | b"hr"
+            | b"img"
+            | b"input"
+            | b"keygen"
+            | b"link"
+            | b"meta"
+            | b"param"
+            | b"source"
+            | b"track"
+            | b"wbr"
     )
 }
 
@@ -159,7 +174,11 @@ struct Builder<'a> {
 
 impl Builder<'_> {
     fn peek(&self) -> Option<u8> {
-        if self.index < self.end { self.source.get(self.index).copied() } else { None }
+        if self.index < self.end {
+            self.source.get(self.index).copied()
+        } else {
+            None
+        }
     }
 
     fn rest(&self) -> &[u8] {
@@ -169,7 +188,10 @@ impl Builder<'_> {
     /// `this.offset()`
     fn position(&self) -> usize {
         if self.shift != 0 && self.index <= self.shifted_up_to {
-            return self.positions.moved(self.source, self.index, -i64::from(self.shift)).unwrap_or(self.index);
+            return self
+                .positions
+                .moved(self.source, self.index, -i64::from(self.shift))
+                .unwrap_or(self.index);
         }
         self.index
     }
@@ -182,12 +204,19 @@ impl Builder<'_> {
 
     fn append_to_comment(&mut self, start: usize, end: usize) {
         if start < end {
-            self.tree.append_source(self.source, &mut self.comment, start, end);
+            self.tree
+                .append_source(self.source, &mut self.comment, start, end);
         }
     }
 
     fn finish_comment(&mut self) {
-        let comment = self.tree.add(Kind::Comment { value: self.comment }, self.start, self.position());
+        let comment = self.tree.add(
+            Kind::Comment {
+                value: self.comment,
+            },
+            self.start,
+            self.position(),
+        );
         self.children.push(comment);
     }
 
@@ -197,7 +226,9 @@ impl Builder<'_> {
 
     fn finish_data(&mut self) {
         let chars = Text::source(self.data_start, self.index);
-        let text = self.tree.add(Kind::Text { chars }, self.start, self.position());
+        let text = self
+            .tree
+            .add(Kind::Text { chars }, self.start, self.position());
         self.children.push(text);
     }
 
@@ -215,7 +246,8 @@ impl Builder<'_> {
 
     /// The character before `index`.
     fn append_to_tag_name(&mut self) {
-        self.tree.append_source(self.source, &mut self.tag.name, self.index - 1, self.index);
+        self.tree
+            .append_source(self.source, &mut self.tag.name, self.index - 1, self.index);
     }
 
     /// The children from `base` on, as a list of the tree. With Prettier's `addBackslash`.
@@ -231,7 +263,9 @@ impl Builder<'_> {
                 }
             }
         }
-        let list = self.tree.add_list(self.children.get(base..).unwrap_or_default());
+        let list = self
+            .tree
+            .add_list(self.children.get(base..).unwrap_or_default());
         self.children.truncate(base);
         list
     }
@@ -246,7 +280,11 @@ impl Builder<'_> {
         // Prettier sorts them by where they start. Each list is in that order.
         self.sorted_tag_parts.clear();
         let mut rest = self.tag_parts.each_ref().map(|list| &list[..]);
-        while let Some(first) = rest.iter_mut().filter(|list| !list.is_empty()).min_by_key(|list| self.tree.node(list[0]).start) {
+        while let Some(first) = rest
+            .iter_mut()
+            .filter(|list| !list.is_empty())
+            .min_by_key(|list| self.tree.node(list[0]).start)
+        {
             self.sorted_tag_parts.push(first[0]);
             *first = &first[1..];
         }
@@ -305,7 +343,12 @@ impl Builder<'_> {
 
     /// The character before `index`.
     fn append_to_attribute_name(&mut self) -> Result<(), Error> {
-        self.tree.append_source(self.source, &mut self.attribute.name, self.index - 1, self.index);
+        self.tree.append_source(
+            self.source,
+            &mut self.attribute.name,
+            self.index - 1,
+            self.index,
+        );
         if self.text(self.attribute.name) == b"as" {
             return self.parse_possible_block_params();
         }
@@ -320,7 +363,8 @@ impl Builder<'_> {
 
     fn append_to_attribute_value(&mut self, start: usize, end: usize) {
         if start < end {
-            self.tree.append_source(self.source, &mut self.attribute.current_part, start, end);
+            self.tree
+                .append_source(self.source, &mut self.attribute.current_part, start, end);
         }
     }
 
@@ -352,7 +396,11 @@ impl Builder<'_> {
         if self.tag.is_end {
             return Err(Error::Syntax);
         }
-        if self.text(name).starts_with(b"|") && self.attribute_parts.is_empty() && !is_quoted && !is_dynamic {
+        if self.text(name).starts_with(b"|")
+            && self.attribute_parts.is_empty()
+            && !is_quoted
+            && !is_dynamic
+        {
             return Err(Error::Syntax);
         }
         // `assembleAttributeValue`
@@ -419,7 +467,9 @@ impl Builder<'_> {
                         }
                     };
                     let name = &self.source[start..self.index];
-                    if name == b"this" || strings::index_of_any(name, b"!\"#%&'()*+./;<=>@[\\]^`{|}~").is_some() {
+                    if name == b"this"
+                        || strings::index_of_any(name, b"!\"#%&'()*+./;<=>@[\\]^`{|}~").is_some()
+                    {
                         return Err(Error::Syntax);
                     }
                     self.tag_params.push(Text::source(start, self.index));
@@ -560,7 +610,10 @@ impl Builder<'_> {
                     self.index += 1;
                     self.state = State::CommentStart;
                     (self.start, self.comment) = (self.tag_open, Text::EMPTY);
-                } else if self.source[self.index - 1..self.end].get(..7).is_some_and(|it| it.eq_ignore_ascii_case(b"DOCTYPE")) {
+                } else if self.source[self.index - 1..self.end]
+                    .get(..7)
+                    .is_some_and(|it| it.eq_ignore_ascii_case(b"DOCTYPE"))
+                {
                     self.index += 6;
                     self.state = State::Doctype;
                 }
@@ -577,7 +630,9 @@ impl Builder<'_> {
                     self.state = State::DoctypeName;
                 }
             }
-            State::DoctypeName => self.doctype(|next| is_space(next).then_some(State::AfterDoctypeName)),
+            State::DoctypeName => {
+                self.doctype(|next| is_space(next).then_some(State::AfterDoctypeName))
+            }
             State::AfterDoctypeName => {
                 let is_public = starts_with_keyword(self.rest(), b"PUBLIC");
                 let is_system = starts_with_keyword(self.rest(), b"SYSTEM");
@@ -590,7 +645,11 @@ impl Builder<'_> {
                     for _ in 0..7 {
                         self.consume_unit()?;
                     }
-                    self.state = if is_public { State::AfterDoctypePublicKeyword } else { State::AfterDoctypeSystemKeyword };
+                    self.state = if is_public {
+                        State::AfterDoctypePublicKeyword
+                    } else {
+                        State::AfterDoctypeSystemKeyword
+                    };
                 }
             }
             State::AfterDoctypePublicKeyword => {
@@ -604,9 +663,15 @@ impl Builder<'_> {
                 };
                 self.index += 1;
             }
-            State::BeforeDoctypePublicIdentifier | State::AfterDoctypeSystemKeyword => return Err(Error::Syntax),
-            State::DoctypePublicIdentifierDoubleQuoted => self.doctype(|next| (next == b'"').then_some(State::AfterDoctypePublicIdentifier)),
-            State::DoctypePublicIdentifierSingleQuoted => self.doctype(|next| (next == b'\'').then_some(State::AfterDoctypePublicIdentifier)),
+            State::BeforeDoctypePublicIdentifier | State::AfterDoctypeSystemKeyword => {
+                return Err(Error::Syntax);
+            }
+            State::DoctypePublicIdentifierDoubleQuoted => {
+                self.doctype(|next| (next == b'"').then_some(State::AfterDoctypePublicIdentifier))
+            }
+            State::DoctypePublicIdentifierSingleQuoted => {
+                self.doctype(|next| (next == b'\'').then_some(State::AfterDoctypePublicIdentifier))
+            }
             State::AfterDoctypePublicIdentifier => self.doctype(|next| match next {
                 _ if is_space(next) => Some(State::BetweenDoctypePublicAndSystemIdentifiers),
                 b'"' => Some(State::DoctypeSystemIdentifierDoubleQuoted),
@@ -618,8 +683,12 @@ impl Builder<'_> {
                 b'\'' => Some(State::DoctypeSystemIdentifierSingleQuoted),
                 _ => None,
             }),
-            State::DoctypeSystemIdentifierDoubleQuoted => self.doctype(|next| (next == b'"').then_some(State::AfterDoctypeSystemIdentifier)),
-            State::DoctypeSystemIdentifierSingleQuoted => self.doctype(|next| (next == b'\'').then_some(State::AfterDoctypeSystemIdentifier)),
+            State::DoctypeSystemIdentifierDoubleQuoted => {
+                self.doctype(|next| (next == b'"').then_some(State::AfterDoctypeSystemIdentifier))
+            }
+            State::DoctypeSystemIdentifierSingleQuoted => {
+                self.doctype(|next| (next == b'\'').then_some(State::AfterDoctypeSystemIdentifier))
+            }
             State::AfterDoctypeSystemIdentifier => self.doctype(|_| None),
             State::CommentStart => {
                 self.index += 1;
@@ -648,7 +717,8 @@ impl Builder<'_> {
                     self.append_to_comment(self.dashes[0], self.dashes[0] + 1);
                     if character >= 0xF0 {
                         self.index = (self.index + 4).min(self.end);
-                        self.tree.append(self.source, &mut self.comment, "\u{FFFD}".as_bytes());
+                        self.tree
+                            .append(self.source, &mut self.comment, "\u{FFFD}".as_bytes());
                     } else {
                         self.consume_unit()?;
                         self.index = self.index.min(self.end);
@@ -884,7 +954,12 @@ impl Builder<'_> {
         let Kind::Mustache { call, .. } = self.tree.kind(mustache) else {
             return Err(Error::Syntax);
         };
-        if self.tag.is_end || !matches!(self.tree.kind(call.path), Kind::Path { .. } | Kind::SubExpression { .. }) {
+        if self.tag.is_end
+            || !matches!(
+                self.tree.kind(call.path),
+                Kind::Path { .. } | Kind::SubExpression { .. }
+            )
+        {
             return Err(Error::Syntax);
         }
         if let Some(kind) = self.tree.kind_mut(mustache) {
@@ -913,7 +988,9 @@ impl Builder<'_> {
                 self.append_dynamic_attribute_value_part(mustache);
                 self.state = State::AttributeValueUnquoted;
             }
-            State::AttributeValueDoubleQuoted | State::AttributeValueSingleQuoted | State::AttributeValueUnquoted => {
+            State::AttributeValueDoubleQuoted
+            | State::AttributeValueSingleQuoted
+            | State::AttributeValueUnquoted => {
                 self.append_dynamic_attribute_value_part(mustache);
             }
             _ => self.children.push(mustache),
@@ -925,7 +1002,8 @@ impl Builder<'_> {
         if let StatementKind::Content = statement.kind {
             return self.content(statement.start as usize, statement.end as usize);
         }
-        let [start, end] = [statement.start, statement.end].map(|offset| self.positions.of_token(self.source, offset as usize));
+        let [start, end] = [statement.start, statement.end]
+            .map(|offset| self.positions.of_token(self.source, offset as usize));
         if let StatementKind::Unsupported = statement.kind {
             return Err(Error::Syntax);
         }
@@ -939,7 +1017,9 @@ impl Builder<'_> {
             StatementKind::Comment { value } => {
                 let comment = self.tree.add(Kind::MustacheComment { value }, start, end);
                 match self.state {
-                    State::BeforeAttributeName | State::AfterAttributeName if !self.tag.is_end => self.tag_parts[2].push(comment),
+                    State::BeforeAttributeName | State::AfterAttributeName if !self.tag.is_end => {
+                        self.tag_parts[2].push(comment)
+                    }
                     State::BeforeData | State::Data => self.children.push(comment),
                     _ => return Err(Error::Syntax),
                 }
@@ -967,13 +1047,22 @@ impl Builder<'_> {
                 let first = (index + 1, first_end as usize);
                 let second = (first_end as usize, statement.next as usize);
                 let (default_block, else_block) = match is_inverted {
-                    true => (self.block(second, Range::default())?, self.block(first, Range::default())?),
-                    false if has_second => (self.block(first, block_params)?, self.block(second, Range::default())?),
+                    true => (
+                        self.block(second, Range::default())?,
+                        self.block(first, Range::default())?,
+                    ),
+                    false if has_second => (
+                        self.block(first, block_params)?,
+                        self.block(second, Range::default())?,
+                    ),
                     false => (self.block(first, block_params)?, NOTHING),
                 };
                 if let Some(block) = self.tree.nodes.get_mut(node as usize) {
                     (block.start, block.end) = (start as u32, end as u32);
-                    if let Kind::BlockStatement { program, inverse, .. } = &mut block.kind {
+                    if let Kind::BlockStatement {
+                        program, inverse, ..
+                    } = &mut block.kind
+                    {
                         (*program, *inverse) = (default_block, else_block);
                     }
                 }
@@ -1054,7 +1143,9 @@ pub(crate) fn build(
     };
     let mut body = builder.body((0, statements.len()))?;
     if let Some(front_matter) = front_matter {
-        let nodes: Vec<NodeId> = std::iter::once(front_matter).chain(builder.tree.list(body).iter().copied()).collect();
+        let nodes: Vec<NodeId> = std::iter::once(front_matter)
+            .chain(builder.tree.list(body).iter().copied())
+            .collect();
         body = builder.tree.add_list(&nodes);
     }
     Ok(builder.tree.add(Kind::Template { body }, 0, source.len()))

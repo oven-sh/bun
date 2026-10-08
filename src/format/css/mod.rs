@@ -59,7 +59,10 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     if lower.ends_with(b".scss") {
         return Some(Parser::Scss);
     }
-    EXTENSIONS.iter().find(|(extension, _)| lower.ends_with(extension)).map(|(_, parser)| *parser)
+    EXTENSIONS
+        .iter()
+        .find(|(extension, _)| lower.ends_with(extension))
+        .map(|(_, parser)| *parser)
 }
 
 /// Everything that is allocated to format a style sheet. It is reused for the next one.
@@ -100,7 +103,11 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
         match state {
             State::Initial => match c {
                 b'\'' | b'"' => state = State::Quotes(c),
-                b'u' | b'U' if text.get(i..i + 4).is_some_and(|it| it.eq_ignore_ascii_case(b"url(")) => {
+                b'u' | b'U'
+                    if text
+                        .get(i..i + 4)
+                        .is_some_and(|it| it.eq_ignore_ascii_case(b"url(")) =>
+                {
                     state = State::Url;
                     i += 3;
                 }
@@ -208,17 +215,32 @@ fn parse_and_print<'o>(
     if let Some(front_matter) = front_matter {
         let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.
-        let first_line_end = text::index_of_char_from(front_matter, b'\n', 0).unwrap_or(front_matter.len());
-        let last_line_start = bun_core::strings::last_index_of_char(front_matter, b'\n').map_or(0, |at| at + 1);
+        let first_line_end =
+            text::index_of_char_from(front_matter, b'\n', 0).unwrap_or(front_matter.len());
+        let last_line_start =
+            bun_core::strings::last_index_of_char(front_matter, b'\n').map_or(0, |at| at + 1);
         let language = text::trim(&front_matter[3..first_line_end]);
-        let is_toml = language == b"toml" || (language.is_empty() && front_matter.starts_with(b"+++"));
+        let is_toml =
+            language == b"toml" || (language.is_empty() && front_matter.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = text::trim(front_matter.get(first_line_end..last_line_start).unwrap_or_default());
+        let value = text::trim(
+            front_matter
+                .get(first_line_end..last_line_start)
+                .unwrap_or_default(),
+        );
         // There is no formatter for TOML, and what is not YAML after all stays as it is.
         let formatted = match value {
-            _ if matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Off) => None,
+            _ if matches!(
+                options.embedded_language_formatting,
+                EmbeddedLanguageFormatting::Off
+            ) =>
+            {
+                None
+            }
             b"" if is_yaml || is_toml => Some(Doc::EMPTY),
-            _ if is_yaml => crate::yaml::document(value, options).ok().map(|it| doc::strip_trailing_hardline(doc::clean(it))),
+            _ if is_yaml => crate::yaml::document(value, options)
+                .ok()
+                .map(|it| doc::strip_trailing_hardline(doc::clean(it))),
             _ => None,
         };
         let front_matter = match formatted {
@@ -226,7 +248,11 @@ fn parse_and_print<'o>(
                 Doc::from(&front_matter[..3]),
                 Doc::from(language),
                 doc::hardline(),
-                if formatted.is_empty_text() { Doc::EMPTY } else { Doc::Array(vec![formatted, doc::hardline()]) },
+                if formatted.is_empty_text() {
+                    Doc::EMPTY
+                } else {
+                    Doc::Array(vec![formatted, doc::hardline()])
+                },
                 Doc::from(&front_matter[last_line_start..]),
             ]))),
             None => Doc::from(front_matter),
@@ -234,7 +260,11 @@ fn parse_and_print<'o>(
         sink.document(&Doc::Array(vec![
             front_matter,
             doc::hardline(),
-            if has_nodes { doc::hardline() } else { Doc::EMPTY },
+            if has_nodes {
+                doc::hardline()
+            } else {
+                Doc::EMPTY
+            },
         ]));
     }
     let mut printer = printer::Printer {
@@ -264,10 +294,16 @@ fn parse_and_print<'o>(
 }
 
 /// Prettier's `textToDoc`: the document for `text`, whose line breaks are `\n`, in another language.
-pub(crate) fn document(text: &[u8], parser: Parser, options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
+pub(crate) fn document(
+    text: &[u8],
+    parser: Parser,
+    options: &FormatOptions,
+) -> Result<Doc<'static>, FormatError> {
     let mut memo = Memo::default();
     let sink = parse_and_print(text, parser, options, Sink::to_document(), &mut memo)?;
-    Ok(doc::strip_trailing_hardline(doc::clean(sink.into_document())))
+    Ok(doc::strip_trailing_hardline(doc::clean(
+        sink.into_document(),
+    )))
 }
 
 /// Appends the formatted `text` to `out`.
@@ -285,7 +321,11 @@ pub fn format(
         None => (false, text),
     };
     let text = normalize_end_of_line(text);
-    let text = match crate::pragma::before_parsing_css(&text, front_matter_len(&text).unwrap_or(0), options) {
+    let text = match crate::pragma::before_parsing_css(
+        &text,
+        front_matter_len(&text).unwrap_or(0),
+        options,
+    ) {
         BeforeParsing::LeaveAsItIs => {
             out.extend_from_slice(original);
             return Ok(());
@@ -301,14 +341,28 @@ pub fn format(
     }
     // Nothing in a style sheet is something that Prettier formats on its own.
     let is_range = options.range_start.is_some_and(|start| start > 0)
-        || options.range_end.is_some_and(|end| (end as usize) < text.len());
+        || options
+            .range_end
+            .is_some_and(|end| (end as usize) < text.len());
     let start = out.len();
     if has_bom {
         out.extend_from_slice(BOM);
     }
     if is_range {
-        parse_and_print(text, parser, options, Sink::to_document(), &mut scratch.memo).inspect_err(|_| out.truncate(start))?;
-        doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)), options, original, out);
+        parse_and_print(
+            text,
+            parser,
+            options,
+            Sink::to_document(),
+            &mut scratch.memo,
+        )
+        .inspect_err(|_| out.truncate(start))?;
+        doc::print(
+            doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
+            options,
+            original,
+            out,
+        );
         return Ok(());
     }
     let sink = Sink::to_output(doc::Printer::new(options, original, out));

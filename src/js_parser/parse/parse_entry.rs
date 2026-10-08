@@ -396,7 +396,8 @@ impl<'a> Parser<'a> {
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.tolerant = options.tolerant;
         lexer.is_javascript = options.is_javascript;
-        lexer.is_ecmascript = options.tolerant && options.is_javascript && options.dialect.ecmascript;
+        lexer.is_ecmascript =
+            options.tolerant && options.is_javascript && options.dialect.ecmascript;
         lexer.is_script = lexer.is_ecmascript && options.dialect.script;
         lexer.is_typescript_5 = options.tolerant && options.dialect.typescript_5;
         lexer.is_babel = options.tolerant && options.dialect.babel;
@@ -644,7 +645,8 @@ impl<'a> Parser<'a> {
         };
         let is_parse_error = |d: &Diagnostic| d.kind == DiagnosticKind::Parse;
         file.has_parse_diagnostics = has_errors
-            || (logged.iter().chain(&file.diagnostics)).any(|d| is_parse_error(d) && !is_accepted(d));
+            || (logged.iter().chain(&file.diagnostics))
+                .any(|d| is_parse_error(d) && !is_accepted(d));
         if has_errors {
             (file.diagnostics)
                 .retain(|d| !matches!(d.kind, DiagnosticKind::Parse | DiagnosticKind::Grammar));

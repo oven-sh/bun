@@ -25,25 +25,25 @@ What a caller does with a file, in this order, is `format_text` in `src/lint/sta
 
 **Import sorting** (`js/sort_imports/`, option `FormatOptions::sort_imports`, compiled once per run from `sort_imports::Settings`) has four flavours. `@trivago`/`@ianvs` `importOrder*` and prettier-plugin-organize-imports are text → text preprocessors in Prettier, so they are here too: `sort_imports::sorted_text(file, how)` gives the text that has to be parsed and formatted instead of the file, byte for byte the plugin's (`babel.rs`: @babel/parser's comment attachment over the HIR, `generator.rs`: @babel/generator's printer for imports, `trivago.rs`/`ianvs.rs`: the plugins, `organize.rs`: TypeScript's organizeImports and textChanges), or `None` if formatting the file as it is gives the same (`layout.rs`): only a file whose imports move is parsed twice. oxfmt's `sortImports` (`oxfmt/`) happens inside `format`: `FormatStatements` tells an `ImportRun` what it is about to write, a run of imports is captured and written as `Interned` sub-ranges, one per line, in sorted order. Tests: `bun-lint format sort-imports cases|bench|serve`, oracles in `test/cli/format/oracle/sort-imports/`.
 
-| directory | what | oxc |
-| --- | --- | --- |
-| `ir/` | the IR, `Formatter`, builders (`group`, `indent`, `soft_line_break`, ..), macros, the printer. Knows nothing about JavaScript except `Formatter::context` | `oxc_formatter_core` |
-| `options.rs` | `FormatOptions`, with oxc's field and type names, and `set("semi", "false")` with Prettier's | `oxc_formatter/src/options.rs` |
-| `js/format.rs` | `impl Format for Expr, Stmt, TypeNode, ..`: comments, `prettier-ignore`, parentheses, then dispatch to `js/print/` | the generated `ast_nodes/generated/format.rs` |
-| `js/ast_nodes.rs`, `fields.rs`, `siblings.rs` | the tree as oxc sees it: `AstNodes`, `parent()`, `span()`, field accessors, the next sibling | `ast_nodes/` |
-| `js/comments.rs`, `trivia.rs` | which comments are printed where | `formatter/comments.rs`, `formatter/trivia.rs` |
-| `js/parentheses/` | `needs_parentheses` | `parentheses/` |
-| `js/print/` | one function per kind of node | `print/` |
-| `js/utils/` | what several kinds of nodes share: assignments, member chains, conditionals, strings, numbers | `utils/` |
-| `js/sort_imports/` | import sorting: `@trivago`/`@ianvs` `importOrder*`, oxfmt's `sortImports` | |
-| `json/`, `css/`, `graphql/` | JSON (`json`, `json5`, `jsonc`, `json-stringify`), style sheets (`css`, `less`, `scss`) and GraphQL, each with a parser of its own. `embed.rs` in the last two: the same in the templates of JavaScript | |
-| `yaml/` | YAML: ports of `yaml` (lexer, CST, composer with its errors), of `yaml-unist-parser` and of `language-yaml`. Prints with `css/doc.rs`. Also the front matter of style sheets and of Markdown | |
-| `markdown/` | Markdown: a parser whose tree is that of micromark and remark, and `language-markdown`. Prints with `css/doc.rs`. Code blocks go to the other formatters. For JavaScript the caller sets `FormatOptions::format_javascript`, since this crate does not parse it | |
-| `handlebars/` | Handlebars as Glimmer reads it (`.hbs`, `.handlebars`): ports of the lexer and the grammar of `@handlebars/parser`, of `simple-html-tokenizer` and of the handlers of `@glimmer/syntax` in the mode `codemod`, and `language-handlebars`, which writes to the `Elements` of `css/doc.rs`. What the parsers drop or change (a doctype, `{{this/a}}`), Prettier does not print, and neither does this | |
-| `js/jsdoc/` | oxfmt's option `jsdoc`: JSDoc comments are formatted as prettier-plugin-jsdoc does. Off unless `.oxfmtrc.json` sets it. A comment whose formatted text would have `*/` in it stays as it is | `formatter/jsdoc/` |
-| `conformance/` | the crate `bun_format_conformance`: runs the tests of Prettier and of oxfmt | |
-| `pragma.rs`, `range.rs`, `cursor.rs` | `insertPragma`/`requirePragma`/`checkIgnorePragma`, `rangeStart`/`rangeEnd`, `cursorOffset`: Prettier's `src/main/core.js` | |
-| `verify.rs`, `verify/` | a check that formatting did not change the program: the trees and the comments before and after | `detect_code_removal` (different) |
+| directory                                     | what                                                                                                                                                                                                                                                                                                                                                                                                | oxc                                            |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `ir/`                                         | the IR, `Formatter`, builders (`group`, `indent`, `soft_line_break`, ..), macros, the printer. Knows nothing about JavaScript except `Formatter::context`                                                                                                                                                                                                                                           | `oxc_formatter_core`                           |
+| `options.rs`                                  | `FormatOptions`, with oxc's field and type names, and `set("semi", "false")` with Prettier's                                                                                                                                                                                                                                                                                                        | `oxc_formatter/src/options.rs`                 |
+| `js/format.rs`                                | `impl Format for Expr, Stmt, TypeNode, ..`: comments, `prettier-ignore`, parentheses, then dispatch to `js/print/`                                                                                                                                                                                                                                                                                  | the generated `ast_nodes/generated/format.rs`  |
+| `js/ast_nodes.rs`, `fields.rs`, `siblings.rs` | the tree as oxc sees it: `AstNodes`, `parent()`, `span()`, field accessors, the next sibling                                                                                                                                                                                                                                                                                                        | `ast_nodes/`                                   |
+| `js/comments.rs`, `trivia.rs`                 | which comments are printed where                                                                                                                                                                                                                                                                                                                                                                    | `formatter/comments.rs`, `formatter/trivia.rs` |
+| `js/parentheses/`                             | `needs_parentheses`                                                                                                                                                                                                                                                                                                                                                                                 | `parentheses/`                                 |
+| `js/print/`                                   | one function per kind of node                                                                                                                                                                                                                                                                                                                                                                       | `print/`                                       |
+| `js/utils/`                                   | what several kinds of nodes share: assignments, member chains, conditionals, strings, numbers                                                                                                                                                                                                                                                                                                       | `utils/`                                       |
+| `js/sort_imports/`                            | import sorting: `@trivago`/`@ianvs` `importOrder*`, oxfmt's `sortImports`                                                                                                                                                                                                                                                                                                                           |                                                |
+| `json/`, `css/`, `graphql/`                   | JSON (`json`, `json5`, `jsonc`, `json-stringify`), style sheets (`css`, `less`, `scss`) and GraphQL, each with a parser of its own. `embed.rs` in the last two: the same in the templates of JavaScript                                                                                                                                                                                             |                                                |
+| `yaml/`                                       | YAML: ports of `yaml` (lexer, CST, composer with its errors), of `yaml-unist-parser` and of `language-yaml`. Prints with `css/doc.rs`. Also the front matter of style sheets and of Markdown                                                                                                                                                                                                        |                                                |
+| `markdown/`                                   | Markdown: a parser whose tree is that of micromark and remark, and `language-markdown`. Prints with `css/doc.rs`. Code blocks go to the other formatters. For JavaScript the caller sets `FormatOptions::format_javascript`, since this crate does not parse it                                                                                                                                     |                                                |
+| `handlebars/`                                 | Handlebars as Glimmer reads it (`.hbs`, `.handlebars`): ports of the lexer and the grammar of `@handlebars/parser`, of `simple-html-tokenizer` and of the handlers of `@glimmer/syntax` in the mode `codemod`, and `language-handlebars`, which writes to the `Elements` of `css/doc.rs`. What the parsers drop or change (a doctype, `{{this/a}}`), Prettier does not print, and neither does this |                                                |
+| `js/jsdoc/`                                   | oxfmt's option `jsdoc`: JSDoc comments are formatted as prettier-plugin-jsdoc does. Off unless `.oxfmtrc.json` sets it. A comment whose formatted text would have `*/` in it stays as it is                                                                                                                                                                                                         | `formatter/jsdoc/`                             |
+| `conformance/`                                | the crate `bun_format_conformance`: runs the tests of Prettier and of oxfmt                                                                                                                                                                                                                                                                                                                         |                                                |
+| `pragma.rs`, `range.rs`, `cursor.rs`          | `insertPragma`/`requirePragma`/`checkIgnorePragma`, `rangeStart`/`rangeEnd`, `cursorOffset`: Prettier's `src/main/core.js`                                                                                                                                                                                                                                                                          |                                                |
+| `verify.rs`, `verify/`                        | a check that formatting did not change the program: the trees and the comments before and after                                                                                                                                                                                                                                                                                                     | `detect_code_removal` (different)              |
 
 ## Style sheets, YAML, Markdown: the other printer
 
@@ -61,17 +61,17 @@ The printer for style sheets returns no documents. It writes operations (text, l
 
 Same name unless listed. `print/mod.rs` of oxc (1900 lines) is split:
 
-| oxc `print/mod.rs` | here |
-| --- | --- |
-| identifiers, `this`, objects, properties, unary, update, `await`, `yield`, chain, assignment targets, `<T>e`, `e!` | `print/expressions.rs`, and the one-liners in `format.rs::write_expression` |
-| statements: `if`, loops, `break`, labels, `with`, expression statements | `print/statements.rs` |
-| binding patterns, `array_pattern.rs`, `binding_property_list.rs`, `assignment_pattern_property_list.rs` | `print/patterns.rs`, `print/object_pattern_like.rs`, `print/expressions.rs` |
-| literals | `print/literals.rs` |
-| enums, interfaces, modules, `import =`, `export =` | `print/ts_declarations.rs` |
-| keyword types, references, literals, signatures, predicates, `typeof`, `import()` types | `print/ts_types.rs`, and the one-liners in `format.rs::write_type` |
-| `template/mod.rs` | `print/template.rs` (`template/embed/`: `css/embed.rs`, `graphql/embed.rs`, after Prettier's `embed/*.js`) |
-| `oxc_syntax` operators and precedence | `utils/operators.rs` |
-| `oxc_formatter_core` `buffer.rs`, `arguments.rs`, `state.rs`, `format_extensions.rs` | `ir/formatter.rs` |
+| oxc `print/mod.rs`                                                                                                 | here                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| identifiers, `this`, objects, properties, unary, update, `await`, `yield`, chain, assignment targets, `<T>e`, `e!` | `print/expressions.rs`, and the one-liners in `format.rs::write_expression`                                |
+| statements: `if`, loops, `break`, labels, `with`, expression statements                                            | `print/statements.rs`                                                                                      |
+| binding patterns, `array_pattern.rs`, `binding_property_list.rs`, `assignment_pattern_property_list.rs`            | `print/patterns.rs`, `print/object_pattern_like.rs`, `print/expressions.rs`                                |
+| literals                                                                                                           | `print/literals.rs`                                                                                        |
+| enums, interfaces, modules, `import =`, `export =`                                                                 | `print/ts_declarations.rs`                                                                                 |
+| keyword types, references, literals, signatures, predicates, `typeof`, `import()` types                            | `print/ts_types.rs`, and the one-liners in `format.rs::write_type`                                         |
+| `template/mod.rs`                                                                                                  | `print/template.rs` (`template/embed/`: `css/embed.rs`, `graphql/embed.rs`, after Prettier's `embed/*.js`) |
+| `oxc_syntax` operators and precedence                                                                              | `utils/operators.rs`                                                                                       |
+| `oxc_formatter_core` `buffer.rs`, `arguments.rs`, `state.rs`, `format_extensions.rs`                               | `ir/formatter.rs`                                                                                          |
 
 ## How the code differs from oxc's
 
@@ -89,25 +89,25 @@ Three frequent shapes are one element each, which the builders write by themselv
 
 No `dyn Buffer`, no generic context. `f: &mut Formatter<'a>`, where `'a` is the lifetime of the file.
 
-| oxc | here |
-| --- | --- |
-| `write!(f, [a, b])`, `write!(f, a)` | the same. **Import the macros by name**: `use crate::{write, format_args, best_fitting};` next to `use crate::prelude::*;` |
-| `impl Format<'a, JsFormatContext<'a>> for X` | `impl<'a> Format<'a> for X` |
-| `&mut JsFormatter<'_, 'a>` | `&mut Formatter<'a>` |
-| `f.context().comments()` | `f.comments()` |
-| `f.context().source_type().is_typescript()` | `!f.file().is_javascript()` |
-| `token("(")` | `"("` |
-| `text(s)`, `text_without_whitespace(s)` | the same, with `&[u8]`. No copy if the slice is part of the source. `source_text(span)` is cheaper still, for a token without line breaks or tabs |
-| `f.allocator().alloc_str(..)` + `text(..)` | `text(&owned)` copies. `f.write_built_text(\|out\| ..)` builds in place |
-| `format_once(\|f\| ..)` | `format_with(\|f\| ..)` wherever the closure can be `Fn` |
-| `VecBuffer::new(f.state_mut())` .. `into_vec()` | `f.capture(&content) -> Interned`, `f.intern(&content) -> Option<FormatElement>`, `f.write_into(&mut vec, &content)` with `f.take_vec()` / `f.recycle_vec(vec)` |
-| `RemoveSoftLinesBuffer::new(f)` | `f.write_without_soft_lines(&content)` |
-| `buffer.start_recording()` .. `stop()` | `let start = f.elements().len(); ..; f.elements_from(start)` |
-| `element.will_break()` | `element.will_break(f)` |
-| `memoized.inspect(f).will_break()` | the same |
-| `BestFittingElement::from_vec_unchecked(..)` | `f.best_fitting_of(&[Interned])` |
-| write to a buffer to learn something, then wrap it in a group or not | `let slot = f.reserve_tag(); ..write..; f.group_from(slot, should_expand)`, or leave the slot alone. See `AssignmentLike::fmt` |
-| `Vec`, `ArenaVec` for a handful of things | `SmallVec<[T; 4]>` |
+| oxc                                                                  | here                                                                                                                                                            |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `write!(f, [a, b])`, `write!(f, a)`                                  | the same. **Import the macros by name**: `use crate::{write, format_args, best_fitting};` next to `use crate::prelude::*;`                                      |
+| `impl Format<'a, JsFormatContext<'a>> for X`                         | `impl<'a> Format<'a> for X`                                                                                                                                     |
+| `&mut JsFormatter<'_, 'a>`                                           | `&mut Formatter<'a>`                                                                                                                                            |
+| `f.context().comments()`                                             | `f.comments()`                                                                                                                                                  |
+| `f.context().source_type().is_typescript()`                          | `!f.file().is_javascript()`                                                                                                                                     |
+| `token("(")`                                                         | `"("`                                                                                                                                                           |
+| `text(s)`, `text_without_whitespace(s)`                              | the same, with `&[u8]`. No copy if the slice is part of the source. `source_text(span)` is cheaper still, for a token without line breaks or tabs               |
+| `f.allocator().alloc_str(..)` + `text(..)`                           | `text(&owned)` copies. `f.write_built_text(\|out\| ..)` builds in place                                                                                         |
+| `format_once(\|f\| ..)`                                              | `format_with(\|f\| ..)` wherever the closure can be `Fn`                                                                                                        |
+| `VecBuffer::new(f.state_mut())` .. `into_vec()`                      | `f.capture(&content) -> Interned`, `f.intern(&content) -> Option<FormatElement>`, `f.write_into(&mut vec, &content)` with `f.take_vec()` / `f.recycle_vec(vec)` |
+| `RemoveSoftLinesBuffer::new(f)`                                      | `f.write_without_soft_lines(&content)`                                                                                                                          |
+| `buffer.start_recording()` .. `stop()`                               | `let start = f.elements().len(); ..; f.elements_from(start)`                                                                                                    |
+| `element.will_break()`                                               | `element.will_break(f)`                                                                                                                                         |
+| `memoized.inspect(f).will_break()`                                   | the same                                                                                                                                                        |
+| `BestFittingElement::from_vec_unchecked(..)`                         | `f.best_fitting_of(&[Interned])`                                                                                                                                |
+| write to a buffer to learn something, then wrap it in a group or not | `let slot = f.reserve_tag(); ..write..; f.group_from(slot, should_expand)`, or leave the slot alone. See `AssignmentLike::fmt`                                  |
+| `Vec`, `ArenaVec` for a handful of things                            | `SmallVec<[T; 4]>`                                                                                                                                              |
 
 ### Nodes
 
@@ -124,26 +124,26 @@ matches!(e.ast_parent(), AstNodes::ExpressionStatement(s) if s.is_arrow_function
 
 Every variant has one field, the handle. It emulates the nodes that oxc has and the HIR has not: `ChainExpression`, `FunctionBody`, `FormalParameters`, `ClassBody`, `TSTypeAnnotation`, `TSTypeParameterInstantiation`/`Declaration`, `JSXExpressionContainer`, `JSXOpeningElement`, `ExportNamedDeclaration`/`ExportDefaultDeclaration` around a declaration, `CatchClause`, `Decorator`, `SequenceExpression` (the HIR has nested commas), the arrow body's `ExpressionStatement`, and the assignment target kinds.
 
-| oxc | here |
-| --- | --- |
-| `match expr.as_ref() { Expression::X(x) => .. }` | `match e.kind() { ExprKind::X .. }`. **If X is a member access, a call or `!`**, use `e.as_ast_nodes()`: see below |
-| `self.parent()` in the code for one kind of node | `e.ast_parent()`. For a member access, a call or `!`: `e.as_chain_element().parent()` |
-| `self.grand_parent()` | `e.ast_parent().parent()` |
-| `call.callee()`, `member.object()`, `binary.left()`, `cond.test()`, `unary.argument()`, `as.expression()` | the same names on `Expr`, from `ExprFields` (`js/fields.rs`), returning `Option`. Or destructure `e.kind()` |
-| `x.span() == y.span()` to ask "is x the test of y?" | `x == y`: handles compare by identity |
-| `parent.is_call_like_callee_span(span)` | `parent.is_call_like_callee(e)` |
-| `node.needs_parentheses(f)` | `parentheses::expression::needs_parentheses(e, f)`, `parentheses::ts_type::needs_parentheses(ty, f)` |
-| `node.write(f)` (without comments and parentheses) | `write_expression(e, ExprOptions::None, f)`, `write_declaration(stmt, f)`, `write_type(ty, f)` |
-| `node.format_leading_comments(f)` | `format_leading_comments(span).fmt(f)` |
-| `node.format_trailing_comments(f)` | `write_trailing_comments_of(node, f)` |
-| `self.id()`, `member.property()`: an identifier node | `identifier(ident, parent_node)`. Names are `Ident`s, not nodes |
-| `property.key()` | `FormatKey::new(key, parent_node)`, `format_computed_or_property_key(..)` in `utils/object.rs` |
-| `self.type_annotation()` (`: T`) | `x.ty().map(FormatTypeAnnotation)` |
-| `self.type_parameters()`, `self.type_arguments()` | `type_parameters(list, owner)`, `type_arguments(list, owner)` in `print/type_parameters.rs`. They write nothing for an empty list |
-| `self.params()`, `self.body()` of a function | `FormatFormalParameters(func)`, `FormatFunctionBody(func)` |
-| `self.decorators()` | `FormatDecorators::new(iter, parent_node)` |
-| `arrow.fmt_with_options(options, f)` | `FormatExpr::with_options(e, ExprOptions::Arrow(options))` |
-| `declare`, `abstract`, `readonly`, .. fields | `x.modifiers().iter().any(\|m\| m.flag() == Flags::X)`. `x.flags()` also has what is inherited (`AMBIENT` in a `.d.ts`) |
+| oxc                                                                                                       | here                                                                                                                              |
+| --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `match expr.as_ref() { Expression::X(x) => .. }`                                                          | `match e.kind() { ExprKind::X .. }`. **If X is a member access, a call or `!`**, use `e.as_ast_nodes()`: see below                |
+| `self.parent()` in the code for one kind of node                                                          | `e.ast_parent()`. For a member access, a call or `!`: `e.as_chain_element().parent()`                                             |
+| `self.grand_parent()`                                                                                     | `e.ast_parent().parent()`                                                                                                         |
+| `call.callee()`, `member.object()`, `binary.left()`, `cond.test()`, `unary.argument()`, `as.expression()` | the same names on `Expr`, from `ExprFields` (`js/fields.rs`), returning `Option`. Or destructure `e.kind()`                       |
+| `x.span() == y.span()` to ask "is x the test of y?"                                                       | `x == y`: handles compare by identity                                                                                             |
+| `parent.is_call_like_callee_span(span)`                                                                   | `parent.is_call_like_callee(e)`                                                                                                   |
+| `node.needs_parentheses(f)`                                                                               | `parentheses::expression::needs_parentheses(e, f)`, `parentheses::ts_type::needs_parentheses(ty, f)`                              |
+| `node.write(f)` (without comments and parentheses)                                                        | `write_expression(e, ExprOptions::None, f)`, `write_declaration(stmt, f)`, `write_type(ty, f)`                                    |
+| `node.format_leading_comments(f)`                                                                         | `format_leading_comments(span).fmt(f)`                                                                                            |
+| `node.format_trailing_comments(f)`                                                                        | `write_trailing_comments_of(node, f)`                                                                                             |
+| `self.id()`, `member.property()`: an identifier node                                                      | `identifier(ident, parent_node)`. Names are `Ident`s, not nodes                                                                   |
+| `property.key()`                                                                                          | `FormatKey::new(key, parent_node)`, `format_computed_or_property_key(..)` in `utils/object.rs`                                    |
+| `self.type_annotation()` (`: T`)                                                                          | `x.ty().map(FormatTypeAnnotation)`                                                                                                |
+| `self.type_parameters()`, `self.type_arguments()`                                                         | `type_parameters(list, owner)`, `type_arguments(list, owner)` in `print/type_parameters.rs`. They write nothing for an empty list |
+| `self.params()`, `self.body()` of a function                                                              | `FormatFormalParameters(func)`, `FormatFunctionBody(func)`                                                                        |
+| `self.decorators()`                                                                                       | `FormatDecorators::new(iter, parent_node)`                                                                                        |
+| `arrow.fmt_with_options(options, f)`                                                                      | `FormatExpr::with_options(e, ExprOptions::Arrow(options))`                                                                        |
+| `declare`, `abstract`, `readonly`, .. fields                                                              | `x.modifiers().iter().any(\|m\| m.flag() == Flags::X)`. `x.flags()` also has what is inherited (`AMBIENT` in a `.d.ts`)           |
 
 ### Optional chains
 
@@ -194,7 +194,7 @@ The goal is to be faster per core than oxfmt and Biome.
 
 ## Conventions
 
-Those of `src/CLAUDE.md` and `src/lint/CLAUDE.md`: no `unsafe`, nothing that can panic on any input (`.get()`, `let .. else`, `saturating_sub`), byte searches through `bun_core::strings`, no `std::fs`/`println!`, `pub(crate)`, no warnings. Comments say what the reader cannot see, in the present tense, and never narrate the port. Naming Prettier's function that something corresponds to is good: `` /// Prettier's `shouldHugTheOnlyFunctionParameter`. ``
+Those of `src/CLAUDE.md` and `src/lint/CLAUDE.md`: no `unsafe`, nothing that can panic on any input (`.get()`, `let .. else`, `saturating_sub`), byte searches through `bun_core::strings`, no `std::fs`/`println!`, `pub(crate)`, no warnings. Comments say what the reader cannot see, in the present tense, and never narrate the port. Naming Prettier's function that something corresponds to is good: ``/// Prettier's `shouldHugTheOnlyFunctionParameter`.``
 
 A node that is not ported yet is written as it is in the source: `write!(f, FormatSuppressedNode(span))`.
 

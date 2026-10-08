@@ -33,12 +33,12 @@ Checking formatting...
 
 `bun format` reads the same configuration, formats the same files, and takes the same flags. The one difference: it writes unless you tell it not to.
 
-| Instead of                       | Run                             |
-| -------------------------------- | ------------------------------- |
-| `prettier --write .`             | `bun format`                    |
-| `prettier --write src test`      | `bun format src test`           |
-| `prettier --check .`             | `bun format --check`            |
-| `prettier -l .`                  | `bun format -l`                 |
+| Instead of                       | Run                                |
+| -------------------------------- | ---------------------------------- |
+| `prettier --write .`             | `bun format`                       |
+| `prettier --write src test`      | `bun format src test`              |
+| `prettier --check .`             | `bun format --check`               |
+| `prettier -l .`                  | `bun format -l`                    |
 | `prettier --stdin-filepath a.ts` | `bun format --stdin-filepath a.ts` |
 
 `bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.yaml`, `.yml`, `.md`, `.graphql`, and `.gql` files. It leaves HTML, Vue, MDX, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
@@ -107,12 +107,12 @@ bun format --no-semi --print-width 100
 
 `bun format` sorts imports itself. No plugin has to be installed. It does so if the configuration asks for it:
 
-| In the configuration file                                                                              | Sorts like                                                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `importOrder`, or another option that starts with `importOrder`                                        | [`@trivago/prettier-plugin-sort-imports`](https://github.com/trivago/prettier-plugin-sort-imports)                                                                               |
-| `"plugins": ["@ianvs/prettier-plugin-sort-imports"]`, or an option or a special word only it has       | [`@ianvs/prettier-plugin-sort-imports`](https://github.com/IanVS/prettier-plugin-sort-imports)                                                                                   |
-| `"plugins": ["prettier-plugin-organize-imports"]`                                                      | [`prettier-plugin-organize-imports`](https://github.com/simonhaenisch/prettier-plugin-organize-imports): TypeScript's "Organize Imports", which also removes unused imports      |
-| `sortImports` in `.oxfmtrc.json`                                                                       | [oxfmt](https://oxc.rs/docs/guide/usage/formatter)                                                                                                                               |
+| In the configuration file                                                                        | Sorts like                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `importOrder`, or another option that starts with `importOrder`                                  | [`@trivago/prettier-plugin-sort-imports`](https://github.com/trivago/prettier-plugin-sort-imports)                                                                          |
+| `"plugins": ["@ianvs/prettier-plugin-sort-imports"]`, or an option or a special word only it has | [`@ianvs/prettier-plugin-sort-imports`](https://github.com/IanVS/prettier-plugin-sort-imports)                                                                              |
+| `"plugins": ["prettier-plugin-organize-imports"]`                                                | [`prettier-plugin-organize-imports`](https://github.com/simonhaenisch/prettier-plugin-organize-imports): TypeScript's "Organize Imports", which also removes unused imports |
+| `sortImports` in `.oxfmtrc.json`                                                                 | [oxfmt](https://oxc.rs/docs/guide/usage/formatter)                                                                                                                          |
 
 ```json .prettierrc icon="file-json"
 {

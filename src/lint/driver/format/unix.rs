@@ -22,6 +22,10 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
         }
     }
     if total > 0 {
-        let _ = write!(out, "\n{total} problem{}", if total == 1 { "" } else { "s" });
+        let _ = write!(
+            out,
+            "\n{total} problem{}",
+            if total == 1 { "" } else { "s" }
+        );
     }
 }

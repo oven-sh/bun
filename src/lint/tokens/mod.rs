@@ -164,7 +164,10 @@ pub enum TokenKind {
 impl TokenKind {
     #[inline]
     pub fn is_comment(self) -> bool {
-        matches!(self, TokenKind::Line | TokenKind::Block | TokenKind::Shebang)
+        matches!(
+            self,
+            TokenKind::Line | TokenKind::Block | TokenKind::Shebang
+        )
     }
 }
 
@@ -247,8 +250,10 @@ impl<'a> Token<'a> {
     /// and there is a `\` in it.
     fn has_decoded_value(self) -> bool {
         use TokenKind::{Boolean, Identifier, Keyword, Null, PrivateIdentifier};
-        matches!(self.raw.kind, Identifier | Keyword | PrivateIdentifier | Boolean | Null)
-            && bun_core::strings::contains_char(self.text(), b'\\')
+        matches!(
+            self.raw.kind,
+            Identifier | Keyword | PrivateIdentifier | Boolean | Null
+        ) && bun_core::strings::contains_char(self.text(), b'\\')
             && scan::is_espree(self.file)
     }
 
@@ -351,7 +356,9 @@ impl<'a> Tokens<'a> {
 
     fn front(&mut self) -> Option<RawToken> {
         match (self.tokens.first(), self.comments.first()) {
-            (Some(token), Some(comment)) if comment.start < token.start => self.comments.split_off_first(),
+            (Some(token), Some(comment)) if comment.start < token.start => {
+                self.comments.split_off_first()
+            }
             (Some(_), _) => self.tokens.split_off_first(),
             (None, _) => self.comments.split_off_first(),
         }
@@ -360,7 +367,9 @@ impl<'a> Tokens<'a> {
 
     fn back(&mut self) -> Option<RawToken> {
         match (self.tokens.last(), self.comments.last()) {
-            (Some(token), Some(comment)) if comment.start > token.start => self.comments.split_off_last(),
+            (Some(token), Some(comment)) if comment.start > token.start => {
+                self.comments.split_off_last()
+            }
             (Some(_), _) => self.tokens.split_off_last(),
             (None, _) => self.comments.split_off_last(),
         }
@@ -418,7 +427,8 @@ fn code_points(name: &[u8]) -> impl Iterator<Item = u32> {
     let mut at = 0;
     std::iter::from_fn(move || {
         let (c, size) = match name.get(at)? {
-            b'\\' => bun_core::lexer::peek_unicode_escape(name, at).unwrap_or_else(|| (i32::from(b'\\'), 1)),
+            b'\\' => bun_core::lexer::peek_unicode_escape(name, at)
+                .unwrap_or_else(|| (i32::from(b'\\'), 1)),
             _ => bun_core::lexer::char_and_size(name, at),
         };
         at += size.max(1);
@@ -429,7 +439,8 @@ fn code_points(name: &[u8]) -> impl Iterator<Item = u32> {
 /// The one of `all` that `offset` is in.
 fn around(all: &[RawToken], offset: u32) -> Option<&RawToken> {
     let after = all.partition_point(|token| token.start <= offset);
-    all.get(after.checked_sub(1)?).filter(|token| offset < token.end)
+    all.get(after.checked_sub(1)?)
+        .filter(|token| offset < token.end)
 }
 
 /// Whether there is nothing but whitespace in `text`, which is next to a comment.
@@ -467,7 +478,11 @@ pub fn scan_comments_again(file: &File) -> Option<usize> {
         return Some(0);
     };
     let range = |comment: &RawToken| (comment.start, comment.end, comment.kind);
-    comments.iter().map(range).eq(scan::scan(file).1.iter().map(range)).then_some(comments.len())
+    comments
+        .iter()
+        .map(range)
+        .eq(scan::scan(file).1.iter().map(range))
+        .then_some(comments.len())
 }
 
 impl<'a> File<'a> {
@@ -570,7 +585,9 @@ impl<'a> File<'a> {
     /// The token that starts at `offset`.
     pub fn token_at(&'a self, offset: u32) -> Option<Token<'a>> {
         let tokens = self.raw_tokens();
-        let at = tokens.binary_search_by_key(&offset, |token| token.start).ok()?;
+        let at = tokens
+            .binary_search_by_key(&offset, |token| token.start)
+            .ok()?;
         self.token(tokens.get(at))
     }
 
@@ -578,7 +595,9 @@ impl<'a> File<'a> {
     pub fn token_or_comment_at(&'a self, offset: u32) -> Option<Token<'a>> {
         self.token_at(offset).or_else(|| {
             let comments = self.raw_comments();
-            let at = comments.binary_search_by_key(&offset, |comment| comment.start).ok()?;
+            let at = comments
+                .binary_search_by_key(&offset, |comment| comment.start)
+                .ok()?;
             self.token(comments.get(at))
         })
     }
@@ -595,7 +614,8 @@ impl<'a> File<'a> {
 
     /// The token or the comment that `offset` is in. `None` in whitespace.
     pub fn token_or_comment_around(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.comment_around(offset).or_else(|| self.token_around(offset))
+        self.comment_around(offset)
+            .or_else(|| self.token_around(offset))
     }
 
     fn comments_within(&'a self, span: Span) -> Tokens<'a> {

@@ -7,15 +7,16 @@
 
 use super::Config;
 use super::comments::{
-    Attached, Placement, comments_of, has_newline, has_newline_backwards, is_followed_by_empty_line,
-    is_previous_line_empty,
+    Attached, Placement, comments_of, has_newline, has_newline_backwards,
+    is_followed_by_empty_line, is_previous_line_empty,
 };
 use super::parser::{
-    BLANK_AFTER, BREAK_AFTER_OPEN, CONCISE, Comment, Kind, MATRIX, Node, Owner, QUOTED, REWRITTEN, Tree, UNQUOTED,
-    make_string,
+    BLANK_AFTER, BREAK_AFTER_OPEN, CONCISE, Comment, Kind, MATRIX, Node, Owner, QUOTED, REWRITTEN,
+    Tree, UNQUOTED, make_string,
 };
 use crate::ir::element::{
-    Align, Condition, FormatElement, Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag, Text, TextWidth, Token,
+    Align, Condition, FormatElement, Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag,
+    Text, TextWidth, Token,
 };
 use crate::ir::formatter::Storage;
 use crate::ir::width::string_width;
@@ -28,7 +29,10 @@ use std::num::NonZeroU32;
 enum Parent {
     Root,
     /// `breaks_after_colon`: the value is on the line after the name.
-    Property { name: u32, breaks_after_colon: bool },
+    Property {
+        name: u32,
+        breaks_after_colon: bool,
+    },
     Element,
 }
 
@@ -75,7 +79,10 @@ pub(super) fn build(
         group_count: 0,
     };
     // Prettier's `addAlignmentToDoc`. The line break makes the indentation take effect.
-    let (levels, spaces) = (config.alignment / config.indent_width.max(1), config.alignment % config.indent_width.max(1));
+    let (levels, spaces) = (
+        config.alignment / config.indent_width.max(1),
+        config.alignment % config.indent_width.max(1),
+    );
     if spaces > 0 {
         builder.tag(Tag::StartAlign(Align(spaces as u8)));
     }
@@ -123,19 +130,27 @@ impl Builder<'_> {
     }
 
     fn start_group(&mut self, should_break: bool, id: Option<GroupId>) {
-        let mode = if should_break { GroupMode::Expand } else { GroupMode::Flat };
+        let mode = if should_break {
+            GroupMode::Expand
+        } else {
+            GroupMode::Flat
+        };
         self.tag(Tag::StartGroup(Group::new().with_mode(mode).with_id(id)));
     }
 
     /// `,` if the group breaks. `None`: the enclosing one.
     fn comma_if_group_breaks(&mut self, id: Option<GroupId>) {
-        self.tag(Tag::StartConditionalContent(Condition::new(PrintMode::Expanded).with_group_id(id)));
+        self.tag(Tag::StartConditionalContent(
+            Condition::new(PrintMode::Expanded).with_group_id(id),
+        ));
         self.token(",");
         self.tag(Tag::EndConditionalContent);
     }
 
     fn slice(&self, start: u32, end: u32) -> &[u8] {
-        self.text.get(start as usize..end as usize).unwrap_or_default()
+        self.text
+            .get(start as usize..end as usize)
+            .unwrap_or_default()
     }
 
     /// A part of the source. Its line breaks are written as they are, without indentation.
@@ -180,14 +195,17 @@ impl Builder<'_> {
     // ───────────────────────────── comments ─────────────────────────────
 
     fn comment(&self, attached: &Attached) -> Comment {
-        self.comments.get(attached.comment as usize).copied().unwrap_or(Comment {
-            start: 0,
-            end: 0,
-            is_block: true,
-            enclosing: Owner::NONE,
-            preceding: Owner::NONE,
-            following: Owner::NONE,
-        })
+        self.comments
+            .get(attached.comment as usize)
+            .copied()
+            .unwrap_or(Comment {
+                start: 0,
+                end: 0,
+                is_block: true,
+                enclosing: Owner::NONE,
+                preceding: Owner::NONE,
+                following: Owner::NONE,
+            })
     }
 
     /// Whether every line of a block comment over several lines starts with a `*`. Its lines are
@@ -196,7 +214,9 @@ impl Builder<'_> {
         let source = self.slice(comment.start, comment.end);
         comment.is_block
             && bun_core::strings::contains_char(source, b'\n')
-            && bun_core::strings::split(source, b"\n").skip(1).all(|line| line.trim_ascii_start().starts_with(b"*"))
+            && bun_core::strings::split(source, b"\n")
+                .skip(1)
+                .all(|line| line.trim_ascii_start().starts_with(b"*"))
     }
 
     /// Prettier's `printComment`
@@ -226,7 +246,10 @@ impl Builder<'_> {
             }
             self.line(LineMode::Hard);
             self.token(" ");
-            self.source(line_start + blanks, line_start + blanks + trimmed.len() as u32);
+            self.source(
+                line_start + blanks,
+                line_start + blanks + trimmed.len() as u32,
+            );
             // In Markdown, two spaces at the end of a line are a line break. A line break in a text
             // keeps the spaces before it, and the one that follows only indents.
             if is_jsdoc && trimmed != b"*" && line.ends_with(b"  ") && lines.peek().is_some() {
@@ -242,14 +265,23 @@ impl Builder<'_> {
     }
 
     fn has_comment(&self, owner: Owner, test: impl Fn(&Self, Placement, Comment) -> bool) -> bool {
-        comments_of(self.attached, owner).iter().any(|it| test(self, it.placement, self.comment(it)))
+        comments_of(self.attached, owner)
+            .iter()
+            .any(|it| test(self, it.placement, self.comment(it)))
     }
 
     /// Prettier's `hasNodeIgnoreComment`
     fn is_ignored(&self, owner: Owner) -> bool {
         self.has_comment(owner, |this, _, comment| {
-            let end = if comment.is_block { comment.end.saturating_sub(2) } else { comment.end };
-            matches!(bun_lint::utils::text::trim(this.slice(comment.start + 2, end)), b"prettier-ignore" | b"oxfmt-ignore")
+            let end = if comment.is_block {
+                comment.end.saturating_sub(2)
+            } else {
+                comment.end
+            };
+            matches!(
+                bun_lint::utils::text::trim(this.slice(comment.start + 2, end)),
+                b"prettier-ignore" | b"oxfmt-ignore"
+            )
         })
     }
 
@@ -257,7 +289,10 @@ impl Builder<'_> {
     /// in the source. The comments in it are in that text.
     fn leading(&mut self, owner: Owner, ignored: Option<(u32, u32)>) {
         let attached = self.attached;
-        for it in comments_of(attached, owner).iter().filter(|it| it.placement == Placement::Leading) {
+        for it in comments_of(attached, owner)
+            .iter()
+            .filter(|it| it.placement == Placement::Leading)
+        {
             let comment = self.comment(it);
             if ignored.is_some_and(|(start, end)| comment.start >= start && comment.end <= end) {
                 continue;
@@ -283,9 +318,13 @@ impl Builder<'_> {
         let attached = self.attached;
         // Of the previous one: whether it is at the end of the line, and whether it is a block.
         let mut previous: Option<(bool, bool)> = None;
-        for it in comments_of(attached, owner).iter().filter(|it| it.placement == Placement::Trailing) {
+        for it in comments_of(attached, owner)
+            .iter()
+            .filter(|it| it.placement == Placement::Trailing)
+        {
             let comment = self.comment(it);
-            let is_printed = ignored.is_some_and(|(start, end)| comment.start >= start && comment.end <= end);
+            let is_printed =
+                ignored.is_some_and(|(start, end)| comment.start >= start && comment.end <= end);
             let start = comment.start as usize;
             let is_after_line_suffix = previous.is_some_and(|(has_line_suffix, _)| has_line_suffix);
             let is_after_line_comment = previous == Some((true, false));
@@ -295,7 +334,11 @@ impl Builder<'_> {
                 previous = Some((true, comment.is_block));
                 if !is_printed {
                     self.tag(Tag::StartLineSuffix);
-                    self.line(if is_previous_line_empty(self.text, start) { LineMode::Empty } else { LineMode::Hard });
+                    self.line(if is_previous_line_empty(self.text, start) {
+                        LineMode::Empty
+                    } else {
+                        LineMode::Hard
+                    });
                     self.write_comment(comment);
                     self.tag(Tag::EndLineSuffix);
                 }
@@ -322,7 +365,10 @@ impl Builder<'_> {
     fn dangling(&mut self, owner: Owner) {
         let attached = self.attached;
         let mut is_first = true;
-        for it in comments_of(attached, owner).iter().filter(|it| it.placement == Placement::Dangling) {
+        for it in comments_of(attached, owner)
+            .iter()
+            .filter(|it| it.placement == Placement::Dangling)
+        {
             if !std::mem::take(&mut is_first) {
                 self.line(LineMode::Hard);
             }
@@ -340,11 +386,17 @@ impl Builder<'_> {
         self.dangling(owner);
         self.tag(Tag::EndIndent);
         let has_line_comment = self.has_dangling_line_comment(owner);
-        self.line(if has_line_comment { LineMode::Hard } else { LineMode::Soft });
+        self.line(if has_line_comment {
+            LineMode::Hard
+        } else {
+            LineMode::Soft
+        });
     }
 
     fn has_dangling_line_comment(&self, owner: Owner) -> bool {
-        self.has_comment(owner, |_, placement, comment| placement == Placement::Dangling && !comment.is_block)
+        self.has_comment(owner, |_, placement, comment| {
+            placement == Placement::Dangling && !comment.is_block
+        })
     }
 
     // ───────────────────────────── nodes ─────────────────────────────
@@ -352,22 +404,35 @@ impl Builder<'_> {
     /// Anything but an object, an array and a sign, without its comments.
     fn scalar(&mut self, node: &Node) {
         let text = self.text;
-        let source = text.get(node.start as usize..node.end as usize).unwrap_or_default();
+        let source = text
+            .get(node.start as usize..node.end as usize)
+            .unwrap_or_default();
         match node.kind {
             Kind::String if node.has(REWRITTEN) => {
-                let quote = if source.first() == Some(&b'"') { QuoteStyle::Single } else { QuoteStyle::Double };
-                let content = source.get(1..source.len().saturating_sub(1)).unwrap_or_default();
+                let quote = if source.first() == Some(&b'"') {
+                    QuoteStyle::Single
+                } else {
+                    QuoteStyle::Double
+                };
+                let content = source
+                    .get(1..source.len().saturating_sub(1))
+                    .unwrap_or_default();
                 let start = self.storage.text.len();
                 make_string(content, quote, &mut self.storage.text);
                 let written = self.storage.text.get(start..).unwrap_or_default();
-                let (len, width) = (written.len() as u32, TextWidth::from_text(written, self.config.indent_width as u8));
+                let (len, width) = (
+                    written.len() as u32,
+                    TextWidth::from_text(written, self.config.indent_width as u8),
+                );
                 self.push(FormatElement::OwnedText(Text {
                     start: start as u32,
                     len,
                     width,
                 }));
             }
-            Kind::Number if node.has(REWRITTEN) => self.built(|out| out.extend_from_slice(&format_trimmed_number(source))),
+            Kind::Number if node.has(REWRITTEN) => {
+                self.built(|out| out.extend_from_slice(&format_trimmed_number(source)))
+            }
             Kind::Template => {
                 self.push(FormatElement::LineSuffixBoundary);
                 self.source(node.start, node.end);
@@ -425,12 +490,14 @@ impl Builder<'_> {
             let Some(element) = self.nodes.get(index as usize) else {
                 break;
             };
-            let has_comment_on_operand = element.kind == Kind::Unary && self.has_comment(Owner::node(index + 1), |_, _, _| true);
-            let has_line_comment_behind = self.has_comment(Owner::node(index), |this, placement, comment| {
-                placement == Placement::Trailing
-                    && !comment.is_block
-                    && !has_newline_backwards(this.text, comment.start as usize)
-            });
+            let has_comment_on_operand = element.kind == Kind::Unary
+                && self.has_comment(Owner::node(index + 1), |_, _, _| true);
+            let has_line_comment_behind =
+                self.has_comment(Owner::node(index), |this, placement, comment| {
+                    placement == Placement::Trailing
+                        && !comment.is_block
+                        && !has_newline_backwards(this.text, comment.start as usize)
+                });
             if has_comment_on_operand || has_line_comment_behind {
                 return false;
             }
@@ -443,7 +510,11 @@ impl Builder<'_> {
     fn concise_array(&mut self, index: u32, array: &Node, id: GroupId) {
         self.tag(Tag::StartFill);
         let mut element_index = index + 1;
-        while let Some(element) = self.nodes.get(element_index as usize).filter(|_| element_index < array.next) {
+        while let Some(element) = self
+            .nodes
+            .get(element_index as usize)
+            .filter(|_| element_index < array.next)
+        {
             let is_last = element.next == array.next;
             self.tag(Tag::StartEntry);
             self.sign_or_scalar(element_index);
@@ -454,9 +525,10 @@ impl Builder<'_> {
             }
             self.tag(Tag::EndEntry);
             if !is_last {
-                let has_leading_line_comment = self.has_comment(Owner::node(element.next), |_, placement, comment| {
-                    placement == Placement::Leading && !comment.is_block
-                });
+                let has_leading_line_comment = self
+                    .has_comment(Owner::node(element.next), |_, placement, comment| {
+                        placement == Placement::Leading && !comment.is_block
+                    });
                 self.tag(Tag::StartEntry);
                 self.line(match (element.has(BLANK_AFTER), has_leading_line_comment) {
                     (true, _) => LineMode::Empty,
@@ -472,7 +544,11 @@ impl Builder<'_> {
 
     /// Anything but an object and an array, with its comments.
     fn sign_or_scalar(&mut self, index: u32) {
-        let Some(node) = self.nodes.get(index as usize).filter(|node| node.kind == Kind::Unary) else {
+        let Some(node) = self
+            .nodes
+            .get(index as usize)
+            .filter(|node| node.kind == Kind::Unary)
+        else {
             return self.scalar_with_comments(index);
         };
         let owner = Owner::node(index);
@@ -510,7 +586,11 @@ impl Builder<'_> {
             if self.config.trailing_comma {
                 self.comma_if_group_breaks(None);
             }
-            self.line(if self.config.bracket_spacing { LineMode::SoftOrSpace } else { LineMode::Soft });
+            self.line(if self.config.bracket_spacing {
+                LineMode::SoftOrSpace
+            } else {
+                LineMode::Soft
+            });
             self.token("}");
         } else {
             if frame.previous.is_none() {
@@ -535,7 +615,9 @@ impl Builder<'_> {
         let mut index = 0u32;
         loop {
             while let Some(frame) = frames.last()
-                && nodes.get(frame.node as usize).is_none_or(|node| node.next == index)
+                && nodes
+                    .get(frame.node as usize)
+                    .is_none_or(|node| node.next == index)
             {
                 self.close(frame);
                 frames.pop();
@@ -547,9 +629,13 @@ impl Builder<'_> {
             // What is before the value.
             let mut parent = Parent::Root;
             if let Some(frame) = frames.last_mut() {
-                let is_object = nodes.get(frame.node as usize).is_some_and(|node| node.kind == Kind::Object);
-                let is_after_blank =
-                    frame.previous.and_then(|it| nodes.get(it as usize)).is_some_and(|it| it.has(BLANK_AFTER));
+                let is_object = nodes
+                    .get(frame.node as usize)
+                    .is_some_and(|node| node.kind == Kind::Object);
+                let is_after_blank = frame
+                    .previous
+                    .and_then(|it| nodes.get(it as usize))
+                    .is_some_and(|it| it.has(BLANK_AFTER));
                 if !std::mem::take(&mut frame.is_first) {
                     self.token(",");
                     self.line(match (is_after_blank, is_object) {
@@ -559,7 +645,9 @@ impl Builder<'_> {
                     });
                 }
                 if !is_object {
-                    let is_hole = nodes.get(index as usize).is_some_and(|node| node.kind == Kind::Hole);
+                    let is_hole = nodes
+                        .get(index as usize)
+                        .is_some_and(|node| node.kind == Kind::Hole);
                     frame.previous = (!is_hole).then_some(index);
                     if is_hole {
                         index += 1;
@@ -571,7 +659,9 @@ impl Builder<'_> {
                     let name = index;
                     index += 1;
                     frame.previous = Some(index);
-                    let (Some(name_node), Some(value)) = (nodes.get(name as usize), nodes.get(index as usize)) else {
+                    let (Some(name_node), Some(value)) =
+                        (nodes.get(name as usize), nodes.get(index as usize))
+                    else {
                         return;
                     };
                     let property = Owner::property(name);
@@ -590,10 +680,12 @@ impl Builder<'_> {
                     self.tag(Tag::EndGroup);
                     self.token(":");
                     // Prettier's `hasLeadingOwnLineComment`, and a comment whose lines are indented
-                    let breaks_after_colon = self.has_comment(Owner::node(index), |this, placement, comment| {
-                        placement == Placement::Leading
-                            && (has_newline(this.text, comment.end as usize) || this.is_indentable(comment))
-                    });
+                    let breaks_after_colon =
+                        self.has_comment(Owner::node(index), |this, placement, comment| {
+                            placement == Placement::Leading
+                                && (has_newline(this.text, comment.end as usize)
+                                    || this.is_indentable(comment))
+                        });
                     if breaks_after_colon {
                         self.start_group(false, None);
                         self.tag(Tag::StartIndent);
@@ -640,14 +732,24 @@ impl Builder<'_> {
                 continue;
             }
             if is_object {
-                self.start_group(self.config.preserves_wrap && node.has(BREAK_AFTER_OPEN), None);
+                self.start_group(
+                    self.config.preserves_wrap && node.has(BREAK_AFTER_OPEN),
+                    None,
+                );
                 self.token("{");
                 self.tag(Tag::StartIndent);
-                self.line(if self.config.bracket_spacing { LineMode::SoftOrSpace } else { LineMode::Soft });
+                self.line(if self.config.bracket_spacing {
+                    LineMode::SoftOrSpace
+                } else {
+                    LineMode::Soft
+                });
             } else {
                 self.group_count += 1;
                 let id = NonZeroU32::new(self.group_count).map(GroupId::new);
-                self.start_group(node.has(MATRIX) || self.has_dangling_line_comment(owner), id);
+                self.start_group(
+                    node.has(MATRIX) || self.has_dangling_line_comment(owner),
+                    id,
+                );
                 self.token("[");
                 self.tag(Tag::StartIndent);
                 self.line(LineMode::Soft);

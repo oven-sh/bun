@@ -76,7 +76,8 @@ pub(crate) struct SourceToken {
 
 impl SourceToken {
     pub(crate) fn source(self, text: &[u8]) -> &[u8] {
-        text.get(self.offset as usize..self.end as usize).unwrap_or_default()
+        text.get(self.offset as usize..self.end as usize)
+            .unwrap_or_default()
     }
 
     pub(crate) fn len(self) -> u32 {
@@ -143,9 +144,10 @@ pub(crate) enum Token {
 impl Token {
     pub(crate) fn offset(&self) -> u32 {
         match self {
-            Token::Source(token) | Token::Directive(token) | Token::DocEnd { token, .. } | Token::FlowScalar { token, .. } => {
-                token.offset
-            }
+            Token::Source(token)
+            | Token::Directive(token)
+            | Token::DocEnd { token, .. }
+            | Token::FlowScalar { token, .. } => token.offset,
             Token::Document { offset, .. }
             | Token::BlockScalar { offset, .. }
             | Token::BlockMap { offset, .. }
@@ -168,13 +170,18 @@ impl Token {
 
     /// `isFlowToken`
     fn is_flow_token(&self) -> bool {
-        matches!(self, Token::FlowScalar { .. } | Token::FlowCollection { .. })
+        matches!(
+            self,
+            Token::FlowScalar { .. } | Token::FlowCollection { .. }
+        )
     }
 
     /// `token.end`, if it is an array.
     fn end_mut(&mut self) -> Option<&mut Vec<SourceToken>> {
         match self {
-            Token::FlowScalar { end, .. } | Token::Document { end, .. } | Token::DocEnd { end, .. } => end.as_mut(),
+            Token::FlowScalar { end, .. }
+            | Token::Document { end, .. }
+            | Token::DocEnd { end, .. } => end.as_mut(),
             Token::FlowCollection { end, .. } => Some(end),
             _ => None,
         }
@@ -195,7 +202,10 @@ fn includes_token(list: &[SourceToken], kind: TokenType) -> bool {
 }
 
 fn is_empty_token(token: &SourceToken) -> bool {
-    matches!(token.kind, TokenType::Space | TokenType::Comment | TokenType::Newline)
+    matches!(
+        token.kind,
+        TokenType::Space | TokenType::Comment | TokenType::Newline
+    )
 }
 
 /// `getPrevProps`
@@ -222,7 +232,12 @@ fn first_key_start_props(prev: Option<&mut Vec<SourceToken>>) -> Vec<SourceToken
     use TokenType::*;
     let mut i = prev
         .iter()
-        .rposition(|token| matches!(token.kind, DocStart | ExplicitKeyInd | MapValueInd | SeqItemInd | Newline))
+        .rposition(|token| {
+            matches!(
+                token.kind,
+                DocStart | ExplicitKeyInd | MapValueInd | SeqItemInd | Newline
+            )
+        })
         .map_or(0, |at| at + 1);
     while prev.get(i).is_some_and(|token| token.kind == Space) {
         i += 1;
@@ -238,7 +253,10 @@ fn fix_flow_seq_items(start: SourceToken, items: &mut [Item]) {
     for it in items {
         let is_plain_value = it.value.is_none()
             && !includes_token(&it.start, TokenType::ExplicitKeyInd)
-            && it.sep.as_ref().is_some_and(|sep| !includes_token(sep, TokenType::MapValueInd));
+            && it
+                .sep
+                .as_ref()
+                .is_some_and(|sep| !includes_token(sep, TokenType::MapValueInd));
         if !is_plain_value {
             continue;
         }
@@ -321,13 +339,16 @@ impl Parser<'_> {
             LexemeKind::Document => TokenType::DocMode,
             LexemeKind::FlowEnd => TokenType::FlowErrorEnd,
             LexemeKind::Scalar => TokenType::Scalar,
-            LexemeKind::Text => match token_type(&self.text[lexeme.start as usize..lexeme.end as usize]) {
-                // A character of the text that looks like a mark of the lexer confuses the parser.
-                None | Some(TokenType::DocMode | TokenType::FlowErrorEnd | TokenType::Scalar) => {
-                    return Err(ParseError::Syntax);
+            LexemeKind::Text => {
+                match token_type(&self.text[lexeme.start as usize..lexeme.end as usize]) {
+                    // A character of the text that looks like a mark of the lexer confuses the parser.
+                    None
+                    | Some(TokenType::DocMode | TokenType::FlowErrorEnd | TokenType::Scalar) => {
+                        return Err(ParseError::Syntax);
+                    }
+                    Some(kind) => kind,
                 }
-                Some(kind) => kind,
-            },
+            }
         };
         self.kind = kind;
         if kind == TokenType::Scalar {
@@ -360,7 +381,9 @@ impl Parser<'_> {
 
     fn step(&mut self) -> Result<()> {
         loop {
-            if self.kind == TokenType::DocEnd && !matches!(self.stack.last(), Some(Token::DocEnd { .. })) {
+            if self.kind == TokenType::DocEnd
+                && !matches!(self.stack.last(), Some(Token::DocEnd { .. }))
+            {
                 while !self.stack.is_empty() {
                     self.pop()?;
                 }
@@ -418,7 +441,10 @@ impl Parser<'_> {
             // A block scalar goes by the indentation of its parent, not that of its header.
             Token::BlockScalar { indent, .. } => *indent = top.indent().unwrap_or(0),
             Token::FlowCollection {
-                indent, start, items, ..
+                indent,
+                start,
+                items,
+                ..
             } => {
                 if matches!(top, Token::Document { .. }) {
                     *indent = 0;
@@ -429,20 +455,29 @@ impl Parser<'_> {
         }
         let becomes_value = match top {
             Token::Document { .. } | Token::BlockSeq { .. } => true,
-            Token::BlockMap { items, .. } => items.last().is_some_and(|it| it.value.is_none() && it.sep.is_some()),
+            Token::BlockMap { items, .. } => items
+                .last()
+                .is_some_and(|it| it.value.is_none() && it.sep.is_some()),
             _ => false,
         };
         // The last item of a block collection, if it is nothing but white space and comments that are
         // not indented, belongs to what is around the collection.
         let mut moved = None;
-        if becomes_value && let Token::BlockMap { indent, items, .. } | Token::BlockSeq { indent, items, .. } = &mut token {
+        if becomes_value
+            && let Token::BlockMap { indent, items, .. } | Token::BlockSeq { indent, items, .. } =
+                &mut token
+        {
             let indent = *indent;
             let is_moved = items.last().is_some_and(|last| {
                 last.sep.is_none()
                     && last.value.is_none()
                     && !last.start.is_empty()
                     && last.start.iter().all(is_empty_token)
-                    && (indent == 0 || last.start.iter().all(|st| st.kind != TokenType::Comment || st.indent < indent))
+                    && (indent == 0
+                        || last
+                            .start
+                            .iter()
+                            .all(|st| st.kind != TokenType::Comment || st.indent < indent))
             });
             if is_moved {
                 moved = items.pop().map(|it| it.start);
@@ -508,11 +543,18 @@ impl Parser<'_> {
         let token = self.source_token();
         match self.kind {
             TokenType::DirectiveLine => self.out.push(Token::Directive(token)),
-            TokenType::ByteOrderMark | TokenType::Space | TokenType::Comment | TokenType::Newline => {
+            TokenType::ByteOrderMark
+            | TokenType::Space
+            | TokenType::Comment
+            | TokenType::Newline => {
                 self.out.push(Token::Source(token));
             }
             TokenType::DocMode | TokenType::DocStart => {
-                let start = if self.kind == TokenType::DocStart { vec![token] } else { Vec::new() };
+                let start = if self.kind == TokenType::DocStart {
+                    vec![token]
+                } else {
+                    Vec::new()
+                };
                 self.stack.push(Token::Document {
                     offset: self.offset,
                     start,
@@ -541,13 +583,19 @@ impl Parser<'_> {
                 start.push(token);
                 return Ok(Next::Done);
             }
-            TokenType::Anchor | TokenType::Tag | TokenType::Space | TokenType::Comment | TokenType::Newline => {
+            TokenType::Anchor
+            | TokenType::Tag
+            | TokenType::Space
+            | TokenType::Comment
+            | TokenType::Newline => {
                 start.push(token);
                 return Ok(Next::Done);
             }
             _ => {}
         }
-        self.start_block_value(doc).map(Next::Push).ok_or(ParseError::Syntax)
+        self.start_block_value(doc)
+            .map(Next::Push)
+            .ok_or(ParseError::Syntax)
     }
 
     /// `parent`: what is below it on the stack.
@@ -607,7 +655,10 @@ impl Parser<'_> {
         // `atIndentedComment`
         let at_indented_comment = self.kind == TokenType::Comment
             && self.indent > indent
-            && it.start.iter().all(|st| matches!(st.kind, TokenType::Newline | TokenType::Space));
+            && it
+                .start
+                .iter()
+                .all(|st| matches!(st.kind, TokenType::Newline | TokenType::Space));
         if !at_indented_comment {
             return false;
         }
@@ -623,9 +674,18 @@ impl Parser<'_> {
     /// A line break after the value of the last of `items`.
     fn newline_after_value(&self, items: &mut Vec<Item>) {
         let token = self.source_token();
-        let end = items.last_mut().and_then(|it| it.value.as_deref_mut()).and_then(Token::end_mut);
+        let end = items
+            .last_mut()
+            .and_then(|it| it.value.as_deref_mut())
+            .and_then(Token::end_mut);
         match end {
-            Some(end) if end.last().is_some_and(|last| last.kind == TokenType::Comment) => end.push(token),
+            Some(end)
+                if end
+                    .last()
+                    .is_some_and(|last| last.kind == TokenType::Comment) =>
+            {
+                end.push(token)
+            }
             _ => items.push(item_with_start(vec![token])),
         }
     }
@@ -658,7 +718,11 @@ impl Parser<'_> {
                 } else if let Some(sep) = &mut it.sep {
                     sep.push(token);
                 } else if !self.moves_indented_comment(items, map_indent) {
-                    items.last_mut().ok_or(ParseError::Syntax)?.start.push(token);
+                    items
+                        .last_mut()
+                        .ok_or(ParseError::Syntax)?
+                        .start
+                        .push(token);
                 }
                 return Ok(Next::Done);
             }
@@ -668,7 +732,9 @@ impl Parser<'_> {
             return Ok(Next::PopAndStep);
         }
         let at_map_indent = !self.on_key_line && self.indent == map_indent;
-        let at_next_item = at_map_indent && (it.sep.is_some() || it.explicit_key) && self.kind != TokenType::SeqItemInd;
+        let at_next_item = at_map_indent
+            && (it.sep.is_some() || it.explicit_key)
+            && self.kind != TokenType::SeqItemInd;
 
         // After an empty node, what is behind an empty line and not indented belongs to the next node.
         let mut start = Vec::new();
@@ -737,12 +803,16 @@ impl Parser<'_> {
                 self.on_key_line = true;
                 if it.explicit_key {
                     match &mut it.sep {
-                        None if includes_token(&it.start, TokenType::Newline) => it.sep = Some(vec![token]),
+                        None if includes_token(&it.start, TokenType::Newline) => {
+                            it.sep = Some(vec![token])
+                        }
                         None => {
                             let start = first_key_start_props(Some(&mut it.start));
                             return Ok(new_map(vec![item_with_key(start, None, vec![token])]));
                         }
-                        Some(_) if it.value.is_some() => items.push(item_with_key(Vec::new(), None, vec![token])),
+                        Some(_) if it.value.is_some() => {
+                            items.push(item_with_key(Vec::new(), None, vec![token]))
+                        }
                         Some(sep) if includes_token(sep, TokenType::MapValueInd) => {
                             return Ok(new_map(vec![item_with_key(start, None, vec![token])]));
                         }
@@ -765,7 +835,9 @@ impl Parser<'_> {
                 } else {
                     match &mut it.sep {
                         None => it.sep = Some(vec![token]),
-                        Some(_) if it.value.is_some() || at_next_item => items.push(item_with_key(start, None, vec![token])),
+                        Some(_) if it.value.is_some() || at_next_item => {
+                            items.push(item_with_key(start, None, vec![token]))
+                        }
                         Some(sep) if includes_token(sep, TokenType::MapValueInd) => {
                             return Ok(new_map(vec![item_with_key(Vec::new(), None, vec![token])]));
                         }
@@ -774,7 +846,10 @@ impl Parser<'_> {
                 }
                 Ok(Next::Done)
             }
-            TokenType::Alias | TokenType::Scalar | TokenType::SingleQuotedScalar | TokenType::DoubleQuotedScalar => {
+            TokenType::Alias
+            | TokenType::Scalar
+            | TokenType::SingleQuotedScalar
+            | TokenType::DoubleQuotedScalar => {
                 let scalar = Token::FlowScalar { token, end: None };
                 if at_next_item || it.value.is_some() {
                     items.push(item_with_key(start, Some(scalar), Vec::new()));
@@ -789,8 +864,11 @@ impl Parser<'_> {
                 Ok(Next::Done)
             }
             _ => {
-                let is_on_line_of_key =
-                    !it.explicit_key && it.sep.as_ref().is_some_and(|sep| !includes_token(sep, TokenType::Newline));
+                let is_on_line_of_key = !it.explicit_key
+                    && it
+                        .sep
+                        .as_ref()
+                        .is_some_and(|sep| !includes_token(sep, TokenType::Newline));
                 let Some(block_value) = self.start_block_value(map) else {
                     return Ok(Next::PopAndStep);
                 };
@@ -831,11 +909,17 @@ impl Parser<'_> {
                 if it.value.is_some() {
                     items.push(item_with_start(vec![token]));
                 } else if !self.moves_indented_comment(items, seq_indent) {
-                    items.last_mut().ok_or(ParseError::Syntax)?.start.push(token);
+                    items
+                        .last_mut()
+                        .ok_or(ParseError::Syntax)?
+                        .start
+                        .push(token);
                 }
                 return Ok(Next::Done);
             }
-            TokenType::Anchor | TokenType::Tag if it.value.is_none() && self.indent > seq_indent => {
+            TokenType::Anchor | TokenType::Tag
+                if it.value.is_none() && self.indent > seq_indent =>
+            {
                 it.start.push(token);
                 return Ok(Next::Done);
             }
@@ -858,7 +942,11 @@ impl Parser<'_> {
     }
 
     /// `parent`: what is below it on the stack.
-    fn flow_collection(&mut self, collection: &mut Token, parent: Option<&mut Token>) -> Result<Next> {
+    fn flow_collection(
+        &mut self,
+        collection: &mut Token,
+        parent: Option<&mut Token>,
+    ) -> Result<Next> {
         let token = self.source_token();
         let Token::FlowCollection {
             offset,
@@ -877,19 +965,28 @@ impl Parser<'_> {
             // The item that goes on, if there is one.
             let it = items.last_mut().filter(|it| it.value.is_none());
             match self.kind {
-                TokenType::Comma | TokenType::ExplicitKeyInd => match items.last_mut().filter(|it| it.sep.is_none()) {
-                    Some(it) => it.start.push(token),
-                    None => items.push(item_with_start(vec![token])),
-                },
+                TokenType::Comma | TokenType::ExplicitKeyInd => {
+                    match items.last_mut().filter(|it| it.sep.is_none()) {
+                        Some(it) => it.start.push(token),
+                        None => items.push(item_with_start(vec![token])),
+                    }
+                }
                 TokenType::MapValueInd => match it {
                     None => items.push(item_with_key(Vec::new(), None, vec![token])),
                     Some(it) => it.sep.get_or_insert_default().push(token),
                 },
-                TokenType::Space | TokenType::Comment | TokenType::Newline | TokenType::Anchor | TokenType::Tag => match it {
+                TokenType::Space
+                | TokenType::Comment
+                | TokenType::Newline
+                | TokenType::Anchor
+                | TokenType::Tag => match it {
                     None => items.push(item_with_start(vec![token])),
                     Some(it) => it.sep.as_mut().unwrap_or(&mut it.start).push(token),
                 },
-                TokenType::Alias | TokenType::Scalar | TokenType::SingleQuotedScalar | TokenType::DoubleQuotedScalar => {
+                TokenType::Alias
+                | TokenType::Scalar
+                | TokenType::SingleQuotedScalar
+                | TokenType::DoubleQuotedScalar => {
                     let scalar = Token::FlowScalar { token, end: None };
                     match it {
                         None => items.push(item_with_key(Vec::new(), Some(scalar), Vec::new())),
@@ -917,7 +1014,8 @@ impl Parser<'_> {
             ..
         } = parent
             && ((self.kind == TokenType::MapValueInd && parent_indent == indent)
-                || (self.kind == TokenType::Newline && parent_items.last().is_some_and(|it| it.sep.is_none())))
+                || (self.kind == TokenType::Newline
+                    && parent_items.last().is_some_and(|it| it.sep.is_none())))
         {
             return Ok(Next::PopAndStep);
         }
@@ -949,9 +1047,10 @@ impl Parser<'_> {
         let token = self.source_token();
         let (offset, indent) = (token.offset, token.indent);
         Some(match self.kind {
-            TokenType::Alias | TokenType::Scalar | TokenType::SingleQuotedScalar | TokenType::DoubleQuotedScalar => {
-                Token::FlowScalar { token, end: None }
-            }
+            TokenType::Alias
+            | TokenType::Scalar
+            | TokenType::SingleQuotedScalar
+            | TokenType::DoubleQuotedScalar => Token::FlowScalar { token, end: None },
             TokenType::BlockScalarHeader => Token::BlockScalar {
                 offset,
                 indent,
@@ -1004,7 +1103,11 @@ impl Parser<'_> {
         if let Token::DocEnd { end, .. } = doc_end {
             end.get_or_insert_default().push(self.source_token());
         }
-        Ok(if self.kind == TokenType::Newline { Next::Pop } else { Next::Done })
+        Ok(if self.kind == TokenType::Newline {
+            Next::Pop
+        } else {
+            Next::Done
+        })
     }
 
     fn line_end(&mut self, token: &mut Token) -> Result<Next> {
@@ -1021,11 +1124,17 @@ impl Parser<'_> {
         // Anything but a space, a comment and a line break is an error, which the composer finds.
         let source_token = self.source_token();
         match token {
-            Token::FlowScalar { end, .. } | Token::Document { end, .. } => end.get_or_insert_default().push(source_token),
+            Token::FlowScalar { end, .. } | Token::Document { end, .. } => {
+                end.get_or_insert_default().push(source_token)
+            }
             Token::FlowCollection { end, .. } => end.push(source_token),
             _ => return Err(ParseError::Syntax),
         }
-        Ok(if self.kind == TokenType::Newline { Next::Pop } else { Next::Done })
+        Ok(if self.kind == TokenType::Newline {
+            Next::Pop
+        } else {
+            Next::Done
+        })
     }
 }
 

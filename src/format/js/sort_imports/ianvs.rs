@@ -1,6 +1,8 @@
 //! `@ianvs/prettier-plugin-sort-imports` 4.7: its `preprocessor`.
 
-use super::babel::{Attached, CommentId, Declaration, Lines, List, Model, Node, SpecifierKind, Which};
+use super::babel::{
+    Attached, CommentId, Declaration, Lines, List, Model, Node, SpecifierKind, Which,
+};
 use super::builtins::is_builtin_module;
 use super::compare::{collate_base_numeric, natural_sort_case_sensitive};
 use super::generator::{Piece, PieceKind, Printer, whitespace_len};
@@ -23,7 +25,10 @@ pub(super) enum Matcher {
     /// `<TYPES>` and nothing else.
     Types,
     /// `is_for_types`: it has `<TYPES>` in it.
-    Regex { regex: Box<Regex>, is_for_types: bool },
+    Regex {
+        regex: Box<Regex>,
+        is_for_types: bool,
+    },
 }
 
 /// An element of `importOrder`.
@@ -45,11 +50,22 @@ pub(super) struct Options {
 
 impl Options {
     fn has_separators(&self) -> bool {
-        self.order.iter().any(|group| matches!(group.matcher, Matcher::Separator))
+        self.order
+            .iter()
+            .any(|group| matches!(group.matcher, Matcher::Separator))
     }
 
     fn has_types(&self) -> bool {
-        self.order.iter().any(|group| matches!(group.matcher, Matcher::Types | Matcher::Regex { is_for_types: true, .. }))
+        self.order.iter().any(|group| {
+            matches!(
+                group.matcher,
+                Matcher::Types
+                    | Matcher::Regex {
+                        is_for_types: true,
+                        ..
+                    }
+            )
+        })
     }
 
     fn compare(&self, a: &[u8], b: &[u8]) -> Ordering {
@@ -66,23 +82,33 @@ impl Options {
             let is_matched = match &group.matcher {
                 Matcher::Separator | Matcher::ThirdParty | Matcher::Types => false,
                 Matcher::Builtin => !(has_types && is_type) && is_builtin_module(source),
-                Matcher::Regex { regex, is_for_types: true } => is_type && regex.test(source),
-                Matcher::Regex { regex, is_for_types: false } => !(has_types && is_type) && regex.test(source),
+                Matcher::Regex {
+                    regex,
+                    is_for_types: true,
+                } => is_type && regex.test(source),
+                Matcher::Regex {
+                    regex,
+                    is_for_types: false,
+                } => !(has_types && is_type) && regex.test(source),
             };
             if is_matched {
                 return Some(group.same_as);
             }
         }
-        self.order.iter().position(|group| match has_types && is_type {
-            true => matches!(group.matcher, Matcher::Types),
-            false => matches!(group.matcher, Matcher::ThirdParty),
-        })
+        self.order
+            .iter()
+            .position(|group| match has_types && is_type {
+                true => matches!(group.matcher, Matcher::Types),
+                false => matches!(group.matcher, Matcher::ThirdParty),
+            })
     }
 }
 
 /// `hasIgnoreNextNode`
 fn has_ignore_next_node(model: &Model, comments: &[CommentId]) -> bool {
-    comments.iter().any(|comment| trim(model.comment_value(*comment)) == b"prettier-ignore")
+    comments
+        .iter()
+        .any(|comment| trim(model.comment_value(*comment)) == b"prettier-ignore")
 }
 
 /// `text.trim()`
@@ -94,7 +120,9 @@ fn trim_end(text: &[u8]) -> &[u8] {
     let mut text = text;
     loop {
         text = match text {
-            [rest @ .., b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C] | [rest @ .., 0xC2, 0xA0] => rest,
+            [rest @ .., b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C] | [rest @ .., 0xC2, 0xA0] => {
+                rest
+            }
             [rest @ .., a, b, c] if whitespace_len(&[*a, *b, *c]) == 3 => rest,
             _ => return text,
         };
@@ -102,17 +130,29 @@ fn trim_end(text: &[u8]) -> &[u8] {
 }
 
 fn has_kind(model: &Model, declaration: &Declaration, kind: SpecifierKind) -> bool {
-    model.specifiers_of(declaration).iter().any(|it| model.specifiers[*it as usize].kind == kind)
+    model
+        .specifiers_of(declaration)
+        .iter()
+        .any(|it| model.specifiers[*it as usize].kind == kind)
 }
 
 /// `mergeNodes`: whether `forget` has been merged into `keep`.
 fn merge_nodes(model: &mut Model, keep: u32, forget: u32) -> bool {
-    let (kept, forgotten) = (model.declarations[keep as usize], model.declarations[forget as usize]);
+    let (kept, forgotten) = (
+        model.declarations[keep as usize],
+        model.declarations[forget as usize],
+    );
     // `mergeIsSafe`
     let both = [&kept, &forgotten];
-    if both.iter().any(|it| has_kind(model, it, SpecifierKind::Namespace))
-        || both.iter().all(|it| has_kind(model, it, SpecifierKind::Default))
-        || both.iter().any(|it| it.is_type && has_kind(model, it, SpecifierKind::Default))
+    if both
+        .iter()
+        .any(|it| has_kind(model, it, SpecifierKind::Namespace))
+        || both
+            .iter()
+            .all(|it| has_kind(model, it, SpecifierKind::Default))
+        || both
+            .iter()
+            .any(|it| it.is_type && has_kind(model, it, SpecifierKind::Default))
     {
         return false;
     }
@@ -126,7 +166,10 @@ fn merge_nodes(model: &mut Model, keep: u32, forget: u32) -> bool {
             specifier.is_type |= specifier.kind == SpecifierKind::Named;
         }
     }
-    let all: Vec<u32> = [&kept, &forgotten].iter().flat_map(|it| model.specifiers_of(it).iter().copied()).collect();
+    let all: Vec<u32> = [&kept, &forgotten]
+        .iter()
+        .flat_map(|it| model.specifiers_of(it).iter().copied())
+        .collect();
     let specifiers = model.new_specifiers(all);
     let comments = Attached {
         leading: model.concat(kept.comments.leading, forgotten.comments.leading),
@@ -139,7 +182,11 @@ fn merge_nodes(model: &mut Model, keep: u32, forget: u32) -> bool {
 }
 
 /// `mergeNodesWithMatchingImportFlavors`
-fn merge_nodes_with_matching_import_flavors(model: &mut Model, nodes: &mut Vec<u32>, options: &Options) {
+fn merge_nodes_with_matching_import_flavors(
+    model: &mut Model,
+    nodes: &mut Vec<u32>,
+    options: &Options,
+) {
     let text_start = model.text_start();
     let mut deleted: Vec<u32> = Vec::new();
     // By source, the node that others are merged into.
@@ -159,12 +206,19 @@ fn merge_nodes_with_matching_import_flavors(model: &mut Model, nodes: &mut Vec<u
                 continue;
             }
             let source = model.source_of(&declaration);
-            let Some(at) = context.iter().position(|it| model.source_of(&model.declarations[*it as usize]) == source) else {
+            let Some(at) = context
+                .iter()
+                .position(|it| model.source_of(&model.declarations[*it as usize]) == source)
+            else {
                 context.push(node);
                 continue;
             };
             let existing = context[at];
-            let start = |index: u32| model.declarations[index as usize].span.map_or(0, |span| span.start - text_start);
+            let start = |index: u32| {
+                model.declarations[index as usize]
+                    .span
+                    .map_or(0, |span| span.start - text_start)
+            };
             if start(existing) != 0 && start(node) != 0 && start(existing) > start(node) {
                 if merge_nodes(model, node, existing) {
                     deleted.push(existing);
@@ -184,13 +238,24 @@ fn explode_type_and_value_specifiers(model: &mut Model, nodes: &mut Vec<u32>) {
     for &node in nodes.iter() {
         let declaration = model.declarations[node as usize];
         let specifiers = model.specifiers_of(&declaration);
-        let is_type = |it: &&u32| model.specifiers[**it as usize].kind == SpecifierKind::Named && model.specifiers[**it as usize].is_type;
+        let is_type = |it: &&u32| {
+            model.specifiers[**it as usize].kind == SpecifierKind::Named
+                && model.specifiers[**it as usize].is_type
+        };
         let types: Vec<u32> = specifiers.iter().filter(is_type).copied().collect();
-        if declaration.is_type || specifiers.len() <= 1 || types.is_empty() || types.len() == specifiers.len() {
+        if declaration.is_type
+            || specifiers.len() <= 1
+            || types.is_empty()
+            || types.len() == specifiers.len()
+        {
             exploded.push(node);
             continue;
         }
-        let values: Vec<u32> = specifiers.iter().filter(|it| !is_type(it)).copied().collect();
+        let values: Vec<u32> = specifiers
+            .iter()
+            .filter(|it| !is_type(it))
+            .copied()
+            .collect();
         for (is_type, specifiers) in [(false, values), (true, types)] {
             for &specifier in &specifiers {
                 model.specifiers[specifier as usize].is_type = false;
@@ -217,9 +282,16 @@ fn sort_specifiers(model: &mut Model, index: u32, options: &Options) {
     let mut orders = std::mem::take(&mut model.orders);
     if let Some(specifiers) = orders.get_mut(start as usize..(start + len) as usize) {
         stable_sort_by(specifiers, |a, b| {
-            let (a, b) = (&model.specifiers[*a as usize], &model.specifiers[*b as usize]);
+            let (a, b) = (
+                &model.specifiers[*a as usize],
+                &model.specifiers[*b as usize],
+            );
             if a.kind != b.kind {
-                return if a.kind == SpecifierKind::Default { Ordering::Less } else { Ordering::Greater };
+                return if a.kind == SpecifierKind::Default {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
             }
             match a.is_type == b.is_type {
                 true => options.compare(a.local.bytes(), b.local.bytes()),
@@ -232,11 +304,19 @@ fn sort_specifiers(model: &mut Model, index: u32, options: &Options) {
 }
 
 /// `getSortedNodesByImportOrder`. `None`: an import belongs to no group.
-fn sorted_by_import_order(model: &mut Model, nodes: &[u32], options: &Options, out: &mut Vec<Node>) -> Option<()> {
+fn sorted_by_import_order(
+    model: &mut Model,
+    nodes: &[u32],
+    options: &Options,
+    out: &mut Vec<Node>,
+) -> Option<()> {
     let mut grouped = Vec::with_capacity(nodes.len());
     for &index in nodes {
         let declaration = &model.declarations[index as usize];
-        grouped.push((options.group_of(model.source_of(declaration), declaration.is_type)?, index));
+        grouped.push((
+            options.group_of(model.source_of(declaration), declaration.is_type)?,
+            index,
+        ));
     }
     grouped.sort_by_key(|it: &(usize, u32)| it.0);
     for group in grouped.chunk_by_mut(|a, b| a.0 == b.0) {
@@ -251,7 +331,12 @@ fn sorted_by_import_order(model: &mut Model, nodes: &[u32], options: &Options, o
         match group.matcher {
             Matcher::Separator if out.len() == start || out.last() == Some(&Node::NewLine) => {}
             Matcher::Separator => out.push(Node::NewLine),
-            _ => out.extend(grouped.iter().filter(|it| it.0 == group.same_as).map(|it| Node::Import(it.1))),
+            _ => out.extend(
+                grouped
+                    .iter()
+                    .filter(|it| it.0 == group.same_as)
+                    .map(|it| Node::Import(it.1)),
+            ),
         }
     }
     Some(())
@@ -310,14 +395,21 @@ impl Registry {
             counter += 1;
             match which {
                 Which::Inner => self.set(entry),
-                Which::Trailing if owner_lines.is_some_and(|lines| lines.start == comment.start_line) => self.set(entry),
+                Which::Trailing
+                    if owner_lines.is_some_and(|lines| lines.start == comment.start_line) =>
+                {
+                    self.set(entry)
+                }
                 Which::Trailing if is_specifier => self.deferred.push(Entry {
                     needs_last_specifier_owner: true,
                     processing_priority: entry.processing_priority + 30000,
                     ..entry
                 }),
                 Which::Trailing => {}
-                Which::Leading if owner == Owner::Declaration(0) && comment.end_line < owner_lines.map_or(0, |lines| lines.start) => {
+                Which::Leading
+                    if owner == Owner::Declaration(0)
+                        && comment.end_line < owner_lines.map_or(0, |lines| lines.start) =>
+                {
                     self.deferred.push(Entry {
                         needs_top_of_file_owner: true,
                         association: Which::Trailing,
@@ -345,9 +437,19 @@ fn comment_registry(model: &Model, output: &[u32]) -> Vec<Entry> {
     for which in [Which::Inner, Which::Trailing, Which::Leading] {
         for &index in output {
             let declaration = &model.declarations[index as usize];
-            registry.attach(model, which, declaration.comments.get(which), Owner::Declaration(index));
+            registry.attach(
+                model,
+                which,
+                declaration.comments.get(which),
+                Owner::Declaration(index),
+            );
             for &specifier in model.specifiers_of(declaration) {
-                registry.attach(model, which, model.specifiers[specifier as usize].comments.get(which), Owner::Specifier(specifier));
+                registry.attach(
+                    model,
+                    which,
+                    model.specifiers[specifier as usize].comments.get(which),
+                    Owner::Specifier(specifier),
+                );
             }
         }
     }
@@ -355,8 +457,15 @@ fn comment_registry(model: &Model, output: &[u32]) -> Vec<Entry> {
     deferred.sort_by_key(|entry| entry.processing_priority);
     // The first specifier on a line.
     let specifier_on = |line: i32| {
-        (output.iter().flat_map(|index| model.specifiers_of(&model.declarations[*index as usize])).copied())
-            .find(|specifier| model.lines(Node::Specifier(*specifier)).is_some_and(|lines| lines.start == line))
+        (output
+            .iter()
+            .flat_map(|index| model.specifiers_of(&model.declarations[*index as usize]))
+            .copied())
+        .find(|specifier| {
+            model
+                .lines(Node::Specifier(*specifier))
+                .is_some_and(|lines| lines.start == line)
+        })
     };
     for entry in deferred {
         if registry.is_registered[entry.comment as usize] {
@@ -366,19 +475,31 @@ fn comment_registry(model: &Model, output: &[u32]) -> Vec<Entry> {
             registry.set(entry);
             continue;
         };
-        let owner = specifier_on(model.comments[entry.comment as usize].start_line).map_or(entry.owner, Owner::Specifier);
+        let owner = specifier_on(model.comments[entry.comment as usize].start_line)
+            .map_or(entry.owner, Owner::Specifier);
         registry.set(Entry {
             owner,
-            association: if entry.association == Which::Leading && owner != entry.owner { Which::Trailing } else { entry.association },
+            association: if entry.association == Which::Leading && owner != entry.owner {
+                Which::Trailing
+            } else {
+                entry.association
+            },
             ..entry
         });
     }
-    registry.entries.sort_by_key(|entry| entry.processing_priority);
+    registry
+        .entries
+        .sort_by_key(|entry| entry.processing_priority);
     registry.entries
 }
 
 /// `attachCommentsToOutputNodes`
-fn attach_comments_to_output_nodes(model: &mut Model, entries: &[Entry], nodes: &mut Vec<Node>, provides_gap: bool) {
+fn attach_comments_to_output_nodes(
+    model: &mut Model,
+    entries: &[Entry],
+    nodes: &mut Vec<Node>,
+    provides_gap: bool,
+) {
     let Some(&new_first_import) = nodes.first() else {
         return;
     };
@@ -401,16 +522,19 @@ fn attach_comments_to_output_nodes(model: &mut Model, entries: &[Entry], nodes: 
             Owner::Declaration(index) => Node::Import(index),
             Owner::Specifier(index) => Node::Specifier(index),
         };
-        if let (true, Owner::Specifier(specifier)) = (entry.needs_last_specifier_owner, entry.owner) {
+        if let (true, Owner::Specifier(specifier)) = (entry.needs_last_specifier_owner, entry.owner)
+        {
             let parent = nodes.iter().find_map(|node| match node {
-                Node::Import(index) => Some(&model.declarations[*index as usize]).filter(|it| model.specifiers_of(it).contains(&specifier)),
+                Node::Import(index) => Some(&model.declarations[*index as usize])
+                    .filter(|it| model.specifiers_of(it).contains(&specifier)),
                 _ => None,
             });
             let Some(&last) = parent.and_then(|parent| model.specifiers_of(parent).last()) else {
                 continue;
             };
             owner = Node::Specifier(last);
-            model.comments[entry.comment as usize].start_line = model.lines(owner).map_or(0, |lines| lines.end) + 1;
+            model.comments[entry.comment as usize].start_line =
+                model.lines(owner).map_or(0, |lines| lines.end) + 1;
         }
         if owner == new_first_import
             && entry.association != Which::Leading
@@ -437,12 +561,17 @@ fn patch_new_first_import_location(model: &mut Model, new_first_import: Node) {
     let Node::Import(index) = new_first_import else {
         return;
     };
-    let (Some(first), Some(original)) = (model.declarations[0].lines, model.declarations[index as usize].lines) else {
+    let (Some(first), Some(original)) = (
+        model.declarations[0].lines,
+        model.declarations[index as usize].lines,
+    ) else {
         return;
     };
     // `getHeightOfLeadingComments`
     let comments = model.declarations[index as usize].comments;
-    let height = model.list(comments.leading).first().map_or(0, |it| (original.start - model.comments[*it as usize].start_line).max(0));
+    let height = model.list(comments.leading).first().map_or(0, |it| {
+        (original.start - model.comments[*it as usize].start_line).max(0)
+    });
     let patched = Lines {
         start: first.start + height,
         end: first.end + height,
@@ -464,17 +593,28 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Option<Vec<Node>> {
     let is_unsortable = |model: &Model, index: u32| {
         let declaration = &model.declarations[index as usize];
         has_ignore_next_node(model, model.list(declaration.comments.leading))
-            || (declaration.specifiers.1 == 0 && !options.safe_side_effects.iter().any(|it| it.test(model.source_of(declaration))))
+            || (declaration.specifiers.1 == 0
+                && !options
+                    .safe_side_effects
+                    .iter()
+                    .any(|it| it.test(model.source_of(declaration))))
     };
     let count = model.declarations.len() as u32;
     let mut nodes = Vec::with_capacity(count as usize + options.order.len() + 2);
     let mut start = 0;
     while start < count {
         let kind = is_unsortable(model, start);
-        let end = (start..count).find(|index| is_unsortable(model, *index) != kind).unwrap_or(count);
+        let end = (start..count)
+            .find(|index| is_unsortable(model, *index) != kind)
+            .unwrap_or(count);
         if kind {
             let has_separators = options.has_separators();
-            if has_separators && model.declarations[start as usize].comments.leading.is_empty() {
+            if has_separators
+                && model.declarations[start as usize]
+                    .comments
+                    .leading
+                    .is_empty()
+            {
                 nodes.push(Node::NewLine);
             }
             nodes.extend((start..end).map(Node::Import));
@@ -494,7 +634,16 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Option<Vec<Node>> {
     nodes.push(Node::NewLine);
 
     // `adjustCommentsOnSortedNodes`
-    let output: Vec<u32> = nodes.iter().filter_map(|node| if let Node::Import(index) = node { Some(*index) } else { None }).collect();
+    let output: Vec<u32> = nodes
+        .iter()
+        .filter_map(|node| {
+            if let Node::Import(index) = node {
+                Some(*index)
+            } else {
+                None
+            }
+        })
+        .collect();
     if model.comments.is_empty() || output.is_empty() {
         return Some(nodes);
     }
@@ -506,23 +655,41 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Option<Vec<Node>> {
             model.specifiers[model.orders[at as usize] as usize].comments = Attached::default();
         }
     }
-    let provides_gap = matches!(options.order.first(), Some(Group { matcher: Matcher::Separator, .. }));
+    let provides_gap = matches!(
+        options.order.first(),
+        Some(Group {
+            matcher: Matcher::Separator,
+            ..
+        })
+    );
     attach_comments_to_output_nodes(model, &entries, &mut nodes, provides_gap);
     Some(nodes)
 }
 
 /// The text that the plugin hands to Prettier in place of the file of `model`. `None`: it is
 /// formatted the same.
-pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'static [u8]) -> Option<Vec<u8>> {
+pub(super) fn preprocess(
+    model: &mut Model,
+    options: &Options,
+    end_of_line: &'static [u8],
+) -> Option<Vec<u8>> {
     let original_count = model.declarations.len();
     let nodes = sorted_nodes(model, options)?;
     let model = &*model;
 
     // `getCodeFromAst`
-    let mut removed: Vec<Span> = model.declarations[..original_count].iter().filter_map(|it| it.span).collect();
+    let mut removed: Vec<Span> = model.declarations[..original_count]
+        .iter()
+        .filter_map(|it| it.span)
+        .collect();
     let mut remove_comments = |attached: &Attached| {
         for which in [Which::Leading, Which::Inner, Which::Trailing] {
-            removed.extend(model.list(attached.get(which)).iter().map(|it| model.comments[*it as usize].span));
+            removed.extend(
+                model
+                    .list(attached.get(which))
+                    .iter()
+                    .map(|it| model.comments[*it as usize].span),
+            );
         }
     };
     for node in &nodes {
@@ -530,14 +697,23 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
             Node::Import(index) => {
                 let declaration = &model.declarations[*index as usize];
                 remove_comments(&declaration.comments);
-                model.specifiers_of(declaration).iter().for_each(|it| remove_comments(&model.specifiers[*it as usize].comments));
+                model
+                    .specifiers_of(declaration)
+                    .iter()
+                    .for_each(|it| remove_comments(&model.specifiers[*it as usize].comments));
             }
             Node::Empty => remove_comments(&model.empty),
             _ => {}
         }
     }
-    model.directives.iter().for_each(|it| remove_comments(&it.comments));
-    model.interpreter.iter().for_each(|it| remove_comments(&it.1));
+    model
+        .directives
+        .iter()
+        .for_each(|it| remove_comments(&it.comments));
+    model
+        .interpreter
+        .iter()
+        .for_each(|it| remove_comments(&it.1));
     removed.extend(model.directives.iter().map(|it| it.span));
     removed.extend(model.interpreter.iter().map(|it| it.0));
     removed.sort_unstable_by_key(|span| span.start);
@@ -591,8 +767,15 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
     let rest_start = model.rest_start.max(at);
     keep(&mut out, at, rest_start);
 
-    let new_from = from + u32::from(nodes.first() == Some(&Node::Empty) && model.interpreter.is_none() && model.directives.is_empty());
-    if !printer.has_changed_comment && is_unchanged(model, from, &out, new_from, &pieces, out.len() as u32) {
+    let new_from = from
+        + u32::from(
+            nodes.first() == Some(&Node::Empty)
+                && model.interpreter.is_none()
+                && model.directives.is_empty(),
+        );
+    if !printer.has_changed_comment
+        && is_unchanged(model, from, &out, new_from, &pieces, out.len() as u32)
+    {
         return None;
     }
     out.extend_from_slice(&text[rest_start as usize..]);

@@ -1,6 +1,8 @@
 //! The names of tags, emphasis, capital letters, and types.
 
-use super::text::{first_char, last_char, lines, parse_index, push_number, trim, trim_end, trim_start};
+use super::text::{
+    first_char, last_char, lines, parse_index, push_number, trim, trim_end, trim_start,
+};
 use crate::options::QuoteStyle;
 use bun_core::strings;
 use std::borrow::Cow;
@@ -96,7 +98,9 @@ pub(super) fn normalize_markdown_emphasis(text: &[u8]) -> Bytes<'_> {
             continue;
         }
         // It opens emphasis if something other than white space follows it.
-        if bytes.get(i + 1).is_some_and(|next| !next.is_ascii_whitespace())
+        if bytes
+            .get(i + 1)
+            .is_some_and(|next| !next.is_ascii_whitespace())
             && let Some(closer) = find_emphasis_end(&bytes, i)
         {
             bytes[i] = b'_';
@@ -106,14 +110,25 @@ pub(super) fn normalize_markdown_emphasis(text: &[u8]) -> Bytes<'_> {
         }
         i += 1;
     }
-    if has_changed { Cow::Owned(bytes) } else { Cow::Borrowed(text) }
+    if has_changed {
+        Cow::Owned(bytes)
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 /// Makes the first letter a capital one, if it is an ASCII letter. Not that of code or of a URL. What comes
 /// after any number of `- ` counts as the start.
 pub(super) fn capitalize_first(text: &[u8]) -> Bytes<'_> {
-    let starts_with = |prefix: &[u8]| text.get(..prefix.len()).is_some_and(|start| start.eq_ignore_ascii_case(prefix));
-    if text.is_empty() || text.starts_with(b"`") || starts_with(b"http://") || starts_with(b"https://") {
+    let starts_with = |prefix: &[u8]| {
+        text.get(..prefix.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+    };
+    if text.is_empty()
+        || text.starts_with(b"`")
+        || starts_with(b"http://")
+        || starts_with(b"https://")
+    {
         return Cow::Borrowed(text);
     }
     let mut remaining = text;
@@ -140,7 +155,9 @@ pub(super) fn capitalize_first(text: &[u8]) -> Bytes<'_> {
 /// `text.replace(/([\w\p{L}])$/u, "$1.")`
 pub(super) fn append_trailing_dot(text: &[u8]) -> Bytes<'_> {
     match last_char(text) {
-        Some((last, _)) if last.is_alphabetic() || last.is_ascii_digit() || last == '_' => Cow::Owned([text, b"."].concat()),
+        Some((last, _)) if last.is_alphabetic() || last.is_ascii_digit() || last == '_' => {
+            Cow::Owned([text, b"."].concat())
+        }
         _ => Cow::Borrowed(text),
     }
 }
@@ -251,7 +268,10 @@ fn without_strings(type_str: &[u8], transform: impl FnOnce(&[u8]) -> Vec<u8>) ->
     let mut rest = &result[..];
     while let Some(at) = strings::index_of(rest, PREFIX) {
         let after = &rest[at + PREFIX.len()..];
-        let digits = after.iter().take_while(|byte| byte.is_ascii_digit()).count();
+        let digits = after
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
         let original = (digits > 0 && after.get(digits) == Some(&b'$'))
             .then(|| parse_index(&after[..digits]).and_then(|index| originals.get(index)))
             .flatten();
@@ -277,7 +297,9 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
         false => Cow::Borrowed(type_str),
     };
     let trimmed = trim(&replaced);
-    if (trimmed.starts_with(b"\"") && trimmed.ends_with(b"\"")) || (trimmed.starts_with(b"'") && trimmed.ends_with(b"'")) {
+    if (trimmed.starts_with(b"\"") && trimmed.ends_with(b"\""))
+        || (trimmed.starts_with(b"'") && trimmed.ends_with(b"'"))
+    {
         return trimmed.to_vec();
     }
     // `... type`
@@ -315,7 +337,10 @@ fn normalize_type_core(type_str: &[u8]) -> Vec<u8> {
     let trimmed = trim(type_str);
     let parts = split_at_top_level_pipe(trimmed);
     if parts.len() > 1 {
-        let normalized: Vec<Vec<u8>> = parts.iter().map(|part| normalize_type_core(trim(part))).collect();
+        let normalized: Vec<Vec<u8>> = parts
+            .iter()
+            .map(|part| normalize_type_core(trim(part)))
+            .collect();
         return normalized.join(&b" | "[..]);
     }
     let mut converted = remove_closure_dot_generics(trimmed).into_owned();
@@ -552,7 +577,10 @@ fn normalize_type_quotes(type_str: &[u8], quote_style: QuoteStyle) -> Bytes<'_> 
 
 fn is_valid_js_identifier(text: &[u8]) -> bool {
     let is_start = |byte: &u8| byte.is_ascii_alphabetic() || *byte == b'_' || *byte == b'$';
-    text.first().is_some_and(is_start) && text.iter().all(|byte| is_start(byte) || byte.is_ascii_digit())
+    text.first().is_some_and(is_start)
+        && text
+            .iter()
+            .all(|byte| is_start(byte) || byte.is_ascii_digit())
 }
 
 /// `"userId": string` becomes `userId: string`.
@@ -611,7 +639,10 @@ fn fix_object_commas(type_str: &[u8]) -> Bytes<'_> {
     }
     let mut result = trimmed.to_vec();
     for i in 0..result.len().saturating_sub(2) {
-        if result[i] == b';' && result[i + 1] == b' ' && (result[i + 2].is_ascii_alphanumeric() || result[i + 2] == b'_') {
+        if result[i] == b';'
+            && result[i + 1] == b' '
+            && (result[i + 2].is_ascii_alphanumeric() || result[i + 2] == b'_')
+        {
             result[i] = b',';
         }
     }
@@ -629,7 +660,8 @@ pub(super) fn normalize_type_whitespace(type_str: &[u8]) -> Bytes<'_> {
         let byte = trimmed[i];
         // A comment stays as it is, up to the end of its line.
         if byte == b'/' && trimmed.get(i + 1) == Some(&b'/') {
-            let end = strings::index_of_char_usize(&trimmed[i..], b'\n').map_or(len, |at| i + at + 1);
+            let end =
+                strings::index_of_char_usize(&trimmed[i..], b'\n').map_or(len, |at| i + at + 1);
             result.extend_from_slice(&trimmed[i..end]);
             i = end;
             prev_was_space = false;
@@ -646,14 +678,20 @@ pub(super) fn normalize_type_whitespace(type_str: &[u8]) -> Bytes<'_> {
             }
             result.extend_from_slice(&trimmed[i..i + operator_len]);
             i += operator_len;
-            prev_was_space = trimmed.get(i).is_some_and(|next| !next.is_ascii_whitespace());
+            prev_was_space = trimmed
+                .get(i)
+                .is_some_and(|next| !next.is_ascii_whitespace());
             if prev_was_space {
                 result.push(b' ');
             }
             continue;
         }
         let (char, char_len) = first_char(&trimmed[i..]).unwrap_or((' ', 1));
-        if if byte < 128 { byte.is_ascii_whitespace() } else { char.is_whitespace() } {
+        if if byte < 128 {
+            byte.is_ascii_whitespace()
+        } else {
+            char.is_whitespace()
+        } {
             if !prev_was_space {
                 result.push(b' ');
                 prev_was_space = true;
@@ -664,7 +702,11 @@ pub(super) fn normalize_type_whitespace(type_str: &[u8]) -> Bytes<'_> {
         }
         i += char_len;
     }
-    if result == trimmed { Cow::Borrowed(trimmed) } else { Cow::Owned(result) }
+    if result == trimmed {
+        Cow::Borrowed(trimmed)
+    } else {
+        Cow::Owned(result)
+    }
 }
 
 /// Whether nothing in `text` is something that `normalize_type` changes.

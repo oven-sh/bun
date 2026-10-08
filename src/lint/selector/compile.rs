@@ -17,9 +17,17 @@ impl Analysis {
     /// any.
     pub(super) fn analyze(&mut self, program: &Program, id: Id) -> Option<TypeSet> {
         match *program.ops.get(id as usize)? {
-            Op::Identifier { node_type, is_exact } => {
+            Op::Identifier {
+                node_type,
+                is_exact,
+            } => {
                 self.identifier_count += 1;
-                Some(node_type.filter(|_| is_exact).map(|it| TypeSet::of(&[it])).unwrap_or_default())
+                Some(
+                    node_type
+                        .filter(|_| is_exact)
+                        .map(|it| TypeSet::of(&[it]))
+                        .unwrap_or_default(),
+                )
             }
             Op::NotAny(list) => {
                 for &it in list.of(&program.lists) {
@@ -39,7 +47,8 @@ impl Analysis {
                 let mut intersection: Option<TypeSet> = None;
                 for &it in list.of(&program.lists) {
                     if let Some(types) = self.analyze(program, it) {
-                        intersection = Some(intersection.map_or(types, |all| all.intersection(types)));
+                        intersection =
+                            Some(intersection.map_or(types, |all| all.intersection(types)));
                     }
                 }
                 intersection
@@ -60,7 +69,11 @@ impl Analysis {
                 is_written_function: true,
                 ..
             } => Some(types),
-            Op::Class { .. } | Op::Wildcard | Op::ExactNode | Op::Has { .. } | Op::UnknownClass(_) => None,
+            Op::Class { .. }
+            | Op::Wildcard
+            | Op::ExactNode
+            | Op::Has { .. }
+            | Op::UnknownClass(_) => None,
         }
     }
 }
@@ -71,15 +84,23 @@ impl Analysis {
 pub(super) fn possible_types(program: &Program, id: Id) -> Option<TypeSet> {
     let either = |a: Option<TypeSet>, b: Option<TypeSet>| a.zip(b).map(|(a, b)| a.union(b));
     match *program.ops.get(id as usize)? {
-        Op::Identifier { node_type, .. } => Some(node_type.map(|it| TypeSet::of(&[it])).unwrap_or_default()),
+        Op::Identifier { node_type, .. } => {
+            Some(node_type.map(|it| TypeSet::of(&[it])).unwrap_or_default())
+        }
         Op::Class { types, .. } => Some(types),
         Op::UnknownClass(_) => Some(TypeSet::default()),
         Op::Any(list) => {
-            let each = list.of(&program.lists).iter().map(|&it| possible_types(program, it));
+            let each = list
+                .of(&program.lists)
+                .iter()
+                .map(|&it| possible_types(program, it));
             each.fold(Some(TypeSet::default()), either)
         }
         Op::All(list) => {
-            let each = list.of(&program.lists).iter().filter_map(|&it| possible_types(program, it));
+            let each = list
+                .of(&program.lists)
+                .iter()
+                .filter_map(|&it| possible_types(program, it));
             each.reduce(TypeSet::intersection)
         }
         Op::Child(_, right) | Op::Descendant(_, right) => possible_types(program, right),
@@ -93,7 +114,10 @@ pub(super) fn possible_types(program: &Program, id: Id) -> Option<TypeSet> {
             right,
             right_is_subject: is_either,
         } => match is_either {
-            true => either(possible_types(program, left), possible_types(program, right)),
+            true => either(
+                possible_types(program, left),
+                possible_types(program, right),
+            ),
             false => possible_types(program, right),
         },
         _ => None,
@@ -105,7 +129,10 @@ pub(super) fn possible_types(program: &Program, id: Id) -> Option<TypeSet> {
 pub(super) fn always_matches(program: &Program, id: Id) -> bool {
     match program.ops.get(id as usize) {
         Some(Op::Identifier { .. } | Op::Wildcard) => true,
-        Some(Op::Any(list)) => list.of(&program.lists).iter().all(|&it| always_matches(program, it)),
+        Some(Op::Any(list)) => list
+            .of(&program.lists)
+            .iter()
+            .all(|&it| always_matches(program, it)),
         _ => false,
     }
 }
@@ -136,19 +163,35 @@ pub(super) fn optimize(program: &mut Program) {
                 list.of_mut(&mut program.lists).sort_by_key(cost_of);
                 bind(program, list);
                 // `*` adds nothing, except on its own.
-                let wildcards = list.of(&program.lists).iter().take_while(|it| cost_of_op(&program.ops, **it) == 0).count() as u32;
+                let wildcards = list
+                    .of(&program.lists)
+                    .iter()
+                    .take_while(|it| cost_of_op(&program.ops, **it) == 0)
+                    .count() as u32;
                 let skipped = wildcards.min(list.len.saturating_sub(1));
                 let rest = Run {
                     start: list.start + skipped,
                     len: list.len - skipped,
                 };
                 program.ops[id] = match *rest.of(&program.lists) {
-                    [only] => program.ops.get(only as usize).copied().unwrap_or(Op::All(rest)),
+                    [only] => program
+                        .ops
+                        .get(only as usize)
+                        .copied()
+                        .unwrap_or(Op::All(rest)),
                     _ => Op::All(rest),
                 };
             }
-            Op::Attribute { path, test, first: Bound::No } => {
-                if let Some(key) = path.of(&program.keys).first().filter(|it| !it.property.is_of_nodes()) {
+            Op::Attribute {
+                path,
+                test,
+                first: Bound::No,
+            } => {
+                if let Some(key) = path
+                    .of(&program.keys)
+                    .first()
+                    .filter(|it| !it.property.is_of_nodes())
+                {
                     let first = key.field.map_or(Bound::Missing, Bound::Field);
                     program.ops[id] = Op::Attribute { path, test, first };
                 }
@@ -171,7 +214,9 @@ pub(super) fn optimize(program: &mut Program) {
 /// Of the selectors in `all`, which a node has to match all of: if one is the name of a type, the first key of each attribute is
 /// a field of that type.
 fn bind(program: &mut Program, all: Run) {
-    let Program { ops, lists, keys, .. } = program;
+    let Program {
+        ops, lists, keys, ..
+    } = program;
     let all = all.of(lists);
     let node_type: Option<NodeType> = all.iter().find_map(|&it| match ops.get(it as usize) {
         Some(Op::Identifier { node_type, .. }) => *node_type,

@@ -765,8 +765,11 @@ impl<'s, 'h> Validator<'s, 'h> {
             _ => count - 1,
         };
         for (i, group) in self.group_names.iter().enumerate().skip(newly_mapped) {
-            let name = self.names.get(group.start as usize..(group.start + group.len) as usize);
-            self.last_group_of_name.insert(name.unwrap_or_default().into(), i as u32);
+            let name = self
+                .names
+                .get(group.start as usize..(group.start + group.len) as usize);
+            self.last_group_of_name
+                .insert(name.unwrap_or_default().into(), i as u32);
         }
     }
 
@@ -780,8 +783,12 @@ impl<'s, 'h> Validator<'s, 'h> {
     fn has_in_scope(&self, name: &[u8]) -> bool {
         self.last_group_called(name).is_some_and(|group| {
             // What each has before its current alternative is before the next one starts.
-            let inner = self.disjunctions.partition_point(|it| it.groups_before <= group);
-            let around = inner.checked_sub(1).and_then(|it| self.disjunctions.get(it));
+            let inner = self
+                .disjunctions
+                .partition_point(|it| it.groups_before <= group);
+            let around = inner
+                .checked_sub(1)
+                .and_then(|it| self.disjunctions.get(it));
             !around.is_some_and(|it| group < it.groups_before_alternative)
         })
     }

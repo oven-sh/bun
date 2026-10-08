@@ -302,7 +302,10 @@ fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
         }
         at += 32;
     }
-    at + text[at..].iter().position(|&c| f(c)).unwrap_or(text.len() - at)
+    at + text[at..]
+        .iter()
+        .position(|&c| f(c))
+        .unwrap_or(text.len() - at)
 }
 
 #[unsafe(no_mangle)]
@@ -323,7 +326,9 @@ unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) ->
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
     // Sums that fit in a byte, which the compiler adds up with vector instructions.
-    text.chunks(192).map(|chunk| usize::from(chunk.iter().map(|&c| u8::from(c == needle)).sum::<u8>())).sum()
+    text.chunks(192)
+        .map(|chunk| usize::from(chunk.iter().map(|&c| u8::from(c == needle)).sum::<u8>()))
+        .sum()
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_index_of_any_char(
@@ -340,15 +345,27 @@ unsafe extern "C" fn highway_index_of_any_char(
         [a] => first(text, |c| c == a),
         // One character after the other for each 32 bytes: that is what the compiler makes good vector code of.
         _ if chars.len() <= 8 => {
-            let has = |chunk: &[u8], wanted: u8| chunk.iter().fold(false, |is_found, &c| is_found | (c == wanted));
-            let whole = text.chunks_exact(32).take_while(|chunk| !chars.iter().any(|&wanted| has(chunk, wanted))).count();
+            let has = |chunk: &[u8], wanted: u8| {
+                chunk
+                    .iter()
+                    .fold(false, |is_found, &c| is_found | (c == wanted))
+            };
+            let whole = text
+                .chunks_exact(32)
+                .take_while(|chunk| !chars.iter().any(|&wanted| has(chunk, wanted)))
+                .count();
             let at = whole * 32;
-            at + text[at..].iter().position(|c| chars.contains(c)).unwrap_or(len - at)
+            at + text[at..]
+                .iter()
+                .position(|c| chars.contains(c))
+                .unwrap_or(len - at)
         }
         _ => {
             let mut is_in_set = [false; 256];
             chars.iter().for_each(|&c| is_in_set[c as usize] = true);
-            text.iter().position(|&c| is_in_set[c as usize]).unwrap_or(len)
+            text.iter()
+                .position(|&c| is_in_set[c as usize])
+                .unwrap_or(len)
         }
     }
 }
@@ -388,13 +405,22 @@ unsafe extern "C" fn highway_memmem(
     let (heads, tails) = (&hay[..=last], &hay[needle.len() - 1..]);
     let mut at = 0;
     while at <= last {
-        for (heads, tails) in heads[at..].chunks_exact(32).zip(tails[at..].chunks_exact(32)) {
-            if heads.iter().zip(tails).fold(false, |is_found, (&a, &b)| is_found | ((a == head) & (b == tail))) {
+        for (heads, tails) in heads[at..]
+            .chunks_exact(32)
+            .zip(tails[at..].chunks_exact(32))
+        {
+            if heads.iter().zip(tails).fold(false, |is_found, (&a, &b)| {
+                is_found | ((a == head) & (b == tail))
+            }) {
                 break;
             }
             at += 32;
         }
-        let Some(found) = heads[at..].iter().zip(&tails[at..]).position(|(&a, &b)| a == head && b == tail) else {
+        let Some(found) = heads[at..]
+            .iter()
+            .zip(&tails[at..])
+            .position(|(&a, &b)| a == head && b == tail)
+        else {
             break;
         };
         at += found;

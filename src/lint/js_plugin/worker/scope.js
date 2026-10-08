@@ -175,7 +175,9 @@ function newDefinition(type, name) {
 }
 
 function newVariable(name, scope, index, flags) {
-  return tree.dialect === 0 ? new TypeScriptVariable(name, scope, index, flags) : new Variable(name, scope, index, flags);
+  return tree.dialect === 0
+    ? new TypeScriptVariable(name, scope, index, flags)
+    : new Variable(name, scope, index, flags);
 }
 
 // `eslint-scope` says less about the name of a class in the scope of the class.
@@ -294,7 +296,8 @@ lazy(Reference.prototype, "resolved", function () {
 });
 
 function referenceAt(index) {
-  return (scopeData.referenceObjects[index] ??= (tree.dialect === 0 ? new TypeScriptReference(index) : new Reference(index)));
+  return (scopeData.referenceObjects[index] ??=
+    tree.dialect === 0 ? new TypeScriptReference(index) : new Reference(index));
 }
 
 function nameOfDefinition(node) {
@@ -367,13 +370,19 @@ lazy(Scope.prototype, "variables", function () {
     const mentioned = mentionedGlobals(this);
     if (tree.dialect === 1) return mentioned;
     const known = new Set(mentioned.map(it => it.name));
-    return [...mentioned, ...Object.keys(fileSettings.libs).filter(it => !known.has(it)).map(it => libVariable(this, it))];
+    return [
+      ...mentioned,
+      ...Object.keys(fileSettings.libs)
+        .filter(it => !known.has(it))
+        .map(it => libVariable(this, it)),
+    ];
   }
   const { scopeWords, innerClassNames } = scopeData;
   const variables = [];
   const inner = innerClassNames.get(this.index);
   if (inner !== undefined) variables.push(variableAt(inner));
-  for (let at = scopeWords[5 * this.index + 4]; at < scopeWords[5 * this.index + 9]; at++) variables.push(variableAt(at));
+  for (let at = scopeWords[5 * this.index + 4]; at < scopeWords[5 * this.index + 9]; at++)
+    variables.push(variableAt(at));
   // typescript-eslint comes to the type parameters of a function after its parameters.
   if (this.type === "function" && this.block.typeParameters) {
     const rank = variable => {
@@ -388,7 +397,8 @@ lazy(Scope.prototype, "variables", function () {
   return variables;
 });
 lazy(Scope.prototype, "set", function () {
-  if (this.index !== 0 || tree.dialect === 1 || Object.hasOwn(this, "variables")) return new Map(this.variables.map(it => [it.name, it]));
+  if (this.index !== 0 || tree.dialect === 1 || Object.hasOwn(this, "variables"))
+    return new Map(this.variables.map(it => [it.name, it]));
   return new GlobalSet(this, mentionedGlobals(this));
 });
 
@@ -486,7 +496,11 @@ lazy(Scope.prototype, "through", function () {
 // Of the global scope.
 lazy(Scope.prototype, "implicit", function () {
   if (this.index !== 0) return undefined;
-  const implicit = { set: new Map(), variables: [], [tree.dialect === 1 ? "left" : "leftToBeResolved"]: [...this.through] };
+  const implicit = {
+    set: new Map(),
+    variables: [],
+    [tree.dialect === 1 ? "left" : "leftToBeResolved"]: [...this.through],
+  };
   for (const reference of this.through) {
     if (!reference.isWriteOnly() || reference.init || reference.from.isStrict) continue;
     const { name } = reference.identifier;
@@ -535,7 +549,8 @@ function addGlobalVariables(scope, variables) {
           // typescript-eslint resolves what the libraries say the name can be: `Promise` is only a type in the first of them
           // that has it. ESLint resolves the rest afterwards.
           if (tree.dialect === 0 && found.length > 1) {
-            const isFirst = it => (it.isTypeReference && this.isTypeVariable) || (it.isValueReference && this.isValueVariable);
+            const isFirst = it =>
+              (it.isTypeReference && this.isTypeVariable) || (it.isValueReference && this.isValueVariable);
             found = [...found.filter(isFirst), ...found.filter(it => !isFirst(it))];
           }
           Object.defineProperty(this, "references", { value: found, writable: true, enumerable: true });
@@ -848,7 +863,8 @@ function orderAsTypeScriptEslint(orders) {
       }
     } else if (kind === 5) {
       const typeArguments = last[id + 1] + 1;
-      if (typeArguments <= last[id] && types[typeArguments] === ARGUMENTS) swap(typeArguments, last[typeArguments], last[id]);
+      if (typeArguments <= last[id] && types[typeArguments] === ARGUMENTS)
+        swap(typeArguments, last[typeArguments], last[id]);
     } else swap(id + 1, last[id + 1], last[id]);
   }
 }
@@ -858,7 +874,11 @@ function scopeManager() {
   program();
   ask(SCOPES);
   const buffer = buffers[SCOPES];
-  const [scopeCount, variableCount, definitionCount, referenceCount, globalCount, commentCount] = new Uint32Array(buffer, 0, 6);
+  const [scopeCount, variableCount, definitionCount, referenceCount, globalCount, commentCount] = new Uint32Array(
+    buffer,
+    0,
+    6,
+  );
   let at = 24;
   const words = length => {
     const part = new Uint32Array(buffer, at, length);
@@ -879,7 +899,8 @@ function scopeManager() {
     if (ofReferences.hasMoved) {
       const { order, place } = ofReferences;
       const copy = references.slice();
-      for (let at = 0; at < referenceCount; at++) references.set(copy.subarray(5 * order[at], 5 * order[at] + 5), 5 * at);
+      for (let at = 0; at < referenceCount; at++)
+        references.set(copy.subarray(5 * order[at], 5 * order[at] + 5), 5 * at);
       for (let at = 0; at < globals.length; at += 2) globals[at] = place[globals[at]];
     }
   }
@@ -970,7 +991,8 @@ function scopeManager() {
     // By the index of a variable: that of its scope.
     variableScopes: memoize(() => {
       const of = new Uint32Array(variableObjects.length);
-      for (let scope = 0; scope < scopeCount; scope++) of.fill(scope, scopeWords[5 * scope + 4], scopeWords[5 * scope + 9]);
+      for (let scope = 0; scope < scopeCount; scope++)
+        of.fill(scope, scopeWords[5 * scope + 4], scopeWords[5 * scope + 9]);
       for (const [scope, variable] of innerClassNames) of[variable] = scope;
       return of;
     }),

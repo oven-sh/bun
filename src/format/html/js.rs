@@ -43,14 +43,20 @@ fn is_probably_jsx(text: &[u8]) -> bool {
     let mut from = 0;
     while let Some(at) = strings::index_of(&text[from..], b"</").map(|at| from + at) {
         let before = &text[..at];
-        match before.iter().rposition(|byte| matches!(byte, b'"' | b'\'' | b'`')) {
+        match before
+            .iter()
+            .rposition(|byte| matches!(byte, b'"' | b'\'' | b'`'))
+        {
             None => return true,
             Some(quote) if strings::contains_char(&before[quote..], b'\n') => return true,
             Some(_) => from = at + 2,
         }
     }
     strings::split(text, b"\n").any(|line| {
-        line.len() >= 4 && line[0] != b'/' && line[1] != b'/' && strings::contains(&line[2..], b"/>")
+        line.len() >= 4
+            && line[0] != b'/'
+            && line[1] != b'/'
+            && strings::contains(&line[2..], b"/>")
     })
 }
 
@@ -58,7 +64,11 @@ fn is_probably_jsx(text: &[u8]) -> bool {
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
     FormatOptions {
         // In an attribute, double quotes would have to be written as entities.
-        quote_style: if in_html.is_in_attribute { QuoteStyle::Single } else { options.quote_style },
+        quote_style: if in_html.is_in_attribute {
+            QuoteStyle::Single
+        } else {
+            options.quote_style
+        },
         in_html: InHtml {
             quote_style: options.quote_style,
             ..in_html
@@ -84,7 +94,14 @@ type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> 
 /// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
 /// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
 /// parsed: nothing has been written then.
-fn with_file(f: &mut Formatter<'_>, code: &[u8], paths: &[&[u8]], source_type: SourceType, in_html: InHtml, write: Write<'_>) -> bool {
+fn with_file(
+    f: &mut Formatter<'_>,
+    code: &[u8],
+    paths: &[&[u8]],
+    source_type: SourceType,
+    in_html: InHtml,
+    write: Write<'_>,
+) -> bool {
     let Some(parse) = f.options().parse_javascript else {
         return false;
     };
@@ -98,7 +115,9 @@ fn with_file(f: &mut Formatter<'_>, code: &[u8], paths: &[&[u8]], source_type: S
         for &is_script in kinds {
             let mut result = None;
             parse(path, code, is_script, &mut |file| {
-                if file.has_parse_errors() || refused_by_prettier_with(file, TypesInJavaScript::Refused) {
+                if file.has_parse_errors()
+                    || refused_by_prettier_with(file, TypesInJavaScript::Refused)
+                {
                     return;
                 }
                 let comments = file.extension(|| {
@@ -132,7 +151,11 @@ fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
 /// What Prettier makes of a `Program`, without the line break at the end.
 fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
     // Nothing that a comment could belong to.
-    if file.body().iter().all(|it| matches!(it.kind(), StmtKind::Empty)) {
+    if file
+        .body()
+        .iter()
+        .all(|it| matches!(it.kind(), StmtKind::Empty))
+    {
         let comments = f.comments().unprinted_comments();
         let indent = DanglingIndentMode::None;
         return write!(f, FormatDanglingComments::Comments { comments, indent });
@@ -143,11 +166,24 @@ fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
 }
 
 /// `textToDoc(code, { parser })` for a program. Returns whether it has been written.
-pub(crate) fn write_program(f: &mut Formatter<'_>, code: &[u8], syntax: Syntax, source_type: SourceType, in_html: InHtml) -> bool {
-    with_file(f, code, paths_of(syntax, code), source_type, in_html, &mut |file, f| {
-        write_statements(file, f);
-        true
-    })
+pub(crate) fn write_program(
+    f: &mut Formatter<'_>,
+    code: &[u8],
+    syntax: Syntax,
+    source_type: SourceType,
+    in_html: InHtml,
+) -> bool {
+    with_file(
+        f,
+        code,
+        paths_of(syntax, code),
+        source_type,
+        in_html,
+        &mut |file, f| {
+            write_statements(file, f);
+            true
+        },
+    )
 }
 
 /// What `formatAttributeValue` puts around the document.
@@ -168,18 +204,31 @@ fn should_hug_js_expression(e: Expr<'_>, root: HtmlRoot) -> bool {
     match e.as_ast_nodes() {
         AstNodes::ObjectExpression(_) | AstNodes::ArrayExpression(_) => true,
         AstNodes::TemplateLiteral(_) | AstNodes::StringLiteral(_) => {
-            matches!(root, HtmlRoot::VueExpression | HtmlRoot::NgBinding | HtmlRoot::NgDirective)
+            matches!(
+                root,
+                HtmlRoot::VueExpression | HtmlRoot::NgBinding | HtmlRoot::NgDirective
+            )
         }
         _ => false,
     }
 }
 
 /// Writes `content` the way `formatAttributeValue` returns it.
-pub(crate) fn write_hugged<'b>(should_hug: Option<bool>, content: &impl Format<'b>, f: &mut Formatter<'b>) {
+pub(crate) fn write_hugged<'b>(
+    should_hug: Option<bool>,
+    content: &impl Format<'b>,
+    f: &mut Formatter<'b>,
+) {
     match should_hug {
         None => write!(f, content),
         Some(true) => write!(f, group(content)),
-        Some(false) => write!(f, [indent(&format_args!(soft_line_break(), content)), soft_line_break()]),
+        Some(false) => write!(
+            f,
+            [
+                indent(&format_args!(soft_line_break(), content)),
+                soft_line_break()
+            ]
+        ),
     }
 }
 
@@ -198,27 +247,44 @@ fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
 
 /// `formatAttributeValue(code, textToDoc, { parser })` for the parsers that take an expression. Returns whether it has
 /// been written.
-pub(crate) fn write_expression(f: &mut Formatter<'_>, code: &[u8], is_typescript: bool, in_html: InHtml, hug: Hug) -> bool {
+pub(crate) fn write_expression(
+    f: &mut Formatter<'_>,
+    code: &[u8],
+    is_typescript: bool,
+    in_html: InHtml,
+    hug: Hug,
+) -> bool {
     let wrapped = [b"(", code, b"\n)"].concat();
-    let path = if is_typescript { EXPRESSION_TS } else { EXPRESSION_JSX };
-    with_file(f, &wrapped, &[path], SourceType::Module, in_html, &mut |file, f| {
-        let Some(e) = expression_of(file) else {
-            return false;
-        };
-        let should_hug = match hug {
-            Hug::Always => Some(true),
-            Hug::Never => Some(false),
-            Hug::Expression => Some(should_hug_js_expression(e, in_html.root)),
-            Hug::Bare => None,
-        };
-        let content = format_with(|f| {
-            write!(f, e);
-            let rest = f.comments().unprinted_comments();
-            write!(f, FormatTrailingComments::Comments(rest));
-        });
-        write_hugged(should_hug, &content, f);
-        true
-    })
+    let path = if is_typescript {
+        EXPRESSION_TS
+    } else {
+        EXPRESSION_JSX
+    };
+    with_file(
+        f,
+        &wrapped,
+        &[path],
+        SourceType::Module,
+        in_html,
+        &mut |file, f| {
+            let Some(e) = expression_of(file) else {
+                return false;
+            };
+            let should_hug = match hug {
+                Hug::Always => Some(true),
+                Hug::Never => Some(false),
+                Hug::Expression => Some(should_hug_js_expression(e, in_html.root)),
+                Hug::Bare => None,
+            };
+            let content = format_with(|f| {
+                write!(f, e);
+                let rest = f.comments().unprinted_comments();
+                write!(f, FormatTrailingComments::Comments(rest));
+            });
+            write_hugged(should_hug, &content, f);
+            true
+        },
+    )
 }
 
 /// An expression of Angular.
@@ -233,8 +299,13 @@ pub(crate) struct AngularExpression<'c> {
 
 /// One string to Prettier, whatever is in it.
 pub(crate) fn write_string(text: &[u8], f: &mut Formatter<'_>) {
-    let width = strings::contains_char(text, b'\n')
-        .then(|| TextWidth::multiline_string(strings::split(text, b"\n").map(|line| f.string_width(line)).sum()));
+    let width = strings::contains_char(text, b'\n').then(|| {
+        TextWidth::multiline_string(
+            strings::split(text, b"\n")
+                .map(|line| f.string_width(line))
+                .sum(),
+        )
+    });
     f.write_text(text, width);
 }
 
@@ -274,7 +345,14 @@ pub(crate) fn write_angular_expression(
         let content = format_with(|f| {
             match expression.ignored {
                 Some(text) => write_string(text, f),
-                None => write!(f, [needs_parentheses.then_some("("), e, needs_parentheses.then_some(")")]),
+                None => write!(
+                    f,
+                    [
+                        needs_parentheses.then_some("("),
+                        e,
+                        needs_parentheses.then_some(")")
+                    ]
+                ),
             }
             write_rest(f);
         });
@@ -286,16 +364,29 @@ pub(crate) fn write_angular_expression(
 }
 
 /// The same for a program. For `shouldHugJsExpression` the root is a `File`, which is not hugged.
-pub(crate) fn write_program_in_attribute(f: &mut Formatter<'_>, code: &[u8], syntax: Syntax, in_html: InHtml, hug: Hug) -> bool {
-    with_file(f, code, paths_of(syntax, code), SourceType::Unknown, in_html, &mut |file, f| {
-        let should_hug = match hug {
-            Hug::Always => Some(true),
-            Hug::Never | Hug::Expression => Some(false),
-            Hug::Bare => None,
-        };
-        write_hugged(should_hug, &format_with(|f| write_statements(file, f)), f);
-        true
-    })
+pub(crate) fn write_program_in_attribute(
+    f: &mut Formatter<'_>,
+    code: &[u8],
+    syntax: Syntax,
+    in_html: InHtml,
+    hug: Hug,
+) -> bool {
+    with_file(
+        f,
+        code,
+        paths_of(syntax, code),
+        SourceType::Unknown,
+        in_html,
+        &mut |file, f| {
+            let should_hug = match hug {
+                Hug::Always => Some(true),
+                Hug::Never | Hug::Expression => Some(false),
+                Hug::Bare => None,
+            };
+            write_hugged(should_hug, &format_with(|f| write_statements(file, f)), f);
+            true
+        },
+    )
 }
 
 /// What `printHtmlBinding` prints of a program that is one declaration.
@@ -310,40 +401,65 @@ pub(crate) enum Binding {
 }
 
 /// `group(printHtmlBinding(..))`, for `before`, `code` and `after` put together. Returns whether it has been written.
-pub(crate) fn write_binding(f: &mut Formatter<'_>, code: &[u8], is_typescript: bool, in_html: InHtml, binding: Binding) -> bool {
+pub(crate) fn write_binding(
+    f: &mut Formatter<'_>,
+    code: &[u8],
+    is_typescript: bool,
+    in_html: InHtml,
+    binding: Binding,
+) -> bool {
     let (before, after): (&[u8], &[u8]) = match binding {
         Binding::Parameters | Binding::ForLeft => (b"function _(", b") {}"),
         Binding::TypeParameters => (b"type T<", b"> = any"),
     };
     let program = [before, code, after].concat();
-    let syntax = if is_typescript { Syntax::BabelTs } else { Syntax::Babel };
-    with_file(f, &program, paths_of(syntax, &program), SourceType::Unknown, in_html, &mut |file, f| {
-        let Some(statement) = file.body().iter().next() else {
-            return false;
-        };
-        let separator = format_with(|f| write!(f, [",", soft_line_break_or_space()]));
-        match (binding, statement.kind()) {
-            (Binding::TypeParameters, StmtKind::TypeAlias(alias)) => {
-                let content = format_with(|f| {
-                    f.join_with(&separator).entries(alias.type_params().iter());
-                });
-                // The root is a `File`, which `shouldHugJsExpression` has nothing to say about.
-                write_hugged(Some(false), &content, f);
-            }
-            (Binding::Parameters | Binding::ForLeft, StmtKind::Fn(func)) => {
-                let params = func.params();
-                let list = format_with(|f| {
-                    f.join_with(&separator).entries(params.iter());
-                });
-                match binding == Binding::ForLeft && params.len() != 1 {
-                    true => write!(f, group(&format_args!("(", indent(&format_args!(soft_line_break(), group(&list))), soft_line_break(), ")"))),
-                    false => write!(f, group(&list)),
+    let syntax = if is_typescript {
+        Syntax::BabelTs
+    } else {
+        Syntax::Babel
+    };
+    with_file(
+        f,
+        &program,
+        paths_of(syntax, &program),
+        SourceType::Unknown,
+        in_html,
+        &mut |file, f| {
+            let Some(statement) = file.body().iter().next() else {
+                return false;
+            };
+            let separator = format_with(|f| write!(f, [",", soft_line_break_or_space()]));
+            match (binding, statement.kind()) {
+                (Binding::TypeParameters, StmtKind::TypeAlias(alias)) => {
+                    let content = format_with(|f| {
+                        f.join_with(&separator).entries(alias.type_params().iter());
+                    });
+                    // The root is a `File`, which `shouldHugJsExpression` has nothing to say about.
+                    write_hugged(Some(false), &content, f);
                 }
+                (Binding::Parameters | Binding::ForLeft, StmtKind::Fn(func)) => {
+                    let params = func.params();
+                    let list = format_with(|f| {
+                        f.join_with(&separator).entries(params.iter());
+                    });
+                    match binding == Binding::ForLeft && params.len() != 1 {
+                        true => write!(
+                            f,
+                            group(&format_args!(
+                                "(",
+                                indent(&format_args!(soft_line_break(), group(&list))),
+                                soft_line_break(),
+                                ")"
+                            ))
+                        ),
+                        false => write!(f, group(&list)),
+                    }
+                }
+                _ => return false,
             }
-            _ => return false,
-        }
-        true
-    })
+            true
+        },
+    )
 }
 
 // ───────────────────────────── `"` in the value of an attribute ─────────────────────────────

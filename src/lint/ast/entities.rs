@@ -269,7 +269,8 @@ pub(super) fn unescape(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let mut rest = &text[first..];
     loop {
         // `rest` starts with `&`.
-        let decoded = index_of_char_usize(rest, b';').and_then(|end| Some((code_point(&rest[1..end])?, end)));
+        let decoded =
+            index_of_char_usize(rest, b';').and_then(|end| Some((code_point(&rest[1..end])?, end)));
         let taken = match decoded {
             Some((c, end)) => {
                 push_code_point(&mut out, c);
@@ -299,7 +300,9 @@ fn code_point(item: &[u8]) -> Option<u32> {
         }
         let mut value = 0u32;
         for digit in digits {
-            value = value.saturating_mul(radix).saturating_add((*digit as char).to_digit(radix)?);
+            value = value
+                .saturating_mul(radix)
+                .saturating_add((*digit as char).to_digit(radix)?);
         }
         (value <= 0x10FFFF).then_some(value)
     };
@@ -307,7 +310,9 @@ fn code_point(item: &[u8]) -> Option<u32> {
         [b'#', b'x', hex @ ..] => digits(hex, 16),
         [b'#', decimal @ ..] => digits(decimal, 10),
         _ => {
-            let at = ENTITIES.binary_search_by(|it| it.0.as_bytes().cmp(item)).ok()?;
+            let at = ENTITIES
+                .binary_search_by(|it| it.0.as_bytes().cmp(item))
+                .ok()?;
             Some(ENTITIES[at].1)
         }
     }

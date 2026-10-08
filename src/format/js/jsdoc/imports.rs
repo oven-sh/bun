@@ -20,7 +20,9 @@ fn parse_import_tag(comment_text: &[u8]) -> Option<ImportInfo> {
     let from_index = strings::last_index_of(text, b" from ")?;
     let specifier = trim(&text[..from_index]);
     let module_part = trim(&text[from_index + 6..]);
-    let quote = *module_part.first().filter(|byte| matches!(byte, b'"' | b'\''))?;
+    let quote = *module_part
+        .first()
+        .filter(|byte| matches!(byte, b'"' | b'\''))?;
     let module_path = module_part.strip_prefix(&[quote])?.strip_suffix(&[quote])?;
     if module_path.is_empty() {
         return None;
@@ -29,10 +31,18 @@ fn parse_import_tag(comment_text: &[u8]) -> Option<ImportInfo> {
     let (default_import, named_imports) = match strings::index_of_char_usize(specifier, b'{') {
         Some(brace_start) => {
             let brace_end = strings::last_index_of_char(specifier, b'}')?;
-            let default_part = trim(trim_end_matches(trim(&specifier[..brace_start]), |c| c == ','));
+            let default_part = trim(trim_end_matches(trim(&specifier[..brace_start]), |c| {
+                c == ','
+            }));
             let named_part = specifier.get(brace_start + 1..brace_end)?;
-            let named = strings::split(named_part, b",").map(collapse).filter(|name| !name.is_empty()).collect();
-            ((!default_part.is_empty()).then(|| default_part.to_vec()), named)
+            let named = strings::split(named_part, b",")
+                .map(collapse)
+                .filter(|name| !name.is_empty())
+                .collect();
+            (
+                (!default_part.is_empty()).then(|| default_part.to_vec()),
+                named,
+            )
         }
         None => (Some(collapse(specifier)), Vec::new()),
     };
@@ -46,7 +56,9 @@ fn parse_import_tag(comment_text: &[u8]) -> Option<ImportInfo> {
 fn cmp_ascii_case_insensitive(a: &[u8], b: &[u8]) -> Ordering {
     let lower = |text: &[u8]| text.iter().map(u8::to_ascii_lowercase).collect::<Vec<u8>>();
     let common = a.len().min(b.len());
-    lower(&a[..common]).cmp(&lower(&b[..common])).then(a.len().cmp(&b.len()))
+    lower(&a[..common])
+        .cmp(&lower(&b[..common]))
+        .then(a.len().cmp(&b.len()))
 }
 
 /// What a specifier is sorted by: `B1` of `B as B1`.
@@ -60,7 +72,10 @@ fn import_specifier_sort_key(specifier: &[u8]) -> &[u8] {
 fn merge_and_sort_imports(imports: Vec<ImportInfo>) -> Vec<ImportInfo> {
     let mut groups: Vec<ImportInfo> = Vec::new();
     for import in imports {
-        let Some(existing) = groups.iter_mut().find(|group| group.module_path == import.module_path) else {
+        let Some(existing) = groups
+            .iter_mut()
+            .find(|group| group.module_path == import.module_path)
+        else {
             groups.push(import);
             continue;
         };
@@ -69,20 +84,26 @@ fn merge_and_sort_imports(imports: Vec<ImportInfo>) -> Vec<ImportInfo> {
         }
         for named in import.named_imports {
             let key = import_specifier_sort_key(&named);
-            if !existing.named_imports.iter().any(|it| import_specifier_sort_key(it) == key) {
+            if !existing
+                .named_imports
+                .iter()
+                .any(|it| import_specifier_sort_key(it) == key)
+            {
                 existing.named_imports.push(named);
             }
         }
     }
     for import in &mut groups {
-        import
-            .named_imports
-            .sort_by(|a, b| cmp_ascii_case_insensitive(import_specifier_sort_key(a), import_specifier_sort_key(b)));
+        import.named_imports.sort_by(|a, b| {
+            cmp_ascii_case_insensitive(import_specifier_sort_key(a), import_specifier_sort_key(b))
+        });
     }
     // Packages come before relative paths.
     groups.sort_by(|a, b| {
         let is_relative = |import: &ImportInfo| import.module_path.starts_with(b".");
-        is_relative(a).cmp(&is_relative(b)).then_with(|| cmp_ascii_case_insensitive(&a.module_path, &b.module_path))
+        is_relative(a)
+            .cmp(&is_relative(b))
+            .then_with(|| cmp_ascii_case_insensitive(&a.module_path, &b.module_path))
     });
     groups
 }
@@ -141,7 +162,15 @@ pub(super) fn process_import_tags(
     }
     let mut lines = LineBuffer::new();
     for import in &merge_and_sort_imports(imports) {
-        format_import_lines(import, if quote_style == QuoteStyle::Single { b'\'' } else { b'"' }, &mut lines);
+        format_import_lines(
+            import,
+            if quote_style == QuoteStyle::Single {
+                b'\''
+            } else {
+                b'"'
+            },
+            &mut lines,
+        );
     }
     (lines, parsed_indices)
 }

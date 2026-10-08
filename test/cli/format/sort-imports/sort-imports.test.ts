@@ -11,7 +11,10 @@ import { join } from "node:path";
 type Case = { name: string; filename: string; options: Record<string, unknown>; input: string; output: string };
 
 const tools = {
-  trivago: (options: object) => [".prettierrc.json", { plugins: ["@trivago/prettier-plugin-sort-imports"], ...options }],
+  trivago: (options: object) => [
+    ".prettierrc.json",
+    { plugins: ["@trivago/prettier-plugin-sort-imports"], ...options },
+  ],
   ianvs: (options: object) => [".prettierrc.json", { plugins: ["@ianvs/prettier-plugin-sort-imports"], ...options }],
   organize: (options: object) => [".prettierrc.json", { plugins: ["prettier-plugin-organize-imports"], ...options }],
   oxfmt: (options: object) => [".oxfmtrc.json", options],
@@ -75,7 +78,10 @@ describe.concurrent("when imports are sorted", () => {
 
   test("in the files of an override only", async () => {
     const config = `{ "overrides": [{ "files": "src/**", "options": { "importOrder": [] } }] }`;
-    const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "src/a.ts": unsorted }, ["a.ts", "src/a.ts"]);
+    const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "src/a.ts": unsorted }, [
+      "a.ts",
+      "src/a.ts",
+    ]);
     expect(result.files).toEqual([unsorted, sorted]);
   });
 

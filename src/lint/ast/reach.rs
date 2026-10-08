@@ -47,18 +47,26 @@ tags_in_tree! {
 impl File<'_> {
     /// [`File::expr_tags_in_tree`], with what `of_node` makes of the kind and the expression in place of the kind.
     #[inline]
-    pub(crate) fn expr_tags_in_tree_as(&self, out: &mut Vec<u8>, mut of_node: impl FnMut(ExprTag, &hir::Expr) -> u8) {
+    pub(crate) fn expr_tags_in_tree_as(
+        &self,
+        out: &mut Vec<u8>,
+        mut of_node: impl FnMut(ExprTag, &hir::Expr) -> u8,
+    ) {
         let all = self.hir.exprs.iter().enumerate();
         out.clear();
         match self.has_synthetic_nodes() {
-            true => out.extend(all.map(|(i, raw)| match self.expr_tag_in_tree::<true>(i as u32) {
-                Some(tag) => of_node(tag, raw),
-                None => NOT_IN_TREE,
-            })),
-            false => out.extend(all.map(|(i, raw)| match self.expr_tag_in_tree::<false>(i as u32) {
-                Some(tag) => of_node(tag, raw),
-                None => NOT_IN_TREE,
-            })),
+            true => out.extend(
+                all.map(|(i, raw)| match self.expr_tag_in_tree::<true>(i as u32) {
+                    Some(tag) => of_node(tag, raw),
+                    None => NOT_IN_TREE,
+                }),
+            ),
+            false => out.extend(all.map(
+                |(i, raw)| match self.expr_tag_in_tree::<false>(i as u32) {
+                    Some(tag) => of_node(tag, raw),
+                    None => NOT_IN_TREE,
+                },
+            )),
         }
     }
 
@@ -89,8 +97,10 @@ impl File<'_> {
         let id = hir::ExprId(i);
         let raw = self.hir.exprs.get(id.idx())?;
         let attributes = self.hir.import_attributes;
-        let is_node = !matches!(self.bound.expr_parent.get(id.idx()), None | Some(Parent::None))
-            && !matches!(raw.kind, hir::ExprKind::Missing)
+        let is_node = !matches!(
+            self.bound.expr_parent.get(id.idx()),
+            None | Some(Parent::None)
+        ) && !matches!(raw.kind, hir::ExprKind::Missing)
             && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
             && (!MAY_BE_SYNTHETIC || self.jsdoc_cast_operand(id).is_none())
             && (attributes.is_empty()
@@ -103,8 +113,10 @@ impl File<'_> {
     fn stmt_tag_in_tree<const MAY_BE_SYNTHETIC: bool>(&self, i: u32) -> Option<StmtTag> {
         let id = hir::StmtId(i);
         let raw = self.hir.stmts.get(id.idx())?;
-        let is_node = !matches!(self.bound.stmt_parent.get(id.idx()), None | Some(Parent::None))
-            && self.is_written::<MAY_BE_SYNTHETIC>(raw.start)
+        let is_node = !matches!(
+            self.bound.stmt_parent.get(id.idx()),
+            None | Some(Parent::None)
+        ) && self.is_written::<MAY_BE_SYNTHETIC>(raw.start)
             && self.wrapped_in(id).is_none()
             && !self.is_nested_namespace(id);
         is_node.then(|| StmtTag::of(&raw.kind))
@@ -114,7 +126,11 @@ impl File<'_> {
     fn type_tag_in_tree<const MAY_BE_SYNTHETIC: bool>(&self, i: u32) -> Option<TypeTag> {
         let id = hir::TypeNodeId(i);
         let raw = self.hir.types.get(id.idx())?;
-        let is_node = self.bound.type_scope.get(id.idx()).is_some_and(|scope| scope.is_some())
+        let is_node = self
+            .bound
+            .type_scope
+            .get(id.idx())
+            .is_some_and(|scope| scope.is_some())
             && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
             && !self.is_in_type_that_is_an_error(id);
         is_node.then(|| TypeTag::of(&raw.kind))
@@ -124,7 +140,10 @@ impl File<'_> {
     fn pat_tag_in_tree<const MAY_BE_SYNTHETIC: bool>(&self, i: u32) -> Option<PatTag> {
         let id = hir::PatId(i);
         let raw = self.hir.pats.get(id.idx())?;
-        let is_bound = !matches!(self.bound.pat_parent.get(id.idx()), None | Some(PatParent::None));
+        let is_bound = !matches!(
+            self.bound.pat_parent.get(id.idx()),
+            None | Some(PatParent::None)
+        );
         let is_node = !matches!(raw.kind, hir::PatKind::Missing)
             && self.is_written::<MAY_BE_SYNTHETIC>(raw.pos)
             && (is_bound || self.is_this_name(id, raw));
@@ -134,18 +153,31 @@ impl File<'_> {
     /// Whether `pat` is the `this` of a `this` parameter of a function that is a node.
     fn is_this_name(&self, pat: hir::PatId, raw: &hir::Pat) -> bool {
         self.hir.text.get(raw.pos as usize..raw.end as usize) == Some(b"this")
-            && (self.parents().of_this(pat))
-                .is_some_and(|param| self.bound.param_fn.get(param.idx()).is_some_and(|f| f.is_some()))
+            && (self.parents().of_this(pat)).is_some_and(|param| {
+                self.bound
+                    .param_fn
+                    .get(param.idx())
+                    .is_some_and(|f| f.is_some())
+            })
     }
 
     /// Whether the statement `id` is the `B` of `namespace A.B`: it starts with its name.
     #[inline]
     pub(crate) fn is_nested_namespace(&self, id: hir::StmtId) -> bool {
         match self.hir.stmts.get(id.idx()) {
-            Some(&hir::Stmt { kind: hir::StmtKind::Module(m), start, .. }) => {
-                let is_name = |it: &hir::Module| it.name_pos == start && matches!(it.name, hir::ModuleName::Ident(_));
+            Some(&hir::Stmt {
+                kind: hir::StmtKind::Module(m),
+                start,
+                ..
+            }) => {
+                let is_name = |it: &hir::Module| {
+                    it.name_pos == start && matches!(it.name, hir::ModuleName::Ident(_))
+                };
                 self.hir.modules.get(m.idx()).is_some_and(is_name)
-                    && matches!(self.bound.stmt_parent.get(id.idx()), Some(Parent::Module(_)))
+                    && matches!(
+                        self.bound.stmt_parent.get(id.idx()),
+                        Some(Parent::Module(_))
+                    )
             }
             _ => false,
         }
@@ -155,15 +187,22 @@ impl File<'_> {
     #[inline]
     pub(crate) fn is_import_attribute(&self, prop: hir::PropId) -> bool {
         !self.hir.import_attributes.is_empty()
-            && (self.bound.prop_owner.get(prop.idx())).is_some_and(|&owner| self.is_import_attributes(owner))
+            && (self.bound.prop_owner.get(prop.idx()))
+                .is_some_and(|&owner| self.is_import_attributes(owner))
     }
 
     /// Whether `object` is the `{ .. }` of import attributes, which is not a node. They are in the order of the source, by
     /// their keyword, which the `{ .. }` follows.
     pub(crate) fn is_import_attributes(&self, object: hir::ExprId) -> bool {
-        let (all, start) = (self.hir.import_attributes, self.hir.exprs.get(object.idx()).map_or(0, |it| it.pos));
+        let (all, start) = (
+            self.hir.import_attributes,
+            self.hir.exprs.get(object.idx()).map_or(0, |it| it.pos),
+        );
         let after = all.partition_point(|it| it.0 < start);
-        after.checked_sub(1).and_then(|it| all.get(it)).is_some_and(|it| it.1 == object)
+        after
+            .checked_sub(1)
+            .and_then(|it| all.get(it))
+            .is_some_and(|it| it.1 == object)
     }
 }
 

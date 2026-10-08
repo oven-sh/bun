@@ -13,7 +13,9 @@ mod compare;
 mod test_only_rules;
 
 pub use bun_format_conformance::{Bundle, read_file, write_line};
-pub use compare::{Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of};
+pub use compare::{
+    Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of,
+};
 
 use bstr::BStr;
 use bun_core::strings;
@@ -95,8 +97,15 @@ pub struct Flags<'a> {
 
 impl<'a> Flags<'a> {
     pub fn parse(args: &[&'a [u8]]) -> Flags<'a> {
-        let flag = |name: &[u8]| args.iter().find_map(|it| it.strip_prefix(b"--")?.strip_prefix(name)?.strip_prefix(b"="));
-        let number = |name: &[u8]| flag(name).and_then(|it| std::str::from_utf8(it).ok()?.parse().ok());
+        let flag = |name: &[u8]| {
+            args.iter().find_map(|it| {
+                it.strip_prefix(b"--")?
+                    .strip_prefix(name)?
+                    .strip_prefix(b"=")
+            })
+        };
+        let number =
+            |name: &[u8]| flag(name).and_then(|it| std::str::from_utf8(it).ok()?.parse().ok());
         let has = |name: &[u8]| args.iter().any(|it| it.strip_prefix(b"--") == Some(name));
         Flags {
             suite: flag(b"suite"),
@@ -135,24 +144,49 @@ const PLUGINS: [(&str, Plugin); 6] = [
 ];
 
 /// The directories of the bundle that are written to the disk.
-const PROJECTS: [&[u8]; 4] = [b"import-project/", b"n-project/", b"typescript-eslint-project/", b"node_modules/"];
+const PROJECTS: [&[u8]; 4] = [
+    b"import-project/",
+    b"n-project/",
+    b"typescript-eslint-project/",
+    b"node_modules/",
+];
 
 fn write_file(path: &[u8], contents: &[u8]) {
     if let Some(end) = strings::last_index_of_char(path, b'/').filter(|&end| end > 0) {
         let _ = bun_sys::mkdir_recursive(&path[..end]);
     }
-    let _ = bun_sys::File::write_file(bun_core::Fd::cwd(), &bun_core::ZBox::from_bytes(path), contents);
+    let _ = bun_sys::File::write_file(
+        bun_core::Fd::cwd(),
+        &bun_core::ZBox::from_bytes(path),
+        contents,
+    );
 }
 
 /// The configuration that the `RuleTester` of the plugin lints a case with: only that rule, as an
 /// error.
 pub fn config_of(linter: &Linter, entry: &'static RuleEntry, case: &Json) -> ResolvedConfig {
     let mut rule = vec![Json::Number(2.0)];
-    rule.extend_from_slice(case.get(b"options").and_then(Json::as_array).unwrap_or_default());
+    rule.extend_from_slice(
+        case.get(b"options")
+            .and_then(Json::as_array)
+            .unwrap_or_default(),
+    );
     let config = Json::Object(vec![
-        (b"languageOptions".to_vec(), case.get(b"languageOptions").cloned().unwrap_or(Json::Null)),
-        (b"settings".to_vec(), case.get(b"settings").cloned().unwrap_or(Json::Null)),
-        (b"rules".to_vec(), Json::Object(vec![(RuleId::Known(entry.meta).to_vec(), Json::Array(rule))])),
+        (
+            b"languageOptions".to_vec(),
+            case.get(b"languageOptions").cloned().unwrap_or(Json::Null),
+        ),
+        (
+            b"settings".to_vec(),
+            case.get(b"settings").cloned().unwrap_or(Json::Null),
+        ),
+        (
+            b"rules".to_vec(),
+            Json::Object(vec![(
+                RuleId::Known(entry.meta).to_vec(),
+                Json::Array(rule),
+            )]),
+        ),
     ]);
     let mut config = ResolvedConfig::from_json(linter.registry(), &config, &mut Vec::new());
     // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
@@ -180,7 +214,11 @@ fn kind_of(entry: &RuleEntry, case: &Json) -> Kind {
         Some(skip) if test_only_rules::is_known(skip) => Kind::WithTestOnlyRules,
         // `@typescript-eslint/parser` without its services.
         None | Some(b"parser: custom") if is_type_aware => Kind::Typed,
-        None | Some(b"parser: custom") if entry.meta.needs_modules || entry.meta.plugin == Plugin::Node => Kind::InProject,
+        None | Some(b"parser: custom")
+            if entry.meta.needs_modules || entry.meta.plugin == Plugin::Node =>
+        {
+            Kind::InProject
+        }
         None | Some(b"parser: custom") => Kind::Plain,
         Some(_) => Kind::Skipped,
     }
@@ -188,7 +226,13 @@ fn kind_of(entry: &RuleEntry, case: &Json) -> Kind {
 
 /// What is wrong with what is reported for `case`, a test of the rule `entry`. `Err`: it cannot be
 /// run here.
-fn run_case(host: &dyn Host, flags: &Flags, entry: &'static RuleEntry, case: &Json, kind: Kind) -> Result<Option<Problem>, ()> {
+fn run_case(
+    host: &dyn Host,
+    flags: &Flags,
+    entry: &'static RuleEntry,
+    case: &Json,
+    kind: Kind,
+) -> Result<Option<Problem>, ()> {
     let code = string_of(case, b"code").unwrap_or_default();
     let filename = string_of(case, b"filename").unwrap_or(b"file.js");
     let config = config_of(host.linter(), entry, case);
@@ -210,19 +254,38 @@ fn run_case(host: &dyn Host, flags: &Flags, entry: &'static RuleEntry, case: &Js
         Kind::Plain => lint(filename, Place::Nowhere, None).ok_or(())?,
         Kind::WithTestOnlyRules => {
             let rules = test_only_rules::Enabled::in_code(code);
-            let messages = lint(filename, Place::Nowhere, Some(&|file| rules.prepare(file))).ok_or(())?;
+            let messages =
+                lint(filename, Place::Nowhere, Some(&|file| rules.prepare(file))).ok_or(())?;
             rules.finish(messages)
         }
         Kind::InProject => {
-            let directory: &[u8] = if entry.meta.plugin == Plugin::Node { b"n-project" } else { b"import-project" };
+            let directory: &[u8] = if entry.meta.plugin == Plugin::Node {
+                b"n-project"
+            } else {
+                b"import-project"
+            };
             let project = [flags.projects.ok_or(())?, b"/", directory].concat();
-            lint(&in_directory(directory).ok_or(())?, Place::Project(&project), None).ok_or(())?
+            lint(
+                &in_directory(directory).ok_or(())?,
+                Place::Project(&project),
+                None,
+            )
+            .ok_or(())?
         }
         Kind::Typed => {
             let tsconfig = string_of(case, b"tsconfig").unwrap_or(b"tsconfig.json");
-            let tsconfig = [flags.projects.ok_or(())?, b"/typescript-eslint-project/", tsconfig].concat();
+            let tsconfig = [
+                flags.projects.ok_or(())?,
+                b"/typescript-eslint-project/",
+                tsconfig,
+            ]
+            .concat();
             let path = in_directory(b"typescript-eslint-project").ok_or(())?;
-            return Ok(problem_of(lint(&path, Place::Program(&tsconfig), None).map(|it| Outcome::new(entry, code, &it)), case));
+            return Ok(problem_of(
+                lint(&path, Place::Program(&tsconfig), None)
+                    .map(|it| Outcome::new(entry, code, &it)),
+                case,
+            ));
         }
     };
     Ok(problem_of(Some(Outcome::new(entry, code, &messages)), case))
@@ -238,11 +301,17 @@ pub struct Tally {
 /// A failure at length.
 fn describe(index: usize, case: &Json, problem: &Problem, into: &mut String) {
     let mut options = Vec::new();
-    case.get(b"options").unwrap_or(&Json::Null).stringify(&mut options);
+    case.get(b"options")
+        .unwrap_or(&Json::Null)
+        .stringify(&mut options);
     let _ = writeln!(
         into,
         "──── case {index} ({}) {} {}\noptions: {}\ncode:\n{}\n{}\n{}\n",
-        if expected_messages(case).is_empty() { "valid" } else { "invalid" },
+        if expected_messages(case).is_empty() {
+            "valid"
+        } else {
+            "invalid"
+        },
         BStr::new(string_of(case, b"filename").unwrap_or_default()),
         BStr::new(string_of(case, b"tsconfig").unwrap_or_default()),
         BStr::new(&options),
@@ -262,7 +331,10 @@ struct Fixture {
 }
 
 fn cases_of(fixture: &Json) -> &[Json] {
-    fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default()
+    fixture
+        .get(b"cases")
+        .and_then(Json::as_array)
+        .unwrap_or_default()
 }
 
 impl Fixture {
@@ -282,14 +354,22 @@ struct Chosen {
 /// The name of the rule whose tests are at `path` in the bundle, if it is a rule of the plugin in
 /// `directory`.
 fn rule_at<'p>(path: &'p [u8], directory: &[u8]) -> Option<&'p [u8]> {
-    path.strip_prefix(directory)?.strip_prefix(b"/")?.strip_suffix(b".json")
+    path.strip_prefix(directory)?
+        .strip_prefix(b"/")?
+        .strip_suffix(b".json")
 }
 
 /// Runs the tests in `bundle` and prints the cases that fail, one per line, and the totals.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     if let (true, Some(projects)) = (flags.extract, flags.projects) {
-        for path in bundle.paths().filter(|path| PROJECTS.iter().any(|it| path.starts_with(it))) {
-            write_file(&[projects, b"/", path].concat(), bundle.read(path).unwrap_or_default());
+        for path in bundle
+            .paths()
+            .filter(|path| PROJECTS.iter().any(|it| path.starts_with(it)))
+        {
+            write_file(
+                &[projects, b"/", path].concat(),
+                bundle.read(path).unwrap_or_default(),
+            );
         }
     }
     let (mut fixtures, mut missing) = (Vec::new(), 0);
@@ -298,12 +378,20 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         Some(only) => only == name.as_bytes(),
         None => true,
     });
-    for ((_, prefix), (directory, plugin)) in suites.flat_map(|suite| PLUGINS.iter().map(move |plugin| (suite, plugin))) {
-        if flags.plugin.is_some_and(|only| only != directory.as_bytes()) {
+    for ((_, prefix), (directory, plugin)) in
+        suites.flat_map(|suite| PLUGINS.iter().map(move |plugin| (suite, plugin)))
+    {
+        if flags
+            .plugin
+            .is_some_and(|only| only != directory.as_bytes())
+        {
             continue;
         }
         let directory = format!("{prefix}{directory}");
-        let mut rules: Vec<(&[u8], &[u8])> = bundle.paths().filter_map(|path| Some((rule_at(path, directory.as_bytes())?, path))).collect();
+        let mut rules: Vec<(&[u8], &[u8])> = bundle
+            .paths()
+            .filter_map(|path| Some((rule_at(path, directory.as_bytes())?, path)))
+            .collect();
         rules.sort_unstable();
         for (name, path) in rules {
             if flags.rule.is_some_and(|only| only != name) {
@@ -330,7 +418,9 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     let (mut untyped, mut typed) = (0, 0);
     let mut chosen = Vec::new();
     for (fixture, it) in fixtures.iter_mut().enumerate() {
-        let Fixture { entry, json, tally, .. } = it;
+        let Fixture {
+            entry, json, tally, ..
+        } = it;
         for (index, case) in cases_of(json).iter().enumerate() {
             let kind = kind_of(entry, case);
             if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
@@ -342,7 +432,11 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 _ => (&mut untyped, flags.every),
             };
             if *counter % every == flags.first % every {
-                chosen.push(Chosen { fixture, index, kind });
+                chosen.push(Chosen {
+                    fixture,
+                    index,
+                    kind,
+                });
             }
             *counter += 1;
         }
@@ -350,11 +444,18 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     // Those with types take a hundred times as long: they are begun first.
     let mut order: Vec<usize> = (0..chosen.len()).collect();
     order.sort_by_key(|&at| chosen[at].kind != Kind::Typed);
-    let results: Vec<OnceLock<Result<Option<Problem>, ()>>> = chosen.iter().map(|_| OnceLock::new()).collect();
+    let results: Vec<OnceLock<Result<Option<Problem>, ()>>> =
+        chosen.iter().map(|_| OnceLock::new()).collect();
     host.for_each(flags.threads, chosen.len(), &|at| {
         let at = order[at];
         let (it, fixture) = (chosen[at], &fixtures[chosen[at].fixture]);
-        let _ = results[at].set(run_case(host, flags, fixture.entry, &fixture.cases()[it.index], it.kind));
+        let _ = results[at].set(run_case(
+            host,
+            flags,
+            fixture.entry,
+            &fixture.cases()[it.index],
+            it.kind,
+        ));
     });
 
     let mut failures: Vec<Vec<(usize, Problem)>> = fixtures.iter().map(|_| Vec::new()).collect();
@@ -384,13 +485,21 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
         }
         if flags.table {
             let verdict = if tally.failed == 0 { "ok  " } else { "FAIL" };
-            output_line!("{verdict} {id}: {} passed, {} failed, {} skipped", tally.passed, tally.failed, tally.skipped);
+            output_line!(
+                "{verdict} {id}: {} passed, {} failed, {} skipped",
+                tally.passed,
+                tally.failed,
+                tally.skipped
+            );
         }
         if flags.verbose && !at_length.is_empty() {
             output_line!("{}", at_length.trim_end_matches('\n'));
         }
         if let Some(report) = flags.report {
-            write_file(&[report, b"/", id.as_bytes(), b".txt"].concat(), at_length.as_bytes());
+            write_file(
+                &[report, b"/", id.as_bytes(), b".txt"].concat(),
+                at_length.as_bytes(),
+            );
         }
         total.passed += tally.passed;
         total.failed += tally.failed;

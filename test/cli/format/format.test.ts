@@ -122,17 +122,28 @@ describe.concurrent("bun format", () => {
   });
 
   test("other languages are left alone, with a warning", async () => {
-    const result = await format({ "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": ugly }, [], {
-      reads: ["a.html", "b.vue", "c.js"],
+    const result = await format(
+      { "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": ugly },
+      [],
+      {
+        reads: ["a.html", "b.vue", "c.js"],
+      },
+    );
+    expect(result.files).toEqual({
+      "a.html": "<a   >b</a>\n",
+      "b.vue": "<template><a   /></template>\n",
+      "c.js": formatted,
     });
-    expect(result.files).toEqual({ "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": formatted });
     expect(result.stderr).toContain("2 files are in a language that bun format does not support yet");
     expect(result.exitCode).toBe(0);
   });
 
   test.each([
     ["arrays", (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString()],
-    ["objects", (depth: number) => Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString()],
+    [
+      "objects",
+      (depth: number) => Buffer.alloc(depth * 5, '{"a":').toString() + "1" + Buffer.alloc(depth, "}").toString(),
+    ],
   ])("JSON that is nested too deeply is refused, not formatted into gigabytes: %s", async (_, make) => {
     const files = { "ok.json": make(512), "deep.json": make(513), "huge.json": make(200_000) };
     const [ok, deep, huge] = await Promise.all(Object.keys(files).map(name => format(files, ["--check", name])));
@@ -162,8 +173,13 @@ describe.concurrent("bun format", () => {
   });
 
   test("CSS", async () => {
-    const result = await format({ "a.css": "a{color:red}\n", "b.scss": "a{b{color:RED}}\n" }, [], { reads: ["a.css", "b.scss"] });
-    expect(result.files).toEqual({ "a.css": "a {\n  color: red;\n}\n", "b.scss": "a {\n  b {\n    color: RED;\n  }\n}\n" });
+    const result = await format({ "a.css": "a{color:red}\n", "b.scss": "a{b{color:RED}}\n" }, [], {
+      reads: ["a.css", "b.scss"],
+    });
+    expect(result.files).toEqual({
+      "a.css": "a {\n  color: red;\n}\n",
+      "b.scss": "a {\n  b {\n    color: RED;\n  }\n}\n",
+    });
     expect(result.exitCode).toBe(0);
   });
 
@@ -380,8 +396,16 @@ describe.concurrent("bun format", () => {
         "in-text.js": `/** see @format */\n${ugly}`,
         "noformat.js": `/** @noformat */\n${ugly}`,
       };
-      expect(await different({ ...files, ".prettierrc": `{ "requirePragma": true }` }, [])).toEqual(["format.js", "prettier.js"]);
-      expect(await different(files, ["--check-ignore-pragma"])).toEqual(["format.js", "in-text.js", "none.js", "prettier.js"]);
+      expect(await different({ ...files, ".prettierrc": `{ "requirePragma": true }` }, [])).toEqual([
+        "format.js",
+        "prettier.js",
+      ]);
+      expect(await different(files, ["--check-ignore-pragma"])).toEqual([
+        "format.js",
+        "in-text.js",
+        "none.js",
+        "prettier.js",
+      ]);
     });
 
     describe("like oxfmt, with an .oxfmtrc.json", () => {
@@ -412,7 +436,10 @@ describe.concurrent("bun format", () => {
           "lib/b.js": ugly,
         };
         const reads = ["src/a.js", "lib/b.js"];
-        const [nested, disabled] = await Promise.all([format(files, [], { reads }), format(files, ["--disable-nested-config"], { reads })]);
+        const [nested, disabled] = await Promise.all([
+          format(files, [], { reads }),
+          format(files, ["--disable-nested-config"], { reads }),
+        ]);
         expect(nested.files).toEqual({ "src/a.js": formatted.replaceAll('"', "'"), "lib/b.js": noSemi });
         expect(disabled.files).toEqual({ "src/a.js": noSemi, "lib/b.js": noSemi });
       });

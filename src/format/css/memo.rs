@@ -45,7 +45,9 @@ fn hash(context: u32, text: &[u8]) -> u64 {
 
 impl Memo {
     fn of(&self, (start, end): (u32, u32)) -> &[u8] {
-        self.bytes.get(start as usize..end as usize).unwrap_or_default()
+        self.bytes
+            .get(start as usize..end as usize)
+            .unwrap_or_default()
     }
 
     fn add(&mut self, bytes: &[u8]) -> (u32, u32) {
@@ -57,13 +59,20 @@ impl Memo {
     /// A number for all that the way a declaration is printed depends on besides its text: `flags`, and the name of
     /// the at-rule that it is in.
     pub(crate) fn context(&mut self, flags: u32, at_rule: &[u8]) -> u32 {
-        if self.bytes.len() + self.entries.len() * size_of::<Entry>() + self.table.len() * size_of::<u32>() > MAX_BYTES {
+        if self.bytes.len()
+            + self.entries.len() * size_of::<Entry>()
+            + self.table.len() * size_of::<u32>()
+            > MAX_BYTES
+        {
             *self = Memo {
                 first_context: self.first_context.wrapping_add(self.contexts.len() as u32),
                 ..Memo::default()
             };
         }
-        let known = self.contexts.iter().position(|context| context.flags == flags && self.of(context.at_rule) == at_rule);
+        let known = self
+            .contexts
+            .iter()
+            .position(|context| context.flags == flags && self.of(context.at_rule) == at_rule);
         let index = known.unwrap_or_else(|| {
             let at_rule = self.add(at_rule);
             self.contexts.push(Context { flags, at_rule });
@@ -78,7 +87,9 @@ impl Memo {
         let hash = hash(context, text);
         let mut at = hash as usize & mask;
         loop {
-            let entry = self.entries.get((*self.table.get(at)?).checked_sub(1)? as usize)?;
+            let entry = self
+                .entries
+                .get((*self.table.get(at)?).checked_sub(1)? as usize)?;
             if entry.hash == hash && entry.context == context && self.of(entry.text) == text {
                 return Some((self.of(entry.output), entry.has_group));
             }

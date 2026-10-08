@@ -65,8 +65,15 @@ pub(crate) fn print(
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
     let printer_options = super::printer::PrinterOptions::new(options, source);
-    super::printer::print(root, &scratch.formatter.storage, source, printer_options, &mut scratch.printer, out)
-        .map_err(|_| FormatError::InvalidDocument)
+    super::printer::print(
+        root,
+        &scratch.formatter.storage,
+        source,
+        printer_options,
+        &mut scratch.printer,
+        out,
+    )
+    .map_err(|_| FormatError::InvalidDocument)
 }
 
 /// The document of `file`, for debugging.
@@ -75,8 +82,18 @@ pub fn dump_document<'a>(
     options: &FormatOptions,
     scratch: &mut Scratch,
 ) -> Result<String, FormatError> {
-    let root = write_document(file, options, CursorRegion::NONE, scratch, crate::js::format_file)?;
-    Ok(super::debug::dump(root, &scratch.formatter.storage, file.text()))
+    let root = write_document(
+        file,
+        options,
+        CursorRegion::NONE,
+        scratch,
+        crate::js::format_file,
+    )?;
+    Ok(super::debug::dump(
+        root,
+        &scratch.formatter.storage,
+        file.text(),
+    ))
 }
 
 fn write_document<'a>(
@@ -95,7 +112,9 @@ fn write_document<'a>(
         crate::js::comments::collect(file, options.flavor, &mut comments);
         comments
     });
-    let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| comments);
+    let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| {
+        comments
+    });
     let mut context = JsFormatContext::new(file, options.clone(), comments);
     context.cursor = cursor;
     write_with(context, file.text(), scratch, |f| write(file, f))

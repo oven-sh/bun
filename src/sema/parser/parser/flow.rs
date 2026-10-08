@@ -178,8 +178,7 @@ impl Parser<'_> {
     fn flow_function_type_without_parentheses(&mut self) -> TypeNodeId {
         let start = self.start();
         let ty = self.flow_prefix_type();
-        if self.token() != T::EqualsGreaterThan
-            || self.has_context(ctx::NO_ANONYMOUS_FUNCTION_TYPE)
+        if self.token() != T::EqualsGreaterThan || self.has_context(ctx::NO_ANONYMOUS_FUNCTION_TYPE)
         {
             return ty;
         }
@@ -601,7 +600,9 @@ impl Parser<'_> {
             T::Plus => Flags::OUT,
             T::Minus => Flags::IN,
             // Each can be the name.
-            T::In | T::Out if self.peek().is_identifier_or_keyword() && self.peek() != T::Extends => {
+            T::In | T::Out
+                if self.peek().is_identifier_or_keyword() && self.peek() != T::Extends =>
+            {
                 match self.token() {
                     T::In => Flags::IN,
                     _ => Flags::OUT,
@@ -685,7 +686,11 @@ impl Parser<'_> {
     /// Takes the parameters on the stack from `base` on: the `this` parameter, and the others.
     fn take_function_type_parameters(&mut self, base: usize) -> (ParamId, Span<ParamId>) {
         let list: Span<ParamId> = take_span!(self, params, base);
-        let first = self.f.params.get(list.start as usize).filter(|_| !list.is_empty());
+        let first = self
+            .f
+            .params
+            .get(list.start as usize)
+            .filter(|_| !list.is_empty());
         let name = first.and_then(|first| self.f.pats.get(first.pat.idx()));
         match name {
             Some(Pat {
@@ -766,8 +771,8 @@ impl Parser<'_> {
         let has_dots = self.eat(T::DotDotDot);
         let (mut name, mut optional, mut ty) = (Atom::NONE, false, TypeNodeId::NONE);
         if !has_dots {
-            let is_variance = matches!(self.token(), T::Plus | T::Minus)
-                || self.is_at_variance_keyword();
+            let is_variance =
+                matches!(self.token(), T::Plus | T::Minus) || self.is_at_variance_keyword();
             if is_variance {
                 self.next();
             }
@@ -887,7 +892,11 @@ impl Parser<'_> {
             self.next();
             let end = self.lx.end;
             self.identifier_name();
-            let text = self.lx.src.get(start as usize..end as usize).unwrap_or_default();
+            let text = self
+                .lx
+                .src
+                .get(start as usize..end as usize)
+                .unwrap_or_default();
             (member.key, member.name_pos) = (PropKey::Name(self.atom(text)), start);
             return;
         }
@@ -931,7 +940,10 @@ impl Parser<'_> {
         if self.eat(T::DotDotDot) {
             member.flags |= Flags::REST;
             // `...` alone: there can be more properties.
-            if !matches!(self.token(), T::Comma | T::Semicolon | T::CloseBrace | T::Bar) {
+            if !matches!(
+                self.token(),
+                T::Comma | T::Semicolon | T::CloseBrace | T::Bar
+            ) {
                 member.ty = self.flow_type();
             }
             return;
@@ -958,15 +970,23 @@ impl Parser<'_> {
             T::OpenParen | T::LessThan => {
                 member.kind = MemberKind::CallSignature;
                 let kind = FnKind::CallSignature;
-                member.func =
-                    self.flow_method_signature(kind, member.flags, Atom::NONE, start.pos, start.pos);
+                member.func = self.flow_method_signature(
+                    kind,
+                    member.flags,
+                    Atom::NONE,
+                    start.pos,
+                    start.pos,
+                );
                 return;
             }
             _ => {}
         }
         let mut fn_kind = FnKind::Method;
         if matches!(self.token(), T::Get | T::Set)
-            && !matches!(self.peek(), T::Colon | T::Question | T::OpenParen | T::LessThan)
+            && !matches!(
+                self.peek(),
+                T::Colon | T::Question | T::OpenParen | T::LessThan
+            )
         {
             (member.kind, fn_kind) = match self.token() {
                 T::Get => (MemberKind::Getter, FnKind::Getter),
@@ -1247,12 +1267,7 @@ impl Parser<'_> {
         statement
     }
 
-    fn add_interface(
-        &mut self,
-        start: Start,
-        base: usize,
-        interface: Interface,
-    ) -> StmtId {
+    fn add_interface(&mut self, start: Start, base: usize, interface: Interface) -> StmtId {
         let interface = self.f.add_interface(interface);
         let modifiers = self.take_modifiers(base);
         let statement = self.add_stmt(StmtKind::Interface(interface), start, modifiers);

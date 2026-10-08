@@ -19,7 +19,9 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
     };
     let type_start = match type_annotation {
         Some(ty) => ty.span().start,
-        None => e.const_keyword_span().map_or_else(|| e.span().end, |it| it.start),
+        None => e
+            .const_keyword_span()
+            .map_or_else(|| e.span().end, |it| it.start),
     };
 
     let format_inner = format_with(|f| {
@@ -29,10 +31,15 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
         });
         let comments = match f.is_quiet() {
             true => &[][..],
-            false => f.comments().comments_in_range(expression.span().end, type_start),
+            false => f
+                .comments()
+                .comments_in_range(expression.span().end, type_start),
         };
         // Those up to the first that spans several lines.
-        let count = comments.iter().take_while(|c| !c.is_multiline_block()).count();
+        let count = comments
+            .iter()
+            .take_while(|c| !c.is_multiline_block())
+            .count();
         let block_comments = comments.get(..count).unwrap_or_default();
 
         if !comments.is_empty() && type_annotation.is_none() {
@@ -48,12 +55,25 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
                 ]
             );
         } else if block_comments.is_empty() {
-            write!(f, [FormatNodeWithoutTrailingComments(&expression), space(), operation, space(), format_type]);
+            write!(
+                f,
+                [
+                    FormatNodeWithoutTrailingComments(&expression),
+                    space(),
+                    operation,
+                    space(),
+                    format_type
+                ]
+            );
         } else {
             write!(f, [expression, space(), operation]);
             // Prettier's space is text, which is seen before a line comment that trails the expression if
             // the type starts on the next line: `a as  // comment`.
-            let is_after_line_comment = f.comments().printed_comments().last().is_some_and(|it| it.is_line());
+            let is_after_line_comment = f
+                .comments()
+                .printed_comments()
+                .last()
+                .is_some_and(|it| it.is_line());
             match is_after_line_comment {
                 true => write!(f, [" ", format_type]),
                 false => write!(f, [space(), format_type]),

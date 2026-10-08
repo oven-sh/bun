@@ -14,7 +14,9 @@
 use super::source_text::SourceText;
 use crate::options::Flavor;
 use crate::pragma::{trim_end, trim_start};
-use bun_lint::ast::{BinOp, Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind};
+use bun_lint::ast::{
+    BinOp, Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind,
+};
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::TokenKind;
 
@@ -65,12 +67,20 @@ impl Comment {
     /// it is a position between two tokens, which is its [`Comment::end`] as well.
     #[inline]
     pub(crate) fn start(self) -> u32 {
-        if self.moved_to == NOT_MOVED { self.span.start } else { self.moved_to }
+        if self.moved_to == NOT_MOVED {
+            self.span.start
+        } else {
+            self.moved_to
+        }
     }
 
     #[inline]
     pub(crate) fn end(self) -> u32 {
-        if self.moved_to == NOT_MOVED { self.span.end } else { self.moved_to }
+        if self.moved_to == NOT_MOVED {
+            self.span.end
+        } else {
+            self.moved_to
+        }
     }
 
     #[inline]
@@ -138,7 +148,11 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
         };
         let mut flags = 0;
         let before = text.get(..span.start as usize).unwrap_or_default();
-        let is_first = before.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(before).trim_ascii().is_empty();
+        let is_first = before
+            .strip_prefix(b"\xEF\xBB\xBF")
+            .unwrap_or(before)
+            .trim_ascii()
+            .is_empty();
         if is_first || source.has_line_terminator_before(span.start) {
             flags |= PRECEDED_BY_NEWLINE;
         }
@@ -149,7 +163,11 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
             flags |= INDENTABLE;
         }
         if kind != CommentKind::Line && content.starts_with(b"*") && is_type_cast_text(content) {
-            flags |= if has_type_casts { LOOKS_LIKE_TYPE_CAST | TYPE_CAST } else { LOOKS_LIKE_TYPE_CAST };
+            flags |= if has_type_casts {
+                LOOKS_LIKE_TYPE_CAST | TYPE_CAST
+            } else {
+                LOOKS_LIKE_TYPE_CAST
+            };
         }
         if matches!(content.trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore") {
             flags |= SUPPRESSION;
@@ -163,7 +181,8 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
             && previous.flags & INDENTABLE != 0
         {
             previous.span.end = span.end;
-            previous.flags = (previous.flags & !FOLLOWED_BY_NEWLINE) | (flags & !PRECEDED_BY_NEWLINE);
+            previous.flags =
+                (previous.flags & !FOLLOWED_BY_NEWLINE) | (flags & !PRECEDED_BY_NEWLINE);
             continue;
         }
         comments.push(Comment {
@@ -209,19 +228,29 @@ impl<'a> NodeFinder<'a> {
     fn is_in_cast_parentheses_of(&self, e: Expr<'a>, comment: Comment) -> bool {
         !self.cast_parentheses.is_empty()
             && e.is_parenthesized()
-            && e.parens().any(|it| it.end >= comment.span.end && self.cast_parentheses.binary_search(&it.start).is_ok())
+            && e.parens().any(|it| {
+                it.end >= comment.span.end && self.cast_parentheses.binary_search(&it.start).is_ok()
+            })
     }
 
     /// Where `e` starts, with the parentheses around it that follow a type cast comment.
     fn start_with_cast_parentheses(&self, e: Expr<'a>) -> u32 {
-        let parentheses = (!self.cast_parentheses.is_empty() && e.is_parenthesized())
-            .then(|| e.parens().rev().find(|it| self.cast_parentheses.binary_search(&it.start).is_ok()));
-        parentheses.flatten().map_or_else(|| e.span().start, |it| it.start)
+        let parentheses = (!self.cast_parentheses.is_empty() && e.is_parenthesized()).then(|| {
+            e.parens()
+                .rev()
+                .find(|it| self.cast_parentheses.binary_search(&it.start).is_ok())
+        });
+        parentheses
+            .flatten()
+            .map_or_else(|| e.span().start, |it| it.start)
     }
 
     /// The innermost node that `offset` is in.
     fn innermost_node_at(&mut self, offset: u32) -> Node<'a> {
-        if !self.statement.is_some_and(|it| it.span().contains_offset(offset)) {
+        if !self
+            .statement
+            .is_some_and(|it| it.span().contains_offset(offset))
+        {
             self.statement = Self::child_at(Node::File(self.file), offset);
         }
         let Some(mut node) = self.statement else {
@@ -239,7 +268,11 @@ impl<'a> NodeFinder<'a> {
 ///
 /// In a chain of calls Prettier prints the comments of a member expression before its `.b`, which is
 /// where they are, unless they are behind the `.`: `is_after_dot`.
-fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comment, is_after_dot: bool) -> Option<u32> {
+fn moved_out_of_member_expression<'a>(
+    nodes: &mut NodeFinder<'a>,
+    comment: Comment,
+    is_after_dot: bool,
+) -> Option<u32> {
     if comments_stay_in_member_expressions(nodes.flavor) {
         return None;
     }
@@ -247,8 +280,12 @@ fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comme
         return None;
     };
     let (object, property_start) = match member.kind() {
-        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => (obj, name.span().start),
-        ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => (obj, index.span().start),
+        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
+            (obj, name.span().start)
+        }
+        ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => {
+            (obj, index.span().start)
+        }
         _ => return None,
     };
     if comment.span.start < object.span().end
@@ -262,7 +299,9 @@ fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comme
         match parent.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == top => top = parent,
             ExprKind::NonNull(inner) if inner == top => top = parent,
-            ExprKind::Call(call) if call.callee() == top => return is_after_dot.then(|| object.span().end),
+            ExprKind::Call(call) if call.callee() == top => {
+                return is_after_dot.then(|| object.span().end);
+            }
             ExprKind::Jsx(_) => return None,
             _ => break,
         }
@@ -288,12 +327,20 @@ fn attach_between_sides_of_assignment<'a>(
 ) -> Option<usize> {
     let first = *comments.get(index)?;
     let (left_end, right, is_assignment) = match nodes.innermost_node_at(first.span.start) {
-        Node::VarDecl(declarator) => {
-            (declarator.ty().map_or_else(|| declarator.pat().span().end, |ty| ty.span().end), declarator.init()?, true)
-        }
+        Node::VarDecl(declarator) => (
+            declarator
+                .ty()
+                .map_or_else(|| declarator.pat().span().end, |ty| ty.span().end),
+            declarator.init()?,
+            true,
+        ),
         Node::Expr(e) => match e.kind() {
-            ExprKind::Assign { target, value, .. } if !e.is_assignment_target() => (target.span().end, value, true),
-            ExprKind::Binary { op, left, right } if op != BinOp::Comma => (left.span().end, right, false),
+            ExprKind::Assign { target, value, .. } if !e.is_assignment_target() => {
+                (target.span().end, value, true)
+            }
+            ExprKind::Binary { op, left, right } if op != BinOp::Comma => {
+                (left.span().end, right, false)
+            }
             _ => return None,
         },
         _ => return None,
@@ -306,27 +353,45 @@ fn attach_between_sides_of_assignment<'a>(
         return None;
     }
     let source = SourceText::new(nodes.file.text());
-    let is_on_same_line =
-        |a: &Comment, b: &Comment| source.all_bytes_match(a.span.end, b.span.start, |b| matches!(b, b' ' | b'\t' | 0x0B | 0x0C));
-    let count = comments[index..].iter().take_while(|comment| comment.span.end <= right_start).count();
+    let is_on_same_line = |a: &Comment, b: &Comment| {
+        source.all_bytes_match(a.span.end, b.span.start, |b| {
+            matches!(b, b' ' | b'\t' | 0x0B | 0x0C)
+        })
+    };
+    let count = comments[index..]
+        .iter()
+        .take_while(|comment| comment.span.end <= right_start)
+        .count();
     let gap = comments.get_mut(index..index + count)?;
     if gap.iter().any(|comment| comment.is_moved()) {
         return None;
     }
     let is_right_complex = is_assignment
-        && matches!(right.kind(), ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Template(_) | ExprKind::TaggedTemplate(_))
-            && right_start == right.span().start;
+        && matches!(
+            right.kind(),
+            ExprKind::Object(_)
+                | ExprKind::Array(_)
+                | ExprKind::Template(_)
+                | ExprKind::TaggedTemplate(_)
+        )
+        && right_start == right.span().start;
 
     // From the end: whether it ends its line, and how far what leads the right side reaches back.
     let (mut ends_line, mut leading_start, mut is_tie_broken) = (false, right_start, false);
     for at in (0..gap.len()).rev() {
         let comment = gap[at];
-        ends_line = comment.followed_by_newline() || (ends_line && gap.get(at + 1).is_some_and(|next| is_on_same_line(&comment, next)));
-        let starts_line = (0..=at).rev().find_map(|it| match gap[it].preceded_by_newline() {
-            true => Some(true),
-            false if it == 0 || !is_on_same_line(&gap[it - 1], &gap[it]) => Some(false),
-            false => None,
-        });
+        ends_line = comment.followed_by_newline()
+            || (ends_line
+                && gap
+                    .get(at + 1)
+                    .is_some_and(|next| is_on_same_line(&comment, next)));
+        let starts_line = (0..=at)
+            .rev()
+            .find_map(|it| match gap[it].preceded_by_newline() {
+                true => Some(true),
+                false if it == 0 || !is_on_same_line(&gap[it - 1], &gap[it]) => Some(false),
+                false => None,
+            });
         let trails_left_side = if starts_line == Some(true) {
             false
         } else if ends_line {
@@ -336,7 +401,9 @@ fn attach_between_sides_of_assignment<'a>(
             }
         } else {
             is_tie_broken = is_tie_broken
-                || !source.all_bytes_match(comment.span.end, leading_start, |b| b.is_ascii_whitespace() || b == b'(');
+                || !source.all_bytes_match(comment.span.end, leading_start, |b| {
+                    b.is_ascii_whitespace() || b == b'('
+                });
             if !is_tie_broken {
                 leading_start = comment.span.start;
             }
@@ -346,8 +413,15 @@ fn attach_between_sides_of_assignment<'a>(
             gap[at].flags |= TRAILS_LEFT_SIDE;
         }
     }
-    if let Some(first_leading) = gap.iter().find(|comment| comment.flags & TRAILS_LEFT_SIDE == 0).map(|it| it.span.start) {
-        for comment in gap.iter_mut().filter(|it| it.flags & TRAILS_LEFT_SIDE != 0 && it.span.start > first_leading) {
+    if let Some(first_leading) = gap
+        .iter()
+        .find(|comment| comment.flags & TRAILS_LEFT_SIDE == 0)
+        .map(|it| it.span.start)
+    {
+        for comment in gap
+            .iter_mut()
+            .filter(|it| it.flags & TRAILS_LEFT_SIDE != 0 && it.span.start > first_leading)
+        {
             comment.moved_to = first_leading;
         }
     }
@@ -368,12 +442,15 @@ fn moved_out_of_assignment_pattern(nodes: &mut NodeFinder<'_>, comment: Comment)
         Node::PatElem(it) => (it.pat()?.span(), it.default()?),
         Node::Param(it) => (it.pat().span(), it.default()?),
         Node::Expr(e) => match e.kind() {
-            ExprKind::Assign { target, value, .. } if e.is_assignment_target() => (target.span(), value),
+            ExprKind::Assign { target, value, .. } if e.is_assignment_target() => {
+                (target.span(), value)
+            }
             _ => return None,
         },
         _ => return None,
     };
-    (left.end <= comment.span.start && comment.span.end <= default.span().start).then_some(left.start)
+    (left.end <= comment.span.start && comment.span.end <= default.span().start)
+        .then_some(left.start)
 }
 
 /// oxfmt has no `handleMemberExpressionComments`: `a ⏎ // comment ⏎ .b` stays as it is.
@@ -403,7 +480,11 @@ fn moved_out_of_property(nodes: &mut NodeFinder<'_>, comment: Comment) -> Option
 /// anything else there is no rule, and no node for the parentheses. So the comment is between what
 /// is before the parameters and the first parameter, which it leads, the `(` counting for nothing.
 /// Without parameters it leads the return type, if nothing is before it that it can trail.
-fn moved_over_parenthesis<'a>(nodes: &mut NodeFinder<'a>, comment: Comment, open_paren: u32) -> Option<u32> {
+fn moved_over_parenthesis<'a>(
+    nodes: &mut NodeFinder<'a>,
+    comment: Comment,
+    open_paren: u32,
+) -> Option<u32> {
     let (func, has_name): (Func<'a>, bool) = match nodes.innermost_node_at(comment.span.start) {
         Node::Member(member) if member.is_signature() => (member.func()?, member.key().is_some()),
         Node::Type(ty) => match ty.kind() {
@@ -447,11 +528,16 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
             .filter(|comment| comment.flags & TYPE_CAST != 0)
             .filter_map(|comment| {
                 let after = text.get(comment.span.end as usize..)?.trim_ascii_start();
-                after.starts_with(b"(").then(|| (text.len() - after.len()) as u32)
+                after
+                    .starts_with(b"(")
+                    .then(|| (text.len() - after.len()) as u32)
             })
             .collect(),
     };
-    let is_blank = |start: u32, end: u32| text.get(start as usize..end as usize).is_some_and(|it| trim_start(it).is_empty());
+    let is_blank = |start: u32, end: u32| {
+        text.get(start as usize..end as usize)
+            .is_some_and(|it| trim_start(it).is_empty())
+    };
     let mut has_moved = false;
     // The comment before is on a line of its own, or follows one that is on the same line.
     let mut is_after_own_line_comment = false;
@@ -464,7 +550,9 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
 
     for index in 0..comments.len() {
         let comment = comments[index];
-        let previous = index.checked_sub(1).and_then(|previous| comments.get(previous));
+        let previous = index
+            .checked_sub(1)
+            .and_then(|previous| comments.get(previous));
         if !previous.is_some_and(|previous| is_blank(previous.span.end, comment.span.start)) {
             run_start = comment.span.start;
         }
@@ -472,7 +560,10 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
             || (is_after_own_line_comment
                 && previous.is_some_and(|previous| {
                     let between = text.get(previous.span.end as usize..comment.span.start as usize);
-                    between.unwrap_or_default().iter().all(|b| matches!(b, b' ' | b'\t'))
+                    between
+                        .unwrap_or_default()
+                        .iter()
+                        .all(|b| matches!(b, b' ' | b'\t'))
                 }));
         is_after_own_line_comment = is_own_line;
         if index < attached_until {
@@ -487,17 +578,40 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         {
             run_last += 1;
         }
-        let after = text.get(comments.get(run_last).map_or(0, |last| last.span.end as usize)..).unwrap_or_default();
+        let after = text
+            .get(
+                comments
+                    .get(run_last)
+                    .map_or(0, |last| last.span.end as usize)..,
+            )
+            .unwrap_or_default();
         let after = trim_start(after);
 
         // The first of its run, after `=`, `= (` or before an assignment operator, or with nothing but
         // an operator between it and the comment before.
-        let is_operator = |b: &u8| matches!(b, b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'&' | b'|' | b'^' | b'?' | b'=' | b'!');
+        let is_operator = |b: &u8| {
+            matches!(
+                b,
+                b'+' | b'-'
+                    | b'*'
+                    | b'/'
+                    | b'%'
+                    | b'<'
+                    | b'>'
+                    | b'&'
+                    | b'|'
+                    | b'^'
+                    | b'?'
+                    | b'='
+                    | b'!'
+            )
+        };
         let mut before = trim_end(text.get(..run_start as usize).unwrap_or_default());
         while let [rest @ .., b'('] = before {
             before = trim_end(rest);
         }
-        let is_at_assignment_operator = starts_with_assignment_operator(after) || before.ends_with(b"=");
+        let is_at_assignment_operator =
+            starts_with_assignment_operator(after) || before.ends_with(b"=");
         if run_start == comment.span.start
             && (is_at_assignment_operator
                 || (!is_own_line
@@ -507,13 +621,19 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     })))
             && let Some(end) = attach_between_sides_of_assignment(&mut nodes, comments, index)
         {
-            has_moved = has_moved || comments[..end].iter().rev().take_while(|it| it.span.start >= run_start).any(|it| it.is_moved());
+            has_moved = has_moved
+                || comments[..end]
+                    .iter()
+                    .rev()
+                    .take_while(|it| it.span.start >= run_start)
+                    .any(|it| it.is_moved());
             attached_until = end;
             continue;
         }
         // A comment before the parentheses of a type cast stays there.
         let is_type_cast = comment.flags & TYPE_CAST != 0
-            && trim_start(text.get(comment.span.end as usize..).unwrap_or_default()).starts_with(b"(");
+            && trim_start(text.get(comment.span.end as usize..).unwrap_or_default())
+                .starts_with(b"(");
         if (!is_own_line && !is_typescript && !comment.followed_by_newline()) || is_type_cast {
             continue;
         }
@@ -527,10 +647,14 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         }
 
         let moved_to = match after {
-            [b'(', ..] if is_typescript => moved_over_parenthesis(&mut nodes, comment, (text.len() - after.len()) as u32),
+            [b'(', ..] if is_typescript => {
+                moved_over_parenthesis(&mut nodes, comment, (text.len() - after.len()) as u32)
+            }
             // `a: (b // comment ⏎ ),`
             [b')', ..] if !is_own_line => {
-                let after_parentheses = after.iter().find(|b| **b != b')' && !b.is_ascii_whitespace());
+                let after_parentheses = after
+                    .iter()
+                    .find(|b| **b != b')' && !b.is_ascii_whitespace());
                 match (comment.followed_by_newline(), after_parentheses) {
                     (true, Some(b',' | b'}')) => moved_out_of_property(&mut nodes, comment),
                     _ => None,
@@ -538,19 +662,31 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
             }
             _ if !is_own_line => None,
             [b'.', b'.', ..] => None,
-            [b'.', ..] | [b'?', b'.', ..] | [b'[', ..] => moved_out_of_member_expression(&mut nodes, comment, false),
+            [b'.', ..] | [b'?', b'.', ..] | [b'[', ..] => {
+                moved_out_of_member_expression(&mut nodes, comment, false)
+            }
             // `(a + b // comment ⏎ ).c`
             [b')', ..] => {
-                let after_parentheses = after.iter().position(|b| *b != b')' && !b.is_ascii_whitespace());
+                let after_parentheses = after
+                    .iter()
+                    .position(|b| *b != b')' && !b.is_ascii_whitespace());
                 match after_parentheses.and_then(|at| after.get(at..)) {
                     Some([b'.', b'.', ..]) => None,
-                    Some([b'.', ..] | [b'?', b'.', ..]) => moved_out_of_member_expression(&mut nodes, comment, false),
+                    Some([b'.', ..] | [b'?', b'.', ..]) => {
+                        moved_out_of_member_expression(&mut nodes, comment, false)
+                    }
                     _ => None,
                 }
             }
-            _ => match text.get(..run_start as usize).unwrap_or_default().trim_ascii_end() {
+            _ => match text
+                .get(..run_start as usize)
+                .unwrap_or_default()
+                .trim_ascii_end()
+            {
                 [.., b'.', b'.'] => None,
-                [.., last @ (b'.' | b'[')] => moved_out_of_member_expression(&mut nodes, comment, *last == b'.'),
+                [.., last @ (b'.' | b'[')] => {
+                    moved_out_of_member_expression(&mut nodes, comment, *last == b'.')
+                }
                 _ => None,
             },
         };
@@ -567,7 +703,12 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
 
 /// `=`, `+=`, `>>>=`, `??=`. Also `<=` and `>=`.
 fn starts_with_assignment_operator(text: &[u8]) -> bool {
-    let operator = text.iter().take_while(|b| matches!(b, b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'&' | b'|' | b'^' | b'?'));
+    let operator = text.iter().take_while(|b| {
+        matches!(
+            b,
+            b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'&' | b'|' | b'^' | b'?'
+        )
+    });
     matches!(text.get(operator.take(4).count()..), Some([b'=', after, ..]) if !matches!(after, b'=' | b'>'))
 }
 
@@ -580,7 +721,11 @@ pub(crate) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> {
             rest = None;
             return Some(text);
         };
-        let len = if text[at..].starts_with(b"\r\n") { 2 } else { 1 };
+        let len = if text[at..].starts_with(b"\r\n") {
+            2
+        } else {
+            1
+        };
         rest = Some(&text[at + len..]);
         Some(&text[..at])
     })
@@ -609,7 +754,9 @@ fn is_type_cast_text(content: &[u8]) -> bool {
         rest = &rest[at + 1..];
         for tag in [&b"type"[..], b"satisfies"] {
             if let Some(after) = rest.strip_prefix(tag)
-                && !after.first().is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_')
+                && !after
+                    .first()
+                    .is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_')
             {
                 return true;
             }
@@ -645,7 +792,11 @@ pub(crate) struct Comments<'a> {
 /// starts where it is. Mostly the answer is 0 or 1, but all comments in a node are before its end.
 fn count_that_end_before(comments: &[Comment], pos: u32) -> usize {
     const NEAR: usize = 4;
-    let near = comments.iter().take(NEAR).take_while(|comment| comment.end() < pos).count();
+    let near = comments
+        .iter()
+        .take(NEAR)
+        .take_while(|comment| comment.end() < pos)
+        .count();
     match comments.get(NEAR..) {
         Some(rest) if near == NEAR => NEAR + rest.partition_point(|comment| comment.end() < pos),
         _ => near,
@@ -654,7 +805,9 @@ fn count_that_end_before(comments: &[Comment], pos: u32) -> usize {
 
 impl<'a> Comments<'a> {
     pub(crate) fn new(source_text: SourceText<'a>, comments: &'a [Comment]) -> Self {
-        let flags = comments.iter().fold(0, |flags, comment| flags | comment.flags);
+        let flags = comments
+            .iter()
+            .fold(0, |flags, comment| flags | comment.flags);
         Comments {
             source_text,
             inner: comments,
@@ -670,7 +823,9 @@ impl<'a> Comments<'a> {
     /// Nothing before this position has to think about comments.
     #[inline]
     pub(crate) fn next_start(&self) -> u32 {
-        self.unprinted_comments().first().map_or(u32::MAX, |c| c.start())
+        self.unprinted_comments()
+            .first()
+            .map_or(u32::MAX, |c| c.start())
     }
 
     /// Prettier's `__contentEnd`: `span`, which is that of a statement, without the `;` at its end
@@ -682,12 +837,21 @@ impl<'a> Comments<'a> {
         }
         let mut end = span.end - 1;
         loop {
-            while end > span.start && self.source_text.byte_at(end - 1).is_some_and(|b| b.is_ascii_whitespace()) {
+            while end > span.start
+                && self
+                    .source_text
+                    .byte_at(end - 1)
+                    .is_some_and(|b| b.is_ascii_whitespace())
+            {
                 end -= 1;
             }
             let at = self.inner.partition_point(|comment| comment.end() < end);
             match self.inner.get(at) {
-                Some(comment) if comment.end() == end && (span.start..end).contains(&comment.start()) => end = comment.start(),
+                Some(comment)
+                    if comment.end() == end && (span.start..end).contains(&comment.start()) =>
+                {
+                    end = comment.start()
+                }
                 _ => return Span::new(span.start, end),
             }
         }
@@ -698,18 +862,32 @@ impl<'a> Comments<'a> {
     /// unless they start the line. Where they start. The others are in the member.
     ///
     /// `value_end`: where the value of the member ends, without parentheses.
-    pub(crate) fn start_of_comments_before_semicolon(&self, value_end: Option<u32>, span: Span) -> u32 {
+    pub(crate) fn start_of_comments_before_semicolon(
+        &self,
+        value_end: Option<u32>,
+        span: Span,
+    ) -> u32 {
         let content_end = self.without_semicolon(span).end;
         let comments = self.comments_in_range(value_end.unwrap_or(content_end), span.end);
-        let is_on_same_line =
-            |end: u32, start: u32| self.source_text.all_bytes_match(end, start, |b| matches!(b, b' ' | b'\t' | b')' | b';'));
+        let is_on_same_line = |end: u32, start: u32| {
+            self.source_text
+                .all_bytes_match(end, start, |b| matches!(b, b' ' | b'\t' | b')' | b';'))
+        };
         let mut first = comments.len();
-        while first > 0 && is_on_same_line(comments[first - 1].end(), comments.get(first).map_or(span.end, |next| next.start())) {
+        while first > 0
+            && is_on_same_line(
+                comments[first - 1].end(),
+                comments.get(first).map_or(span.end, |next| next.start()),
+            )
+        {
             first -= 1;
         }
         match comments.get(first) {
             // At the very end it has no code behind it.
-            Some(comment) if !comment.preceded_by_newline() && comments.last().is_some_and(|last| last.end() < span.end) => {
+            Some(comment)
+                if !comment.preceded_by_newline()
+                    && comments.last().is_some_and(|last| last.end() < span.end) =>
+            {
                 comment.start()
             }
             _ => span.end,
@@ -739,8 +917,13 @@ impl<'a> Comments<'a> {
     }
 
     /// The comments that end at or before `pos`.
-    pub(crate) fn comments_before_iter(&self, pos: u32) -> impl Iterator<Item = &'a Comment> + use<'a> {
-        self.unprinted_comments().iter().take_while(move |c| c.end() <= pos)
+    pub(crate) fn comments_before_iter(
+        &self,
+        pos: u32,
+    ) -> impl Iterator<Item = &'a Comment> + use<'a> {
+        self.unprinted_comments()
+            .iter()
+            .take_while(move |c| c.end() <= pos)
     }
 
     /// The comments that end at or before `pos`.
@@ -752,20 +935,28 @@ impl<'a> Comments<'a> {
     /// The comments up to the end of the node at `span`. One that has been moved to where the node
     /// ends is behind it.
     pub(crate) fn comments_before_end_of(&self, span: Span) -> &'a [Comment] {
-        let count = self.comments_before_iter(span.end).take_while(|c| !c.is_moved() || c.end() < span.end).count();
+        let count = self
+            .comments_before_iter(span.end)
+            .take_while(|c| !c.is_moved() || c.end() < span.end)
+            .count();
         &self.unprinted_comments()[..count]
     }
 
     /// Of the comments that end at or before `pos`, the first ones that start their line.
     pub(crate) fn own_line_comments_before(&self, pos: u32) -> &'a [Comment] {
-        let count = self.comments_before_iter(pos).take_while(|c| c.preceded_by_newline()).count();
+        let count = self
+            .comments_before_iter(pos)
+            .take_while(|c| c.preceded_by_newline())
+            .count();
         &self.unprinted_comments()[..count]
     }
 
     /// The comments after `pos` up to one that ends its line, if nothing but blanks, `=`, `:` and
     /// `,` is in between.
     pub(crate) fn end_of_line_comments_after(&self, pos: u32) -> &'a [Comment] {
-        self.end_of_line_comments_after_bytes(pos, |b| matches!(b, b'\t' | b' ' | b'=' | b':' | b','))
+        self.end_of_line_comments_after_bytes(pos, |b| {
+            matches!(b, b'\t' | b' ' | b'=' | b':' | b',')
+        })
     }
 
     /// The comments that trail the left side of a declarator or an assignment whose right side starts
@@ -773,7 +964,9 @@ impl<'a> Comments<'a> {
     pub(crate) fn comments_trailing_left_side(&self, right_start: u32) -> &'a [Comment] {
         let comments = self.unprinted_comments();
         let count = (comments.iter())
-            .take_while(|comment| comment.flags & TRAILS_LEFT_SIDE != 0 && comment.start() < right_start)
+            .take_while(|comment| {
+                comment.flags & TRAILS_LEFT_SIDE != 0 && comment.start() < right_start
+            })
             .count();
         &comments[..count]
     }
@@ -781,21 +974,33 @@ impl<'a> Comments<'a> {
     /// Prettier's `handlePropertyComments`: the comments between the key of a property, which ends at
     /// `key_end`, and its value, which starts at `value_start`, that lead the property: those that end
     /// their line. None if one before them does not.
-    pub(crate) fn comments_leading_property(&self, key_end: u32, value_start: u32) -> &'a [Comment] {
+    pub(crate) fn comments_leading_property(
+        &self,
+        key_end: u32,
+        value_start: u32,
+    ) -> &'a [Comment] {
         let comments = self.comments_in_range(key_end, value_start);
         // One that starts its line leads the value, and so does a type comment: Prettier's
         // `handleClosureTypeCastComments` comes first.
         let count = (comments.iter())
-            .take_while(|comment| !comment.preceded_by_newline() && !self.looks_like_type_cast_comment(comment))
+            .take_while(|comment| {
+                !comment.preceded_by_newline() && !self.looks_like_type_cast_comment(comment)
+            })
             .count();
         let comments = &comments[..count];
-        let count = comments.iter().rposition(|comment| comment.followed_by_newline()).map_or(0, |last| last + 1);
+        let count = comments
+            .iter()
+            .rposition(|comment| comment.followed_by_newline())
+            .map_or(0, |last| last + 1);
         let comments = &comments[..count];
         let ends_line = |(index, comment): (usize, &Comment)| {
             !comment.is_moved()
                 && (comment.followed_by_newline()
                     || comments.get(index + 1).is_some_and(|next| {
-                        self.source_text.all_bytes_match(comment.end(), next.start(), |b| matches!(b, b' ' | b'\t'))
+                        self.source_text
+                            .all_bytes_match(comment.end(), next.start(), |b| {
+                                matches!(b, b' ' | b'\t')
+                            })
                     }))
         };
         match comments.iter().enumerate().all(ends_line) {
@@ -804,10 +1009,17 @@ impl<'a> Comments<'a> {
         }
     }
 
-    fn end_of_line_comments_after_bytes(&self, mut pos: u32, can_be_between: impl Fn(u8) -> bool) -> &'a [Comment] {
+    fn end_of_line_comments_after_bytes(
+        &self,
+        mut pos: u32,
+        can_be_between: impl Fn(u8) -> bool,
+    ) -> &'a [Comment] {
         let comments = self.comments_after(pos);
         for (index, comment) in comments.iter().enumerate() {
-            if !self.source_text.all_bytes_match(pos, comment.start(), &can_be_between) {
+            if !self
+                .source_text
+                .all_bytes_match(pos, comment.start(), &can_be_between)
+            {
                 break;
             }
             if comment.is_line() || comment.followed_by_newline() {
@@ -834,15 +1046,26 @@ impl<'a> Comments<'a> {
         let comments = self.comments_after(start);
         // Nor in a comment that is printed.
         let printed = self.printed_comments();
-        let first = printed.len() - printed.iter().rev().take_while(|it| it.span.start >= start).count();
+        let first = printed.len()
+            - printed
+                .iter()
+                .rev()
+                .take_while(|it| it.span.start >= start)
+                .count();
         for comment in &printed[first..] {
-            if self.source_text.bytes_contain(start, comment.span.start, character) {
+            if self
+                .source_text
+                .bytes_contain(start, comment.span.start, character)
+            {
                 return &[];
             }
             start = comment.span.end;
         }
         for (index, comment) in comments.iter().enumerate() {
-            if self.source_text.bytes_contain(start, comment.start(), character) {
+            if self
+                .source_text
+                .bytes_contain(start, comment.start(), character)
+            {
                 return &comments[..index];
             }
             start = comment.end();
@@ -862,12 +1085,15 @@ impl<'a> Comments<'a> {
 
     #[inline]
     pub(crate) fn has_comment_before(&self, start: u32) -> bool {
-        self.unprinted_comments().first().is_some_and(|c| c.end() <= start)
+        self.unprinted_comments()
+            .first()
+            .is_some_and(|c| c.end() <= start)
     }
 
     /// Whether a comment before `start` ends its line.
     pub(crate) fn has_leading_own_line_comment(&self, start: u32) -> bool {
-        self.comments_before_iter(start).any(|c| c.followed_by_newline())
+        self.comments_before_iter(start)
+            .any(|c| c.followed_by_newline())
     }
 
     /// Has to be called for each comment that is printed.
@@ -922,7 +1148,9 @@ impl<'a> Comments<'a> {
             if comment.is_moved() && comment.flags & TRAILS_LEFT_SIDE != 0 {
                 // It has been moved to here because it does.
                 trailing_count = comment_index + 1;
-            } else if following_span_start > enclosing_span.end && comment.end() <= enclosing_span.end {
+            } else if following_span_start > enclosing_span.end
+                && comment.end() <= enclosing_span.end
+            {
                 // The next sibling is outside of the parent and the comment is inside.
             } else if comment.flags & LOOKS_LIKE_TYPE_CAST != 0 {
                 // Prettier's `handleClosureTypeCastComments`. `a || /** @type {T} */ (b)`: it leads the
@@ -941,9 +1169,15 @@ impl<'a> Comments<'a> {
         // From the end, those that have nothing but blanks and `(` between them and the next
         // sibling lead it.
         let mut gap_end = type_cast_comment.map_or(following_span_start, |c| c.start());
-        for (index, comment) in comments[..comment_index].iter().enumerate().skip(trailing_count).rev() {
-            let is_adjacent = source_text
-                .all_bytes_match(comment.end(), gap_end, |b| b.is_ascii_whitespace() || b == b'(');
+        for (index, comment) in comments[..comment_index]
+            .iter()
+            .enumerate()
+            .skip(trailing_count)
+            .rev()
+        {
+            let is_adjacent = source_text.all_bytes_match(comment.end(), gap_end, |b| {
+                b.is_ascii_whitespace() || b == b'('
+            });
             if !is_adjacent {
                 return &comments[..=index];
             }
@@ -961,7 +1195,10 @@ impl<'a> Comments<'a> {
     /// Whether a `prettier-ignore` comment leads the node that starts at `start`.
     #[inline]
     pub(crate) fn is_suppressed(&self, start: u32) -> bool {
-        self.has_suppression_comments && self.comments_before_iter(start).any(|comment| self.is_suppression_comment(comment))
+        self.has_suppression_comments
+            && self
+                .comments_before_iter(start)
+                .any(|comment| self.is_suppression_comment(comment))
     }
 
     /// Whether a `prettier-ignore` comment trails the node that ends at `pos`: Prettier goes by any
@@ -973,14 +1210,18 @@ impl<'a> Comments<'a> {
     }
 
     fn find_trailing_suppression_comment(&self, pos: u32) -> bool {
-        if self.end_of_line_comments_after(pos).iter().any(|comment| self.is_suppression_comment(comment)) {
+        if self
+            .end_of_line_comments_after(pos)
+            .iter()
+            .any(|comment| self.is_suppression_comment(comment))
+        {
             return true;
         }
         let (mut end, mut is_suppressed) = (pos, false);
         for comment in self.comments_after(pos) {
-            let is_adjacent = self
-                .source_text
-                .all_bytes_match(end, comment.start(), |b| b.is_ascii_whitespace() || matches!(b, b',' | b';'));
+            let is_adjacent = self.source_text.all_bytes_match(end, comment.start(), |b| {
+                b.is_ascii_whitespace() || matches!(b, b',' | b';')
+            });
             if !is_adjacent {
                 break;
             }
@@ -989,7 +1230,12 @@ impl<'a> Comments<'a> {
         }
         is_suppressed
             && matches!(
-                self.source_text.as_bytes().get(end as usize..).unwrap_or_default().trim_ascii_start().first(),
+                self.source_text
+                    .as_bytes()
+                    .get(end as usize..)
+                    .unwrap_or_default()
+                    .trim_ascii_start()
+                    .first(),
                 None | Some(b'}' | b']' | b')')
             )
     }
@@ -1017,7 +1263,9 @@ impl<'a> Comments<'a> {
     pub(crate) fn get_type_cast_comment_index(&self, span: Span) -> Option<usize> {
         self.comments_before_iter(span.start).position(|comment| {
             self.is_type_cast_comment(comment)
-                && self.source_text.next_non_whitespace_byte_is(comment.end(), b'(')
+                && self
+                    .source_text
+                    .next_non_whitespace_byte_is(comment.end(), b'(')
         })
     }
 
@@ -1026,10 +1274,16 @@ impl<'a> Comments<'a> {
     pub(crate) fn is_cast_parenthesis(&self, open: u32) -> bool {
         let before = self.inner.partition_point(|comment| comment.start() < open);
         // The text of a moved comment is somewhere else.
-        self.inner[..before].iter().rev().find(|comment| !comment.is_moved()).is_some_and(|comment| {
-            self.is_type_cast_comment(comment)
-                && self.source_text.all_bytes_match(comment.span.end, open, |b| b.is_ascii_whitespace())
-        })
+        self.inner[..before]
+            .iter()
+            .rev()
+            .find(|comment| !comment.is_moved())
+            .is_some_and(|comment| {
+                self.is_type_cast_comment(comment)
+                    && self
+                        .source_text
+                        .all_bytes_match(comment.span.end, open, |b| b.is_ascii_whitespace())
+            })
     }
 
     /// Shows the comments that start before `end_pos`, hidden or not, and hides the others. Returns

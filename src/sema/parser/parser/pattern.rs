@@ -65,7 +65,12 @@ impl Parser<'_> {
                 });
                 // `checkGrammarBindingElement`
                 if is_rest && self.token() == T::Comma && self.peek() == T::CloseBracket {
-                    self.flag(DiagnosticKind::Grammar, 1013, (self.lx.start, self.lx.end), &[]);
+                    self.flag(
+                        DiagnosticKind::Grammar,
+                        1013,
+                        (self.lx.start, self.lx.end),
+                        &[],
+                    );
                 }
             }
             if !self.eat(T::Comma) {

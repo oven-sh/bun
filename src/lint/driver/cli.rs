@@ -10,45 +10,93 @@ use bun_lint::options::Json;
 
 /// A flag without a description is understood, and not listed in the help.
 pub const PARAMS: &[Param] = &[
-    clap::param!("-c, --config <path>             Use this configuration file instead of looking for one"),
+    clap::param!(
+        "-c, --config <path>             Use this configuration file instead of looking for one"
+    ),
     clap::param!("--no-config-lookup              Do not look for a configuration file"),
-    clap::param!("--no-config-cache               Run <b>eslint.config.js<r> again even if nothing that it depends on has changed"),
-    clap::param!("--rule <rule>...                Configure a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"),
-    clap::param!("--global <name>...              Define global variables: <b>--global a,b:true<r>"),
-    clap::param!("--parser-options <options>...   Set parser options: <b>--parser-options projectService:true<r>"),
+    clap::param!(
+        "--no-config-cache               Run <b>eslint.config.js<r> again even if nothing that it depends on has changed"
+    ),
+    clap::param!(
+        "--rule <rule>...                Configure a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"
+    ),
+    clap::param!(
+        "--global <name>...              Define global variables: <b>--global a,b:true<r>"
+    ),
+    clap::param!(
+        "--parser-options <options>...   Set parser options: <b>--parser-options projectService:true<r>"
+    ),
     clap::param!("--ext <ext>...                  Lint files with these extensions too"),
     clap::param!("--fix                           Fix what can be fixed, and write the files"),
-    clap::param!("--fix-dry-run                   Fix without writing. The <b>json<r> format has the fixed code"),
-    clap::param!("--fix-type <type>...            Only apply fixes of rules of these types: <b>directive<r>, <b>problem<r>, <b>suggestion<r>, <b>layout<r>"),
+    clap::param!(
+        "--fix-dry-run                   Fix without writing. The <b>json<r> format has the fixed code"
+    ),
+    clap::param!(
+        "--fix-type <type>...            Only apply fixes of rules of these types: <b>directive<r>, <b>problem<r>, <b>suggestion<r>, <b>layout<r>"
+    ),
     clap::param!("--ignore-pattern <pattern>...   Ignore the files that match"),
     clap::param!("--no-ignore                     Lint ignored files too"),
-    clap::param!("--no-warn-ignored               Do not warn about an ignored file that is named as an argument"),
+    clap::param!(
+        "--no-warn-ignored               Do not warn about an ignored file that is named as an argument"
+    ),
     clap::param!("--stdin                         Lint the code on standard input"),
-    clap::param!("--stdin-filename <path>         The file name that the code on standard input is linted as"),
+    clap::param!(
+        "--stdin-filename <path>         The file name that the code on standard input is linted as"
+    ),
     clap::param!("--quiet                         Report errors only"),
-    clap::param!("--max-warnings <n>              Exit with 1 if there are more warnings than this"),
-    clap::param!("-f, --format <name>             <b>stylish<r> <d>(default)<r>, <b>pretty<r>, <b>json<r>, <b>json-with-metadata<r>, <b>unix<r>, <b>github<r>, <b>agent<r>"),
-    clap::param!("--all                           Show every problem <d>(<b>pretty<r><d> and <b>agent<r><d> group identical problems above 50)<r>"),
+    clap::param!(
+        "--max-warnings <n>              Exit with 1 if there are more warnings than this"
+    ),
+    clap::param!(
+        "-f, --format <name>             <b>stylish<r> <d>(default)<r>, <b>pretty<r>, <b>json<r>, <b>json-with-metadata<r>, <b>unix<r>, <b>github<r>, <b>agent<r>"
+    ),
+    clap::param!(
+        "--all                           Show every problem <d>(<b>pretty<r><d> and <b>agent<r><d> group identical problems above 50)<r>"
+    ),
     clap::param!("-o, --output-file <path>        Write the report to a file"),
     clap::param!("--color                         Always use colors"),
     clap::param!("--no-color                      Never use colors"),
-    clap::param!("--no-inline-config              Ignore <b>eslint-disable<r> and other configuration comments"),
-    clap::param!("--report-unused-disable-directives  Report <b>eslint-disable<r> comments that disable nothing, as errors"),
-    clap::param!("--report-unused-disable-directives-severity <severity>  The same, as <b>off<r>, <b>warn<r> or <b>error<r>"),
-    clap::param!("--report-unused-inline-configs <severity>  Report configuration comments that change nothing"),
-    clap::param!("--suppress-all                  Tolerate the errors that there are now: write them to <b>eslint-suppressions.json<r>"),
+    clap::param!(
+        "--no-inline-config              Ignore <b>eslint-disable<r> and other configuration comments"
+    ),
+    clap::param!(
+        "--report-unused-disable-directives  Report <b>eslint-disable<r> comments that disable nothing, as errors"
+    ),
+    clap::param!(
+        "--report-unused-disable-directives-severity <severity>  The same, as <b>off<r>, <b>warn<r> or <b>error<r>"
+    ),
+    clap::param!(
+        "--report-unused-inline-configs <severity>  Report configuration comments that change nothing"
+    ),
+    clap::param!(
+        "--suppress-all                  Tolerate the errors that there are now: write them to <b>eslint-suppressions.json<r>"
+    ),
     clap::param!("--suppress-rule <rule>...       The same for the errors of a rule"),
-    clap::param!("--suppressions-location <path>  Another file than <b>eslint-suppressions.json<r>"),
+    clap::param!(
+        "--suppressions-location <path>  Another file than <b>eslint-suppressions.json<r>"
+    ),
     clap::param!("--prune-suppressions            Remove from that file what no longer occurs"),
-    clap::param!("--pass-on-unpruned-suppressions  Do not fail if that file has what no longer occurs"),
+    clap::param!(
+        "--pass-on-unpruned-suppressions  Do not fail if that file has what no longer occurs"
+    ),
     clap::param!("--no-error-on-unmatched-pattern  Do not fail if an argument matches no file"),
-    clap::param!("--pass-on-no-patterns           Exit with 0 if there are no arguments, instead of linting <b>.<r>"),
+    clap::param!(
+        "--pass-on-no-patterns           Exit with 0 if there are no arguments, instead of linting <b>.<r>"
+    ),
     clap::param!("--exit-on-fatal-error           Exit with 2 if a file cannot be parsed"),
-    clap::param!("--print-config <path>           Print the configuration of a file, and lint nothing"),
-    clap::param!("--type-aware                    Run the rules that need types, whatever the configuration says"),
+    clap::param!(
+        "--print-config <path>           Print the configuration of a file, and lint nothing"
+    ),
+    clap::param!(
+        "--type-aware                    Run the rules that need types, whatever the configuration says"
+    ),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
-    clap::param!("-p, --project/--tsconfig <path>  The tsconfig.json for the rules that need types"),
-    clap::param!("--threads <n>                   Number of threads <d>(default: one per CPU core, at most 16 with plugins in JavaScript)<r>"),
+    clap::param!(
+        "-p, --project/--tsconfig <path>  The tsconfig.json for the rules that need types"
+    ),
+    clap::param!(
+        "--threads <n>                   Number of threads <d>(default: one per CPU core, at most 16 with plugins in JavaScript)<r>"
+    ),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),
     clap::param!("-h, --help                      Print this help menu"),
@@ -256,7 +304,9 @@ fn list(value: &[u8]) -> Vec<Vec<u8>> {
     if value.trim_ascii().is_empty() {
         return Vec::new();
     }
-    strings::split(value, b",").map(|item| item.trim_ascii().to_vec()).collect()
+    strings::split(value, b",")
+        .map(|item| item.trim_ascii().to_vec())
+        .collect()
 }
 
 fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError> {
@@ -264,13 +314,25 @@ fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError> {
         b"off" | b"0" => Ok(Severity::Off),
         b"warn" | b"1" => Ok(Severity::Warn),
         b"error" | b"2" => Ok(Severity::Error),
-        _ => error(&[b"Option ", name, b": '", value, b"' not one of off, warn, error, 0, 1, or 2."]),
+        _ => error(&[
+            b"Option ",
+            name,
+            b": '",
+            value,
+            b"' not one of off, warn, error, 0, 1, or 2.",
+        ]),
     }
 }
 
 fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<(), UsageError> {
     let Some(entries) = bun_lint::linter::parse_levn_object(value) else {
-        return error(&[b"Invalid value for option '", name, b"' - expected type Object, received value: ", value, b"."]);
+        return error(&[
+            b"Invalid value for option '",
+            name,
+            b"' - expected type Object, received value: ",
+            value,
+            b".",
+        ]);
     };
     // `mergeRepeatedObjects`
     for (key, value) in entries {
@@ -285,7 +347,12 @@ fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<
 impl Options {
     /// Takes in the flag that is called `name`. `value`: `None` for a flag that takes none.
     /// `is_on`: it is not written `--no-..`.
-    fn set(&mut self, name: &'static [u8], value: Option<&[u8]>, is_on: bool) -> Result<(), UsageError> {
+    fn set(
+        &mut self,
+        name: &'static [u8],
+        value: Option<&[u8]>,
+        is_on: bool,
+    ) -> Result<(), UsageError> {
         let text = value.unwrap_or_default();
         let owned = || Some(text.to_vec());
         match name {
@@ -319,7 +386,10 @@ impl Options {
             b"stdin" => self.stdin = is_on,
             b"stdin-filename" => self.stdin_filename = owned(),
             b"quiet" => self.quiet = is_on,
-            b"max-warnings" => match std::str::from_utf8(text).ok().and_then(|it| it.parse().ok()) {
+            b"max-warnings" => match std::str::from_utf8(text)
+                .ok()
+                .and_then(|it| it.parse().ok())
+            {
                 Some(count) => self.max_warnings = count,
                 None => {
                     return error(&[
@@ -337,7 +407,9 @@ impl Options {
             b"report-unused-disable-directives-severity" => {
                 self.report_unused_disable_directives_severity = Some(severity(name, text)?);
             }
-            b"report-unused-inline-configs" => self.report_unused_inline_configs = Some(severity(name, text)?),
+            b"report-unused-inline-configs" => {
+                self.report_unused_inline_configs = Some(severity(name, text)?)
+            }
             b"error-on-unmatched-pattern" => self.error_on_unmatched_pattern = is_on,
             b"pass-on-no-patterns" => self.pass_on_no_patterns = is_on,
             b"exit-on-fatal-error" => self.exit_on_fatal_error = is_on,
@@ -355,7 +427,13 @@ impl Options {
                             b"' is not a positive integer, 'auto' or 'off'.",
                         ]);
                     }
-                    _ => return error(&[b"--threads takes a number above zero, not \"", text, b"\"."]),
+                    _ => {
+                        return error(&[
+                            b"--threads takes a number above zero, not \"",
+                            text,
+                            b"\".",
+                        ]);
+                    }
                 },
             },
             b"timing" => self.timing = is_on,
@@ -365,7 +443,10 @@ impl Options {
             b"help" => self.help = is_on,
             b"version" => self.version = is_on,
             b"suppress-all" => self.suppress_all = is_on,
-            b"suppress-rule" => self.suppress_rule.get_or_insert_default().extend(list(text)),
+            b"suppress-rule" => self
+                .suppress_rule
+                .get_or_insert_default()
+                .extend(list(text)),
             b"suppressions-location" => self.suppressions_location = owned(),
             b"prune-suppressions" => self.prune_suppressions = is_on,
             b"pass-on-unpruned-suppressions" => self.pass_on_unpruned_suppressions = is_on,
@@ -394,7 +475,11 @@ impl Options {
                 });
             }
             b"cache-strategy" if !matches!(text, b"metadata" | b"content") => {
-                return error(&[b"Option cache-strategy: '", text, b"' not one of metadata or content."]);
+                return error(&[
+                    b"Option cache-strategy: '",
+                    text,
+                    b"' not one of metadata or content.",
+                ]);
             }
             b"debug" | b"flag" | b"cache-file" | b"cache-location" | b"cache-strategy" => {}
             _ => {
@@ -416,11 +501,18 @@ impl Options {
                 b"-V" => rewritten.push(b"--version"),
                 _ if arg.starts_with(b"--debug=") => {
                     for option in strings::split(&arg[b"--debug=".len()..], b",") {
-                        rewritten.push(if option == b"files" { b"--list-files" } else { b"--timing" });
+                        rewritten.push(if option == b"files" {
+                            b"--list-files"
+                        } else {
+                            b"--timing"
+                        });
                     }
                 }
                 // It takes no file.
-                b"--print-config" if args.get(at + 1).is_none_or(|next| next.starts_with(b"-")) || at + 1 == count => {
+                b"--print-config"
+                    if args.get(at + 1).is_none_or(|next| next.starts_with(b"-"))
+                        || at + 1 == count =>
+                {
                     rewritten.extend([&b"--print-config"[..], b"__placeholder__.js"]);
                 }
                 arg => rewritten.push(arg),

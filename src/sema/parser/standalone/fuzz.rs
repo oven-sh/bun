@@ -54,9 +54,46 @@ fn pieces(text: &[u8]) -> Vec<(usize, usize)> {
 }
 
 const INSERTED: [&[u8]; 40] = [
-    b"(", b")", b"{", b"}", b"[", b"]", b"<", b">", b",", b";", b":", b"?", b".", b"...", b"=>",
-    b"=", b"!", b"&", b"|", b"*", b"/", b"`", b"${", b"'", b"\"", b"\\", b"#", b"@", b"\n", b"/*",
-    b"*/", b"//", b" as ", b" in ", b" of ", b" await ", b" yield ", b" async ", b" typeof ", b"\xE2\x80\xA8",
+    b"(",
+    b")",
+    b"{",
+    b"}",
+    b"[",
+    b"]",
+    b"<",
+    b">",
+    b",",
+    b";",
+    b":",
+    b"?",
+    b".",
+    b"...",
+    b"=>",
+    b"=",
+    b"!",
+    b"&",
+    b"|",
+    b"*",
+    b"/",
+    b"`",
+    b"${",
+    b"'",
+    b"\"",
+    b"\\",
+    b"#",
+    b"@",
+    b"\n",
+    b"/*",
+    b"*/",
+    b"//",
+    b" as ",
+    b" in ",
+    b" of ",
+    b" await ",
+    b" yield ",
+    b" async ",
+    b" typeof ",
+    b"\xE2\x80\xA8",
 ];
 
 /// One damaged version of `text`.
@@ -127,7 +164,10 @@ pub(crate) fn run(
         let mut random = Random(seed ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let extension = files[i].rsplit('.').next().unwrap_or("ts");
         // What is being parsed, for the case that the process dies.
-        let current = format!("{keep}/current-{:?}.{extension}", std::thread::current().id());
+        let current = format!(
+            "{keep}/current-{:?}.{extension}",
+            std::thread::current().id()
+        );
         for round in 0..rounds {
             let damaged = damage(&text, &pieces, &mut random);
             let _ = std::fs::write(&current, &damaged);
@@ -137,7 +177,10 @@ pub(crate) fn run(
                 Verdict::Wrong(what) => {
                     let name = format!("{keep}/wrong-{i}-{round}.{extension}");
                     let _ = std::fs::write(&name, &damaged);
-                    wrong.lock().unwrap().push(format!("{name} (from {}): {what}", files[i]));
+                    wrong
+                        .lock()
+                        .unwrap()
+                        .push(format!("{name} (from {}): {what}", files[i]));
                 }
             }
         }

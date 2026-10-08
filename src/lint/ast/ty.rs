@@ -161,9 +161,13 @@ impl<'a> TypeNode<'a> {
                 args: List::ids(file, args),
             },
             hir::TypeNodeKind::StringLit(text) => TypeKind::StringLit(file.name(text)),
-            hir::TypeNodeKind::NumberLit(at) => {
-                TypeKind::NumberLit(file.hir.numbers.get(at as usize).copied().unwrap_or(f64::NAN))
-            }
+            hir::TypeNodeKind::NumberLit(at) => TypeKind::NumberLit(
+                file.hir
+                    .numbers
+                    .get(at as usize)
+                    .copied()
+                    .unwrap_or(f64::NAN),
+            ),
             hir::TypeNodeKind::BigIntLit { text, negative } => TypeKind::BigIntLit {
                 text: file.name(text),
                 negative,
@@ -263,8 +267,13 @@ impl<'a> TypeNode<'a> {
     pub fn annotation_span(self) -> Span {
         let (text, outer) = (self.file.text(), self.outer_span());
         let before = self.file.end_of_token_before(outer.start);
-        let is_arrow = text.get(..before as usize).is_some_and(|it| it.ends_with(b"=>"));
-        Span::new(before.saturating_sub(if is_arrow { 2 } else { 1 }), outer.end)
+        let is_arrow = text
+            .get(..before as usize)
+            .is_some_and(|it| it.ends_with(b"=>"));
+        Span::new(
+            before.saturating_sub(if is_arrow { 2 } else { 1 }),
+            outer.end,
+        )
     }
 
     #[inline]
@@ -316,7 +325,10 @@ impl<'a> TypeNode<'a> {
         };
         let whole = self.span();
         Some(match is_typeof {
-            true => Span::new(skip_trivia(self.file.text(), whole.start + "typeof".len() as u32), whole.end),
+            true => Span::new(
+                skip_trivia(self.file.text(), whole.start + "typeof".len() as u32),
+                whole.end,
+            ),
             false => whole,
         })
     }
@@ -327,7 +339,10 @@ impl<'a> TypeNode<'a> {
         let open = skip_trivia(text, self.import_span()?.start + "import".len() as u32);
         let start = skip_trivia(text, open + 1);
         let rest = text.get(start as usize..).unwrap_or_default();
-        Some(Span::new(start, start + crate::tokens::token_len(rest) as u32))
+        Some(Span::new(
+            start,
+            start + crate::tokens::token_len(rest) as u32,
+        ))
     }
 
     /// Of an `Import`: the `with: { .. }` of `import("m", { with: { .. } })`.
@@ -401,7 +416,11 @@ impl<'a> List<'a, TypeNode<'a>> {
     /// `None` if the list is empty.
     pub fn angle_brackets_span(self) -> Option<Span> {
         let (first, last) = (self.first()?, self.last()?);
-        Some(angle_brackets(first.file, first.outer_span().start, last.outer_span().end))
+        Some(angle_brackets(
+            first.file,
+            first.outer_span().start,
+            last.outer_span().end,
+        ))
     }
 }
 
@@ -410,7 +429,11 @@ impl<'a> List<'a, TypeParam<'a>> {
     /// `None` if the list is empty.
     pub fn angle_brackets_span(self) -> Option<Span> {
         let (first, last) = (self.first()?, self.last()?);
-        Some(angle_brackets(first.file(), first.span().start, last.span().end))
+        Some(angle_brackets(
+            first.file(),
+            first.span().start,
+            last.span().end,
+        ))
     }
 }
 
@@ -445,8 +468,16 @@ impl<'a> ImportAttributes<'a> {
 
     /// `with`, or the deprecated `assert`.
     pub fn keyword_span(self) -> Span {
-        let rest = self.object.file().text().get(self.keyword as usize..).unwrap_or_default();
-        Span::new(self.keyword, self.keyword + crate::tokens::token_len(rest) as u32)
+        let rest = self
+            .object
+            .file()
+            .text()
+            .get(self.keyword as usize..)
+            .unwrap_or_default();
+        Span::new(
+            self.keyword,
+            self.keyword + crate::tokens::token_len(rest) as u32,
+        )
     }
 
     /// The `{ .. }`.
@@ -462,7 +493,13 @@ impl<'a> ImportAttributes<'a> {
         if text.get(close as usize) == Some(&b',') {
             close = skip_trivia(text, close + 1);
         }
-        Span::new(self.object.file().end_of_token_before(self.keyword).saturating_sub(1), close + 1)
+        Span::new(
+            self.object
+                .file()
+                .end_of_token_before(self.keyword)
+                .saturating_sub(1),
+            close + 1,
+        )
     }
 
     /// `key: "value"`. The key is a name or a string.
@@ -497,13 +534,16 @@ impl<'a> EntityName<'a> {
     pub fn parts(self) -> impl DoubleEndedIterator<Item = Ident<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
         let names = file.hir.names.get(self.names.range()).unwrap_or_default();
-        names.iter().map(move |name| file.ident(name.text, name.pos()))
+        names
+            .iter()
+            .map(move |name| file.ident(name.text, name.pos()))
     }
 
     /// The name at `i`, counted from the left.
     #[inline]
     pub fn get(self, i: usize) -> Option<Ident<'a>> {
-        let name = (i < self.names.len()).then(|| self.file.hir.names.get(self.names.start as usize + i))??;
+        let name = (i < self.names.len())
+            .then(|| self.file.hir.names.get(self.names.start as usize + i))??;
         Some(self.file.ident(name.text, name.pos()))
     }
 

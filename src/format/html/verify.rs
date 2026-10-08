@@ -79,10 +79,16 @@ impl Reader {
                 }
             }
             Kind::FrontMatter => self.count(node.span.of(text)),
-            Kind::AngularControlFlowBlock | Kind::AngularLetDeclaration | Kind::AngularIcuExpression => {
+            Kind::AngularControlFlowBlock
+            | Kind::AngularLetDeclaration
+            | Kind::AngularIcuExpression => {
                 self.count(&node.name);
                 self.count(&node.value);
-                for parameter in tree.parameters(id).into_iter().flat_map(|parameters| tree.children(parameters)) {
+                for parameter in tree
+                    .parameters(id)
+                    .into_iter()
+                    .flat_map(|parameters| tree.children(parameters))
+                {
                     self.count(&tree[parameter].value);
                 }
             }

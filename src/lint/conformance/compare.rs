@@ -49,8 +49,13 @@ impl Outcome {
     pub fn new(entry: &'static RuleEntry, code: &[u8], messages: &[LintMessage]) -> Outcome {
         let mut fixes: Vec<_> = messages.iter().filter_map(|it| it.fix.as_ref()).collect();
         Outcome {
-            has_parse_errors: messages.iter().any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
-            messages: messages.iter().map(|it| Reported::new(entry, code, it)).collect(),
+            has_parse_errors: messages
+                .iter()
+                .any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
+            messages: messages
+                .iter()
+                .map(|it| Reported::new(entry, code, it))
+                .collect(),
             output: bun_lint::fix::apply_fixes(code, &mut fixes),
         }
     }
@@ -59,11 +64,16 @@ impl Outcome {
 impl Reported {
     /// What is compared of a message about `code` in a test of the rule `entry`.
     pub fn new(entry: &'static RuleEntry, code: &[u8], message: &LintMessage) -> Reported {
-        let apply = |fix: &Fix| bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec());
+        let apply = |fix: &Fix| {
+            bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec())
+        };
         let edit = |fix: &Fix| {
             let mut offsets = Utf16Offsets::new(code);
             Edit {
-                range: (offsets.convert(fix.span.start), offsets.convert(fix.span.end)),
+                range: (
+                    offsets.convert(fix.span.start),
+                    offsets.convert(fix.span.end),
+                ),
                 text: fix.text.clone().into(),
             }
         };
@@ -122,23 +132,32 @@ fn expected_edit(of: &Json) -> Option<Edit> {
 
 /// What ESLint reported for `case`.
 pub fn expected_messages(case: &Json) -> Vec<Reported> {
-    let messages = case.get(b"messages").and_then(Json::as_array).unwrap_or_default();
+    let messages = case
+        .get(b"messages")
+        .and_then(Json::as_array)
+        .unwrap_or_default();
     let reported = messages.iter().map(|it| Reported {
-        rule_id: it.get(b"ruleId").map(|id| id.as_str().unwrap_or_default().into()),
+        rule_id: it
+            .get(b"ruleId")
+            .map(|id| id.as_str().unwrap_or_default().into()),
         message_id: text_of(it, b"messageId"),
         message: text_of(it, b"message"),
         line: number_of(it, b"line").unwrap_or(0),
         column: number_of(it, b"column").unwrap_or(0),
         end: number_of(it, b"endLine").zip(number_of(it, b"endColumn")),
         fix: expected_edit(it),
-        suggestions: (it.get(b"suggestions").and_then(Json::as_array).unwrap_or_default().iter())
-            .map(|it| Suggested {
-                message_id: text_of(it, b"messageId"),
-                desc: text_of(it, b"desc"),
-                fix: expected_edit(it),
-                output: text_of(it, b"output"),
-            })
-            .collect(),
+        suggestions: (it
+            .get(b"suggestions")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter())
+        .map(|it| Suggested {
+            message_id: text_of(it, b"messageId"),
+            desc: text_of(it, b"desc"),
+            fix: expected_edit(it),
+            output: text_of(it, b"output"),
+        })
+        .collect(),
     });
     reported.collect()
 }
@@ -147,7 +166,13 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
 /// nodes.
 fn in_order(mut messages: Vec<Reported>) -> Vec<Reported> {
     messages.sort_by(|a, b| {
-        (a.line, a.column, a.end, &a.message_id, &a.message).cmp(&(b.line, b.column, b.end, &b.message_id, &b.message))
+        (a.line, a.column, a.end, &a.message_id, &a.message).cmp(&(
+            b.line,
+            b.column,
+            b.end,
+            &b.message_id,
+            &b.message,
+        ))
     });
     messages
 }
@@ -167,13 +192,25 @@ pub fn problem_of(outcome: Option<Outcome>, case: &Json) -> Option<Problem> {
     if outcome.has_parse_errors {
         return problem("the parser rejects the code", String::new());
     }
-    let (actual, expected) = (in_order(outcome.messages), in_order(expected_messages(case)));
+    let (actual, expected) = (
+        in_order(outcome.messages),
+        in_order(expected_messages(case)),
+    );
     if actual != expected {
-        return problem("messages differ", format!("  expected: {expected:#?}\n  actual: {actual:#?}"));
+        return problem(
+            "messages differ",
+            format!("  expected: {expected:#?}\n  actual: {actual:#?}"),
+        );
     }
-    let (actual, expected) = (outcome.output.as_deref().map(bstr::BStr::new), string_of(case, b"output").map(bstr::BStr::new));
+    let (actual, expected) = (
+        outcome.output.as_deref().map(bstr::BStr::new),
+        string_of(case, b"output").map(bstr::BStr::new),
+    );
     if actual != expected {
-        return problem("output differs", format!("  expected: {expected:?}\n  actual: {actual:?}"));
+        return problem(
+            "output differs",
+            format!("  expected: {expected:?}\n  actual: {actual:?}"),
+        );
     }
     None
 }

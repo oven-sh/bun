@@ -43,8 +43,13 @@ fn check_and_lint(
     indices: &[usize],
     already_read: AlreadyRead,
 ) -> Vec<Option<Linted>> {
-    let by_path: FxHashMap<Vec<u8>, usize> = indices.iter().enumerate().map(|(at, &index)| (from_native(files[index].path), at)).collect();
-    let mut results: Guarded<Vec<Option<Linted>>> = Guarded::new(indices.iter().map(|_| None).collect());
+    let by_path: FxHashMap<Vec<u8>, usize> = indices
+        .iter()
+        .enumerate()
+        .map(|(at, &index)| (from_native(files[index].path), at))
+        .collect();
+    let mut results: Guarded<Vec<Option<Linted>>> =
+        Guarded::new(indices.iter().map(|_| None).collect());
     let options = context.lint_options();
     // The text of a file of TypeScript's library, which the checker does not keep.
     let read_library = |path: &[u8], then: &mut dyn FnMut(&[u8])| match environment.libs {
@@ -65,13 +70,21 @@ fn check_and_lint(
         };
         let config = files[indices[at]].config;
         let started = context.timing.now();
-        let linted = bun_lint::types::with_file_and_modules(checker, file, &config.language, Some(&read_library), Some(context.modules), |file| {
-            let mut result = context.linter.lint(file, config, &options);
-            context.promote_suggestions(&mut result);
-            let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
-            let text = (is_reported && (context.keeps_text || context.fixes())).then(|| file.text().to_vec());
-            (result, text)
-        });
+        let linted = bun_lint::types::with_file_and_modules(
+            checker,
+            file,
+            &config.language,
+            Some(&read_library),
+            Some(context.modules),
+            |file| {
+                let mut result = context.linter.lint(file, config, &options);
+                context.promote_suggestions(&mut result);
+                let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
+                let text = (is_reported && (context.keeps_text || context.fixes()))
+                    .then(|| file.text().to_vec());
+                (result, text)
+            },
+        );
         context.timing.add(&context.timing.rules, started);
         // A task of the checker can run again: the last time counts.
         if let Some(linted) = linted {
@@ -79,7 +92,10 @@ fn check_and_lint(
         }
     };
     let command_line = bun_sema_driver::parse_command_line(&[b"--skipLibCheck"], &environment.cwd);
-    let paths: Vec<Vec<u8>> = indices.iter().map(|&index| files[index].path.to_vec()).collect();
+    let paths: Vec<Vec<u8>> = indices
+        .iter()
+        .map(|&index| files[index].path.to_vec())
+        .collect();
     let request = bun_sema_driver::Request {
         cwd: &environment.cwd,
         project: context.options.project.as_deref(),
@@ -131,13 +147,20 @@ fn with_byte_order_mark((mut result, text): Linted, current: Option<&[u8]>, path
     let Some(text) = text else {
         return (result, None);
     };
-    if !current.map_or_else(|| crate::fs::starts_with(path, MARK), |current| current.starts_with(MARK)) {
+    if !current.map_or_else(
+        || crate::fs::starts_with(path, MARK),
+        |current| current.starts_with(MARK),
+    ) {
         return (result, Some(text));
     }
-    let fixes = result.messages.iter_mut().chain(&mut result.suppressed).flat_map(|message| {
-        let of_suggestions = message.suggestions.iter_mut().map(|it| &mut it.fix);
-        message.fix.iter_mut().chain(of_suggestions)
-    });
+    let fixes = result
+        .messages
+        .iter_mut()
+        .chain(&mut result.suppressed)
+        .flat_map(|message| {
+            let of_suggestions = message.suggestions.iter_mut().map(|it| &mut it.fix);
+            message.fix.iter_mut().chain(of_suggestions)
+        });
     for fix in fixes {
         fix.span.start += MARK.len() as u32;
         fix.span.end += MARK.len() as u32;
@@ -172,30 +195,48 @@ pub(crate) fn lint(
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
     while !pending.is_empty() {
-        let changed = states.iter().zip(files).filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
+        let changed = states
+            .iter()
+            .zip(files)
+            .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
         let linted = check_and_lint(context, environment, files, &pending, changed.collect());
         let mut next = Vec::new();
         for (index, linted) in pending.iter().copied().zip(linted) {
             let (file, state) = (&files[index], &mut states[index]);
             let (mut result, text) = match (linted, &state.current) {
-                (Some(linted), current) => with_byte_order_mark(linted, current.as_deref(), file.path),
+                (Some(linted), current) => {
+                    with_byte_order_mark(linted, current.as_deref(), file.path)
+                }
                 // It was in a program before it was fixed.
-                (None, Some(current)) => (context.verify(file.path, current, file.config), Some(current.clone())),
+                (None, Some(current)) => (
+                    context.verify(file.path, current, file.config),
+                    Some(current.clone()),
+                ),
                 (None, None) => continue,
             };
             let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
-                let mut result = context.result(crate::paths::to_native(file.path.to_vec()), result, text.unwrap_or_default(), is_fixed, file.config);
+                let mut result = context.result(
+                    crate::paths::to_native(file.path.to_vec()),
+                    result,
+                    text.unwrap_or_default(),
+                    is_fixed,
+                    file.config,
+                );
                 result.had_types = true;
                 done[index] = Some(result);
             };
-            let has_fixes = context.fixes() && !state.is_over && result.messages.iter().any(|it| it.fix.is_some());
+            let has_fixes = context.fixes()
+                && !state.is_over
+                && result.messages.iter().any(|it| it.fix.is_some());
             let (true, Some(text)) = (has_fixes, &text) else {
                 let text = state.current.take().or(text);
                 finish(result, text, state.is_fixed);
                 continue;
             };
             state.passes += 1;
-            let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| context.should_fix(message));
+            let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| {
+                context.should_fix(message)
+            });
             result.messages = fixed.remaining;
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));

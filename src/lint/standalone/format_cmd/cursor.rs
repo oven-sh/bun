@@ -10,8 +10,8 @@
 //! `-` for the start or the end of the text.
 
 use super::Args;
-use bun_format::cursor::{Region, format_with_cursor, locate};
 use bun_format::Scratch;
+use bun_format::cursor::{Region, format_with_cursor, locate};
 use bun_lint::language::LanguageOptions;
 use bun_lint::span::Span;
 
@@ -22,16 +22,24 @@ pub(super) fn run(args: &Args) {
     let Ok(code) = std::fs::read(path) else {
         return eprintln!("cannot read {path}");
     };
-    let step: usize = args.flag("step").and_then(|it| it.parse().ok()).unwrap_or(1).max(1);
+    let step: usize = args
+        .flag("step")
+        .and_then(|it| it.parse().ok())
+        .unwrap_or(1)
+        .max(1);
     let only_region = args.flag("only") == Some("region");
-    let show = |span: Option<Span>| span.map_or("-".to_owned(), |it| format!("{}-{}", it.start, it.end));
+    let show =
+        |span: Option<Span>| span.map_or("-".to_owned(), |it| format!("{}-{}", it.start, it.end));
 
     crate::with_file(path, &code, &LanguageOptions::default(), |file| {
-        let (mut scratch, mut out, mut options) = (Scratch::default(), Vec::new(), args.options.clone());
+        let (mut scratch, mut out, mut options) =
+            (Scratch::default(), Vec::new(), args.options.clone());
         for offset in (0..=code.len()).step_by(step) {
             let region = match locate(file, offset as u32) {
                 Region::Node(span) => format!("node {} {}", span.start, span.end),
-                Region::Between { before, after } => format!("between {} {}", show(before), show(after)),
+                Region::Between { before, after } => {
+                    format!("between {} {}", show(before), show(after))
+                }
             };
             if only_region {
                 println!("{offset} {region}");

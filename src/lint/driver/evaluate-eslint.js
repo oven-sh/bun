@@ -18,7 +18,8 @@ function locate(plugin) {
   if (located.size === 0) {
     for (const [module, { exports }] of Object.entries(require.cache)) {
       const note = (value, path) => {
-        if (value !== null && typeof value === "object" && !located.has(value)) located.set(value, { module, export: path });
+        if (value !== null && typeof value === "object" && !located.has(value))
+          located.set(value, { module, export: path });
       };
       try {
         note(exports, []);
@@ -78,9 +79,13 @@ function serializeConfigObject(config, index) {
   if (plugins && typeof plugins === "object") {
     const ids = Object.entries(plugins).map(([prefix, plugin]) => [prefix, (plugin && objectId(plugin)) ?? null]);
     out.plugins = Array.isArray(plugins) ? serialize(plugins) : Object.fromEntries(ids);
-    const withRules = Object.entries(plugins).filter(([, plugin]) => plugin?.rules && Object.keys(plugin.rules).length > 0);
+    const withRules = Object.entries(plugins).filter(
+      ([, plugin]) => plugin?.rules && Object.keys(plugin.rules).length > 0,
+    );
     // `index`: that of the object in what the file exports.
-    out.$jsPlugins = Object.fromEntries(withRules.map(([prefix, plugin]) => [prefix, locate(plugin) ?? { config: path, index }]));
+    out.$jsPlugins = Object.fromEntries(
+      withRules.map(([prefix, plugin]) => [prefix, locate(plugin) ?? { config: path, index }]),
+    );
   }
   if (languageOptions && typeof languageOptions === "object") {
     out.languageOptions = serializeLanguageOptions(languageOptions);
@@ -90,7 +95,9 @@ function serializeConfigObject(config, index) {
   }
   // Only a file that does not call `defineConfig()` still has it.
   if (extended !== undefined) {
-    out.extends = [extended].flat(Infinity).map(item => (typeof item === "string" ? item : serializeConfigObject(item, index)));
+    out.extends = [extended]
+      .flat(Infinity)
+      .map(item => (typeof item === "string" ? item : serializeConfigObject(item, index)));
   }
   return out;
 }

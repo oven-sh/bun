@@ -43,7 +43,10 @@ impl Token {
     }
 
     pub(crate) fn is_whitespace(&self) -> bool {
-        matches!(self.kind, TokenKind::NoSpace | TokenKind::Space | TokenKind::Newline)
+        matches!(
+            self.kind,
+            TokenKind::NoSpace | TokenKind::Space | TokenKind::Newline
+        )
     }
 
     pub(crate) fn is_cj(&self) -> bool {
@@ -76,13 +79,15 @@ struct Splitter<'x, F> {
 impl<F: Fn(usize, usize) -> Str> Splitter<'_, F> {
     /// Prettier's `appendNode`
     fn word(&mut self, kind: TokenKind, start: usize, end: usize, has_punctuation: (bool, bool)) {
-        let has_wide_space = bun_core::strings::contains(&self.text[start..end], "\u{3000}".as_bytes());
+        let has_wide_space =
+            bun_core::strings::contains(&self.text[start..end], "\u{3000}".as_bytes());
         // Two words next to each other have an empty space between them, but for punctuation of Chinese and
         // Japanese next to other text, and a full-width space.
         if let Some((last_kind, last_has_wide_space)) = self.last_word {
             let is_between = matches!(
                 (last_kind, kind),
-                (TokenKind::NonCjk, TokenKind::CjkPunctuation) | (TokenKind::CjkPunctuation, TokenKind::NonCjk)
+                (TokenKind::NonCjk, TokenKind::CjkPunctuation)
+                    | (TokenKind::CjkPunctuation, TokenKind::NonCjk)
             );
             if !is_between && !has_wide_space && !last_has_wide_space {
                 self.tokens.push(Token::whitespace(TokenKind::NoSpace));
@@ -121,14 +126,25 @@ pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: 
     let mut index = 0;
     while index < text.len() {
         if is_white(text[index]) {
-            let len = text[index..].iter().take_while(|&&byte| is_white(byte)).count();
+            let len = text[index..]
+                .iter()
+                .take_while(|&&byte| is_white(byte))
+                .count();
             let has_newline = bun_core::strings::contains_char(&text[index..index + len], b'\n');
-            splitter.tokens.push(Token::whitespace(if has_newline { TokenKind::Newline } else { TokenKind::Space }));
+            splitter.tokens.push(Token::whitespace(if has_newline {
+                TokenKind::Newline
+            } else {
+                TokenKind::Space
+            }));
             splitter.last_word = None;
             index += len;
             continue;
         }
-        let word_end = index + text[index..].iter().take_while(|&&byte| !is_white(byte)).count();
+        let word_end = index
+            + text[index..]
+                .iter()
+                .take_while(|&&byte| !is_white(byte))
+                .count();
         if text[index..word_end].is_ascii() {
             splitter.other_word(index, word_end);
             index = word_end;
@@ -145,7 +161,8 @@ pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: 
                 continue;
             }
             splitter.other_word(run_start, index);
-            let selector = first_char(&text[index + len..word_end]).filter(|it| is_in(VARIATION_SELECTORS, it.0 as u32));
+            let selector = first_char(&text[index + len..word_end])
+                .filter(|it| is_in(VARIATION_SELECTORS, it.0 as u32));
             let end = index + len + selector.map_or(0, |it| it.1);
             let kind = if is_punctuation(c) {
                 TokenKind::CjkPunctuation
@@ -164,11 +181,19 @@ pub(crate) fn split_text(text: &[u8], at: impl Fn(usize, usize) -> Str, tokens: 
 }
 
 fn trim_html_whitespace_start(text: &[u8]) -> &[u8] {
-    &text[text.iter().take_while(|byte| matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' ')).count()..]
+    &text[text
+        .iter()
+        .take_while(|byte| matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' '))
+        .count()..]
 }
 
 fn trim_html_whitespace_end(text: &[u8]) -> &[u8] {
-    &text[..text.len() - text.iter().rev().take_while(|byte| matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' ')).count()]
+    &text[..text.len()
+        - text
+            .iter()
+            .rev()
+            .take_while(|byte| matches!(byte, b'\t' | b'\n' | 0x0C | b'\r' | b' '))
+            .count()]
 }
 
 /// The length of a `>` at the start of `line`, however it is written, with the blanks around it.
@@ -184,7 +209,8 @@ fn blockquote_marker_len(line: &[u8]) -> Option<usize> {
         };
         let zeros = digits.iter().take_while(|&&byte| byte == b'0').count();
         let value = digits.get(zeros..zeros + 2)?;
-        (value.eq_ignore_ascii_case(wanted) && digits.get(zeros + 2) == Some(&b';')).then_some(prefix + zeros + 3)
+        (value.eq_ignore_ascii_case(wanted) && digits.get(zeros + 2) == Some(&b';'))
+            .then_some(prefix + zeros + 3)
     };
     let len = if rest.starts_with(b">") {
         1
@@ -205,7 +231,11 @@ fn count_newline_references(line: &[u8]) -> usize {
     while let Some(at) = bun_core::strings::index_of_char_usize(&line[index..], b'&') {
         let start = index + at;
         index = start + 1;
-        let backslashes = line[..start].iter().rev().take_while(|&&byte| byte == b'\\').count();
+        let backslashes = line[..start]
+            .iter()
+            .rev()
+            .take_while(|&&byte| byte == b'\\')
+            .count();
         if backslashes % 2 == 1 {
             continue;
         }
@@ -217,7 +247,9 @@ fn count_newline_references(line: &[u8]) -> usize {
                     _ => (number, b"10;"),
                 };
                 let zeros = digits.iter().take_while(|&&byte| byte == b'0').count();
-                digits.get(zeros..zeros + wanted.len()).is_some_and(|it| it.eq_ignore_ascii_case(wanted))
+                digits
+                    .get(zeros..zeros + wanted.len())
+                    .is_some_and(|it| it.eq_ignore_ascii_case(wanted))
             });
         count += usize::from(is_newline);
     }
@@ -255,7 +287,12 @@ fn blockquote_raw_text(raw: &[u8], value: &[u8], out: &mut Vec<u8>) {
         }
         let from = match to_keep {
             0 => position,
-            _ => starts.len().checked_sub(to_keep).and_then(|at| starts.get(at)).copied().unwrap_or(0),
+            _ => starts
+                .len()
+                .checked_sub(to_keep)
+                .and_then(|at| starts.get(at))
+                .copied()
+                .unwrap_or(0),
         };
         out.extend_from_slice(&raw_line[from..]);
     }
@@ -267,11 +304,17 @@ pub(crate) fn ordered_item_info(text: &[u8], tree: &Tree, item: NodeId) -> (u64,
     let Some(node) = tree.get(item) else {
         return (0, 0);
     };
-    let end = tree.get(node.first_child).map_or(node.end, |child| child.start);
-    let head = text.get(node.start as usize..end as usize).unwrap_or_default();
+    let end = tree
+        .get(node.first_child)
+        .map_or(node.end, |child| child.start);
+    let head = text
+        .get(node.start as usize..end as usize)
+        .unwrap_or_default();
     let head = crate::range::trim_start(head);
     let digits = head.iter().take_while(|byte| byte.is_ascii_digit()).count();
-    let number = head[..digits].iter().fold(0u64, |number, digit| number * 10 + u64::from(digit - b'0'));
+    let number = head[..digits]
+        .iter()
+        .fold(0u64, |number, digit| number * 10 + u64::from(digit - b'0'));
     let after = head.get(digits + 1..).unwrap_or_default();
     (number, after.len() - crate::range::trim_start(after).len())
 }
@@ -281,7 +324,9 @@ pub(crate) fn is_indented_code(text: &[u8], tree: &Tree, code: NodeId) -> bool {
     let Some(node) = tree.get(code).filter(|node| node.kind == Kind::Code) else {
         return false;
     };
-    let source = text.get(node.start as usize..node.end as usize).unwrap_or_default();
+    let source = text
+        .get(node.start as usize..node.end as usize)
+        .unwrap_or_default();
     let source = source.strip_prefix(b"\n").unwrap_or(source);
     source.starts_with(b"    ") || source.starts_with(b"\t")
 }
@@ -403,7 +448,10 @@ impl Preprocessor<'_> {
             // Prettier's `htmlToJsx`
             Kind::Html
                 if self.is_mdx
-                    && !self.tree.kind(node.parent).is_some_and(super::printer::Printer::is_inline_wrapper)
+                    && !self
+                        .tree
+                        .kind(node.parent)
+                        .is_some_and(super::printer::Printer::is_inline_wrapper)
                     && !super::inline::has_html_comment(self.tree.str(self.text, node.value)) =>
             {
                 if let Some(node) = self.tree.get_mut(id) {
@@ -441,7 +489,10 @@ impl Preprocessor<'_> {
             return true;
         }
         let first = node.first_child;
-        let second = self.tree.get(first).map_or(super::ast::NONE, |item| item.next);
+        let second = self
+            .tree
+            .get(first)
+            .map_or(super::ast::NONE, |item| item.next);
         if ordered_item_info(self.original, self.tree, first).1 > 1 {
             return true;
         }
@@ -474,7 +525,11 @@ impl Preprocessor<'_> {
         if let Some((_, true)) = around.paragraph
             && bun_core::strings::contains_char(raw, b'\n')
         {
-            blockquote_raw_text(raw, self.tree.str(self.text, node.value), &mut without_markers);
+            blockquote_raw_text(
+                raw,
+                self.tree.str(self.text, node.value),
+                &mut without_markers,
+            );
             text = &without_markers;
         }
         if around.paragraph.is_some() && self.tree.kind(node.parent) == Some(Kind::Paragraph) {
@@ -489,7 +544,10 @@ impl Preprocessor<'_> {
         // remark-parse 8 gives the characters that are meant, and Prettier's `restoreUnescapedCharacter` puts back
         // how they are written, except for `*` and `_`, which are escaped anew where they are written.
         let mut unescaped = Vec::new();
-        if self.is_mdx && (bun_core::strings::contains(text, b"\\*") || bun_core::strings::contains(text, b"\\_")) {
+        if self.is_mdx
+            && (bun_core::strings::contains(text, b"\\*")
+                || bun_core::strings::contains(text, b"\\_"))
+        {
             let mut index = 0;
             while let Some(&byte) = text.get(index) {
                 match (byte, text.get(index + 1)) {
@@ -520,7 +578,9 @@ impl Preprocessor<'_> {
             }
         };
         let is_risky = around.paragraph.is_some_and(|(paragraph, _)| {
-            self.tree.get(paragraph).is_some_and(|it| it.kind == Kind::Paragraph && it.spread)
+            self.tree
+                .get(paragraph)
+                .is_some_and(|it| it.kind == Kind::Paragraph && it.spread)
         });
         if is_risky {
             if let Some(node) = self.tree.get_mut(id) {
@@ -532,10 +592,12 @@ impl Preprocessor<'_> {
         // escapes.
         if !self.wraps_lines
             && text.is_ascii()
-            && !((around.is_in_emphasis || self.is_mdx) && bun_core::strings::index_of_any(text, b"*_").is_some())
+            && !((around.is_in_emphasis || self.is_mdx)
+                && bun_core::strings::index_of_any(text, b"*_").is_some())
         {
             if let Some(node) = self.tree.get_mut(id) {
-                (node.kind, node.value, node.number, node.is_aligned) = (Kind::Sentence, base, PLAIN, around.is_in_emphasis);
+                (node.kind, node.value, node.number, node.is_aligned) =
+                    (Kind::Sentence, base, PLAIN, around.is_in_emphasis);
             }
             return;
         }
@@ -545,7 +607,8 @@ impl Preprocessor<'_> {
         self.tree.tokens = tokens;
         let count = self.tree.tokens.len() - first_token;
         if let Some(node) = self.tree.get_mut(id) {
-            (node.kind, node.first_align, node.number) = (Kind::Sentence, first_token as u32, count as u32);
+            (node.kind, node.first_align, node.number) =
+                (Kind::Sentence, first_token as u32, count as u32);
         }
     }
 }

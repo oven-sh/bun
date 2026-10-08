@@ -98,7 +98,8 @@ pub type FormatJavaScript = fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bo
 
 /// Parses JavaScript or TypeScript, which this crate cannot do by itself. It is given the name of a file that says which
 /// of them it is, the code, whether that is a script, and what to call with the file, errors or not.
-pub type ParseJavaScript = fn(&[u8], &[u8], bool, &mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>));
+pub type ParseJavaScript =
+    fn(&[u8], &[u8], bool, &mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>));
 
 /// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
 /// what is less than a program.
@@ -145,7 +146,13 @@ impl HtmlRoot {
     /// Prettier's `NGRoot`: the code is an expression of Angular, in which `a | b(c)` stands for the pipe `a | b: c`.
     #[inline]
     pub fn is_angular(self) -> bool {
-        matches!(self, HtmlRoot::NgAction | HtmlRoot::NgBinding | HtmlRoot::NgDirective | HtmlRoot::NgInterpolation)
+        matches!(
+            self,
+            HtmlRoot::NgAction
+                | HtmlRoot::NgBinding
+                | HtmlRoot::NgDirective
+                | HtmlRoot::NgInterpolation
+        )
     }
 }
 
@@ -170,16 +177,32 @@ impl FormatOptions {
                 }
                 n = n.saturating_mul(10).saturating_add(u32::from(digit - b'0'));
             }
-            if value.is_empty() || n > max { Err(InvalidOption) } else { Ok(n) }
+            if value.is_empty() || n > max {
+                Err(InvalidOption)
+            } else {
+                Ok(n)
+            }
         };
-        let quotes = |single: bool| if single { QuoteStyle::Single } else { QuoteStyle::Double };
+        let quotes = |single: bool| {
+            if single {
+                QuoteStyle::Single
+            } else {
+                QuoteStyle::Double
+            }
+        };
         match name {
             b"printWidth" if value == b"Infinity" => self.line_width = LineWidth(u16::MAX),
             b"printWidth" => self.line_width = LineWidth(number(u32::from(u16::MAX))? as u16),
             // Markdown asks whether something is a multiple of it. Nothing is as wide as 255 columns.
-            b"tabWidth" => self.indent_width = IndentWidth(number(u32::MAX)?.min(u32::from(u8::MAX)) as u8),
+            b"tabWidth" => {
+                self.indent_width = IndentWidth(number(u32::MAX)?.min(u32::from(u8::MAX)) as u8)
+            }
             b"useTabs" => {
-                self.indent_style = if boolean()? { IndentStyle::Tab } else { IndentStyle::Space };
+                self.indent_style = if boolean()? {
+                    IndentStyle::Tab
+                } else {
+                    IndentStyle::Space
+                };
             }
             b"endOfLine" => {
                 self.line_ending = match value {
@@ -191,7 +214,11 @@ impl FormatOptions {
                 };
             }
             b"semi" => {
-                self.semicolons = if boolean()? { Semicolons::Always } else { Semicolons::AsNeeded };
+                self.semicolons = if boolean()? {
+                    Semicolons::Always
+                } else {
+                    Semicolons::AsNeeded
+                };
             }
             b"singleQuote" => self.quote_style = quotes(boolean()?),
             b"jsxSingleQuote" => self.jsx_quote_style = quotes(boolean()?),
@@ -215,7 +242,8 @@ impl FormatOptions {
             b"bracketSameLine" => self.bracket_same_line = BracketSameLine(boolean()?),
             // The name it had before 2.4. One of the two is enough.
             b"jsxBracketSameLine" => {
-                self.bracket_same_line = BracketSameLine(boolean()? || self.bracket_same_line.value());
+                self.bracket_same_line =
+                    BracketSameLine(boolean()? || self.bracket_same_line.value());
             }
             b"arrowParens" => {
                 self.arrow_parentheses = match value {
@@ -312,7 +340,9 @@ impl FormatOptions {
                         };
                     }
                     b"descriptionTag" => jsdoc.description_tag = boolean()?,
-                    b"keepUnparsableExampleIndent" => jsdoc.keep_unparsable_example_indent = boolean()?,
+                    b"keepUnparsableExampleIndent" => {
+                        jsdoc.keep_unparsable_example_indent = boolean()?
+                    }
                     _ => return Err(InvalidOption),
                 }
             }
@@ -655,11 +685,17 @@ impl FormatTrailingCommas {
     pub fn trailing_separator(self, options: &FormatOptions) -> TrailingSeparator {
         match self {
             _ if options.trailing_commas.is_none() => TrailingSeparator::Omit,
-            FormatTrailingCommas::All | FormatTrailingCommas::Arguments if !options.trailing_commas.is_all() => {
+            FormatTrailingCommas::All | FormatTrailingCommas::Arguments
+                if !options.trailing_commas.is_all() =>
+            {
                 TrailingSeparator::Omit
             }
-            FormatTrailingCommas::Arguments if options.in_html.root.is_angular() => TrailingSeparator::Omit,
-            FormatTrailingCommas::All | FormatTrailingCommas::Arguments | FormatTrailingCommas::ES5 => TrailingSeparator::Allowed,
+            FormatTrailingCommas::Arguments if options.in_html.root.is_angular() => {
+                TrailingSeparator::Omit
+            }
+            FormatTrailingCommas::All
+            | FormatTrailingCommas::Arguments
+            | FormatTrailingCommas::ES5 => TrailingSeparator::Allowed,
         }
     }
 }

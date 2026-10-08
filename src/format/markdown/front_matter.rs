@@ -16,9 +16,12 @@ pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
     let first_line = &text[3..first_line_break];
     let language_start = 3 + (first_line.len() - crate::range::trim_start(first_line).len());
     let language = crate::range::trim_end(crate::range::trim_start(first_line));
-    let find = |needle: &[u8]| Some(first_line_break + bun_core::strings::index_of(&text[first_line_break..], needle)?);
+    let find = |needle: &[u8]| {
+        Some(first_line_break + bun_core::strings::index_of(&text[first_line_break..], needle)?)
+    };
     let is_yaml = delimiter == b"---" && matches!(language, b"" | b"yaml");
-    let end_delimiter = find(&[b"\n", delimiter].concat()).or_else(|| find(b"\n...").filter(|_| is_yaml))?;
+    let end_delimiter =
+        find(&[b"\n", delimiter].concat()).or_else(|| find(b"\n...").filter(|_| is_yaml))?;
     Some(FrontMatter {
         end: end_delimiter + 4,
         explicit_language: (language_start, language_start + language.len()),

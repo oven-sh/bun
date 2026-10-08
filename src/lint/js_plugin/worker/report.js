@@ -133,9 +133,7 @@ function messageOf(descriptor, messages) {
     return messages[id];
   }
   if (descriptor.message) return descriptor.message;
-  throw new TypeError(
-    "Missing `message` property in report() call; add a message that describes the linting problem.",
-  );
+  throw new TypeError("Missing `message` property in report() call; add a message that describes the linting problem.");
 }
 
 // What is reported about the file:

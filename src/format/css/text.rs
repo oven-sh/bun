@@ -24,7 +24,11 @@ fn white_space_len_at_end(text: &[u8]) -> Option<usize> {
         _ => {}
     }
     (2..=3usize).find(|&len| {
-        text.len().checked_sub(len).and_then(|at| text.get(at..)).and_then(white_space_len_at_start) == Some(len)
+        text.len()
+            .checked_sub(len)
+            .and_then(|at| text.get(at..))
+            .and_then(white_space_len_at_start)
+            == Some(len)
     })
 }
 
@@ -57,7 +61,10 @@ pub(crate) fn trim(text: &[u8]) -> &[u8] {
 /// `text.toLowerCase()`
 pub(crate) fn to_lower_case(text: &[u8]) -> Cow<'_, [u8]> {
     // Neither an upper case letter nor anything that is not ASCII.
-    if text.iter().all(|byte| !matches!(byte, b'A'..=b'Z' | 0x80..)) {
+    if text
+        .iter()
+        .all(|byte| !matches!(byte, b'A'..=b'Z' | 0x80..))
+    {
         return Cow::Borrowed(text);
     }
     if text.is_ascii() {
@@ -102,7 +109,9 @@ impl ByteSet {
     /// The index of the first byte of `text` from `from` on that is in the set.
     pub(crate) fn find(&self, text: &[u8], from: usize) -> Option<usize> {
         let rest = text.get(from..)?;
-        rest.iter().position(|&byte| self.0[byte as usize]).map(|at| from + at)
+        rest.iter()
+            .position(|&byte| self.0[byte as usize])
+            .map(|at| from + at)
     }
 }
 

@@ -25,11 +25,13 @@ impl Parser<'_> {
                 Some(b' ' | b'\t' | b'\n' | b'\r') => self.at += 1,
                 Some(b'/') if self.text.get(self.at + 1) == Some(&b'/') => {
                     let rest = &self.text[self.at..];
-                    self.at += bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
+                    self.at +=
+                        bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
                 }
                 Some(b'/') if self.text.get(self.at + 1) == Some(&b'*') => {
                     let rest = &self.text[self.at + 2..];
-                    self.at += 2 + bun_core::strings::index_of(rest, b"*/").map_or(rest.len(), |i| i + 2);
+                    self.at +=
+                        2 + bun_core::strings::index_of(rest, b"*/").map_or(rest.len(), |i| i + 2);
                 }
                 _ => return,
             }
@@ -88,7 +90,10 @@ impl Parser<'_> {
             }
             b'-' | b'0'..=b'9' => {
                 let start = self.at;
-                while matches!(self.text.get(self.at), Some(b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')) {
+                while matches!(
+                    self.text.get(self.at),
+                    Some(b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                ) {
                     self.at += 1;
                 }
                 let written = std::str::from_utf8(&self.text[start..self.at]).ok()?;
@@ -130,7 +135,8 @@ impl Parser<'_> {
                 b't' => out.push(b'\t'),
                 b'u' => {
                     let mut unit = self.hex4()?;
-                    if (0xD800..0xDC00).contains(&unit) && self.text[self.at..].starts_with(b"\\u") {
+                    if (0xD800..0xDC00).contains(&unit) && self.text[self.at..].starts_with(b"\\u")
+                    {
                         let before = self.at;
                         self.at += 2;
                         let low = self.hex4()?;

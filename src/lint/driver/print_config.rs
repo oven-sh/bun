@@ -46,7 +46,12 @@ pub(crate) fn text(text: &[u8]) -> Json {
 }
 
 pub(crate) fn object(entries: Vec<(&[u8], Json)>) -> Json {
-    Json::Object(entries.into_iter().map(|(key, value)| (key.to_vec(), value)).collect())
+    Json::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.to_vec(), value))
+            .collect(),
+    )
 }
 
 /// What ESLint prints for a file that has `config`, but for the default options of the rules, which
@@ -60,18 +65,33 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     if config.linter.no_inline_config {
         linter_options.push((&b"noInlineConfig"[..], Json::Bool(true)));
     }
-    linter_options.push((b"reportUnusedDisableDirectives", number(config.linter.report_unused_disable_directives as u32)));
+    linter_options.push((
+        b"reportUnusedDisableDirectives",
+        number(config.linter.report_unused_disable_directives as u32),
+    ));
     if config.linter.report_unused_inline_configs as u32 != 0 {
-        linter_options.push((b"reportUnusedInlineConfigs", number(config.linter.report_unused_inline_configs as u32)));
+        linter_options.push((
+            b"reportUnusedInlineConfigs",
+            number(config.linter.report_unused_inline_configs as u32),
+        ));
     }
     let rules = config.rules.iter().map(|rule| {
         let mut setting = vec![number(rule.severity as u32)];
         setting.extend(rule.options.iter().cloned());
-        (RuleId::Known(rule.entry.meta).to_vec(), Json::Array(setting))
+        (
+            RuleId::Known(rule.entry.meta).to_vec(),
+            Json::Array(setting),
+        )
     });
     let mut plugins = vec![text(b"@")];
     let of_rules = config.rules.iter().map(|it| it.entry.meta.plugin);
-    for prefix in config.plugins.clone().unwrap_or_else(|| of_rules.collect()).iter().map(|it| text(it.prefix().as_bytes())) {
+    for prefix in config
+        .plugins
+        .clone()
+        .unwrap_or_else(|| of_rules.collect())
+        .iter()
+        .map(|it| text(it.prefix().as_bytes()))
+    {
         if prefix != text(b"") && !plugins.contains(&prefix) {
             plugins.push(prefix);
         }
@@ -96,7 +116,14 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
                 Parser::Other => b"unknown",
             }),
         ),
-        (b"parserOptions", if matches!(language.parser_options, Json::Null) { object(Vec::new()) } else { language.parser_options.clone() }),
+        (
+            b"parserOptions",
+            if matches!(language.parser_options, Json::Null) {
+                object(Vec::new())
+            } else {
+                language.parser_options.clone()
+            },
+        ),
     ];
     if !language.globals.is_empty() {
         let globals = language.globals.iter().map(|(name, global)| {
@@ -115,7 +142,10 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     }
     all.push((b"rules", Json::Object(rules.collect())));
     all.push((b"plugins", Json::Array(plugins)));
-    all.push((b"language", text(config.language_name.as_deref().unwrap_or(b"@/js"))));
+    all.push((
+        b"language",
+        text(config.language_name.as_deref().unwrap_or(b"@/js")),
+    ));
     all.push((b"languageOptions", object(language_options)));
     if let Some(processor) = &config.processor {
         all.push((b"processor", text(processor)));

@@ -18,7 +18,9 @@
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
-use bun_lint::modules::{Declaration, Flavor, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of};
+use bun_lint::modules::{
+    Declaration, Flavor, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of,
+};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::config::{Project, find_config, load_overriding, without_config};
@@ -52,7 +54,8 @@ impl Store {
     }
 
     fn disk(&self) -> &Disk {
-        self.disk.get_or_init(|| Disk::with_already_read(1, FxHashMap::default(), &self.cwd))
+        self.disk
+            .get_or_init(|| Disk::with_already_read(1, FxHashMap::default(), &self.cwd))
     }
 }
 
@@ -75,7 +78,9 @@ struct Complete {
 }
 
 /// The extensions that oxlint tries, in its order.
-const EXTENSIONS: [&[u8]; 8] = [b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx"];
+const EXTENSIONS: [&[u8]; 8] = [
+    b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx",
+];
 
 struct ProjectResolver<'h> {
     resolver: Resolver<'h>,
@@ -177,15 +182,30 @@ impl<'h> Graph<'h> {
     fn load_project(&self, config: &[u8], directory: &[u8]) -> Project {
         let flag = |name: &[u8]| (name.to_vec(), Json::Bool(true));
         // Whatever the project says: what is linted is also JavaScript.
-        let over = || vec![flag(b"allowJs"), flag(b"resolveJsonModule"), flag(b"allowImportingTsExtensions")];
+        let over = || {
+            vec![
+                flag(b"allowJs"),
+                flag(b"resolveJsonModule"),
+                flag(b"allowImportingTsExtensions"),
+            ]
+        };
         let (disk, session) = (self.store.disk(), &self.store.session);
-        let loaded = (!config.is_empty()).then(|| load_overriding(&WithoutListings(disk), session, config, &|_| over()).ok());
+        let loaded = (!config.is_empty())
+            .then(|| load_overriding(&WithoutListings(disk), session, config, &|_| over()).ok());
         loaded.flatten().unwrap_or_else(|| {
             let mut options = over();
             options.push((b"module".to_vec(), Json::String(b"esnext".to_vec())));
-            options.push((b"moduleResolution".to_vec(), Json::String(b"bundler".to_vec())));
+            options.push((
+                b"moduleResolution".to_vec(),
+                Json::String(b"bundler".to_vec()),
+            ));
             // With a file, so that the directory is not searched for files.
-            without_config(&WithoutListings(disk), directory, Json::Object(options), vec![b"index.ts".to_vec()])
+            without_config(
+                &WithoutListings(disk),
+                directory,
+                Json::Object(options),
+                vec![b"index.ts".to_vec()],
+            )
         })
     }
 
@@ -208,22 +228,39 @@ impl<'h> Graph<'h> {
         }
         let store: &'h Store = self.store;
         let mut project = self.load_project(config, directory);
-        let base_url = project.raw_compiler_options.iter().find(|it| it.0 == b"baseUrl").and_then(|it| it.1.as_str()).map(<[u8]>::to_vec);
+        let base_url = project
+            .raw_compiler_options
+            .iter()
+            .find(|it| it.0 == b"baseUrl")
+            .and_then(|it| it.1.as_str())
+            .map(<[u8]>::to_vec);
         if let Some(base_url) = &base_url {
             project.options.paths_base_dir.clone_from(base_url);
         }
         let project = store.session.keep(project);
         let resolver = Resolver::new(&store.session, store.disk(), &project.options);
-        self.resolvers.insert_ref(config.clone(), ProjectResolver { resolver, base_url })
+        self.resolvers
+            .insert_ref(config.clone(), ProjectResolver { resolver, base_url })
     }
 
     fn flavor(&self) -> Flavor {
-        if self.follows_oxlint.load(Ordering::Relaxed) { Flavor::Oxlint } else { Flavor::EslintPluginImport }
+        if self.follows_oxlint.load(Ordering::Relaxed) {
+            Flavor::Oxlint
+        } else {
+            Flavor::EslintPluginImport
+        }
     }
 
     /// The path, and whether it was found in a `node_modules`.
-    fn resolve_path(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<(Cow<'h, [u8]>, bool)> {
-        let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../") || matches!(specifier, b"." | b"..");
+    fn resolve_path(
+        &self,
+        from: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> Option<(Cow<'h, [u8]>, bool)> {
+        let is_relative = specifier.starts_with(b"./")
+            || specifier.starts_with(b"../")
+            || matches!(specifier, b"." | b"..");
         if is_relative {
             if self.flavor().resolves_as_node()
                 && let Some(found) = self.resolve_relative_as_node(from, specifier)
@@ -233,11 +270,18 @@ impl<'h> Graph<'h> {
             return self.resolve_with_project(from, specifier, is_require);
         }
         // What is not relative means the same in all the files of a directory, and takes long to find.
-        let key = [directory_of(from), if is_require { b"\0r\0" } else { b"\0i\0" }, specifier].concat();
+        let key = [
+            directory_of(from),
+            if is_require { b"\0r\0" } else { b"\0i\0" },
+            specifier,
+        ]
+        .concat();
         let found = match self.not_relative.get_ref(&key[..]) {
             Some(found) => found,
             None => {
-                let found = self.resolve_with_project(from, specifier, is_require).map(|it| (it.0.into_owned(), it.1));
+                let found = self
+                    .resolve_with_project(from, specifier, is_require)
+                    .map(|it| (it.0.into_owned(), it.1));
                 self.not_relative.insert_ref(key, found)
             }
         };
@@ -250,17 +294,35 @@ impl<'h> Graph<'h> {
         let disk = self.store.disk();
         let base = join(directory_of(from), specifier);
         let file = |path: Vec<u8>| disk.is_file(&path).then_some(path);
-        let aliases: [(&[u8], [&[u8]; 2]); 3] = [(b".js", [b".js", b".ts"]), (b".mjs", [b".mjs", b".mts"]), (b".cjs", [b".cjs", b".cts"])];
+        let aliases: [(&[u8], [&[u8]; 2]); 3] = [
+            (b".js", [b".js", b".ts"]),
+            (b".mjs", [b".mjs", b".mts"]),
+            (b".cjs", [b".cjs", b".cts"]),
+        ];
         let found = match aliases.iter().find(|it| base.ends_with(it.0)) {
-            Some((written, tried)) => tried.iter().find_map(|it| file([&base[..base.len() - written.len()], it].concat())),
+            Some((written, tried)) => tried
+                .iter()
+                .find_map(|it| file([&base[..base.len() - written.len()], it].concat())),
             None => {
-                let as_file = || file(base.clone()).or_else(|| EXTENSIONS.iter().find_map(|it| file([&base[..], it].concat())));
-                let mut found = if specifier.ends_with(b"/") { None } else { as_file() };
+                let as_file = || {
+                    file(base.clone()).or_else(|| {
+                        EXTENSIONS
+                            .iter()
+                            .find_map(|it| file([&base[..], it].concat()))
+                    })
+                };
+                let mut found = if specifier.ends_with(b"/") {
+                    None
+                } else {
+                    as_file()
+                };
                 if found.is_none() && disk.is_dir(&base) {
                     if disk.is_file(&join(&base, b"package.json")) {
                         return None;
                     }
-                    found = EXTENSIONS.iter().find_map(|it| file([&base[..], b"/index", it].concat()));
+                    found = EXTENSIONS
+                        .iter()
+                        .find_map(|it| file([&base[..], b"/index", it].concat()));
                 }
                 found
             }
@@ -274,14 +336,27 @@ impl<'h> Graph<'h> {
         }))
     }
 
-    fn resolve_with_project(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<(Cow<'h, [u8]>, bool)> {
-        let mode = if is_require { ResolutionMode::Require } else { ResolutionMode::Import };
+    fn resolve_with_project(
+        &self,
+        from: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> Option<(Cow<'h, [u8]>, bool)> {
+        let mode = if is_require {
+            ResolutionMode::Require
+        } else {
+            ResolutionMode::Import
+        };
         let ProjectResolver { resolver, base_url } = self.resolver(directory_of(from));
         let from_base_url = || {
-            let base_url = base_url.as_ref().filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"))?;
+            let base_url = base_url
+                .as_ref()
+                .filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"))?;
             resolver.resolve_module_name(&join(base_url, specifier), from, mode)
         };
-        let found = resolver.resolve_module_name(specifier, from, mode).or_else(from_base_url)?;
+        let found = resolver
+            .resolve_module_name(specifier, from, mode)
+            .or_else(from_base_url)?;
         let path = match self.flavor().resolves_as_node() {
             true => self.as_node_finds(specifier, found.file_name)?,
             false => Cow::Borrowed(found.file_name),
@@ -299,7 +374,11 @@ impl<'h> Graph<'h> {
         if is_declaration && specifier.ends_with(&found[stem.len() - 2..]) {
             return Some(Cow::Borrowed(found));
         }
-        let stem = if is_declaration { &stem[..stem.len() - 2] } else { stem };
+        let stem = if is_declaration {
+            &stem[..stem.len() - 2]
+        } else {
+            stem
+        };
         let written = EXTENSIONS.iter().find(|it| specifier.ends_with(it));
         let tried: &[&[u8]] = match written.copied() {
             Some(b".js") => &[b".js", b".ts"],
@@ -318,7 +397,13 @@ impl<'h> Graph<'h> {
         })
     }
 
-    fn make_record(&self, path: Vec<u8>, requests: &[Request], is_always_checked: bool, linted_as: Option<Vec<u8>>) -> Recorded<'h> {
+    fn make_record(
+        &self,
+        path: Vec<u8>,
+        requests: &[Request],
+        is_always_checked: bool,
+        linted_as: Option<Vec<u8>>,
+    ) -> Recorded<'h> {
         let resolved = requests.iter().filter_map(|it| {
             let declaration = Declaration {
                 specifier: it.specifier.into(),
@@ -326,7 +411,9 @@ impl<'h> Graph<'h> {
                 is_dynamic: it.kind == RequestKind::Dynamic,
                 is_only_importing_types: it.is_only_importing_types,
             };
-            let resolved = self.resolve_path(&path, it.specifier, it.kind == RequestKind::Other)?.0;
+            let resolved = self
+                .resolve_path(&path, it.specifier, it.kind == RequestKind::Other)?
+                .0;
             (!(it.may_be_itself && *resolved == *path)).then_some((resolved, declaration, it.kind))
         });
         Recorded {
@@ -348,7 +435,11 @@ impl<'h> Graph<'h> {
         };
         with_file(path, &text, &language, None, |file| {
             // As eslint-plugin-import: nothing is known of a file that cannot be parsed.
-            let requests = if file.has_parse_errors() { Vec::new() } else { requests_of(file, self.flavor()) };
+            let requests = if file.has_parse_errors() {
+                Vec::new()
+            } else {
+                requests_of(file, self.flavor())
+            };
             self.make_record(path.to_vec(), &requests, false, None)
         })
     }
@@ -362,7 +453,8 @@ impl<'h> Graph<'h> {
         }
         let mut all = Complete::default();
         // Which modules are known, and which of them are linted and checked in any case.
-        let (mut is_known, mut is_always_checked, mut linted_as) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut is_known, mut is_always_checked, mut linted_as) =
+            (Vec::new(), Vec::new(), Vec::new());
         while !pending.is_empty() {
             let mut unknown: Vec<ModuleId> = Vec::new();
             for record in pending.drain(..) {
@@ -373,7 +465,13 @@ impl<'h> Graph<'h> {
                 for (target, declaration, kind) in record.requests {
                     let target = all.intern(&target);
                     if imports.len() > 16 && positions.len() < imports.len() {
-                        positions.extend(imports.iter().enumerate().skip(positions.len()).map(|(at, it)| (it.module, at)));
+                        positions.extend(
+                            imports
+                                .iter()
+                                .enumerate()
+                                .skip(positions.len())
+                                .map(|(at, it)| (it.module, at)),
+                        );
                     }
                     let existing = match positions.is_empty() {
                         true => imports.iter_mut().find(|it| it.module == target),
@@ -382,8 +480,12 @@ impl<'h> Graph<'h> {
                     match (kind, existing) {
                         (RequestKind::Other, _) => {}
                         // As eslint-plugin-import: the last of these replaces the others.
-                        (RequestKind::Dynamic, Some(existing)) => existing.declarations = SmallVec::from_iter([declaration]),
-                        (RequestKind::Static, Some(existing)) => existing.declarations.push(declaration),
+                        (RequestKind::Dynamic, Some(existing)) => {
+                            existing.declarations = SmallVec::from_iter([declaration])
+                        }
+                        (RequestKind::Static, Some(existing)) => {
+                            existing.declarations.push(declaration)
+                        }
                         (_, None) => imports.push(Import {
                             module: target,
                             declarations: SmallVec::from_iter([declaration]),
@@ -396,13 +498,17 @@ impl<'h> Graph<'h> {
                 }
                 linted_as.resize(all.paths.len(), None);
                 let at = module.0 as usize;
-                (is_known[at], is_always_checked[at], linted_as[at]) = (true, record.is_always_checked, record.linted_as);
+                (is_known[at], is_always_checked[at], linted_as[at]) =
+                    (true, record.is_always_checked, record.linted_as);
                 all.imports.resize_with(all.paths.len(), Vec::new);
                 all.imports[at] = imports;
             }
             unknown.sort_unstable();
             unknown.dedup();
-            unknown.retain(|it| !std::mem::replace(&mut is_known[it.0 as usize], true) && is_read(&all.paths[it.0 as usize]));
+            unknown.retain(|it| {
+                !std::mem::replace(&mut is_known[it.0 as usize], true)
+                    && is_read(&all.paths[it.0 as usize])
+            });
             let mut read = Guarded::new(Vec::new());
             parallel(unknown.len(), &|at| {
                 if let Some(record) = self.read(&all.paths[unknown[at].0 as usize]) {
@@ -413,14 +519,26 @@ impl<'h> Graph<'h> {
         }
         all.find_components();
         let mut sizes = vec![0u32; all.paths.len()];
-        all.components.iter().for_each(|&it| sizes[it as usize] += 1);
+        all.components
+            .iter()
+            .for_each(|&it| sizes[it as usize] += 1);
         let counts_self_imports = self.flavor().counts_self_imports();
         let imports_itself = |at: usize| {
-            let is_value = |it: &Import| !it.declarations.iter().all(|it| it.is_only_importing_types);
-            counts_self_imports && all.imports[at].iter().any(|it| it.module.0 as usize == at && is_value(it))
+            let is_value =
+                |it: &Import| !it.declarations.iter().all(|it| it.is_only_importing_types);
+            counts_self_imports
+                && all.imports[at]
+                    .iter()
+                    .any(|it| it.module.0 as usize == at && is_value(it))
         };
-        let is_checked = |at: usize| is_always_checked[at] || sizes[all.components[at] as usize] > 1 || imports_itself(at);
-        let again = linted_as.into_iter().enumerate().filter_map(|(at, path)| path.filter(|_| is_checked(at))).collect();
+        let is_checked = |at: usize| {
+            is_always_checked[at] || sizes[all.components[at] as usize] > 1 || imports_itself(at)
+        };
+        let again = linted_as
+            .into_iter()
+            .enumerate()
+            .filter_map(|(at, path)| path.filter(|_| is_checked(at)))
+            .collect();
         let _ = self.complete.set(all);
         again
     }
@@ -442,7 +560,8 @@ impl Complete {
         const UNSEEN: u32 = u32::MAX;
         let count = self.paths.len();
         self.imports.resize_with(count, Vec::new);
-        let (mut index, mut low, mut is_on_stack) = (vec![UNSEEN; count], vec![0u32; count], vec![false; count]);
+        let (mut index, mut low, mut is_on_stack) =
+            (vec![UNSEEN; count], vec![0u32; count], vec![false; count]);
         let (mut stack, mut calls): (Vec<u32>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
         let (mut next_index, mut next_component) = (0, 0);
         self.components = vec![0; count];
@@ -462,7 +581,11 @@ impl Complete {
                 if let Some(import) = self.imports[here].get(edge as usize) {
                     top.1 += 1;
                     let to = import.module.0 as usize;
-                    if import.declarations.iter().all(|it| it.is_only_importing_types) {
+                    if import
+                        .declarations
+                        .iter()
+                        .all(|it| it.is_only_importing_types)
+                    {
                         continue;
                     }
                     if index[to] == UNSEEN {
@@ -497,14 +620,19 @@ impl Modules for Graph<'_> {
     }
 
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor) {
-        self.follows_oxlint.store(flavor == Flavor::Oxlint, Ordering::Relaxed);
+        self.follows_oxlint
+            .store(flavor == Flavor::Oxlint, Ordering::Relaxed);
         let real = self.store.disk().realpath(&from_native(path));
         let record = self.make_record(real, requests, is_always_checked, Some(path.to_vec()));
         self.recorded.lock().push(record);
     }
 
     fn find(&self, path: &[u8]) -> Option<ModuleId> {
-        self.complete.get()?.ids.get(&self.store.disk().realpath(&from_native(path))).copied()
+        self.complete
+            .get()?
+            .ids
+            .get(&self.store.disk().realpath(&from_native(path)))
+            .copied()
     }
 
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved> {
@@ -517,15 +645,25 @@ impl Modules for Graph<'_> {
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {
-        self.complete.get().and_then(|it| it.paths.get(module.0 as usize)).map_or(&[], |it| &it[..])
+        self.complete
+            .get()
+            .and_then(|it| it.paths.get(module.0 as usize))
+            .map_or(&[], |it| &it[..])
     }
 
     fn imports(&self, module: ModuleId) -> &[Import] {
-        self.complete.get().and_then(|it| it.imports.get(module.0 as usize)).map_or(&[], |it| &it[..])
+        self.complete
+            .get()
+            .and_then(|it| it.imports.get(module.0 as usize))
+            .map_or(&[], |it| &it[..])
     }
 
     fn component(&self, module: ModuleId) -> u32 {
-        self.complete.get().and_then(|it| it.components.get(module.0 as usize)).copied().unwrap_or(u32::MAX)
+        self.complete
+            .get()
+            .and_then(|it| it.components.get(module.0 as usize))
+            .copied()
+            .unwrap_or(u32::MAX)
     }
 
     fn package_json(&self, path: &[u8]) -> Option<&Json> {

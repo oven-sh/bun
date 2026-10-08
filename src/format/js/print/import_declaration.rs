@@ -2,7 +2,9 @@ use super::program::is_next_line_empty;
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::{format_node, identifier};
 use crate::js::utils::object::FormatKey;
-use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind, is_es5_identifier_name};
+use crate::js::utils::string::{
+    FormatLiteralStringToken, StringLiteralParentKind, is_es5_identifier_name,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -14,10 +16,22 @@ pub(crate) struct FormatStringLiteral<'a> {
 
 impl<'a> Format<'a> for FormatStringLiteral<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_node(self.span, || self.parent, f, |f| {
-            let string = f.source_text().text_for(&self.span);
-            write!(f, FormatLiteralStringToken::new(string, false, StringLiteralParentKind::Expression));
-        });
+        format_node(
+            self.span,
+            || self.parent,
+            f,
+            |f| {
+                let string = f.source_text().text_for(&self.span);
+                write!(
+                    f,
+                    FormatLiteralStringToken::new(
+                        string,
+                        false,
+                        StringLiteralParentKind::Expression
+                    )
+                );
+            },
+        );
     }
 }
 
@@ -34,7 +48,10 @@ pub(crate) fn module_export_name<'a>(name: Ident<'a>, parent: AstNodes<'a>) -> i
 }
 
 /// `"source" with { type: "json" }` of the import or export `statement`.
-pub(crate) fn format_import_and_export_source_with_clause<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn format_import_and_export_source_with_clause<'a>(
+    statement: Stmt<'a>,
+    f: &mut Formatter<'a>,
+) {
     let parent = statement.as_ast_nodes();
     let Some(span) = statement.module_specifier_span() else {
         return;
@@ -64,7 +81,9 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(statement: Stmt<'a
                 .iter()
                 .take_while(|comment| !comment.preceded_by_newline())
                 .enumerate()
-                .filter(|(_, comment)| comment.span.end <= braces.start || comment.followed_by_newline())
+                .filter(|(_, comment)| {
+                    comment.span.end <= braces.start || comment.followed_by_newline()
+                })
                 .last()
                 .map_or(0, |(index, _)| index + 1);
             comments.get(..count).unwrap_or_default()
@@ -74,7 +93,11 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(statement: Stmt<'a
     write_with_clause(with_clause, f);
 }
 
-pub(crate) fn write_import_declaration<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_import_declaration<'a>(
+    statement: Stmt<'a>,
+    import: Import<'a>,
+    f: &mut Formatter<'a>,
+) {
     write!(f, "import ");
     if let Some(phase) = import.phase() {
         write!(f, [phase, space()]);
@@ -105,7 +128,17 @@ fn write_import_specifiers<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut 
         write!(f, [",", space()]);
     }
     if let (Some(namespace), Some(span)) = (import.namespace(), import.namespace_span()) {
-        format_node(span, || node, f, |f| write!(f, ["*", space(), "as", space(), identifier(namespace, node)]));
+        format_node(
+            span,
+            || node,
+            f,
+            |f| {
+                write!(
+                    f,
+                    ["*", space(), "as", space(), identifier(namespace, node)]
+                )
+            },
+        );
         if !has_braces {
             return;
         }
@@ -113,37 +146,57 @@ fn write_import_specifiers<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut 
     }
 
     let should_insert_space_around_brackets = f.options().bracket_spacing.value();
-    let is_only_specifier = named.len() == 1 && import.default().is_none() && import.namespace().is_none();
+    let is_only_specifier =
+        named.len() == 1 && import.default().is_none() && import.namespace().is_none();
 
     match named.first() {
         None => write!(f, "{}"),
-        Some(only) if is_only_specifier && !only_specifier_has_comments(statement, only.span(), f) => write!(
-            f,
-            [
-                "{",
-                maybe_space(should_insert_space_around_brackets),
-                only,
-                maybe_space(should_insert_space_around_brackets),
-                "}",
-            ]
-        ),
+        Some(only)
+            if is_only_specifier && !only_specifier_has_comments(statement, only.span(), f) =>
+        {
+            write!(
+                f,
+                [
+                    "{",
+                    maybe_space(should_insert_space_around_brackets),
+                    only,
+                    maybe_space(should_insert_space_around_brackets),
+                    "}",
+                ]
+            )
+        }
         Some(_) => write!(f, ["{", FormatSpecifiers(statement, named), "}"]),
     }
 }
 
 /// Whether a comment belongs to `specifier`, the only one of the import or export `statement`. One
 /// inside of it does if it starts or ends its line, otherwise it belongs to a name.
-pub(crate) fn only_specifier_has_comments<'a>(statement: Stmt<'a>, specifier: Span, f: &Formatter<'a>) -> bool {
+pub(crate) fn only_specifier_has_comments<'a>(
+    statement: Stmt<'a>,
+    specifier: Span,
+    f: &Formatter<'a>,
+) -> bool {
     !f.is_quiet()
-        && (f.comments().comments_before_character(statement.span().start, b'}').iter().any(|comment| {
-            !specifier.contains(comment.span) || comment.preceded_by_newline() || comment.followed_by_newline()
-        }) || !comments_before_from(specifier.end, statement, f).is_empty())
+        && (f
+            .comments()
+            .comments_before_character(statement.span().start, b'}')
+            .iter()
+            .any(|comment| {
+                !specifier.contains(comment.span)
+                    || comment.preceded_by_newline()
+                    || comment.followed_by_newline()
+            })
+            || !comments_before_from(specifier.end, statement, f).is_empty())
 }
 
 /// `{ a } /* comment */ from "a"`: of the comments that are not printed yet between `position`,
 /// where the last specifier of `statement` ends, and the source, those that trail the specifier:
 /// the ones that end their line, and the ones before the `from` that do not start their line.
-fn comments_before_from<'a>(mut position: u32, statement: Stmt<'a>, f: &Formatter<'a>) -> &'a [Comment] {
+fn comments_before_from<'a>(
+    mut position: u32,
+    statement: Stmt<'a>,
+    f: &Formatter<'a>,
+) -> &'a [Comment] {
     let Some(source) = statement.module_specifier_span() else {
         return &[];
     };
@@ -169,16 +222,26 @@ impl<'a, T: Handle<'a> + Format<'a> + Spanned> Format<'a> for FormatSpecifiers<'
         let FormatSpecifiers(statement, specifiers) = *self;
         let format_specifiers = format_with(|f| {
             let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
-            let iter = specifiers.iter().enumerate().map(|(index, specifier)| FormatSpecifier {
-                specifier,
-                statement,
-                next_start: specifiers.get(index + 1).map(|next| next.span().start),
-            });
-            f.join_with(soft_line_break_or_space())
-                .entries(FormatSeparatedIter::new(iter, ",").with_trailing_separator(trailing_separator));
+            let iter = specifiers
+                .iter()
+                .enumerate()
+                .map(|(index, specifier)| FormatSpecifier {
+                    specifier,
+                    statement,
+                    next_start: specifiers.get(index + 1).map(|next| next.span().start),
+                });
+            f.join_with(soft_line_break_or_space()).entries(
+                FormatSeparatedIter::new(iter, ",").with_trailing_separator(trailing_separator),
+            );
         });
         let needs_space = f.options().bracket_spacing.value();
-        write!(f, group(&soft_block_indent_with_maybe_space(&format_specifiers, needs_space)));
+        write!(
+            f,
+            group(&soft_block_indent_with_maybe_space(
+                &format_specifiers,
+                needs_space
+            ))
+        );
     }
 }
 
@@ -203,10 +266,20 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
         }
         // What leads the source is hidden from the last specifier.
         let end = self.specifier.span().end;
-        let source = self.statement.module_specifier_span().filter(|_| self.next_start.is_none());
+        let source = self
+            .statement
+            .module_specifier_span()
+            .filter(|_| self.next_start.is_none());
         let limit = source.and_then(|source| {
             let is_leading = |it: &&Comment| it.preceded_by_newline() && !it.followed_by_newline();
-            Some(f.comments().comments_in_range(end, source.start).iter().find(is_leading)?.span.start)
+            Some(
+                f.comments()
+                    .comments_in_range(end, source.start)
+                    .iter()
+                    .find(is_leading)?
+                    .span
+                    .start,
+            )
         });
         let previous_limit = limit.map(|limit| f.comments_mut().limit_comments_up_to(limit));
         write!(f, self.specifier);
@@ -219,7 +292,10 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
         let comments = match self.next_start {
             Some(next_start) => {
                 let comments = f.comments().comments_before(next_start);
-                let count = comments.iter().rposition(|it| it.followed_by_newline()).map_or(0, |last| last + 1);
+                let count = comments
+                    .iter()
+                    .rposition(|it| it.followed_by_newline())
+                    .map_or(0, |last| last + 1);
                 comments.get(..count).unwrap_or_default()
             }
             None => comments_before_from(end, self.statement, f),
@@ -238,8 +314,12 @@ impl<'a> Format<'a> for FormatCommentsInSpecifier {
             return;
         }
         let comments = f.comments().comments_before(self.0.end);
-        let count = comments.iter().rposition(|it| it.preceded_by_newline() || it.followed_by_newline());
-        let comments = comments.get(..count.map_or(0, |last| last + 1)).unwrap_or_default();
+        let count = comments
+            .iter()
+            .rposition(|it| it.preceded_by_newline() || it.followed_by_newline());
+        let comments = comments
+            .get(..count.map_or(0, |last| last + 1))
+            .unwrap_or_default();
         write!(f, FormatLeadingComments::Comments(comments));
     }
 }
@@ -247,11 +327,22 @@ impl<'a> Format<'a> for FormatCommentsInSpecifier {
 /// `a`, `a as b`, `type a`
 pub(crate) fn write_import_specifier<'a>(specifier: ImportSpec<'a>, f: &mut Formatter<'a>) {
     let node = AstNodes::ImportSpecifier(specifier);
-    let kind = specifier.is_type_only().then(|| super::flow::import_kind(specifier.span().start, f));
+    let kind = specifier
+        .is_type_only()
+        .then(|| super::flow::import_kind(specifier.span().start, f));
     write!(f, [FormatCommentsInSpecifier(specifier.span()), kind]);
     let local = identifier(specifier.local(), node);
     match specifier.is_renamed() {
-        true => write!(f, [module_export_name(specifier.imported(), node), space(), "as", space(), local]),
+        true => write!(
+            f,
+            [
+                module_export_name(specifier.imported(), node),
+                space(),
+                "as",
+                space(),
+                local
+            ]
+        ),
         false => write!(f, local),
     }
 }
@@ -264,13 +355,18 @@ fn write_with_clause<'a>(with_clause: ImportAttributes<'a>, f: &mut Formatter<'a
         let quote_needed = entries.iter().any(|attribute| {
             attribute.key().is_some_and(|key| {
                 matches!(key.kind(), KeyKind::String(_))
-                    && !is_es5_identifier_name(f.source_text().text_for(&key.span(f.file()).shrink(1, 1)))
+                    && !is_es5_identifier_name(
+                        f.source_text().text_for(&key.span(f.file()).shrink(1, 1)),
+                    )
             })
         });
         f.context_mut().push_quote_needed(quote_needed);
     }
 
-    write!(f, [space(), source_text(with_clause.keyword_span()), space()]);
+    write!(
+        f,
+        [space(), source_text(with_clause.keyword_span()), space()]
+    );
     write_import_attributes(entries, with_clause.braces_span(), f);
 
     if is_consistent {
@@ -291,16 +387,33 @@ fn write_import_attributes<'a>(entries: List<'a, Prop<'a>>, braces: Span, f: &mu
     let needs_space = f.options().bracket_spacing.value();
 
     // Prettier's `isSingleTypeImportAttributes`
-    let is_type = first.key().is_some_and(|key| key.is("type")) && first.value().is_some_and(|value| value.tag() == ExprTag::String);
+    let is_type = first.key().is_some_and(|key| key.is("type"))
+        && first
+            .value()
+            .is_some_and(|value| value.tag() == ExprTag::String);
     if entries.len() == 1 && is_type && !f.comments().has_comment_before(braces.end) {
-        return write!(f, ["{", maybe_space(needs_space), attribute_at(0, first), maybe_space(needs_space), "}"]);
+        return write!(
+            f,
+            [
+                "{",
+                maybe_space(needs_space),
+                attribute_at(0, first),
+                maybe_space(needs_space),
+                "}"
+            ]
+        );
     }
 
     let format_attributes = format_with(|f| {
         let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
-        let attributes = entries.iter().enumerate().map(|(index, attribute)| attribute_at(index, attribute));
+        let attributes = entries
+            .iter()
+            .enumerate()
+            .map(|(index, attribute)| attribute_at(index, attribute));
         let mut previous_end = None;
-        for attribute in FormatSeparatedIter::new(attributes, ",").with_trailing_separator(trailing_separator) {
+        for attribute in
+            FormatSeparatedIter::new(attributes, ",").with_trailing_separator(trailing_separator)
+        {
             match previous_end {
                 Some(end) if is_next_line_empty(f.source_text(), end) => write!(f, empty_line()),
                 Some(_) => write!(f, soft_line_break_or_space()),
@@ -312,8 +425,15 @@ fn write_import_attributes<'a>(entries: List<'a, Prop<'a>>, braces: Span, f: &mu
     });
     write!(
         f,
-        group(&format_args!("{", soft_block_indent_with_maybe_space(&format_attributes, needs_space), "}"))
-            .should_expand(f.source_text().contains_newline_between(braces.start, first.span().start))
+        group(&format_args!(
+            "{",
+            soft_block_indent_with_maybe_space(&format_attributes, needs_space),
+            "}"
+        ))
+        .should_expand(
+            f.source_text()
+                .contains_newline_between(braces.start, first.span().start)
+        )
     );
 }
 
@@ -341,8 +461,12 @@ impl<'a> Format<'a> for FormatImportAttribute<'a> {
             Some(key) if matches!(key.kind(), KeyKind::String(_)) => {
                 let span = key.span(f.file());
                 let string = f.source_text().text_for(&span);
-                let format =
-                    FormatLiteralStringToken::new(string, false, StringLiteralParentKind::ImportAttribute).clean_text(f);
+                let format = FormatLiteralStringToken::new(
+                    string,
+                    false,
+                    StringLiteralParentKind::ImportAttribute,
+                )
+                .clean_text(f);
                 format_node(span, || node, f, |f| write!(f, format));
             }
             Some(key) => write!(f, FormatKey::new(key, node)),
@@ -356,11 +480,17 @@ impl<'a> Format<'a> for FormatImportAttribute<'a> {
                     .any(|comment| comment.followed_by_newline() || comment.is_indentable_block());
             let previous_limit = f.comments_mut().limit_comments_up_to(span.end);
             match breaks_after_colon {
-                true => write!(f, group(&indent(&format_args!(soft_line_break_or_space(), value)))),
+                true => write!(
+                    f,
+                    group(&indent(&format_args!(soft_line_break_or_space(), value)))
+                ),
                 false => write!(f, [space(), value]),
             }
             f.comments_mut().restore_view_limit(previous_limit);
         }
-        write!(f, format_trailing_comments(self.braces, span, self.next_start));
+        write!(
+            f,
+            format_trailing_comments(self.braces, span, self.next_start)
+        );
     }
 }

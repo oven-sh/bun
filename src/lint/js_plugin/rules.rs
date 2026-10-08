@@ -50,7 +50,9 @@ impl Plugin {
     /// The rule that the plugin calls `name`.
     pub fn rule(&self, name: &[u8]) -> Option<&Arc<Rule>> {
         let skipped = self.name.len() + 1;
-        let at = self.rules.binary_search_by(|it| it.id.get(skipped..).unwrap_or_default().cmp(name));
+        let at = self
+            .rules
+            .binary_search_by(|it| it.id.get(skipped..).unwrap_or_default().cmp(name));
         Some(&self.rules[at.ok()?])
     }
 }
@@ -145,13 +147,19 @@ impl FileSettings {
             SourceType::CommonJs => b"commonjs",
         };
         let language_options = Json::Object(vec![
-            (b"ecmaVersion".to_vec(), Json::Number(f64::from(language.ecma_version))),
+            (
+                b"ecmaVersion".to_vec(),
+                Json::Number(f64::from(language.ecma_version)),
+            ),
             (b"sourceType".to_vec(), string(source_type)),
             (b"globals".to_vec(), Json::Object(globals.collect())),
-            (b"parserOptions".to_vec(), match &language.parser_options {
-                Json::Null => Json::Object(Vec::new()),
-                options => options.clone(),
-            }),
+            (
+                b"parserOptions".to_vec(),
+                match &language.parser_options {
+                    Json::Null => Json::Object(Vec::new()),
+                    options => options.clone(),
+                },
+            ),
         ]);
         let settings = match &language.settings {
             Json::Null => Json::Object(Vec::new()),
@@ -166,10 +174,15 @@ impl FileSettings {
             }
         };
         let all_globals = config_globals_in_order(language).into_iter();
-        let all_globals = all_globals.map(|(name, setting)| (name.into_owned(), string(setting_name(setting)))).collect();
+        let all_globals = all_globals
+            .map(|(name, setting)| (name.into_owned(), string(setting_name(setting))))
+            .collect();
         // 1: a type, 2: a value.
         let libs = language.lib_variables().map(|(name, is_type, is_value)| {
-            (name.to_vec(), Json::Number(f64::from(u8::from(is_type) | (u8::from(is_value) << 1))))
+            (
+                name.to_vec(),
+                Json::Number(f64::from(u8::from(is_type) | (u8::from(is_value) << 1))),
+            )
         });
         let all = Json::Object(vec![
             (b"settings".to_vec(), settings),

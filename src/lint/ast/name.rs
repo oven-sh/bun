@@ -130,7 +130,10 @@ impl<'a> Ident<'a> {
     /// It is written as a string: `import { "a b" as c }`, `declare module "m"`.
     #[inline]
     pub fn is_string(self) -> bool {
-        matches!(self.name.file.text().get(self.start as usize), Some(b'"' | b'\''))
+        matches!(
+            self.name.file.text().get(self.start as usize),
+            Some(b'"' | b'\'')
+        )
     }
 
     pub fn span(self) -> Span {

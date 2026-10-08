@@ -57,7 +57,11 @@ impl Table {
         None
     }
 
-    fn extend(&mut self, entries: impl IntoIterator<Item = (Atom, SymbolId)>, spare: &mut Vec<Names>) {
+    fn extend(
+        &mut self,
+        entries: impl IntoIterator<Item = (Atom, SymbolId)>,
+        spare: &mut Vec<Names>,
+    ) {
         for (name, symbol) in entries {
             self.insert(name, symbol, spare);
         }
@@ -343,7 +347,11 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             requires_scope_change: filled(old.requires_scope_change, f.fns.len(), false),
             fn_symbol: filled(old.fn_symbol, f.fns.len(), SymbolId::NONE),
             class_symbol: filled(old.class_symbol, f.classes.len(), SymbolId::NONE),
-            class_owner: filled(old.class_owner, f.classes.len(), ClassOwner::Stmt(StmtId::NONE)),
+            class_owner: filled(
+                old.class_owner,
+                f.classes.len(),
+                ClassOwner::Stmt(StmtId::NONE),
+            ),
             class_scope: filled(old.class_scope, f.classes.len(), ScopeId::NONE),
             interface_symbol: filled(old.interface_symbol, f.interfaces.len(), SymbolId::NONE),
             interface_scope: filled(old.interface_scope, f.interfaces.len(), ScopeId::NONE),
@@ -353,14 +361,26 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             alias_symbol: filled(old.alias_symbol, f.aliases.len(), SymbolId::NONE),
             alias_scope: filled(old.alias_scope, f.aliases.len(), ScopeId::NONE),
             enum_symbol: filled(old.enum_symbol, f.enums.len(), SymbolId::NONE),
-            enum_member_symbol: filled(old.enum_member_symbol, f.enum_members.len(), SymbolId::NONE),
+            enum_member_symbol: filled(
+                old.enum_member_symbol,
+                f.enum_members.len(),
+                SymbolId::NONE,
+            ),
             enum_member_owner: filled(old.enum_member_owner, f.enum_members.len(), EnumId::NONE),
             module_symbol: filled(old.module_symbol, f.modules.len(), SymbolId::NONE),
-            module_instance_state: filled(old.module_instance_state, f.modules.len(), ModuleInstanceState::NonInstantiated),
+            module_instance_state: filled(
+                old.module_instance_state,
+                f.modules.len(),
+                ModuleInstanceState::NonInstantiated,
+            ),
             var_stmt: filled(old.var_stmt, f.var_decls.len(), StmtId::NONE),
             case_stmt: filled(old.case_stmt, f.cases.len(), StmtId::NONE),
             import_scope: filled(old.import_scope, f.imports.len(), ScopeId::NONE),
-            import_equals_scope: filled(old.import_equals_scope, f.import_equals.len(), ScopeId::NONE),
+            import_equals_scope: filled(
+                old.import_equals_scope,
+                f.import_equals.len(),
+                ScopeId::NONE,
+            ),
             export_scope: filled(old.export_scope, f.exports.len(), ScopeId::NONE),
             // Empty, with the room they had.
             ..old
@@ -1105,7 +1125,11 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
 
     fn finish_label(&mut self, label: FlowId) -> FlowId {
         if LINT {
-            return if self.has_edges(label) { REACHABLE } else { UNREACHABLE };
+            return if self.has_edges(label) {
+                REACHABLE
+            } else {
+                UNREACHABLE
+            };
         }
         let edges = &self.label_edges[self.edges_of(label)].edges;
         match edges.len() {
@@ -1153,7 +1177,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         };
         if links > 32 && is_lasting() {
             let entry = is_known | if answer { is_yes } else { 0 };
-            self.chain_answers.borrow_mut().resize(self.f.exprs.len(), 0);
+            self.chain_answers
+                .borrow_mut()
+                .resize(self.f.exprs.len(), 0);
             let last = at;
             at = e;
             while at != last {
@@ -1182,7 +1208,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             if matches!(binder.f[e].kind, ExprKind::NonNull(_)) {
                 has_non_null.set(true);
             }
-            binder.chain_of(e).map_or(Ok(false), |(inner, _)| Err(inner))
+            binder
+                .chain_of(e)
+                .map_or(Ok(false), |(inner, _)| Err(inner))
         };
         self.answer_along_chain(1, e, step, || !has_non_null.get())
     }
@@ -2173,7 +2201,13 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     fn finish(&mut self) {
         if LINT {
             let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some();
-            let nested = || self.b.scopes.iter().filter(is_nested).map(|s| &self.tables[s.locals.idx()]);
+            let nested = || {
+                self.b
+                    .scopes
+                    .iter()
+                    .filter(is_nested)
+                    .map(|s| &self.tables[s.locals.idx()])
+            };
             let count: usize = nested().map(|table| table.len()).sum();
             // One word that is empty: nothing is declared in there.
             let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
@@ -2187,7 +2221,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         let idents = std::mem::take(&mut self.idents);
         if LINT {
             self.b.expr_kind_counts.clear();
-            self.b.expr_kind_counts.extend_from_slice(&self.expr_kind_counts);
+            self.b
+                .expr_kind_counts
+                .extend_from_slice(&self.expr_kind_counts);
         }
         // FOR SPEED, with `LINT`: what `resolve` has said of late. A name is often used again nearby.
         let mut recent = [(ScopeId::NONE, Atom::NONE, None); 256];
@@ -3206,7 +3242,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             met_one_in_progress: false,
             ran_out_of_stack: false,
         };
-        states.of.resize(self.f.modules.len(), InstanceState::Unknown);
+        states
+            .of
+            .resize(self.f.modules.len(), InstanceState::Unknown);
         let mut outer = std::mem::take(&mut self.statement_lists);
         let state = self.instance_state_of_module(m, &mut outer, &mut states);
         self.statement_lists = outer;
@@ -3827,7 +3865,11 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         // belong to the enclosing function.
         let passes_yields_on = f.kind == FnKind::StaticBlock;
         let (rs, rl) = Self::list(&mut self.b.ids, &mut self.returns, first_return);
-        let first_yield = if passes_yields_on { self.yields.len() } else { first_yield };
+        let first_yield = if passes_yields_on {
+            self.yields.len()
+        } else {
+            first_yield
+        };
         let (ys, yl) = Self::list(&mut self.b.ids, &mut self.yields, first_yield);
         self.b.fns[id.idx()] = FnInfo {
             owner,
@@ -3909,7 +3951,8 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         let exports = self.get_exports(symbol);
         let prototype = self.new_symbol(SymFlags::PROPERTY, known::prototype);
         self.b.symbols[prototype.idx()].parent = symbol;
-        if let Some(exported) = self.tables[exports.idx()].insert(known::prototype, prototype, &mut self.spare_names)
+        if let Some(exported) =
+            self.tables[exports.idx()].insert(known::prototype, prototype, &mut self.spare_names)
             && let Some(&decl) = self.b.symbols[exported.idx()].decls.first()
         {
             self.b.redeclarations.push(Redeclaration {
@@ -4567,7 +4610,8 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                 // `Resolve`: the `infer` type parameters can only be referenced in the true branch.
                 // Types in the `extends` type are still generic in them (`getOuterTypeParameters`),
                 // so their scope encloses it too.
-                let scope = self.push_scope_of(ScopeNode::Type(id), ScopeKind::TypeParams, SymbolId::NONE);
+                let scope =
+                    self.push_scope_of(ScopeNode::Type(id), ScopeKind::TypeParams, SymbolId::NONE);
                 let outer = std::mem::replace(&mut self.infer_scope, scope);
                 self.push_scope(ScopeKind::Extends, SymbolId::NONE);
                 self.ty(extends);
@@ -4818,7 +4862,11 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             std::mem::replace(&mut self.in_assignment_pattern, false),
         );
         self.expr_with_operands(id, parent);
-        (self.true_target, self.false_target, self.in_assignment_pattern) = around;
+        (
+            self.true_target,
+            self.false_target,
+            self.in_assignment_pattern,
+        ) = around;
     }
 
     fn expr_with_operands(&mut self, id: ExprId, parent: Parent) {

@@ -17,12 +17,27 @@ fn with_tree<R>(
     is_script: bool,
     path: &str,
     code: &[u8],
-    then: impl for<'a, 's> FnOnce(Summary<'a, 's>, &'a dyn Intern, &'s Session, &'a LanguageOptions) -> R,
+    then: impl for<'a, 's> FnOnce(
+        Summary<'a, 's>,
+        &'a dyn Intern,
+        &'s Session,
+        &'a LanguageOptions,
+    ) -> R,
 ) -> R {
-    let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
+    let is_typescript = [".ts", ".tsx", ".mts", ".cts"]
+        .iter()
+        .any(|it| path.ends_with(it));
     let language = LanguageOptions {
-        parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
-        source_type: if is_script { SourceType::Script } else { SourceType::Module },
+        parser: if is_typescript {
+            Parser::TypeScript
+        } else {
+            Parser::Espree
+        },
+        source_type: if is_script {
+            SourceType::Script
+        } else {
+            SourceType::Module
+        },
         ..LanguageOptions::default()
     };
     let session = Session::new();
@@ -42,30 +57,47 @@ fn with_tree<R>(
 }
 
 /// `None`: `before` does not parse.
-fn compare(name: &str, before: &[u8], after: &[u8], options: &FormatOptions, scratch: &mut Scratch) -> Option<Result<(), String>> {
+fn compare(
+    name: &str,
+    before: &[u8],
+    after: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+) -> Option<Result<(), String>> {
     let mut compare_as = |is_script: bool| {
-        with_tree(is_script, name, before, |summary, atoms, session, language| {
-            let hir = summary.into_arena((session.arena(), session));
-            if hir.has_errors || hir.has_parse_diagnostics {
-                return None;
-            }
-            let bind_options = BindOptions {
-                emit_standard_class_fields: true,
-                before_es2020: false,
-                before_es2017: false,
-            };
-            let bound = bind_for_format(&hir, bind_options, atoms, session.arena());
-            let file = File::new(name.as_bytes(), &hir, &bound, atoms, language, None).with_text(before);
-            let program = Program::new(&hir, before, atoms);
-            let result = with_tree(is_script, name, after, |summary, atoms, _, _| {
-                let program_after = match &summary {
-                    Summary::InPlace(hir) => Program::new(&**hir, after, atoms),
-                    Summary::InArena(hir) => Program::new(hir, after, atoms),
+        with_tree(
+            is_script,
+            name,
+            before,
+            |summary, atoms, session, language| {
+                let hir = summary.into_arena((session.arena(), session));
+                if hir.has_errors || hir.has_parse_diagnostics {
+                    return None;
+                }
+                let bind_options = BindOptions {
+                    emit_standard_class_fields: true,
+                    before_es2020: false,
+                    before_es2017: false,
                 };
-                bun_format::verify::compare(&file, &program, &program_after, options, scratch)
-            });
-            Some(result.map_err(|difference| difference.to_string().replace('\n', "\\n").replace('\t', "\\t")))
-        })
+                let bound = bind_for_format(&hir, bind_options, atoms, session.arena());
+                let file = File::new(name.as_bytes(), &hir, &bound, atoms, language, None)
+                    .with_text(before);
+                let program = Program::new(&hir, before, atoms);
+                let result = with_tree(is_script, name, after, |summary, atoms, _, _| {
+                    let program_after = match &summary {
+                        Summary::InPlace(hir) => Program::new(&**hir, after, atoms),
+                        Summary::InArena(hir) => Program::new(hir, after, atoms),
+                    };
+                    bun_format::verify::compare(&file, &program, &program_after, options, scratch)
+                });
+                Some(result.map_err(|difference| {
+                    difference
+                        .to_string()
+                        .replace('\n', "\\n")
+                        .replace('\t', "\\t")
+                }))
+            },
+        )
     };
     // As `bun format` does.
     match name {
@@ -80,7 +112,10 @@ pub(super) fn verify(args: &Args) {
     std::panic::set_hook(Box::new(|_| {}));
     let mut scratch = Scratch::default();
     let (mut passed, mut failed, mut errors) = (0, 0, 0);
-    for path in collect_files(&args.positional).iter().filter(|it| !is_other_language(it)) {
+    for path in collect_files(&args.positional)
+        .iter()
+        .filter(|it| !is_other_language(it))
+    {
         let name = path.to_string_lossy();
         let Ok(code) = std::fs::read(path) else {
             continue;
@@ -112,10 +147,19 @@ pub(super) fn verify_pairs(args: &Args) {
     let mut line = String::new();
     while stdin.read_line(&mut line).is_ok_and(|read| read > 0) {
         let mut parts = line.trim_end().splitn(3, ' ');
-        let mut length = || parts.next().and_then(|it| it.parse::<usize>().ok()).unwrap_or(0);
+        let mut length = || {
+            parts
+                .next()
+                .and_then(|it| it.parse::<usize>().ok())
+                .unwrap_or(0)
+        };
         let (mut before, mut after) = (vec![0; length()], vec![0; length()]);
         let name = parts.next().unwrap_or_default();
-        if stdin.read_exact(&mut before).and_then(|()| stdin.read_exact(&mut after)).is_err() {
+        if stdin
+            .read_exact(&mut before)
+            .and_then(|()| stdin.read_exact(&mut after))
+            .is_err()
+        {
             return;
         }
         let _ = match compare(name, &before, &after, &args.options, &mut scratch) {

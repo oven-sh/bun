@@ -346,7 +346,10 @@ impl<'a> File<'a> {
     /// the first time. There is one slot: `None` if it holds a value of another type.
     #[inline]
     pub fn extension<T: 'static>(&'a self, init: impl FnOnce() -> T) -> Option<&'a T> {
-        self.lazy.extension.get_or_init(|| Box::new(init())).downcast_ref()
+        self.lazy
+            .extension
+            .get_or_init(|| Box::new(init()))
+            .downcast_ref()
     }
 
     /// ESLint's `sourceCode.hasBOM`. The text starts with a byte order mark, which is part of
@@ -379,20 +382,26 @@ impl<'a> File<'a> {
         let text = self.hir.text;
         let escapes = self.lazy.unicode_escapes.get_or_init(|| {
             let (mut all, mut from) = (Vec::new(), 0);
-            while let Some(at) = text.get(from..).and_then(|rest| bun_core::strings::index_of(rest, b"\\u")) {
+            while let Some(at) = text
+                .get(from..)
+                .and_then(|rest| bun_core::strings::index_of(rest, b"\\u"))
+            {
                 all.push((from + at) as u32);
                 from += at + 2;
             }
-            self.lazy.unicode_escape_range.0.set(match (all.first(), all.last()) {
-                (Some(&first), Some(&last)) => (first, last),
-                _ => (u32::MAX, 0),
-            });
+            self.lazy
+                .unicode_escape_range
+                .0
+                .set(match (all.first(), all.last()) {
+                    (Some(&first), Some(&last)) => (first, last),
+                    _ => (u32::MAX, 0),
+                });
             all.into_boxed_slice()
         });
         match escapes.get(escapes.partition_point(|&at| at < pos)) {
-            Some(&at) if at < end => {
-                end.max(pos + crate::tokens::token_len(text.get(pos as usize..).unwrap_or_default()) as u32)
-            }
+            Some(&at) if at < end => end.max(
+                pos + crate::tokens::token_len(text.get(pos as usize..).unwrap_or_default()) as u32,
+            ),
             _ => end,
         }
     }
@@ -413,7 +422,8 @@ impl<'a> File<'a> {
                 Some(b'\n' | b'\r') => {
                     end -= 1;
                     // The line before can end in a comment only if it has a `//`.
-                    let line = bun_core::strings::last_index_of_any(&text[..end], b"\n\r").map_or(0, |it| it + 1);
+                    let line = bun_core::strings::last_index_of_any(&text[..end], b"\n\r")
+                        .map_or(0, |it| it + 1);
                     if bun_core::strings::contains(&text[line..end], b"//") {
                         break;
                     }
@@ -424,7 +434,9 @@ impl<'a> File<'a> {
                 Some(_) => return end as u32,
             }
         }
-        self.tokens_before(Span::empty(at)).next().map_or(0, crate::tokens::Token::end)
+        self.tokens_before(Span::empty(at))
+            .next()
+            .map_or(0, crate::tokens::Token::end)
     }
 
     /// Whether the expression `id` is in parentheses, its own or those after a JSDoc cast.
@@ -444,26 +456,32 @@ impl<'a> File<'a> {
             }
             bits
         });
-        bits.get(id.idx() / 64).is_some_and(|word| word & (1 << (id.idx() % 64)) != 0)
+        bits.get(id.idx() / 64)
+            .is_some_and(|word| word & (1 << (id.idx() % 64)) != 0)
     }
 
     /// Every expression that is in parentheses, once each, in no particular order.
     pub fn parenthesized(&'a self) -> impl Iterator<Item = Expr<'a>> + 'a {
         let parens = self.hir.parens;
-        let has_parens = move |id: hir::ExprId| parens.binary_search_by_key(&id.0, |p| p.0.0).is_ok();
+        let has_parens =
+            move |id: hir::ExprId| parens.binary_search_by_key(&id.0, |p| p.0.0).is_ok();
         parens.iter().enumerate().filter_map(move |(i, p)| {
             let is_repeated = i > 0 && parens[i - 1].0 == p.0;
             // The parentheses after a JSDoc cast belong to its operand, which may have its own.
             let is_listed_already = self.jsdoc_cast_operand(p.0).is_some_and(has_parens);
             let e = Expr::new(self, p.0);
-            (!is_repeated && !is_listed_already && self.expr_in_tree(e.id().idx()).is_some()).then_some(e)
+            (!is_repeated && !is_listed_already && self.expr_in_tree(e.id().idx()).is_some())
+                .then_some(e)
         })
     }
 
     /// The range of ESLint's `Program`: from the first token, after a `#!` line and comments, to
     /// the end of the text.
     pub fn program_span(&self) -> Span {
-        Span::new(crate::tokens::skip_trivia(self.hir.text, 0), self.hir.text.len() as u32)
+        Span::new(
+            crate::tokens::skip_trivia(self.hir.text, 0),
+            self.hir.text.len() as u32,
+        )
     }
 
     /// The name that `atom` stands for.
@@ -553,7 +571,11 @@ impl<'a> File<'a> {
         let after = parens.partition_point(|p| p.0.0 <= operand.0);
         let place = match after.checked_sub(1).map(|last| parens[last]) {
             Some((of, start, end)) if of == operand => (start, end),
-            _ => self.hir.exprs.get(operand.idx()).map(|it| (it.pos, it.end))?,
+            _ => self
+                .hir
+                .exprs
+                .get(operand.idx())
+                .map(|it| (it.pos, it.end))?,
         };
         (place == (cast.pos, cast.end)).then_some(operand)
     }
@@ -565,7 +587,9 @@ impl<'a> File<'a> {
             return None;
         }
         match self.bound.expr_parent.get(id.idx()) {
-            Some(&bind::Parent::Expr(parent)) if self.jsdoc_cast_operand(parent) == Some(id) => Some(parent),
+            Some(&bind::Parent::Expr(parent)) if self.jsdoc_cast_operand(parent) == Some(id) => {
+                Some(parent)
+            }
             _ => None,
         }
     }
@@ -594,8 +618,11 @@ impl<'a> File<'a> {
         if !self.has_synthetic_nodes() {
             return flags;
         }
-        let from_tags = Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE | Flags::READONLY | Flags::OVERRIDE;
-        let keywords = written.iter().fold(Flags::empty(), |all, it| all | it.flag());
+        let from_tags =
+            Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE | Flags::READONLY | Flags::OVERRIDE;
+        let keywords = written
+            .iter()
+            .fold(Flags::empty(), |all, it| all | it.flag());
         (flags - from_tags) | (keywords & from_tags)
     }
 
@@ -614,7 +641,10 @@ impl<'a> File<'a> {
             tags.into_boxed_slice()
         });
         let after = tags.partition_point(|it| it.0 <= pos);
-        after.checked_sub(1).and_then(|it| tags.get(it)).is_some_and(|it| pos < it.1)
+        after
+            .checked_sub(1)
+            .and_then(|it| tags.get(it))
+            .is_some_and(|it| pos < it.1)
     }
 
     /// Whether the file has nodes that are synthesized from JSDoc comments.

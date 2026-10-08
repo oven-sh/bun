@@ -18,13 +18,13 @@ mod estree_json;
 
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{
-    ExprKind, ExprTag, File, FnKind, Key, List, Modifier, NOT_IN_TREE, Node, PatTag, StmtKind, StmtTag, TypeKind, TypeTag,
-    assign_op_text, bin_op_text, un_op_text,
+    ExprKind, ExprTag, File, FnKind, Key, List, Modifier, NOT_IN_TREE, Node, PatTag, StmtKind,
+    StmtTag, TypeKind, TypeTag, assign_op_text, bin_op_text, un_op_text,
 };
 use bun_lint::context::Severity;
 use bun_lint::estree_for_tests::{NodeType, VNode, Value};
-use bun_lint::language::{Parser, SourceType};
 use bun_lint::language::LanguageOptions;
+use bun_lint::language::{Parser, SourceType};
 use bun_lint::options::{Json, Options};
 use bun_lint::rule::{Kind, Listeners, Meta, Rule};
 use bun_lint::runner::Enabled;
@@ -36,14 +36,20 @@ use std::sync::Mutex;
 pub(crate) fn run(args: &[String]) {
     match args {
         [command, path, flags @ ..] if command == "estree" => estree(path, &language_of(flags)),
-        [command, path, flags @ ..] if command == "estree-batch" => estree_batch(path, &language_of(flags)),
+        [command, path, flags @ ..] if command == "estree-batch" => {
+            estree_batch(path, &language_of(flags))
+        }
         [command] if command == "schema" => schema(),
         [command, path] if command == "parts" => parts(path),
         [command, paths @ ..] if command == "check" && !paths.is_empty() => check_files(paths),
         [command, path] if command == "check-batch" => check_batch(path),
         [command, path] if command == "bench" => bench(path),
         [command, path, flags @ ..] if command == "bind-check" => {
-            bind_check(path, &language_of(flags), flags.iter().any(|it| it == "--format"));
+            bind_check(
+                path,
+                &language_of(flags),
+                flags.iter().any(|it| it == "--format"),
+            );
         }
         _ => println!("usage: bun-lint ast estree|estree-batch|check|check-batch|bench <path>"),
     }
@@ -141,13 +147,17 @@ fn estree_batch(path: &str, language: &LanguageOptions) {
         out.clear();
         let _ = write!(out, "{{\"id\":{:?},\"ast\":", input.id);
         let prefix = out.len();
-        let outcome = with_input(&input, language, |file| match bun_lint::linter::parse_error(file).is_some() {
-            true => Err("parse".to_owned()),
-            false => {
-                estree_json::write_json(file, &mut out);
-                Ok(())
-            }
-        });
+        let outcome = with_input(
+            &input,
+            language,
+            |file| match bun_lint::linter::parse_error(file).is_some() {
+                true => Err("parse".to_owned()),
+                false => {
+                    estree_json::write_json(file, &mut out);
+                    Ok(())
+                }
+            },
+        );
         if let Err(error) = outcome.map_err(|panic| format!("panic: {panic}")).flatten() {
             out.truncate(prefix - "\"ast\":".len());
             let _ = write!(out, "\"error\":{error:?}");
@@ -186,7 +196,10 @@ fn schema() {
     for node_type in NodeType::ALL {
         let names = |only: &dyn Fn(&bun_lint::estree_for_tests::FieldEntry) -> bool| {
             let fields = node_type.fields().iter().filter(|it| only(it));
-            fields.map(|it| format!("{:?}", it.field.name())).collect::<Vec<_>>().join(",")
+            fields
+                .map(|it| format!("{:?}", it.field.name()))
+                .collect::<Vec<_>>()
+                .join(",")
         };
         types.push(format!(
             "{:?}:{{\"keys\":[{}],\"espreeKeys\":[{}],\"fields\":[{}],\"espreeFields\":[{}]}}",
@@ -254,12 +267,21 @@ fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> HashMap<No
         let is_jsx_text = matches!(node, Node::Expr(e) if matches!(e.kind(), ExprKind::String(_))
             && matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Jsx(_))));
         if span.start > span.end || span.end as usize > text.len() {
-            problems.push((format!("span is not a range: {}", describe(node)), place(node)));
+            problems.push((
+                format!("span is not a range: {}", describe(node)),
+                place(node),
+            ));
         } else if !matches!(node, Node::File(_))
             && !is_jsx_text
             && (span.is_empty() || is_space(span.start) || is_space(span.end - 1))
         {
-            problems.push((format!("span is empty or starts or ends with a space: {}", describe(node)), place(node)));
+            problems.push((
+                format!(
+                    "span is empty or starts or ends with a space: {}",
+                    describe(node)
+                ),
+                place(node),
+            ));
         }
         check_positions(node, problems);
         let mut previous_end = span.start;
@@ -278,10 +300,16 @@ fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> HashMap<No
                 _ => child.span(),
             };
             if !span.contains(inner) {
-                problems.push((format!("outside of its parent: {}", edge()), format!("{} in {}", place(child), place(node))));
+                problems.push((
+                    format!("outside of its parent: {}", edge()),
+                    format!("{} in {}", place(child), place(node)),
+                ));
             }
             if inner.start < previous_end {
-                problems.push((format!("out of order: {}", edge()), format!("{} in {}", place(child), place(node))));
+                problems.push((
+                    format!("out of order: {}", edge()),
+                    format!("{} in {}", place(child), place(node)),
+                ));
             }
             previous_end = inner.end;
             pending.push(child);
@@ -299,8 +327,12 @@ fn within(open: u8, close: u8) -> impl Fn(&[u8]) -> bool {
 fn modifiers<'a>(list: List<'a, Modifier<'a>>, expect: Expect) {
     for modifier in list {
         match modifier.decorator() {
-            Some(_) => expect("decorator", Some(modifier.span()), &|text| text.starts_with(b"@")),
-            None => expect("modifier", Some(modifier.span()), &|text| text.iter().all(u8::is_ascii_lowercase)),
+            Some(_) => expect("decorator", Some(modifier.span()), &|text| {
+                text.starts_with(b"@")
+            }),
+            None => expect("modifier", Some(modifier.span()), &|text| {
+                text.iter().all(u8::is_ascii_lowercase)
+            }),
         }
     }
 }
@@ -311,11 +343,15 @@ fn key<'a>(file: &'a File<'a>, key: Option<Key<'a>>, expect: Expect) {
     match key.is_computed() {
         true => {
             expect("Key::span", Some(outer), &within(b'[', b']'));
-            expect("Key::inner_span", Some(inner), &|text| !text.is_empty() && outer.contains(inner) && outer != inner);
+            expect("Key::inner_span", Some(inner), &|text| {
+                !text.is_empty() && outer.contains(inner) && outer != inner
+            });
         }
         false => expect("Key::span", Some(outer), &|text| {
             let is_quoted = matches!(text.first(), Some(b'"' | b'\''));
-            !text.is_empty() && outer == inner && (is_quoted || !text.iter().any(u8::is_ascii_whitespace))
+            !text.is_empty()
+                && outer == inner
+                && (is_quoted || !text.iter().any(u8::is_ascii_whitespace))
         }),
     }
 }
@@ -327,8 +363,14 @@ fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
         if let Some(span) = span
             && !is_right(file.slice(span))
         {
-            let found = String::from_utf8_lossy(file.slice(span)).chars().take(30).collect::<String>();
-            problems.push((format!("{what} of {}", describe(node)), format!("{found:?} in {}", place(node))));
+            let found = String::from_utf8_lossy(file.slice(span))
+                .chars()
+                .take(30)
+                .collect::<String>();
+            problems.push((
+                format!("{what} of {}", describe(node)),
+                format!("{found:?} in {}", place(node)),
+            ));
         }
     };
     let at = |offset: Option<u32>| offset.map(|it| Span::new(it, it + 1));
@@ -341,123 +383,254 @@ fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
             for parens in e.parens() {
                 expect("Expr::parens", Some(parens), &within(b'(', b')'));
             }
-            if e.is_parenthesized() != (e.parens().len() > 0) || e.outer_span() != e.parens().next_back().unwrap_or(e.span()) {
+            if e.is_parenthesized() != (e.parens().len() > 0)
+                || e.outer_span() != e.parens().next_back().unwrap_or(e.span())
+            {
                 expect("Expr::is_parenthesized", Some(e.span()), &|_| false);
             }
             expect("Expr::jsx_container_span", e.jsx_container_span(), &braces);
             match e.kind() {
-                ExprKind::Unary { op, .. } => expect("operator_span", e.operator_span(), &|text| text == un_op_text(op).as_bytes()),
-                ExprKind::Binary { op, .. } => expect("operator_span", e.operator_span(), &|text| text == bin_op_text(op).as_bytes()),
+                ExprKind::Unary { op, .. } => expect("operator_span", e.operator_span(), &|text| {
+                    text == un_op_text(op).as_bytes()
+                }),
+                ExprKind::Binary { op, .. } => {
+                    expect("operator_span", e.operator_span(), &|text| {
+                        text == bin_op_text(op).as_bytes()
+                    })
+                }
                 ExprKind::Assign { op, .. } => {
                     // The default of `{ a = 1 }` and the like.
-                    expect("operator_span", e.operator_span(), &|text| text == assign_op_text(op).as_bytes());
+                    expect("operator_span", e.operator_span(), &|text| {
+                        text == assign_op_text(op).as_bytes()
+                    });
                 }
                 ExprKind::Call(call) | ExprKind::New(call) => {
                     expect("Call::close_paren", at(call.close_paren()), &is(")"));
                     expect("type_args", call.type_args().angle_brackets_span(), &angles);
                 }
-                ExprKind::Dot { name, .. } => expect("Dot::name", Some(name.span()), &|text| !text.is_empty() && e.span().end == name.span().end),
+                ExprKind::Dot { name, .. } => expect("Dot::name", Some(name.span()), &|text| {
+                    !text.is_empty() && e.span().end == name.span().end
+                }),
                 ExprKind::Template(template) => {
                     for i in 0..template.quasi_count() {
                         let is_last = i + 1 == template.quasi_count();
-                        expect("Template::quasi_span", Some(template.quasi_span(i)), &|text| {
-                            text.starts_with(if i == 0 { b"`" } else { b"}" }) && text.ends_with(if is_last { b"`" } else { b"${" })
-                        });
+                        expect(
+                            "Template::quasi_span",
+                            Some(template.quasi_span(i)),
+                            &|text| {
+                                text.starts_with(if i == 0 { b"`" } else { b"}" })
+                                    && text.ends_with(if is_last { b"`" } else { b"${" })
+                            },
+                        );
                     }
                 }
-                ExprKind::AsConst(_) => expect("const_keyword_span", e.const_keyword_span(), &is("const")),
+                ExprKind::AsConst(_) => {
+                    expect("const_keyword_span", e.const_keyword_span(), &is("const"))
+                }
                 ExprKind::Jsx(jsx) => {
                     expect("Jsx::opening_span", Some(jsx.opening_span()), &angles);
-                    expect("Jsx::closing_span", jsx.closing_span(), &|text| text.starts_with(b"<") && text.ends_with(b">"));
+                    expect("Jsx::closing_span", jsx.closing_span(), &|text| {
+                        text.starts_with(b"<") && text.ends_with(b">")
+                    });
                     expect("type_args", jsx.type_args().angle_brackets_span(), &angles);
                 }
                 ExprKind::Regex(regex) => expect("Regex", Some(e.span()), &|text| {
-                    text.len() == regex.pattern().len() + regex.flags().len() + 2 && regex.flags().iter().all(u8::is_ascii_alphabetic)
+                    text.len() == regex.pattern().len() + regex.flags().len() + 2
+                        && regex.flags().iter().all(u8::is_ascii_alphabetic)
                 }),
                 _ => {}
             }
         }
         Node::Type(ty) => {
-            expect("TypeNode::outer_span", ty.is_parenthesized().then(|| ty.outer_span()), &within(b'(', b')'));
+            expect(
+                "TypeNode::outer_span",
+                ty.is_parenthesized().then(|| ty.outer_span()),
+                &within(b'(', b')'),
+            );
             match ty.kind() {
                 TypeKind::Ref { name, args } => {
                     expect("type_args", args.angle_brackets_span(), &angles);
-                    expect("EntityName::span", Some(name.span()), &|text| !text.is_empty() && name.span().start == ty.span().start);
+                    expect("EntityName::span", Some(name.span()), &|text| {
+                        !text.is_empty() && name.span().start == ty.span().start
+                    });
                 }
-                TypeKind::UniqueSymbol => expect("unique_symbol_keyword_span", ty.unique_symbol_keyword_span(), &is("symbol")),
+                TypeKind::UniqueSymbol => expect(
+                    "unique_symbol_keyword_span",
+                    ty.unique_symbol_keyword_span(),
+                    &is("symbol"),
+                ),
                 TypeKind::Import { .. } => {
-                    expect("import_span", ty.import_span(), &|text| text.starts_with(b"import"));
-                    expect("import_source_span", ty.import_source_span(), &|text| matches!(text.first(), Some(b'"' | b'\'')));
+                    expect("import_span", ty.import_span(), &|text| {
+                        text.starts_with(b"import")
+                    });
+                    expect("import_source_span", ty.import_source_span(), &|text| {
+                        matches!(text.first(), Some(b'"' | b'\''))
+                    });
                 }
                 _ => {}
             }
         }
         Node::Func(func) => {
-            let open: &'static str = if func.kind() == FnKind::IndexSignature { "[" } else { "(" };
-            let close: &'static str = if func.kind() == FnKind::IndexSignature { "]" } else { ")" };
+            let open: &'static str = if func.kind() == FnKind::IndexSignature {
+                "["
+            } else {
+                "("
+            };
+            let close: &'static str = if func.kind() == FnKind::IndexSignature {
+                "]"
+            } else {
+                ")"
+            };
             expect("Func::open_paren", at(func.open_paren()), &is(open));
             expect("Func::close_paren", at(func.close_paren()), &is(close));
             expect("Func::arrow_span", func.arrow_span(), &is("=>"));
             expect("Func::body_span", func.body_span(), &braces);
-            expect("Func::params_span", func.params_span().filter(|_| func.close_paren().is_some()), &|text| {
-                text.starts_with(open.as_bytes()) && text.ends_with(close.as_bytes())
+            expect(
+                "Func::params_span",
+                func.params_span().filter(|_| func.close_paren().is_some()),
+                &|text| text.starts_with(open.as_bytes()) && text.ends_with(close.as_bytes()),
+            );
+            expect(
+                "type_params",
+                func.type_params().angle_brackets_span(),
+                &angles,
+            );
+            expect(
+                "return_type",
+                func.return_type().map(|it| it.annotation_span()),
+                &annotation,
+            );
+            expect("Func::name", func.name().map(|it| it.span()), &|text| {
+                !text.is_empty()
             });
-            expect("type_params", func.type_params().angle_brackets_span(), &angles);
-            expect("return_type", func.return_type().map(|it| it.annotation_span()), &annotation);
-            expect("Func::name", func.name().map(|it| it.span()), &|text| !text.is_empty());
             if !matches!(func.kind(), FnKind::Arrow | FnKind::StaticBlock) {
-                expect("Func::span_from_params", Some(func.span_from_params()), &|text| matches!(text.first(), Some(b'(' | b'<' | b'[')));
+                expect(
+                    "Func::span_from_params",
+                    Some(func.span_from_params()),
+                    &|text| matches!(text.first(), Some(b'(' | b'<' | b'[')),
+                );
             }
         }
         Node::Param(param) => {
             modifiers(param.modifiers(), &mut expect);
-            expect("Param::ty", param.ty().map(|it| it.annotation_span()), &annotation);
-            expect("Param::binding_span", Some(param.binding_span()), &|_| param.span().contains(param.binding_span()));
-            expect("Param::span_without_modifiers", Some(param.span_without_modifiers()), &|text| {
-                text.starts_with(b"...") == param.is_rest() && param.span_without_modifiers().contains(param.binding_span())
+            expect(
+                "Param::ty",
+                param.ty().map(|it| it.annotation_span()),
+                &annotation,
+            );
+            expect("Param::binding_span", Some(param.binding_span()), &|_| {
+                param.span().contains(param.binding_span())
             });
+            expect(
+                "Param::span_without_modifiers",
+                Some(param.span_without_modifiers()),
+                &|text| {
+                    text.starts_with(b"...") == param.is_rest()
+                        && param
+                            .span_without_modifiers()
+                            .contains(param.binding_span())
+                },
+            );
         }
         Node::Class(class) => {
             modifiers(class.modifiers(), &mut expect);
-            expect("Class::keyword_span", Some(class.keyword_span()), &is("class"));
+            expect(
+                "Class::keyword_span",
+                Some(class.keyword_span()),
+                &is("class"),
+            );
             expect("Class::body_span", Some(class.body_span()), &braces);
-            expect("type_params", class.type_params().angle_brackets_span(), &angles);
-            expect("extends_args", class.extends_args().angle_brackets_span(), &angles);
+            expect(
+                "type_params",
+                class.type_params().angle_brackets_span(),
+                &angles,
+            );
+            expect(
+                "extends_args",
+                class.extends_args().angle_brackets_span(),
+                &angles,
+            );
         }
         Node::Member(member) => {
             modifiers(member.modifiers(), &mut expect);
             key(file, member.key(), &mut expect);
-            expect("Member::ty", member.ty().map(|it| it.annotation_span()), &annotation);
-            expect("constructor_keyword", member.constructor_keyword().map(|it| it.span()), &|text| {
-                text == b"constructor" || text.get(1..text.len() - 1) == Some(b"constructor")
-            });
+            expect(
+                "Member::ty",
+                member.ty().map(|it| it.annotation_span()),
+                &annotation,
+            );
+            expect(
+                "constructor_keyword",
+                member.constructor_keyword().map(|it| it.span()),
+                &|text| {
+                    text == b"constructor" || text.get(1..text.len() - 1) == Some(b"constructor")
+                },
+            );
         }
         Node::Prop(prop) => key(file, prop.key(), &mut expect),
         Node::PatProp(prop) => key(file, prop.key(), &mut expect),
         Node::EnumMember(member) => key(file, member.key(), &mut expect),
-        Node::VarDecl(declaration) => expect("VarDecl::ty", declaration.ty().map(|it| it.annotation_span()), &annotation),
+        Node::VarDecl(declaration) => expect(
+            "VarDecl::ty",
+            declaration.ty().map(|it| it.annotation_span()),
+            &annotation,
+        ),
         Node::Stmt(statement) => {
             modifiers(statement.modifiers(), &mut expect);
             expect("Stmt::semicolon", statement.semicolon(), &is(";"));
-            expect("Stmt::export_span", statement.export_span(), &|text| text.starts_with(b"export"));
-            expect("Stmt::catch_clause_span", statement.catch_clause_span(), &|text| text.starts_with(b"catch") && text.ends_with(b"}"));
-            expect("Stmt::module_specifier_span", statement.module_specifier_span(), &|text| matches!(text.first(), Some(b'"' | b'\'')));
-            expect("Stmt::label", statement.label().map(|it| it.span()), &|text| !text.is_empty());
+            expect("Stmt::export_span", statement.export_span(), &|text| {
+                text.starts_with(b"export")
+            });
+            expect(
+                "Stmt::catch_clause_span",
+                statement.catch_clause_span(),
+                &|text| text.starts_with(b"catch") && text.ends_with(b"}"),
+            );
+            expect(
+                "Stmt::module_specifier_span",
+                statement.module_specifier_span(),
+                &|text| matches!(text.first(), Some(b'"' | b'\'')),
+            );
+            expect(
+                "Stmt::label",
+                statement.label().map(|it| it.span()),
+                &|text| !text.is_empty(),
+            );
             match statement.kind() {
                 StmtKind::Interface(it) => {
                     expect("Interface::body_span", Some(it.body_span()), &braces);
-                    expect("type_params", it.type_params().angle_brackets_span(), &angles);
+                    expect(
+                        "type_params",
+                        it.type_params().angle_brackets_span(),
+                        &angles,
+                    );
                 }
                 StmtKind::Enum(it) => expect("Enum::body_span", Some(it.body_span()), &braces),
                 StmtKind::Module(it) => expect("Module::body_span", it.body_span(), &braces),
-                StmtKind::TypeAlias(it) => expect("type_params", it.type_params().angle_brackets_span(), &angles),
+                StmtKind::TypeAlias(it) => expect(
+                    "type_params",
+                    it.type_params().angle_brackets_span(),
+                    &angles,
+                ),
                 StmtKind::Block(_) => expect("Block", Some(statement.span()), &braces),
-                StmtKind::ImportEquals(it) => expect("require_span", it.require_span(), &|text| text.starts_with(b"require") && text.ends_with(b")")),
+                StmtKind::ImportEquals(it) => expect("require_span", it.require_span(), &|text| {
+                    text.starts_with(b"require") && text.ends_with(b")")
+                }),
                 StmtKind::Import(it) => {
-                    expect("namespace_span", it.namespace_span(), &|text| text.starts_with(b"*"));
+                    expect("namespace_span", it.namespace_span(), &|text| {
+                        text.starts_with(b"*")
+                    });
                     if let Some(attributes) = it.attributes() {
-                        expect("ImportAttributes::keyword_span", Some(attributes.keyword_span()), &|text| text == b"with" || text == b"assert");
-                        expect("ImportAttributes::braces_span", Some(attributes.braces_span()), &braces);
+                        expect(
+                            "ImportAttributes::keyword_span",
+                            Some(attributes.keyword_span()),
+                            &|text| text == b"with" || text == b"assert",
+                        );
+                        expect(
+                            "ImportAttributes::braces_span",
+                            Some(attributes.braces_span()),
+                            &braces,
+                        );
                     }
                 }
                 _ => {}
@@ -469,9 +642,22 @@ fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
 
 /// Goes down the virtual ESTree and checks each edge, and compares accessors of `bun_lint::ast` that
 /// answer from below with the tree, which is made from above.
-fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, problems: &mut Vec<Problem>) {
+fn check_estree<'a>(
+    file: &'a File<'a>,
+    reached: &HashMap<Node<'a>, u32>,
+    problems: &mut Vec<Problem>,
+) {
     let describe_v = |v: VNode| format!("{} of {}", v.node_type().name(), describe(v.base()));
-    let place_v = |v: VNode| format!("{v:?} {:?} {:?}", v.span(), String::from_utf8_lossy(file.slice(v.span())).chars().take(50).collect::<String>());
+    let place_v = |v: VNode| {
+        format!(
+            "{v:?} {:?} {:?}",
+            v.span(),
+            String::from_utf8_lossy(file.slice(v.span()))
+                .chars()
+                .take(50)
+                .collect::<String>()
+        )
+    };
     let mut all: HashMap<VNode, u32> = HashMap::new();
     let (mut chains, mut directives) = (Vec::new(), Vec::new());
     let mut pending = vec![VNode::program(file)];
@@ -479,35 +665,59 @@ fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, proble
         let times = all.entry(v).or_insert(0);
         *times += 1;
         if *times > 1 {
-            problems.push((format!("estree: reached twice: {}", describe_v(v)), place_v(v)));
+            problems.push((
+                format!("estree: reached twice: {}", describe_v(v)),
+                place_v(v),
+            ));
             continue;
         }
         let node_type = v.node_type();
         if !node_type.listens_to().contains(v.base()) {
-            problems.push((format!("estree: listens_to lacks {}", describe_v(v)), place_v(v)));
+            problems.push((
+                format!("estree: listens_to lacks {}", describe_v(v)),
+                place_v(v),
+            ));
         }
         if node_type == NodeType::ChainExpression {
             chains.push(v.span());
         }
         // typescript-estree has directives in static blocks, ESLint's own parser has not.
-        let in_static_block = v.parent().is_some_and(|it| it.node_type() == NodeType::StaticBlock);
-        if !in_static_block && matches!(v.field(bun_lint::estree_for_tests::Field::Directive), Value::Str(_)) {
+        let in_static_block = v
+            .parent()
+            .is_some_and(|it| it.node_type() == NodeType::StaticBlock);
+        if !in_static_block
+            && matches!(
+                v.field(bun_lint::estree_for_tests::Field::Directive),
+                Value::Str(_)
+            )
+        {
             directives.push(v.span());
         }
-        for entry in node_type.fields().iter().filter(|it| it.is_child && !it.is_part) {
+        for entry in node_type
+            .fields()
+            .iter()
+            .filter(|it| it.is_child && !it.is_part)
+        {
             let is_part = match (entry.get)(v) {
                 Value::Node(it) => it.base() == v.base(),
                 Value::Nodes(list) => list.flatten().any(|it| it.base() == v.base()),
                 _ => false,
             };
             if is_part {
-                problems.push((format!("estree: {}.{:?} is a part", node_type.name(), entry.field), place_v(v)));
+                problems.push((
+                    format!("estree: {}.{:?} is a part", node_type.name(), entry.field),
+                    place_v(v),
+                ));
             }
         }
         v.for_each_child(|child| {
             if child.parent() != Some(v) {
                 let actual = child.parent().map_or("none".to_owned(), describe_v);
-                let kind = format!("estree: parent of {} in {} is {actual}", describe_v(child), describe_v(v));
+                let kind = format!(
+                    "estree: parent of {} in {} is {actual}",
+                    describe_v(child),
+                    describe_v(v)
+                );
                 problems.push((kind, place_v(child)));
             }
             pending.push(child);
@@ -520,15 +730,27 @@ fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, proble
     }
     for (&v, &times) in &found {
         if times > 1 {
-            problems.push((format!("estree: for_each_at finds twice: {}", describe_v(v)), place_v(v)));
+            problems.push((
+                format!("estree: for_each_at finds twice: {}", describe_v(v)),
+                place_v(v),
+            ));
         }
         if !all.contains_key(&v) {
-            problems.push((format!("estree: for_each_at finds what is not in the tree: {}", describe_v(v)), place_v(v)));
+            problems.push((
+                format!(
+                    "estree: for_each_at finds what is not in the tree: {}",
+                    describe_v(v)
+                ),
+                place_v(v),
+            ));
         }
     }
     for &v in all.keys() {
         if !found.contains_key(&v) {
-            problems.push((format!("estree: for_each_at does not find {}", describe_v(v)), place_v(v)));
+            problems.push((
+                format!("estree: for_each_at does not find {}", describe_v(v)),
+                place_v(v),
+            ));
         }
     }
     let (mut chain_roots, mut with_directive) = (Vec::new(), Vec::new());
@@ -539,13 +761,17 @@ fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, proble
             _ => {}
         }
     }
-    for (what, mut expected, mut actual) in
-        [("is_chain_root", chains, chain_roots), ("directive", directives, with_directive)]
-    {
+    for (what, mut expected, mut actual) in [
+        ("is_chain_root", chains, chain_roots),
+        ("directive", directives, with_directive),
+    ] {
         expected.sort();
         actual.sort();
         if expected != actual {
-            problems.push((format!("{what} differs from the ESTree"), format!("{expected:?} {actual:?}")));
+            problems.push((
+                format!("{what} differs from the ESTree"),
+                format!("{expected:?} {actual:?}"),
+            ));
         }
     }
 }
@@ -553,7 +779,11 @@ fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, proble
 /// What the rule below finds.
 /// Whether the kinds of all the elements of a vector of the HIR at once are those of the nodes that are reached, and of
 /// nothing else.
-fn check_tags<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, problems: &mut Vec<Problem>) {
+fn check_tags<'a>(
+    file: &'a File<'a>,
+    reached: &HashMap<Node<'a>, u32>,
+    problems: &mut Vec<Problem>,
+) {
     let [mut exprs, mut stmts, mut types, mut pats] = [const { Vec::new() }; 4];
     file.expr_tags_in_tree(&mut exprs);
     file.stmt_tags_in_tree(&mut stmts);
@@ -570,13 +800,27 @@ fn check_tags<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, problems
         };
         counts[sort] += 1;
         if tags.get(id) != Some(&tag) {
-            problems.push((format!("in the tree, another kind in the list of all: {}", describe(node)), place(node)));
+            problems.push((
+                format!(
+                    "in the tree, another kind in the list of all: {}",
+                    describe(node)
+                ),
+                place(node),
+            ));
         }
     }
-    for (name, tags, count) in [("Expr", &exprs, counts[0]), ("Stmt", &stmts, counts[1]), ("Type", &types, counts[2]), ("Pat", &pats, counts[3])] {
+    for (name, tags, count) in [
+        ("Expr", &exprs, counts[0]),
+        ("Stmt", &stmts, counts[1]),
+        ("Type", &types, counts[2]),
+        ("Pat", &pats, counts[3]),
+    ] {
         let listed = tags.iter().filter(|&&tag| tag != NOT_IN_TREE).count();
         if listed != count {
-            problems.push((format!("the list of all has {name}s that are not in the tree"), format!("{listed} and {count}")));
+            problems.push((
+                format!("the list of all has {name}s that are not in the tree"),
+                format!("{listed} and {count}"),
+            ));
         }
     }
 }
@@ -589,9 +833,44 @@ struct Everything;
 const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
     use ExprTag::*;
     [
-        Missing, Ident, PrivateIdentifier, This, Super, Null, True, False, Number, String, BigInt, Regex, Template,
-        TaggedTemplate, Array, Object, Fn, Class, Dot, Index, Call, New, Unary, Binary, Assign, Cond, Spread, Await,
-        Yield, As, Satisfies, AsConst, NonNull, Instantiation, Jsx, ImportCall, ImportMeta, NewTarget,
+        Missing,
+        Ident,
+        PrivateIdentifier,
+        This,
+        Super,
+        Null,
+        True,
+        False,
+        Number,
+        String,
+        BigInt,
+        Regex,
+        Template,
+        TaggedTemplate,
+        Array,
+        Object,
+        Fn,
+        Class,
+        Dot,
+        Index,
+        Call,
+        New,
+        Unary,
+        Binary,
+        Assign,
+        Cond,
+        Spread,
+        Await,
+        Yield,
+        As,
+        Satisfies,
+        AsConst,
+        NonNull,
+        Instantiation,
+        Jsx,
+        ImportCall,
+        ImportMeta,
+        NewTarget,
     ]
 };
 
@@ -604,10 +883,18 @@ impl Rule for Everything {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs(EXPR_TAGS, |_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.stmts(StmtTag::ALL, |_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.types(TypeTag::ALL, |_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.pats(PatTag::ALL, |_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
+        on.exprs(EXPR_TAGS, |_, it, cx| {
+            *cx.state.entry(it.into()).or_insert(0) += 1
+        });
+        on.stmts(StmtTag::ALL, |_, it, cx| {
+            *cx.state.entry(it.into()).or_insert(0) += 1
+        });
+        on.types(TypeTag::ALL, |_, it, cx| {
+            *cx.state.entry(it.into()).or_insert(0) += 1
+        });
+        on.pats(PatTag::ALL, |_, it, cx| {
+            *cx.state.entry(it.into()).or_insert(0) += 1
+        });
         on.funcs(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
         on.classes(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
         on.members(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
@@ -626,17 +913,28 @@ impl Rule for Everything {
             check_tags(cx.file(), &reached, &mut problems);
             for (&node, &times) in &cx.state {
                 if times > 1 {
-                    problems.push((format!("listener called twice: {}", describe(node)), place(node)));
+                    problems.push((
+                        format!("listener called twice: {}", describe(node)),
+                        place(node),
+                    ));
                 }
                 if !reached.contains_key(&node) {
-                    problems.push((format!("listener called, not in the tree: {}", describe(node)), place(node)));
+                    problems.push((
+                        format!("listener called, not in the tree: {}", describe(node)),
+                        place(node),
+                    ));
                 }
             }
             for &node in reached.keys() {
-                let has_listener =
-                    !matches!(node, Node::File(_) | Node::PatProp(_) | Node::PatElem(_) | Node::TupleElem(_));
+                let has_listener = !matches!(
+                    node,
+                    Node::File(_) | Node::PatProp(_) | Node::PatElem(_) | Node::TupleElem(_)
+                );
                 if has_listener && !cx.state.contains_key(&node) {
-                    problems.push((format!("in the tree, no listener called: {}", describe(node)), place(node)));
+                    problems.push((
+                        format!("in the tree, no listener called: {}", describe(node)),
+                        place(node),
+                    ));
                 }
             }
             FOUND.lock().unwrap().append(&mut problems);
@@ -676,7 +974,9 @@ fn check_batch(path: &str) {
     let (mut checked, mut rejected, mut with_problems) = (0, 0, 0);
     let mut by_kind: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
     for input in &inputs {
-        let outcome = with_input(input, &language_of(&[]), |file| (!bun_lint::linter::parse_error(file).is_some()).then(|| check(file)));
+        let outcome = with_input(input, &language_of(&[]), |file| {
+            (!bun_lint::linter::parse_error(file).is_some()).then(|| check(file))
+        });
         let problems = match outcome {
             Ok(None) => {
                 rejected += 1;
@@ -706,7 +1006,10 @@ fn check_batch(path: &str) {
             println!("         {example}");
         }
     }
-    println!("{checked} checked, {rejected} rejected by the parser, {with_problems} with problems, {} kinds", ranked.len());
+    println!(
+        "{checked} checked, {rejected} rejected by the parser, {with_problems} with problems, {} kinds",
+        ranked.len()
+    );
 }
 
 // ───────────────────────────── the binder without a checker ─────────────────────────────
@@ -739,21 +1042,40 @@ fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Ve
     let mut truth = |name: &str, full: Vec<bool>, lint: Vec<bool>| {
         if full != lint {
             let at = full.iter().zip(&lint).position(|(a, b)| a != b);
-            different.push(format!("{name}: {} and {} long, first at {at:?}", full.len(), lint.len()));
+            different.push(format!(
+                "{name}: {} and {} long, first at {at:?}",
+                full.len(),
+                lint.len()
+            ));
         }
     };
-    let reached = |of: &bun_sema::bind::Bound| of.stmt_flow.iter().map(|it| *it != UNREACHABLE).collect();
+    let reached =
+        |of: &bun_sema::bind::Bound| of.stmt_flow.iter().map(|it| *it != UNREACHABLE).collect();
     truth("stmt_flow", reached(full), reached(lint));
-    let falls = |of: &bun_sema::bind::Bound| of.case_fallthrough.iter().map(|it| it.is_some()).collect();
+    let falls =
+        |of: &bun_sema::bind::Bound| of.case_fallthrough.iter().map(|it| it.is_some()).collect();
     truth("case_fallthrough", falls(full), falls(lint));
     let ends = |of: &bun_sema::bind::Bound| of.fns.iter().map(|it| it.end != UNREACHABLE).collect();
     truth("fns.end", ends(full), ends(lint));
-    let exits = |of: &bun_sema::bind::Bound| of.fns.iter().flat_map(|it| [it.exit.is_some(), it.exit != UNREACHABLE]).collect();
+    let exits = |of: &bun_sema::bind::Bound| {
+        of.fns
+            .iter()
+            .flat_map(|it| [it.exit.is_some(), it.exit != UNREACHABLE])
+            .collect()
+    };
     truth("fns.exit", exits(full), exits(lint));
     let functions = |of: &bun_sema::bind::Bound| -> Vec<String> {
         let one = |it: &bun_sema::bind::FnInfo| {
-            let lists = (it.returns.start, it.returns.len, it.yields.start, it.yields.len);
-            format!("{:?} {:?} {:?} {lists:?} {}", it.owner, it.scope, it.enclosing, it.contains_this)
+            let lists = (
+                it.returns.start,
+                it.returns.len,
+                it.yields.start,
+                it.yields.len,
+            );
+            format!(
+                "{:?} {:?} {:?} {lists:?} {}",
+                it.owner, it.scope, it.enclosing, it.contains_this
+            )
         };
         of.fns.iter().map(one).collect()
     };
@@ -763,7 +1085,12 @@ fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Ve
     let symbols = |of: &bun_sema::bind::Bound| -> Vec<String> {
         let one = |it: &bun_sema::bind::Symbol| {
             let links = (it.value_declaration, it.parent, it.export_symbol);
-            format!("{:?} {:?} {:?} {links:?}", it.name, it.flags, it.decls.as_slice())
+            format!(
+                "{:?} {:?} {:?} {links:?}",
+                it.name,
+                it.flags,
+                it.decls.as_slice()
+            )
         };
         of.symbols.iter().map(one).collect()
     };
@@ -771,10 +1098,17 @@ fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Ve
     if all != ours {
         let at = all.iter().zip(&ours).position(|(a, b)| a != b);
         let (a, b) = (at.map(|at| &all[at]), at.map(|at| &ours[at]));
-        different.push(format!("symbols: {} and {}, first at {at:?}: {a:?} and {b:?}", all.len(), ours.len()));
+        different.push(format!(
+            "symbols: {} and {}, first at {at:?}: {a:?} and {b:?}",
+            all.len(),
+            ours.len()
+        ));
     }
     let refused = |of: &bun_sema::bind::Bound| -> Vec<String> {
-        of.redeclarations.iter().map(|it| format!("{:?} {} {:?} {}", it.symbol, it.count, it.decl, it.code)).collect()
+        of.redeclarations
+            .iter()
+            .map(|it| format!("{:?} {} {:?} {}", it.symbol, it.count, it.decl, it.code))
+            .collect()
     };
     if refused(full) != refused(lint) {
         different.push("redeclarations".to_owned());
@@ -786,7 +1120,11 @@ fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Ve
 }
 
 /// What is wrong with the tables that only `bind_for_lint` has.
-fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Vec<String> {
+fn problems_of_lint_tables(
+    hir: &bun_sema::hir::File,
+    full: &bun_sema::bind::Bound,
+    lint: &bun_sema::bind::Bound,
+) -> Vec<String> {
     use bun_sema::bind::{Decl, NOT_REACHED, Parent, ScopeKind, ScopeNode};
     use bun_sema::hir::{Chain, ExprKind};
     let mut problems = Vec::new();
@@ -795,7 +1133,8 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
         return vec!["expr_kinds: not as long as the expressions".to_owned()];
     }
     for (i, e) in hir.exprs.iter().enumerate() {
-        let is_reached = lint.expr_parent[i] != Parent::None && !matches!(e.kind, ExprKind::Missing);
+        let is_reached =
+            lint.expr_parent[i] != Parent::None && !matches!(e.kind, ExprKind::Missing);
         let chain = match e.kind {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
             ExprKind::Call(call) => hir.calls[call.idx()].chain,
@@ -809,7 +1148,10 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
             counts[expected as usize] += 1;
         }
         if lint.expr_kinds[i] != expected {
-            problems.push(format!("expr_kinds: at {i}: {} and not {expected}, {:?}", lint.expr_kinds[i], e.kind));
+            problems.push(format!(
+                "expr_kinds: at {i}: {} and not {expected}, {:?}",
+                lint.expr_kinds[i], e.kind
+            ));
         }
     }
     if lint.expr_kind_counts[..] != counts[..] {
@@ -818,24 +1160,45 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
     let mut times: HashMap<Decl, u32> = HashMap::new();
     for &(symbol, decl, scope) in lint.declared.iter() {
         *times.entry(decl).or_insert(0) += 1;
-        if !lint.symbols.get(symbol.idx()).is_some_and(|it| it.decls.as_slice().contains(&decl)) {
-            problems.push(format!("declared: not a declaration of the symbol: {decl:?}"));
+        if !lint
+            .symbols
+            .get(symbol.idx())
+            .is_some_and(|it| it.decls.as_slice().contains(&decl))
+        {
+            problems.push(format!(
+                "declared: not a declaration of the symbol: {decl:?}"
+            ));
         }
         if scope.idx() >= lint.scopes.len() {
             problems.push(format!("declared: in no scope: {decl:?}"));
         }
     }
     for (decl, times) in times.iter().filter(|it| *it.1 > 1) {
-        let name: String = format!("{decl:?}").chars().take_while(|c| c.is_alphabetic()).collect();
+        let name: String = format!("{decl:?}")
+            .chars()
+            .take_while(|c| c.is_alphabetic())
+            .collect();
         problems.push(format!("declared {times} times, a {name}: {decl:?}"));
     }
     // What `semantic` makes variables of.
     for decl in lint.symbols.iter().flat_map(|it| it.decls.as_slice()) {
         let is_of_a_variable = matches!(
             decl,
-            Decl::Var(_) | Decl::Param(_) | Decl::Require(_) | Decl::Fn(_) | Decl::Class(_) | Decl::Interface(_)
-                | Decl::Alias(_) | Decl::Enum(_) | Decl::EnumMember(_) | Decl::Module(_) | Decl::TypeParam(_)
-                | Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_)
+            Decl::Var(_)
+                | Decl::Param(_)
+                | Decl::Require(_)
+                | Decl::Fn(_)
+                | Decl::Class(_)
+                | Decl::Interface(_)
+                | Decl::Alias(_)
+                | Decl::Enum(_)
+                | Decl::EnumMember(_)
+                | Decl::Module(_)
+                | Decl::TypeParam(_)
+                | Decl::ImportDefault(_)
+                | Decl::ImportNamespace(_)
+                | Decl::ImportSpec(_)
+                | Decl::ImportEquals(_)
         );
         // Its symbol is in no table.
         let has_no_name = match *decl {
@@ -849,7 +1212,10 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
             _ => false,
         };
         if is_of_a_variable && !has_no_name && !times.contains_key(decl) {
-            let name: String = format!("{decl:?}").chars().take_while(|c| c.is_alphabetic()).collect();
+            let name: String = format!("{decl:?}")
+                .chars()
+                .take_while(|c| c.is_alphabetic())
+                .collect();
             problems.push(format!("declared lacks a {name}: {decl:?}"));
         }
     }
@@ -857,7 +1223,9 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
         problems.push("scope_node: not as long as the scopes".to_owned());
     }
     for (scope, node) in lint.scopes.iter().zip(lint.scope_node.iter()) {
-        if matches!(scope.kind, ScopeKind::Block | ScopeKind::TypeParams) != (*node != ScopeNode::None) {
+        if matches!(scope.kind, ScopeKind::Block | ScopeKind::TypeParams)
+            != (*node != ScopeNode::None)
+        {
             problems.push(format!("scope_node: {node:?} of a {:?}", scope.kind));
         }
     }
@@ -868,7 +1236,10 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
 }
 
 /// The same for `ours`, from `bind_for_format`.
-fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::Bound) -> Vec<String> {
+fn differences_for_format(
+    full: &bun_sema::bind::Bound,
+    ours: &bun_sema::bind::Bound,
+) -> Vec<String> {
     use bun_sema::bind::{ClassOwner, MemberOwner, Parent, PatParent};
     use bun_sema::hir::{ExprId, StmtId};
     let mut different = Vec::new();
@@ -882,7 +1253,8 @@ fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::B
             }
         )*};
     }
-    let is_operand = |of: &bun_sema::bind::Bound, e: ExprId| of.type_query_operands.binary_search(&e).is_ok();
+    let is_operand =
+        |of: &bun_sema::bind::Bound, e: ExprId| of.type_query_operands.binary_search(&e).is_ok();
     same! {
         // The parent of the `a.b` of `typeof a.b` is what the type is in.
         expr_parent unless |i: usize, it: &Parent| match it {
@@ -908,12 +1280,25 @@ fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::B
         )*};
     }
     reached!(class_scope type_scope type_param_scope);
-    let owners = full.fns.iter().zip(ours.fns.iter()).position(|(a, b)| a.owner != b.owner);
+    let owners = full
+        .fns
+        .iter()
+        .zip(ours.fns.iter())
+        .position(|(a, b)| a.owner != b.owner);
     if full.fns.len() != ours.fns.len() || owners.is_some() {
-        different.push(format!("fns.owner: {} and {} long, first at {owners:?}", full.fns.len(), ours.fns.len()));
+        different.push(format!(
+            "fns.owner: {} and {} long, first at {owners:?}",
+            full.fns.len(),
+            ours.fns.len()
+        ));
     }
-    let reached = (0..full.expr_parent.len()).filter(|&i| full.expr_parent[i] != Parent::None).map(|i| ExprId(i as u32));
-    if let Some(e) = reached.into_iter().find(|&e| is_operand(full, e) != is_operand(ours, e)) {
+    let reached = (0..full.expr_parent.len())
+        .filter(|&i| full.expr_parent[i] != Parent::None)
+        .map(|i| ExprId(i as u32));
+    if let Some(e) = reached
+        .into_iter()
+        .find(|&e| is_operand(full, e) != is_operand(ours, e))
+    {
         different.push(format!("type_query_operands: {e:?}"));
     }
     different
@@ -940,20 +1325,36 @@ fn differences_of_recycled<A: bun_sema::hir::Storage, B: bun_sema::hir::Storage>
     }
     fn functions<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
         let one = |it: &bun_sema::bind::FnInfo| {
-            let lists = (it.returns.start, it.returns.len, it.yields.start, it.yields.len);
-            format!("{:?} {:?} {:?} {lists:?} {} {:?} {:?}", it.owner, it.scope, it.enclosing, it.contains_this, it.end, it.exit)
+            let lists = (
+                it.returns.start,
+                it.returns.len,
+                it.yields.start,
+                it.yields.len,
+            );
+            format!(
+                "{:?} {:?} {:?} {lists:?} {} {:?} {:?}",
+                it.owner, it.scope, it.enclosing, it.contains_this, it.end, it.exit
+            )
         };
         of.fns.iter().map(one).collect()
     }
     fn symbols<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
         let one = |it: &bun_sema::bind::SymbolIn<S>| {
             let links = (it.value_declaration, it.parent, it.export_symbol);
-            format!("{:?} {:?} {:?} {links:?}", it.name, it.flags, it.decls.as_slice())
+            format!(
+                "{:?} {:?} {:?} {links:?}",
+                it.name,
+                it.flags,
+                it.decls.as_slice()
+            )
         };
         of.symbols.iter().map(one).collect()
     }
     fn refused<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
-        of.redeclarations.iter().map(|it| format!("{:?} {} {:?} {}", it.symbol, it.count, it.decl, it.code)).collect()
+        of.redeclarations
+            .iter()
+            .map(|it| format!("{:?} {} {:?} {}", it.symbol, it.count, it.decl, it.code))
+            .collect()
     }
     if functions(copied) != functions(recycled) {
         different.push("recycled fns".to_owned());
@@ -964,14 +1365,19 @@ fn differences_of_recycled<A: bun_sema::hir::Storage, B: bun_sema::hir::Storage>
     if refused(copied) != refused(recycled) {
         different.push("recycled redeclarations".to_owned());
     }
-    if copied.scopes.len() != recycled.scopes.len() || copied.ran_out_of_stack != recycled.ran_out_of_stack {
+    if copied.scopes.len() != recycled.scopes.len()
+        || copied.ran_out_of_stack != recycled.ran_out_of_stack
+    {
         different.push("recycled scopes, or ran_out_of_stack".to_owned());
     }
     different
 }
 
 fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
-    use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format, bind_for_format_in, bind_for_lint, bind_for_lint_in};
+    use bun_sema::bind::{
+        BindOptions, Recycled, bind, bind_for_format, bind_for_format_in, bind_for_lint,
+        bind_for_lint_in,
+    };
     std::panic::set_hook(Box::new(|_| {}));
     let inputs = read_inputs(path);
     let (mut same, mut by_kind) = (0, BTreeMap::<String, (usize, Vec<String>)>::new());
@@ -1009,9 +1415,15 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
             let full = bind(&hir, options, &atoms, arena);
             let mut counts = left_behind.get();
             let has = [
-                full.expr_parent.iter().any(|it| *it == bun_sema::bind::Parent::None),
-                full.stmt_parent.iter().any(|it| *it == bun_sema::bind::Parent::None),
-                full.fns.iter().any(|it| it.owner == bun_sema::bind::FnOwner::None),
+                full.expr_parent
+                    .iter()
+                    .any(|it| *it == bun_sema::bind::Parent::None),
+                full.stmt_parent
+                    .iter()
+                    .any(|it| *it == bun_sema::bind::Parent::None),
+                full.fns
+                    .iter()
+                    .any(|it| it.owner == bun_sema::bind::FnOwner::None),
                 full.class_scope.iter().any(|it| it.is_none()),
                 full.type_scope.iter().any(|it| it.is_none()),
                 full.type_param_scope.iter().any(|it| it.is_none()),
@@ -1023,7 +1435,10 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
                     let ours = bind_for_format(&hir, options, &atoms, arena);
                     let mut different = differences_for_format(&full, &ours);
                     let mut recycled = Recycled::of_this_thread();
-                    different.extend(differences_of_recycled(&ours, bind_for_format_in(&hir, options, &atoms, &mut recycled)));
+                    different.extend(differences_of_recycled(
+                        &ours,
+                        bind_for_format_in(&hir, options, &atoms, &mut recycled),
+                    ));
                     different
                 }
                 false => {
@@ -1031,7 +1446,10 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
                     let mut different = differences(&full, &lint);
                     different.extend(problems_of_lint_tables(&hir, &full, &lint));
                     let mut recycled = Recycled::of_this_thread();
-                    different.extend(differences_of_recycled(&lint, bind_for_lint_in(&hir, options, &atoms, &mut recycled)));
+                    different.extend(differences_of_recycled(
+                        &lint,
+                        bind_for_lint_in(&hir, options, &atoms, &mut recycled),
+                    ));
                     different
                 }
             }
@@ -1055,7 +1473,11 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
     println!(
         "not reached by bind: expressions in {exprs} inputs, statements in {stmts}, functions in {fns}, classes in {classes}, types in {types}, type parameters in {type_params}"
     );
-    println!("{} inputs, {same} the same, {} tables differ", inputs.len(), by_kind.len());
+    println!(
+        "{} inputs, {same} the same, {} tables differ",
+        inputs.len(),
+        by_kind.len()
+    );
 }
 
 // ───────────────────────────── timing ─────────────────────────────
@@ -1079,7 +1501,9 @@ fn bench(path: &str) {
         println!("{name}: {:?} ({result})", start.elapsed() / 20);
     };
     time("parse and bind", &mut || {
-        crate::with_file(path, &code, &LanguageOptions::default(), |file| file.body().len())
+        crate::with_file(path, &code, &LanguageOptions::default(), |file| {
+            file.body().len()
+        })
     });
     crate::with_file(path, &code, &LanguageOptions::default(), |file| {
         time("walk", &mut || {
@@ -1109,18 +1533,36 @@ fn bench(path: &str) {
         let mut nodes = Collect(Vec::new());
         walk(file, &mut nodes);
         let nodes = nodes.0;
-        time("span of each", &mut || nodes.iter().map(|it| it.span().end as usize).sum());
-        time("parent of each", &mut || nodes.iter().filter(|it| matches!(it.parent(), Node::Expr(_))).count());
+        time("span of each", &mut || {
+            nodes.iter().map(|it| it.span().end as usize).sum()
+        });
+        time("parent of each", &mut || {
+            nodes
+                .iter()
+                .filter(|it| matches!(it.parent(), Node::Expr(_)))
+                .count()
+        });
         time("kind of each expression", &mut || {
-            let kinds = nodes.iter().filter_map(|it| it.as_expr()).map(|it| it.kind());
-            kinds.filter(|it| matches!(it, ExprKind::Call(_) | ExprKind::String(_))).count()
+            let kinds = nodes
+                .iter()
+                .filter_map(|it| it.as_expr())
+                .map(|it| it.kind());
+            kinds
+                .filter(|it| matches!(it, ExprKind::Call(_) | ExprKind::String(_)))
+                .count()
         });
         time("outer_span of each expression", &mut || {
-            nodes.iter().filter_map(|it| it.as_expr()).map(|it| it.outer_span().end as usize).sum()
+            nodes
+                .iter()
+                .filter_map(|it| it.as_expr())
+                .map(|it| it.outer_span().end as usize)
+                .sum()
         });
         time("children of each", &mut || {
             let mut count = 0;
-            nodes.iter().for_each(|it| it.for_each_child(|_| count += 1));
+            nodes
+                .iter()
+                .for_each(|it| it.for_each_child(|_| count += 1));
             count
         });
         time("virtual walk", &mut || {

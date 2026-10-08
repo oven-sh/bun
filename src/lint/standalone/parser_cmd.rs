@@ -25,7 +25,9 @@ pub(crate) fn run(args: &[String]) {
             let code = std::fs::read(path).expect("the file");
             let (is_refused, diagnostics) = parse(path, &code, dialect(has("--script")));
             println!("{}", if is_refused { "refused" } else { "accepted" });
-            diagnostics.iter().for_each(|it| println!("{}", describe(&code, it)));
+            diagnostics
+                .iter()
+                .for_each(|it| println!("{}", describe(&code, it)));
         }
         _ => println!("usage: bun-lint parser errors <inputs.jsonl> | file <path>"),
     }
@@ -36,8 +38,21 @@ fn parse(path: &str, code: &[u8], dialect: Dialect) -> (bool, Vec<Diagnostic>) {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let path = path.as_bytes();
-    let hir = bun_js_parser::sema::summarize_as(dialect, session.arena(), path, None, code, &atoms, false, !dialect.script).0;
-    (hir.has_errors || hir.has_parse_diagnostics, hir.diagnostics.to_vec())
+    let hir = bun_js_parser::sema::summarize_as(
+        dialect,
+        session.arena(),
+        path,
+        None,
+        code,
+        &atoms,
+        false,
+        !dialect.script,
+    )
+    .0;
+    (
+        hir.has_errors || hir.has_parse_diagnostics,
+        hir.diagnostics.to_vec(),
+    )
 }
 
 /// `Parse 1005 ';' expected. at 12: let a ‸b`
@@ -48,8 +63,16 @@ fn describe(code: &[u8], diagnostic: &Diagnostic) -> String {
     }
     let at = (diagnostic.start as usize).min(code.len());
     let is_break = |it: &u8| matches!(it, b'\n' | b'\r');
-    let start = code[..at].iter().rposition(is_break).map_or(0, |it| it + 1).max(at.saturating_sub(60));
-    let end = code[at..].iter().position(is_break).map_or(code.len(), |it| at + it).min(at + 40);
+    let start = code[..at]
+        .iter()
+        .rposition(is_break)
+        .map_or(0, |it| it + 1)
+        .max(at.saturating_sub(60));
+    let end = code[at..]
+        .iter()
+        .position(is_break)
+        .map_or(code.len(), |it| at + it)
+        .min(at + 40);
     format!(
         "{:?} {} {} at {at}: {}\u{2038}{}",
         diagnostic.kind,

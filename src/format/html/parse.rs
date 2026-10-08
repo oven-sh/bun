@@ -76,15 +76,28 @@ fn parse_options(parser: Parser) -> ParseOptions {
     }
 }
 
-fn should_parse_as_raw_text_in_mjml(tag_name: &[u8], _has_parent: bool, _attrs: &[LexedAttribute<'_>]) -> bool {
+fn should_parse_as_raw_text_in_mjml(
+    tag_name: &[u8],
+    _has_parent: bool,
+    _attrs: &[LexedAttribute<'_>],
+) -> bool {
     matches!(tag_name, b"mj-style" | b"mj-raw")
 }
 
-fn should_parse_as_raw_text_in_vue(tag_name: &[u8], has_parent: bool, attrs: &[LexedAttribute<'_>]) -> bool {
+fn should_parse_as_raw_text_in_vue(
+    tag_name: &[u8],
+    has_parent: bool,
+    attrs: &[LexedAttribute<'_>],
+) -> bool {
     !tag_name.eq_ignore_ascii_case(b"html")
         && !has_parent
         && (tag_name != b"template"
-            || attrs.iter().any(|attr| attr.name == b"lang" && attr.value.is_some_and(|value| !matches!(value, b"html" | b""))))
+            || attrs.iter().any(|attr| {
+                attr.name == b"lang"
+                    && attr
+                        .value
+                        .is_some_and(|value| !matches!(value, b"html" | b""))
+            }))
 }
 
 struct Context<'a, 't> {
@@ -98,13 +111,19 @@ struct Context<'a, 't> {
 }
 
 impl<'a> Context<'a, '_> {
-    fn angular_html_parser_parse(&mut self, range: Span, options: &ParseOptions, decides_on_raw_text: bool) -> Result<parser::ParseResult> {
-        let should_parse_as_raw_text: Option<&dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> bool> = match options.name {
-            _ if !decides_on_raw_text => None,
-            Parser::Mjml => Some(&should_parse_as_raw_text_in_mjml),
-            Parser::Vue => Some(&should_parse_as_raw_text_in_vue),
-            _ => None,
-        };
+    fn angular_html_parser_parse(
+        &mut self,
+        range: Span,
+        options: &ParseOptions,
+        decides_on_raw_text: bool,
+    ) -> Result<parser::ParseResult> {
+        let should_parse_as_raw_text: Option<&dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> bool> =
+            match options.name {
+                _ if !decides_on_raw_text => None,
+                Parser::Mjml => Some(&should_parse_as_raw_text_in_mjml),
+                Parser::Vue => Some(&should_parse_as_raw_text_in_vue),
+                _ => None,
+            };
         let result = parser::parse(
             self.tree,
             self.text.get(..range.end as usize).unwrap_or(self.text),
@@ -132,12 +151,16 @@ impl<'a> Context<'a, '_> {
 
     /// `parseVue`
     fn parse_vue(&mut self, range: Span, options: ParseOptions) -> Result<(ParseOptions, Id)> {
-        let parser::ParseResult { root, mut errors, .. } = self.angular_html_parser_parse(range, &options, true)?;
+        let parser::ParseResult {
+            root, mut errors, ..
+        } = self.angular_html_parser_parse(range, &options, true)?;
         let is_html = self.tree.children(root).any(|id| {
             let node = &self.tree[id];
             match node.kind {
                 Kind::DocType => &node.value[..] == b"html",
-                Kind::Element => node.namespace.is_empty() && node.name.eq_ignore_ascii_case(b"html"),
+                Kind::Element => {
+                    node.namespace.is_empty() && node.name.eq_ignore_ascii_case(b"html")
+                }
                 _ => false,
             }
         });
@@ -154,10 +177,15 @@ impl<'a> Context<'a, '_> {
             }
             let (start_span, end_span) = (node.start_span, node.end_span());
             let is_plain = node.namespace.is_empty();
-            let is_void = is_plain && parser::definition_of(&node.name, options.is_tag_name_case_sensitive).is_void;
+            let is_void = is_plain
+                && parser::definition_of(&node.name, options.is_tag_name_case_sensitive).is_void;
             // `shouldParseVueRootNodeAsHtml`
             let is_html_template = is_plain && &node.name[..] == b"template" && {
-                let language = self.tree.attrs(id).iter().find(|attr| attr.namespace.is_empty() && &attr.name[..] == b"lang");
+                let language = self
+                    .tree
+                    .attrs(id)
+                    .iter()
+                    .find(|attr| attr.namespace.is_empty() && &attr.name[..] == b"lang");
                 language.is_none_or(|attr| {
                     let value = attr.value_span.map_or(&b""[..], |span| span.of(self.text));
                     let value = match value {
@@ -176,13 +204,18 @@ impl<'a> Context<'a, '_> {
             };
             if is_void {
                 errors.clone_from(&second.errors);
-            } else if second.errors.iter().any(|&at| at > start_span.start && end_span.is_none_or(|span| at < span.end)) {
+            } else if second
+                .errors
+                .iter()
+                .any(|&at| at > start_span.start && end_span.is_none_or(|span| at < span.end))
+            {
                 // Without an end tag, Prettier fails when it asks where that ends.
                 return Err(ParseError::Syntax);
             }
             // `getElementWithSameLocation`
             let same = self.tree.children(second.root).find(|&other| {
-                self.tree[other].kind == Kind::Element && self.tree[other].start_span.start == start_span.start
+                self.tree[other].kind == Kind::Element
+                    && self.tree[other].start_span.start == start_span.start
             });
             if let Some(same) = same {
                 self.tree.remove(same);
@@ -213,7 +246,11 @@ impl<'a> Context<'a, '_> {
             Kind::Comment => {
                 let node = &mut self.tree[id];
                 let source = node.span.of(text);
-                node.value = Cow::Borrowed(source.get(4..source.len().saturating_sub(3)).unwrap_or_default());
+                node.value = Cow::Borrowed(
+                    source
+                        .get(4..source.len().saturating_sub(3))
+                        .unwrap_or_default(),
+                );
                 self.parse_ie_conditional_comment(id, options)?;
             }
             Kind::Text => {
@@ -223,7 +260,9 @@ impl<'a> Context<'a, '_> {
             Kind::AngularControlFlowBlock => {
                 // `name.toLowerCase().replaceAll(/\s+/g, " ").trim()`
                 let node = &mut self.tree[id];
-                let is_normal = node.name.iter().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_');
+                let is_normal = node.name.iter().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_'
+                });
                 if !is_normal && !matches!(&node.name[..], b"else if" | b"default never") {
                     node.name = Cow::Owned(collapse_white_space(&node.name.to_ascii_lowercase()));
                 }
@@ -240,19 +279,27 @@ impl<'a> Context<'a, '_> {
             let raw_name = name_span.of(text);
             let explicit = match namespace {
                 b"" => None,
-                _ => raw_name.strip_prefix(namespace).and_then(|rest| rest.strip_prefix(b":")),
+                _ => raw_name
+                    .strip_prefix(namespace)
+                    .and_then(|rest| rest.strip_prefix(b":")),
             };
             (explicit.unwrap_or(raw_name), explicit.is_some())
         };
         let node = &mut self.tree[id];
         let (name, has_explicit_namespace) = restored(node.namespace, node.name_span);
         node.name = Cow::Borrowed(name);
-        node.flags.set(Flags::HAS_EXPLICIT_NAMESPACE, has_explicit_namespace);
+        node.flags
+            .set(Flags::HAS_EXPLICIT_NAMESPACE, has_explicit_namespace);
         // `addTagDefinition`
         let definition = parser::definition_of(name, options.is_tag_name_case_sensitive);
-        let is_plain =
-            node.namespace.is_empty() || Some(node.namespace) == definition.implicit_namespace_prefix || is_unknown_namespace(node);
-        node.tag_definition = if is_plain { definition } else { &data::DEFAULT_TAG_DEFINITION };
+        let is_plain = node.namespace.is_empty()
+            || Some(node.namespace) == definition.implicit_namespace_prefix
+            || is_unknown_namespace(node);
+        node.tag_definition = if is_plain {
+            definition
+        } else {
+            &data::DEFAULT_TAG_DEFINITION
+        };
         // `normalizeName`
         if options.normalize_tag_name && is_plain && name.iter().any(u8::is_ascii_uppercase) {
             let lower = name.to_ascii_lowercase();
@@ -263,7 +310,10 @@ impl<'a> Context<'a, '_> {
         let (start, end) = node.attrs;
         let Tree { nodes, attrs, .. } = &mut *self.tree;
         let element_name = &nodes[id as usize].name;
-        for attr in attrs.get_mut(start as usize..end as usize).unwrap_or_default() {
+        for attr in attrs
+            .get_mut(start as usize..end as usize)
+            .unwrap_or_default()
+        {
             let (name, has_explicit_namespace) = restored(attr.namespace, attr.name_span);
             attr.name = Cow::Borrowed(name);
             attr.has_explicit_namespace = has_explicit_namespace;
@@ -272,7 +322,10 @@ impl<'a> Context<'a, '_> {
                 [b'"' | b'\'', inner @ .., _] => inner,
                 value => value,
             });
-            if options.normalize_attribute_name && attr.namespace.is_empty() && name.iter().any(u8::is_ascii_uppercase) {
+            if options.normalize_attribute_name
+                && attr.namespace.is_empty()
+                && name.iter().any(u8::is_ascii_uppercase)
+            {
                 let lower = name.to_ascii_lowercase();
                 if data::is_attribute_of_element(element_name, &lower) {
                     attr.name = Cow::Owned(lower);
@@ -288,7 +341,10 @@ impl<'a> Context<'a, '_> {
         while let Some(id) = next {
             self.postprocess_node(id, options)?;
             // What is in a conditional comment has been through this.
-            let first_child = self.tree.first_child(id).filter(|_| self.tree[id].kind != Kind::IeConditionalComment);
+            let first_child = self
+                .tree
+                .first_child(id)
+                .filter(|_| self.tree[id].kind != Kind::IeConditionalComment);
             next = first_child.or_else(|| {
                 let mut at = id;
                 loop {
@@ -311,7 +367,9 @@ impl<'a> Context<'a, '_> {
             Cow::Owned(_) => return Ok(()),
         };
         // `<!\s*\[endif\]$`: what is before it.
-        let before_end = value.strip_suffix(b"[endif]").and_then(|rest| text::trim_end(rest).strip_suffix(b"<!"));
+        let before_end = value
+            .strip_suffix(b"[endif]")
+            .and_then(|rest| text::trim_end(rest).strip_suffix(b"<!"));
         if before_end == Some(b"") {
             self.tree[id].kind = Kind::IeConditionalEndComment;
             return Ok(());
@@ -328,7 +386,8 @@ impl<'a> Context<'a, '_> {
         };
         let condition = collapse_white_space(&rest[..condition_len]);
         let opening_len = 3 + condition_len + 2;
-        let Some(data_len) = before_end.and_then(|before| before.len().checked_sub(opening_len)) else {
+        let Some(data_len) = before_end.and_then(|before| before.len().checked_sub(opening_len))
+        else {
             if after_condition == b"<!" {
                 let node = &mut self.tree[id];
                 node.kind = Kind::IeConditionalStartComment;
@@ -348,10 +407,14 @@ impl<'a> Context<'a, '_> {
             Ok(root) => {
                 // Prettier parses it with blanks in the place of what is before it, so the first child is a text.
                 let starts_with_text = self.tree.first_child(root).is_some_and(|first| {
-                    self.tree[first].kind == Kind::Text && self.tree[first].span.start == content.start
+                    self.tree[first].kind == Kind::Text
+                        && self.tree[first].span.start == content.start
                 });
                 if !starts_with_text {
-                    let empty = self.tree.add(Node::text(Cow::Borrowed(b""), Span::new(content.start, content.start)));
+                    let empty = self.tree.add(Node::text(
+                        Cow::Borrowed(b""),
+                        Span::new(content.start, content.start),
+                    ));
                     self.tree.append_child(id, empty);
                 }
                 let mut next = self.tree.first_child(root);
@@ -363,7 +426,9 @@ impl<'a> Context<'a, '_> {
             }
             Err(ParseError::NestedTooDeeply) => return Err(ParseError::NestedTooDeeply),
             Err(ParseError::Syntax) => {
-                let only = self.tree.add(Node::text(Cow::Borrowed(content.of(text)), content));
+                let only = self
+                    .tree
+                    .add(Node::text(Cow::Borrowed(content.of(text)), content));
                 self.tree.append_child(id, only);
                 false
             }
@@ -401,7 +466,12 @@ pub(crate) fn collapse_white_space(value: &[u8]) -> Vec<u8> {
 
 /// Fills `tree` with the syntax of `text`, in which there are blanks in the place of the front matter, which is
 /// `front_matter_len` long.
-pub(crate) fn parse<'a>(text: &'a [u8], front_matter_len: Option<usize>, parser: Parser, tree: &mut Tree<'a>) -> Result<()> {
+pub(crate) fn parse<'a>(
+    text: &'a [u8],
+    front_matter_len: Option<usize>,
+    parser: Parser,
+    tree: &mut Tree<'a>,
+) -> Result<()> {
     let all = Span::new(0, text.len() as u32);
     let mut context = Context {
         text,

@@ -10,7 +10,14 @@ pub(crate) fn write_numeric_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
 pub(crate) fn write_string_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let is_jsx = matches!(e.parent(), Node::Prop(property) if property.is_jsx_attribute())
         && matches!(e.ast_parent(), AstNodes::JSXAttribute(_));
-    write!(f, FormatLiteralStringToken::new(f.source_text().text_for(&e), is_jsx, StringLiteralParentKind::Expression));
+    write!(
+        f,
+        FormatLiteralStringToken::new(
+            f.source_text().text_for(&e),
+            is_jsx,
+            StringLiteralParentKind::Expression
+        )
+    );
 }
 
 pub(crate) fn write_big_int_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
@@ -23,12 +30,19 @@ pub(crate) fn write_big_int_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
 
 /// An error: `/a/é`. The characters are sorted as JavaScript sorts strings, by UTF-16 code units.
 #[cold]
-fn write_reg_exp_literal_with_unknown_flags<'a>(raw: &'a [u8], flags: &[u8], f: &mut Formatter<'a>) {
+fn write_reg_exp_literal_with_unknown_flags<'a>(
+    raw: &'a [u8],
+    flags: &[u8],
+    f: &mut Formatter<'a>,
+) {
     let Ok(characters) = std::str::from_utf8(flags) else {
         return write!(f, text(raw));
     };
     let mut characters: Vec<char> = characters.chars().collect();
-    characters.sort_by(|a, b| a.encode_utf16(&mut [0; 2]).cmp(&b.encode_utf16(&mut [0; 2])));
+    characters.sort_by(|a, b| {
+        a.encode_utf16(&mut [0; 2])
+            .cmp(&b.encode_utf16(&mut [0; 2]))
+    });
     f.write_built_text(|out| {
         out.extend_from_slice(raw.get(..raw.len() - flags.len()).unwrap_or_default());
         for character in characters {

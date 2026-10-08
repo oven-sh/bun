@@ -231,24 +231,35 @@ struct Context<'a> {
 
 /// `tokens(..)`: without spaces and line breaks.
 fn tokens(list: &[SourceToken]) -> impl Iterator<Item = SourceToken> + '_ {
-    list.iter().copied().filter(|token| !matches!(token.kind, TokenType::Space | TokenType::Newline))
+    list.iter()
+        .copied()
+        .filter(|token| !matches!(token.kind, TokenType::Space | TokenType::Newline))
 }
 
 /// `maybeContentPropertyToken`
 fn is_content_property(token: SourceToken) -> bool {
-    matches!(token.kind, TokenType::Comment | TokenType::Tag | TokenType::Anchor)
+    matches!(
+        token.kind,
+        TokenType::Comment | TokenType::Tag | TokenType::Anchor
+    )
 }
 
 /// `isEmptyNode`
 fn is_empty_node(node: Option<&Composed<'_, '_>>, props: &[SourceToken]) -> bool {
-    node.is_none_or(|node| node.range[0] == node.range[1] && props.iter().all(|token| token.kind == TokenType::Comment))
+    node.is_none_or(|node| {
+        node.range[0] == node.range[1] && props.iter().all(|token| token.kind == TokenType::Comment)
+    })
 }
 
 impl<'a> Context<'a> {
     /// `transformOffset`
     fn point(&self, offset: u32) -> Point {
         // Most of the time it is the same line as the last time, or the next one.
-        let starts_at_or_before = |line: usize| self.line_starts.get(line).is_some_and(|&start| start <= offset);
+        let starts_at_or_before = |line: usize| {
+            self.line_starts
+                .get(line)
+                .is_some_and(|&start| start <= offset)
+        };
         let mut line = self.last_line.get();
         if !starts_at_or_before(line - 1) || starts_at_or_before(line + 1) {
             line = self.line_starts.partition_point(|&start| start <= offset);
@@ -256,12 +267,22 @@ impl<'a> Context<'a> {
             line += 1;
         }
         self.last_line.set(line.max(1));
-        let start = self.line_starts.get(line.wrapping_sub(1)).copied().unwrap_or(0);
-        let before = self.text.get(start as usize..offset as usize).unwrap_or_default();
+        let start = self
+            .line_starts
+            .get(line.wrapping_sub(1))
+            .copied()
+            .unwrap_or(0);
+        let before = self
+            .text
+            .get(start as usize..offset as usize)
+            .unwrap_or_default();
         // Columns count UTF-16 code units.
         let column = match self.is_ascii || before.is_ascii() {
             true => before.len(),
-            false => before.iter().filter(|&&b| b & 0xC0 != 0x80).count() + before.iter().filter(|&&b| b >= 0xF0).count(),
+            false => {
+                before.iter().filter(|&&b| b & 0xC0 != 0x80).count()
+                    + before.iter().filter(|&&b| b >= 0xF0).count()
+            }
         };
         Point {
             offset,
@@ -330,13 +351,21 @@ impl<'a> Context<'a> {
 
     fn transform_comment(&mut self, token: SourceToken) -> Id {
         let id = self.new_node(Kind::Comment, self.position(token.offset, token.end));
-        self.node(id).value = Cow::Borrowed(self.text.get(token.offset as usize + 1..token.end as usize).unwrap_or_default());
+        self.node(id).value = Cow::Borrowed(
+            self.text
+                .get(token.offset as usize + 1..token.end as usize)
+                .unwrap_or_default(),
+        );
         self.comments.push(id);
         id
     }
 
     /// `extractComments`, where anything else is an error unless `allows` says otherwise.
-    fn extract_comments(&mut self, list: &[SourceToken], allows: impl Fn(TokenType) -> bool) -> Result<()> {
+    fn extract_comments(
+        &mut self,
+        list: &[SourceToken],
+        allows: impl Fn(TokenType) -> bool,
+    ) -> Result<()> {
         for token in tokens(list) {
             match token.kind {
                 TokenType::Comment => {
@@ -350,7 +379,12 @@ impl<'a> Context<'a> {
     }
 
     /// `transformContentProperties`, for the node `id` that is made of `node`.
-    fn transform_content_properties(&mut self, id: Id, node: &Composed<'_, 'a>, props: &[SourceToken]) -> Result<()> {
+    fn transform_content_properties(
+        &mut self,
+        id: Id,
+        node: &Composed<'_, 'a>,
+        props: &[SourceToken],
+    ) -> Result<()> {
         let mut first_tag_or_anchor_start = None;
         self.has_properties |= !props.is_empty();
         for &token in props {
@@ -363,14 +397,21 @@ impl<'a> Context<'a> {
                 }
                 TokenType::Anchor => {
                     first_tag_or_anchor_start.get_or_insert(token.offset);
-                    let anchor = self.new_node(Kind::Anchor, self.position(token.offset, token.end));
+                    let anchor =
+                        self.new_node(Kind::Anchor, self.position(token.offset, token.end));
                     let (start, end) = node.anchor.ok_or(Unexpected)?;
-                    self.node(anchor).value = Cow::Borrowed(self.text.get(start as usize..end as usize).unwrap_or_default());
+                    self.node(anchor).value = Cow::Borrowed(
+                        self.text
+                            .get(start as usize..end as usize)
+                            .unwrap_or_default(),
+                    );
                     self.node(id).anchor = self.own(id, anchor);
                 }
                 TokenType::Comment => {
                     let comment = self.transform_comment(token);
-                    if first_tag_or_anchor_start.is_some_and(|start| start <= token.offset) && token.end <= node.range[0] {
+                    if first_tag_or_anchor_start.is_some_and(|start| start <= token.offset)
+                        && token.end <= node.range[0]
+                    {
                         append(&mut self.nodes, id, Which::MiddleComments, comment);
                     }
                 }
@@ -383,7 +424,9 @@ impl<'a> Context<'a> {
     /// The `end` of the token of a scalar or an alias.
     fn extract_end_comments(&mut self, node: &Composed<'_, 'a>) -> Result<()> {
         match node.src_token {
-            Some(Token::FlowScalar { end, .. }) => self.extract_comments(end.as_deref().unwrap_or_default(), |_| false),
+            Some(Token::FlowScalar { end, .. }) => {
+                self.extract_comments(end.as_deref().unwrap_or_default(), |_| false)
+            }
             _ => Err(Unexpected),
         }
     }
@@ -405,7 +448,8 @@ impl<'a> Context<'a> {
             NodeKind::Seq { flow: false, items } => self.transform_seq(node, items, props),
             NodeKind::Scalar(kind @ (ScalarType::BlockFolded | ScalarType::BlockLiteral)) => {
                 let Some(Token::BlockScalar {
-                    props: scalar_props, ..
+                    props: scalar_props,
+                    ..
                 }) = node.src_token
                 else {
                     return Err(Unexpected);
@@ -414,7 +458,9 @@ impl<'a> Context<'a> {
                 let mut indicator_comment = None;
                 for token in tokens(scalar_props) {
                     match token.kind {
-                        TokenType::Comment => indicator_comment = Some(self.transform_comment(token)),
+                        TokenType::Comment => {
+                            indicator_comment = Some(self.transform_comment(token))
+                        }
                         TokenType::BlockScalarHeader => header = Some(token),
                         _ => return Err(Unexpected),
                     }
@@ -425,14 +471,30 @@ impl<'a> Context<'a> {
                     [rest @ .., sign @ (b'+' | b'-')] => (rest, Some(*sign)),
                     _ => (header, None),
                 };
-                let digits_len = before_last_sign.iter().rev().take_while(|b| b.is_ascii_digit()).count();
-                let (before_digits, digits) = before_last_sign.split_at(before_last_sign.len() - digits_len);
-                let first_sign = before_digits.last().copied().filter(|b| matches!(b, b'+' | b'-'));
-                let kind = if *kind == ScalarType::BlockFolded { Kind::BlockFolded } else { Kind::BlockLiteral };
+                let digits_len = before_last_sign
+                    .iter()
+                    .rev()
+                    .take_while(|b| b.is_ascii_digit())
+                    .count();
+                let (before_digits, digits) =
+                    before_last_sign.split_at(before_last_sign.len() - digits_len);
+                let first_sign = before_digits
+                    .last()
+                    .copied()
+                    .filter(|b| matches!(b, b'+' | b'-'));
+                let kind = if *kind == ScalarType::BlockFolded {
+                    Kind::BlockFolded
+                } else {
+                    Kind::BlockLiteral
+                };
                 let id = self.new_node(kind, self.position(start, end));
                 self.transform_content_properties(id, node, props)?;
                 let block = self.node(id);
-                block.indent = (!digits.is_empty()).then(|| digits.iter().fold(0u32, |all, b| all.saturating_mul(10) + u32::from(b - b'0')));
+                block.indent = (!digits.is_empty()).then(|| {
+                    digits
+                        .iter()
+                        .fold(0u32, |all, b| all.saturating_mul(10) + u32::from(b - b'0'))
+                });
                 block.chomping = match last_sign.or(first_sign) {
                     Some(b'+') => Chomping::Keep,
                     Some(_) => Chomping::Strip,
@@ -468,15 +530,28 @@ impl<'a> Context<'a> {
     }
 
     /// The items of the token that no item of the node has been made of.
-    fn extract_comments_of_rest(&mut self, items: &[Item], from: usize, allows_comma: bool) -> Result<()> {
+    fn extract_comments_of_rest(
+        &mut self,
+        items: &[Item],
+        from: usize,
+        allows_comma: bool,
+    ) -> Result<()> {
         for item in items.get(from..).unwrap_or_default() {
             self.extract_comments(&item.start, |kind| allows_comma && kind == TokenType::Comma)?;
         }
         Ok(())
     }
 
-    fn transform_flow_map(&mut self, node: &Composed<'_, 'a>, pairs: &[Pair<'_, 'a>], props: &[SourceToken]) -> Result<Id> {
-        let Some(Token::FlowCollection { start, items, end, .. }) = node.src_token else {
+    fn transform_flow_map(
+        &mut self,
+        node: &Composed<'_, 'a>,
+        pairs: &[Pair<'_, 'a>],
+        props: &[SourceToken],
+    ) -> Result<Id> {
+        let Some(Token::FlowCollection {
+            start, items, end, ..
+        }) = node.src_token
+        else {
             return Err(Unexpected);
         };
         let children = self.pending.len();
@@ -485,7 +560,15 @@ impl<'a> Context<'a> {
             self.pending.push(child);
         }
         self.extract_comments_of_rest(items, pairs.len(), true)?;
-        self.finish_flow_collection(Kind::FlowMapping, TokenType::FlowMapEnd, node, *start, end, children, props)
+        self.finish_flow_collection(
+            Kind::FlowMapping,
+            TokenType::FlowMapEnd,
+            node,
+            *start,
+            end,
+            children,
+            props,
+        )
     }
 
     fn finish_flow_collection(
@@ -500,15 +583,26 @@ impl<'a> Context<'a> {
         props: &[SourceToken],
     ) -> Result<Id> {
         self.extract_comments(end, |kind| kind == end_kind)?;
-        let close = tokens(end).filter(|token| token.kind == end_kind).last().ok_or(Unexpected)?;
+        let close = tokens(end)
+            .filter(|token| token.kind == end_kind)
+            .last()
+            .ok_or(Unexpected)?;
         let id = self.new_node(kind, self.position(start.offset, close.end));
         self.transform_content_properties(id, node, props)?;
         self.add_pending_children(id, children);
         Ok(id)
     }
 
-    fn transform_flow_seq(&mut self, node: &Composed<'_, 'a>, nodes: &[SeqItem<'_, 'a>], props: &[SourceToken]) -> Result<Id> {
-        let Some(Token::FlowCollection { start, items, end, .. }) = node.src_token else {
+    fn transform_flow_seq(
+        &mut self,
+        node: &Composed<'_, 'a>,
+        nodes: &[SeqItem<'_, 'a>],
+        props: &[SourceToken],
+    ) -> Result<Id> {
+        let Some(Token::FlowCollection {
+            start, items, end, ..
+        }) = node.src_token
+        else {
             return Err(Unexpected);
         };
         let children = self.pending.len();
@@ -520,7 +614,11 @@ impl<'a> Context<'a> {
                     kind: NodeKind::Map { items: pairs, .. },
                     src_token: None,
                     ..
-                }) => self.transform_pair(pairs.last().ok_or(Unexpected)?, item, Kind::FlowMappingItem)?,
+                }) => self.transform_pair(
+                    pairs.last().ok_or(Unexpected)?,
+                    item,
+                    Kind::FlowMappingItem,
+                )?,
                 SeqItem::Node(item_node) => {
                     let mut item_props = Props::new();
                     for token in tokens(&item.start) {
@@ -539,10 +637,23 @@ impl<'a> Context<'a> {
             self.pending.push(child);
         }
         self.extract_comments_of_rest(items, nodes.len(), true)?;
-        self.finish_flow_collection(Kind::FlowSequence, TokenType::FlowSeqEnd, node, *start, end, children, props)
+        self.finish_flow_collection(
+            Kind::FlowSequence,
+            TokenType::FlowSeqEnd,
+            node,
+            *start,
+            end,
+            children,
+            props,
+        )
     }
 
-    fn transform_map(&mut self, node: &Composed<'_, 'a>, pairs: &[Pair<'_, 'a>], props: &[SourceToken]) -> Result<Id> {
+    fn transform_map(
+        &mut self,
+        node: &Composed<'_, 'a>,
+        pairs: &[Pair<'_, 'a>],
+        props: &[SourceToken],
+    ) -> Result<Id> {
         let Some(Token::BlockMap { items, .. }) = node.src_token else {
             return Err(Unexpected);
         };
@@ -552,7 +663,11 @@ impl<'a> Context<'a> {
             self.pending.push(child);
         }
         self.extract_comments_of_rest(items, pairs.len(), false)?;
-        let (&first, &last) = self.pending.get(children).zip(self.pending.last()).ok_or(Unexpected)?;
+        let (&first, &last) = self
+            .pending
+            .get(children)
+            .zip(self.pending.last())
+            .ok_or(Unexpected)?;
         let position = Position {
             start: self.position_of(first).start,
             end: self.position_of(last).end,
@@ -563,7 +678,12 @@ impl<'a> Context<'a> {
         Ok(id)
     }
 
-    fn transform_seq(&mut self, node: &Composed<'_, 'a>, nodes: &[SeqItem<'_, 'a>], props: &[SourceToken]) -> Result<Id> {
+    fn transform_seq(
+        &mut self,
+        node: &Composed<'_, 'a>,
+        nodes: &[SeqItem<'_, 'a>],
+        props: &[SourceToken],
+    ) -> Result<Id> {
         let Some(Token::BlockSeq { items, .. }) = node.src_token else {
             return Err(Unexpected);
         };
@@ -586,7 +706,11 @@ impl<'a> Context<'a> {
                 }
                 SeqItem::Node(item_node) => Some(self.transform_node(item_node, &item_props)?),
                 SeqItem::Pair(pair) => {
-                    let mapping_item = self.transform_pair(pair, pair.src_token.ok_or(Unexpected)?, Kind::MappingItem)?;
+                    let mapping_item = self.transform_pair(
+                        pair,
+                        pair.src_token.ok_or(Unexpected)?,
+                        Kind::MappingItem,
+                    )?;
                     let mapping = self.new_node(Kind::Mapping, self.position_of(mapping_item));
                     self.transform_content_properties(mapping, &pair.key, &item_props)?;
                     self.add_child(mapping, mapping_item);
@@ -612,7 +736,11 @@ impl<'a> Context<'a> {
             self.pending.push(id);
         }
         self.extract_comments_of_rest(items, nodes.len(), false)?;
-        let (&first, &last) = self.pending.get(children).zip(self.pending.last()).ok_or(Unexpected)?;
+        let (&first, &last) = self
+            .pending
+            .get(children)
+            .zip(self.pending.last())
+            .ok_or(Unexpected)?;
         let position = Position {
             start: self.position_of(first).start,
             end: self.position_of(last).end,
@@ -656,7 +784,10 @@ impl<'a> Context<'a> {
             (None, None) => key_start,
         };
         let value_start = pair.value.as_ref().map(|value| {
-            map_value_ind.map(|it| it.offset).or_else(|| item.value.as_ref().map(|it| it.offset())).unwrap_or(value.range[0])
+            map_value_ind
+                .map(|it| it.offset)
+                .or_else(|| item.value.as_ref().map(|it| it.offset()))
+                .unwrap_or(value.range[0])
         });
 
         // `transformAstPair`
@@ -667,20 +798,28 @@ impl<'a> Context<'a> {
             }
             false => Some(self.transform_node(&pair.key, &key_props)?),
         };
-        let value_content = match (&pair.value, is_empty_node(pair.value.as_ref(), &value_props)) {
+        let value_content = match (
+            &pair.value,
+            is_empty_node(pair.value.as_ref(), &value_props),
+        ) {
             (Some(value), false) => Some(self.transform_node(value, &value_props)?),
             _ => {
                 self.extract_comments(&value_props, |_| true)?;
                 None
             }
         };
-        let key_position = self.position(key_start, key_content.map_or(key_end, |it| self.position_of(it).end.offset));
+        let key_position = self.position(
+            key_start,
+            key_content.map_or(key_end, |it| self.position_of(it).end.offset),
+        );
         let mapping_key = self.new_node(Kind::MappingKey, key_position);
         if let Some(content) = key_content {
             self.add_child(mapping_key, content);
         }
         let value_position = match (value_start, value_content) {
-            (Some(start), Some(content)) => self.position(start, self.position_of(content).end.offset),
+            (Some(start), Some(content)) => {
+                self.position(start, self.position_of(content).end.offset)
+            }
             (Some(start), None) => self.position(start, start + 1),
             (None, Some(content)) => {
                 let position = self.position_of(content);
@@ -720,7 +859,9 @@ struct DocumentData<'t, 'a> {
 impl<'a> Context<'a> {
     fn transform_document(&mut self, data: &DocumentData<'_, 'a>) -> Result<Id> {
         let (cst_start, cst_end) = match data.cst_node {
-            Some(Token::Document { start, end, .. }) => (&start[..], end.as_deref().unwrap_or_default()),
+            Some(Token::Document { start, end, .. }) => {
+                (&start[..], end.as_deref().unwrap_or_default())
+            }
             _ => (&[][..], &[][..]),
         };
 
@@ -746,7 +887,8 @@ impl<'a> Context<'a> {
                     }
                 }
                 Token::Directive(token) => {
-                    let directive = self.new_node(Kind::Directive, self.position(token.offset, token.end));
+                    let directive =
+                        self.new_node(Kind::Directive, self.position(token.offset, token.end));
                     self.node(directive).value = Cow::Borrowed(token.source(self.text));
                     directives.push(directive);
                     end_comment_candidates.clear();
@@ -803,7 +945,9 @@ impl<'a> Context<'a> {
 
         // `transformDocumentBody`
         let (doc_end, doc_end_end) = match data.document_end {
-            Some(Token::DocEnd { token, end }) => (Some(*token), end.as_deref().unwrap_or_default()),
+            Some(Token::DocEnd { token, end }) => {
+                (Some(*token), end.as_deref().unwrap_or_default())
+            }
             _ => (None, &[][..]),
         };
         let prop_tokens = between_tokens;
@@ -835,7 +979,9 @@ impl<'a> Context<'a> {
         }
         let has_content = contents.is_some_and(|contents| {
             contents.range[0] < contents.range[1]
-                || prop_tokens.iter().any(|token| matches!(token.kind, TokenType::Tag | TokenType::Anchor))
+                || prop_tokens
+                    .iter()
+                    .any(|token| matches!(token.kind, TokenType::Tag | TokenType::Anchor))
         });
         let content = match (contents, has_content) {
             (Some(contents), true) => Some(self.transform_node(contents, &prop_tokens)?),
@@ -849,11 +995,15 @@ impl<'a> Context<'a> {
             Some(doc_end) => doc_end.offset.saturating_sub(1),
             // `findCharIndex(text, document.range[2], /\S/) ?? text.length`
             None => {
-                let rest = self.text.get(data.node.range[2] as usize..).unwrap_or_default();
+                let rest = self
+                    .text
+                    .get(data.node.range[2] as usize..)
+                    .unwrap_or_default();
                 text_len - crate::css::text::trim_start(rest).len() as u32
             }
         };
-        let mut body_start = content.map_or(body_end, |content| self.position_of(content).start.offset);
+        let mut body_start =
+            content.map_or(body_end, |content| self.position_of(content).start.offset);
         if let Some(doc_start) = doc_start {
             let doc_start_end = doc_start.end + 1;
             if body_start < doc_start_end && doc_start_end <= body_end {
@@ -892,7 +1042,11 @@ impl<'a> Context<'a> {
     }
 
     /// `transformDocuments`
-    fn transform_documents<'t>(&mut self, documents: &'t [Document<'t, 'a>], cst_tokens: &'t [Token]) -> Result<Vec<Id>> {
+    fn transform_documents<'t>(
+        &mut self,
+        documents: &'t [Document<'t, 'a>],
+        cst_tokens: &'t [Token],
+    ) -> Result<Vec<Id>> {
         let mut data: Vec<DocumentData<'t, 'a>> = Vec::new();
         let mut buffer_comments: Vec<&'t Token> = Vec::new();
         let mut tokens_before_body: Vec<&'t Token> = Vec::new();
@@ -907,7 +1061,9 @@ impl<'a> Context<'a> {
         };
         for token in cst_tokens {
             match token {
-                Token::Source(source) if source.kind == TokenType::Comment => buffer_comments.push(token),
+                Token::Source(source) if source.kind == TokenType::Comment => {
+                    buffer_comments.push(token)
+                }
                 Token::Source(_) => {}
                 Token::Document { .. } => {
                     let node = documents.get(data.len()).ok_or(Unexpected)?;
@@ -925,7 +1081,10 @@ impl<'a> Context<'a> {
                     tokens_before_body.push(token);
                 }
                 Token::DocEnd { .. } => {
-                    let current = data.last_mut().filter(|it| it.document_end.is_none()).ok_or(Unexpected)?;
+                    let current = data
+                        .last_mut()
+                        .filter(|it| it.document_end.is_none())
+                        .ok_or(Unexpected)?;
                     current.tokens_after_body = source_tokens(&mut buffer_comments);
                     current.document_end = Some(token);
                 }
@@ -946,10 +1105,14 @@ impl<'a> Context<'a> {
                 });
             }
             if let Some(current) = data.last_mut() {
-                current.tokens_after_body.extend(source_tokens(&mut buffer_comments));
+                current
+                    .tokens_after_body
+                    .extend(source_tokens(&mut buffer_comments));
             }
         }
-        data.iter().map(|data| self.transform_document(data)).collect()
+        data.iter()
+            .map(|data| self.transform_document(data))
+            .collect()
     }
 }
 
@@ -971,12 +1134,18 @@ fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
     }
     let column_of = |id: Id, is_start: bool| {
         let position = nodes[id as usize].position;
-        if is_start { position.start.column } else { position.end.column }
+        if is_start {
+            position.start.column
+        } else {
+            position.end.column
+        }
     };
     let (start_line, end_line) = (start.line as usize - 1, end.line as usize - 1);
     if node.kind.has_leading_comments()
         && let Some(line) = table.get_mut(start_line)
-        && line.leading_attachable_node.is_none_or(|it| start.column < column_of(it, true))
+        && line
+            .leading_attachable_node
+            .is_none_or(|it| start.column < column_of(it, true))
     {
         line.leading_attachable_node = Some(id);
     }
@@ -984,14 +1153,27 @@ fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
         && end.column > 1
         && !matches!(node.kind, Kind::Document | Kind::DocumentHead)
         && let Some(line) = table.get_mut(end_line)
-        && line.trailing_attachable_node.is_none_or(|it| end.column >= column_of(it, false))
+        && line
+            .trailing_attachable_node
+            .is_none_or(|it| end.column >= column_of(it, false))
     {
         line.trailing_attachable_node = Some(id);
     }
-    if !matches!(node.kind, Kind::Root | Kind::Document | Kind::DocumentHead | Kind::DocumentBody) {
-        for index in [Some(end_line), (start_line != end_line).then_some(start_line)].into_iter().flatten() {
+    if !matches!(
+        node.kind,
+        Kind::Root | Kind::Document | Kind::DocumentHead | Kind::DocumentBody
+    ) {
+        for index in [
+            Some(end_line),
+            (start_line != end_line).then_some(start_line),
+        ]
+        .into_iter()
+        .flatten()
+        {
             if let Some(line) = table.get_mut(index)
-                && line.trailing_node.is_none_or(|it| end.column >= column_of(it, false))
+                && line
+                    .trailing_node
+                    .is_none_or(|it| end.column >= column_of(it, false))
             {
                 line.trailing_node = Some(id);
             }
@@ -1005,7 +1187,9 @@ fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
 /// `isExplicitMappingKey`
 fn is_explicit_mapping_key(nodes: &[Node<'_>], id: Id) -> bool {
     let node = &nodes[id as usize];
-    node.children.first().is_none_or(|child| node.position.start.offset != nodes[child as usize].position.start.offset)
+    node.children.first().is_none_or(|child| {
+        node.position.start.offset != nodes[child as usize].position.start.offset
+    })
 }
 
 fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool {
@@ -1014,7 +1198,10 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
         && node.position.end.offset > comment.end.offset
         && matches!(node.kind, Kind::FlowMapping | Kind::FlowSequence)
     {
-        return node.children.last().is_none_or(|last| comment.start.line > nodes[last as usize].position.end.line);
+        return node
+            .children
+            .last()
+            .is_none_or(|last| comment.start.line > nodes[last as usize].position.end.line);
     }
     if comment.end.offset < node.position.end.offset {
         return false;
@@ -1022,11 +1209,16 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
     match node.kind {
         Kind::SequenceItem => comment.start.column > node.position.start.column,
         Kind::MappingKey | Kind::MappingValue => {
-            let parent_column = node.parent.map_or(0, |parent| nodes[parent as usize].position.start.column);
+            let parent_column = node
+                .parent
+                .map_or(0, |parent| nodes[parent as usize].position.start.column);
             comment.start.column > parent_column
                 && match (node.children.first(), node.children.len()) {
                     (None, _) => true,
-                    (Some(child), 1) => !matches!(nodes[child as usize].kind, Kind::BlockFolded | Kind::BlockLiteral),
+                    (Some(child), 1) => !matches!(
+                        nodes[child as usize].kind,
+                        Kind::BlockFolded | Kind::BlockLiteral
+                    ),
                     _ => false,
                 }
                 && (node.kind == Kind::MappingValue || is_explicit_mapping_key(nodes, id))
@@ -1037,12 +1229,22 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
 
 /// `next_leading[line]`: the first line from the one with the index `line` on that has a
 /// `leading_attachable_node`.
-fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], next_leading: &[u32], comment: Id, document: Id) -> Result<()> {
+fn attach_comment(
+    nodes: &mut [Node<'_>],
+    table: &[Line],
+    next_leading: &[u32],
+    comment: Id,
+    document: Id,
+) -> Result<()> {
     let position = nodes[comment as usize].position;
     let comment_line = position.start.line as usize;
     let line_at = |line: usize| table.get(line.wrapping_sub(1)).copied().unwrap_or_default();
     if let Some(node) = line_at(comment_line).trailing_attachable_node {
-        if nodes[node as usize].trailing_comment.replace(comment).is_some() {
+        if nodes[node as usize]
+            .trailing_comment
+            .replace(comment)
+            .is_some()
+        {
             return Err(Unexpected);
         }
         nodes[comment as usize].parent = Some(node);
@@ -1067,10 +1269,15 @@ fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], next_leading: &[u32], 
         }
         if nodes[current as usize].kind == Kind::MappingItem {
             let children = nodes[current as usize].children;
-            let (Some(key), Some(value), 2) = (children.first(), children.last(), children.len()) else {
+            let (Some(key), Some(value), 2) = (children.first(), children.last(), children.len())
+            else {
                 return Err(Unexpected);
             };
-            current = if is_explicit_mapping_key(nodes, key) { key } else { value };
+            current = if is_explicit_mapping_key(nodes, key) {
+                key
+            } else {
+                value
+            };
         }
         loop {
             if should_own_end_comment(nodes, current, position) {
@@ -1087,12 +1294,18 @@ fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], next_leading: &[u32], 
     // The first line after that of the comment, in the document.
     if let Some(&index) = next_leading.get(comment_line)
         && index < document_position.end.line
-        && let Some(node) = table.get(index as usize).and_then(|line| line.leading_attachable_node)
+        && let Some(node) = table
+            .get(index as usize)
+            .and_then(|line| line.leading_attachable_node)
     {
         append(nodes, node, Which::LeadingComments, comment);
         return Ok(());
     }
-    let body = nodes[document as usize].children.last().filter(|_| nodes[document as usize].children.len() > 1).ok_or(Unexpected)?;
+    let body = nodes[document as usize]
+        .children
+        .last()
+        .filter(|_| nodes[document as usize].children.len() > 1)
+        .ok_or(Unexpected)?;
     append(nodes, body, Which::EndComments, comment);
     Ok(())
 }
@@ -1117,13 +1330,21 @@ fn update_positions(nodes: &mut [Node<'_>], id: Id, has_properties: bool) {
     if !has_children_field {
         return;
     }
-    let mut child = children.first().filter(|_| has_properties || nodes[id as usize].kind != Kind::DocumentBody);
+    let mut child = children
+        .first()
+        .filter(|_| has_properties || nodes[id as usize].kind != Kind::DocumentBody);
     while let Some(id) = child {
         update_positions(nodes, id, has_properties);
         child = nodes[id as usize].next;
     }
-    if let (Kind::Document, Some(head), Some(body), 2) = (nodes[id as usize].kind, children.first(), children.last(), children.len()) {
-        let (head_position, body_position) = (nodes[head as usize].position, nodes[body as usize].position);
+    if let (Kind::Document, Some(head), Some(body), 2) = (
+        nodes[id as usize].kind,
+        children.first(),
+        children.last(),
+        children.len(),
+    ) {
+        let (head_position, body_position) =
+            (nodes[head as usize].position, nodes[body as usize].position);
         if head_position.start.offset == head_position.end.offset {
             nodes[head as usize].position = Position {
                 start: body_position.start,
@@ -1176,14 +1397,24 @@ fn update_start_points(
     }
     if let Some(first_child) = first_child {
         update_start(first_child.position.start);
-        for related in first_child.leading_comments.first().into_iter().chain(first_child.tag).chain(first_child.anchor) {
+        for related in first_child
+            .leading_comments
+            .first()
+            .into_iter()
+            .chain(first_child.tag)
+            .chain(first_child.anchor)
+        {
             update_start(position_of(related).start);
         }
     }
 }
 
 /// `parse` of `yaml-unist-parser`, from the results of `yaml`.
-pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_tokens: &[Token]) -> Result<Tree<'a>> {
+pub(crate) fn build<'a>(
+    text: &'a [u8],
+    documents: &[Document<'_, 'a>],
+    cst_tokens: &[Token],
+) -> Result<Tree<'a>> {
     let mut line_starts = vec![0u32];
     let mut from = 0;
     while let Some(at) = strings::index_of_char_usize(&text[from..], b'\n') {
@@ -1214,13 +1445,17 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
     comments.sort_by_key(|&comment| nodes[comment as usize].position.start.offset);
 
     // `attachComments`, if there are comments to attach.
-    if comments.iter().all(|&comment| nodes[comment as usize].parent.is_some()) {
+    if comments
+        .iter()
+        .all(|&comment| nodes[comment as usize].parent.is_some())
+    {
         update_positions(&mut nodes, root, has_properties || !comments.is_empty());
         return Ok(Tree { nodes, root });
     }
     let mut table = vec![Line::default(); nodes[root as usize].position.end.line as usize];
     for &comment in &comments {
-        if let Some(line) = table.get_mut(nodes[comment as usize].position.start.line as usize - 1) {
+        if let Some(line) = table.get_mut(nodes[comment as usize].position.start.line as usize - 1)
+        {
             line.comment = Some(comment);
         }
     }
@@ -1238,11 +1473,18 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
             continue;
         }
         while let [first, _, ..] = rest_documents
-            && nodes[comment as usize].position.start.line > nodes[*first as usize].position.end.line
+            && nodes[comment as usize].position.start.line
+                > nodes[*first as usize].position.end.line
         {
             rest_documents = &rest_documents[1..];
         }
-        attach_comment(&mut nodes, &table, &next_leading, comment, *rest_documents.first().ok_or(Unexpected)?)?;
+        attach_comment(
+            &mut nodes,
+            &table,
+            &next_leading,
+            comment,
+            *rest_documents.first().ok_or(Unexpected)?,
+        )?;
     }
     update_positions(&mut nodes, root, true);
     Ok(Tree { nodes, root })

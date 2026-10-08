@@ -59,8 +59,8 @@
 //!   decorators of a member after the member, the index of `a[b]` in a pattern before `a`.
 
 use crate::ast::{
-    Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals, ImportSpec, Interface,
-    Module, Name, Node, Pat, Stmt, StmtKind, TypeKind, TypeNode, TypeParam,
+    Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals,
+    ImportSpec, Interface, Module, Name, Node, Pat, Stmt, StmtKind, TypeKind, TypeNode, TypeParam,
 };
 use crate::linter::globals::GlobalVariable;
 use crate::span::{Span, Spanned};
@@ -125,7 +125,9 @@ impl<'a> File<'a> {
     #[cold]
     #[inline(never)]
     fn compute_variables(&'a self) -> &'a Variables {
-        self.semantic().variables.get_or_init(|| Variables::new(self, self.scope_tree()))
+        self.semantic()
+            .variables
+            .get_or_init(|| Variables::new(self, self.scope_tree()))
     }
 
     #[inline]
@@ -207,19 +209,22 @@ impl<'a> Symbol<'a> {
 
     #[inline]
     pub fn name(self) -> Name<'a> {
-        self.file.name(self.variable().map_or(known::arguments, |it| it.name))
+        self.file
+            .name(self.variable().map_or(known::arguments, |it| it.name))
     }
 
     /// typescript-eslint's `variable.isValueVariable`: everything but an interface, a type alias
     /// and a type parameter. Also an `import type` and a namespace that only has types in it.
     pub fn is_value_variable(self) -> bool {
-        self.variable().is_some_and(|it| it.flags & variables::VALUE != 0)
+        self.variable()
+            .is_some_and(|it| it.flags & variables::VALUE != 0)
     }
 
     /// typescript-eslint's `variable.isTypeVariable`: an interface, a type alias, a type
     /// parameter, a class, an enum and its members, a namespace, an import.
     pub fn is_type_variable(self) -> bool {
-        self.variable().is_some_and(|it| it.flags & variables::TYPE != 0)
+        self.variable()
+            .is_some_and(|it| it.flags & variables::TYPE != 0)
     }
 
     /// The `arguments` of a function that is not an arrow function, unless the function declares
@@ -234,9 +239,13 @@ impl<'a> Symbol<'a> {
     /// type parameters, as in ESLint. What ESLint takes for one variable is one symbol:
     /// `function f() {} var f;` has two declarations.
     #[inline]
-    pub fn declarations(self) -> impl DoubleEndedIterator<Item = Declaration<'a>> + ExactSizeIterator + 'a {
+    pub fn declarations(
+        self,
+    ) -> impl DoubleEndedIterator<Item = Declaration<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
-        let all = self.variable().map_or(&[][..], |it| file.variables().declarations_of(it));
+        let all = self
+            .variable()
+            .map_or(&[][..], |it| file.variables().declarations_of(it));
         all.iter().map(move |&decl| Declaration::new(file, decl))
     }
 
@@ -245,8 +254,13 @@ impl<'a> Symbol<'a> {
     /// reference, but one that gives its name a value makes a write reference of the name, as in
     /// ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
     #[inline]
-    pub fn references(self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        Reference::all_at(self.file, self.file.reference_list().of_variable(self.index))
+    pub fn references(
+        self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        Reference::all_at(
+            self.file,
+            self.file.reference_list().of_variable(self.index),
+        )
     }
 
     #[inline]
@@ -317,7 +331,9 @@ impl<'a> Symbol<'a> {
 
     fn has_mark(self, mark: u8) -> bool {
         let marks = self.file.semantic().marks.borrow();
-        marks.get(self.index as usize).is_some_and(|it| it & mark != 0)
+        marks
+            .get(self.index as usize)
+            .is_some_and(|it| it & mark != 0)
     }
 
     /// Sets ESLint's `variable.eslintUsed`, which `no-unused-vars` reads.
@@ -439,7 +455,9 @@ impl<'a> Declaration<'a> {
             Declaration::Param(_) => DeclarationKind::Parameter,
             Declaration::Fn(_) => DeclarationKind::FunctionName,
             Declaration::Class(_) => DeclarationKind::ClassName,
-            Declaration::Interface(_) | Declaration::TypeAlias(_) | Declaration::TypeParam(_) => DeclarationKind::Type,
+            Declaration::Interface(_) | Declaration::TypeAlias(_) | Declaration::TypeParam(_) => {
+                DeclarationKind::Type
+            }
             Declaration::Enum(_) => DeclarationKind::TsEnumName,
             Declaration::EnumMember(_) => DeclarationKind::TsEnumMember,
             Declaration::Module(_) => DeclarationKind::TsModuleName,
@@ -474,7 +492,9 @@ impl<'a> Declaration<'a> {
             Declaration::Enum(it) => it.name().span(),
             Declaration::EnumMember(it) => it.key()?.span(it.file()),
             Declaration::Module(it) => match it.name() {
-                crate::ast::ModuleName::Ident(name) | crate::ast::ModuleName::String(name) => name.span(),
+                crate::ast::ModuleName::Ident(name) | crate::ast::ModuleName::String(name) => {
+                    name.span()
+                }
                 crate::ast::ModuleName::Global => return None,
             },
             Declaration::TypeParam(it) => it.name().span(),
@@ -490,7 +510,9 @@ impl<'a> Declaration<'a> {
     /// annotation includes the `?` and the annotation: `a?: T`.
     pub fn identifier_span(self) -> Option<Span> {
         match self {
-            Declaration::Var(pat) | Declaration::Param(pat) => Some(crate::utils::estree_span(Node::Pat(pat))),
+            Declaration::Var(pat) | Declaration::Param(pat) => {
+                Some(crate::utils::estree_span(Node::Pat(pat)))
+            }
             _ => self.name_span(),
         }
     }
@@ -504,7 +526,9 @@ impl<'a> Declaration<'a> {
                 _ => return None,
             },
             Declaration::Param(pat) => match variables::root_of_pattern(pat.file(), pat.id()) {
-                bind::PatParent::Param(p) => Node::Func(crate::ast::Param::new(pat.file(), p).func()?),
+                bind::PatParent::Param(p) => {
+                    Node::Func(crate::ast::Param::new(pat.file(), p).func()?)
+                }
                 _ => return None,
             },
             Declaration::Fn(func) => Node::Func(func),
@@ -515,7 +539,9 @@ impl<'a> Declaration<'a> {
             Declaration::EnumMember(it) => Node::EnumMember(it),
             Declaration::Module(it) => Node::Stmt(it.stmt()),
             Declaration::TypeParam(it) => Node::TypeParam(it),
-            Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => Node::Stmt(it.stmt()),
+            Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => {
+                Node::Stmt(it.stmt())
+            }
             Declaration::ImportSpec(it) => Node::ImportSpec(it),
             Declaration::ImportEquals(it) => Node::Stmt(it.stmt()),
             Declaration::Other => return None,
@@ -527,7 +553,9 @@ impl<'a> Declaration<'a> {
     pub fn parent(self) -> Option<Node<'a>> {
         match self {
             Declaration::Var(_) if !self.is_catch_parameter() => Some(self.node()?.parent()),
-            Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => Some(Node::Stmt(it.stmt())),
+            Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => {
+                Some(Node::Stmt(it.stmt()))
+            }
             Declaration::ImportSpec(it) => Some(Node::Stmt(it.import().stmt())),
             Declaration::ImportEquals(it) => Some(Node::Stmt(it.stmt())),
             _ => None,
@@ -597,7 +625,12 @@ impl std::hash::Hash for Reference<'_> {
 }
 impl std::fmt::Debug for Reference<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Reference({:?}, {:?})", self.raw().site, self.raw().flags)
+        write!(
+            f,
+            "Reference({:?}, {:?})",
+            self.raw().site,
+            self.raw().flags
+        )
     }
 }
 
@@ -636,7 +669,8 @@ impl<'a> Reference<'a> {
             return None;
         }
         let global = self.file.global_named(self.name())?;
-        ((self.is_value() && global.accepts(false)) || (self.is_type() && global.accepts(true))).then_some(global)
+        ((self.is_value() && global.accepts(false)) || (self.is_type() && global.accepts(true)))
+            .then_some(global)
     }
 
     #[inline]
@@ -710,14 +744,18 @@ impl<'a> Reference<'a> {
         match self.raw().site {
             ReferenceSite::Expr(e) => Node::Expr(Expr::new(file, e)),
             ReferenceSite::Pat(p) => Node::Pat(Pat::new(file, p)),
-            ReferenceSite::TypeName(t) | ReferenceSite::Predicate(t) => Node::Type(TypeNode::new(file, t)),
+            ReferenceSite::TypeName(t) | ReferenceSite::Predicate(t) => {
+                Node::Type(TypeNode::new(file, t))
+            }
             ReferenceSite::ImportEquals(i) => Node::Stmt(ImportEquals::new(file, i).stmt()),
             ReferenceSite::ExportAsNamespace(s) => Node::Stmt(Stmt::new(file, s)),
             ReferenceSite::JsxName(e) => Node::Expr(Expr::new(file, e)),
             ReferenceSite::ExportSpec(s) => Node::ExportSpec(crate::ast::ExportSpec::new(file, s)),
             ReferenceSite::Declaration(index) => {
                 let first = Symbol::at(file, index).declarations().next();
-                first.and_then(Declaration::node).unwrap_or(Node::File(file))
+                first
+                    .and_then(Declaration::node)
+                    .unwrap_or(Node::File(file))
             }
         }
     }
@@ -925,20 +963,26 @@ impl<'a> Scope<'a> {
                     block,
                     handler: Some(handler),
                     ..
-                } => Span::new(crate::tokens::skip_trivia(file.text(), block.span().end), handler.span().end),
+                } => Span::new(
+                    crate::tokens::skip_trivia(file.text(), block.span().end),
+                    handler.span().end,
+                ),
                 _ => s.span(),
             },
             // The HIR positions the block after `finally` at the keyword.
             (ScopeKind::Block, Node::Stmt(s)) => match file.hir.stmts.get(s.id().idx()) {
-                Some(raw) if file.text().get(raw.start as usize) != Some(&b'{') => {
-                    Span::new(crate::tokens::skip_trivia(file.text(), raw.loc.pos), raw.loc.end)
-                }
+                Some(raw) if file.text().get(raw.start as usize) != Some(&b'{') => Span::new(
+                    crate::tokens::skip_trivia(file.text(), raw.loc.pos),
+                    raw.loc.end,
+                ),
                 _ => s.span(),
             },
             (ScopeKind::ClassStaticBlock, Node::Func(f)) => f.owner().span(),
             (_, Node::Func(f)) => match f.owner() {
                 Node::Stmt(s) => s.span_without_export(),
-                Node::Expr(e) if matches!(f.kind(), hir::FnKind::Expr | hir::FnKind::Arrow) => e.span(),
+                Node::Expr(e) if matches!(f.kind(), hir::FnKind::Expr | hir::FnKind::Arrow) => {
+                    e.span()
+                }
                 Node::Type(t) => t.span(),
                 Node::Member(m) if self.kind() == ScopeKind::FunctionType => m.span(),
                 _ => f.span_from_params(),
@@ -947,7 +991,9 @@ impl<'a> Scope<'a> {
                 Node::Stmt(s) => s.span_without_export(),
                 owner => owner.span(),
             },
-            (ScopeKind::TsModule | ScopeKind::TsEnum | ScopeKind::Type, Node::Stmt(s)) => s.span_without_export(),
+            (ScopeKind::TsModule | ScopeKind::TsEnum | ScopeKind::Type, Node::Stmt(s)) => {
+                s.span_without_export()
+            }
             (_, node) => node.span(),
         }
     }
@@ -956,16 +1002,24 @@ impl<'a> Scope<'a> {
     /// an arrow function is its [`arguments`](Symbol::is_implicit_arguments).
     pub fn symbols(self) -> impl DoubleEndedIterator<Item = Symbol<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
-        file.variables().range_of_scope(self.id.0).map(move |index| Symbol::at(file, index as u32))
+        file.variables()
+            .range_of_scope(self.id.0)
+            .map(move |index| Symbol::at(file, index as u32))
     }
 
     fn get_atom(self, name: Atom) -> Option<Symbol<'a>> {
-        self.file.variables().get(self.id.0, name).map(|index| Symbol::at(self.file, index))
+        self.file
+            .variables()
+            .get(self.id.0, name)
+            .map(|index| Symbol::at(self.file, index))
     }
 
     fn resolve_atom(self, name: Atom) -> Option<Symbol<'a>> {
         let (tree, wants) = (self.file.scope_tree(), variables::VALUE | variables::TYPE);
-        let found = self.file.variables().resolve(tree, self.id.0, name, u32::MAX, wants);
+        let found = self
+            .file
+            .variables()
+            .resolve(tree, self.id.0, name, u32::MAX, wants);
         found.map(|index| Symbol::at(self.file, index))
     }
 
@@ -1017,8 +1071,13 @@ impl<'a> Scope<'a> {
 
     /// The references that are written directly in it, not in a scope inside it, in source order:
     /// ESLint's `scope.references`.
-    pub fn references(self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        Reference::all_at(self.file, self.file.reference_list().in_scopes(self.id.0, self.id.0))
+    pub fn references(
+        self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        Reference::all_at(
+            self.file,
+            self.file.reference_list().in_scopes(self.id.0, self.id.0),
+        )
     }
 
     /// The references in it, and in the scopes inside it, to what is declared outside it or
@@ -1027,10 +1086,12 @@ impl<'a> Scope<'a> {
         let (file, id) = (self.file, self.id.0);
         let (tree, variables) = (file.scope_tree(), file.variables());
         let all = Reference::all_at(file, file.reference_list().in_scopes(id, self.data().last));
-        all.filter(move |it| match variables.list.get(it.raw().variable as usize) {
-            Some(variable) => !tree.contains(id, variable.scope),
-            None => true,
-        })
+        all.filter(
+            move |it| match variables.list.get(it.raw().variable as usize) {
+                Some(variable) => !tree.contains(id, variable.scope),
+                None => true,
+            },
+        )
     }
 }
 
@@ -1068,7 +1129,10 @@ impl<'a> File<'a> {
 
     /// Those of [`File::symbols`] that have a declaration of one of `kinds`. It looks at a number
     /// for each symbol of the file.
-    pub fn symbols_declared_as(&'a self, kinds: DeclarationKinds) -> impl Iterator<Item = Symbol<'a>> + 'a {
+    pub fn symbols_declared_as(
+        &'a self,
+        kinds: DeclarationKinds,
+    ) -> impl Iterator<Item = Symbol<'a>> + 'a {
         let declared = self.variables().list.iter().enumerate();
         let declared = declared.filter(move |it| it.1.kinds & kinds.bits() != 0);
         declared.map(move |it| Symbol::at(self, it.0 as u32))
@@ -1088,7 +1152,13 @@ impl<'a> File<'a> {
         }
         let global = self.global(name.bytes());
         if global.is_none_or(|it| it.comments.is_empty()) {
-            *slot = (atom, global.map(|it| GlobalVariable { comments: &[], ..it }));
+            *slot = (
+                atom,
+                global.map(|it| GlobalVariable {
+                    comments: &[],
+                    ..it
+                }),
+            );
         }
         global
     }
@@ -1099,12 +1169,19 @@ impl<'a> File<'a> {
     }
 
     /// Every reference, in source order.
-    pub fn references(&'a self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        self.reference_list().all.iter().map(move |raw| Reference { file: self, raw })
+    pub fn references(
+        &'a self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        self.reference_list()
+            .all
+            .iter()
+            .map(move |raw| Reference { file: self, raw })
     }
 
     /// Every reference, in [the order ESLint makes them](self).
-    pub fn references_as_visited(&'a self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+    pub fn references_as_visited(
+        &'a self,
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
         let references = self.reference_list();
         let (all, order) = (&references.all[..], references.visiting_order());
         (0..all.len()).map(move |i| Reference {
@@ -1133,7 +1210,11 @@ impl<'a> File<'a> {
         &'a self,
         name: &[u8],
     ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        Reference::all_at(self, self.reference_list().unresolved_named(self.atoms.intern(name)))
+        Reference::all_at(
+            self,
+            self.reference_list()
+                .unresolved_named(self.atoms.intern(name)),
+        )
     }
 
     /// The assignments outside strict mode to what nothing declares, each of which creates a
@@ -1237,7 +1318,10 @@ impl<'a> Node<'a> {
                 _ => None,
             },
             // A signature or a static block. A method is in the scope of the class.
-            Node::Member(m) => m.func().and_then(Func::scope).filter(|it| it.kind() != ScopeKind::Function),
+            Node::Member(m) => m
+                .func()
+                .and_then(Func::scope)
+                .filter(|it| it.kind() != ScopeKind::Function),
             _ => None,
         };
         if let Some(own) = own {
@@ -1311,7 +1395,9 @@ impl<'a> Node<'a> {
                         d.pat().for_each_binding(&mut |pat| add(pat.symbol()));
                     }
                 }
-                StmtKind::Try { param: Some(d), .. } => d.pat().for_each_binding(&mut |pat| add(pat.symbol())),
+                StmtKind::Try { param: Some(d), .. } => {
+                    d.pat().for_each_binding(&mut |pat| add(pat.symbol()))
+                }
                 StmtKind::Fn(f) => function(f, &mut add),
                 StmtKind::Class(c) => add(c.symbol()),
                 StmtKind::Interface(it) => add(Symbol::declared_by(file, Decl::Interface(it.id()))),
@@ -1331,7 +1417,11 @@ impl<'a> Node<'a> {
             _ => {}
         }
         // Each once, where it is first: `var a, a`, `function f(a, a) {}`.
-        let mut first: Vec<(u32, usize)> = found.iter().enumerate().map(|(i, it)| (it.index, i)).collect();
+        let mut first: Vec<(u32, usize)> = found
+            .iter()
+            .enumerate()
+            .map(|(i, it)| (it.index, i))
+            .collect();
         first.sort_unstable();
         first.dedup_by_key(|it| it.0);
         if first.len() < found.len() {

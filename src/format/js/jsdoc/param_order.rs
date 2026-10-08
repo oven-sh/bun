@@ -10,11 +10,16 @@ fn is_identifier_byte(byte: u8) -> bool {
 /// `after`: the text behind the comment. Only if every `@param` has a type and a name, and the names are those
 /// of the parameters.
 pub(super) fn reorder_param_tags(effective_tags: &mut [(&Tag<'_>, &[u8])], after: &[u8]) {
-    let Some(param_start) = effective_tags.iter().position(|(_, kind)| *kind == b"param") else {
+    let Some(param_start) = effective_tags
+        .iter()
+        .position(|(_, kind)| *kind == b"param")
+    else {
         return;
     };
-    let param_end =
-        effective_tags[param_start..].iter().position(|(_, kind)| *kind != b"param").map_or(effective_tags.len(), |at| param_start + at);
+    let param_end = effective_tags[param_start..]
+        .iter()
+        .position(|(_, kind)| *kind != b"param")
+        .map_or(effective_tags.len(), |at| param_start + at);
     if param_end - param_start < 2 {
         return;
     }
@@ -26,12 +31,21 @@ pub(super) fn reorder_param_tags(effective_tags: &mut [(&Tag<'_>, &[u8])], after
         }
     }
     let function_params = extract_function_params(after);
-    if function_params.len() != names.len() || names == function_params || !names.iter().all(|name| function_params.contains(name)) {
+    if function_params.len() != names.len()
+        || names == function_params
+        || !names.iter().all(|name| function_params.contains(name))
+    {
         return;
     }
     effective_tags[param_start..param_end].sort_by_cached_key(|(tag, _)| {
-        let name = tag.type_name_comment().1.map_or(&b""[..], |name| name.parsed());
-        function_params.iter().position(|param| *param == name).unwrap_or(usize::MAX)
+        let name = tag
+            .type_name_comment()
+            .1
+            .map_or(&b""[..], |name| name.parsed());
+        function_params
+            .iter()
+            .position(|param| *param == name)
+            .unwrap_or(usize::MAX)
     });
 }
 
@@ -69,7 +83,10 @@ fn skip_generics(bytes: &[u8], i: &mut usize) {
 
 /// Whether the word `keyword` is at `i`, with something behind it.
 fn is_keyword_at(bytes: &[u8], i: usize, keyword: &[u8]) -> bool {
-    bytes[i..].starts_with(keyword) && bytes.get(i + keyword.len()).is_some_and(|&next| !is_identifier_byte(next))
+    bytes[i..].starts_with(keyword)
+        && bytes
+            .get(i + keyword.len())
+            .is_some_and(|&next| !is_identifier_byte(next))
 }
 
 /// Where the `(` of the parameters is, if `text` starts with something like a function.
@@ -77,7 +94,10 @@ fn find_function_params_start(text: &[u8]) -> Option<usize> {
     let mut i = 0;
     loop {
         skip_whitespace(text, &mut i);
-        match [&b"export"[..], b"async", b"default"].iter().find(|keyword| is_keyword_at(text, i, keyword)) {
+        match [&b"export"[..], b"async", b"default"]
+            .iter()
+            .find(|keyword| is_keyword_at(text, i, keyword))
+        {
             Some(keyword) => i += keyword.len(),
             None => break,
         }
@@ -97,10 +117,16 @@ fn find_function_params_start(text: &[u8]) -> Option<usize> {
         return is_paren(i);
     }
     // `const name = (` or `name(`
-    if !text.get(i).is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_' || *byte == b'$') {
+    if !text
+        .get(i)
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_' || *byte == b'$')
+    {
         return None;
     }
-    if [&b"const "[..], b"let ", b"var "].iter().any(|keyword| text[i..].starts_with(keyword)) {
+    if [&b"const "[..], b"let ", b"var "]
+        .iter()
+        .any(|keyword| text[i..].starts_with(keyword))
+    {
         while text.get(i).is_some_and(|byte| !byte.is_ascii_whitespace()) {
             i += 1;
         }
@@ -203,7 +229,11 @@ fn parse_param_names(params: &[u8]) -> Vec<&[u8]> {
             return names;
         }
         if params[i] == b'{' || params[i] == b'[' {
-            let (open, close) = if params[i] == b'{' { (b'{', b'}') } else { (b'[', b']') };
+            let (open, close) = if params[i] == b'{' {
+                (b'{', b'}')
+            } else {
+                (b'[', b']')
+            };
             let mut depth = 0i32;
             while i < len {
                 depth += i32::from(params[i] == open) - i32::from(params[i] == close);

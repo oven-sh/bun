@@ -32,7 +32,11 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
         let _ = write!(
             out,
             "],\"suppressedMessages\":[],\"errorCount\":{},\"warningCount\":{},\"fatalErrorCount\":{},\"fixableErrorCount\":{},\"fixableWarningCount\":{}",
-            counts.errors, counts.warnings, counts.fatal_errors, counts.fixable_errors, counts.fixable_warnings
+            counts.errors,
+            counts.warnings,
+            counts.fatal_errors,
+            counts.fixable_errors,
+            counts.fixable_warnings
         );
     } else {
         let text = result.text.as_deref().unwrap_or_default();
@@ -43,7 +47,11 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
         let _ = write!(
             out,
             ",\"errorCount\":{},\"fatalErrorCount\":{},\"warningCount\":{},\"fixableErrorCount\":{},\"fixableWarningCount\":{}",
-            counts.errors, counts.fatal_errors, counts.warnings, counts.fixable_errors, counts.fixable_warnings
+            counts.errors,
+            counts.fatal_errors,
+            counts.warnings,
+            counts.fixable_errors,
+            counts.fixable_warnings
         );
         if result.is_fixed {
             out.extend_from_slice(b",\"output\":");
@@ -60,7 +68,8 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
 
 pub(super) fn write_results(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     // The text of every file with a problem is in it: on all threads.
-    let mut pieces: Guarded<Vec<Vec<u8>>> = Guarded::new(results.iter().map(|_| Vec::new()).collect());
+    let mut pieces: Guarded<Vec<Vec<u8>>> =
+        Guarded::new(results.iter().map(|_| Vec::new()).collect());
     meta.pool.for_each(results.len(), 8, &|index| {
         let mut piece = Vec::new();
         write_result(&mut piece, &results[index]);
@@ -87,13 +96,19 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         let _ = write!(out, "\"color\":{color},");
     }
     if let Some((max, found)) = meta.max_warnings_exceeded {
-        let _ = write!(out, "\"maxWarningsExceeded\":{{\"maxWarnings\":{max},\"foundWarnings\":{found}}},");
+        let _ = write!(
+            out,
+            "\"maxWarningsExceeded\":{{\"maxWarnings\":{max},\"foundWarnings\":{found}}},"
+        );
     }
     out.extend_from_slice(b"\"cwd\":");
     write_string(out, meta.cwd);
     out.extend_from_slice(b",\"rulesMeta\":{");
     let mut seen: Vec<Vec<u8>> = Vec::new();
-    for message in results.iter().flat_map(|it| it.messages.iter().chain(&it.suppressed)) {
+    for message in results
+        .iter()
+        .flat_map(|it| it.messages.iter().chain(&it.suppressed))
+    {
         let Some(bun_lint::linter::RuleId::Known(rule)) = &message.rule_id else {
             continue;
         };
@@ -114,7 +129,9 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         match rule.fixable {
             bun_lint::rule::Fixable::No => {}
             bun_lint::rule::Fixable::Code => out.extend_from_slice(b",\"fixable\":\"code\""),
-            bun_lint::rule::Fixable::Whitespace => out.extend_from_slice(b",\"fixable\":\"whitespace\""),
+            bun_lint::rule::Fixable::Whitespace => {
+                out.extend_from_slice(b",\"fixable\":\"whitespace\"")
+            }
         }
         if rule.has_suggestions {
             out.extend_from_slice(b",\"hasSuggestions\":true");

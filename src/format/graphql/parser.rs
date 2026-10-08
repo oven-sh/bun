@@ -126,7 +126,9 @@ impl Tree {
             return &[];
         };
         let start = node.first_child as usize;
-        self.children.get(start..start + node.child_count as usize).unwrap_or_default()
+        self.children
+            .get(start..start + node.child_count as usize)
+            .unwrap_or_default()
     }
 
     pub(crate) fn kind(&self, id: NodeId) -> Kind {
@@ -189,7 +191,9 @@ fn hex_digit(byte: Option<&u8>) -> Option<u32> {
 }
 
 fn hex_code(text: &[u8]) -> Option<u32> {
-    (0..4).try_fold(0, |code, index| Some(code << 4 | hex_digit(text.get(index))?))
+    (0..4).try_fold(0, |code, index| {
+        Some(code << 4 | hex_digit(text.get(index))?)
+    })
 }
 
 /// The escape sequence that `text` starts with: the character that it stands for, and its length.
@@ -209,7 +213,10 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
             let mut code: u32 = 0;
             for size in 3..12 {
                 if text.get(size) == Some(&b'}') {
-                    return (size >= 4).then(|| char::from_u32(code)).flatten().map(|c| (c, size + 1));
+                    return (size >= 4)
+                        .then(|| char::from_u32(code))
+                        .flatten()
+                        .map(|c| (c, size + 1));
                 }
                 code = code.checked_shl(4)? | hex_digit(text.get(size))?;
             }
@@ -299,7 +306,9 @@ impl Parser<'_> {
                 b'#' => {
                     let rest = &self.text[position..];
                     let len = bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
-                    self.tree.comments.push(Span::new(position as u32, (position + len) as u32));
+                    self.tree
+                        .comments
+                        .push(Span::new(position as u32, (position + len) as u32));
                     position += len;
                     continue;
                 }
@@ -320,7 +329,11 @@ impl Parser<'_> {
                     return token(TokenKind::Spread, position, position + 3);
                 }
                 b'"' if self.text[position..].starts_with(b"\"\"\"") => {
-                    return token(TokenKind::BlockString, position, self.read_block_string(position)?);
+                    return token(
+                        TokenKind::BlockString,
+                        position,
+                        self.read_block_string(position)?,
+                    );
                 }
                 b'"' => return token(TokenKind::String, position, self.read_string(position)?),
                 b'0'..=b'9' | b'-' => {
@@ -329,7 +342,10 @@ impl Parser<'_> {
                 }
                 _ if is_name_start(byte) => {
                     let rest = &self.text[position..];
-                    let len = rest.iter().take_while(|&&byte| is_name_continue(byte)).count();
+                    let len = rest
+                        .iter()
+                        .take_while(|&&byte| is_name_continue(byte))
+                        .count();
                     return token(TokenKind::Name, position, position + len);
                 }
                 _ => return Err(SyntaxError),
@@ -355,7 +371,10 @@ impl Parser<'_> {
         }
         if self.byte(position) == Some(b'0') {
             position += 1;
-            if self.byte(position).is_some_and(|byte| byte.is_ascii_digit()) {
+            if self
+                .byte(position)
+                .is_some_and(|byte| byte.is_ascii_digit())
+            {
                 return Err(SyntaxError);
             }
         } else {
@@ -387,7 +406,9 @@ impl Parser<'_> {
             position += bun_core::strings::index_of_any(rest, b"\"\\\n\r").ok_or(SyntaxError)?;
             match self.byte(position) {
                 Some(b'"') => return Ok(position + 1),
-                Some(b'\\') => position += read_escape(&self.text[position..]).ok_or(SyntaxError)?.1,
+                Some(b'\\') => {
+                    position += read_escape(&self.text[position..]).ok_or(SyntaxError)?.1
+                }
                 _ => return Err(SyntaxError),
             }
         }
@@ -430,7 +451,9 @@ impl Parser<'_> {
     }
 
     fn text_of(&self, token: Token) -> &[u8] {
-        self.text.get(token.start as usize..token.end as usize).unwrap_or_default()
+        self.text
+            .get(token.start as usize..token.end as usize)
+            .unwrap_or_default()
     }
 
     fn peek(&self, kind: TokenKind) -> bool {
@@ -485,7 +508,8 @@ impl Parser<'_> {
     fn finish(&mut self, kind: Kind, flags: u8, (start, first_pending): (u32, usize)) {
         let tree = &mut *self.tree;
         let first_child = tree.children.len() as u32;
-        tree.children.extend(tree.pending.drain(first_pending.min(tree.pending.len())..));
+        tree.children
+            .extend(tree.pending.drain(first_pending.min(tree.pending.len())..));
         tree.pending.push(tree.nodes.len() as NodeId);
         tree.nodes.push(Node {
             kind,
@@ -512,7 +536,12 @@ impl Parser<'_> {
     }
 
     /// `open item+ close`
-    fn many(&mut self, open: TokenKind, item: fn(&mut Self) -> Result<()>, close: TokenKind) -> Result<()> {
+    fn many(
+        &mut self,
+        open: TokenKind,
+        item: fn(&mut Self) -> Result<()>,
+        close: TokenKind,
+    ) -> Result<()> {
         self.expect(open)?;
         loop {
             item(self)?;
@@ -523,7 +552,12 @@ impl Parser<'_> {
     }
 
     /// The same, if it is there. Returns whether it is.
-    fn optional_many(&mut self, open: TokenKind, item: fn(&mut Self) -> Result<()>, close: TokenKind) -> Result<bool> {
+    fn optional_many(
+        &mut self,
+        open: TokenKind,
+        item: fn(&mut Self) -> Result<()>,
+        close: TokenKind,
+    ) -> Result<bool> {
         let is_there = self.peek(open);
         if is_there {
             self.many(open, item, close)?;
@@ -532,7 +566,12 @@ impl Parser<'_> {
     }
 
     /// `open item* close`
-    fn any(&mut self, open: TokenKind, item: fn(&mut Self) -> Result<()>, close: TokenKind) -> Result<()> {
+    fn any(
+        &mut self,
+        open: TokenKind,
+        item: fn(&mut Self) -> Result<()>,
+        close: TokenKind,
+    ) -> Result<()> {
         self.expect(open)?;
         while !self.eat(close)? {
             item(self)?;
@@ -541,7 +580,11 @@ impl Parser<'_> {
     }
 
     /// `delimiter? item (delimiter item)*`
-    fn delimited_many(&mut self, delimiter: TokenKind, item: fn(&mut Self) -> Result<()>) -> Result<()> {
+    fn delimited_many(
+        &mut self,
+        delimiter: TokenKind,
+        item: fn(&mut Self) -> Result<()>,
+    ) -> Result<()> {
         self.eat(delimiter)?;
         loop {
             item(self)?;
@@ -562,7 +605,11 @@ impl Parser<'_> {
 
     fn parse_document(&mut self) -> Result<()> {
         let begin = self.begin();
-        self.many(TokenKind::StartOfFile, Self::parse_definition, TokenKind::EndOfFile)?;
+        self.many(
+            TokenKind::StartOfFile,
+            Self::parse_definition,
+            TokenKind::EndOfFile,
+        )?;
         self.finish(Kind::Document, 0, begin);
         Ok(())
     }
@@ -572,7 +619,11 @@ impl Parser<'_> {
             return self.parse_operation_definition();
         }
         let has_description = self.peek_description();
-        let keyword = if has_description { self.lookahead()? } else { self.token };
+        let keyword = if has_description {
+            self.lookahead()?
+        } else {
+            self.token
+        };
         if keyword.kind != TokenKind::Name {
             return Err(SyntaxError);
         }
@@ -580,7 +631,9 @@ impl Parser<'_> {
             b"schema" => self.parse_schema_definition(),
             b"scalar" => self.parse_scalar_type_definition(),
             b"type" => self.parse_object_like_definition(b"type", Kind::ObjectTypeDefinition),
-            b"interface" => self.parse_object_like_definition(b"interface", Kind::InterfaceTypeDefinition),
+            b"interface" => {
+                self.parse_object_like_definition(b"interface", Kind::InterfaceTypeDefinition)
+            }
             b"union" => self.parse_union_type_definition(),
             b"enum" => self.parse_enum_type_definition(),
             b"input" => self.parse_input_object_type_definition(),
@@ -621,7 +674,11 @@ impl Parser<'_> {
     }
 
     fn parse_variable_definitions(&mut self) -> Result<bool> {
-        self.optional_many(TokenKind::ParenL, Self::parse_variable_definition, TokenKind::ParenR)
+        self.optional_many(
+            TokenKind::ParenL,
+            Self::parse_variable_definition,
+            TokenKind::ParenR,
+        )
     }
 
     fn parse_variable_definition(&mut self) -> Result<()> {
@@ -705,7 +762,11 @@ impl Parser<'_> {
         let has_type_condition = self.eat_keyword(b"on")?;
         if !has_type_condition && self.peek(TokenKind::Name) {
             self.parse_fragment_name()?;
-            self.optional_many(TokenKind::ParenL, Self::parse_fragment_argument, TokenKind::ParenR)?;
+            self.optional_many(
+                TokenKind::ParenL,
+                Self::parse_fragment_argument,
+                TokenKind::ParenR,
+            )?;
             self.parse_directives()?;
             self.finish(Kind::FragmentSpread, 0, begin);
             return Ok(());
@@ -749,7 +810,11 @@ impl Parser<'_> {
     }
 
     fn parse_value_literal(&mut self, is_const: bool) -> Result<()> {
-        let value = if is_const { Self::parse_const_value } else { Self::parse_value };
+        let value = if is_const {
+            Self::parse_const_value
+        } else {
+            Self::parse_value
+        };
         match self.token.kind {
             TokenKind::BracketL => {
                 self.check_depth()?;
@@ -761,7 +826,11 @@ impl Parser<'_> {
             TokenKind::BraceL => {
                 self.check_depth()?;
                 let begin = self.begin();
-                let field = if is_const { Self::parse_const_object_field } else { Self::parse_object_field };
+                let field = if is_const {
+                    Self::parse_const_object_field
+                } else {
+                    Self::parse_object_field
+                };
                 self.any(TokenKind::BraceL, field, TokenKind::BraceR)?;
                 self.finish(Kind::ObjectValue, 0, begin);
                 Ok(())
@@ -852,7 +921,11 @@ impl Parser<'_> {
         self.parse_description()?;
         self.expect_keyword(b"schema")?;
         self.parse_const_directives()?;
-        self.many(TokenKind::BraceL, Self::parse_operation_type_definition, TokenKind::BraceR)?;
+        self.many(
+            TokenKind::BraceL,
+            Self::parse_operation_type_definition,
+            TokenKind::BraceR,
+        )?;
         self.finish(Kind::SchemaDefinition, 0, begin);
         Ok(())
     }
@@ -898,7 +971,11 @@ impl Parser<'_> {
     }
 
     fn parse_fields_definition(&mut self) -> Result<bool> {
-        self.optional_many(TokenKind::BraceL, Self::parse_field_definition, TokenKind::BraceR)
+        self.optional_many(
+            TokenKind::BraceL,
+            Self::parse_field_definition,
+            TokenKind::BraceR,
+        )
     }
 
     fn parse_field_definition(&mut self) -> Result<()> {
@@ -914,7 +991,11 @@ impl Parser<'_> {
     }
 
     fn parse_argument_definitions(&mut self) -> Result<bool> {
-        self.optional_many(TokenKind::ParenL, Self::parse_input_value_definition, TokenKind::ParenR)
+        self.optional_many(
+            TokenKind::ParenL,
+            Self::parse_input_value_definition,
+            TokenKind::ParenR,
+        )
     }
 
     fn parse_input_value_definition(&mut self) -> Result<()> {
@@ -962,7 +1043,11 @@ impl Parser<'_> {
     }
 
     fn parse_enum_values_definition(&mut self) -> Result<bool> {
-        self.optional_many(TokenKind::BraceL, Self::parse_enum_value_definition, TokenKind::BraceR)
+        self.optional_many(
+            TokenKind::BraceL,
+            Self::parse_enum_value_definition,
+            TokenKind::BraceR,
+        )
     }
 
     fn parse_enum_value_definition(&mut self) -> Result<()> {
@@ -989,7 +1074,11 @@ impl Parser<'_> {
     }
 
     fn parse_input_fields_definition(&mut self) -> Result<bool> {
-        self.optional_many(TokenKind::BraceL, Self::parse_input_value_definition, TokenKind::BraceR)
+        self.optional_many(
+            TokenKind::BraceL,
+            Self::parse_input_value_definition,
+            TokenKind::BraceR,
+        )
     }
 
     /// `extend ..`. An extension has to add something.
@@ -1000,8 +1089,11 @@ impl Parser<'_> {
         let (kind, adds_something) = match self.text_of(keyword) {
             b"schema" => {
                 let has_directives = self.parse_const_directives()?;
-                let has_types =
-                    self.optional_many(TokenKind::BraceL, Self::parse_operation_type_definition, TokenKind::BraceR)?;
+                let has_types = self.optional_many(
+                    TokenKind::BraceL,
+                    Self::parse_operation_type_definition,
+                    TokenKind::BraceR,
+                )?;
                 (Kind::SchemaExtension, has_directives || has_types)
             }
             b"scalar" => {
@@ -1009,7 +1101,11 @@ impl Parser<'_> {
                 (Kind::ScalarTypeExtension, self.parse_const_directives()?)
             }
             keyword @ (b"type" | b"interface") => {
-                let kind = if keyword == b"type" { Kind::ObjectTypeExtension } else { Kind::InterfaceTypeExtension };
+                let kind = if keyword == b"type" {
+                    Kind::ObjectTypeExtension
+                } else {
+                    Kind::InterfaceTypeExtension
+                };
                 self.parse_name()?;
                 let has_interfaces = self.parse_implements_interfaces()?;
                 let has_directives = self.parse_const_directives()?;
@@ -1059,7 +1155,11 @@ impl Parser<'_> {
         let is_repeatable = self.eat_keyword(b"repeatable")?;
         self.expect_keyword(b"on")?;
         self.delimited_many(TokenKind::Pipe, Self::parse_directive_location)?;
-        self.finish(Kind::DirectiveDefinition, if is_repeatable { IS_REPEATABLE } else { 0 }, begin);
+        self.finish(
+            Kind::DirectiveDefinition,
+            if is_repeatable { IS_REPEATABLE } else { 0 },
+            begin,
+        );
         Ok(())
     }
 

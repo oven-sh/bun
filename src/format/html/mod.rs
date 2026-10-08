@@ -76,7 +76,10 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
         (b".vue", Parser::Vue),
     ];
     let lower = path.to_ascii_lowercase();
-    EXTENSIONS.iter().find(|(extension, _)| lower.ends_with(extension)).map(|(_, parser)| *parser)
+    EXTENSIONS
+        .iter()
+        .find(|(extension, _)| lower.ends_with(extension))
+        .map(|(_, parser)| *parser)
 }
 
 /// Everything that is allocated to format a text and can be used again for the next one.
@@ -101,8 +104,12 @@ const BOM: &[u8] = "\u{FEFF}".as_bytes();
 /// `/^\s*<!--\s*@(?:a|b)\s*-->/.test(text)`
 fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     (|| {
-        let rest = text::trim_start(text::trim_start(text).strip_prefix(b"<!--")?).strip_prefix(b"@")?;
-        let rest = pragmas.iter().find_map(|pragma| rest.strip_prefix(*pragma).filter(|rest| text::trim_start(rest).starts_with(b"-->")));
+        let rest =
+            text::trim_start(text::trim_start(text).strip_prefix(b"<!--")?).strip_prefix(b"@")?;
+        let rest = pragmas.iter().find_map(|pragma| {
+            rest.strip_prefix(*pragma)
+                .filter(|rest| text::trim_start(rest).starts_with(b"-->"))
+        });
         rest.map(|_| ())
     })()
     .is_some()
@@ -138,27 +145,45 @@ fn without_front_matter(text: &[u8]) -> (Cow<'_, [u8]>, Option<usize>) {
 /// to be inserted. `None`: because of a pragma, it stays as it is.
 fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<Cow<'t, [u8]>> {
     let text = normalize_end_of_line(text.strip_prefix(BOM).unwrap_or(text));
-    let has_format_pragma = (options.require_pragma || options.insert_pragma) && has_pragma(&text, [b"format", b"prettier"]);
-    if (options.require_pragma && !has_format_pragma) || (options.check_ignore_pragma && has_pragma(&text, [b"noformat", b"noprettier"])) {
+    let has_format_pragma = (options.require_pragma || options.insert_pragma)
+        && has_pragma(&text, [b"format", b"prettier"]);
+    if (options.require_pragma && !has_format_pragma)
+        || (options.check_ignore_pragma && has_pragma(&text, [b"noformat", b"noprettier"]))
+    {
         return None;
     }
-    Some(match options.insert_pragma && !options.require_pragma && !has_format_pragma {
-        true => Cow::Owned([b"<!-- @format -->\n\n", &text[..]].concat()),
-        false => text,
-    })
+    Some(
+        match options.insert_pragma && !options.require_pragma && !has_format_pragma {
+            true => Cow::Owned([b"<!-- @format -->\n\n", &text[..]].concat()),
+            false => text,
+        },
+    )
 }
 
 /// Whether `after`, which `before` has been formatted to with `options`, has all that is in `before` and nothing else. See
 /// `verify.rs`.
-pub fn has_same_content(before: &[u8], after: &[u8], parser: Parser, options: &FormatOptions) -> bool {
+pub fn has_same_content(
+    before: &[u8],
+    after: &[u8],
+    parser: Parser,
+    options: &FormatOptions,
+) -> bool {
     let after = normalize_end_of_line(after.strip_prefix(BOM).unwrap_or(after));
-    prepared_text(before, options).is_none_or(|before| text::trim(&before).is_empty() || verify::has_same_content(&before, &after, parser))
+    prepared_text(before, options).is_none_or(|before| {
+        text::trim(&before).is_empty() || verify::has_same_content(&before, &after, parser)
+    })
 }
 
 /// Whether `text`, in which every line break is `\n`, has no syntax error.
 pub(crate) fn can_be_parsed(text: &[u8], parser: Parser) -> bool {
     let (content, front_matter_len) = without_front_matter(text);
-    parse::parse(&content, front_matter_len, parser, &mut ast::Tree::default()).is_ok()
+    parse::parse(
+        &content,
+        front_matter_len,
+        parser,
+        &mut ast::Tree::default(),
+    )
+    .is_ok()
 }
 
 /// What is known once a document is written.
@@ -182,7 +207,17 @@ pub(crate) fn write_document(
     indent_level: Option<u32>,
     f: &mut Formatter<'_>,
 ) -> Result<usize, FormatError> {
-    write_document_with_cursor(text, parser, path, options, is_embedded, indent_level, None, f).map(|written| written.top_level_count)
+    write_document_with_cursor(
+        text,
+        parser,
+        path,
+        options,
+        is_embedded,
+        indent_level,
+        None,
+        f,
+    )
+    .map(|written| written.top_level_count)
 }
 
 /// The same. `cursor_offset`: where the cursor is in `text`.
@@ -273,7 +308,9 @@ pub fn format_with_cursor(
     // In `text`, which has one byte for every line break and no byte order mark.
     let cursor_offset = crate::cursor::cursor_offset_in_bytes(original, options).map(|offset| {
         let before = original.get(..offset as usize).unwrap_or(original);
-        offset.saturating_sub(strings::count(before, b"\r\n") as u32 + if has_bom { BOM.len() as u32 } else { 0 })
+        offset.saturating_sub(
+            strings::count(before, b"\r\n") as u32 + if has_bom { BOM.len() as u32 } else { 0 },
+        )
     });
     let start = out.len() - if has_bom { BOM.len() } else { 0 };
     let options = FormatOptions {
@@ -284,12 +321,25 @@ pub fn format_with_cursor(
     let mut result = Ok(None);
     let context = JsFormatContext::without_file(&text, options.clone(), &[]);
     let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
-        result = write_document_with_cursor(&text, parser, path, &options, false, Some(0), cursor_offset, f).map(|written| written.region);
+        result = write_document_with_cursor(
+            &text,
+            parser,
+            path,
+            &options,
+            false,
+            Some(0),
+            cursor_offset,
+            f,
+        )
+        .map(|written| written.region);
     });
     let printed_from = out.len();
     let region = result
         .and_then(|region| root.map(|root| (region, root)))
-        .and_then(|(region, root)| crate::ir::run::print(root, &text, &options, &mut scratch.document, out).map(|()| region))
+        .and_then(|(region, root)| {
+            crate::ir::run::print(root, &text, &options, &mut scratch.document, out)
+                .map(|()| region)
+        })
         .inspect_err(|_| out.truncate(start))?;
     let (Some(offset), Some(region)) = (cursor_offset, region) else {
         return Ok(None);
@@ -298,9 +348,17 @@ pub fn format_with_cursor(
     // Without a node on one side, the part goes to that end of the document.
     let [first, second] = scratch.document.marks();
     let marks = match region {
-        Region::Between { before: None, after: Some(_) } => Some(0).zip(second),
-        Region::Between { before: Some(_), after: None } => first.zip(Some(printed.len() as u32)),
+        Region::Between {
+            before: None,
+            after: Some(_),
+        } => Some(0).zip(second),
+        Region::Between {
+            before: Some(_),
+            after: None,
+        } => first.zip(Some(printed.len() as u32)),
         _ => first.zip(second),
     };
-    Ok(Some(crate::cursor::cursor_in_region(&text, offset, region, printed, marks) + u32::from(has_bom)))
+    Ok(Some(
+        crate::cursor::cursor_in_region(&text, offset, region, printed, marks) + u32::from(has_bom),
+    ))
 }

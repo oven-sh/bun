@@ -5,8 +5,8 @@ use super::js::{self, Hug, SourceType, Syntax};
 use super::parse::collapse_white_space;
 use super::printer::Printer;
 use super::utilities::{
-    dedent_string, html_split, html_trim, html_trim_preserve_indentation, is_script_like_tag, should_unquote_attribute_value,
-    unescape_quote_entities,
+    dedent_string, html_split, html_trim, html_trim_preserve_indentation, is_script_like_tag,
+    should_unquote_attribute_value, unescape_quote_entities,
 };
 use super::{Parser, data};
 use crate::css::text;
@@ -18,12 +18,21 @@ use bun_core::strings;
 /// `inferParserByTypeAttribute`
 fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8]> {
     Some(match kind {
-        b"module" | b"text/javascript" | b"text/babel" | b"text/jsx" | b"application/javascript" => b"babel",
+        b"module"
+        | b"text/javascript"
+        | b"text/babel"
+        | b"text/jsx"
+        | b"application/javascript" => b"babel",
         b"application/x-typescript" => b"typescript",
         b"text/markdown" => b"markdown",
         b"text/html" => b"html",
         b"text/x-handlebars-template" => b"glimmer",
-        _ if kind.ends_with(b"json") || kind.ends_with(b"importmap") || kind == b"speculationrules" => b"json",
+        _ if kind.ends_with(b"json")
+            || kind.ends_with(b"importmap")
+            || kind == b"speculationrules" =>
+        {
+            b"json"
+        }
         _ => return None,
     })
 }
@@ -58,7 +67,10 @@ fn is_floating_point(text: &[u8]) -> bool {
         None => &rest[whole..],
     };
     if let [b'e' | b'E', exponent @ ..] = rest {
-        let exponent = exponent.strip_prefix(b"+").or_else(|| exponent.strip_prefix(b"-")).unwrap_or(exponent);
+        let exponent = exponent
+            .strip_prefix(b"+")
+            .or_else(|| exponent.strip_prefix(b"-"))
+            .unwrap_or(exponent);
         if digits(exponent) == 0 {
             return false;
         }
@@ -81,11 +93,17 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
     let mut candidates = Vec::new();
     let mut position = 0;
     loop {
-        position += input[position..].iter().take_while(|&&byte| byte == b',' || is_space(byte)).count();
+        position += input[position..]
+            .iter()
+            .take_while(|&&byte| byte == b',' || is_space(byte))
+            .count();
         if position >= input.len() {
             return Some(candidates).filter(|candidates| !candidates.is_empty());
         }
-        let len = input[position..].iter().take_while(|&&byte| !is_space(byte)).count();
+        let len = input[position..]
+            .iter()
+            .take_while(|&&byte| !is_space(byte))
+            .count();
         let mut url = &input[position..position + len];
         position += len;
         let mut descriptors: Vec<&[u8]> = Vec::new();
@@ -95,7 +113,10 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
             }
         } else {
             // The descriptor tokenizer. A descriptor is a part of the input.
-            position += input[position..].iter().take_while(|&&byte| is_space(byte)).count();
+            position += input[position..]
+                .iter()
+                .take_while(|&&byte| is_space(byte))
+                .count();
             let mut start = position;
             let mut is_in_parens = false;
             loop {
@@ -114,7 +135,10 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
                             position += usize::from(c.is_some());
                             break;
                         }
-                        position += input[position..].iter().take_while(|&&byte| is_space(byte)).count();
+                        position += input[position..]
+                            .iter()
+                            .take_while(|&&byte| is_space(byte))
+                            .count();
                         start = position;
                         continue;
                     }
@@ -130,7 +154,9 @@ fn parse_srcset(input: &[u8]) -> Option<Vec<Candidate<'_>>> {
         };
         for descriptor in descriptors {
             let (&unit, value) = descriptor.split_last()?;
-            let number = std::str::from_utf8(value).ok().and_then(|value| value.parse::<f64>().ok());
+            let number = std::str::from_utf8(value)
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok());
             let has = |value: Option<f64>| value.is_some_and(|value| value != 0.0);
             match unit {
                 b'w' if is_non_negative_integer(value) => {
@@ -166,7 +192,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// The options for a formatter whose text is written with `Writer::printed_text`. `None`: where the lines start is
     /// not known.
     fn options_for_printed_text(&self) -> Option<FormatOptions> {
-        let width = usize::from(self.options.format.line_width.value()).saturating_sub(self.out.indentation_width()?);
+        let width = usize::from(self.options.format.line_width.value())
+            .saturating_sub(self.out.indentation_width()?);
         Some(FormatOptions {
             line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),
             line_ending: LineEnding::Lf,
@@ -176,7 +203,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     }
 
     /// Writes what `format` appends to the vector that it is given, without the line breaks at its end.
-    fn write_printed_text(&mut self, format: impl FnOnce(&FormatOptions, &mut Vec<u8>) -> Result<(), FormatError>) -> bool {
+    fn write_printed_text(
+        &mut self,
+        format: impl FnOnce(&FormatOptions, &mut Vec<u8>) -> Result<(), FormatError>,
+    ) -> bool {
         let Some(options) = self.options_for_printed_text() else {
             return false;
         };
@@ -184,24 +214,37 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         if format(&options, &mut printed).is_err() {
             return false;
         }
-        let end = printed.iter().rposition(|byte| !matches!(byte, b'\n' | b'\r')).map_or(0, |at| at + 1);
+        let end = printed
+            .iter()
+            .rposition(|byte| !matches!(byte, b'\n' | b'\r'))
+            .map_or(0, |at| at + 1);
         self.out.printed_text(&printed[..end]);
         true
     }
 
     /// `textToDoc(code, { parser, __embeddedInHtml: true })`. Returns whether it has written something: if not, Prettier
     /// throws, or the document is empty.
-    pub(crate) fn text_to_doc(&mut self, code: &[u8], parser: &[u8], source_type: SourceType) -> bool {
+    pub(crate) fn text_to_doc(
+        &mut self,
+        code: &[u8],
+        parser: &[u8],
+        source_type: SourceType,
+    ) -> bool {
         let in_html = InHtml {
             root: HtmlRoot::Program,
             ..InHtml::default()
         };
-        let program = |syntax: Syntax, printer: &mut Self| printer.out.foreign(|f| js::write_program(f, code, syntax, source_type, in_html));
+        let program = |syntax: Syntax, printer: &mut Self| {
+            printer
+                .out
+                .foreign(|f| js::write_program(f, code, syntax, source_type, in_html))
+        };
         if let Some(parser) = crate::css::Parser::from_name(parser) {
             let options = js::options_in_html(self.options.format, in_html);
             return match crate::css::document(code, parser, &options) {
                 Ok(document) if !document.is_empty_text() => {
-                    self.out.foreign(|f| crate::css::embed::write_document(&document, f));
+                    self.out
+                        .foreign(|f| crate::css::embed::write_document(&document, f));
                     true
                 }
                 _ => false,
@@ -210,7 +253,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         if let Some(parser) = crate::json::Parser::from_name(parser) {
             // To these parsers, a text with nothing in it is a syntax error.
             return !text::trim(code).is_empty()
-                && self.write_printed_text(|options, out| crate::json::format(code, parser, options, &mut Default::default(), out));
+                && self.write_printed_text(|options, out| {
+                    crate::json::format(code, parser, options, &mut Default::default(), out)
+                });
         }
         if let Some(parser) = Parser::from_name(parser) {
             return self.print_embedded_html(code, parser);
@@ -218,9 +263,15 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         match parser {
             b"babel" => program(Syntax::Babel, self),
             b"typescript" => program(Syntax::TypeScript, self),
-            b"yaml" => self.write_printed_text(|options, out| crate::yaml::format(code, options, &mut Default::default(), out)),
-            b"markdown" => self.write_printed_text(|options, out| crate::markdown::format(code, options, &mut Default::default(), out)),
-            b"graphql" => self.write_printed_text(|options, out| crate::graphql::format(code, options, &mut Default::default(), out)),
+            b"yaml" => self.write_printed_text(|options, out| {
+                crate::yaml::format(code, options, &mut Default::default(), out)
+            }),
+            b"markdown" => self.write_printed_text(|options, out| {
+                crate::markdown::format(code, options, &mut Default::default(), out)
+            }),
+            b"graphql" => self.write_printed_text(|options, out| {
+                crate::graphql::format(code, options, &mut Default::default(), out)
+            }),
             _ => false,
         }
     }
@@ -233,7 +284,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let (format, filepath) = (self.options.format, self.options.filepath);
         let attempt = self.out.start_attempt();
         let indent_level = self.out.indent_level();
-        let is_written = self.out.foreign(|f| super::write_document(code, parser, filepath, format, true, indent_level, f).is_ok());
+        let is_written = self.out.foreign(|f| {
+            super::write_document(code, parser, filepath, format, true, indent_level, f).is_ok()
+        });
         self.out.end_attempt(attempt, is_written)
     }
 
@@ -244,11 +297,16 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let (tree, node) = (self.tree, &self.tree[id]);
         let by_attributes = || {
             let language = tree.attribute_value(id, b"lang").and_then(infer_parser);
-            language.or_else(|| tree.attribute_value(id, b"type").and_then(infer_parser_by_type_attribute))
+            language.or_else(|| {
+                tree.attribute_value(id, b"type")
+                    .and_then(infer_parser_by_type_attribute)
+            })
         };
         // `inferScriptParser`
         if &node.name[..] == b"script" && tree.attribute(id, b"src").is_none() {
-            if tree.attribute_value(id, b"lang").is_none() && tree.attribute_value(id, b"type").is_none() {
+            if tree.attribute_value(id, b"lang").is_none()
+                && tree.attribute_value(id, b"type").is_none()
+            {
                 return Some(b"babel");
             }
             if let Some(parser) = by_attributes() {
@@ -289,9 +347,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// `printEmbedFrontMatter`
     fn embed_front_matter(&mut self, id: Id) -> bool {
         let raw = self.tree[id].span.of(self.options.original_text);
-        let (Some(first_line_end), Some(last_line_start)) =
-            (strings::index_of_char_usize(raw, b'\n'), strings::last_index_of_char(raw, b'\n').map(|at| at + 1))
-        else {
+        let (Some(first_line_end), Some(last_line_start)) = (
+            strings::index_of_char_usize(raw, b'\n'),
+            strings::last_index_of_char(raw, b'\n').map(|at| at + 1),
+        ) else {
             return false;
         };
         let language = text::trim(&raw[3..first_line_end]);
@@ -318,7 +377,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// A block of a Vue file that is not HTML.
     fn embed_element(&mut self, id: Id) -> bool {
         let (tags, node) = (self.tags(), &self.tree[id]);
-        if is_script_like_tag(node, self.options) || node.has(Flags::IS_SELF_CLOSING) || !self.tree.is_vue_non_html_block(id, self.options) {
+        if is_script_like_tag(node, self.options)
+            || node.has(Flags::IS_SELF_CLOSING)
+            || !self.tree.is_vue_non_html_block(id, self.options)
+        {
             return false;
         }
         let Some(parser) = self.infer_element_parser(id) else {
@@ -333,7 +395,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let mut is_written = true;
         if !text::trim(content).is_empty() {
             self.out.hardline();
-            is_written = self.text_to_doc(html_trim_preserve_indentation(content), parser, SourceType::Unknown);
+            is_written = self.text_to_doc(
+                html_trim_preserve_indentation(content),
+                parser,
+                SourceType::Unknown,
+            );
             self.out.hardline();
         }
         self.out.built_text(|out| {
@@ -358,7 +424,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 b"markdown" => {
                     // `.replace(/^[^\S\n]*\n/, "")`
                     let blank = value.len() - text::trim_start(value).len();
-                    let first_line_end = strings::index_of_char_usize(&value[..blank], b'\n').map_or(0, |at| at + 1);
+                    let first_line_end =
+                        strings::index_of_char_usize(&value[..blank], b'\n').map_or(0, |at| at + 1);
                     dedented = dedent_string(&value[first_line_end..]);
                     &dedented[..]
                 }
@@ -368,8 +435,13 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 (Parser::Html, b"babel") => {
                     let kind = tree.attribute(parent, b"type").flatten();
                     let is_module = kind == Some(b"module")
-                        || (matches!(kind, Some(b"text/babel" | b"text/jsx")) && tree.attribute(parent, b"data-type").flatten() == Some(b"module"));
-                    if is_module { SourceType::Module } else { SourceType::Script }
+                        || (matches!(kind, Some(b"text/babel" | b"text/jsx"))
+                            && tree.attribute(parent, b"data-type").flatten() == Some(b"module"));
+                    if is_module {
+                        SourceType::Module
+                    } else {
+                        SourceType::Script
+                    }
                 }
                 _ => SourceType::Unknown,
             };
@@ -398,12 +470,17 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let is_written = match self.options.parser {
             Parser::Angular => self.write_angular_expression(value, in_html, Hug::Bare),
             _ => {
-                let is_typescript = self.options.parser == Parser::Vue && self.is_vue_sfc_with_typescript_script();
-                self.out.foreign(|f| js::write_expression(f, value, is_typescript, in_html, Hug::Bare))
+                let is_typescript =
+                    self.options.parser == Parser::Vue && self.is_vue_sfc_with_typescript_script();
+                self.out
+                    .foreign(|f| js::write_expression(f, value, is_typescript, in_html, Hug::Bare))
             }
         };
         self.out.end_indent();
-        match tree.next(parent).is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next)) {
+        match tree
+            .next(parent)
+            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next))
+        {
             true => self.out.token(" "),
             false => self.out.line(),
         }
@@ -414,7 +491,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
 
     /// `createAttributePrinter`: writes the attribute with the value that `write_value` writes, unless that returns
     /// `false` or writes nothing.
-    pub(crate) fn print_attribute_with(&mut self, attr: &Attribute<'_>, write_value: impl FnOnce(&mut Self) -> bool) -> bool {
+    pub(crate) fn print_attribute_with(
+        &mut self,
+        attr: &Attribute<'_>,
+        write_value: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
         let attempt = self.out.start_attempt_behind_text();
         let is_written = write_value(self);
         let Some(value) = self.out.end_attempt_as_content(attempt, is_written) else {
@@ -423,14 +504,19 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         self.write_raw_name(attr.raw_name());
         self.out.token("=\"");
         self.out.start_group();
-        self.out.foreign(|f| js::write_with_quote_entities(value, f));
+        self.out
+            .foreign(|f| js::write_with_quote_entities(value, f));
         self.out.end_group();
         self.out.token("\"");
         true
     }
 
     /// `printExpand(doc, canHaveTrailingWhitespace)`, where `write` writes `doc`.
-    pub(crate) fn print_expand(&mut self, can_have_trailing_whitespace: bool, write: impl FnOnce(&mut Self) -> bool) -> bool {
+    pub(crate) fn print_expand(
+        &mut self,
+        can_have_trailing_whitespace: bool,
+        write: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
         self.out.start_indent();
         self.out.softline();
         let is_written = write(self);
@@ -461,7 +547,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 b"srcset" if node.is_full_name(b"img") || node.is_full_name(b"source") => {
                     return self.print_attribute_with(attr, |printer| printer.print_srcset(value));
                 }
-                b"style" if is_plain => return self.print_attribute_with(attr, |printer| printer.print_style(value)),
+                b"style" if is_plain => {
+                    return self.print_attribute_with(attr, |printer| printer.print_style(value));
+                }
                 name if is_plain && data::is_event_attribute(name) => {
                     let in_html = InHtml {
                         root: HtmlRoot::Program,
@@ -470,7 +558,15 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                         ..InHtml::default()
                     };
                     return self.print_attribute_with(attr, |printer| {
-                        printer.out.foreign(|f| js::write_program_in_attribute(f, value, Syntax::Babel, in_html, Hug::Never))
+                        printer.out.foreign(|f| {
+                            js::write_program_in_attribute(
+                                f,
+                                value,
+                                Syntax::Babel,
+                                in_html,
+                                Hug::Never,
+                            )
+                        })
                     });
                 }
                 b"class" if is_plain => {
@@ -480,7 +576,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                     });
                 }
                 b"allow" if is_plain && node.is_full_name(b"iframe") => {
-                    return self.print_attribute_with(attr, |printer| printer.print_permissions_policy(value));
+                    return self.print_attribute_with(attr, |printer| {
+                        printer.print_permissions_policy(value)
+                    });
                 }
                 _ => {}
             }
@@ -497,9 +595,14 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         let Some(candidates) = parse_srcset(value) else {
             return false;
         };
-        let has = |get: fn(&Candidate<'_>) -> Option<f64>| candidates.iter().any(|candidate| get(candidate).is_some());
-        let kinds: [(fn(&Candidate<'_>) -> Option<f64>, &'static str); 3] =
-            [(|it| it.width, "w"), (|it| it.height, "h"), (|it| it.density, "x")];
+        let has = |get: fn(&Candidate<'_>) -> Option<f64>| {
+            candidates.iter().any(|candidate| get(candidate).is_some())
+        };
+        let kinds: [(fn(&Candidate<'_>) -> Option<f64>, &'static str); 3] = [
+            (|it| it.width, "w"),
+            (|it| it.height, "h"),
+            (|it| it.density, "x"),
+        ];
         let mut used = kinds.iter().filter(|(get, _)| has(*get));
         let (kind, None) = (used.next(), used.next()) else {
             return false;
@@ -514,11 +617,22 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 None => Vec::new(),
             });
         }
-        let left_len = |descriptor: &[u8]| strings::index_of_char_usize(descriptor, b'.').unwrap_or(descriptor.len());
-        let max_url_len = candidates.iter().map(|candidate| utf16_len(candidate.url)).max().unwrap_or(0);
-        let max_descriptor_left_len = descriptors.iter().map(|descriptor| left_len(descriptor)).max().unwrap_or(0);
+        let left_len = |descriptor: &[u8]| {
+            strings::index_of_char_usize(descriptor, b'.').unwrap_or(descriptor.len())
+        };
+        let max_url_len = candidates
+            .iter()
+            .map(|candidate| utf16_len(candidate.url))
+            .max()
+            .unwrap_or(0);
+        let max_descriptor_left_len = descriptors
+            .iter()
+            .map(|descriptor| left_len(descriptor))
+            .max()
+            .unwrap_or(0);
         self.print_expand(true, |printer| {
-            for (index, (candidate, descriptor)) in candidates.iter().zip(&descriptors).enumerate() {
+            for (index, (candidate, descriptor)) in candidates.iter().zip(&descriptors).enumerate()
+            {
                 if index > 0 {
                     printer.out.token(",");
                     printer.out.line();
@@ -527,7 +641,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 if descriptor.is_empty() {
                     continue;
                 }
-                let alignment = max_url_len - utf16_len(candidate.url) + 1 + max_descriptor_left_len - left_len(descriptor);
+                let alignment =
+                    max_url_len - utf16_len(candidate.url) + 1 + max_descriptor_left_len
+                        - left_len(descriptor);
                 printer.out.start_if(true, None);
                 printer.out.text(&b" ".repeat(alignment));
                 printer.out.end_if();
@@ -553,14 +669,20 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return false;
         };
         self.print_expand(true, |printer| {
-            printer.out.foreign(|f| crate::css::embed::write_document(&document, f));
+            printer
+                .out
+                .foreign(|f| crate::css::embed::write_document(&document, f));
             true
         })
     }
 
     /// `printPermissionsPolicy`
     fn print_permissions_policy(&mut self, value: &[u8]) -> bool {
-        let directives = || strings::split(value, b";").map(html_trim).filter(|token| !token.is_empty());
+        let directives = || {
+            strings::split(value, b";")
+                .map(html_trim)
+                .filter(|token| !token.is_empty())
+        };
         let count = directives().count();
         if count == 0 {
             // An attribute with nothing between its quotes.

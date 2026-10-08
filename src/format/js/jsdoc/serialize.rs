@@ -73,8 +73,13 @@ impl JsdocFormatter<'_> {
         }
 
         if !merged_description.is_empty() {
-            let description =
-                format_description(&merged_description, self.wrap_width, 0, self.options.capitalize_descriptions, self.format_options);
+            let description = format_description(
+                &merged_description,
+                self.wrap_width,
+                0,
+                self.options.capitalize_descriptions,
+                self.format_options,
+            );
             let out = self.content_lines.begin_line();
             if self.options.description_tag {
                 out.extend_from_slice(b"@description ");
@@ -83,7 +88,8 @@ impl JsdocFormatter<'_> {
         }
 
         reorder_param_tags(&mut effective_tags, after);
-        let (import_lines, parsed_import_indices) = process_import_tags(&effective_tags, self.quote_style());
+        let (import_lines, parsed_import_indices) =
+            process_import_tags(&effective_tags, self.quote_style());
         let mut import_lines = Some(import_lines).filter(|lines| !lines.is_empty());
         let mut imports_emitted = false;
         let mut prev_normalized_kind: Option<&[u8]> = None;
@@ -104,8 +110,9 @@ impl JsdocFormatter<'_> {
                 continue;
             }
             let is_first_tag = !first_non_import_tag_emitted && !imports_emitted;
-            let should_capitalize =
-                self.options.capitalize_descriptions && !should_skip_capitalize(normalized_kind) && is_known_tag(normalized_kind);
+            let should_capitalize = self.options.capitalize_descriptions
+                && !should_skip_capitalize(normalized_kind)
+                && is_known_tag(normalized_kind);
             if is_first_tag {
                 if !self.content_lines.is_empty() && !self.content_lines.last_is_empty() {
                     self.content_lines.push_empty();
@@ -114,7 +121,10 @@ impl JsdocFormatter<'_> {
                 let prev = prev_normalized_kind.unwrap_or_default();
                 let has_prev = prev_normalized_kind.is_some();
                 let is_group_head = |kind: &[u8]| matches!(kind, b"typedef" | b"callback");
-                let should_separate = if has_prev && prev == normalized_kind && (prev == b"example" || is_group_head(prev)) {
+                let should_separate = if has_prev
+                    && prev == normalized_kind
+                    && (prev == b"example" || is_group_head(prev))
+                {
                     true
                 } else if self.options.separate_tag_groups {
                     has_prev && prev != normalized_kind
@@ -122,17 +132,24 @@ impl JsdocFormatter<'_> {
                     let is_return = |kind: &[u8]| matches!(kind, b"returns" | b"yields");
                     is_return(normalized_kind) && has_prev && !is_return(prev)
                 } else {
-                    is_group_head(normalized_kind) && has_prev && !is_group_head(prev) && !matches!(prev, b"import" | b"template")
+                    is_group_head(normalized_kind)
+                        && has_prev
+                        && !is_group_head(prev)
+                        && !matches!(prev, b"import" | b"template")
                 };
                 // What is behind a tag that is not known stays, an empty line too.
-                let should_separate = should_separate || (prev_tag_had_trailing_blank && has_prev && !is_known_tag(prev));
+                let should_separate = should_separate
+                    || (prev_tag_had_trailing_blank && has_prev && !is_known_tag(prev));
                 if should_separate && !self.content_lines.last_is_empty() {
                     self.content_lines.push_empty();
                 }
             }
             first_non_import_tag_emitted = true;
             prev_normalized_kind = Some(normalized_kind);
-            let source_has_trailing_blank = tag.comment().parsed_preserving_whitespace().ends_with(b"\n\n");
+            let source_has_trailing_blank = tag
+                .comment()
+                .parsed_preserving_whitespace()
+                .ends_with(b"\n\n");
             prev_tag_had_trailing_blank = source_has_trailing_blank;
             let lines_before = self.content_lines.byte_len();
             let has_no_space_before_type = tag.has_no_space_before_type();
@@ -140,18 +157,32 @@ impl JsdocFormatter<'_> {
             if normalized_kind == b"example" {
                 self.format_example_tag(normalized_kind, tag);
             } else if is_type_name_comment_tag(normalized_kind) {
-                self.format_type_name_comment_tag(normalized_kind, tag, should_capitalize, has_no_space_before_type);
+                self.format_type_name_comment_tag(
+                    normalized_kind,
+                    tag,
+                    should_capitalize,
+                    has_no_space_before_type,
+                );
             } else if is_type_comment_tag(normalized_kind) {
-                self.format_type_comment_tag(normalized_kind, tag, should_capitalize, has_no_space_before_type);
+                self.format_type_comment_tag(
+                    normalized_kind,
+                    tag,
+                    should_capitalize,
+                    has_no_space_before_type,
+                );
             } else {
                 self.format_generic_tag(normalized_kind, tag, should_capitalize);
             }
 
             let next_kind = effective_tags.get(tag_index + 1).map(|&(_, kind)| kind);
-            let needs_trailing_blank = if normalized_kind == b"example" && self.content_lines.line_count_since(lines_before) > 1 {
+            let needs_trailing_blank = if normalized_kind == b"example"
+                && self.content_lines.line_count_since(lines_before) > 1
+            {
                 next_kind.is_some_and(|next| next != normalized_kind)
             } else {
-                next_kind.is_some() && source_has_trailing_blank && self.content_lines.last_line_is_block_end()
+                next_kind.is_some()
+                    && source_has_trailing_blank
+                    && self.content_lines.last_line_is_block_end()
             };
             if needs_trailing_blank && !self.content_lines.last_is_empty() {
                 self.content_lines.push_empty();
@@ -171,7 +202,10 @@ impl JsdocFormatter<'_> {
             CommentLineStrategy::Keep => has_one_line && is_single_line,
         };
         if use_single_line {
-            let is_unchanged = content.strip_prefix(b"/** ").and_then(|rest| rest.strip_suffix(b" */")) == Some(first);
+            let is_unchanged = content
+                .strip_prefix(b"/** ")
+                .and_then(|rest| rest.strip_suffix(b" */"))
+                == Some(first);
             return (!is_unchanged).then(|| FormattedJsdoc::SingleLine(first.to_vec()));
         }
         let mut whole = b"/**".to_vec();
@@ -205,7 +239,8 @@ impl JsdocFormatter<'_> {
 
     /// How wide a description can be that is indented by [`Self::CONTINUATION_INDENT`].
     pub(super) fn indented_width(&self) -> usize {
-        self.wrap_width.saturating_sub(Self::CONTINUATION_INDENT.len())
+        self.wrap_width
+            .saturating_sub(Self::CONTINUATION_INDENT.len())
     }
 
     /// What code is indented by.
@@ -228,8 +263,19 @@ impl JsdocFormatter<'_> {
     }
 
     /// `wrap_text`: a description in lines of at most `max_width` columns, the first `tag_string_length` less.
-    pub(super) fn wrap_text(&self, text: &[u8], max_width: usize, tag_string_length: usize) -> Vec<u8> {
-        format_description(text, max_width, tag_string_length, false, self.format_options)
+    pub(super) fn wrap_text(
+        &self,
+        text: &[u8],
+        max_width: usize,
+        tag_string_length: usize,
+    ) -> Vec<u8> {
+        format_description(
+            text,
+            max_width,
+            tag_string_length,
+            false,
+            self.format_options,
+        )
     }
 }
 
@@ -237,7 +283,16 @@ impl JsdocFormatter<'_> {
 fn should_skip_capitalize(kind: &[u8]) -> bool {
     matches!(
         kind,
-        b"borrows" | b"default" | b"defaultValue" | b"deprecated" | b"import" | b"memberof" | b"module" | b"satisfies" | b"see" | b"type"
+        b"borrows"
+            | b"default"
+            | b"defaultValue"
+            | b"deprecated"
+            | b"import"
+            | b"memberof"
+            | b"module"
+            | b"satisfies"
+            | b"see"
+            | b"type"
     )
 }
 
@@ -248,17 +303,26 @@ pub(super) fn should_skip_description_formatting(kind: &[u8]) -> bool {
 
 /// `TAGS_PEV_FORMATE_DESCRIPTION`: tags whose descriptions stay as they are.
 pub(super) fn should_preserve_description_verbatim(kind: &[u8]) -> bool {
-    matches!(kind, b"borrows" | b"default" | b"defaultValue" | b"import" | b"memberof" | b"module" | b"see")
+    matches!(
+        kind,
+        b"borrows" | b"default" | b"defaultValue" | b"import" | b"memberof" | b"module" | b"see"
+    )
 }
 
 /// `@tag {type} name description`
 fn is_type_name_comment_tag(kind: &[u8]) -> bool {
-    matches!(kind, b"param" | b"property" | b"typedef" | b"template" | b"fires")
+    matches!(
+        kind,
+        b"param" | b"property" | b"typedef" | b"template" | b"fires"
+    )
 }
 
 /// `@tag {type} description`
 fn is_type_comment_tag(kind: &[u8]) -> bool {
-    matches!(kind, b"returns" | b"yields" | b"throws" | b"type" | b"satisfies" | b"this" | b"extends")
+    matches!(
+        kind,
+        b"returns" | b"yields" | b"throws" | b"type" | b"satisfies" | b"this" | b"extends"
+    )
 }
 
 const UNKNOWN_TAG_PRIORITY: u32 = 88;
@@ -328,7 +392,18 @@ fn is_tags_group_head(kind: &[u8]) -> bool {
 
 /// `TAGS_GROUP_CONDITION`
 fn is_tags_group_condition(kind: &[u8]) -> bool {
-    matches!(kind, b"callback" | b"typedef" | b"type" | b"property" | b"param" | b"returns" | b"this" | b"yields" | b"throws")
+    matches!(
+        kind,
+        b"callback"
+            | b"typedef"
+            | b"type"
+            | b"property"
+            | b"param"
+            | b"returns"
+            | b"this"
+            | b"yields"
+            | b"throws"
+    )
 }
 
 /// Tags without a type whose first word is a name, which gets no capital letter.
@@ -381,13 +456,27 @@ fn sort_tags_by_groups<'t, 'a>(tags: &'t [Tag<'a>]) -> Vec<(&'t Tag<'a>, &'a [u8
 fn should_remove_empty_tag(kind: &[u8]) -> bool {
     matches!(
         kind,
-        b"borrows" | b"category" | b"description" | b"example" | b"import" | b"privateRemarks" | b"remarks" | b"since" | b"todo"
+        b"borrows"
+            | b"category"
+            | b"description"
+            | b"example"
+            | b"import"
+            | b"privateRemarks"
+            | b"remarks"
+            | b"since"
+            | b"todo"
     )
 }
 
 /// Whether an odd number of backslashes is before `pos`.
 fn is_escaped(bytes: &[u8], pos: usize) -> bool {
-    bytes[..pos].iter().rev().take_while(|&&byte| byte == b'\\').count() % 2 != 0
+    bytes[..pos]
+        .iter()
+        .rev()
+        .take_while(|&&byte| byte == b'\\')
+        .count()
+        % 2
+        != 0
 }
 
 /// The value of `@default`: what looks like JSON gets its spaces and the quotes of `quote_style`.
@@ -455,7 +544,10 @@ pub(super) fn format_default_value(value: &[u8], quote_style: QuoteStyle) -> Cow
                 }
             }
             b'}' => {
-                if result.last().is_some_and(|&last| last != b'{' && last != b' ') {
+                if result
+                    .last()
+                    .is_some_and(|&last| last != b'{' && last != b' ')
+                {
                     result.push(b' ');
                 }
                 result.push(b'}');
@@ -492,7 +584,11 @@ pub(super) fn strip_default_is_suffix(desc: &[u8]) -> &[u8] {
         let pos = from + at;
         let after = &desc[pos + 7..];
         let spaces = after.iter().take_while(|&&byte| is_space(byte)).count();
-        if spaces > 0 && after[spaces..].strip_prefix(b"is").is_some_and(|rest| rest.first().is_some_and(|&byte| is_space(byte))) {
+        if spaces > 0
+            && after[spaces..]
+                .strip_prefix(b"is")
+                .is_some_and(|rest| rest.first().is_some_and(|&byte| is_space(byte)))
+        {
             return before(pos);
         }
         from = pos + 7;

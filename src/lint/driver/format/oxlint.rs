@@ -52,7 +52,11 @@ fn is_error(message: &LintMessage) -> bool {
 
 fn file_name(result: &FileResult, meta: &Meta) -> Vec<u8> {
     let path = paths::from_native(&result.path);
-    if paths::is_absolute(&path) { paths::relative(meta.cwd, &path) } else { path }
+    if paths::is_absolute(&path) {
+        paths::relative(meta.cwd, &path)
+    } else {
+        path
+    }
 }
 
 /// Finds the offsets of the lines and columns that ESLint counts.
@@ -108,7 +112,12 @@ impl<'t> Offsets<'t> {
                 units += in_utf16;
             }
         }
-        Offsets { text, lines, is_ascii, marks }
+        Offsets {
+            text,
+            lines,
+            is_ascii,
+            marks,
+        }
     }
 
     const STEP: usize = 1024;
@@ -126,14 +135,20 @@ impl<'t> Offsets<'t> {
     /// The offset of a line from 1 and a column from 1 in UTF-16 code units, and the column from 1
     /// in bytes.
     fn at(&self, line: u32, column: u32) -> (usize, usize) {
-        let start = (self.lines.get((line as usize).saturating_sub(1)).copied()).unwrap_or(self.text.len());
+        let start =
+            (self.lines.get((line as usize).saturating_sub(1)).copied()).unwrap_or(self.text.len());
         let after_start = (column as usize).saturating_sub(1);
         let at = if self.is_ascii {
             (start + after_start).min(self.text.len())
-        } else if let Some(&before) = self.marks.get(start / Self::STEP).filter(|it| it.0 <= start).or_else(|| {
-            // The mark is after the start of its step if a character goes across that.
-            self.marks.get((start / Self::STEP).checked_sub(1)?)
-        }) {
+        } else if let Some(&before) = self
+            .marks
+            .get(start / Self::STEP)
+            .filter(|it| it.0 <= start)
+            .or_else(|| {
+                // The mark is after the start of its step if a character goes across that.
+                self.marks.get((start / Self::STEP).checked_sub(1)?)
+            })
+        {
             let (mut counted, mut units_before_line) = before;
             while counted < start {
                 let (bytes, in_utf16) = sizes(self.text[counted]);
@@ -142,7 +157,13 @@ impl<'t> Offsets<'t> {
             }
             let wanted = units_before_line + after_start;
             let later = self.marks.partition_point(|it| it.1 <= wanted);
-            self.forward(later.checked_sub(1).map_or((start, units_before_line), |it| self.marks[it]).max((start, units_before_line)), wanted)
+            self.forward(
+                later
+                    .checked_sub(1)
+                    .map_or((start, units_before_line), |it| self.marks[it])
+                    .max((start, units_before_line)),
+                wanted,
+            )
         } else {
             self.forward((start, 0), after_start)
         };
@@ -167,22 +188,33 @@ pub(super) fn write_json(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
                 out.extend_from_slice(b",\"code\": ");
                 write_json_string(out, &code);
             }
-            out.extend_from_slice(if is_error(message) { b",\"severity\": \"error\"" } else { b",\"severity\": \"warning\"" });
+            out.extend_from_slice(if is_error(message) {
+                b",\"severity\": \"error\""
+            } else {
+                b",\"severity\": \"warning\""
+            });
             out.extend_from_slice(b",\"filename\": ");
             write_json_string(out, &name);
             out.extend_from_slice(b",\"labels\": [");
             if message.line > 0 {
                 let (start, column) = offsets.at(message.line, message.column);
-                let end = message.end.map_or(start, |(line, column)| offsets.at(line, column).0);
+                let end = message
+                    .end
+                    .map_or(start, |(line, column)| offsets.at(line, column).0);
                 let length = end.saturating_sub(start);
                 let line = message.line;
-                let _ = write!(out, "{{\"span\": {{\"offset\": {start},\"length\": {length},\"line\": {line},\"column\": {column}}}}}");
+                let _ = write!(
+                    out,
+                    "{{\"span\": {{\"offset\": {start},\"length\": {length},\"line\": {line},\"column\": {column}}}}}"
+                );
             }
             out.extend_from_slice(b"]}");
         }
     }
     let run = &meta.run;
-    let rules = run.rules.map_or_else(|| "null".to_owned(), |it| it.to_string());
+    let rules = run
+        .rules
+        .map_or_else(|| "null".to_owned(), |it| it.to_string());
     let _ = write!(
         out,
         "],\n              \"number_of_files\": {},\n              \"number_of_rules\": {rules},\n              \"threads_count\": {},\n              \"start_time\": {}\n            }}\n            ",
@@ -204,14 +236,32 @@ fn write_xml_escaped(out: &mut Vec<u8>, text: &[u8]) {
 }
 
 pub(super) fn write_checkstyle(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    out.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"utf-8\"?><checkstyle version=\"4.3\">");
-    for (i, result) in results.iter().filter(|it| !it.messages.is_empty()).enumerate() {
-        out.extend_from_slice(if i > 0 { b" <file name=\"" } else { b"<file name=\"" });
+    out.extend_from_slice(
+        b"<?xml version=\"1.0\" encoding=\"utf-8\"?><checkstyle version=\"4.3\">",
+    );
+    for (i, result) in results
+        .iter()
+        .filter(|it| !it.messages.is_empty())
+        .enumerate()
+    {
+        out.extend_from_slice(if i > 0 {
+            b" <file name=\""
+        } else {
+            b"<file name=\""
+        });
         out.extend_from_slice(&file_name(result, meta));
         out.extend_from_slice(b"\">");
         for message in &result.messages {
-            let severity = if is_error(message) { "error" } else { "warning" };
-            let _ = write!(out, "<error line=\"{}\" column=\"{}\" severity=\"{severity}\" message=\"", message.line, message.column);
+            let severity = if is_error(message) {
+                "error"
+            } else {
+                "warning"
+            };
+            let _ = write!(
+                out,
+                "<error line=\"{}\" column=\"{}\" severity=\"{severity}\" message=\"",
+                message.line, message.column
+            );
             write_xml_escaped(out, &message.message);
             out.extend_from_slice(b"\" source=\"");
             write_xml_escaped(out, &code(message).unwrap_or_default());
@@ -231,13 +281,29 @@ pub(super) fn write_junit(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"Oxlint\" tests=\"{all}\" failures=\"{}\" errors=\"{errors}\">\n",
         all - errors,
     );
-    for (i, result) in results.iter().filter(|it| !it.messages.is_empty()).enumerate() {
-        out.extend_from_slice(if i > 0 { b"\n    <testsuite name=\"" } else { b"    <testsuite name=\"" });
+    for (i, result) in results
+        .iter()
+        .filter(|it| !it.messages.is_empty())
+        .enumerate()
+    {
+        out.extend_from_slice(if i > 0 {
+            b"\n    <testsuite name=\""
+        } else {
+            b"    <testsuite name=\""
+        });
         out.extend_from_slice(&file_name(result, meta));
         let (all, errors) = (result.messages.len(), errors_of(result));
-        let _ = write!(out, "\" tests=\"{all}\" disabled=\"0\" errors=\"{errors}\" failures=\"{}\">", all - errors);
+        let _ = write!(
+            out,
+            "\" tests=\"{all}\" disabled=\"0\" errors=\"{errors}\" failures=\"{}\">",
+            all - errors
+        );
         for message in &result.messages {
-            let tag = if is_error(message) { "error" } else { "failure" };
+            let tag = if is_error(message) {
+                "error"
+            } else {
+                "failure"
+            };
             out.extend_from_slice(b"\n        <testcase name=\"");
             out.extend_from_slice(&code(message).unwrap_or_default());
             let _ = write!(out, "\">\n            <{tag} message=\"");
@@ -259,15 +325,28 @@ fn number(value: usize) -> Json {
 /// oxlint's.
 pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     // Paths are from the root of the repository.
-    let root = paths::ancestors(meta.cwd).find(|it| bun_sys::exists(&paths::join(it, b".git"))).unwrap_or(meta.cwd);
+    let root = paths::ancestors(meta.cwd)
+        .find(|it| bun_sys::exists(&paths::join(it, b".git")))
+        .unwrap_or(meta.cwd);
     let mut all = Vec::new();
     for result in results {
         let path = paths::relative(root, &paths::resolve(meta.cwd, &file_name(result, meta)));
         for message in &result.messages {
             let end = message.end.map_or(message.line, |it| it.0);
-            let severity: &[u8] = if is_error(message) { b"critical" } else { b"major" };
+            let severity: &[u8] = if is_error(message) {
+                b"critical"
+            } else {
+                b"major"
+            };
             let lines = format!("{}:{end}:", message.line);
-            let fingerprint = crate::evaluate::hash(&[lines.as_bytes(), &path, b":", &message.message, b":", severity]);
+            let fingerprint = crate::evaluate::hash(&[
+                lines.as_bytes(),
+                &path,
+                b":",
+                &message.message,
+                b":",
+                severity,
+            ]);
             all.push(object(vec![
                 (b"description", text(&message.message)),
                 (b"check_name", text(&code(message).unwrap_or_default())),
@@ -277,7 +356,13 @@ pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
                     b"location",
                     object(vec![
                         (b"path", text(&path)),
-                        (b"lines", object(vec![(b"begin", number(message.line as usize)), (b"end", number(end as usize))])),
+                        (
+                            b"lines",
+                            object(vec![
+                                (b"begin", number(message.line as usize)),
+                                (b"end", number(end as usize)),
+                            ]),
+                        ),
                     ]),
                 ),
             ]));
@@ -292,7 +377,10 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
     for result in results.iter().filter(|it| !it.messages.is_empty()) {
         let uri = file_name(result, meta);
         let artifact = artifacts.len();
-        artifacts.push(object(vec![(b"location", object(vec![(b"uri", text(&uri))]))]));
+        artifacts.push(object(vec![(
+            b"location",
+            object(vec![(b"uri", text(&uri))]),
+        )]));
         for message in &result.messages {
             // A problem without a rule, like a syntax error.
             let id = code(message).unwrap_or_else(|| b"OXL0001".to_vec());
@@ -301,21 +389,37 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
                 rule_ids.push(id.clone());
                 rule_ids.len() - 1
             });
-            let mut region = vec![(&b"startLine"[..], number(message.line.max(1) as usize)), (b"startColumn", number(message.column.max(1) as usize))];
+            let mut region = vec![
+                (&b"startLine"[..], number(message.line.max(1) as usize)),
+                (b"startColumn", number(message.column.max(1) as usize)),
+            ];
             if let Some((line, column)) = message.end {
-                region.extend([(&b"endLine"[..], number(line as usize)), (b"endColumn", number(column as usize))]);
+                region.extend([
+                    (&b"endLine"[..], number(line as usize)),
+                    (b"endColumn", number(column as usize)),
+                ]);
             }
             let location = object(vec![(
                 b"physicalLocation",
                 object(vec![
-                    (b"artifactLocation", object(vec![(b"uri", text(&uri)), (b"index", number(artifact))])),
+                    (
+                        b"artifactLocation",
+                        object(vec![(b"uri", text(&uri)), (b"index", number(artifact))]),
+                    ),
                     (b"region", object(region)),
                 ]),
             )]);
             all.push(object(vec![
                 (b"ruleId", text(&id)),
                 (b"ruleIndex", number(rule)),
-                (b"level", text(if is_error(message) { b"error" } else { b"warning" })),
+                (
+                    b"level",
+                    text(if is_error(message) {
+                        b"error"
+                    } else {
+                        b"warning"
+                    }),
+                ),
                 (b"message", object(vec![(b"text", text(&message.message))])),
                 (b"locations", Json::Array(vec![location])),
             ]));
@@ -325,7 +429,10 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
         (b"name", text(b"bun lint")),
         (b"version", text(meta.version)),
         (b"semanticVersion", text(meta.version)),
-        (b"informationUri", text(b"https://bun.com/docs/runtime/lint")),
+        (
+            b"informationUri",
+            text(b"https://bun.com/docs/runtime/lint"),
+        ),
         (b"rules", Json::Array(rules)),
     ]);
     let mut run = vec![(&b"tool"[..], object(vec![(b"driver", driver)]))];
@@ -348,12 +455,20 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
 
 /// The plugin of oxlint that has the rules with the prefix `prefix`.
 fn plugin(prefix: &[u8]) -> &[u8] {
-    if prefix == b"react-hooks" { b"react" } else { scope(prefix) }
+    if prefix == b"react-hooks" {
+        b"react"
+    } else {
+        scope(prefix)
+    }
 }
 
 /// `--rules`. `as_json`: with `-f json`.
 pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool) {
-    let mut all: Vec<_> = registry.all().iter().map(|it| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta)).collect();
+    let mut all: Vec<_> = registry
+        .all()
+        .iter()
+        .map(|it| (plugin(it.meta.plugin.prefix().as_bytes()), &it.meta))
+        .collect();
     all.sort_by_key(|it| (it.0, it.1.name));
     if !as_json {
         for (scope, meta) in all {
@@ -370,14 +485,30 @@ pub(crate) fn write_rules(out: &mut Vec<u8>, registry: &Registry, as_json: bool)
             (false, true) => b"fixable_suggestion",
             (false, false) => b"none",
         };
-        let url = [b"https://oxc.rs/docs/guide/usage/linter/rules/", scope, b"/", meta.name.as_bytes(), b".html"].concat();
+        let url = [
+            b"https://oxc.rs/docs/guide/usage/linter/rules/",
+            scope,
+            b"/",
+            meta.name.as_bytes(),
+            b".html",
+        ]
+        .concat();
         object(vec![
             (b"scope", text(scope)),
             (b"value", text(meta.name.as_bytes())),
-            (b"category", category.map_or(Json::Null, |it| text(it.as_bytes()))),
+            (
+                b"category",
+                category.map_or(Json::Null, |it| text(it.as_bytes())),
+            ),
             (b"type_aware", Json::Bool(meta.requires_types)),
             (b"fix", text(fix)),
-            (b"default", Json::Bool(category == Some("correctness") && matches!(scope, b"eslint" | b"typescript" | b"oxc"))),
+            (
+                b"default",
+                Json::Bool(
+                    category == Some("correctness")
+                        && matches!(scope, b"eslint" | b"typescript" | b"oxc"),
+                ),
+            ),
             (b"docs_url", text(&url)),
         ])
     });

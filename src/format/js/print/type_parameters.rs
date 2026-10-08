@@ -12,16 +12,25 @@ pub(crate) fn write_ts_type_parameter<'a>(param: TypeParam<'a>, f: &mut Formatte
     if is_flow {
         super::flow::write_type_parameter_modifiers(param, f);
     } else if !flags.is_empty() {
-        for (flag, keyword) in [(Flags::CONST, "const"), (Flags::IN, "in"), (Flags::OUT, "out")] {
+        for (flag, keyword) in [
+            (Flags::CONST, "const"),
+            (Flags::IN, "in"),
+            (Flags::OUT, "out"),
+        ] {
             if flags.contains(flag) {
                 write!(f, [keyword, space()]);
             }
         }
     }
-    write!(f, identifier(param.name(), AstNodes::TSTypeParameter(param)));
+    write!(
+        f,
+        identifier(param.name(), AstNodes::TSTypeParameter(param))
+    );
 
     match param.constraint() {
-        Some(constraint) if is_flow => super::flow::write_type_parameter_bound(param, constraint, f),
+        Some(constraint) if is_flow => {
+            super::flow::write_type_parameter_bound(param, constraint, f)
+        }
         Some(constraint) => write_type_parameter_bound("extends", constraint, f),
         None => {}
     }
@@ -57,7 +66,9 @@ fn should_force_trailing_comma_for_arrow_function<'a>(
 ) -> bool {
     params.len() == 1
         && matches!(owner, Node::Func(func) if func.is_arrow())
-        && !params.first().is_some_and(|param| param.constraint().is_some())
+        && !params
+            .first()
+            .is_some_and(|param| param.constraint().is_some())
         && !f.filepath().ends_with(b".ts")
         && !f.file().is_flow()
 }
@@ -78,7 +89,10 @@ pub(crate) struct FormatTSTypeParameters<'a> {
 
 /// The type parameters `params` of `owner`: a `Func`, a `Class`, or the `Stmt` of an interface or
 /// a type alias.
-pub(crate) fn type_parameters<'a>(params: List<'a, TypeParam<'a>>, owner: Node<'a>) -> FormatTSTypeParameters<'a> {
+pub(crate) fn type_parameters<'a>(
+    params: List<'a, TypeParam<'a>>,
+    owner: Node<'a>,
+) -> FormatTSTypeParameters<'a> {
     FormatTSTypeParameters {
         params,
         owner,
@@ -153,7 +167,12 @@ impl<'a> Format<'a> for FormatTSTypeParameters<'a> {
             return self.write_without_comments(f);
         }
         let node = AstNodes::TSTypeParameterDeclaration(self.owner);
-        format_node(node.span(), || node.parent(), f, |f| self.write_without_comments(f));
+        format_node(
+            node.span(),
+            || node.parent(),
+            f,
+            |f| self.write_without_comments(f),
+        );
     }
 }
 
@@ -166,7 +185,10 @@ pub(crate) struct FormatTypeArguments<'a> {
 
 /// The type arguments `params` of `owner`: an `Expr`, a `TypeNode`, or the `Class` whose `extends`
 /// clause has them.
-pub(crate) fn type_arguments<'a>(params: List<'a, TypeNode<'a>>, owner: Node<'a>) -> FormatTypeArguments<'a> {
+pub(crate) fn type_arguments<'a>(
+    params: List<'a, TypeNode<'a>>,
+    owner: Node<'a>,
+) -> FormatTypeArguments<'a> {
     FormatTypeArguments { params, owner }
 }
 
@@ -175,7 +197,9 @@ impl<'a> FormatTypeArguments<'a> {
     pub(crate) fn write_without_comments(self, f: &mut Formatter<'a>) {
         let params = self.params;
         let should_inline = params.len() == 1
-            && params.first().is_some_and(|first| should_hug_single_type(first, f) && !self.has_comment_on_own_line(first, f))
+            && params.first().is_some_and(|first| {
+                should_hug_single_type(first, f) && !self.has_comment_on_own_line(first, f)
+            })
             && !is_arrow_function_variable_type_argument(self);
 
         // TypeScript has no `,` after the last type argument. Flow, whose types those in a JavaScript
@@ -185,13 +209,17 @@ impl<'a> FormatTypeArguments<'a> {
             false => TrailingSeparator::Disallowed,
         };
         let format_params = format_with(|f| {
-            f.join_with(soft_line_break_or_space()).entries_with_trailing_separator(params.iter(), ",", trailing_separator);
+            f.join_with(soft_line_break_or_space())
+                .entries_with_trailing_separator(params.iter(), ",", trailing_separator);
         });
 
         if should_inline {
             write!(f, ["<", format_params, ">"]);
         } else {
-            write!(f, group(&format_args!("<", soft_block_indent(&format_params), ">")));
+            write!(
+                f,
+                group(&format_args!("<", soft_block_indent(&format_params), ">"))
+            );
         }
     }
 
@@ -201,11 +229,17 @@ impl<'a> FormatTypeArguments<'a> {
         if f.is_quiet() {
             return false;
         }
-        let (outer, inner) = (AstNodes::TSTypeParameterInstantiation(self.owner).span(), only.span());
+        let (outer, inner) = (
+            AstNodes::TSTypeParameterInstantiation(self.owner).span(),
+            only.span(),
+        );
         let before = f.comments().comments_in_range(outer.start, inner.start);
         let after = f.comments().comments_in_range(inner.end, outer.end);
         before.iter().chain(after).any(|comment| comment.is_line())
-            || after.last().or_else(|| before.last()).is_some_and(|comment| comment.followed_by_newline())
+            || after
+                .last()
+                .or_else(|| before.last())
+                .is_some_and(|comment| comment.followed_by_newline())
     }
 }
 
@@ -218,7 +252,12 @@ impl<'a> Format<'a> for FormatTypeArguments<'a> {
             return self.write_without_comments(f);
         }
         let node = AstNodes::TSTypeParameterInstantiation(self.owner);
-        format_node(node.span(), || node.parent(), f, |f| self.write_without_comments(f));
+        format_node(
+            node.span(),
+            || node.parent(),
+            f,
+            |f| self.write_without_comments(f),
+        );
     }
 }
 
@@ -241,7 +280,9 @@ fn is_arrow_function_variable_type_argument(arguments: FormatTypeArguments<'_>) 
         return false;
     }
     // The parent is the `TSTypeReference`.
-    let grand_parent = AstNodes::TSTypeParameterInstantiation(arguments.owner).parent().parent();
+    let grand_parent = AstNodes::TSTypeParameterInstantiation(arguments.owner)
+        .parent()
+        .parent();
     matches!(grand_parent, AstNodes::TSTypeAnnotation(_))
         && matches!(
             grand_parent.parent(),

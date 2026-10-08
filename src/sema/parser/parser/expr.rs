@@ -52,10 +52,15 @@ fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
         let after = after.trim_ascii_start();
         let is_in_name = |c: &&u8| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | 0x80..);
         let name = after.iter().take_while(is_in_name).count();
-        let next = after.get(name..).unwrap_or_default().trim_ascii_start().first();
+        let next = after
+            .get(name..)
+            .unwrap_or_default()
+            .trim_ascii_start()
+            .first();
         name == 0 || matches!(next, None | Some(b':' | b',' | b'?' | b'=' | b')'))
     };
-    open.iter().any(|&at| text[at] != b'(' || starts_parameters(&text[at + 1..]))
+    open.iter()
+        .any(|&at| text[at] != b'(' || starts_parameters(&text[at + 1..]))
 }
 
 /// The operator that a compound assignment combines with. `None` for `=`.
@@ -263,7 +268,13 @@ impl Parser<'_> {
                 && pos == start
             {
                 self.f.exprs.pop();
-                return self.simple_arrow_function(name, (pos, end, full), false, pos, allow_return_type);
+                return self.simple_arrow_function(
+                    name,
+                    (pos, end, full),
+                    false,
+                    pos,
+                    allow_return_type,
+                );
             }
             self.fail();
             return expression;
@@ -920,7 +931,8 @@ impl Parser<'_> {
                         self.tagged_template(start, expression, IdList::EMPTY, is_in_chain);
                 }
                 T::LessThan | T::LessThanLessThan if self.has_type_arguments_in_expressions => {
-                    let Some(type_args) = self.try_type_arguments_in_expression(allows_calls) else {
+                    let Some(type_args) = self.try_type_arguments_in_expression(allows_calls)
+                    else {
                         return expression;
                     };
                     expression = match self.token() {
@@ -955,7 +967,12 @@ impl Parser<'_> {
     #[cold]
     fn private_name_in_optional_chain(&mut self) {
         match self.is_ecmascript {
-            true => self.flag(DiagnosticKind::Grammar, 18030, (self.lx.start, self.lx.end), &[]),
+            true => self.flag(
+                DiagnosticKind::Grammar,
+                18030,
+                (self.lx.start, self.lx.end),
+                &[],
+            ),
             false => self.report(),
         }
     }
@@ -1033,7 +1050,10 @@ impl Parser<'_> {
     }
 
     /// `parseTypeArgumentsInExpression`, in a `tryParse`. `allows_calls`: not in the callee of `new`.
-    fn try_type_arguments_in_expression(&mut self, allows_calls: bool) -> Option<IdList<TypeNodeId>> {
+    fn try_type_arguments_in_expression(
+        &mut self,
+        allows_calls: bool,
+    ) -> Option<IdList<TypeNodeId>> {
         if self.is_flow {
             return self.flow_type_arguments_in_expression(!allows_calls);
         }
@@ -1063,9 +1083,7 @@ impl Parser<'_> {
             let follows = match p.token() {
                 T::OpenParen | T::NoSubstitutionTemplate | T::TemplateHead => true,
                 T::LessThan | T::GreaterThan | T::Plus | T::Minus => false,
-                _ => {
-                    p.newline_before() || p.is_binary_operator() || !p.is_start_of_expression()
-                }
+                _ => p.newline_before() || p.is_binary_operator() || !p.is_start_of_expression(),
             };
             follows.then(|| p.take_ids(base))
         });
@@ -1114,9 +1132,7 @@ impl Parser<'_> {
             let mut from = (failed_at as usize).saturating_sub(less_than);
             // A word where none is expected is left to what is around. Only a list takes it, as its
             // next element after a missing comma.
-            if failed_token.is_identifier_or_keyword()
-                && !is_in_list_of_type(statement, from)
-            {
+            if failed_token.is_identifier_or_keyword() && !is_in_list_of_type(statement, from) {
                 from = statement.len();
             }
             while let Some(found) = statement
@@ -1304,7 +1320,12 @@ impl Parser<'_> {
         let exprs = self.template_parts(true);
         // `checkGrammarTaggedTemplateChain`
         if is_in_chain {
-            self.flag(DiagnosticKind::Grammar, 1358, (backtick, self.prev_end()), &[]);
+            self.flag(
+                DiagnosticKind::Grammar,
+                1358,
+                (backtick, self.prev_end()),
+                &[],
+            );
         }
         // A `NoSubstitutionTemplateLiteral` is a string, as it is without a tag.
         let kind = match exprs.is_empty() {
@@ -1395,7 +1416,9 @@ impl Parser<'_> {
         let props: Span<PropId> = take_span!(self, props, base);
         for index in modifiers..self.s.prop_modifiers.len() {
             let (prop, list) = self.s.prop_modifiers[index];
-            self.f.modifiers_of_props.push((props.at(prop as usize), list));
+            self.f
+                .modifiers_of_props
+                .push((props.at(prop as usize), list));
         }
         self.s.prop_modifiers.truncate(modifiers);
         self.finish_expr(ExprKind::Object(props), start)
@@ -1551,8 +1574,9 @@ impl Parser<'_> {
             postfix_token = self.pos();
             self.next();
         }
-        let is_function =
-            kind != PropKind::Init || is_generator || matches!(self.token(), T::OpenParen | T::LessThan);
+        let is_function = kind != PropKind::Init
+            || is_generator
+            || matches!(self.token(), T::OpenParen | T::LessThan);
         let value = if is_function {
             let fn_kind = match kind {
                 PropKind::Getter => FnKind::Getter,

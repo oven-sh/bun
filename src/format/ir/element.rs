@@ -142,7 +142,9 @@ impl Token {
     #[inline(always)]
     pub(crate) fn new(text: &str) -> Option<Token> {
         let mut bytes = [0; Token::MAX];
-        bytes.get_mut(..text.len())?.copy_from_slice(text.as_bytes());
+        bytes
+            .get_mut(..text.len())?
+            .copy_from_slice(text.as_bytes());
         Some(Token {
             len: text.len() as u8,
             bytes,
@@ -260,7 +262,12 @@ impl TextWidth {
 
 impl std::fmt::Debug for TextWidth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}{}", self.value(), if self.is_multiline() { "+" } else { "" })
+        write!(
+            f,
+            "{}{}",
+            self.value(),
+            if self.is_multiline() { "+" } else { "" }
+        )
     }
 }
 
@@ -337,7 +344,6 @@ impl PrintMode {
     pub(crate) const fn is_flat(self) -> bool {
         matches!(self, PrintMode::Flat)
     }
-
 }
 
 /// Marks the start or the end of content that is treated in a special way.
@@ -580,5 +586,4 @@ impl FormatElement {
             _ => false,
         }
     }
-
 }

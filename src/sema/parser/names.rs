@@ -103,7 +103,10 @@ impl Default for Names {
     fn default() -> Self {
         let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
         let mut known_others = Vec::new();
-        let with_numbers = KNOWN_TEXTS.iter().zip(0u32..).map(|(&text, atom)| (text, atom));
+        let with_numbers = KNOWN_TEXTS
+            .iter()
+            .zip(0u32..)
+            .map(|(&text, atom)| (text, atom));
         let keywords = KEYWORDS.iter().map(|&(text, _)| (text, u32::MAX));
         for (text, atom) in with_numbers.chain(keywords) {
             if !is_short(text) {
@@ -283,7 +286,10 @@ impl Names {
     pub(crate) fn begin_own(&mut self, len: usize) {
         self.next_generation();
         // A place in `short` for every 8 bytes of the text.
-        let bits = (len / 8).next_power_of_two().trailing_zeros().clamp(8, SHORT_BITS);
+        let bits = (len / 8)
+            .next_power_of_two()
+            .trailing_zeros()
+            .clamp(8, SHORT_BITS);
         self.unused_bits = SHORT_BITS - bits;
         // What has been done since the last file has pushed the tables out of the caches of the
         // processor. Written in order they come back much faster than one entry at a time.
@@ -393,7 +399,10 @@ impl Names {
         atoms: &dyn Intern,
     ) -> (Atom, T) {
         let bit = short_place(words);
-        let (first, len) = (bit >> self.unused_bits, self.short.len() >> self.unused_bits);
+        let (first, len) = (
+            bit >> self.unused_bits,
+            self.short.len() >> self.unused_bits,
+        );
         let mut free = None;
         for at in (first..=first + WINDOW).map(|at| at % len) {
             let entry = &self.short[at];
@@ -457,9 +466,15 @@ impl Names {
         }
         let bit = mention_bit_of([words[0], words[1]], text.text.len()) as usize;
         let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, bit, self.known_other(text.text), atoms), at),
+            Some(at) => (
+                self.new_atom(text, bit, self.known_other(text.text), atoms),
+                at,
+            ),
             None if self.is_own => return self.other(text, atoms),
-            None => (self.new_atom(text, bit, self.known_other(text.text), atoms), first),
+            None => (
+                self.new_atom(text, bit, self.known_other(text.text), atoms),
+                first,
+            ),
         };
         self.long[at] = Long {
             words,
@@ -476,7 +491,9 @@ impl Names {
             return atoms.intern(text.text);
         }
         let hash = hash_of(text.text);
-        let found = (self.other).find(hash, |atom| self.bytes(Atom(atom), text.source) == text.text);
+        let found = (self.other).find(hash, |atom| {
+            self.bytes(Atom(atom), text.source) == text.text
+        });
         if let Some(atom) = found {
             return Atom(atom);
         }

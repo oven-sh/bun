@@ -10,31 +10,39 @@ use smallvec::{SmallVec, smallvec};
 /// The node that the parameters, the type parameters and the return type of `func` are fields of.
 fn function_node<'a>(func: Func<'a>) -> VNode<'a> {
     match (func.owner(), func.kind()) {
-        (Node::Member(member), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor)
-            if !member.is_signature() =>
-        {
-            VNode::new(func, Part::Main)
-        }
+        (
+            Node::Member(member),
+            FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor,
+        ) if !member.is_signature() => VNode::new(func, Part::Main),
         (owner @ (Node::Member(_) | Node::Type(_)), _) => VNode::new(owner, Part::Main),
         _ => VNode::new(func, Part::Main),
     }
 }
 
 /// The `Decorator` whose expression is `e`, among the modifiers of `owner`.
-fn decorator<'a>(owner: Node<'a>, modifiers: List<'a, Modifier<'a>>, e: Expr<'a>) -> Option<VNode<'a>> {
+fn decorator<'a>(
+    owner: Node<'a>,
+    modifiers: List<'a, Modifier<'a>>,
+    e: Expr<'a>,
+) -> Option<VNode<'a>> {
     let found = modifiers.iter().find(|it| it.decorator() == Some(e))?;
     Some(VNode::new(owner, Part::Decorator(found.id().0)))
 }
 
 /// The mapped type that `param` is the `K in T` of.
 fn mapped_type<'a>(param: TypeParam<'a>) -> Option<TypeNode<'a>> {
-    param.parent().as_type().filter(|ty| matches!(ty.kind(), TypeKind::Mapped(_)))
+    param
+        .parent()
+        .as_type()
+        .filter(|ty| matches!(ty.kind(), TypeKind::Mapped(_)))
 }
 
 /// The `TSImportType` of the import type `ty`.
 fn import_type<'a>(ty: TypeNode<'a>) -> VNode<'a> {
     match ty.kind() {
-        TypeKind::Import { is_typeof: true, .. } => VNode::new(ty, Part::ImportType),
+        TypeKind::Import {
+            is_typeof: true, ..
+        } => VNode::new(ty, Part::ImportType),
         _ => VNode::new(ty, Part::Main),
     }
 }
@@ -44,7 +52,9 @@ fn above_stmt<'a>(statement: Stmt<'a>) -> VNode<'a> {
     match statement.parent() {
         Node::Stmt(parent) => match parent.kind() {
             StmtKind::Module(_) => VNode::new(parent, Part::Body),
-            StmtKind::Try { handler, .. } if handler == Some(statement) => VNode::new(parent, Part::Catch),
+            StmtKind::Try { handler, .. } if handler == Some(statement) => {
+                VNode::new(parent, Part::Catch)
+            }
             _ => VNode::new(parent, Part::Main),
         },
         Node::Func(func) => match (func.kind(), func.owner()) {
@@ -66,14 +76,19 @@ fn above_main_of_stmt<'a>(statement: Stmt<'a>) -> VNode<'a> {
 /// What the expression `e`, with all that ESTree has around it, is in.
 fn above_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
     let attribute = |owner: Node<'a>, attributes: Option<crate::ast::ImportAttributes<'a>>| {
-        let found = attributes?.entries().iter().find(|it| it.value() == Some(e))?;
+        let found = attributes?
+            .entries()
+            .iter()
+            .find(|it| it.value() == Some(e))?;
         Some(VNode::new(owner, Part::Attribute(found.id().0)))
     };
     let parent = e.parent();
     Some(match parent {
         Node::File(_) => return None,
         Node::Expr(mut above) => match above.kind() {
-            ExprKind::Binary { op: BinOp::Comma, .. } => {
+            ExprKind::Binary {
+                op: BinOp::Comma, ..
+            } => {
                 // To the outermost of the comma operators.
                 while !above.is_parenthesized()
                     && let Node::Expr(next) = above.parent()
@@ -85,8 +100,12 @@ fn above_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
             }
             ExprKind::Jsx(jsx) if jsx.tag() == Some(e) => VNode::new(above, Part::Opening),
             ExprKind::Jsx(jsx) if jsx.close_tag() == Some(e) => VNode::new(above, Part::Closing),
-            ExprKind::Spread(_) if above.jsx_container_span().is_some() => VNode::new(above, Part::Container),
-            ExprKind::NonNull(_) if above.inner_non_null_spans().len() > 0 => VNode::new(above, Part::NonNull(0)),
+            ExprKind::Spread(_) if above.jsx_container_span().is_some() => {
+                VNode::new(above, Part::Container)
+            }
+            ExprKind::NonNull(_) if above.inner_non_null_spans().len() > 0 => {
+                VNode::new(above, Part::NonNull(0))
+            }
             _ => VNode::new(above, Part::Main),
         },
         Node::Stmt(statement) => (attribute(parent, statement.import_attributes()))
@@ -98,9 +117,8 @@ fn above_expr<'a>(e: Expr<'a>) -> Option<VNode<'a>> {
         },
         Node::Param(param) if param.default() == Some(e) => VNode::new(param, Part::Inner),
         Node::Param(param) => decorator(parent, param.modifiers(), e)?,
-        Node::Member(member) => {
-            decorator(parent, member.modifiers(), e).unwrap_or_else(|| VNode::new(member, Part::Main))
-        }
+        Node::Member(member) => decorator(parent, member.modifiers(), e)
+            .unwrap_or_else(|| VNode::new(member, Part::Main)),
         Node::Class(class) => {
             decorator(parent, class.modifiers(), e).unwrap_or_else(|| VNode::new(class, Part::Main))
         }
@@ -135,9 +153,10 @@ fn above_type<'a>(ty: TypeNode<'a>) -> Option<VNode<'a>> {
     Some(match parent {
         Node::File(_) => return None,
         Node::Type(above) => match above.kind() {
-            TypeKind::Ref { .. } | TypeKind::Heritage { .. } | TypeKind::Typeof { .. } | TypeKind::Import { .. } => {
-                VNode::new(above, Part::TypeArgs)
-            }
+            TypeKind::Ref { .. }
+            | TypeKind::Heritage { .. }
+            | TypeKind::Typeof { .. }
+            | TypeKind::Import { .. } => VNode::new(above, Part::TypeArgs),
             _ => VNode::new(above, Part::Main),
         },
         Node::Expr(above) => match above.kind() {
@@ -215,7 +234,9 @@ impl<'a> VNode<'a> {
                 Chain => return above_chain(e),
                 Container => return above_expr(e),
                 ConstName => self.with(ConstType),
-                NonNull(i) if (i as usize) + 1 < e.inner_non_null_spans().len() => self.with(NonNull(i + 1)),
+                NonNull(i) if (i as usize) + 1 < e.inner_non_null_spans().len() => {
+                    self.with(NonNull(i + 1))
+                }
                 TypeArgs if matches!(e.kind(), ExprKind::Jsx(_)) => self.with(Opening),
                 _ => main,
             },
@@ -225,7 +246,9 @@ impl<'a> VNode<'a> {
                 Export => above_stmt(statement),
                 DefaultLocal => self.with(DefaultSpecifier),
                 NamespaceLocal => self.with(NamespaceSpecifier),
-                Source if matches!(statement.kind(), StmtKind::ImportEquals(_)) => self.with(Reference),
+                Source if matches!(statement.kind(), StmtKind::ImportEquals(_)) => {
+                    self.with(Reference)
+                }
                 _ => main,
             },
 
@@ -261,7 +284,9 @@ impl<'a> VNode<'a> {
                     }
                     _ => VNode::new(declaration, Main),
                 },
-                Node::Param(param) if param.is_rest() || param.default().is_some() => VNode::new(param, Inner),
+                Node::Param(param) if param.is_rest() || param.default().is_some() => {
+                    VNode::new(param, Inner)
+                }
                 Node::Param(param) if VNode::has_keywords(param) => VNode::new(param, Main),
                 Node::Param(param) => return above_param(param),
                 Node::PatProp(prop) if prop.default().is_some() => VNode::new(prop, Value),
@@ -341,7 +366,10 @@ impl<'a> VNode<'a> {
     }
 
     /// The same. `visit` is also given the type of the node, which is known here.
-    pub fn for_each_with_type_at(node: Node<'a>, visit: &mut dyn FnMut(VNode<'a>, super::NodeType)) {
+    pub fn for_each_with_type_at(
+        node: Node<'a>,
+        visit: &mut dyn FnMut(VNode<'a>, super::NodeType),
+    ) {
         // The parts of a node are a tree of their own, except where the outermost is missing.
         fn descend<'a>(v: VNode<'a>, visit: &mut dyn FnMut(VNode<'a>, super::NodeType)) {
             // The next is the last. Not by recursion: the parts of `A.B.C..`, which is one node, are as deep as it is long.
@@ -350,7 +378,11 @@ impl<'a> VNode<'a> {
                 let node_type = v.node_type();
                 visit(v, node_type);
                 let first = pending.len();
-                let parts = node_type.fields().iter().take_while(|it| it.is_child).filter(|it| it.is_part);
+                let parts = node_type
+                    .fields()
+                    .iter()
+                    .take_while(|it| it.is_child)
+                    .filter(|it| it.is_part);
                 for entry in parts {
                     if !entry.is_in(v.dialect()) {
                         continue;
@@ -374,8 +406,13 @@ impl<'a> VNode<'a> {
         match node {
             Node::File(file) => root(Some(VNode::program(file))),
             Node::Expr(e) => {
-                let is_operand_of_comma = matches!(e.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
-                    && !e.is_parenthesized()
+                let is_operand_of_comma = matches!(
+                    e.kind(),
+                    ExprKind::Binary {
+                        op: BinOp::Comma,
+                        ..
+                    }
+                ) && !e.is_parenthesized()
                     && matches!(e.parent(), Node::Expr(above)
                         if matches!(above.kind(), ExprKind::Binary { op: BinOp::Comma, left, .. } if left == e));
                 if !is_operand_of_comma {
@@ -384,15 +421,26 @@ impl<'a> VNode<'a> {
                 // No listener is called with the placeholder in `{}`.
                 if let ExprKind::Jsx(jsx) = e.kind() {
                     let values = jsx.attrs().iter().filter_map(|it| it.value());
-                    for empty in jsx.children().iter().chain(values).filter(|it| it.is_missing()) {
-                        VNode::of_expr(empty).into_iter().for_each(|it| descend(it, visit));
+                    for empty in jsx
+                        .children()
+                        .iter()
+                        .chain(values)
+                        .filter(|it| it.is_missing())
+                    {
+                        VNode::of_expr(empty)
+                            .into_iter()
+                            .for_each(|it| descend(it, visit));
                     }
                 }
             }
             Node::Stmt(statement) => root(Some(VNode::of_stmt(statement))),
             Node::Func(func) => match function_node(func).base == node {
                 true => root(Some(VNode::new(func, Part::Main))),
-                false => root(func.type_params().first().map(|_| VNode::new(func, Part::TypeParams))),
+                false => root(
+                    func.type_params()
+                        .first()
+                        .map(|_| VNode::new(func, Part::TypeParams)),
+                ),
             },
             Node::Param(param) => {
                 let outermost = VNode::of_param(param);
@@ -406,7 +454,8 @@ impl<'a> VNode<'a> {
                 None => root(Some(VNode::new(param, Part::Main))),
             },
             Node::VarDecl(declaration) => {
-                if !matches!(declaration.parent(), Node::Stmt(it) if matches!(it.kind(), StmtKind::Try { .. })) {
+                if !matches!(declaration.parent(), Node::Stmt(it) if matches!(it.kind(), StmtKind::Try { .. }))
+                {
                     root(Some(VNode::new(declaration, Part::Main)));
                 }
             }

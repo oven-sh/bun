@@ -116,8 +116,20 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
     pub(crate) fn run(&mut self) {
         let (a, b) = (self.a, self.b);
         same!(
-            self, a, b, kind, is_js, is_flow, check_directive, has_module_syntax, has_errors,
-            ran_out_of_stack, has_parse_diagnostics, syntax_errors, source_len, jsx_pragmas
+            self,
+            a,
+            b,
+            kind,
+            is_js,
+            is_flow,
+            check_directive,
+            has_module_syntax,
+            has_errors,
+            ran_out_of_stack,
+            has_parse_diagnostics,
+            syntax_errors,
+            source_len,
+            jsx_pragmas
         );
         // The reference lists what the lowering reports before what the parser reports.
         let sorted = |list: &[Diagnostic]| {
@@ -144,7 +156,11 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             self.differ("with_bodies", &&a.with_bodies[..], &&b.with_bodies[..]);
         }
         self.stmt_list("body", a.body, b.body);
-        if self.lens("import_attributes", a.import_attributes.len(), b.import_attributes.len()) {
+        if self.lens(
+            "import_attributes",
+            a.import_attributes.len(),
+            b.import_attributes.len(),
+        ) {
             for (x, y) in a.import_attributes.iter().zip(&b.import_attributes[..]) {
                 if x.0 != y.0 {
                     self.differ("import_attributes", &x.0, &y.0);
@@ -230,10 +246,19 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
         }
         for (name, is_sorted) in [
             ("parens", b.parens.is_sorted_by_key(|it| it.0.0)),
-            ("non_null_ends", b.non_null_ends.is_sorted_by_key(|it| it.0.0)),
-            ("jsx_expressions", b.jsx_expressions.is_sorted_by_key(|it| it.0.0)),
+            (
+                "non_null_ends",
+                b.non_null_ends.is_sorted_by_key(|it| it.0.0),
+            ),
+            (
+                "jsx_expressions",
+                b.jsx_expressions.is_sorted_by_key(|it| it.0.0),
+            ),
             ("body_starts", b.body_starts.is_sorted_by_key(|it| it.0.0)),
-            ("modifiers_of_props", b.modifiers_of_props.is_sorted_by_key(|it| it.0.0)),
+            (
+                "modifiers_of_props",
+                b.modifiers_of_props.is_sorted_by_key(|it| it.0.0),
+            ),
         ] {
             if !is_sorted {
                 self.differ("order", &name, &"not sorted");
@@ -393,7 +418,16 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             (Module(x), Module(y)) => {
                 let (i, j) = (self.a[x], self.b[y]);
                 self.seen.modules[y.idx()] = true;
-                same!(self, i, j, name, name_pos, flags, has_body, specifies_module);
+                same!(
+                    self,
+                    i,
+                    j,
+                    name,
+                    name_pos,
+                    flags,
+                    has_body,
+                    specifies_module
+                );
                 self.back_reference(i.stmt, a, j.stmt, b);
                 self.stmt_list("body", i.body, j.body);
             }
@@ -520,7 +554,9 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 self.stmt("handler", handler, handler2);
                 self.stmt("finalizer", finalizer, finalizer2);
             }
-            (Break(x), Break(y)) | (Continue(x), Continue(y)) | (ExportAsNamespace(x), ExportAsNamespace(y)) => {
+            (Break(x), Break(y))
+            | (Continue(x), Continue(y))
+            | (ExportAsNamespace(x), ExportAsNamespace(y)) => {
                 if x != y {
                     self.differ("name", &x, &y);
                 }
@@ -541,8 +577,21 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 let (i, j) = (self.a[x], self.b[y]);
                 self.seen.imports[y.idx()] = true;
                 same!(
-                    self, i, j, spec, default, default_pos, namespace, namespace_pos, clause_start,
-                    clause_end, namespace_start, has_named_imports, type_only, is_deferred, mode
+                    self,
+                    i,
+                    j,
+                    spec,
+                    default,
+                    default_pos,
+                    namespace,
+                    namespace_pos,
+                    clause_start,
+                    clause_end,
+                    namespace_start,
+                    has_named_imports,
+                    type_only,
+                    is_deferred,
+                    mode
                 );
                 self.back_reference(i.stmt, a, j.stmt, b);
                 if self.lens("named", i.named.len(), j.named.len()) {
@@ -550,7 +599,18 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                         let (s, t) = (self.a[i.named.at(n)], self.b[j.named.at(n)]);
                         self.seen.import_specs[j.named.at(n).idx()] = true;
                         self.path.push(("import specifier", s.start));
-                        same!(self, s, t, start, imported, local, pos, type_only, imported_pos, end);
+                        same!(
+                            self,
+                            s,
+                            t,
+                            start,
+                            imported,
+                            local,
+                            pos,
+                            type_only,
+                            imported_pos,
+                            end
+                        );
                         if (s.import == x) != (t.import == y) {
                             self.differ("import", &s.import, &t.import);
                         }
@@ -582,7 +642,9 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                         let (s, t) = (self.a[i.items.at(n)], self.b[j.items.at(n)]);
                         self.seen.export_specs[j.items.at(n).idx()] = true;
                         self.path.push(("export specifier", s.start));
-                        same!(self, s, t, start, local, exported, pos, type_only, local_pos, end);
+                        same!(
+                            self, s, t, start, local, exported, pos, type_only, local_pos, end
+                        );
                         if (s.export == x) != (t.export == y) {
                             self.differ("export", &s.export, &t.export);
                         }
@@ -807,7 +869,10 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             self.path.push(("property", x.start));
             same!(self, x, y, kind, name_kind, pos, start, end, postfix_token);
             self.key(x.key, y.key);
-            self.modifiers(self.a.prop_modifiers(a.at(n)), self.b.prop_modifiers(b.at(n)));
+            self.modifiers(
+                self.a.prop_modifiers(a.at(n)),
+                self.b.prop_modifiers(b.at(n)),
+            );
             self.expr("value", x.value, y.value);
             self.path.pop();
         }
@@ -928,7 +993,11 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 },
             ) => {
                 if (name, name_pos, chain) != (name2, name_pos2, chain2) {
-                    self.differ("name", &(name, name_pos, chain), &(name2, name_pos2, chain2));
+                    self.differ(
+                        "name",
+                        &(name, name_pos, chain),
+                        &(name2, name_pos2, chain2),
+                    );
                 }
                 self.expr("object", obj, obj2);
             }
@@ -1014,8 +1083,20 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 }
                 self.expr("value", value, value2);
             }
-            (As { expr, ty }, As { expr: expr2, ty: ty2 })
-            | (Satisfies { expr, ty }, Satisfies { expr: expr2, ty: ty2 }) => {
+            (
+                As { expr, ty },
+                As {
+                    expr: expr2,
+                    ty: ty2,
+                },
+            )
+            | (
+                Satisfies { expr, ty },
+                Satisfies {
+                    expr: expr2,
+                    ty: ty2,
+                },
+            ) => {
                 self.expr("operand", expr, expr2);
                 self.ty("type", ty, ty2);
             }
@@ -1118,7 +1199,18 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                         let (e, g) = (self.a[x.at(n)], self.b[y.at(n)]);
                         self.seen.tuple_elems[y.at(n).idx()] = true;
                         self.path.push(("element", e.start));
-                        same!(self, e, g, member_type, name, optional, rest, has_dots, start, end);
+                        same!(
+                            self,
+                            e,
+                            g,
+                            member_type,
+                            name,
+                            optional,
+                            rest,
+                            has_dots,
+                            start,
+                            end
+                        );
                         self.ty("type", e.ty, g.ty);
                         if (e.written == e.ty) != (g.written == g.ty) {
                             self.differ("written", &e.written, &g.written);
@@ -1158,7 +1250,13 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 let (i, j) = (self.a[x], self.b[y]);
                 self.seen.mapped[y.idx()] = true;
                 same!(
-                    self, i, j, readonly, optional, is_readonly_with_plus, is_optional_with_plus
+                    self,
+                    i,
+                    j,
+                    readonly,
+                    optional,
+                    is_readonly_with_plus,
+                    is_optional_with_plus
                 );
                 self.type_param(i.param, j.param);
                 self.ty("name type", i.name_ty, j.name_ty);
@@ -1207,7 +1305,11 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                 },
             ) => {
                 if has_type_arguments != has_type_arguments2 {
-                    self.differ("has_type_arguments", &has_type_arguments, &has_type_arguments2);
+                    self.differ(
+                        "has_type_arguments",
+                        &has_type_arguments,
+                        &has_type_arguments2,
+                    );
                 }
                 self.names("name", name, name2);
                 self.type_list("type argument", args, args2);

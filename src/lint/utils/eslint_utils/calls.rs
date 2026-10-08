@@ -309,7 +309,9 @@ pub(super) fn call<'a>(
             number(parse_int(&text, to_int32(arg(args, 1).to_number()?)).ok_or(Stop::Abort)?)
         }
         // A string, whatever the arguments are. Which one depends on the time and the time zone.
-        "Date" => Ok(StaticValue::string(&b"Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)"[..])),
+        "Date" => Ok(StaticValue::string(
+            &b"Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)"[..],
+        )),
         // `Date.parse`, whose result depends on the time zone, and what throws without `new`.
         _ => Err(Stop::Abort),
     }

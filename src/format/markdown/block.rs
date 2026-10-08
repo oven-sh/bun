@@ -158,12 +158,21 @@ pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
 
 /// Fills `tree` with the syntax of `text`, in which every line break is `\n`. Returns the root. `original`: the
 /// same, or the text that `text` is for [`blank_front_matter`].
-pub(crate) fn parse(text: &[u8], original: &[u8], syntax: Syntax, tree: &mut Tree) -> Option<NodeId> {
+pub(crate) fn parse(
+    text: &[u8],
+    original: &[u8],
+    syntax: Syntax,
+    tree: &mut Tree,
+) -> Option<NodeId> {
     let Some(front_matter) = super::front_matter::parse(original) else {
         return parse_lines(text, tree, syntax, 0);
     };
     let is_blanked = !matches!(original.get(front_matter.end), None | Some(b'\n'));
-    let first_line = if is_blanked { front_matter.end - 3 } else { front_matter.end + 1 };
+    let first_line = if is_blanked {
+        front_matter.end - 3
+    } else {
+        front_matter.end + 1
+    };
     let root = parse_lines(text, tree, syntax, first_line)?;
     let node = tree.add(Kind::FrontMatter, 0, front_matter.end as u32);
     tree.prepend(root, node);
@@ -173,7 +182,11 @@ pub(crate) fn parse(text: &[u8], original: &[u8], syntax: Syntax, tree: &mut Tre
 /// `is_plain`: CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
 /// wiki links, or links that are not marked as such.
 pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Option<NodeId> {
-    let syntax = if is_plain { Syntax::Plain } else { Syntax::Markdown };
+    let syntax = if is_plain {
+        Syntax::Plain
+    } else {
+        Syntax::Markdown
+    };
     parse_lines(text, tree, syntax, 0)
 }
 
@@ -216,7 +229,10 @@ impl<'t> Line<'t> {
         if cursor.virtual_spaces > 0 {
             return Some(b' ');
         }
-        self.text.get(cursor.offset).copied().filter(|_| cursor.offset < self.end)
+        self.text
+            .get(cursor.offset)
+            .copied()
+            .filter(|_| cursor.offset < self.end)
     }
 
     fn at_space(&self, cursor: Cursor) -> bool {
@@ -277,7 +293,8 @@ impl<'t> Line<'t> {
         let Some(&marker @ (b'*' | b'-' | b'_')) = rest.first() else {
             return false;
         };
-        rest.iter().all(|&byte| byte == marker || is_space(byte)) && bun_core::strings::count_char(rest, marker) >= 3
+        rest.iter().all(|&byte| byte == marker || is_space(byte))
+            && bun_core::strings::count_char(rest, marker) >= 3
     }
 
     /// The marker of a list item at `cursor`.
@@ -302,7 +319,9 @@ impl<'t> Line<'t> {
                 if interrupts && rest[..digits] != *b"1" {
                     return None;
                 }
-                let number = rest[..digits].iter().fold(0u32, |number, digit| number * 10 + u32::from(digit - b'0'));
+                let number = rest[..digits]
+                    .iter()
+                    .fold(0u32, |number, digit| number * 10 + u32::from(digit - b'0'));
                 (true, marker, number, digits + 1)
             }
             _ => return None,
@@ -477,7 +496,10 @@ impl<'t> Parser<'t> {
         if !(all_continued && is_concrete && !starts_item) {
             let interrupts = all_continued
                 && !starts_item
-                && matches!(self.leaf, Leaf::Paragraph { .. } | Leaf::IndentedCode { .. });
+                && matches!(
+                    self.leaf,
+                    Leaf::Paragraph { .. } | Leaf::IndentedCode { .. }
+                );
             let mut is_first = true;
             loop {
                 let mut attempt = cursor;
@@ -488,7 +510,9 @@ impl<'t> Parser<'t> {
                     // micromark closes the containers here, and then moves their ends back over line breaks and
                     // indentation. The marker of a block quote is in the way of that.
                     let has_line_break = self.close_flow(line_start);
-                    let has_marker = self.containers[..continued].iter().any(|it| matches!(it.kind, ContainerKind::Blockquote));
+                    let has_marker = self.containers[..continued]
+                        .iter()
+                        .any(|it| matches!(it.kind, ContainerKind::Blockquote));
                     if has_line_break || has_marker {
                         self.end_containers(continued, cursor.offset, has_line_break);
                     }
@@ -642,7 +666,9 @@ impl<'t> Parser<'t> {
                         ordered: next_ordered,
                         marker: next_marker,
                         ..
-                    }) if next_ordered == ordered && next_marker == marker => Continuation::NextItem,
+                    }) if next_ordered == ordered && next_marker == marker => {
+                        Continuation::NextItem
+                    }
                     _ => Continuation::No,
                 }
             }
@@ -651,7 +677,12 @@ impl<'t> Parser<'t> {
 
     /// `line_prefix_start`: where the white space before the marker starts. `cursor` is at the marker, and
     /// is moved behind what belongs to it.
-    fn open_container(&mut self, new: &NewContainer, line_prefix_start: Cursor, cursor: &mut Cursor) {
+    fn open_container(
+        &mut self,
+        new: &NewContainer,
+        line_prefix_start: Cursor,
+        cursor: &mut Cursor,
+    ) {
         match *new {
             NewContainer::Blockquote => {
                 let node = self.add_block(Kind::Blockquote, cursor.offset, cursor.offset + 1);
@@ -667,7 +698,9 @@ impl<'t> Parser<'t> {
                 let label = Str::source(cursor.offset as u32 + 2, label_end as u32);
                 let raw = &self.text[cursor.offset + 2..label_end];
                 let identifier = normalize_identifier(raw);
-                let lowercase = self.tree.owned(|out| super::strings::push_lowercase(&identifier, out));
+                let lowercase = self
+                    .tree
+                    .owned(|out| super::strings::push_lowercase(&identifier, out));
                 let label = match bun_core::strings::index_of_any(raw, b"\\&") {
                     Some(_) => self.tree.owned(|out| unescape(raw, out)),
                     None => label,
@@ -716,7 +749,11 @@ impl<'t> Parser<'t> {
         *cursor = line_prefix_start;
         let initial_size = self.line.pass_spaces(cursor, 3);
         let marker_start = *cursor;
-        while self.line.byte(*cursor).is_some_and(|byte| byte.is_ascii_digit()) {
+        while self
+            .line
+            .byte(*cursor)
+            .is_some_and(|byte| byte.is_ascii_digit())
+        {
             Line::pass_byte(cursor);
         }
         Line::pass_byte(cursor);
@@ -740,7 +777,11 @@ impl<'t> Parser<'t> {
         let Some(&Container { node: list, .. }) = self.containers.get(index) else {
             return;
         };
-        let item = self.tree.add(Kind::ListItem, marker_start.offset as u32, marker_end.offset as u32);
+        let item = self.tree.add(
+            Kind::ListItem,
+            marker_start.offset as u32,
+            marker_end.offset as u32,
+        );
         self.tree.append(list, item);
         if let Some(Container {
             kind:
@@ -754,7 +795,12 @@ impl<'t> Parser<'t> {
             ..
         }) = self.containers.get_mut(index)
         {
-            (*list_size, *list_item, *initial_blank_line, *further_blank_lines) = (size, item, is_blank, false);
+            (
+                *list_size,
+                *list_item,
+                *initial_blank_line,
+                *further_blank_lines,
+            ) = (size, item, is_blank, false);
         }
     }
 
@@ -780,12 +826,68 @@ enum LeafStart {
 }
 
 const HTML_BLOCK_NAMES: [&[u8]; 62] = [
-    b"address", b"article", b"aside", b"base", b"basefont", b"blockquote", b"body", b"caption", b"center", b"col",
-    b"colgroup", b"dd", b"details", b"dialog", b"dir", b"div", b"dl", b"dt", b"fieldset", b"figcaption", b"figure",
-    b"footer", b"form", b"frame", b"frameset", b"h1", b"h2", b"h3", b"h4", b"h5", b"h6", b"head", b"header", b"hr",
-    b"html", b"iframe", b"legend", b"li", b"link", b"main", b"menu", b"menuitem", b"nav", b"noframes", b"ol",
-    b"optgroup", b"option", b"p", b"param", b"search", b"section", b"summary", b"table", b"tbody", b"td", b"tfoot",
-    b"th", b"thead", b"title", b"tr", b"track", b"ul",
+    b"address",
+    b"article",
+    b"aside",
+    b"base",
+    b"basefont",
+    b"blockquote",
+    b"body",
+    b"caption",
+    b"center",
+    b"col",
+    b"colgroup",
+    b"dd",
+    b"details",
+    b"dialog",
+    b"dir",
+    b"div",
+    b"dl",
+    b"dt",
+    b"fieldset",
+    b"figcaption",
+    b"figure",
+    b"footer",
+    b"form",
+    b"frame",
+    b"frameset",
+    b"h1",
+    b"h2",
+    b"h3",
+    b"h4",
+    b"h5",
+    b"h6",
+    b"head",
+    b"header",
+    b"hr",
+    b"html",
+    b"iframe",
+    b"legend",
+    b"li",
+    b"link",
+    b"main",
+    b"menu",
+    b"menuitem",
+    b"nav",
+    b"noframes",
+    b"ol",
+    b"optgroup",
+    b"option",
+    b"p",
+    b"param",
+    b"search",
+    b"section",
+    b"summary",
+    b"table",
+    b"tbody",
+    b"td",
+    b"tfoot",
+    b"th",
+    b"thead",
+    b"title",
+    b"tr",
+    b"track",
+    b"ul",
 ];
 const HTML_RAW_NAMES: [&[u8]; 4] = [b"pre", b"script", b"style", b"textarea"];
 
@@ -807,7 +909,11 @@ fn is_complete_tag(rest: &[u8], is_closing: bool) -> bool {
         AttributeValueQuotedAfter,
         End,
     }
-    let mut state = if is_closing { State::ClosingTagAfter } else { State::AttributeNameBefore };
+    let mut state = if is_closing {
+        State::ClosingTagAfter
+    } else {
+        State::AttributeNameBefore
+    };
     let mut index = 0;
     loop {
         let byte = rest.get(index).copied();
@@ -819,12 +925,17 @@ fn is_complete_tag(rest: &[u8], is_closing: bool) -> bool {
             },
             State::AttributeNameBefore => match byte {
                 Some(b'/') => (State::End, true),
-                Some(byte) if byte == b':' || byte == b'_' || byte.is_ascii_alphabetic() => (State::AttributeName, true),
+                Some(byte) if byte == b':' || byte == b'_' || byte.is_ascii_alphabetic() => {
+                    (State::AttributeName, true)
+                }
                 Some(b' ' | b'\t') => (State::AttributeNameBefore, true),
                 _ => (State::End, false),
             },
             State::AttributeName => match byte {
-                Some(byte) if matches!(byte, b'-' | b'.' | b':' | b'_') || byte.is_ascii_alphanumeric() => {
+                Some(byte)
+                    if matches!(byte, b'-' | b'.' | b':' | b'_')
+                        || byte.is_ascii_alphanumeric() =>
+                {
                     (State::AttributeName, true)
                 }
                 _ => (State::AttributeNameAfter, false),
@@ -863,7 +974,12 @@ fn is_complete_tag(rest: &[u8], is_closing: bool) -> bool {
 }
 
 /// The kind of HTML that `rest` starts, which starts with `<`, and where to go on looking for its end.
-fn html_start(rest: &[u8], interrupts: bool, is_lazy: bool, is_mdx: bool) -> Option<(u8, usize, bool)> {
+fn html_start(
+    rest: &[u8],
+    interrupts: bool,
+    is_lazy: bool,
+    is_mdx: bool,
+) -> Option<(u8, usize, bool)> {
     match *rest.get(1)? {
         b'!' => match *rest.get(2)? {
             b'-' => (rest.get(3) == Some(&b'-')).then_some((2, 4, true)),
@@ -878,16 +994,24 @@ fn html_start(rest: &[u8], interrupts: bool, is_lazy: bool, is_mdx: bool) -> Opt
             if is_mdx {
                 let mut after = name_start;
                 while rest.get(after).is_some_and(u8::is_ascii_alphabetic) {
-                    after += rest[after..].iter().take_while(|byte| byte.is_ascii_alphanumeric()).count();
-                    if rest.get(after) == Some(&b'.') && rest.get(after + 1).is_some_and(u8::is_ascii_alphabetic) {
+                    after += rest[after..]
+                        .iter()
+                        .take_while(|byte| byte.is_ascii_alphanumeric())
+                        .count();
+                    if rest.get(after) == Some(&b'.')
+                        && rest.get(after + 1).is_some_and(u8::is_ascii_alphabetic)
+                    {
                         after += 1;
                     } else {
                         break;
                     }
                 }
-                let is_raw = !is_closing && is_name_in(&HTML_RAW_NAMES[..3], &rest[name_start..after]);
+                let is_raw =
+                    !is_closing && is_name_in(&HTML_RAW_NAMES[..3], &rest[name_start..after]);
                 match rest[after..] {
-                    [] | [b' ' | b'\t' | b'>', ..] => return Some((if is_raw { 1 } else { 6 }, after, false)),
+                    [] | [b' ' | b'\t' | b'>', ..] => {
+                        return Some((if is_raw { 1 } else { 6 }, after, false));
+                    }
                     [b'/', b'>', ..] => return Some((6, after, false)),
                     _ => {}
                 }
@@ -895,7 +1019,10 @@ fn html_start(rest: &[u8], interrupts: bool, is_lazy: bool, is_mdx: bool) -> Opt
             if !rest.get(name_start)?.is_ascii_alphabetic() {
                 return None;
             }
-            let len = rest[name_start..].iter().take_while(|&&byte| byte == b'-' || byte.is_ascii_alphanumeric()).count();
+            let len = rest[name_start..]
+                .iter()
+                .take_while(|&&byte| byte == b'-' || byte.is_ascii_alphanumeric())
+                .count();
             let (name, after) = (&rest[name_start..name_start + len], name_start + len);
             let next = rest.get(after).copied();
             if !matches!(next, None | Some(b'/' | b'>' | b' ' | b'\t')) {
@@ -906,7 +1033,8 @@ fn html_start(rest: &[u8], interrupts: bool, is_lazy: bool, is_mdx: bool) -> Opt
                 return Some((1, after, false));
             }
             if is_name_in(&HTML_BLOCK_NAMES, name) {
-                return (!is_slash || rest.get(after + 1) == Some(&b'>')).then_some((6, after, false));
+                return (!is_slash || rest.get(after + 1) == Some(&b'>'))
+                    .then_some((6, after, false));
             }
             if interrupts && !is_lazy {
                 return None;
@@ -928,7 +1056,11 @@ fn html_ends(kind: u8, line: &[u8], in_declaration: bool) -> bool {
         CdataInside,
         DeclarationInside,
     }
-    let mut state = if in_declaration { State::DeclarationInside } else { State::Continuation };
+    let mut state = if in_declaration {
+        State::DeclarationInside
+    } else {
+        State::Continuation
+    };
     let mut index = 0;
     while let Some(&byte) = line.get(index) {
         state = match state {
@@ -944,7 +1076,11 @@ fn html_ends(kind: u8, line: &[u8], in_declaration: bool) -> bool {
                 }
             }
             State::CommentInside | State::CdataInside => {
-                let wanted = if state == State::CommentInside { b'-' } else { b']' };
+                let wanted = if state == State::CommentInside {
+                    b'-'
+                } else {
+                    b']'
+                };
                 match byte == wanted {
                     true => {
                         index += 1;
@@ -985,7 +1121,12 @@ impl<'t> Parser<'t> {
     // ───────────────────────────── leaf blocks ─────────────────────────────
 
     /// The leaf block that starts at `cursor`, which is behind less than four columns of indentation.
-    fn find_leaf_start(&self, cursor: Cursor, interrupts: bool, is_lazy: bool) -> Option<LeafStart> {
+    fn find_leaf_start(
+        &self,
+        cursor: Cursor,
+        interrupts: bool,
+        is_lazy: bool,
+    ) -> Option<LeafStart> {
         if cursor.virtual_spaces > 0 {
             return None;
         }
@@ -993,20 +1134,27 @@ impl<'t> Parser<'t> {
         match *rest.first()? {
             b'#' => {
                 let size = rest.iter().take_while(|&&byte| byte == b'#').count();
-                (size <= 6 && rest.get(size).is_none_or(|&byte| is_space(byte))).then_some(LeafStart::Heading)
+                (size <= 6 && rest.get(size).is_none_or(|&byte| is_space(byte)))
+                    .then_some(LeafStart::Heading)
             }
-            marker @ (b'-' | b'=') if interrupts && !is_lazy && {
-                let size = rest.iter().take_while(|&&byte| byte == marker).count();
-                is_blank(&rest[size..])
-            } =>
+            marker @ (b'-' | b'=')
+                if interrupts && !is_lazy && {
+                    let size = rest.iter().take_while(|&&byte| byte == marker).count();
+                    is_blank(&rest[size..])
+                } =>
             {
                 Some(LeafStart::SetextUnderline)
             }
-            b'*' | b'-' | b'_' => self.line.is_thematic_break(cursor).then_some(LeafStart::ThematicBreak),
-            b'<' => html_start(rest, interrupts, is_lazy, self.is_mdx).map(|(kind, ..)| LeafStart::Html(kind)),
+            b'*' | b'-' | b'_' => self
+                .line
+                .is_thematic_break(cursor)
+                .then_some(LeafStart::ThematicBreak),
+            b'<' => html_start(rest, interrupts, is_lazy, self.is_mdx)
+                .map(|(kind, ..)| LeafStart::Html(kind)),
             marker @ (b'`' | b'~') => {
                 let size = rest.iter().take_while(|&&byte| byte == marker).count();
-                let is_fence = size >= 3 && (marker != b'`' || !bun_core::strings::contains_char(&rest[size..], b'`'));
+                let is_fence = size >= 3
+                    && (marker != b'`' || !bun_core::strings::contains_char(&rest[size..], b'`'));
                 is_fence.then_some(LeafStart::Fenced(marker, size))
             }
             b'$' if !self.is_plain => {
@@ -1014,7 +1162,9 @@ impl<'t> Parser<'t> {
                 let is_fence = size >= 2 && !bun_core::strings::contains_char(&rest[size..], b'$');
                 is_fence.then_some(LeafStart::Fenced(b'$', size))
             }
-            b'{' if !self.is_plain && !self.is_mdx => self.find_liquid_end(cursor).map(LeafStart::Liquid),
+            b'{' if !self.is_plain && !self.is_mdx => {
+                self.find_liquid_end(cursor).map(LeafStart::Liquid)
+            }
             b'i' | b'e' if self.is_mdx && !interrupts => self.find_es_syntax(cursor),
             _ => None,
         }
@@ -1027,8 +1177,14 @@ impl<'t> Parser<'t> {
             return None;
         }
         let rest = &self.text[cursor.offset..];
-        let kind = if rest.starts_with(b"import") { Kind::Import } else { Kind::Export };
-        if !(kind == Kind::Import || rest.starts_with(b"export")) || !rest.get(6).is_some_and(u8::is_ascii_whitespace) {
+        let kind = if rest.starts_with(b"import") {
+            Kind::Import
+        } else {
+            Kind::Export
+        };
+        if !(kind == Kind::Import || rest.starts_with(b"export"))
+            || !rest.get(6).is_some_and(u8::is_ascii_whitespace)
+        {
             return None;
         }
         let len = bun_core::strings::index_of(rest, b"\n\n").unwrap_or(rest.len());
@@ -1043,11 +1199,16 @@ impl<'t> Parser<'t> {
             _ => return None,
         };
         // Over several lines only outside of containers.
-        let limit = if self.containers.is_empty() { self.text.len() } else { self.line.end };
+        let limit = if self.containers.is_empty() {
+            self.text.len()
+        } else {
+            self.line.end
+        };
         let from = cursor.offset + 2;
         let end = from + bun_core::strings::index_of(self.text.get(from..limit)?, closing)? + 2;
         let after = &self.text[end..];
-        let line_rest = &after[..bun_core::strings::index_of_char_usize(after, b'\n').unwrap_or(after.len())];
+        let line_rest =
+            &after[..bun_core::strings::index_of_char_usize(after, b'\n').unwrap_or(after.len())];
         if !is_blank(line_rest) {
             return None;
         }
@@ -1056,7 +1217,8 @@ impl<'t> Parser<'t> {
         while line_end < end {
             let start = line_end + 1;
             let rest = &self.text[start..];
-            line_end = start + bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
+            line_end =
+                start + bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
             let line = Line {
                 text: self.text,
                 end: line_end,
@@ -1096,7 +1258,10 @@ fn parse_delimiter_row(row: &[u8]) -> Option<Vec<Align>> {
         }
         let is_left = at(index) == Some(b':');
         index += usize::from(is_left);
-        let dashes = row[index.min(row.len())..].iter().take_while(|&&byte| byte == b'-').count();
+        let dashes = row[index.min(row.len())..]
+            .iter()
+            .take_while(|&&byte| byte == b'-')
+            .count();
         if dashes == 0 {
             return None;
         }
@@ -1148,7 +1313,11 @@ fn split_row(row: &[u8]) -> Vec<Cell> {
             b' ' | b'\t' => index += 1,
             _ => {
                 awaits_first_pipe = false;
-                let len = if byte == b'\\' && matches!(row.get(index + 1), Some(b'\\' | b'|')) { 2 } else { 1 };
+                let len = if byte == b'\\' && matches!(row.get(index + 1), Some(b'\\' | b'|')) {
+                    2
+                } else {
+                    1
+                };
                 content = Some((content.map_or(index, |it| it.0), index + len));
                 index += len;
             }
@@ -1168,7 +1337,9 @@ fn split_row(row: &[u8]) -> Vec<Cell> {
 
 /// How many cells the row `row` has as the head of a table. `None`: it cannot be one.
 fn count_head_cells(row: &[u8]) -> Option<usize> {
-    if row.iter().filter(|&&byte| !is_space(byte)).count() == 1 && bun_core::strings::contains_char(row, b'|') {
+    if row.iter().filter(|&&byte| !is_space(byte)).count() == 1
+        && bun_core::strings::contains_char(row, b'|')
+    {
         return None;
     }
     // An empty cell at the end, which `split_row` does not make one, does not count either.
@@ -1187,7 +1358,11 @@ impl<'t> Parser<'t> {
             {
                 let mut content = cursor;
                 let indent = self.line.pass_spaces(&mut content, usize::MAX);
-                let start = if indent >= 4 { None } else { self.find_leaf_start(content, true, true) };
+                let start = if indent >= 4 {
+                    None
+                } else {
+                    self.find_leaf_start(content, true, true)
+                };
                 match start {
                     None => {
                         self.segments.push(Segment {
@@ -1267,10 +1442,18 @@ impl<'t> Parser<'t> {
             Leaf::Paragraph { first_segment } => {
                 let mut content = cursor;
                 let indent = self.line.pass_spaces(&mut content, usize::MAX);
-                let start = if indent >= 4 { None } else { self.find_leaf_start(content, true, false) };
+                let start = if indent >= 4 {
+                    None
+                } else {
+                    self.find_leaf_start(content, true, false)
+                };
                 match start {
                     Some(LeafStart::SetextUnderline) => {
-                        let depth = if self.line.byte(content) == Some(b'=') { 1 } else { 2 };
+                        let depth = if self.line.byte(content) == Some(b'=') {
+                            1
+                        } else {
+                            2
+                        };
                         self.extend_containers(end);
                         if self.close_paragraph(Some(depth)) {
                             return;
@@ -1380,7 +1563,11 @@ impl<'t> Parser<'t> {
         }
         // The line belongs to the block quotes whose marker it has, and to what they are in. A list in
         // them ends behind it, but not its item.
-        let Some(deepest) = self.containers.iter().rposition(|it| matches!(it.kind, ContainerKind::Blockquote)) else {
+        let Some(deepest) = self
+            .containers
+            .iter()
+            .rposition(|it| matches!(it.kind, ContainerKind::Blockquote))
+        else {
             self.has_blank_line = true;
             return;
         };
@@ -1408,7 +1595,8 @@ impl<'t> Parser<'t> {
                 let depth = rest.iter().take_while(|&&byte| byte == b'#').count();
                 let after = &rest[depth..];
                 let mut text = after.trim_ascii();
-                let without_closing = &text[..text.len() - text.iter().rev().take_while(|&&byte| byte == b'#').count()];
+                let without_closing = &text
+                    [..text.len() - text.iter().rev().take_while(|&&byte| byte == b'#').count()];
                 if without_closing.last().is_none_or(|&byte| is_space(byte)) {
                     text = without_closing.trim_ascii_end();
                 }
@@ -1422,7 +1610,11 @@ impl<'t> Parser<'t> {
                 }
             }
             LeafStart::Fenced(marker, size) => {
-                let kind = if marker == b'$' { Kind::Math } else { Kind::Code };
+                let kind = if marker == b'$' {
+                    Kind::Math
+                } else {
+                    Kind::Code
+                };
                 let node = self.add_block(kind, cursor.offset, end);
                 let info = &rest[size..];
                 let info = &info[info.len() - info.trim_ascii_start().len()..];
@@ -1511,9 +1703,15 @@ impl<'t> Parser<'t> {
         };
         // Nothing has been taken away from the lines: the value is in the text as it is.
         let is_plain = segments.iter().all(|it| it.virtual_spaces == 0)
-            && segments.iter().zip(&segments[1..]).all(|(line, next)| line.end + 1 == next.start)
+            && segments
+                .iter()
+                .zip(&segments[1..])
+                .all(|(line, next)| line.end + 1 == next.start)
             && !(self.has.nul
-                && bun_core::strings::contains_char(&self.text[first_segment.start as usize..last_segment.end as usize], 0));
+                && bun_core::strings::contains_char(
+                    &self.text[first_segment.start as usize..last_segment.end as usize],
+                    0,
+                ));
         if is_plain {
             return Str::source(first_segment.start, last_segment.end);
         }
@@ -1523,8 +1721,16 @@ impl<'t> Parser<'t> {
                 if index > 0 {
                     out.push(b'\n');
                 }
-                out.extend(std::iter::repeat_n(b' ', usize::from(segment.virtual_spaces)));
-                for part in bun_core::strings::split(&text[segment.start as usize..segment.end as usize], b"\0").enumerate() {
+                out.extend(std::iter::repeat_n(
+                    b' ',
+                    usize::from(segment.virtual_spaces),
+                ));
+                for part in bun_core::strings::split(
+                    &text[segment.start as usize..segment.end as usize],
+                    b"\0",
+                )
+                .enumerate()
+                {
                     if part.0 > 0 {
                         out.extend_from_slice("\u{FFFD}".as_bytes());
                     }
@@ -1546,7 +1752,10 @@ impl<'t> Parser<'t> {
         // Without a closing fence, the line break at the end is not part of the value.
         if !has_closing_fence
             && self.segments.len() > first_segment
-            && self.segments.last().is_some_and(|it| it.start == it.end && it.virtual_spaces == 0)
+            && self
+                .segments
+                .last()
+                .is_some_and(|it| it.start == it.end && it.virtual_spaces == 0)
         {
             self.segments.pop();
         }
@@ -1571,7 +1780,10 @@ impl<'t> Parser<'t> {
                 self.segments.truncate(certain);
                 // A line break at the end is not part of the value.
                 if self.segments.len() > first_segment + 1
-                    && self.segments.last().is_some_and(|it| it.start == it.end && it.virtual_spaces == 0)
+                    && self
+                        .segments
+                        .last()
+                        .is_some_and(|it| it.start == it.end && it.virtual_spaces == 0)
                 {
                     self.segments.pop();
                 }
@@ -1600,7 +1812,8 @@ impl<'t> Parser<'t> {
     /// Closes the paragraph that is open: the definitions at its start, and a paragraph for the rest, or a
     /// heading of `setext_depth` that ends with the current line. Returns whether there is a rest.
     fn close_paragraph(&mut self, setext_depth: Option<u32>) -> bool {
-        let Leaf::Paragraph { first_segment } = std::mem::replace(&mut self.leaf, Leaf::None) else {
+        let Leaf::Paragraph { first_segment } = std::mem::replace(&mut self.leaf, Leaf::None)
+        else {
             return false;
         };
         let mut first = first_segment;
@@ -1622,12 +1835,16 @@ impl<'t> Parser<'t> {
             };
             self.content = content;
         }
-        let (Some(first_line), Some(last_line)) = (self.segments.get(first), self.segments.last()) else {
+        let (Some(first_line), Some(last_line)) = (self.segments.get(first), self.segments.last())
+        else {
             self.segments.truncate(first_segment);
             return false;
         };
         let (start, end) = (first_line.start as usize, last_line.end as usize);
-        let blanks = self.text[start..end].iter().take_while(|&&byte| is_space(byte)).count();
+        let blanks = self.text[start..end]
+            .iter()
+            .take_while(|&&byte| is_space(byte))
+            .count();
         let start = start + blanks;
         if let Some(first_line) = self.segments.get_mut(first) {
             first_line.start = start as u32;
@@ -1660,14 +1877,24 @@ impl<'t> Parser<'t> {
         let bytes = &content.bytes;
         let raw_label = &bytes[definition.label.0..definition.label.1];
         let normalized = normalize_identifier(raw_label);
-        let identifier = self.tree.owned(|out| super::strings::push_lowercase(&normalized, out));
+        let identifier = self
+            .tree
+            .owned(|out| super::strings::push_lowercase(&normalized, out));
         let label = self.tree.owned(|out| unescape(raw_label, out));
-        let url = self.tree.owned(|out| unescape(&bytes[definition.destination.0..definition.destination.1], out));
-        let title =
-            definition.title.map_or(Str::NO, |title| self.tree.owned(|out| inline::push_title(&bytes[title.0..title.1], out)));
+        let url = self.tree.owned(|out| {
+            unescape(
+                &bytes[definition.destination.0..definition.destination.1],
+                out,
+            )
+        });
+        let title = definition.title.map_or(Str::NO, |title| {
+            self.tree
+                .owned(|out| inline::push_title(&bytes[title.0..title.1], out))
+        });
         self.definitions.insert(normalized);
         if let Some(node) = self.tree.get_mut(node) {
-            (node.identifier, node.third, node.value, node.second) = (identifier, label, url, title);
+            (node.identifier, node.third, node.value, node.second) =
+                (identifier, label, url, title);
         }
     }
 
@@ -1709,7 +1936,11 @@ impl<'t> Parser<'t> {
         let row = self.tree.add(Kind::TableRow, start as u32, end as u32);
         self.tree.append(table, row);
         for cell in split_row(&self.text[start..end]) {
-            let node = self.tree.add(Kind::TableCell, (start + cell.start) as u32, (start + cell.end) as u32);
+            let node = self.tree.add(
+                Kind::TableCell,
+                (start + cell.start) as u32,
+                (start + cell.end) as u32,
+            );
             self.tree.append(row, node);
             if let Some((content_start, content_end)) = cell.content {
                 self.add_pending(node, start + content_start, start + content_end);
@@ -1723,7 +1954,8 @@ impl<'t> Parser<'t> {
         let max_definition_len = self.definitions.iter().map(Vec::len).max().unwrap_or(0);
         let mut spare_items = Vec::new();
         for pending in std::mem::take(&mut self.pending) {
-            let segments = &self.segments[pending.first_segment..pending.first_segment + pending.segment_count];
+            let segments = &self.segments
+                [pending.first_segment..pending.first_segment + pending.segment_count];
             content.fill(self.text, segments);
             let mut context = inline::Context {
                 text: self.text,

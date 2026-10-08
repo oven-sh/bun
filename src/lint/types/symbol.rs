@@ -71,7 +71,9 @@ impl<'a> SymbolList<'a> {
         self.ids.last().map(|&id| TsSymbol::new(self.file, id))
     }
 
-    pub fn iter(self) -> impl DoubleEndedIterator<Item = TsSymbol<'a>> + ExactSizeIterator + Clone + 'a {
+    pub fn iter(
+        self,
+    ) -> impl DoubleEndedIterator<Item = TsSymbol<'a>> + ExactSizeIterator + Clone + 'a {
         let file = self.file;
         self.ids.iter().map(move |&id| TsSymbol::new(file, id))
     }
@@ -128,7 +130,10 @@ impl<'a> TsSymbol<'a> {
 
     #[inline]
     fn table(self, table: SymbolTable) -> SymbolList<'a> {
-        SymbolList::new(self.file, self.file.query(|q| q.symbol_table(table, self.id)))
+        SymbolList::new(
+            self.file,
+            self.file.query(|q| q.symbol_table(table, self.id)),
+        )
     }
 
     #[inline]
@@ -172,7 +177,9 @@ impl<'a> TsSymbol<'a> {
     }
 
     /// `symbol.declarations`, `symbol.getDeclarations()`. Empty where TypeScript has `undefined`.
-    pub fn declarations(self) -> impl DoubleEndedIterator<Item = TsNode<'a>> + ExactSizeIterator + Clone + 'a {
+    pub fn declarations(
+        self,
+    ) -> impl DoubleEndedIterator<Item = TsNode<'a>> + ExactSizeIterator + Clone + 'a {
         let file = self.file;
         let declarations = file.query(|q| q.declarations(self.id));
         declarations.iter().map(move |&node| TsNode::of(file, node))
@@ -180,7 +187,9 @@ impl<'a> TsSymbol<'a> {
 
     /// `symbol.getDeclarations()`
     #[inline]
-    pub fn get_declarations(self) -> impl DoubleEndedIterator<Item = TsNode<'a>> + ExactSizeIterator + Clone + 'a {
+    pub fn get_declarations(
+        self,
+    ) -> impl DoubleEndedIterator<Item = TsNode<'a>> + ExactSizeIterator + Clone + 'a {
         self.declarations()
     }
 
@@ -215,13 +224,20 @@ impl<'a> TsSymbol<'a> {
     /// `checker.getTypeOfSymbolAtLocation(symbol, node)`
     pub fn get_type_at_location(self, node: impl Locate<'a>) -> Type<'a> {
         let node = node.locate(self.file).raw();
-        Type::new(self.file, self.file.query(|q| q.type_of_symbol_at_location(self.id, node)))
+        Type::new(
+            self.file,
+            self.file
+                .query(|q| q.type_of_symbol_at_location(self.id, node)),
+        )
     }
 
     /// `checker.getDeclaredTypeOfSymbol(symbol)`: the type that a class, an interface, an enum, a
     /// type alias or a type parameter names.
     pub fn get_declared_type(self) -> Type<'a> {
-        Type::new(self.file, self.file.query(|q| q.declared_type_of_symbol(self.id)))
+        Type::new(
+            self.file,
+            self.file.query(|q| q.declared_type_of_symbol(self.id)),
+        )
     }
 
     /// `checker.getAliasedSymbol(symbol)`: what an import or an export finally refers to. The
@@ -276,7 +292,8 @@ impl<'a> TsSymbol<'a> {
 
     /// `getDeclarationModifierFlagsFromSymbol(symbol)`
     pub fn get_declaration_modifier_flags(self) -> ModifierFlags {
-        self.file.query(|q| q.declaration_modifier_flags_from_symbol(self.id))
+        self.file
+            .query(|q| q.declaration_modifier_flags_from_symbol(self.id))
     }
 
     /// `symbol.getJsDocTags(checker).find(tag => tag.name === 'deprecated')`, as

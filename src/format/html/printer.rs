@@ -4,8 +4,9 @@ use super::ast::{Attribute, Flags, Id, Kind, StartTagComment, Tree};
 use super::cursor::{Cursor, Target};
 use super::tag::Tags;
 use super::utilities::{
-    html_split, html_trim, html_trim_end, html_trim_preserve_indentation, is_pre_like, is_script_like_tag, is_text_like,
-    min_indentation, should_unquote_attribute_value, unescape_quote_entities,
+    html_split, html_trim, html_trim_end, html_trim_preserve_indentation, is_pre_like,
+    is_script_like_tag, is_text_like, min_indentation, should_unquote_attribute_value,
+    unescape_quote_entities,
 };
 use super::writer::Writer;
 use super::{Options, Parser};
@@ -52,7 +53,9 @@ impl<'c> IgnoredAttributes<'c> {
         };
         match rest {
             b"" => IgnoredAttributes::All,
-            _ if text::starts_with_white_space(rest) => IgnoredAttributes::Named(text::trim_start(rest)),
+            _ if text::starts_with_white_space(rest) => {
+                IgnoredAttributes::Named(text::trim_start(rest))
+            }
             _ => IgnoredAttributes::None,
         }
     }
@@ -64,10 +67,17 @@ impl<'c> IgnoredAttributes<'c> {
             IgnoredAttributes::Named(mut names) => {
                 let (namespace, name) = attr.raw_name();
                 while !names.is_empty() {
-                    let len = (0..names.len()).find(|&at| text::starts_with_white_space(&names[at..])).unwrap_or(names.len());
+                    let len = (0..names.len())
+                        .find(|&at| text::starts_with_white_space(&names[at..]))
+                        .unwrap_or(names.len());
                     let is_same = match namespace {
                         b"" => &names[..len] == name,
-                        _ => names[..len].strip_prefix(namespace).and_then(|rest| rest.strip_prefix(b":")) == Some(name),
+                        _ => {
+                            names[..len]
+                                .strip_prefix(namespace)
+                                .and_then(|rest| rest.strip_prefix(b":"))
+                                == Some(name)
+                        }
                     };
                     if is_same {
                         return true;
@@ -97,7 +107,10 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
     }
 
     pub(crate) fn formats_embedded(&self) -> bool {
-        matches!(self.options.format.embedded_language_formatting, EmbeddedLanguageFormatting::Auto)
+        matches!(
+            self.options.format.embedded_language_formatting,
+            EmbeddedLanguageFormatting::Auto
+        )
     }
 
     /// `ends_with_line_break`: `stripTrailingHardline` is not called for the document.
@@ -116,7 +129,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         let (starts_before, starts_after, ends_before, ends_after) = match self.cursor {
             Cursor::Nowhere => return print(self),
             Cursor::In(node) => (node == target, false, false, node == target),
-            Cursor::Between { before, after } => (false, before == Some(target), after == Some(target), false),
+            Cursor::Between { before, after } => {
+                (false, before == Some(target), after == Some(target), false)
+            }
         };
         if starts_before {
             self.out.cursor_mark(CursorMark::RegionStart);
@@ -135,7 +150,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
 
     /// What Prettier's `mainPrint` comes to: what `embed` has made of the node, or else what `genericPrint` makes.
     pub(crate) fn print_node(&mut self, id: Id) {
-        self.with_cursor_marks(Target::Node(id), |printer| printer.print_node_without_marks(id));
+        self.with_cursor_marks(Target::Node(id), |printer| {
+            printer.print_node_without_marks(id)
+        });
     }
 
     fn print_node_without_marks(&mut self, id: Id) {
@@ -156,7 +173,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             Kind::FrontMatter => self.out.text(node.span.of(self.options.original_text)),
             Kind::Element | Kind::IeConditionalComment => self.print_element(id),
             Kind::AngularControlFlowBlock => self.print_angular_control_flow_block(id),
-            Kind::AngularControlFlowBlockParameters => self.print_angular_control_flow_block_parameters(id),
+            Kind::AngularControlFlowBlockParameters => {
+                self.print_angular_control_flow_block_parameters(id)
+            }
             Kind::AngularControlFlowBlockParameter => self.out.text(html_trim(&node.value)),
             Kind::AngularLetDeclaration => self.print_angular_let_declaration(id),
             Kind::AngularIcuExpression => self.print_angular_icu_expression(id),
@@ -181,12 +200,19 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 self.out.token(" ");
                 // `.replace(/^html\b/i, "html").replaceAll(/\s+/g, " ")`
                 let mut value = &node.value[..];
-                if value.len() >= 4 && value[..4].eq_ignore_ascii_case(b"html") && !value.get(4).is_some_and(|&byte| text::is_word_character(byte)) {
+                if value.len() >= 4
+                    && value[..4].eq_ignore_ascii_case(b"html")
+                    && !value
+                        .get(4)
+                        .is_some_and(|&byte| text::is_word_character(byte))
+                {
                     self.out.token("html");
                     value = &value[4..];
                 }
                 while !value.is_empty() {
-                    let len = (0..value.len()).find(|&at| text::starts_with_white_space(&value[at..])).unwrap_or(value.len());
+                    let len = (0..value.len())
+                        .find(|&at| text::starts_with_white_space(&value[at..]))
+                        .unwrap_or(value.len());
                     self.out.text(&value[..len]);
                     let rest = text::trim_start(&value[len..]);
                     if rest.len() < value.len() - len {
@@ -296,16 +322,32 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         }
         let tags = self.tags();
         let mut start = self.tree[child].span.start as usize;
-        if self.tree.prev(child).is_some_and(|prev| tags.needs_to_borrow_next_opening_tag_start_marker(prev)) {
+        if self
+            .tree
+            .prev(child)
+            .is_some_and(|prev| tags.needs_to_borrow_next_opening_tag_start_marker(prev))
+        {
             start += tags.len_of(|tags, out| tags.opening_tag_start_marker(child, out));
         }
         let mut end = self.end_location(child) as usize;
-        if self.tree.next(child).is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next)) {
-            end = end.saturating_sub(tags.len_of(|tags, out| tags.closing_tag_end_marker(child, out)));
+        if self
+            .tree
+            .next(child)
+            .is_some_and(|next| tags.needs_to_borrow_prev_closing_tag_end_marker(next))
+        {
+            end = end
+                .saturating_sub(tags.len_of(|tags, out| tags.closing_tag_end_marker(child, out)));
         }
-        self.out.built_text(|out| tags.opening_tag_prefix(child, out));
-        self.out.text(html_trim_end(self.options.original_text.get(start..end).unwrap_or_default()));
-        self.out.built_text(|out| tags.closing_tag_suffix(child, out));
+        self.out
+            .built_text(|out| tags.opening_tag_prefix(child, out));
+        self.out.text(html_trim_end(
+            self.options
+                .original_text
+                .get(start..end)
+                .unwrap_or_default(),
+        ));
+        self.out
+            .built_text(|out| tags.closing_tag_suffix(child, out));
     }
 
     fn between_line(&self, prev: Id, next: Id) -> BetweenLine {
@@ -348,7 +390,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             || (tags.needs_to_borrow_prev_closing_tag_end_marker(next)
                 && tree.last_child(prev).is_some_and(|last| {
                     tags.needs_to_borrow_parent_closing_tag_start_marker(last)
-                        && tree.last_child(last).is_some_and(|last| tags.needs_to_borrow_parent_closing_tag_start_marker(last))
+                        && tree.last_child(last).is_some_and(|last| {
+                            tags.needs_to_borrow_parent_closing_tag_start_marker(last)
+                        })
                 }))
         {
             return BetweenLine::Hardline;
@@ -415,7 +459,8 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 Some(prev) => prev_line.unwrap_or_else(|| self.between_line(prev, child)),
                 None => BetweenLine::Nothing,
             };
-            let next_line = next.map_or(BetweenLine::Nothing, |next| self.between_line(child, next));
+            let next_line =
+                next.map_or(BetweenLine::Nothing, |next| self.between_line(child, next));
             known_line = Some(next_line);
 
             // What comes before the groups, and what is at the start of the outer one.
@@ -440,11 +485,16 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 }
                 None => {}
             }
-            let forces_next_empty_line = next_line != BetweenLine::Nothing && tree.force_next_empty_line(child, options);
-            let is_trailing_line = next_line != BetweenLine::Nothing && !forces_next_empty_line && next_line != BetweenLine::Hardline;
+            let forces_next_empty_line =
+                next_line != BetweenLine::Nothing && tree.force_next_empty_line(child, options);
+            let is_trailing_line = next_line != BetweenLine::Nothing
+                && !forces_next_empty_line
+                && next_line != BetweenLine::Hardline;
             // Only an element behind it asks whether the group is broken.
             prev_group_id = match next {
-                Some(next) if is_trailing_line && !is_text_like(&tree[next]) => Some(self.out.new_group_id()),
+                Some(next) if is_trailing_line && !is_text_like(&tree[next]) => {
+                    Some(self.out.new_group_id())
+                }
                 _ => None,
             };
             self.out.start_group_with(false, prev_group_id);
@@ -493,16 +543,24 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             return;
         };
         let (first_node, last_node) = (&tree[first], &tree[last]);
-        let has_sensitive_leading_spaces = first_node.has(Flags::HAS_LEADING_SPACES | Flags::IS_LEADING_SPACE_SENSITIVE);
-        let has_sensitive_trailing_spaces = last_node.has(Flags::HAS_TRAILING_SPACES | Flags::IS_TRAILING_SPACE_SENSITIVE);
+        let has_sensitive_leading_spaces =
+            first_node.has(Flags::HAS_LEADING_SPACES | Flags::IS_LEADING_SPACE_SENSITIVE);
+        let has_sensitive_trailing_spaces =
+            last_node.has(Flags::HAS_TRAILING_SPACES | Flags::IS_TRAILING_SPACE_SENSITIVE);
         let should_hug_content = first == last
-            && matches!(first_node.kind, Kind::Interpolation | Kind::AngularIcuExpression)
+            && matches!(
+                first_node.kind,
+                Kind::Interpolation | Kind::AngularIcuExpression
+            )
             && first_node.has(Flags::IS_LEADING_SPACE_SENSITIVE)
             && !first_node.has(Flags::HAS_LEADING_SPACES)
             && last_node.has(Flags::IS_TRAILING_SPACE_SENSITIVE)
             && !last_node.has(Flags::HAS_TRAILING_SPACES);
         let attr_group_id = should_hug_content.then(|| self.out.new_group_id());
-        let is_sensitive_text = |kind: Kind| kind == Kind::Text && node.has(Flags::IS_WHITESPACE_SENSITIVE | Flags::IS_INDENTATION_SENSITIVE);
+        let is_sensitive_text = |kind: Kind| {
+            kind == Kind::Text
+                && node.has(Flags::IS_WHITESPACE_SENSITIVE | Flags::IS_INDENTATION_SENSITIVE)
+        };
 
         self.out.start_group();
         self.out.start_group_with(false, attr_group_id);
@@ -515,7 +573,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         // `printChildrenDoc`
         let is_indented = attr_group_id.is_none()
             && !((is_script_like_tag(node, options) || tree.is_vue_custom_block(id, options))
-                && tree.parent_of(id).is_some_and(|parent| parent.kind == Kind::Root)
+                && tree
+                    .parent_of(id)
+                    .is_some_and(|parent| parent.kind == Kind::Root)
                 && options.parser == Parser::Vue
                 && !options.format.vue_indent_script_and_style);
         let outer_indent_level = attr_group_id.map(|id| self.out.start_indent_if_break(id));
@@ -557,9 +617,14 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.out.line();
         } else if (last_node.kind == Kind::Comment || is_sensitive_text(last_node.kind)) && {
             // `\n[\t ]{n}$`, where `n` is the indentation of the element.
-            let width = usize::from(options.format.indent_width.value()) * self.ancestors.saturating_sub(1);
+            let width =
+                usize::from(options.format.indent_width.value()) * self.ancestors.saturating_sub(1);
             let value = &last_node.value[..];
-            value.len() > width && value[value.len() - width..].iter().all(|byte| matches!(byte, b'\t' | b' ')) && value[value.len() - width - 1] == b'\n'
+            value.len() > width
+                && value[value.len() - width..]
+                    .iter()
+                    .all(|byte| matches!(byte, b'\t' | b' '))
+                && value[value.len() - width - 1] == b'\n'
         } {
         } else {
             self.out.softline();
@@ -591,7 +656,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             return;
         }
         let ignored = match tree.prev_of(id) {
-            Some(prev) if prev.kind == Kind::Comment => IgnoredAttributes::from_comment(&prev.value),
+            Some(prev) if prev.kind == Kind::Comment => {
+                IgnoredAttributes::from_comment(&prev.value)
+            }
             _ => IgnoredAttributes::None,
         };
         let force_not_to_break_attr_content = node.kind == Kind::Element
@@ -601,8 +668,10 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             && comments.is_empty();
         let should_force_break = comments.iter().any(|comment| comment.is_single_line);
         let should_print_attribute_per_line = should_force_break
-            || (matches!(options.format.attribute_position, AttributePosition::Multiline)
-                && attributes.len() > 1
+            || (matches!(
+                options.format.attribute_position,
+                AttributePosition::Multiline
+            ) && attributes.len() > 1
                 && !tree.is_vue_sfc_block(id, options));
 
         self.out.start_indent();
@@ -614,11 +683,14 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.out.line();
         }
         // In the order they are written in.
-        let (mut attributes, mut comments) = (attributes.iter().peekable(), comments.iter().peekable());
+        let (mut attributes, mut comments) =
+            (attributes.iter().peekable(), comments.iter().peekable());
         let mut is_first = true;
         loop {
             let next = match (attributes.peek(), comments.peek()) {
-                (Some(attr), Some(comment)) if comment.span.start < attr.span.start => comments.next().map(InStartTag::Comment),
+                (Some(attr), Some(comment)) if comment.span.start < attr.span.start => {
+                    comments.next().map(InStartTag::Comment)
+                }
                 (Some(_), _) => attributes.next().map(InStartTag::Attribute),
                 (None, _) => comments.next().map(InStartTag::Comment),
             };
@@ -632,27 +704,38 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 }
             }
             match next {
-                InStartTag::Attribute(attr) if ignored.has(attr) => self.out.text(attr.span.of(options.original_text)),
+                InStartTag::Attribute(attr) if ignored.has(attr) => {
+                    self.out.text(attr.span.of(options.original_text))
+                }
                 InStartTag::Attribute(attr) => {
-                    self.with_cursor_marks(Target::InStartTag(attr.span), |printer| printer.print_attribute(id, attr));
+                    self.with_cursor_marks(Target::InStartTag(attr.span), |printer| {
+                        printer.print_attribute(id, attr)
+                    });
                 }
                 // `printStartTagComment`
-                InStartTag::Comment(comment) => self.with_cursor_marks(Target::InStartTag(comment.span), |printer| {
-                    if comment.is_single_line {
-                        printer.out.token("//");
-                        printer.out.text(text::trim_end(comment.value));
-                    } else {
-                        printer.out.token("/*");
-                        printer.out.text(comment.value);
-                        printer.out.token("*/");
-                    }
-                }),
+                InStartTag::Comment(comment) => {
+                    self.with_cursor_marks(Target::InStartTag(comment.span), |printer| {
+                        if comment.is_single_line {
+                            printer.out.token("//");
+                            printer.out.text(text::trim_end(comment.value));
+                        } else {
+                            printer.out.token("/*");
+                            printer.out.text(comment.value);
+                            printer.out.token("*/");
+                        }
+                    })
+                }
             }
         }
         self.out.end_indent();
 
-        if tree.first_child(id).is_some_and(|first| tags.needs_to_borrow_parent_opening_tag_end_marker(first))
-            || (is_self_closing && tree.parent(id).is_some_and(|parent| tags.needs_to_borrow_last_child_closing_tag_end_marker(parent)))
+        if tree
+            .first_child(id)
+            .is_some_and(|first| tags.needs_to_borrow_parent_opening_tag_end_marker(first))
+            || (is_self_closing
+                && tree.parent(id).is_some_and(|parent| {
+                    tags.needs_to_borrow_last_child_closing_tag_end_marker(parent)
+                }))
             || force_not_to_break_attr_content
             || options.format.bracket_same_line.value()
         {

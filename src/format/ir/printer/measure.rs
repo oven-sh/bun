@@ -1,8 +1,9 @@
 //! Running ahead of the printer to find out whether something fits on the line.
 
 use super::{
-    Elements, FlatFlags, FormatElement, Frame, FrameKind, Group, Interned, LineMode, PrintError, PrintMode, PrintResult,
-    Printer, Run, Tag, TextWidth, first_of, skip_conditional_content, take_line_suffix,
+    Elements, FlatFlags, FormatElement, Frame, FrameKind, Group, Interned, LineMode, PrintError,
+    PrintMode, PrintResult, Printer, Run, Tag, TextWidth, first_of, skip_conditional_content,
+    take_line_suffix,
 };
 use crate::ir::element::Flat;
 
@@ -49,7 +50,8 @@ impl<'d> Measure<'d> {
         let indent = printer.pending_indent;
         Measure {
             line_width: printer.line_width,
-            pending_indent: indent.level() as usize * printer.options.indent_width as usize + indent.align() as usize,
+            pending_indent: indent.level() as usize * printer.options.indent_width as usize
+                + indent.align() as usize,
             pending_space: printer.pending_space,
             is_space_element_pending: printer.pending_space,
             has_line_suffix: !printer.buffers.line_suffixes.is_empty(),
@@ -94,10 +96,16 @@ impl FitsEndPredicate for SingleEntryPredicate {
         match element {
             FormatElement::Tag(Tag::StartEntry) => self.depth += 1,
             FormatElement::Tag(Tag::EndEntry) => {
-                self.depth = self.depth.checked_sub(1).ok_or(PrintError::InvalidDocument)?;
+                self.depth = self
+                    .depth
+                    .checked_sub(1)
+                    .ok_or(PrintError::InvalidDocument)?;
                 self.is_done = self.depth == 0;
             }
-            FormatElement::Interned(_) | FormatElement::Skip(_) | FormatElement::Nop | FormatElement::Cursor(_) => {}
+            FormatElement::Interned(_)
+            | FormatElement::Skip(_)
+            | FormatElement::Nop
+            | FormatElement::Cursor(_) => {}
             _ if self.depth == 0 => return Err(PrintError::InvalidDocument),
             _ => {}
         }
@@ -167,7 +175,11 @@ impl<'d> Printer<'d> {
         }
     }
 
-    fn variant_fits_by_elements(&mut self, variant: Interned, uses_flat: bool) -> PrintResult<bool> {
+    fn variant_fits_by_elements(
+        &mut self,
+        variant: Interned,
+        uses_flat: bool,
+    ) -> PrintResult<bool> {
         let mut measure = Measure::new(self, uses_flat);
         measure.queue_len += 1;
         // Without the start tag: the frame for it has the mode.
@@ -193,9 +205,17 @@ impl<'d> Printer<'d> {
 
     pub(super) fn is_measure_at_start_entry(&self, measure: &Measure<'d>) -> bool {
         let queue = &self.buffers.queue;
-        let own = std::iter::once(measure.elements.run()).chain(self.buffers.measure_queue.iter().rev().copied());
-        let of_printer = (0..measure.queue_len).rev().map(|at| queue.get(at).copied().unwrap_or_else(|| self.elements.run()));
-        let first = own.chain(of_printer).find_map(|run| first_of(run, self.pool));
+        let own = std::iter::once(measure.elements.run())
+            .chain(self.buffers.measure_queue.iter().rev().copied());
+        let of_printer = (0..measure.queue_len).rev().map(|at| {
+            queue
+                .get(at)
+                .copied()
+                .unwrap_or_else(|| self.elements.run())
+        });
+        let first = own
+            .chain(of_printer)
+            .find_map(|run| first_of(run, self.pool));
         matches!(first, Some(FormatElement::Tag(Tag::StartEntry)))
     }
 
@@ -209,7 +229,11 @@ impl<'d> Printer<'d> {
                 Some(run) => run,
                 None => {
                     measure.queue_len = measure.queue_len.checked_sub(1)?;
-                    self.buffers.queue.get(measure.queue_len).copied().unwrap_or_else(|| self.elements.run())
+                    self.buffers
+                        .queue
+                        .get(measure.queue_len)
+                        .copied()
+                        .unwrap_or_else(|| self.elements.run())
                 }
             };
             measure.elements = Elements::new(run, self.pool);
@@ -238,19 +262,29 @@ impl<'d> Printer<'d> {
             Some(top) if top.kind == kind => {
                 own.pop();
             }
-            None if measure.frames_len > 1 && of_printer.get(measure.frames_len - 1).is_some_and(|top| top.kind == kind) => {
+            None if measure.frames_len > 1
+                && of_printer
+                    .get(measure.frames_len - 1)
+                    .is_some_and(|top| top.kind == kind) =>
+            {
                 measure.frames_len -= 1;
             }
             _ => return Err(PrintError::InvalidDocument),
         }
-        let top = own.last().or_else(|| of_printer.get(measure.frames_len - 1));
+        let top = own
+            .last()
+            .or_else(|| of_printer.get(measure.frames_len - 1));
         measure.mode = top.map_or(PrintMode::Expanded, |top| top.mode);
         Ok(())
     }
 
     /// Whether what comes next fits on the line, up to the first line break, the end of the
     /// document, or where `predicate` says.
-    fn fits(&mut self, measure: &mut Measure<'d>, predicate: &mut impl FitsEndPredicate) -> PrintResult<bool> {
+    fn fits(
+        &mut self,
+        measure: &mut Measure<'d>,
+        predicate: &mut impl FitsEndPredicate,
+    ) -> PrintResult<bool> {
         while let Some(element) = self.measure_next(measure) {
             match self.fits_element(measure, element)? {
                 Fits::Yes => return Ok(true),
@@ -266,7 +300,11 @@ impl<'d> Printer<'d> {
     }
 
     #[inline(always)]
-    fn fits_element(&mut self, measure: &mut Measure<'d>, element: &'d FormatElement) -> PrintResult<Fits> {
+    fn fits_element(
+        &mut self,
+        measure: &mut Measure<'d>,
+        element: &'d FormatElement,
+    ) -> PrintResult<Fits> {
         let mode = measure.mode;
         match element {
             FormatElement::Nop | FormatElement::Cursor(_) => {}
@@ -278,10 +316,14 @@ impl<'d> Printer<'d> {
                 }
             }
             FormatElement::Line(line_mode)
-            | FormatElement::Tag(Tag::StartIndentWithLine(line_mode) | Tag::EndIndentWithLine(line_mode)) => {
+            | FormatElement::Tag(
+                Tag::StartIndentWithLine(line_mode) | Tag::EndIndentWithLine(line_mode),
+            ) => {
                 if mode.is_flat() {
                     match line_mode {
-                        LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => measure.pending_space = true,
+                        LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
+                            measure.pending_space = true
+                        }
                         LineMode::Soft | LineMode::SoftEmpty => {}
                         // The break is there in any mode, and everything up to it fits. In a
                         // fill, an item that has a comment on a line of its own before it does
@@ -292,13 +334,21 @@ impl<'d> Printer<'d> {
                 } else {
                     // This is past the end of what is measured, in content that is expanded.
                     let width = measure.line_width + usize::from(measure.is_space_element_pending);
-                    return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
+                    return Ok(if width > self.options.print_width {
+                        Fits::No
+                    } else {
+                        Fits::Yes
+                    });
                 }
             }
             FormatElement::IndentedLineGroup(_) => {
                 if !mode.is_flat() {
                     let width = measure.line_width + usize::from(measure.is_space_element_pending);
-                    return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
+                    return Ok(if width > self.options.print_width {
+                        Fits::No
+                    } else {
+                        Fits::Yes
+                    });
                 }
                 measure.pending_space = true;
             }
@@ -357,7 +407,9 @@ impl<'d> Printer<'d> {
                 Tag::StartConditionalContent(condition) => {
                     let group_mode = match condition.group_id {
                         None => mode,
-                        Some(_) if measure.has_passed_group_ids => return Err(PrintError::MeasureAgain),
+                        Some(_) if measure.has_passed_group_ids => {
+                            return Err(PrintError::MeasureAgain);
+                        }
                         // As in Prettier, it is the mode that the group has been printed in. One that has only been measured
                         // counts as being on one line.
                         Some(id) => self.group_mode(id).unwrap_or(PrintMode::Flat),
@@ -409,11 +461,16 @@ impl<'d> Printer<'d> {
             return Fits::Maybe;
         }
         let print_width = self.options.print_width;
-        measure.line_width += measure.pending_indent + usize::from(measure.pending_space) + width.value() as usize;
+        measure.line_width +=
+            measure.pending_indent + usize::from(measure.pending_space) + width.value() as usize;
         measure.pending_indent = 0;
         // The line break is there in any mode. What counts is what is before it.
         if width.is_multiline() && !width.is_one_string() {
-            return if measure.line_width > print_width { Fits::No } else { Fits::Yes };
+            return if measure.line_width > print_width {
+                Fits::No
+            } else {
+                Fits::Yes
+            };
         }
         if measure.line_width > print_width {
             return Fits::No;
@@ -437,7 +494,8 @@ impl<'d> Printer<'d> {
         if flat.width == 0 {
             return Fits::Maybe;
         }
-        measure.line_width += measure.pending_indent + usize::from(measure.pending_space) + flat.width as usize;
+        measure.line_width +=
+            measure.pending_indent + usize::from(measure.pending_space) + flat.width as usize;
         measure.pending_indent = 0;
         if measure.line_width > self.options.print_width {
             return Fits::No;

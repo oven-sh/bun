@@ -15,12 +15,17 @@ mod range;
 use crate::ir::element::{Align, FormatElement, LineMode, Tag};
 use crate::js::context::JsFormatContext;
 use crate::options::LineEnding;
-use crate::range::{Offsets, alignment_size, normalized_len, trim_end, trim_start, white_space_len, write_with_line_ending};
+use crate::range::{
+    Offsets, alignment_size, normalized_len, trim_end, trim_start, white_space_len,
+    write_with_line_ending,
+};
 use crate::{FormatError, FormatOptions};
 
 /// Whether Prettier takes the file at `path` for GraphQL.
 pub fn is_graphql_path(path: &[u8]) -> bool {
-    [&b".graphql"[..], b".gql", b".graphqls"].iter().any(|extension| path.ends_with(extension))
+    [&b".graphql"[..], b".gql", b".graphqls"]
+        .iter()
+        .any(|extension| path.ends_with(extension))
 }
 
 /// Everything that is allocated to format a text. It is reused for the next one.
@@ -85,7 +90,8 @@ pub fn format(
         ..options.clone()
     };
     // The offsets after `\r\n` has become `\n`.
-    let [start, end] = [start, end].map(|offset| normalized_len(original.get(first..offset).unwrap_or_default()));
+    let [start, end] =
+        [start, end].map(|offset| normalized_len(original.get(first..offset).unwrap_or_default()));
     let mut normalized = Vec::new();
     let mut text = text;
     if bun_core::strings::contains_char(text, b'\r') {
@@ -105,7 +111,10 @@ pub fn format(
         return format_range(text, start, end, &options, scratch, out);
     }
     let with_pragma;
-    if options.insert_pragma && !options.require_pragma && !has_pragma(text, [b"format", b"prettier"]) {
+    if options.insert_pragma
+        && !options.require_pragma
+        && !has_pragma(text, [b"format", b"prettier"])
+    {
         with_pragma = [b"# @format\n\n", text].concat();
         text = &with_pragma;
     }

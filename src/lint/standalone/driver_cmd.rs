@@ -14,8 +14,14 @@ fn os(bytes: &[u8]) -> &std::ffi::OsStr {
 
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let mut command = std::process::Command::new("bun");
-    command.arg("-e").arg(script.source).args(script.arguments.iter().map(|it| os(it))).current_dir(os(script.cwd));
-    let output = command.output().map_err(|error| format!("Cannot run bun: {error}").into_bytes())?;
+    command
+        .arg("-e")
+        .arg(script.source)
+        .args(script.arguments.iter().map(|it| os(it)))
+        .current_dir(os(script.cwd));
+    let output = command
+        .output()
+        .map_err(|error| format!("Cannot run bun: {error}").into_bytes())?;
     match output.status.success() {
         true => Ok(output.stdout),
         false => Err(output.stderr),
@@ -33,7 +39,10 @@ fn stream(is_tty: bool) -> Stream {
 fn print_help(name: &str, params: &[bun_lint_driver::Param]) {
     println!("Usage: bun {name} [flags] [...files, directories or patterns]\n\nFlags:");
     for param in params.iter().filter(|it| !it.id.msg_plain.is_empty()) {
-        let short = param.names.short.map_or("    ".to_owned(), |it| format!("-{}, ", it as char));
+        let short = param
+            .names
+            .short
+            .map_or("    ".to_owned(), |it| format!("-{}, ", it as char));
         let long = crate::text(param.names.long.unwrap_or_default());
         println!("  {short}--{long:<44} {}", crate::text(param.id.msg_plain));
     }
@@ -55,12 +64,19 @@ pub(crate) fn run(args: &[String]) {
     let args: Vec<&[u8]> = args.iter().map(String::as_bytes).collect();
     let command = match &args[..] {
         [b"--run-eslint-tests", ..] => Command::Lint(Box::default()),
-        [b"@format", rest @ ..] => Command::Format(Box::new(or_exit(bun_lint_driver::fmt::cli::Options::parse(rest)))),
+        [b"@format", rest @ ..] => Command::Format(Box::new(or_exit(
+            bun_lint_driver::fmt::cli::Options::parse(rest),
+        ))),
         args => Command::Lint(Box::new(or_exit(Options::parse(args)))),
     };
     let (help, cwd) = match &command {
         Command::Lint(options) => (options.help.then_some(("lint", PARAMS)), &options.cwd),
-        Command::Format(options) => (options.help.then_some(("format", bun_lint_driver::fmt::cli::PARAMS)), &options.cwd),
+        Command::Format(options) => (
+            options
+                .help
+                .then_some(("format", bun_lint_driver::fmt::cli::PARAMS)),
+            &options.cwd,
+        ),
     };
     if let Some((name, params)) = help {
         return print_help(name, params);
@@ -68,27 +84,42 @@ pub(crate) fn run(args: &[String]) {
     if let Some(cwd) = cwd
         && let Err(error) = std::env::set_current_dir(os(cwd))
     {
-        eprintln!("error: Could not change directory to \"{}\": {error}", crate::text(cwd));
+        eprintln!(
+            "error: Could not change directory to \"{}\": {error}",
+            crate::text(cwd)
+        );
         std::process::exit(1);
     }
-    let libs = std::env::var_os("BUN_SEMA_TS_LIB").unwrap_or_default().into_vec();
+    let libs = std::env::var_os("BUN_SEMA_TS_LIB")
+        .unwrap_or_default()
+        .into_vec();
     // `Output::is_ai_agent`
     let is_one = |name: &str| std::env::var_os(name).map(|it| it == "1");
-    let is_agent = is_one("AGENT").unwrap_or_else(|| is_one("CLAUDECODE") == Some(true) || is_one("REPL_ID") == Some(true));
-    let processes = crate::js_plugin_cmd::new_processes(std::thread::available_parallelism().map_or(1, usize::from));
+    let is_agent = is_one("AGENT")
+        .unwrap_or_else(|| is_one("CLAUDECODE") == Some(true) || is_one("REPL_ID") == Some(true));
+    let processes = crate::js_plugin_cmd::new_processes(
+        std::thread::available_parallelism().map_or(1, usize::from),
+    );
     let environment = Environment {
-        cwd: std::env::current_dir().expect("the working directory").into_os_string().into_vec(),
+        cwd: std::env::current_dir()
+            .expect("the working directory")
+            .into_os_string()
+            .into_vec(),
         stdout: stream(std::io::stdout().is_terminal()),
         stderr: stream(std::io::stderr().is_terminal()),
         is_ai_agent: is_agent,
-        is_github_action: !is_agent && std::env::var_os("GITHUB_ACTIONS").is_some_and(|it| it == "true"),
+        is_github_action: !is_agent
+            && std::env::var_os("GITHUB_ACTIONS").is_some_and(|it| it == "true"),
         libs: bun_sema_driver::Libs::Directory(&libs),
         run_script: &run_script,
         js_engine: &processes,
         version: b"0.0.0-harness",
     };
     if let [b"--run-eslint-tests", rest @ ..] = &args[..] {
-        std::process::exit(i32::from(!bun_lint_driver::for_tests::run_eslint_tests(rest, &environment)));
+        std::process::exit(i32::from(!bun_lint_driver::for_tests::run_eslint_tests(
+            rest,
+            &environment,
+        )));
     }
     let outcome = match &command {
         Command::Lint(options) => bun_lint_driver::run(options, &environment),

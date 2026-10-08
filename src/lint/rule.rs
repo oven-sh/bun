@@ -38,8 +38,8 @@
 //! - [`Listeners::finish`] is called last.
 
 use crate::ast::{
-    BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, ImportSpec, Member, Node, Param,
-    Pat, PatTag, Prop, Stmt, StmtTag, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
+    BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, ImportSpec, Member,
+    Node, Param, Pat, PatTag, Prop, Stmt, StmtTag, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::code_path::{CodePath, Segment};
 use crate::context::Cx;
@@ -386,7 +386,8 @@ impl<'a, R: Rule> Listeners<'a, R> {
         listener: Listener<'a, R, Expr<'a>>,
     ) {
         let tags = tags.into_iter().filter(|&tag| self.file.has_exprs([tag]));
-        self.entries.extend(tags.map(|tag| Entry::Exprs(tag, listener)));
+        self.entries
+            .extend(tags.map(|tag| Entry::Exprs(tag, listener)));
     }
 
     /// Every `Dot`, `Index` and `Call` that is part of an optional chain ([`Expr::chain`] is not `Chain::No`), in no particular
@@ -394,7 +395,8 @@ impl<'a, R: Rule> Listeners<'a, R> {
     pub fn optional_chains(&mut self, listener: Listener<'a, R, Expr<'a>>) {
         let tags = [ExprTag::Dot, ExprTag::Index, ExprTag::Call].into_iter();
         let tags = tags.filter(|&tag| !self.file.chained_exprs_of(tag).is_empty());
-        self.entries.extend(tags.map(|tag| Entry::Chained(tag, listener)));
+        self.entries
+            .extend(tags.map(|tag| Entry::Chained(tag, listener)));
     }
 
     /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators, in no particular order. A rule that
@@ -404,8 +406,11 @@ impl<'a, R: Rule> Listeners<'a, R> {
         ops: impl IntoIterator<Item = BinOp>,
         listener: Listener<'a, R, Expr<'a>>,
     ) {
-        let ops = ops.into_iter().filter(|&op| !self.file.binaries_of(op).is_empty());
-        self.entries.extend(ops.map(|op| Entry::Binaries(op, listener)));
+        let ops = ops
+            .into_iter()
+            .filter(|&op| !self.file.binaries_of(op).is_empty());
+        self.entries
+            .extend(ops.map(|op| Entry::Binaries(op, listener)));
     }
 
     /// Every [`ExprKind::Unary`](crate::ast::ExprKind::Unary) with one of these operators, in no particular order.
@@ -414,8 +419,11 @@ impl<'a, R: Rule> Listeners<'a, R> {
         ops: impl IntoIterator<Item = UnOp>,
         listener: Listener<'a, R, Expr<'a>>,
     ) {
-        let ops = ops.into_iter().filter(|&op| !self.file.unaries_of(op).is_empty());
-        self.entries.extend(ops.map(|op| Entry::Unaries(op, listener)));
+        let ops = ops
+            .into_iter()
+            .filter(|&op| !self.file.unaries_of(op).is_empty());
+        self.entries
+            .extend(ops.map(|op| Entry::Unaries(op, listener)));
     }
 
     /// Every statement of one of these kinds, in no particular order.
@@ -425,7 +433,8 @@ impl<'a, R: Rule> Listeners<'a, R> {
         listener: Listener<'a, R, Stmt<'a>>,
     ) {
         let tags = tags.into_iter().filter(|&tag| self.file.has_stmts([tag]));
-        self.entries.extend(tags.map(|tag| Entry::Stmts(tag, listener)));
+        self.entries
+            .extend(tags.map(|tag| Entry::Stmts(tag, listener)));
     }
 
     /// Every type of one of these kinds, in no particular order.
@@ -434,8 +443,11 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = TypeTag>,
         listener: Listener<'a, R, TypeNode<'a>>,
     ) {
-        let tags = tags.into_iter().filter(|&tag| !self.file.types_of(tag).is_empty());
-        self.entries.extend(tags.map(|tag| Entry::Types(tag, listener)));
+        let tags = tags
+            .into_iter()
+            .filter(|&tag| !self.file.types_of(tag).is_empty());
+        self.entries
+            .extend(tags.map(|tag| Entry::Types(tag, listener)));
     }
 
     /// Every binding pattern of one of these kinds, in no particular order.
@@ -444,8 +456,11 @@ impl<'a, R: Rule> Listeners<'a, R> {
         tags: impl IntoIterator<Item = PatTag>,
         listener: Listener<'a, R, Pat<'a>>,
     ) {
-        let tags = tags.into_iter().filter(|&tag| !self.file.pats_of(tag).is_empty());
-        self.entries.extend(tags.map(|tag| Entry::Pats(tag, listener)));
+        let tags = tags
+            .into_iter()
+            .filter(|&tag| !self.file.pats_of(tag).is_empty());
+        self.entries
+            .extend(tags.map(|tag| Entry::Pats(tag, listener)));
     }
 
     /// Every node of one of these kinds, in no particular order: for a rule that learns from its options which kinds it is about.
@@ -638,6 +653,7 @@ impl From<TypeTag> for NodeTags {
 }
 impl<T: Into<NodeTags>, const N: usize> From<[T; N]> for NodeTags {
     fn from(tags: [T; N]) -> NodeTags {
-        tags.into_iter().fold(NodeTags::EMPTY, |all, tag| all | tag.into())
+        tags.into_iter()
+            .fold(NodeTags::EMPTY, |all, tag| all | tag.into())
     }
 }

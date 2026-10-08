@@ -46,7 +46,10 @@ const IS_CONFIGURED: u32 = 1 << 7;
 const TO_GLOBAL: u32 = 1 << 8;
 
 /// The first of the ESTree nodes made of `base` that `is_it` accepts.
-fn find<'a>(base: Node<'a>, mut is_it: impl FnMut(VNode<'a>, NodeType) -> bool) -> Option<VNode<'a>> {
+fn find<'a>(
+    base: Node<'a>,
+    mut is_it: impl FnMut(VNode<'a>, NodeType) -> bool,
+) -> Option<VNode<'a>> {
     let mut found = None;
     VNode::for_each_with_type_at(base, &mut |node, node_type| {
         if found.is_none() && is_it(node, node_type) {
@@ -59,8 +62,13 @@ fn find<'a>(base: Node<'a>, mut is_it: impl FnMut(VNode<'a>, NodeType) -> bool) 
 /// The name that starts at `start` among the ESTree nodes made of `base`.
 fn name_at(base: Node<'_>, start: u32) -> Option<VNode<'_>> {
     find(base, |node, node_type| {
-        matches!(node_type, NodeType::Identifier | NodeType::JSXIdentifier | NodeType::Literal | NodeType::ThisExpression)
-            && node.span().start == start
+        matches!(
+            node_type,
+            NodeType::Identifier
+                | NodeType::JSXIdentifier
+                | NodeType::Literal
+                | NodeType::ThisExpression
+        ) && node.span().start == start
     })
 }
 
@@ -82,7 +90,9 @@ fn block<'a>(scope: Scope<'a>) -> Option<VNode<'a>> {
         Node::File(file) => Some(VNode::program(file)),
         Node::Expr(e) => expression(e),
         Node::Func(func) => with_span(Node::Func(func)).or_else(|| with_span(func.owner())),
-        Node::Stmt(_) if scope.kind() == ScopeKind::Catch => find(scope.node(), |_, it| it == NodeType::CatchClause),
+        Node::Stmt(_) if scope.kind() == ScopeKind::Catch => {
+            find(scope.node(), |_, it| it == NodeType::CatchClause)
+        }
         node => with_span(node).or_else(|| find(node, |_, _| true)),
     }
 }
@@ -92,10 +102,12 @@ fn name_of<'a>(declaration: Declaration<'a>) -> Option<VNode<'a>> {
     let start = declaration.name_span()?.start;
     match declaration {
         Declaration::Var(pat) | Declaration::Param(pat) => name_at(Node::Pat(pat), start),
-        Declaration::ImportSpec(it) => match find(Node::ImportSpec(it), |_, _| true)?.field(Field::Local) {
-            Value::Node(local) => Some(local),
-            _ => None,
-        },
+        Declaration::ImportSpec(it) => {
+            match find(Node::ImportSpec(it), |_, _| true)?.field(Field::Local) {
+                Value::Node(local) => Some(local),
+                _ => None,
+            }
+        }
         _ => name_at(declaration.node()?, start),
     }
 }
@@ -108,7 +120,12 @@ fn identifier<'a>(reference: Reference<'a>) -> Option<VNode<'a>> {
     }
 }
 
-pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>, out: &mut Vec<u8>) {
+pub(super) fn write<'a>(
+    file: &'a File<'a>,
+    offsets: &Offsets,
+    ids: &NodeIds<'a>,
+    out: &mut Vec<u8>,
+) {
     let id = |node: Option<VNode<'a>>| node.and_then(|it| ids.get(&it)).copied().unwrap_or(NONE);
     let header = out.len();
     out.resize(header + HEADER * 4, 0);
@@ -181,7 +198,10 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
                 identifier,
                 u32::from(reference.flags().bits()) | (u32::from(global.is_some()) * TO_GLOBAL),
                 id(reference.write_expr().and_then(expression)),
-                symbol.and_then(|it| index_of.get(it.key())).copied().unwrap_or(NONE),
+                symbol
+                    .and_then(|it| index_of.get(it.key()))
+                    .copied()
+                    .unwrap_or(NONE),
                 reference.scope().id().0,
             ],
         );
@@ -190,7 +210,9 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
 
     let in_comments = file.globals_in_comments();
     for global in in_comments {
-        let name = global.comments.first().map_or(Span::new(0, 0), |it| file.name_in_global_comment(*it, &global.name));
+        let name = global.comments.first().map_or(Span::new(0, 0), |it| {
+            file.name_in_global_comment(*it, &global.name)
+        });
         let setting = match global.setting {
             Global::Readonly => 0,
             Global::Writable => 1,
@@ -198,7 +220,12 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
         };
         wire::words(
             out,
-            &[offsets.to_utf16(name.start), offsets.to_utf16(name.end), setting, global.comments.len() as u32],
+            &[
+                offsets.to_utf16(name.start),
+                offsets.to_utf16(name.end),
+                setting,
+                global.comments.len() as u32,
+            ],
         );
         for comment in &global.comments {
             wire::words(out, &[offsets.to_utf16(comment.start)]);

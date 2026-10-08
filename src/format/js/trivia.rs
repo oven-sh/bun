@@ -11,12 +11,18 @@ use crate::write;
 /// as well: Prettier's `hasNewline(.., { backwards: true })` and `isPreviousLineEmpty`.
 fn lines_before(comment: &Comment, f: &Formatter<'_>) -> usize {
     fn without_blanks(text: &[u8]) -> &[u8] {
-        let blanks = text.iter().rev().take_while(|b| matches!(b, b' ' | b'\t')).count();
+        let blanks = text
+            .iter()
+            .rev()
+            .take_while(|b| matches!(b, b' ' | b'\t'))
+            .count();
         &text[..text.len() - blanks]
     }
     fn without_line_break(text: &[u8]) -> Option<&[u8]> {
         match text {
-            [rest @ .., b'\r', b'\n'] | [rest @ .., b'\n' | b'\r'] | [rest @ .., 0xE2, 0x80, 0xA8 | 0xA9] => Some(rest),
+            [rest @ .., b'\r', b'\n']
+            | [rest @ .., b'\n' | b'\r']
+            | [rest @ .., 0xE2, 0x80, 0xA8 | 0xA9] => Some(rest),
             _ => None,
         }
     }
@@ -56,7 +62,9 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
 fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut Formatter<'a>) {
     // A comment that has been moved out of a node that is written as it is in the source is in that
     // text.
-    let is_ignored = comments.iter().any(|comment| comment.is_moved() && f.comments().is_suppression_comment(comment));
+    let is_ignored = comments
+        .iter()
+        .any(|comment| comment.is_moved() && f.comments().is_suppression_comment(comment));
     for comment in comments {
         f.comments_mut().increment_printed_count();
         if is_ignored && comment.is_moved() && comment.span.start >= node_start {
@@ -103,9 +111,9 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = match *self {
             Self::Node((enclosing, ..)) if f.comments().next_start() >= enclosing.end => return,
-            Self::Node((enclosing, preceding, following)) => {
-                f.comments().get_trailing_comments(enclosing, preceding, following)
-            }
+            Self::Node((enclosing, preceding, following)) => f
+                .comments()
+                .get_trailing_comments(enclosing, preceding, following),
             Self::Comments(comments) => comments,
         };
         if !comments.is_empty() {
@@ -153,7 +161,8 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
             );
         } else {
             // Nothing but a byte order mark is before it.
-            let is_first_in_file = f.source_text().slice_range(0, comment.span.start) == b"\xEF\xBB\xBF";
+            let is_first_in_file =
+                f.source_text().slice_range(0, comment.span.start) == b"\xEF\xBB\xBF";
             let content = format_with(|f| write!(f, [maybe_space(!is_first_in_file), comment]));
             if comment.is_line() {
                 write!(f, [line_suffix(&content), expand_parent()]);
@@ -240,7 +249,13 @@ fn write_dangling_comments<'a>(
         let mut previous_comment: Option<&Comment> = None;
         for comment in comments {
             f.comments_mut().increment_printed_count();
-            write!(f, [previous_comment.is_some().then_some(hard_line_break()), comment]);
+            write!(
+                f,
+                [
+                    previous_comment.is_some().then_some(hard_line_break()),
+                    comment
+                ]
+            );
             previous_comment = Some(comment);
         }
         if matches!(indent, DanglingIndentMode::Soft)
@@ -268,7 +283,8 @@ impl<'a> Format<'a> for Comment {
         }
         if self.is_indentable_block() {
             // In Markdown, two spaces at the end of a line are a line break.
-            let is_jsdoc = content.starts_with(b"/**") && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt());
+            let is_jsdoc = content.starts_with(b"/**")
+                && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt());
             let mut lines = lines(content).peekable();
             write!(f, text(lines.next().unwrap_or_default().trim_ascii_end()));
             while let Some(line) = lines.next() {

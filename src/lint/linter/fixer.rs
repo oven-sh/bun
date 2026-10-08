@@ -27,7 +27,10 @@ pub fn grows_too_much(original: usize) -> LintMessage {
     let (from, to) = (size(original), size(max_fixed_len(original)));
     LintMessage {
         severity: Severity::Warn,
-        message: format!("Fixes would grow this file from {from} to more than {to}. It is left as it is.").into_bytes(),
+        message: format!(
+            "Fixes would grow this file from {from} to more than {to}. It is left as it is."
+        )
+        .into_bytes(),
         line: 1,
         column: 1,
         ..LintMessage::default()

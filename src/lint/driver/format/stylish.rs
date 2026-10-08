@@ -13,12 +13,30 @@ struct Style {
     close: &'static [u8],
 }
 
-const UNDERLINE: Style = Style { open: b"\x1b[4m", close: b"\x1b[24m" };
-const RED: Style = Style { open: b"\x1b[31m", close: b"\x1b[39m" };
-const YELLOW: Style = Style { open: b"\x1b[33m", close: b"\x1b[39m" };
-const DIM: Style = Style { open: b"\x1b[2m", close: b"\x1b[22m" };
-const BOLD: Style = Style { open: b"\x1b[1m", close: b"\x1b[22m" };
-const RESET: Style = Style { open: b"\x1b[0m", close: b"\x1b[0m" };
+const UNDERLINE: Style = Style {
+    open: b"\x1b[4m",
+    close: b"\x1b[24m",
+};
+const RED: Style = Style {
+    open: b"\x1b[31m",
+    close: b"\x1b[39m",
+};
+const YELLOW: Style = Style {
+    open: b"\x1b[33m",
+    close: b"\x1b[39m",
+};
+const DIM: Style = Style {
+    open: b"\x1b[2m",
+    close: b"\x1b[22m",
+};
+const BOLD: Style = Style {
+    open: b"\x1b[1m",
+    close: b"\x1b[22m",
+};
+const RESET: Style = Style {
+    open: b"\x1b[0m",
+    close: b"\x1b[0m",
+};
 
 fn styled(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
     if color {
@@ -79,7 +97,12 @@ fn visible_len(text: &[u8]) -> usize {
 
 /// `line.replace(/(\d+)\s+(\d+)/u, (m, p1, p2) => styleText("dim", `${p1}:${p2}`))`
 fn write_line_with_position(out: &mut Vec<u8>, color: bool, line: &[u8]) {
-    let digits = |from: usize| line[from..].iter().take_while(|byte| byte.is_ascii_digit()).count();
+    let digits = |from: usize| {
+        line[from..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
+    };
     let mut at = 0;
     while at < line.len() {
         let first = digits(at);
@@ -97,7 +120,12 @@ fn write_line_with_position(out: &mut Vec<u8>, color: bool, line: &[u8]) {
             continue;
         }
         out.extend_from_slice(&line[..at]);
-        let position = [&line[at..at + first], b":", &line[second..second + second_len]].concat();
+        let position = [
+            &line[at..at + first],
+            b":",
+            &line[second..second + second_len],
+        ]
+        .concat();
         styled(out, color, &DIM, &position);
         out.extend_from_slice(&line[second + second_len..]);
         return;
@@ -143,7 +171,9 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
         let rows: Vec<Row> = (result.messages.iter())
             .map(|message| {
                 let text = match &message.message[..] {
-                    [.., before, b'.'] if *before != b' ' => &message.message[..message.message.len() - 1],
+                    [.., before, b'.'] if *before != b' ' => {
+                        &message.message[..message.message.len() - 1]
+                    }
                     text => text,
                 };
                 Row {
@@ -152,13 +182,20 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
                     is_error: message.is_fatal || message.severity == Severity::Error,
                     message: text.to_vec(),
                     message_len: visible_len(text),
-                    rule: message.rule_id.as_ref().map(|id| id.to_vec()).unwrap_or_default(),
+                    rule: message
+                        .rule_id
+                        .as_ref()
+                        .map(|id| id.to_vec())
+                        .unwrap_or_default(),
                 }
             })
             .collect();
         let widest = |len: &dyn Fn(&Row) -> usize| rows.iter().map(len).max().unwrap_or(0);
         let kind_len = |row: &Row| if row.is_error { 5 } else { 7 };
-        let (lines, columns) = (widest(&|row| row.line.len()), widest(&|row| row.column.len()));
+        let (lines, columns) = (
+            widest(&|row| row.line.len()),
+            widest(&|row| row.column.len()),
+        );
         let (kinds, messages) = (widest(&kind_len), widest(&|row| row.message_len));
         let rules = widest(&|row| visible_len(&row.rule));
         let mut text = Vec::new();

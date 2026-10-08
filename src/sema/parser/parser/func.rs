@@ -30,15 +30,19 @@ fn signature_context(flags: Flags) -> u32 {
 
 impl Parser<'_> {
     /// `parseFunctionDeclaration`
-    pub(crate) fn function_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
+    pub(crate) fn function_declaration(
+        &mut self,
+        start: Start,
+        base: usize,
+        flags: Flags,
+    ) -> StmtId {
         // Only its modifiers say that `default function f() {}` has `default`.
         let flags = match flags.contains(Flags::EXPORT) {
             true => flags,
             false => flags - Flags::DEFAULT,
         };
         self.next();
-        let mut fn_flags =
-            self.ambient() | flags & (Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC);
+        let mut fn_flags = self.ambient() | flags & (Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC);
         if self.eat(T::Asterisk) {
             fn_flags |= Flags::GENERATOR;
         }
@@ -54,7 +58,13 @@ impl Parser<'_> {
             // A default export without a name is placed at `export`.
             let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
             let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
-            (Atom::NONE, modifiers.iter().rfind(is_export).map_or(start.pos, |it| it.pos))
+            (
+                Atom::NONE,
+                modifiers
+                    .iter()
+                    .rfind(is_export)
+                    .map_or(start.pos, |it| it.pos),
+            )
         };
         let func = self.function_rest(FnKind::Decl, fn_flags, name, name_pos, start.pos);
         let modifiers = self.take_modifiers(base);
@@ -225,7 +235,11 @@ impl Parser<'_> {
         let list = self.parameter_list(context, T::CloseParen);
         self.expect(T::CloseParen);
         // `GetThisParameter`: the first, if it is named `this`.
-        let first = self.f.params.get(list.start as usize).filter(|_| !list.is_empty());
+        let first = self
+            .f
+            .params
+            .get(list.start as usize)
+            .filter(|_| !list.is_empty());
         let name = first.and_then(|first| self.f.pats.get(first.pat.idx()));
         match name {
             Some(Pat {
@@ -313,7 +327,9 @@ impl Parser<'_> {
         let pat;
         let is_this = self.token() == T::This;
         if is_this {
-            pat = self.f.pat(PatKind::Ident(known::this), self.lx.start, self.lx.end);
+            pat = self
+                .f
+                .pat(PatKind::Ident(known::this), self.lx.start, self.lx.end);
             self.next();
             // A decorator of `this` is an error of the parser.
             if token.is_modifier() || token == T::At {

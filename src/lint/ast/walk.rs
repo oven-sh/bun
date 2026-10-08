@@ -1,8 +1,6 @@
 //! The way down: the children of a node, and a walk over a whole file in source order.
 
-use super::{
-    ExprKind, File, FnBody, Key, KeyKind, Modifier, Node, PatKind, StmtKind, TypeKind,
-};
+use super::{ExprKind, File, FnBody, Key, KeyKind, Modifier, Node, PatKind, StmtKind, TypeKind};
 
 impl<'a> Node<'a> {
     /// Calls `visit` with each child, in source order.
@@ -65,7 +63,10 @@ impl<'a> Node<'a> {
         fn attribute_values<'a>(
             attributes: Option<super::ImportAttributes<'a>>,
         ) -> impl Iterator<Item = super::Expr<'a>> {
-            attributes.into_iter().flat_map(|it| it.entries()).filter_map(super::Prop::value)
+            attributes
+                .into_iter()
+                .flat_map(|it| it.entries())
+                .filter_map(super::Prop::value)
         }
         /// What is in the head of a `for`: a `Var`, or the expression in a wrapper.
         fn head(statement: super::Stmt) -> Node {
@@ -194,7 +195,10 @@ impl<'a> Node<'a> {
                     opt!(update);
                     one!(body);
                 }
-                StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
+                StmtKind::ForIn { left, expr, body }
+                | StmtKind::ForOf {
+                    left, expr, body, ..
+                } => {
                     one!(head(left));
                     one!(expr);
                     one!(body);
@@ -261,7 +265,9 @@ impl<'a> Node<'a> {
             Node::Pat(pat) => match pat.kind() {
                 PatKind::Missing | PatKind::Ident(_) => {}
                 PatKind::Object(props) => list!(props),
-                PatKind::Array(elements) => all!(elements.near(near).filter(|it| it.pat().is_some())),
+                PatKind::Array(elements) => {
+                    all!(elements.near(near).filter(|it| it.pat().is_some()))
+                }
             },
             Node::PatProp(prop) => {
                 opt!(computed(prop.key()));
@@ -323,7 +329,9 @@ impl<'a> Node<'a> {
                     all!(attribute_values(ty.import_attributes()));
                     list!(args);
                 }
-                TypeKind::Template(types) | TypeKind::Union(types) | TypeKind::Intersection(types) => {
+                TypeKind::Template(types)
+                | TypeKind::Union(types)
+                | TypeKind::Intersection(types) => {
                     list!(types)
                 }
                 TypeKind::Array(operand)

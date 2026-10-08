@@ -5,7 +5,11 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// `{ readonly [K in T as N]?: V }`
-pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_mapped_type<'a>(
+    ty: TypeNode<'a>,
+    mapped: Mapped<'a>,
+    f: &mut Formatter<'a>,
+) {
     let param = mapped.param();
     let key = param.name();
     if f.comments().is_suppressed(key.start()) {
@@ -13,26 +17,48 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
     }
     // One that has a line break after its `{` in the source stays broken.
     let should_expand = f.options().expand == Expand::Auto
-        && f.source_text().has_line_terminator_after_skipping_comments(ty.span().start + 1);
+        && f.source_text()
+            .has_line_terminator_after_skipping_comments(ty.span().start + 1);
 
     let format_inner = format_with(|f| {
         if !f.is_quiet() {
-            write_comments_before_bracket(f.comments().comments_before_character(ty.span().start, b'['), f);
+            write_comments_before_bracket(
+                f.comments()
+                    .comments_before_character(ty.span().start, b'['),
+                f,
+            );
         }
         match mapped.readonly() {
             MappedModifier::None => {}
-            MappedModifier::Add => write!(f, [mapped.is_readonly_with_plus().then_some("+"), "readonly", space()]),
+            MappedModifier::Add => write!(
+                f,
+                [
+                    mapped.is_readonly_with_plus().then_some("+"),
+                    "readonly",
+                    space()
+                ]
+            ),
             MappedModifier::Remove => write!(f, ["-", "readonly", space()]),
         }
 
         let format_key = format_with(|f| {
             // The blank after `in` stays if a comment that trails the key ends up behind it.
-            write!(f, [identifier(key, AstNodes::TSMappedType(ty)), " in ", param.constraint()]);
+            write!(
+                f,
+                [
+                    identifier(key, AstNodes::TSMappedType(ty)),
+                    " in ",
+                    param.constraint()
+                ]
+            );
             if let Some(name_type) = mapped.name_type() {
                 write!(f, [" as ", name_type]);
             }
         });
-        write!(f, group(&format_args!("[", soft_block_indent(&format_key), "]")));
+        write!(
+            f,
+            group(&format_args!("[", soft_block_indent(&format_key), "]"))
+        );
 
         match mapped.optional() {
             MappedModifier::None => {}
@@ -53,8 +79,11 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
         f,
         [
             "{",
-            group(&soft_block_indent_with_maybe_space(&format_inner, f.options().bracket_spacing.value()))
-                .should_expand(should_expand),
+            group(&soft_block_indent_with_maybe_space(
+                &format_inner,
+                f.options().bracket_spacing.value()
+            ))
+            .should_expand(should_expand),
             "}",
         ]
     );

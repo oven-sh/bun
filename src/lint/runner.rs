@@ -1,14 +1,15 @@
 //! Runs rules on a file.
 
 use crate::ast::{
-    BinOp, Case, Chain, NOT_IN_TREE, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle, ImportSpec, Member,
-    Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
+    BinOp, Case, Chain, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle,
+    ImportSpec, Member, NOT_IN_TREE, Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt,
+    StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
-use crate::semantic::Symbol;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
+use crate::semantic::Symbol;
 use bun_sema::hir;
 use std::cell::OnceCell;
 
@@ -32,8 +33,14 @@ impl<const KINDS: usize> Grouped<KINDS> {
     }
 
     /// `kind_of(id)`: the kind of the node `id`, which is one of `all`, or `None` to leave it out.
-    fn of_ids(all: impl ExactSizeIterator<Item = u32> + Clone, kind_of: impl Fn(u32) -> Option<usize>) -> Self {
-        let kinds: Vec<u8> = all.clone().map(|id| kind_of(id).map_or(NOT_IN_TREE, |kind| kind as u8)).collect();
+    fn of_ids(
+        all: impl ExactSizeIterator<Item = u32> + Clone,
+        kind_of: impl Fn(u32) -> Option<usize>,
+    ) -> Self {
+        let kinds: Vec<u8> = all
+            .clone()
+            .map(|id| kind_of(id).map_or(NOT_IN_TREE, |kind| kind as u8))
+            .collect();
         Grouped::of_kinds(all, &kinds)
     }
 
@@ -49,7 +56,11 @@ impl<const KINDS: usize> Grouped<KINDS> {
     }
 
     /// `counts`: at `kind + 1`, how many of `kinds` are `kind`.
-    fn of_counted_kinds(all: impl Iterator<Item = u32>, kinds: &[u8], counts: &[u32; MOST_KINDS + 2]) -> Self {
+    fn of_counted_kinds(
+        all: impl Iterator<Item = u32>,
+        kinds: &[u8],
+        counts: &[u32; MOST_KINDS + 2],
+    ) -> Self {
         const { assert!(KINDS <= MOST_KINDS) };
         let mut starts = *counts;
         for kind in 0..KINDS {
@@ -89,22 +100,43 @@ impl Exprs {
     /// substitutions is a string.
     fn from_binder(file: &File) -> Option<Exprs> {
         let (kinds, counted) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
-        if kinds.len() != file.hir.exprs.len() || file.has_synthetic_nodes() || !file.hir.import_attributes.is_empty() {
+        if kinds.len() != file.hir.exprs.len()
+            || file.has_synthetic_nodes()
+            || !file.hir.import_attributes.is_empty()
+        {
             return None;
         }
         let mut counts = [0u32; MOST_KINDS + 2];
         counts.get_mut(1..=counted.len())?.copy_from_slice(counted);
-        let mut grouped: Grouped<{ 2 * ExprTag::COUNT }> = Grouped::of_counted_kinds(0..kinds.len() as u32, kinds, &counts);
+        let mut grouped: Grouped<{ 2 * ExprTag::COUNT }> =
+            Grouped::of_counted_kinds(0..kinds.len() as u32, kinds, &counts);
         if bun_core::strings::contains_char(file.text(), b'`') {
-            let (strings, templates) = (2 * ExprTag::String as usize, 2 * ExprTag::Template as usize);
+            let (strings, templates) =
+                (2 * ExprTag::String as usize, 2 * ExprTag::Template as usize);
             const { assert!((ExprTag::String as usize) < ExprTag::Template as usize) };
             let is_template = |id: &u32| file.expr_in_tree(*id as usize) == Some(ExprTag::Template);
-            let moved: Vec<u32> = grouped.of(strings).iter().copied().filter(is_template).collect();
+            let moved: Vec<u32> = grouped
+                .of(strings)
+                .iter()
+                .copied()
+                .filter(is_template)
+                .collect();
             if !moved.is_empty() {
                 // The strings that stay, what is between the two kinds, and the templates of both origins by their index.
-                let (start, end) = (grouped.starts[strings] as usize, grouped.starts[templates + 1] as usize);
-                let mut rest: Vec<u32> = grouped.of(strings).iter().copied().filter(|id| !is_template(id)).collect();
-                rest.extend_from_slice(&grouped.ids[grouped.starts[strings + 1] as usize..grouped.starts[templates] as usize]);
+                let (start, end) = (
+                    grouped.starts[strings] as usize,
+                    grouped.starts[templates + 1] as usize,
+                );
+                let mut rest: Vec<u32> = grouped
+                    .of(strings)
+                    .iter()
+                    .copied()
+                    .filter(|id| !is_template(id))
+                    .collect();
+                rest.extend_from_slice(
+                    &grouped.ids
+                        [grouped.starts[strings + 1] as usize..grouped.starts[templates] as usize],
+                );
                 let mut all_templates = [grouped.of(templates), &moved[..]].concat();
                 all_templates.sort_unstable();
                 rest.extend_from_slice(&all_templates);
@@ -122,7 +154,11 @@ impl Exprs {
         file.expr_tags_in_tree_as(&mut kinds, |tag, raw| {
             let chain = match raw.kind {
                 hir::ExprKind::Dot { chain, .. } | hir::ExprKind::Index { chain, .. } => chain,
-                hir::ExprKind::Call(call) => file.hir.calls.get(call.idx()).map_or(Chain::No, |call| call.chain),
+                hir::ExprKind::Call(call) => file
+                    .hir
+                    .calls
+                    .get(call.idx())
+                    .map_or(Chain::No, |call| call.chain),
                 _ => Chain::No,
             };
             let kind = 2 * tag as u8 + u8::from(chain != Chain::No);
@@ -176,7 +212,8 @@ impl File<'_> {
     #[inline(never)]
     fn exprs_of(&self, tag: ExprTag) -> &[u32] {
         let grouped = &self.exprs().grouped;
-        &grouped.ids[grouped.starts[2 * tag as usize] as usize..grouped.starts[2 * tag as usize + 2] as usize]
+        &grouped.ids[grouped.starts[2 * tag as usize] as usize
+            ..grouped.starts[2 * tag as usize + 2] as usize]
     }
 
     /// Those of `exprs_of` that are part of an optional chain.
@@ -202,10 +239,13 @@ impl File<'_> {
     #[inline(never)]
     pub(crate) fn binaries_of(&self, op: BinOp) -> &[u32] {
         let grouped = self.by_kind().binaries.get_or_init(|| {
-            Grouped::of_ids(self.exprs_of(ExprTag::Binary).iter().copied(), |id| match self.hir.exprs.get(id as usize)?.kind {
-                hir::ExprKind::Binary { op, .. } => Some(op as usize),
-                _ => None,
-            })
+            Grouped::of_ids(
+                self.exprs_of(ExprTag::Binary).iter().copied(),
+                |id| match self.hir.exprs.get(id as usize)?.kind {
+                    hir::ExprKind::Binary { op, .. } => Some(op as usize),
+                    _ => None,
+                },
+            )
         });
         grouped.of(op as usize)
     }
@@ -213,10 +253,13 @@ impl File<'_> {
     #[inline(never)]
     pub(crate) fn unaries_of(&self, op: UnOp) -> &[u32] {
         let grouped = self.by_kind().unaries.get_or_init(|| {
-            Grouped::of_ids(self.exprs_of(ExprTag::Unary).iter().copied(), |id| match self.hir.exprs.get(id as usize)?.kind {
-                hir::ExprKind::Unary { op, .. } => Some(op as usize),
-                _ => None,
-            })
+            Grouped::of_ids(
+                self.exprs_of(ExprTag::Unary).iter().copied(),
+                |id| match self.hir.exprs.get(id as usize)?.kind {
+                    hir::ExprKind::Unary { op, .. } => Some(op as usize),
+                    _ => None,
+                },
+            )
         });
         grouped.of(op as usize)
     }
@@ -290,39 +333,53 @@ every! {
 impl<'a> File<'a> {
     /// The expressions of a kind, in no particular order. For [`Rule::register`] to look closer than [`File::has_exprs`] does.
     pub fn exprs_of_kind(&'a self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> {
-        self.exprs_of(tag).iter().map(|&id| Expr::from_raw(self, id))
+        self.exprs_of(tag)
+            .iter()
+            .map(|&id| Expr::from_raw(self, id))
     }
 
     /// The same for statements.
     pub fn stmts_of_kind(&'a self, tag: StmtTag) -> impl Iterator<Item = Stmt<'a>> {
-        self.stmts_of(tag).iter().map(|&id| Stmt::from_raw(self, id))
+        self.stmts_of(tag)
+            .iter()
+            .map(|&id| Stmt::from_raw(self, id))
     }
 
     /// The same for functions: what [`Listeners::funcs`] is called with.
     pub fn funcs(&'a self) -> impl Iterator<Item = Func<'a>> {
-        (0..self.hir.fns.len()).map(|i| Func::from_raw(self, i as u32)).filter(|it| it.is_in_tree())
+        (0..self.hir.fns.len())
+            .map(|i| Func::from_raw(self, i as u32))
+            .filter(|it| it.is_in_tree())
     }
 
     /// The same for classes: what [`Listeners::classes`] is called with.
     pub fn classes(&'a self) -> impl Iterator<Item = Class<'a>> {
-        (0..self.hir.classes.len()).map(|i| Class::from_raw(self, i as u32)).filter(|it| it.is_in_tree())
+        (0..self.hir.classes.len())
+            .map(|i| Class::from_raw(self, i as u32))
+            .filter(|it| it.is_in_tree())
     }
 
     pub(crate) fn every_expr_of(&'a self, tags: &[ExprTag], mut visit: impl FnMut(Expr<'a>)) {
         for &tag in tags {
-            self.exprs_of(tag).iter().for_each(|&id| visit(Expr::from_raw(self, id)));
+            self.exprs_of(tag)
+                .iter()
+                .for_each(|&id| visit(Expr::from_raw(self, id)));
         }
     }
 
     pub(crate) fn every_stmt_of(&'a self, tags: &[StmtTag], mut visit: impl FnMut(Stmt<'a>)) {
         for &tag in tags {
-            self.stmts_of(tag).iter().for_each(|&id| visit(Stmt::from_raw(self, id)));
+            self.stmts_of(tag)
+                .iter()
+                .for_each(|&id| visit(Stmt::from_raw(self, id)));
         }
     }
 
     pub(crate) fn every_type_of(&'a self, tags: &[TypeTag], mut visit: impl FnMut(TypeNode<'a>)) {
         for &tag in tags {
-            self.types_of(tag).iter().for_each(|&id| visit(TypeNode::from_raw(self, id)));
+            self.types_of(tag)
+                .iter()
+                .for_each(|&id| visit(TypeNode::from_raw(self, id)));
         }
     }
 
@@ -330,22 +387,30 @@ impl<'a> File<'a> {
     pub(crate) fn every_node_of(&'a self, tags: NodeTags, visit: &mut dyn FnMut(Node<'a>)) {
         for tag in EXPR_TAGS {
             if tags.intersects(tag.into()) {
-                self.exprs_of(tag).iter().for_each(|&id| visit(Node::Expr(Expr::from_raw(self, id))));
+                self.exprs_of(tag)
+                    .iter()
+                    .for_each(|&id| visit(Node::Expr(Expr::from_raw(self, id))));
             }
         }
         for tag in StmtTag::ALL {
             if tags.intersects(tag.into()) {
-                self.stmts_of(tag).iter().for_each(|&id| visit(Node::Stmt(Stmt::from_raw(self, id))));
+                self.stmts_of(tag)
+                    .iter()
+                    .for_each(|&id| visit(Node::Stmt(Stmt::from_raw(self, id))));
             }
         }
         for tag in TypeTag::ALL {
             if tags.intersects(tag.into()) {
-                self.types_of(tag).iter().for_each(|&id| visit(Node::Type(TypeNode::from_raw(self, id))));
+                self.types_of(tag)
+                    .iter()
+                    .for_each(|&id| visit(Node::Type(TypeNode::from_raw(self, id))));
             }
         }
         if tags.intersects(NodeTags::PAT) {
             for tag in PatTag::ALL {
-                self.pats_of(tag).iter().for_each(|&id| visit(Node::Pat(Pat::from_raw(self, id))));
+                self.pats_of(tag)
+                    .iter()
+                    .for_each(|&id| visit(Node::Pat(Pat::from_raw(self, id))));
             }
         }
         macro_rules! sorts {
@@ -397,7 +462,10 @@ impl<'a> File<'a> {
     fn every_pat_elem(&'a self, mut visit: impl FnMut(PatElem<'a>)) {
         for i in 0..self.hir.pat_elems.len() {
             let it = PatElem::from_raw(self, i as u32);
-            if it.pat().is_none_or(|pat| self.pat_in_tree(pat.id().idx()).is_some()) {
+            if it
+                .pat()
+                .is_none_or(|pat| self.pat_in_tree(pat.id().idx()).is_some())
+            {
                 visit(it);
             }
         }
@@ -572,10 +640,18 @@ impl<'a, R: Rule> Run<'_, 'a, R> {
                 Entry::EnumMembers(listener) => file.every_enum_member(|it| listener(rule, it, cx)),
                 Entry::ImportSpecs(listener) => file.every_import_spec(|it| listener(rule, it, cx)),
                 Entry::ExportSpecs(listener) => file.every_export_spec(|it| listener(rule, it, cx)),
-                Entry::StringLiterals(listener) => file.every_string_literal(|it| listener(rule, it, cx)),
-                Entry::NumberLiterals(listener) => file.every_number_literal(&mut |it| listener(rule, it, cx)),
-                Entry::Symbols(listener) => every_symbol(file, &mut |symbol| listener(rule, symbol, cx)),
-                Entry::Nodes(tags, listener) => file.every_node_of(tags, &mut |node| listener(rule, node, cx)),
+                Entry::StringLiterals(listener) => {
+                    file.every_string_literal(|it| listener(rule, it, cx))
+                }
+                Entry::NumberLiterals(listener) => {
+                    file.every_number_literal(&mut |it| listener(rule, it, cx))
+                }
+                Entry::Symbols(listener) => {
+                    every_symbol(file, &mut |symbol| listener(rule, symbol, cx))
+                }
+                Entry::Nodes(tags, listener) => {
+                    file.every_node_of(tags, &mut |node| listener(rule, node, cx))
+                }
                 Entry::Enter(..)
                 | Entry::Exit(..)
                 | Entry::CodePathStart(_)
@@ -631,9 +707,10 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
                 Some(Entry::UnreachableSegmentStart(on)),
                 Event::UnreachableSegmentStart(segment, node),
             )
-            | (Some(Entry::UnreachableSegmentEnd(on)), Event::UnreachableSegmentEnd(segment, node)) => {
-                on(rule, segment, node, cx)
-            }
+            | (
+                Some(Entry::UnreachableSegmentEnd(on)),
+                Event::UnreachableSegmentEnd(segment, node),
+            ) => on(rule, segment, node, cx),
             (Some(Entry::SegmentLoop(on)), Event::SegmentLoop(from, to, node)) => {
                 on(rule, from, to, node, cx)
             }
@@ -668,7 +745,8 @@ impl ByTag {
         self.starts = vec![0; NodeTags::COUNT + 1];
         for &(tags, ..) in &self.registered {
             self.tags = self.tags | tags;
-            tags.indices().for_each(|index| self.starts[index as usize + 1] += 1);
+            tags.indices()
+                .for_each(|index| self.starts[index as usize + 1] += 1);
         }
         for index in 0..NodeTags::COUNT {
             self.starts[index + 1] += self.starts[index];
@@ -789,9 +867,44 @@ fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
 pub(crate) const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
     use ExprTag::*;
     [
-        Missing, Ident, PrivateIdentifier, This, Super, Null, True, False, Number, String, BigInt, Regex, Template,
-        TaggedTemplate, Array, Object, Fn, Class, Dot, Index, Call, New, Unary, Binary, Assign, Cond, Spread, Await, Yield, As,
-        Satisfies, AsConst, NonNull, Instantiation, Jsx, ImportCall, ImportMeta, NewTarget,
+        Missing,
+        Ident,
+        PrivateIdentifier,
+        This,
+        Super,
+        Null,
+        True,
+        False,
+        Number,
+        String,
+        BigInt,
+        Regex,
+        Template,
+        TaggedTemplate,
+        Array,
+        Object,
+        Fn,
+        Class,
+        Dot,
+        Index,
+        Call,
+        New,
+        Unary,
+        Binary,
+        Assign,
+        Cond,
+        Spread,
+        Await,
+        Yield,
+        As,
+        Satisfies,
+        AsConst,
+        NonNull,
+        Instantiation,
+        Jsx,
+        ImportCall,
+        ImportMeta,
+        NewTarget,
     ]
 };
 
@@ -820,10 +933,17 @@ pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> 
         return diagnostics;
     }
     // The keys are sorted, not what is reported, which is many times as large.
-    let mut order: Vec<_> = diagnostics.iter().enumerate().map(|(at, it)| (key(it), at as u32)).collect();
+    let mut order: Vec<_> = diagnostics
+        .iter()
+        .enumerate()
+        .map(|(at, it)| (key(it), at as u32))
+        .collect();
     order.sort_unstable();
     let mut diagnostics: Vec<Option<Diagnostic>> = diagnostics.into_iter().map(Some).collect();
-    order.iter().filter_map(|&(_, at)| diagnostics.get_mut(at as usize)?.take()).collect()
+    order
+        .iter()
+        .filter_map(|&(_, at)| diagnostics.get_mut(at as usize)?.take())
+        .collect()
 }
 
 fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {

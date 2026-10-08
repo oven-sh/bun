@@ -114,7 +114,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// `node`, if it is a node of a file of the program.
     #[inline]
     fn valid(&self, node: NodeRef) -> Option<(&'p hir::File<'s>, Node)> {
-        (node.node.is_some() && self.has_file(node.file)).then(|| (self.c.hir(node.file), node.node))
+        (node.node.is_some() && self.has_file(node.file))
+            .then(|| (self.c.hir(node.file), node.node))
     }
 
     /// The expression that `node` is, or is the parentheses around.
@@ -126,13 +127,24 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             // A function or a class that is an expression has the handle of its own.
             _ => match hir.kind(at) {
                 Kind::FunctionExpression | Kind::ArrowFunction => {
-                    match self.c.bound(node.file).fns.get(hir.function_of(at).idx())?.owner {
+                    match self
+                        .c
+                        .bound(node.file)
+                        .fns
+                        .get(hir.function_of(at).idx())?
+                        .owner
+                    {
                         crate::bind::FnOwner::Expr(e) => Some(e),
                         _ => None,
                     }
                 }
                 Kind::ClassExpression => {
-                    match *self.c.bound(node.file).class_owner.get(hir.class_of(at).idx())? {
+                    match *self
+                        .c
+                        .bound(node.file)
+                        .class_owner
+                        .get(hir.class_of(at).idx())?
+                    {
                         crate::bind::ClassOwner::Expr(e) => Some(e),
                         crate::bind::ClassOwner::Stmt(_) => None,
                     }
@@ -158,7 +170,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             no_implicit_override: options.no_implicit_override,
             use_unknown_in_catch_variables: options.use_unknown_in_catch_variables,
             no_unchecked_indexed_access: options.no_unchecked_indexed_access,
-            no_property_access_from_index_signature: options.no_property_access_from_index_signature,
+            no_property_access_from_index_signature: options
+                .no_property_access_from_index_signature,
             no_fallthrough_cases_in_switch: options.no_fallthrough_cases_in_switch,
             exact_optional_property_types: options.exact_optional_property_types,
             isolated_modules: options.isolated_modules,
@@ -212,7 +225,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             is_external_module: module.is_module(),
             package_name: match path_in_node_modules(module.file_name()) {
                 Some(path) => Some(path),
-                None if module.is_from_external_library => self.package_names_of_linked_files().get(&file).map(Vec::as_slice),
+                None if module.is_from_external_library => self
+                    .package_names_of_linked_files()
+                    .get(&file)
+                    .map(Vec::as_slice),
                 None => None,
             },
         }
@@ -231,8 +247,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                         continue;
                     }
                     let directory = files.atoms.bytes(module.package_json_directory);
-                    let in_package = module.file_name().strip_prefix(directory).and_then(|it| it.strip_prefix(b"/"));
-                    let (Some(package), Some(in_package)) = (package_of_specifier(files.atoms.bytes(specifier)), in_package) else {
+                    let in_package = module
+                        .file_name()
+                        .strip_prefix(directory)
+                        .and_then(|it| it.strip_prefix(b"/"));
+                    let (Some(package), Some(in_package)) = (
+                        package_of_specifier(files.atoms.bytes(specifier)),
+                        in_package,
+                    ) else {
                         continue;
                     };
                     if path_in_node_modules(module.file_name()).is_some() {
@@ -241,7 +263,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     let name = cat!(package, b"/", in_package);
                     // Whatever the order of the imports.
                     match names.entry(file) {
-                        std::collections::hash_map::Entry::Occupied(mut known) if name < *known.get() => {
+                        std::collections::hash_map::Entry::Occupied(mut known)
+                            if name < *known.get() =>
+                        {
                             known.insert(name);
                         }
                         std::collections::hash_map::Entry::Occupied(_) => {}
@@ -335,11 +359,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn node_kind(&mut self, node: NodeRef) -> Kind {
-        self.valid(node).map_or(Kind::Unknown, |(hir, node)| hir.kind(node))
+        self.valid(node)
+            .map_or(Kind::Unknown, |(hir, node)| hir.kind(node))
     }
 
     pub fn node_data(&mut self, node: NodeRef) -> NodeData {
-        self.valid(node).map_or(NodeData::None, |(hir, node)| hir.data(node))
+        self.valid(node)
+            .map_or(NodeData::None, |(hir, node)| hir.data(node))
     }
 
     pub fn node_parent(&mut self, node: NodeRef) -> Node {
@@ -361,7 +387,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Child::Type => hir.type_node(node),
             Child::Body => hir.body(node),
             Child::Constraint | Child::Default => match hir.data(node) {
-                NodeData::TypeParam(parameter) if child == Child::Constraint => hir.node(hir[parameter].constraint),
+                NodeData::TypeParam(parameter) if child == Child::Constraint => {
+                    hir.node(hir[parameter].constraint)
+                }
                 NodeData::TypeParam(parameter) => hir.node(hir[parameter].default),
                 _ => Node::NONE,
             },
@@ -386,7 +414,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Some((hir, at)) if !hir.text.is_empty() => {
                 let (start, end) = (hir.start(at), self.c.end_of_node(node.file, at));
                 // The HIR does not say where every node is that is derived from another.
-                match at.part().is_some() && (end <= start || start == 0 && hir.start(at.row()) != 0) {
+                match at.part().is_some()
+                    && (end <= start || start == 0 && hir.start(at.row()) != 0)
+                {
                     true => (0, 0),
                     false => (start, end),
                 }
@@ -409,7 +439,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn node_source_text(&mut self, node: NodeRef) -> &'p [u8] {
         let (start, end) = self.node_span(node);
         match self.valid(node) {
-            Some((hir, _)) => hir.text.get(start as usize..end as usize).unwrap_or_default(),
+            Some((hir, _)) => hir
+                .text
+                .get(start as usize..end as usize)
+                .unwrap_or_default(),
             None => b"",
         }
     }
@@ -420,22 +453,34 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             return false;
         };
         match (hir.data(at), hir.data(at.row())) {
-            (NodeData::ImportSpec(s), _) => hir[s].type_only || with_parents && hir[hir[s].import].type_only,
-            (NodeData::ExportSpec(s), _) => hir[s].type_only || with_parents && hir[hir[s].export].type_only,
+            (NodeData::ImportSpec(s), _) => {
+                hir[s].type_only || with_parents && hir[hir[s].import].type_only
+            }
+            (NodeData::ExportSpec(s), _) => {
+                hir[s].type_only || with_parents && hir[hir[s].export].type_only
+            }
             (data, NodeData::Stmt(s)) => match (hir[s].kind, data) {
-                (StmtKind::Import(i), NodeData::Part(crate::node::Part::ImportClause, _)) => hir[i].type_only,
+                (StmtKind::Import(i), NodeData::Part(crate::node::Part::ImportClause, _)) => {
+                    hir[i].type_only
+                }
                 (StmtKind::Import(i), NodeData::Part(crate::node::Part::NamedBindings, _)) => {
                     with_parents && hir.kind(at) == Kind::NamespaceImport && hir[i].type_only
                 }
-                (StmtKind::ImportEquals(i), NodeData::Stmt(_)) => hir[i].flags.contains(Flags::TYPE_ONLY),
+                (StmtKind::ImportEquals(i), NodeData::Stmt(_)) => {
+                    hir[i].flags.contains(Flags::TYPE_ONLY)
+                }
                 (StmtKind::ExportNamed(e), NodeData::Stmt(_)) => !with_parents && hir[e].type_only,
                 // `export type * from "m"` is one, `export type * as ns from "m"` has a clause that is.
                 (StmtKind::ExportStar { type_only, .. }, NodeData::Stmt(_)) => {
-                    type_only && (!with_parents || hir.kind(at.with(crate::node::Part::ExportClause)) != Kind::NamespaceExport)
+                    type_only
+                        && (!with_parents
+                            || hir.kind(at.with(crate::node::Part::ExportClause))
+                                != Kind::NamespaceExport)
                 }
-                (StmtKind::ExportStar { type_only, .. }, NodeData::Part(crate::node::Part::ExportClause, _)) => {
-                    with_parents && type_only
-                }
+                (
+                    StmtKind::ExportStar { type_only, .. },
+                    NodeData::Part(crate::node::Part::ExportClause, _),
+                ) => with_parents && type_only,
                 _ => false,
             },
             _ => false,
@@ -444,7 +489,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     /// What the HIR stores for `node` besides its modifiers: `?`, `...`, `!`, `*`.
     pub fn node_hir_flags(&mut self, node: NodeRef) -> Flags {
-        self.valid(node).map_or(Flags::empty(), |(hir, node)| hir.flags(node))
+        self.valid(node)
+            .map_or(Flags::empty(), |(hir, node)| hir.flags(node))
     }
 
     /// `getCombinedModifierFlags`
@@ -534,7 +580,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let hir = self.c.hir(file);
         let mut text = hir.text.get(hir.start(node) as usize..).unwrap_or_default();
         for modifier in [&b"export"[..], b"declare"] {
-            text = text.strip_prefix(modifier).map_or(text, |rest| rest.trim_ascii_start());
+            text = text
+                .strip_prefix(modifier)
+                .map_or(text, |rest| rest.trim_ascii_start());
         }
         !text.starts_with(b"module")
     }
@@ -545,7 +593,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     fn symbol_of_rejected_declaration(&self, file: FileId, decl: Decl) -> SymbolId {
         let found = match file == self.file {
             true => {
-                let symbols = (self.symbols_of_declarations).get_or_init(|| self.c.symbols_of_declarations(file));
+                let symbols = (self.symbols_of_declarations)
+                    .get_or_init(|| self.c.symbols_of_declarations(file));
                 symbols.get(&decl).copied()
             }
             false => self.c.symbols_of_declarations(file).get(&decl).copied(),
@@ -555,7 +604,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     /// What `node` is, if it is an expression, an identifier or the name of a declaration.
     fn visited_kind(&self, node: NodeRef) -> Option<VisitedKind> {
-        self.c.visited_kind(node.file, node.node, &|decl| self.symbol_of_rejected_declaration(node.file, decl).some())
+        self.c.visited_kind(node.file, node.node, &|decl| {
+            self.symbol_of_rejected_declaration(node.file, decl).some()
+        })
     }
 
     pub fn type_from_type_node(&mut self, node: NodeRef) -> TypeId {
@@ -569,12 +620,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         if let Some((hir, at)) = self.valid(node) {
             // The name in the tag of a JSX element: `getContextualJsxElementAttributesType`.
             let tag = hir.parent(at);
-            if matches!(hir.kind(tag), Kind::JsxOpeningElement | Kind::JsxSelfClosingElement)
-                && hir.is_jsx_tag_name(at)
+            if matches!(
+                hir.kind(tag),
+                Kind::JsxOpeningElement | Kind::JsxSelfClosingElement
+            ) && hir.is_jsx_tag_name(at)
                 && let NodeData::Expr(element) = hir.data(tag.row())
             {
                 let outer = self.c.begin_recheck();
-                let ty = self.c.contextual_jsx_element_attributes_type(node.file, element);
+                let ty = self
+                    .c
+                    .contextual_jsx_element_attributes_type(node.file, element);
                 self.c.end_recheck(outer);
                 return ty;
             }
@@ -615,12 +670,18 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn apparent_type_of_contextual_type(&mut self, node: NodeRef) -> Option<TypeId> {
         let e = self.expr_of(node)?;
         let outer = self.c.begin_recheck();
-        let ty = self.c.apparent_type_of_contextual_type(node.file, e, ContextFlags::empty());
+        let ty = self
+            .c
+            .apparent_type_of_contextual_type(node.file, e, ContextFlags::empty());
         self.c.end_recheck(outer);
         ty
     }
 
-    pub fn contextual_type_for_argument_at_index(&mut self, call: NodeRef, index: u32) -> Option<TypeId> {
+    pub fn contextual_type_for_argument_at_index(
+        &mut self,
+        call: NodeRef,
+        index: u32,
+    ) -> Option<TypeId> {
         let e = self.expr_of(call)?;
         let hir = self.c.hir(call.file);
         let (ExprKind::Call(id) | ExprKind::New(id)) = hir[e].kind else {
@@ -644,8 +705,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let is_call_like = matches!(
             hir[e].kind,
             ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::Jsx(_)
-        ) || matches!(hir[e].kind, ExprKind::Binary { op: BinOp::Instanceof, .. })
-            || matches!(self.c.bound(call.file).expr_parent.get(e.idx()), Some(crate::bind::Parent::Decorator(..)));
+        ) || matches!(
+            hir[e].kind,
+            ExprKind::Binary {
+                op: BinOp::Instanceof,
+                ..
+            }
+        ) || matches!(
+            self.c.bound(call.file).expr_parent.get(e.idx()),
+            Some(crate::bind::Parent::Decorator(..))
+        );
         if !is_call_like {
             return None;
         }
@@ -668,7 +737,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 ExprKind::Dot { name, .. } => name,
                 ExprKind::Index { index, .. } => match hir[index].kind {
                     ExprKind::String(text) => text,
-                    ExprKind::Number(number) => self.c.number_name(*hir.numbers.get(number as usize)?),
+                    ExprKind::Number(number) => {
+                        self.c.number_name(*hir.numbers.get(number as usize)?)
+                    }
                     _ => {
                         let ty = self.c.type_of_expr(node.file, index);
                         self.c.property_name_of_type(ty)?
@@ -700,7 +771,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             NodeData::Param(parameter) => {
                 let function = *self.c.bound(node.file).param_fn.get(parameter.idx())?;
-                self.c.number_name(f64::from(parameter.0.checked_sub(hir[function].params.start)?))
+                self.c.number_name(f64::from(
+                    parameter.0.checked_sub(hir[function].params.start)?,
+                ))
             }
             _ => return None,
         };
@@ -712,7 +785,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let value = match hir.data(at) {
             NodeData::EnumMember(member) => self.c.enum_member_value(node.file, member)?,
             // `getConstantValue`: an access to a member of an enum.
-            NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::Dot { .. } | ExprKind::Index { .. }) => {
+            NodeData::Expr(e)
+                if matches!(hir[e].kind, ExprKind::Dot { .. } | ExprKind::Index { .. }) =>
+            {
                 let ty = self.c.type_of_expr(node.file, e);
                 match *self.c.data(ty) {
                     TypeData::EnumLit { value, .. } => value,
@@ -728,7 +803,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn is_const_context(&mut self, node: NodeRef) -> bool {
-        self.expr_of(node).is_some_and(|e| self.c.is_const_context(node.file, e))
+        self.expr_of(node)
+            .is_some_and(|e| self.c.is_const_context(node.file, e))
     }
 
     pub fn flow_type_of_reference(&mut self, node: NodeRef, declared: TypeId) -> TypeId {

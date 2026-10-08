@@ -47,7 +47,12 @@ fn write_tokens<'a>(out: &mut String, text: &[u8], tokens: impl Iterator<Item = 
     out.push('[');
     for (i, token) in tokens.enumerate() {
         let (start, end) = (utf16.at(token.start()), utf16.at(token.end()));
-        let _ = write!(out, "{}{},{start},{end}", if i == 0 { "" } else { "," }, token.kind() as u8);
+        let _ = write!(
+            out,
+            "{}{},{start},{end}",
+            if i == 0 { "" } else { "," },
+            token.kind() as u8
+        );
     }
     out.push(']');
 }
@@ -81,22 +86,40 @@ fn batch(path: &str) {
             // Before the tokens are asked for, these are the comments that the parser lists.
             let mut comments = String::new();
             write_tokens(&mut comments, code, file.comments());
-            assert!(bun_lint::tokens::scan_comments_again(file).is_some(), "the parser and the scan disagree on the comments");
+            assert!(
+                bun_lint::tokens::scan_comments_again(file).is_some(),
+                "the parser and the scan disagree on the comments"
+            );
             let mut out = format!("{{\"errors\":{},\"tokens\":", file.has_parse_errors());
             write_tokens(&mut out, code, file.tokens());
             // Where `token.value` is not the text: the index of the token, and the value.
-            let different = file.tokens().enumerate().filter(|(_, token)| *token.decoded_value() != *token.text());
-            let values = different.flat_map(|(i, token)| [Json::Number(i as f64), Json::String(token.decoded_value().into_owned())]);
+            let different = file
+                .tokens()
+                .enumerate()
+                .filter(|(_, token)| *token.decoded_value() != *token.text());
+            let values = different.flat_map(|(i, token)| {
+                [
+                    Json::Number(i as f64),
+                    Json::String(token.decoded_value().into_owned()),
+                ]
+            });
             let mut written = Vec::new();
             Json::Array(values.collect()).stringify(&mut written);
             // How much of each comment is not its value: at the start, at the end.
             let delimiters = file.comments().flat_map(|comment| {
-                let start = if comment.kind() == TokenKind::Block { 2 } else { comment.text().len() - comment.value().len() };
+                let start = if comment.kind() == TokenKind::Block {
+                    2
+                } else {
+                    comment.text().len() - comment.value().len()
+                };
                 [start, comment.text().len() - comment.value().len() - start]
             });
             let delimiters: Vec<usize> = delimiters.collect();
             let written = bstr::BStr::new(&written);
-            let _ = write!(out, ",\"comments\":{comments},\"values\":{written},\"delimiters\":{delimiters:?}}}");
+            let _ = write!(
+                out,
+                ",\"comments\":{comments},\"values\":{written},\"delimiters\":{delimiters:?}}}"
+            );
             out
         });
         let _ = writeln!(stdout, "{line}");
@@ -108,12 +131,27 @@ fn answer<'a>(file: &'a File<'a>, query: &[Json]) -> Vec<u32> {
         Some(Json::Number(n)) => *n as u32,
         _ => 0,
     };
-    let (a, b) = (Span::new(number(1), number(2)), Span::new(number(3), number(4)));
+    let (a, b) = (
+        Span::new(number(1), number(2)),
+        Span::new(number(3), number(4)),
+    );
     let includes_comments = number(5) != 0;
-    let with = |tokens: Tokens<'a>| if includes_comments { tokens.with_comments() } else { tokens };
-    let ranges = |tokens: &mut dyn Iterator<Item = Token<'a>>| tokens.flat_map(|t| [t.start(), t.end()]).collect();
+    let with = |tokens: Tokens<'a>| {
+        if includes_comments {
+            tokens.with_comments()
+        } else {
+            tokens
+        }
+    };
+    let ranges = |tokens: &mut dyn Iterator<Item = Token<'a>>| {
+        tokens.flat_map(|t| [t.start(), t.end()]).collect()
+    };
     let one = |plain: Option<Token<'a>>, with_comments: &mut dyn FnMut() -> Option<Token<'a>>| {
-        let token = if includes_comments { with_comments() } else { plain };
+        let token = if includes_comments {
+            with_comments()
+        } else {
+            plain
+        };
         ranges(&mut token.into_iter())
     };
     match query.first().and_then(Json::as_str).unwrap_or_default() {
@@ -124,19 +162,34 @@ fn answer<'a>(file: &'a File<'a>, query: &[Json]) -> Vec<u32> {
         b"betweenBackwards" => ranges(&mut with(file.tokens_between(a, b)).rev()),
         b"padded" => ranges(&mut file.tokens_in(a).padded(b.start as usize, b.end as usize)),
         b"paddedBetween" => ranges(&mut file.tokens_between(a, b).padded(1, 1)),
-        b"first" => one(file.first_token(a), &mut || file.tokens_in(a).with_comments().next()),
-        b"last" => one(file.last_token(a), &mut || file.tokens_in(a).with_comments().next_back()),
+        b"first" => one(file.first_token(a), &mut || {
+            file.tokens_in(a).with_comments().next()
+        }),
+        b"last" => one(file.last_token(a), &mut || {
+            file.tokens_in(a).with_comments().next_back()
+        }),
         b"secondLast" => ranges(&mut with(file.tokens_in(a)).nth_back(1).into_iter()),
-        b"tokenBefore" => one(file.token_before(a), &mut || file.tokens_before(a).with_comments().next()),
-        b"tokenAfter" => one(file.token_after(a), &mut || file.tokens_after(a).with_comments().next()),
+        b"tokenBefore" => one(file.token_before(a), &mut || {
+            file.tokens_before(a).with_comments().next()
+        }),
+        b"tokenAfter" => one(file.token_after(a), &mut || {
+            file.tokens_after(a).with_comments().next()
+        }),
         b"secondBefore" => ranges(&mut with(file.tokens_before(a)).nth(1).into_iter()),
-        b"at" => one(file.token_at(a.start), &mut || file.token_or_comment_at(a.start)),
-        b"around" => one(file.token_around(a.start), &mut || file.token_or_comment_around(a.start)),
+        b"at" => one(file.token_at(a.start), &mut || {
+            file.token_or_comment_at(a.start)
+        }),
+        b"around" => one(file.token_around(a.start), &mut || {
+            file.token_or_comment_around(a.start)
+        }),
         b"commentsBefore" => ranges(&mut file.comments_before(a)),
         b"commentsAfter" => ranges(&mut file.comments_after(a)),
         b"commentsIn" => ranges(&mut file.comments_in(a)),
         b"commentsExist" => {
-            assert_eq!(file.comments_exist_between(a, b), file.comments_between(a, b).next().is_some());
+            assert_eq!(
+                file.comments_exist_between(a, b),
+                file.comments_between(a, b).next().is_some()
+            );
             vec![u32::from(file.comments_exist_between(a, b))]
         }
         b"space" => vec![u32::from(file.is_space_between(a, b))],
@@ -159,11 +212,21 @@ fn query(path: &str) {
         let case = bun_lint::json::parse(line).expect("a case");
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
-        let queries = case.get(b"queries").and_then(Json::as_array).unwrap_or_default();
-        let answers = crate::with_file(&String::from_utf8_lossy(path), code, &language_of(&case), |file| {
-            let answers = queries.iter().map(|it| answer(file, it.as_array().unwrap_or_default()));
-            format!("{:?}", answers.collect::<Vec<_>>())
-        });
+        let queries = case
+            .get(b"queries")
+            .and_then(Json::as_array)
+            .unwrap_or_default();
+        let answers = crate::with_file(
+            &String::from_utf8_lossy(path),
+            code,
+            &language_of(&case),
+            |file| {
+                let answers = queries
+                    .iter()
+                    .map(|it| answer(file, it.as_array().unwrap_or_default()));
+                format!("{:?}", answers.collect::<Vec<_>>())
+            },
+        );
         let _ = writeln!(stdout, "{answers}");
     }
 }
@@ -176,7 +239,12 @@ fn dump(path: &str) {
         }
         for token in file.tokens().with_comments() {
             let kind: TokenKind = token.kind();
-            println!("{kind:?} {}..{} {:?}", token.start(), token.end(), bstr::BStr::new(token.text()));
+            println!(
+                "{kind:?} {}..{} {:?}",
+                token.start(),
+                token.end(),
+                bstr::BStr::new(token.text())
+            );
         }
     });
 }
@@ -228,8 +296,15 @@ fn bench(paths: &[String]) {
 fn check<'a>(file: &'a File<'a>) -> Option<String> {
     let mut end = 0;
     for token in file.tokens().with_comments() {
-        if token.start() < end || token.end() <= token.start() || token.end() as usize > file.text().len() {
-            return Some(format!("{token:?} at {}..{} after {end}", token.start(), token.end()));
+        if token.start() < end
+            || token.end() <= token.start()
+            || token.end() as usize > file.text().len()
+        {
+            return Some(format!(
+                "{token:?} at {}..{} after {end}",
+                token.start(),
+                token.end()
+            ));
         }
         end = token.end();
     }
@@ -268,12 +343,16 @@ fn fuzz(rounds: usize, paths: &[String]) {
                         code.splice(to..to, copy);
                     }
                     _ => {
-                        let inserted: Vec<u8> = (0..1 + random(3)).map(|_| BYTES[random(BYTES.len())]).collect();
+                        let inserted: Vec<u8> = (0..1 + random(3))
+                            .map(|_| BYTES[random(BYTES.len())])
+                            .collect();
                         code.splice(at..at, inserted);
                     }
                 }
             }
-            let problem = std::panic::catch_unwind(|| crate::with_file(path, &code, &LanguageOptions::default(), check));
+            let problem = std::panic::catch_unwind(|| {
+                crate::with_file(path, &code, &LanguageOptions::default(), check)
+            });
             scanned += 1;
             let problem = match problem {
                 Ok(None) => continue,
@@ -281,7 +360,10 @@ fn fuzz(rounds: usize, paths: &[String]) {
                 Err(_) => "panic".to_owned(),
             };
             panics += 1;
-            let saved = format!("fuzz-{panics}-{}", path.rsplit('/').next().unwrap_or_default());
+            let saved = format!(
+                "fuzz-{panics}-{}",
+                path.rsplit('/').next().unwrap_or_default()
+            );
             let _ = std::fs::write(&saved, &code);
             println!("{saved}: {problem}");
         }
@@ -295,7 +377,11 @@ pub(crate) fn run(args: &[String]) {
         [command, path] if command == "batch" => batch(path),
         [command, path] if command == "query" => query(path),
         [command, paths @ ..] if command == "bench" => bench(paths),
-        [command, rounds, paths @ ..] if command == "fuzz" => fuzz(rounds.parse().unwrap_or(1), paths),
-        _ => println!("usage: bun-lint tokens dump <file> | batch <cases.jsonl> | query <cases.jsonl> | bench <files..> | fuzz <rounds> <files..>"),
+        [command, rounds, paths @ ..] if command == "fuzz" => {
+            fuzz(rounds.parse().unwrap_or(1), paths)
+        }
+        _ => println!(
+            "usage: bun-lint tokens dump <file> | batch <cases.jsonl> | query <cases.jsonl> | bench <files..> | fuzz <rounds> <files..>"
+        ),
     }
 }

@@ -160,10 +160,12 @@ impl<'a> Leaf<'a> {
             KeyKind::Private(name) => Leaf::Private(name.bytes()),
             KeyKind::ComputedString(_) if file.slice(span).starts_with(b"`") => Leaf::Template,
             KeyKind::String(value) | KeyKind::ComputedString(value) => Leaf::String(value.bytes()),
-            KeyKind::Number(value) | KeyKind::ComputedNumber(value) => match file.slice(span).ends_with(b"n") {
-                true => Leaf::BigInt(value.bytes()),
-                false => Leaf::Number(std::str::from_utf8(value.bytes()).ok()?.parse().ok()?),
-            },
+            KeyKind::Number(value) | KeyKind::ComputedNumber(value) => {
+                match file.slice(span).ends_with(b"n") {
+                    true => Leaf::BigInt(value.bytes()),
+                    false => Leaf::Number(std::str::from_utf8(value.bytes()).ok()?.parse().ok()?),
+                }
+            }
             KeyKind::Computed(_) => return None,
         };
         Some((leaf, span))
@@ -231,7 +233,9 @@ impl<'a> VNode<'a> {
     pub(super) fn in_container(e: Expr<'a>) -> Option<VNode<'a>> {
         match e.tag() {
             ExprTag::Missing => None,
-            ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull if e.is_chain_root() => {
+            ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
+                if e.is_chain_root() =>
+            {
                 Some(VNode::new(e, Part::Chain))
             }
             _ => Some(VNode::main_of_expr(e)),
@@ -258,7 +262,12 @@ impl<'a> VNode<'a> {
                 | StmtKind::Enum(_)
                 | StmtKind::Module(_)
                 | StmtKind::ImportEquals(_)
-        ) && (statement.modifiers().iter().map(Modifier::flag).find(|it| !it.is_empty())) == Some(Flags::EXPORT)
+        ) && (statement
+            .modifiers()
+            .iter()
+            .map(Modifier::flag)
+            .find(|it| !it.is_empty()))
+            == Some(Flags::EXPORT)
     }
 
     pub(super) fn of_stmt(statement: Stmt<'a>) -> VNode<'a> {
@@ -351,7 +360,11 @@ impl<'a> VNode<'a> {
     }
 
     /// `A.B.C` in `owner`, which has `len` names: the whole of it.
-    pub(super) fn of_entity_name(owner: impl Into<Node<'a>>, len: usize, is_member: bool) -> Option<VNode<'a>> {
+    pub(super) fn of_entity_name(
+        owner: impl Into<Node<'a>>,
+        len: usize,
+        is_member: bool,
+    ) -> Option<VNode<'a>> {
         let last = len.checked_sub(1)? as u32;
         Some(VNode::new(
             owner,
@@ -439,9 +452,10 @@ impl<'a> VNode<'a> {
         }
         match ty.parent() {
             Node::Stmt(statement) => matches!(statement.kind(), StmtKind::Interface(_)),
-            Node::Class(class) => {
-                class.implements().first().is_some_and(|first| first.span().start <= ty.span().start)
-            }
+            Node::Class(class) => class
+                .implements()
+                .first()
+                .is_some_and(|first| first.span().start <= ty.span().start),
             _ => false,
         }
     }
@@ -458,13 +472,16 @@ impl<'a> VNode<'a> {
     /// The token that it is, if it is one.
     pub(super) fn leaf(self) -> Option<(Leaf<'a>, Span)> {
         let file = self.file();
-        let string = |value: Option<&'a [u8]>, span: Option<Span>| Some((Leaf::String(value?), span?));
+        let string =
+            |value: Option<&'a [u8]>, span: Option<Span>| Some((Leaf::String(value?), span?));
         let word = |span: Span| Some((Leaf::Identifier(file.slice(span)), span));
         let ident = |ident: Option<Ident<'a>>| ident.map(Leaf::ident);
         match (self.base, self.part) {
             (Node::Expr(e), Part::Main) => {
                 let leaf = match e.kind() {
-                    ExprKind::Ident(_) | ExprKind::This if e.is_jsx_tag_name() => Leaf::JsxIdentifier,
+                    ExprKind::Ident(_) | ExprKind::This if e.is_jsx_tag_name() => {
+                        Leaf::JsxIdentifier
+                    }
                     ExprKind::Ident(name) => Leaf::Identifier(name.bytes()),
                     ExprKind::PrivateIdentifier(name) => Leaf::Private(name.bytes()),
                     ExprKind::Null => Leaf::Null,
@@ -491,7 +508,9 @@ impl<'a> VNode<'a> {
             (Node::Expr(e), Part::Property | Part::Meta) => {
                 let is_property = self.part == Part::Property;
                 match e.kind() {
-                    ExprKind::Dot { name, .. } if e.is_jsx_tag_name() => Some((Leaf::JsxIdentifier, name.span())),
+                    ExprKind::Dot { name, .. } if e.is_jsx_tag_name() => {
+                        Some((Leaf::JsxIdentifier, name.span()))
+                    }
                     ExprKind::Dot { name, .. } => Some(Leaf::ident(name)),
                     ExprKind::ImportMeta | ExprKind::NewTarget => {
                         let (meta, property) = e.meta_property_spans()?;
@@ -500,27 +519,40 @@ impl<'a> VNode<'a> {
                     // `a:b`
                     ExprKind::String(_) => {
                         let (namespace, name) = file.jsx_namespace_and_name(e.span().start)?;
-                        Some((Leaf::JsxIdentifier, if is_property { name } else { namespace }))
+                        Some((
+                            Leaf::JsxIdentifier,
+                            if is_property { name } else { namespace },
+                        ))
                     }
                     _ => None,
                 }
             }
             (Node::Expr(e), Part::ConstName) => word(e.const_keyword_span()?),
             (Node::Prop(prop), Part::KeyNamespace | Part::KeyName) => {
-                let (namespace, name) = file.jsx_namespace_and_name(prop.key()?.span(file).start)?;
-                Some((Leaf::JsxIdentifier, if self.part == Part::KeyName { name } else { namespace }))
+                let (namespace, name) =
+                    file.jsx_namespace_and_name(prop.key()?.span(file).start)?;
+                Some((
+                    Leaf::JsxIdentifier,
+                    if self.part == Part::KeyName {
+                        name
+                    } else {
+                        namespace
+                    },
+                ))
             }
             (Node::Prop(prop), Part::Key) => {
                 let found = Leaf::key(file, prop.key()?)?;
-                let is_namespaced =
-                    matches!(found.0, Leaf::JsxIdentifier) && file.jsx_namespace_and_name(found.1.start).is_some();
+                let is_namespaced = matches!(found.0, Leaf::JsxIdentifier)
+                    && file.jsx_namespace_and_name(found.1.start).is_some();
                 (!is_namespaced).then_some(found)
             }
             (_, Part::AttributeKey(_)) => Leaf::key(file, self.attribute()?.key()?),
             (Node::PatProp(prop), Part::Key) => Leaf::key(file, prop.key()?),
             (Node::EnumMember(member), Part::Key) => Leaf::key(file, member.key()?),
             (Node::Member(member), Part::Key) => match member.constructor_keyword() {
-                Some(keyword) if keyword.is_string() => Some((Leaf::String(b"constructor"), keyword.span())),
+                Some(keyword) if keyword.is_string() => {
+                    Some((Leaf::String(b"constructor"), keyword.span()))
+                }
                 Some(keyword) => Some((Leaf::Identifier(b"constructor"), keyword.span())),
                 None => Leaf::key(file, member.key()?),
             },
@@ -533,7 +565,9 @@ impl<'a> VNode<'a> {
             (Node::ExportSpec(it), Part::Local) => ident(Some(it.local())),
             (Node::ExportSpec(it), Part::Exported) => ident(Some(it.exported())),
             (Node::Stmt(statement), Part::Name) => ident(match statement.kind() {
-                StmtKind::Labeled { .. } | StmtKind::Break(_) | StmtKind::Continue(_) => statement.label(),
+                StmtKind::Labeled { .. } | StmtKind::Break(_) | StmtKind::Continue(_) => {
+                    statement.label()
+                }
                 StmtKind::Interface(it) => Some(it.name()),
                 StmtKind::TypeAlias(it) => Some(it.name()),
                 StmtKind::Enum(it) => Some(it.name()),
@@ -546,8 +580,12 @@ impl<'a> VNode<'a> {
                 StmtKind::Module(module) => {
                     let module = VNode::nested_module(module, i)?;
                     match module.name() {
-                        ModuleName::Ident(name) | ModuleName::String(name) => Some(Leaf::ident(name)),
-                        ModuleName::Global => Some((Leaf::Identifier(b"global"), module.name_span())),
+                        ModuleName::Ident(name) | ModuleName::String(name) => {
+                            Some(Leaf::ident(name))
+                        }
+                        ModuleName::Global => {
+                            Some((Leaf::Identifier(b"global"), module.name_span()))
+                        }
                     }
                 }
                 _ => ident(self.entity_name()?.get(i as usize)),
@@ -565,15 +603,23 @@ impl<'a> VNode<'a> {
                 };
                 string(spec.map(|it| it.bytes()), statement.module_specifier_span())
             }
-            (Node::Stmt(statement), Part::DefaultLocal | Part::NamespaceLocal) => match statement.kind() {
-                StmtKind::Import(import) if self.part == Part::DefaultLocal => ident(import.default()),
-                StmtKind::Import(import) => ident(import.namespace()),
-                _ => None,
-            },
-            (Node::Type(ty), Part::Name) => ident(ty.predicate_param().filter(|it| !it.name().is("this"))),
+            (Node::Stmt(statement), Part::DefaultLocal | Part::NamespaceLocal) => {
+                match statement.kind() {
+                    StmtKind::Import(import) if self.part == Part::DefaultLocal => {
+                        ident(import.default())
+                    }
+                    StmtKind::Import(import) => ident(import.namespace()),
+                    _ => None,
+                }
+            }
+            (Node::Type(ty), Part::Name) => {
+                ident(ty.predicate_param().filter(|it| !it.name().is("this")))
+            }
             (Node::Type(_), Part::NamePart(i)) => ident(self.entity_name()?.get(i as usize)),
             (Node::Type(ty), Part::Source) => match ty.kind() {
-                TypeKind::Import { spec, .. } => string(spec.map(|it| it.bytes()), ty.import_source_span()),
+                TypeKind::Import { spec, .. } => {
+                    string(spec.map(|it| it.bytes()), ty.import_source_span())
+                }
                 _ => None,
             },
             (Node::Type(ty), Part::OptionsKey) => word(ty.import_attributes()?.keyword_span()),
@@ -733,10 +779,12 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
         ExprKind::This => ThisExpression,
         ExprKind::Super => Super,
         ExprKind::String(_) if e.is_jsx_text() => JSXText,
-        ExprKind::String(_) if e.is_jsx_tag_name() => match e.file().jsx_namespace_and_name(e.span().start) {
-            Some(_) => JSXNamespacedName,
-            None => JSXIdentifier,
-        },
+        ExprKind::String(_) if e.is_jsx_tag_name() => {
+            match e.file().jsx_namespace_and_name(e.span().start) {
+                Some(_) => JSXNamespacedName,
+                None => JSXIdentifier,
+            }
+        }
         ExprKind::String(_) => Literal,
         ExprKind::Ident(_) => Identifier,
         ExprKind::PrivateIdentifier(_) => PrivateIdentifier,
@@ -767,7 +815,9 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
         ExprKind::Unary { .. } => UnaryExpression,
         ExprKind::Binary { op, .. } => match op {
             crate::ast::BinOp::Comma => SequenceExpression,
-            crate::ast::BinOp::And | crate::ast::BinOp::Or | crate::ast::BinOp::Nullish => LogicalExpression,
+            crate::ast::BinOp::And | crate::ast::BinOp::Or | crate::ast::BinOp::Nullish => {
+                LogicalExpression
+            }
             _ => BinaryExpression,
         },
         ExprKind::Assign { .. } if is_assignment_pattern(e) => AssignmentPattern,
@@ -793,7 +843,8 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
 
 /// Whether the `Assign` `e` is a default: in what is assigned to, or in `{ a = 1 }`.
 pub(super) fn is_assignment_pattern(e: Expr) -> bool {
-    matches!(e.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand) || e.is_assignment_target()
+    matches!(e.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand)
+        || e.is_assignment_target()
 }
 
 fn stmt_type(statement: Stmt, part: Part) -> NodeType {
@@ -895,9 +946,10 @@ fn type_type(ty: TypeNode, part: Part) -> NodeType {
             Keyword::Intrinsic => TSIntrinsicKeyword,
         },
         TypeKind::Ref { .. } => TSTypeReference,
-        TypeKind::StringLit(_) | TypeKind::NumberLit(_) | TypeKind::BigIntLit { .. } | TypeKind::BoolLit(_) => {
-            TSLiteralType
-        }
+        TypeKind::StringLit(_)
+        | TypeKind::NumberLit(_)
+        | TypeKind::BigIntLit { .. }
+        | TypeKind::BoolLit(_) => TSLiteralType,
         TypeKind::Template(_) => TSTemplateLiteralType,
         TypeKind::Array(_) => TSArrayType,
         TypeKind::Tuple(_) => TSTupleType,
@@ -910,8 +962,14 @@ fn type_type(ty: TypeNode, part: Part) -> NodeType {
         TypeKind::Infer(_) => TSInferType,
         TypeKind::Mapped(_) => TSMappedType,
         TypeKind::IndexedAccess { .. } => TSIndexedAccessType,
-        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => TSTypeOperator,
-        TypeKind::Typeof { .. } | TypeKind::Import { is_typeof: true, .. } => TSTypeQuery,
+        TypeKind::Keyof(_)
+        | TypeKind::Readonly(_)
+        | TypeKind::UniqueSymbol
+        | TypeKind::Unique(_) => TSTypeOperator,
+        TypeKind::Typeof { .. }
+        | TypeKind::Import {
+            is_typeof: true, ..
+        } => TSTypeQuery,
         TypeKind::Import { .. } => TSImportType,
         TypeKind::Predicate { .. } => TSTypePredicate,
     }
@@ -919,7 +977,10 @@ fn type_type(ty: TypeNode, part: Part) -> NodeType {
 
 fn member_type(member: Member) -> NodeType {
     use NodeType::*;
-    let keywords = member.modifiers().iter().fold(Flags::empty(), |all, it| all | it.flag());
+    let keywords = member
+        .modifiers()
+        .iter()
+        .fold(Flags::empty(), |all, it| all | it.flag());
     let is_abstract = keywords.contains(Flags::ABSTRACT);
     match member.kind() {
         MemberKind::CallSignature => TSCallSignatureDeclaration,
@@ -997,7 +1058,9 @@ impl<'a> VNode<'a> {
             },
             (Node::Stmt(statement), part) => match part {
                 Part::Export => statement.export_span(),
-                Part::Main if VNode::is_exported_declaration(statement) => Some(statement.span_without_export()),
+                Part::Main if VNode::is_exported_declaration(statement) => {
+                    Some(statement.span_without_export())
+                }
                 Part::Catch => statement.catch_clause_span(),
                 Part::Reference => match statement.kind() {
                     StmtKind::ImportEquals(import) => import.require_span(),
@@ -1038,12 +1101,14 @@ impl<'a> VNode<'a> {
                 Node::VarDecl(declaration) => declaration.binding_span(),
                 _ => pat.span(),
             }),
-            (Node::PatProp(prop), Part::Value) => {
-                Some(Span::new(prop.value().span().start, prop.default()?.outer_span().end))
-            }
-            (Node::Param(param), Part::Inner) if !param.is_rest() => {
-                Some(Span::new(param.pat().span().start, param.default()?.outer_span().end))
-            }
+            (Node::PatProp(prop), Part::Value) => Some(Span::new(
+                prop.value().span().start,
+                prop.default()?.outer_span().end,
+            )),
+            (Node::Param(param), Part::Inner) if !param.is_rest() => Some(Span::new(
+                param.pat().span().start,
+                param.default()?.outer_span().end,
+            )),
             (Node::TupleElem(element), Part::Named) => {
                 Some(Span::new(element.name()?.span().start, element.span().end))
             }

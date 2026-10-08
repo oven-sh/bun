@@ -9,7 +9,9 @@ const MAX_LINE_WIDTH: usize = 320;
 
 /// The options for something in a comment of a file that is formatted with `options`.
 pub(super) fn embedded_options(options: &FormatOptions, print_width: usize) -> FormatOptions {
-    let width = u16::try_from(print_width).map_or(80, usize::from).clamp(1, MAX_LINE_WIDTH);
+    let width = u16::try_from(print_width)
+        .map_or(80, usize::from)
+        .clamp(1, MAX_LINE_WIDTH);
     FormatOptions {
         line_width: LineWidth(width as u16),
         jsdoc: None,
@@ -42,13 +44,30 @@ const TSX: &[u8] = b"dummy.tsx";
 const JSX: &[u8] = b"dummy.jsx";
 
 pub(super) fn is_js_ts_lang(lang: &[u8]) -> bool {
-    [&b"js"[..], b"javascript", b"jsx", b"ts", b"typescript", b"tsx"].iter().any(|name| lang.eq_ignore_ascii_case(name))
+    [
+        &b"js"[..],
+        b"javascript",
+        b"jsx",
+        b"ts",
+        b"typescript",
+        b"tsx",
+    ]
+    .iter()
+    .any(|name| lang.eq_ignore_ascii_case(name))
 }
 
 /// Code in a description in one of the languages that prettier-plugin-jsdoc formats and that is neither JavaScript
 /// nor TypeScript. `None`: it stays as it is.
-pub(super) fn format_embedded_language(lang: &[u8], code: &[u8], print_width: usize, options: &FormatOptions) -> Option<Vec<u8>> {
-    if matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Off) {
+pub(super) fn format_embedded_language(
+    lang: &[u8],
+    code: &[u8],
+    print_width: usize,
+    options: &FormatOptions,
+) -> Option<Vec<u8>> {
+    if matches!(
+        options.embedded_language_formatting,
+        EmbeddedLanguageFormatting::Off
+    ) {
         return None;
     }
     let options = FormatOptions {
@@ -56,12 +75,20 @@ pub(super) fn format_embedded_language(lang: &[u8], code: &[u8], print_width: us
         ..embedded_options(options, print_width)
     };
     let mut out = Vec::new();
-    let css = |parser, out: &mut Vec<u8>| crate::css::format(code, parser, &options, &mut Default::default(), out);
+    let css = |parser, out: &mut Vec<u8>| {
+        crate::css::format(code, parser, &options, &mut Default::default(), out)
+    };
     match &lang.to_ascii_lowercase()[..] {
         b"css" => css(crate::css::Parser::Css, &mut out),
         b"less" => css(crate::css::Parser::Less, &mut out),
         b"scss" => css(crate::css::Parser::Scss, &mut out),
-        b"json" => crate::json::format(code, crate::json::Parser::Json, &options, &mut Default::default(), &mut out),
+        b"json" => crate::json::format(
+            code,
+            crate::json::Parser::Json,
+            &options,
+            &mut Default::default(),
+            &mut out,
+        ),
         b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out),
         _ => return None,
     }
@@ -78,7 +105,9 @@ pub(super) fn update_template_depth(line: &[u8], mut depth: u32) -> u32 {
     while i < line.len() {
         match line[i] {
             b'\\' => i += 1,
-            b'`' if expression_brace_depth.is_empty() => depth = u32::from(depth == 0) + depth.saturating_sub(1),
+            b'`' if expression_brace_depth.is_empty() => {
+                depth = u32::from(depth == 0) + depth.saturating_sub(1)
+            }
             b'`' => expression_brace_depth.push(0),
             b'$' if depth > 0 && line.get(i + 1) == Some(&b'{') => {
                 expression_brace_depth.push(0);
@@ -105,17 +134,23 @@ pub(super) fn update_template_depth(line: &[u8], mut depth: u32) -> u32 {
 
 /// `code` formatted as JavaScript or TypeScript, in lines of at most `print_width` columns. `None` if it is
 /// neither.
-pub(super) fn format_embedded_js(code: &[u8], print_width: usize, options: &FormatOptions) -> Option<Vec<u8>> {
+pub(super) fn format_embedded_js(
+    code: &[u8],
+    print_width: usize,
+    options: &FormatOptions,
+) -> Option<Vec<u8>> {
     let base_options = embedded_options(options, print_width);
     let trimmed = trim(code);
     if !trimmed.starts_with(b"{") {
         // TSX first: `getItem<number>(..)` is something else in JSX.
-        return parse_and_build(TSX, code, &base_options).or_else(|| parse_and_build(JSX, code, &base_options));
+        return parse_and_build(TSX, code, &base_options)
+            .or_else(|| parse_and_build(JSX, code, &base_options));
     }
     // An object, which would be a block with labels. prettier-plugin-jsdoc formats it as JSON, which keeps the
     // quotes of keys, so one with quotes is left alone.
-    let has_quoted_keys = strings::index_of_char_usize(trimmed, b'"')
-        .is_some_and(|quote| strings::index_of_char_usize(trimmed, b'}').is_some_and(|brace| quote < brace));
+    let has_quoted_keys = strings::index_of_char_usize(trimmed, b'"').is_some_and(|quote| {
+        strings::index_of_char_usize(trimmed, b'}').is_some_and(|brace| quote < brace)
+    });
     if has_quoted_keys {
         return None;
     }
@@ -126,7 +161,10 @@ pub(super) fn format_embedded_js(code: &[u8], print_width: usize, options: &Form
     };
     let format_object = |path: &[u8]| -> Option<Vec<u8>> {
         let formatted = parse_and_build(path, &wrapped, &object_options)?;
-        let Some(inner) = formatted.strip_prefix(b"(").and_then(|inner| inner.strip_suffix(b");")) else {
+        let Some(inner) = formatted
+            .strip_prefix(b"(")
+            .and_then(|inner| inner.strip_suffix(b");"))
+        else {
             return Some(formatted);
         };
         // Something behind the object: it is a call, and the parentheses are not the ones that were added.
@@ -137,7 +175,10 @@ pub(super) fn format_embedded_js(code: &[u8], print_width: usize, options: &Form
 
 /// `formatType` of prettier-plugin-jsdoc: the type is formatted as that of `type __t = ..;`. `None` if that
 /// fails or changes nothing. `options`: from [`embedded_options`].
-pub(super) fn format_type_via_formatter(type_str: &[u8], options: &FormatOptions) -> Option<Vec<u8>> {
+pub(super) fn format_type_via_formatter(
+    type_str: &[u8],
+    options: &FormatOptions,
+) -> Option<Vec<u8>> {
     if type_str.is_empty() {
         return None;
     }

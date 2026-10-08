@@ -105,7 +105,11 @@ fn unit_at(text: &[u8], index: u32) -> Option<Short> {
 impl<'a> Val<'a> {
     /// The value of the field of `entry` in `node`, which is of the type that `entry` is of.
     #[inline]
-    pub(super) fn of_field(node: VNode<'a>, entry: &'static FieldEntry, dialect: Dialect) -> Val<'a> {
+    pub(super) fn of_field(
+        node: VNode<'a>,
+        entry: &'static FieldEntry,
+        dialect: Dialect,
+    ) -> Val<'a> {
         if !entry.is_in(dialect) {
             return Val::Undefined;
         }
@@ -166,40 +170,58 @@ impl<'a> Val<'a> {
             (Val::Node(node), P::Parent) => node.parent().map_or(Val::Null, Val::Node),
             (Val::Node(node), P::Range) => Val::Range(node),
             (Val::Node(node), P::Loc) => Val::Loc(node),
-            (Val::Node(node), P::Start) if is_espree => Val::Number(utf16_offset(node.file(), node.span().start)),
-            (Val::Node(node), P::End) if is_espree => Val::Number(utf16_offset(node.file(), node.span().end)),
+            (Val::Node(node), P::Start) if is_espree => {
+                Val::Number(utf16_offset(node.file(), node.span().start))
+            }
+            (Val::Node(node), P::End) if is_espree => {
+                Val::Number(utf16_offset(node.file(), node.span().end))
+            }
             (Val::Node(node), _) => {
                 let entry = key.field.and_then(|field| node.node_type().field(field));
                 entry.map_or(Val::Undefined, |entry| Val::of_field(node, entry, dialect))
             }
 
             (Val::List(..), P::Length) => Val::Number(self.elements().map_or(0, Nodes::len) as f64),
-            (Val::List(..), P::Index(index)) => match self.elements().and_then(|it| it.get(index as usize)) {
-                Some(Some(node)) => Val::Node(node),
-                Some(None) => Val::Null,
-                None => Val::Undefined,
-            },
+            (Val::List(..), P::Index(index)) => {
+                match self.elements().and_then(|it| it.get(index as usize)) {
+                    Some(Some(node)) => Val::Node(node),
+                    Some(None) => Val::Null,
+                    None => Val::Undefined,
+                }
+            }
 
             (Val::Str(text), _) => string(text),
             (Val::Short(text), _) => string(text.as_bytes()),
 
-            (Val::Object(Object::Template { cooked, .. }), P::Cooked) => cooked.map_or(Val::Null, Val::Str),
+            (Val::Object(Object::Template { cooked, .. }), P::Cooked) => {
+                cooked.map_or(Val::Null, Val::Str)
+            }
             (Val::Object(Object::Template { raw, .. }), P::Raw) => Val::Str(raw),
             (Val::Object(Object::Regex { pattern, .. }), P::Pattern) => Val::Str(pattern),
             (Val::Object(Object::Regex { flags, .. }), P::Flags) => Val::Str(flags),
 
             (Val::Regex { pattern, .. }, P::Source) => Val::Str(pattern),
             (Val::Regex { flags, .. }, P::Flags) => Val::Short(Short::of_flags(flags)),
-            (Val::Regex { flags, .. }, P::HasFlag(flag)) => Val::Bool(bun_core::strings::contains_char(flags, flag)),
+            (Val::Regex { flags, .. }, P::HasFlag(flag)) => {
+                Val::Bool(bun_core::strings::contains_char(flags, flag))
+            }
             (Val::Regex { .. }, P::LastIndex) => Val::Number(0.0),
 
-            (Val::Range(node), P::Index(0)) => Val::Number(utf16_offset(node.file(), node.span().start)),
-            (Val::Range(node), P::Index(1)) => Val::Number(utf16_offset(node.file(), node.span().end)),
+            (Val::Range(node), P::Index(0)) => {
+                Val::Number(utf16_offset(node.file(), node.span().start))
+            }
+            (Val::Range(node), P::Index(1)) => {
+                Val::Number(utf16_offset(node.file(), node.span().end))
+            }
             (Val::Range(_), P::Length) => Val::Number(2.0),
             (Val::Loc(node), P::Start) => Val::Position(node.file(), node.span().start),
             (Val::Loc(node), P::End) => Val::Position(node.file(), node.span().end),
-            (Val::Position(file, offset), P::Line) => Val::Number(f64::from(file.position(offset).line)),
-            (Val::Position(file, offset), P::Column) => Val::Number(f64::from(file.position(offset).column)),
+            (Val::Position(file, offset), P::Line) => {
+                Val::Number(f64::from(file.position(offset).line))
+            }
+            (Val::Position(file, offset), P::Column) => {
+                Val::Number(f64::from(file.position(offset).column))
+            }
             _ => Val::Undefined,
         }
     }
@@ -214,7 +236,9 @@ impl<'a> Val<'a> {
             Val::Number(value) => then(&text::number_to_string(value)),
             Val::Str(text) | Val::BigInt(text) => then(text),
             Val::Short(text) => then(text.as_bytes()),
-            Val::Object(_) | Val::Node(_) | Val::Loc(_) | Val::Position(..) => then(b"[object Object]"),
+            Val::Object(_) | Val::Node(_) | Val::Loc(_) | Val::Position(..) => {
+                then(b"[object Object]")
+            }
             Val::Regex { pattern, flags } => {
                 then(&[b"/", pattern, b"/", Short::of_flags(flags).as_bytes()].concat())
             }
@@ -248,9 +272,12 @@ impl<'a> Val<'a> {
             Val::Null => literal.names == Names::Null,
             Val::Bool(value) => literal.names == Names::Bool(value),
             Val::Number(value) => {
-                literal.names == Names::Number && (value == literal.number || value.is_nan() && literal.number.is_nan())
+                literal.names == Names::Number
+                    && (value == literal.number || value.is_nan() && literal.number.is_nan())
             }
-            Val::Object(_) | Val::Node(_) | Val::Loc(_) | Val::Position(..) => literal.names == Names::Object,
+            Val::Object(_) | Val::Node(_) | Val::Loc(_) | Val::Position(..) => {
+                literal.names == Names::Object
+            }
             Val::Short(_) | Val::Regex { .. } | Val::List(..) | Val::Range(_) => {
                 self.with_string(|text| *text == *literal.text)
             }

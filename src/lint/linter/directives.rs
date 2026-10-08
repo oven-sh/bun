@@ -64,7 +64,10 @@ pub(crate) struct ConfigComment {
 #[inline]
 fn may_start_with_label(value: &[u8]) -> bool {
     // Or with whitespace that is not ASCII.
-    matches!(value.trim_ascii_start().first(), Some(b'e' | b'o' | b'g' | 0x0B | 0x80..))
+    matches!(
+        value.trim_ascii_start().first(),
+        Some(b'e' | b'o' | b'g' | 0x0B | 0x80..)
+    )
 }
 
 /// The range of `inner`, which is a slice of `outer`, in `outer`.

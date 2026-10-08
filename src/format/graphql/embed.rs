@@ -16,11 +16,19 @@ fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
 /// Whether a block comment with exactly `language` in it, like ` GraphQL `, is right before `start`, with nothing
 /// but other comments between. `is_statement`: a statement starts at `start`, and empty statements before it are
 /// nothing either.
-fn follows_language_comment(start: u32, is_statement: bool, language: &[u8], f: &Formatter<'_>) -> bool {
+fn follows_language_comment(
+    start: u32,
+    is_statement: bool,
+    language: &[u8],
+    f: &Formatter<'_>,
+) -> bool {
     let source = f.source_text();
     let unprinted = f.comments().comments_before(start);
     let (mut position, mut has_empty_statement) = (start, false);
-    let mut comments = unprinted.iter().rev().chain(f.comments().printed_comments().iter().rev());
+    let mut comments = unprinted
+        .iter()
+        .rev()
+        .chain(f.comments().printed_comments().iter().rev());
     while let Some(comment) = comments.next() {
         if comment.span.end > position {
             return false;
@@ -42,31 +50,51 @@ fn follows_language_comment(start: u32, is_statement: bool, language: &[u8], f: 
         // Behind a statement on the same line, it trails that. So do the comments before it.
         let mut first = comment;
         for previous in comments {
-            if first.preceded_by_newline() || !is_blank(source.bytes_range(previous.span.end, first.span.start)) {
+            if first.preceded_by_newline()
+                || !is_blank(source.bytes_range(previous.span.end, first.span.start))
+            {
                 break;
             }
             first = previous;
         }
-        return first.preceded_by_newline() || matches!(trim(source.bytes_range(0, first.span.start)), [] | [.., b'{']);
+        return first.preceded_by_newline()
+            || matches!(
+                trim(source.bytes_range(0, first.span.start)),
+                [] | [.., b'{']
+            );
     }
     false
 }
 
 /// Whether the comment leads `e`. A comment leads the outermost of the nodes that start behind it, and
 /// parentheses are not nodes.
-fn is_led_by_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, language: &[u8], f: &Formatter<'a>) -> bool {
+fn is_led_by_language_comment<'a>(
+    e: Expr<'a>,
+    parent: AstNodes<'a>,
+    language: &[u8],
+    f: &Formatter<'a>,
+) -> bool {
     let outer_start = e.outer_span().start;
     (e.is_parenthesized() && follows_language_comment(e.span().start, false, language, f))
-        || (parent.span().start != outer_start && follows_language_comment(outer_start, false, language, f))
+        || (parent.span().start != outer_start
+            && follows_language_comment(outer_start, false, language, f))
 }
 
 /// Prettier's `hasLanguageComment`. `language`: what is between the `/*` and the `*/`.
-pub(crate) fn has_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, language: &[u8], f: &Formatter<'a>) -> bool {
+pub(crate) fn has_language_comment<'a>(
+    e: Expr<'a>,
+    parent: AstNodes<'a>,
+    language: &[u8],
+    f: &Formatter<'a>,
+) -> bool {
     is_led_by_language_comment(e, parent, language, f)
         || match parent {
-            AstNodes::ExpressionStatement(_) => follows_language_comment(parent.span().start, true, language, f),
+            AstNodes::ExpressionStatement(_) => {
+                follows_language_comment(parent.span().start, true, language, f)
+            }
             AstNodes::TSAsExpression(cast) => {
-                matches!(cast.kind(), ExprKind::AsConst(_)) && is_led_by_language_comment(cast, parent.parent(), language, f)
+                matches!(cast.kind(), ExprKind::AsConst(_))
+                    && is_led_by_language_comment(cast, parent.parent(), language, f)
             }
             _ => false,
         }
@@ -79,15 +107,19 @@ pub(crate) fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         AstNodes::TaggedTemplateExpression(tagged) => match tagged.kind() {
             ExprKind::TaggedTemplate(call) => match call.callee().kind() {
                 ExprKind::Dot { obj, name, .. } => {
-                    matches!(call.callee().as_ast_nodes(), AstNodes::StaticMemberExpression(_))
-                        && is_identifier(obj, &[b"graphql"])
+                    matches!(
+                        call.callee().as_ast_nodes(),
+                        AstNodes::StaticMemberExpression(_)
+                    ) && is_identifier(obj, &[b"graphql"])
                         && name.bytes() == b"experimental"
                 }
                 _ => is_identifier(call.callee(), &[b"gql", b"graphql"]),
             },
             _ => false,
         },
-        AstNodes::CallExpression(call) => call.callee().is_some_and(|callee| is_identifier(callee, &[b"graphql"])),
+        AstNodes::CallExpression(call) => call
+            .callee()
+            .is_some_and(|callee| is_identifier(callee, &[b"graphql"])),
         _ => false,
     };
     is_marked || has_language_comment(e, parent, b" GraphQL ", f)
@@ -108,23 +140,36 @@ enum Content {
 }
 
 fn lines(text: &[u8]) -> impl DoubleEndedIterator<Item = &[u8]> + Clone {
-    bun_core::strings::split(text, b"\n").collect::<SmallVec<[&[u8]; 16]>>().into_iter()
+    bun_core::strings::split(text, b"\n")
+        .collect::<SmallVec<[&[u8]; 16]>>()
+        .into_iter()
 }
 
 /// `None`: Prettier leaves the template as it is.
 fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     let raw = template.raw(index);
     let is_as_written = bun_core::strings::index_of_any(raw, b"\\\r").is_none();
-    let text = if is_as_written { raw } else { template.cooked(index)?.bytes() };
+    let text = if is_as_written {
+        raw
+    } else {
+        template.cooked(index)?.bytes()
+    };
     let is_last = index + 1 == template.quasi_count();
 
     let all = lines(text);
     // A substitution in a comment.
-    if !is_last && all.clone().next_back().is_some_and(|line| bun_core::strings::contains_char(line, b'#')) {
+    if !is_last
+        && all
+            .clone()
+            .next_back()
+            .is_some_and(|line| bun_core::strings::contains_char(line, b'#'))
+    {
         return None;
     }
     let count = all.clone().count();
-    let has_only_comments = all.clone().all(|line| matches!(trim(line), [] | [b'#', ..]));
+    let has_only_comments = all
+        .clone()
+        .all(|line| matches!(trim(line), [] | [b'#', ..]));
     let content = if !has_only_comments {
         let (mut tree, mut attached) = (Tree::default(), Vec::new());
         parser::parse(text, &mut tree).ok()?;
@@ -144,8 +189,10 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
 }
 
 fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
-    matches!(f.options().embedded_language_formatting, EmbeddedLanguageFormatting::Auto)
-        && is_embed_graphql(e, f)
+    matches!(
+        f.options().embedded_language_formatting,
+        EmbeddedLanguageFormatting::Auto
+    ) && is_embed_graphql(e, f)
         && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())
 }
 
@@ -154,7 +201,9 @@ fn is_blank_template(template: Template<'_>) -> bool {
 }
 
 fn parse<'a>(template: Template<'a>) -> Option<SmallVec<[Part<'a>; 2]>> {
-    (0..template.quasi_count()).map(|index| parse_part(template, index)).collect()
+    (0..template.quasi_count())
+        .map(|index| parse_part(template, index))
+        .collect()
 }
 
 /// Whether `e` is a template, with or without a tag, that is written as GraphQL and is more than ` `` `:
@@ -164,7 +213,8 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         ExprKind::TaggedTemplate(call) => call.template(),
         _ => Some(e),
     };
-    let Some((quasi, ExprKind::Template(template))) = quasi.map(|quasi| (quasi, quasi.kind())) else {
+    let Some((quasi, ExprKind::Template(template))) = quasi.map(|quasi| (quasi, quasi.kind()))
+    else {
         return false;
     };
     is_candidate(quasi, template, f) && !is_blank_template(template) && parse(template).is_some()
@@ -180,7 +230,11 @@ struct Separator {
 impl Separator {
     fn write(&mut self, f: &mut Formatter<'_>) {
         if self.is_needed {
-            let mode = if self.has_blank_line { LineMode::Empty } else { LineMode::Hard };
+            let mode = if self.has_blank_line {
+                LineMode::Empty
+            } else {
+                LineMode::Hard
+            };
             f.write_element(FormatElement::Line(mode));
         }
         *self = Separator {
@@ -191,7 +245,11 @@ impl Separator {
 }
 
 /// Writes the template `e` as GraphQL, if that is what Prettier takes it for. Returns whether it has.
-pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_template<'a>(
+    e: Expr<'a>,
+    template: Template<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
     if !is_candidate(e, template, f) {
         return false;
     }

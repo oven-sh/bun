@@ -429,9 +429,18 @@ impl<'a> Parser<'a> {
     /// `Lexer::flagged` as diagnostics.
     fn report_what_the_scanner_flagged(&mut self) {
         for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
-            let written = self.lx.src.get(start as usize..end as usize).unwrap_or_default();
-            let digits = |from: usize| core::str::from_utf8(written.get(from..).unwrap_or_default());
-            let octal = |from: usize| digits(from).ok().and_then(|it| u64::from_str_radix(it, 8).ok());
+            let written = self
+                .lx
+                .src
+                .get(start as usize..end as usize)
+                .unwrap_or_default();
+            let digits =
+                |from: usize| core::str::from_utf8(written.get(from..).unwrap_or_default());
+            let octal = |from: usize| {
+                digits(from)
+                    .ok()
+                    .and_then(|it| u64::from_str_radix(it, 8).ok())
+            };
             let argument = match code {
                 // `\1`
                 1487 => format!("\\x{:02x}", octal(1).unwrap_or(0)).into_bytes(),
@@ -455,7 +464,9 @@ impl<'a> Parser<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn flag(&mut self, kind: DiagnosticKind, code: u32, at: (u32, u32), args: &[&[u8]]) {
-        self.f.diagnostics.push(Diagnostic::new(kind, at, code, args));
+        self.f
+            .diagnostics
+            .push(Diagnostic::new(kind, at, code, args));
     }
 
     #[inline(always)]

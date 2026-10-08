@@ -9,7 +9,10 @@
 use super::compare::lowercase;
 use super::sort::stable_sort_by;
 use bun_core::strings;
-use bun_lint::ast::{Export, ExportSpec, ExprKind, ExprTag, File, Ident, Import, ImportSpec, List, ModuleName, Node, Stmt, StmtKind};
+use bun_lint::ast::{
+    Export, ExportSpec, ExprKind, ExprTag, File, Ident, Import, ImportSpec, List, ModuleName, Node,
+    Stmt, StmtKind,
+};
 use bun_lint::span::Span;
 use bun_lint::tokens::TokenKind;
 use std::cmp::Ordering;
@@ -48,9 +51,10 @@ impl Comparer {
     fn compare(self, a: &[u8], b: &[u8]) -> Ordering {
         match self {
             Comparer::CaseSensitive => a.cmp(b),
-            Comparer::IgnoringCase if a.is_ascii() && b.is_ascii() => {
-                a.iter().map(u8::to_ascii_lowercase).cmp(b.iter().map(u8::to_ascii_lowercase))
-            }
+            Comparer::IgnoringCase if a.is_ascii() && b.is_ascii() => a
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .cmp(b.iter().map(u8::to_ascii_lowercase)),
             Comparer::IgnoringCase => lowercase(a).cmp(&lowercase(b)),
         }
     }
@@ -91,12 +95,21 @@ impl<'a> Declaration<'a> {
 
 /// `measureSortedness`
 fn measure_sortedness<T>(items: &[T], compare: impl Fn(&T, &T) -> Ordering) -> usize {
-    items.iter().zip(items.iter().skip(1)).filter(|(a, b)| compare(a, b) == Ordering::Greater).count()
+    items
+        .iter()
+        .zip(items.iter().skip(1))
+        .filter(|(a, b)| compare(a, b) == Ordering::Greater)
+        .count()
 }
 
 /// `detectCaseSensitivityBySort`
 fn detect_case_sensitivity_by_sort(groups: &[Vec<&[u8]>]) -> Comparer {
-    let unsortedness = |comparer: Comparer| -> usize { groups.iter().map(|group| measure_sortedness(group, |a, b| comparer.compare(a, b))).sum() };
+    let unsortedness = |comparer: Comparer| -> usize {
+        groups
+            .iter()
+            .map(|group| measure_sortedness(group, |a, b| comparer.compare(a, b)))
+            .sum()
+    };
     match unsortedness(Comparer::CaseSensitive) < unsortedness(Comparer::IgnoringCase) {
         true => Comparer::CaseSensitive,
         false => Comparer::IgnoringCase,
@@ -104,7 +117,12 @@ fn detect_case_sensitivity_by_sort(groups: &[Vec<&[u8]>]) -> Comparer {
 }
 
 /// `compareImportOrExportSpecifiers`
-fn compare_specifiers(a: (bool, &[u8]), b: (bool, &[u8]), comparer: Comparer, type_order: TypeOrder) -> Ordering {
+fn compare_specifiers(
+    a: (bool, &[u8]),
+    b: (bool, &[u8]),
+    comparer: Comparer,
+    type_order: TypeOrder,
+) -> Ordering {
     let by_kind = match type_order {
         TypeOrder::First => b.0.cmp(&a.0),
         TypeOrder::Inline => Ordering::Equal,
@@ -114,37 +132,75 @@ fn compare_specifiers(a: (bool, &[u8]), b: (bool, &[u8]), comparer: Comparer, ty
 }
 
 /// `detectNamedImportOrganizationBySort`
-fn detect_named_import_organization_by_sort(imports: &[Declaration], orders: &[TypeOrder]) -> Option<(Comparer, Option<TypeOrder>)> {
+fn detect_named_import_organization_by_sort(
+    imports: &[Declaration],
+    orders: &[TypeOrder],
+) -> Option<(Comparer, Option<TypeOrder>)> {
     let named: Vec<Vec<(bool, &[u8])>> = (imports.iter().filter_map(Declaration::import))
-        .map(|import| import.named().iter().map(|it| (it.is_type_only(), it.local().bytes())).collect::<Vec<_>>())
+        .map(|import| {
+            import
+                .named()
+                .iter()
+                .map(|it| (it.is_type_only(), it.local().bytes()))
+                .collect::<Vec<_>>()
+        })
         .filter(|elements| !elements.is_empty())
         .collect();
     if named.is_empty() {
         return None;
     }
-    let has_both = named.iter().any(|elements| elements.iter().any(|it| it.0) && elements.iter().any(|it| !it.0));
+    let has_both = named
+        .iter()
+        .any(|elements| elements.iter().any(|it| it.0) && elements.iter().any(|it| !it.0));
     if !has_both {
-        let names: Vec<Vec<&[u8]>> = named.iter().map(|elements| elements.iter().map(|it| it.1).collect()).collect();
-        return Some((detect_case_sensitivity_by_sort(&names), if let [only] = orders { Some(*only) } else { None }));
+        let names: Vec<Vec<&[u8]>> = named
+            .iter()
+            .map(|elements| elements.iter().map(|it| it.1).collect())
+            .collect();
+        return Some((
+            detect_case_sensitivity_by_sort(&names),
+            if let [only] = orders {
+                Some(*only)
+            } else {
+                None
+            },
+        ));
     }
     // For each order, the comparer that what is there is closest to being sorted by.
     let best: Vec<(usize, Comparer, TypeOrder)> = (orders.iter())
         .map(|&order| {
             let unsortedness = |comparer: Comparer| -> usize {
-                named.iter().map(|elements| measure_sortedness(elements, |a, b| compare_specifiers(*a, *b, comparer, order))).sum()
+                named
+                    .iter()
+                    .map(|elements| {
+                        measure_sortedness(elements, |a, b| {
+                            compare_specifiers(*a, *b, comparer, order)
+                        })
+                    })
+                    .sum()
             };
             let (ignoring, sensitive) = (unsortedness(COMPARERS[0]), unsortedness(COMPARERS[1]));
-            if sensitive < ignoring { (sensitive, COMPARERS[1], order) } else { (ignoring, COMPARERS[0], order) }
+            if sensitive < ignoring {
+                (sensitive, COMPARERS[1], order)
+            } else {
+                (ignoring, COMPARERS[0], order)
+            }
         })
         .collect();
     let least = best.iter().map(|it| it.0).min()?;
-    best.iter().find(|it| it.0 == least).map(|it| (it.1, Some(it.2)))
+    best.iter()
+        .find(|it| it.0 == least)
+        .map(|it| (it.1, Some(it.2)))
 }
 
 /// `isExternalModuleNameRelative`
 fn is_relative(name: &[u8]) -> bool {
     match name {
-        b"." | b".." | [b'/' | b'\\', ..] | [b'.', b'/' | b'\\', ..] | [b'.', b'.', b'/' | b'\\', ..] => true,
+        b"."
+        | b".."
+        | [b'/' | b'\\', ..]
+        | [b'.', b'/' | b'\\', ..]
+        | [b'.', b'.', b'/' | b'\\', ..] => true,
         [drive, b':', ..] => drive.is_ascii_alphabetic(),
         _ => false,
     }
@@ -195,7 +251,9 @@ impl<'a> NewImport<'a> {
             base,
             name: import.default(),
             namespace: import.namespace(),
-            named: import.has_named_imports().then(|| import.named().iter().map(Specifier::Written).collect()),
+            named: import
+                .has_named_imports()
+                .then(|| import.named().iter().map(Specifier::Written).collect()),
             braces: import.has_named_imports().then_some((import, true)),
         }
     }
@@ -224,7 +282,8 @@ impl<'a> NewImport<'a> {
         let Some(import) = self.base.import() else {
             return false;
         };
-        let same = |a: Option<Ident>, b: Option<Ident>| a.map(|it| it.span()) == b.map(|it| it.span());
+        let same =
+            |a: Option<Ident>, b: Option<Ident>| a.map(|it| it.span()) == b.map(|it| it.span());
         same(self.name, import.default())
             && same(self.namespace, import.namespace())
             && match &self.named {
@@ -233,7 +292,10 @@ impl<'a> NewImport<'a> {
                     import.has_named_imports()
                         && named.len() == import.named().len()
                         && named.iter().zip(import.named().iter()).all(|(new, old)| {
-                            *new == Specifier::Written(old) && !(old.is_renamed() && !old.imported().is_string() && old.imported().bytes() == old.local().bytes())
+                            *new == Specifier::Written(old)
+                                && !(old.is_renamed()
+                                    && !old.imported().is_string()
+                                    && old.imported().bytes() == old.local().bytes())
                         })
                 }
             }
@@ -270,8 +332,13 @@ impl<'a> Organizer<'a, '_> {
     // ───────────────────────────── scanner.ts ─────────────────────────────
 
     fn comment_at(&self, at: u32) -> Option<(Span, bool)> {
-        let index = self.comments.partition_point(|comment| comment.0.start < at);
-        self.comments.get(index).copied().filter(|comment| comment.0.start == at)
+        let index = self
+            .comments
+            .partition_point(|comment| comment.0.start < at);
+        self.comments
+            .get(index)
+            .copied()
+            .filter(|comment| comment.0.start == at)
     }
 
     /// If a line break is at `at`, where it ends.
@@ -294,7 +361,12 @@ impl<'a> Organizer<'a, '_> {
     }
 
     /// `skipTrivia`
-    fn skip_trivia(&self, mut at: u32, stops_after_line_break: bool, stops_at_comments: bool) -> u32 {
+    fn skip_trivia(
+        &self,
+        mut at: u32,
+        stops_after_line_break: bool,
+        stops_at_comments: bool,
+    ) -> u32 {
         loop {
             if let Some(end) = self.line_break_end(at) {
                 at = end;
@@ -356,7 +428,9 @@ impl<'a> Organizer<'a, '_> {
     fn next_line_start(&self, at: u32) -> u32 {
         let rest = self.text.get(at as usize..).unwrap_or_default();
         match strings::index_of_any(rest, b"\n\r") {
-            Some(found) => self.line_break_end(at + found as u32).unwrap_or(at + found as u32 + 1),
+            Some(found) => self
+                .line_break_end(at + found as u32)
+                .unwrap_or(at + found as u32 + 1),
             None => self.text.len() as u32,
         }
     }
@@ -365,15 +439,20 @@ impl<'a> Organizer<'a, '_> {
 
     /// `getEndPositionOfMultilineTrailingComment`
     fn end_of_multiline_trailing_comment(&self, end: u32) -> Option<u32> {
-        let has_line_break = |span: Span| strings::index_of_any(self.file.slice(span), b"\n\r").is_some();
+        let has_line_break =
+            |span: Span| strings::index_of_any(self.file.slice(span), b"\n\r").is_some();
         let comments = self.trailing_comments(end);
-        let multiline = comments.iter().take_while(|comment| comment.1).find(|comment| has_line_break(comment.0))?;
+        let multiline = comments
+            .iter()
+            .take_while(|comment| comment.1)
+            .find(|comment| has_line_break(comment.0))?;
         Some(self.skip_trivia(multiline.0.end, true, true))
     }
 
     /// `getAdjustedEndPosition` with `TrailingTriviaOption.Include`
     fn adjusted_end(&self, end: u32) -> u32 {
-        self.end_of_multiline_trailing_comment(end).unwrap_or_else(|| self.skip_trivia(end, true, false))
+        self.end_of_multiline_trailing_comment(end)
+            .unwrap_or_else(|| self.skip_trivia(end, true, false))
     }
 
     /// `getAdjustedStartPosition` without a `leadingTriviaOption`
@@ -384,11 +463,16 @@ impl<'a> Organizer<'a, '_> {
             return start;
         }
         if has_trailing_comment
-            && let Some(comment) = (self.leading_comments(full_start).first().copied()).or_else(|| self.trailing_comments(full_start).first().copied())
+            && let Some(comment) = (self.leading_comments(full_start).first().copied())
+                .or_else(|| self.trailing_comments(full_start).first().copied())
         {
             return self.skip_trivia(comment.0.end, true, true);
         }
-        let line = if full_start > 0 { self.next_line_start(full_start_line) } else { full_start_line };
+        let line = if full_start > 0 {
+            self.next_line_start(full_start_line)
+        } else {
+            full_start_line
+        };
         self.line_start(self.skip_trivia(line, false, true))
     }
 
@@ -415,7 +499,10 @@ impl<'a> Organizer<'a, '_> {
     }
 
     /// `groupByNewlineContiguous`
-    fn group_by_newline_contiguous(&self, declarations: &[Declaration<'a>]) -> Vec<Vec<Declaration<'a>>> {
+    fn group_by_newline_contiguous(
+        &self,
+        declarations: &[Declaration<'a>],
+    ) -> Vec<Vec<Declaration<'a>>> {
         let mut groups: Vec<Vec<Declaration<'a>>> = Vec::new();
         for declaration in declarations {
             match groups.last_mut() {
@@ -429,39 +516,70 @@ impl<'a> Organizer<'a, '_> {
     /// Whether a JSDoc comment names `name` where TypeScript takes it for a reference: in the type
     /// after a tag, as what a `{@link}` links to, or after `@see` and the like.
     fn is_named_in_jsdoc(&self, name: &[u8]) -> bool {
-        let is_word = |byte: Option<&u8>| byte.is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii());
-        self.comments.iter().filter(|comment| comment.1).any(|comment| {
-            let text = self.file.slice(comment.0);
-            // One that follows something on its line documents nothing, unless that is a parameter.
-            let before = self.text[..comment.0.start as usize].trim_ascii_end();
-            let starts_line = before.is_empty() || self.has_line_break_in(before.len() as u32, comment.0.start);
-            if !text.starts_with(b"/**") || !(starts_line || matches!(before.last(), Some(b'(' | b','))) {
-                return false;
-            }
-            let mut from = 0;
-            while let Some(found) = strings::index_of(&text[from..], name) {
-                let (start, end) = (from + found, from + found + name.len());
-                from = end;
-                if is_word(text.get(start.wrapping_sub(1))) || is_word(text.get(end)) || text.get(start.wrapping_sub(1)) == Some(&b'.') {
-                    continue;
+        let is_word = |byte: Option<&u8>| {
+            byte.is_some_and(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii()
+            })
+        };
+        self.comments
+            .iter()
+            .filter(|comment| comment.1)
+            .any(|comment| {
+                let text = self.file.slice(comment.0);
+                // One that follows something on its line documents nothing, unless that is a parameter.
+                let before = self.text[..comment.0.start as usize].trim_ascii_end();
+                let starts_line = before.is_empty()
+                    || self.has_line_break_in(before.len() as u32, comment.0.start);
+                if !text.starts_with(b"/**")
+                    || !(starts_line || matches!(before.last(), Some(b'(' | b',')))
+                {
+                    return false;
                 }
-                let before = text[..start].trim_ascii_end();
-                let open = strings::last_index_of_char(before, b'{').filter(|open| strings::last_index_of_char(before, b'}') < Some(*open));
-                let is_reference = match open.map(|open| (text[..open].trim_ascii_end(), &before[open + 1..])) {
-                    Some((_, [b'@', tag @ ..])) => matches!(tag, b"link" | b"linkcode" | b"linkplain"),
-                    // `@param {A}`
-                    Some((before_brace, _)) => {
-                        let word = before_brace.len() - before_brace.iter().rev().take_while(|byte| byte.is_ascii_alphabetic()).count();
-                        word > 0 && word < before_brace.len() && before_brace[word - 1] == b'@'
+                let mut from = 0;
+                while let Some(found) = strings::index_of(&text[from..], name) {
+                    let (start, end) = (from + found, from + found + name.len());
+                    from = end;
+                    if is_word(text.get(start.wrapping_sub(1)))
+                        || is_word(text.get(end))
+                        || text.get(start.wrapping_sub(1)) == Some(&b'.')
+                    {
+                        continue;
                     }
-                    None => [&b"@see"[..], b"@extends", b"@augments", b"@implements", b"@throws"].iter().any(|tag| before.ends_with(tag)),
-                };
-                if is_reference {
-                    return true;
+                    let before = text[..start].trim_ascii_end();
+                    let open = strings::last_index_of_char(before, b'{')
+                        .filter(|open| strings::last_index_of_char(before, b'}') < Some(*open));
+                    let is_reference = match open
+                        .map(|open| (text[..open].trim_ascii_end(), &before[open + 1..]))
+                    {
+                        Some((_, [b'@', tag @ ..])) => {
+                            matches!(tag, b"link" | b"linkcode" | b"linkplain")
+                        }
+                        // `@param {A}`
+                        Some((before_brace, _)) => {
+                            let word = before_brace.len()
+                                - before_brace
+                                    .iter()
+                                    .rev()
+                                    .take_while(|byte| byte.is_ascii_alphabetic())
+                                    .count();
+                            word > 0 && word < before_brace.len() && before_brace[word - 1] == b'@'
+                        }
+                        None => [
+                            &b"@see"[..],
+                            b"@extends",
+                            b"@augments",
+                            b"@implements",
+                            b"@throws",
+                        ]
+                        .iter()
+                        .any(|tag| before.ends_with(tag)),
+                    };
+                    if is_reference {
+                        return true;
+                    }
                 }
-            }
-            false
-        })
+                false
+            })
     }
 
     /// `isDeclarationUsed`
@@ -473,7 +591,9 @@ impl<'a> Organizer<'a, '_> {
         let is_in_namespaced_tag = |node: Node| matches!(node, Node::Expr(tag) if matches!(tag.kind(), ExprKind::String(_)));
         self.jsx_names.iter().any(|it| it == name.bytes())
             || symbol.declarations().len() > 1
-            || symbol.references().any(|it| !it.is_jsx_pragma() && !is_in_namespaced_tag(it.node()))
+            || symbol
+                .references()
+                .any(|it| !it.is_jsx_pragma() && !is_in_namespaced_tag(it.node()))
             || self.is_named_in_jsdoc(name.bytes())
     }
 
@@ -487,7 +607,9 @@ impl<'a> Organizer<'a, '_> {
             }
             let statement = import.base.statement;
             import.name = import.name.filter(|name| self.is_used(*name, statement));
-            import.namespace = import.namespace.filter(|name| self.is_used(*name, statement));
+            import.namespace = import
+                .namespace
+                .filter(|name| self.is_used(*name, statement));
             if let Some(named) = &mut import.named {
                 let count = named.len();
                 named.retain(|it| matches!(it, Specifier::Written(it) if self.is_used(it.local(), statement)));
@@ -511,10 +633,15 @@ impl<'a> Organizer<'a, '_> {
 
     /// `hasModuleDeclarationMatchingSpecifier`
     fn has_module_declaration_matching(&self, module: Option<&[u8]>) -> bool {
-        self.file.body().iter().any(|statement| match statement.kind() {
-            StmtKind::Module(it) => matches!(it.name(), ModuleName::String(name) if Some(name.bytes()) == module),
-            _ => false,
-        })
+        self.file
+            .body()
+            .iter()
+            .any(|statement| match statement.kind() {
+                StmtKind::Module(it) => {
+                    matches!(it.name(), ModuleName::String(name) if Some(name.bytes()) == module)
+                }
+                _ => false,
+            })
     }
 
     /// What the imports that are combined have to have in common.
@@ -523,7 +650,16 @@ impl<'a> Organizer<'a, '_> {
             return Vec::new();
         };
         let mut entries: Vec<(&[u8], &[u8])> = (attributes.entries().iter())
-            .filter_map(|it| Some((it.key()?.name()?.bytes(), self.file.slice(it.value()?.span()).get(1..)?.split_last()?.1)))
+            .filter_map(|it| {
+                Some((
+                    it.key()?.name()?.bytes(),
+                    self.file
+                        .slice(it.value()?.span())
+                        .get(1..)?
+                        .split_last()?
+                        .1,
+                ))
+            })
             .collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
         let mut key = [self.file.slice(attributes.keyword_span()), b" "].concat();
@@ -547,11 +683,18 @@ impl<'a> Organizer<'a, '_> {
         for (_, group) in by_attributes {
             coalesced.extend(group.iter().find(|it| !it.has_clause()).cloned());
             for is_type_only in [false, true] {
-                let of_kind = || group.iter().filter(move |it| it.has_clause() && it.is_type_only() == is_type_only);
+                let of_kind = || {
+                    group
+                        .iter()
+                        .filter(move |it| it.has_clause() && it.is_type_only() == is_type_only)
+                };
                 let defaults: Vec<&NewImport> = of_kind().filter(|it| it.name.is_some()).collect();
-                let mut namespaces: Vec<&NewImport> = of_kind().filter(|it| it.namespace.is_some()).collect();
+                let mut namespaces: Vec<&NewImport> =
+                    of_kind().filter(|it| it.namespace.is_some()).collect();
                 let named: Vec<&NewImport> = of_kind().filter(|it| it.named.is_some()).collect();
-                if let (false, [default], [namespace], []) = (is_type_only, &defaults[..], &namespaces[..], &named[..]) {
+                if let (false, [default], [namespace], []) =
+                    (is_type_only, &defaults[..], &namespaces[..], &named[..])
+                {
                     coalesced.push(NewImport {
                         namespace: namespace.namespace,
                         named: None,
@@ -559,8 +702,11 @@ impl<'a> Organizer<'a, '_> {
                     });
                     continue;
                 }
-                let name_of = |it: &NewImport<'a>| it.namespace.map_or(&[][..], |name| name.bytes());
-                stable_sort_by(&mut namespaces, |a, b| self.module_comparer.compare(name_of(a), name_of(b)));
+                let name_of =
+                    |it: &NewImport<'a>| it.namespace.map_or(&[][..], |name| name.bytes());
+                stable_sort_by(&mut namespaces, |a, b| {
+                    self.module_comparer.compare(name_of(a), name_of(b))
+                });
                 coalesced.extend(namespaces.iter().map(|it| NewImport {
                     name: None,
                     named: None,
@@ -573,13 +719,27 @@ impl<'a> Organizer<'a, '_> {
                 let new_default = match &defaults[..] {
                     [only] => only.name,
                     all => {
-                        specifiers.extend(all.iter().filter_map(|it| it.name).map(Specifier::Default));
+                        specifiers
+                            .extend(all.iter().filter_map(|it| it.name).map(Specifier::Default));
                         None
                     }
                 };
-                specifiers.extend(named.iter().flat_map(|it| it.named.iter().flatten()).copied());
-                stable_sort_by(&mut specifiers, |a, b| compare_specifiers(a.key(), b.key(), self.named_comparer.unwrap_or(Comparer::IgnoringCase), self.type_order));
-                let new_named = (!specifiers.is_empty() || new_default.is_none()).then_some(specifiers);
+                specifiers.extend(
+                    named
+                        .iter()
+                        .flat_map(|it| it.named.iter().flatten())
+                        .copied(),
+                );
+                stable_sort_by(&mut specifiers, |a, b| {
+                    compare_specifiers(
+                        a.key(),
+                        b.key(),
+                        self.named_comparer.unwrap_or(Comparer::IgnoringCase),
+                        self.type_order,
+                    )
+                });
+                let new_named =
+                    (!specifiers.is_empty() || new_default.is_none()).then_some(specifiers);
                 let braces = named.first().and_then(|it| it.braces);
                 let import = |base: &NewImport<'a>, name, named| NewImport {
                     base: base.base,
@@ -603,23 +763,46 @@ impl<'a> Organizer<'a, '_> {
     fn sorted_by_module(&self, declarations: &[Declaration<'a>]) -> Vec<Vec<Declaration<'a>>> {
         let mut by_module: Vec<Vec<Declaration<'a>>> = Vec::new();
         for declaration in declarations {
-            match by_module.iter_mut().find(|group| group[0].module() == declaration.module()) {
+            match by_module
+                .iter_mut()
+                .find(|group| group[0].module() == declaration.module())
+            {
                 Some(group) => group.push(*declaration),
                 None => by_module.push(vec![*declaration]),
             }
         }
         let mut order: Vec<usize> = (0..by_module.len()).collect();
-        stable_sort_by(&mut order, |a, b| compare_module_specifiers(by_module[*a][0].module(), by_module[*b][0].module(), self.module_comparer));
-        order.into_iter().map(|index| std::mem::take(&mut by_module[index])).collect()
+        stable_sort_by(&mut order, |a, b| {
+            compare_module_specifiers(
+                by_module[*a][0].module(),
+                by_module[*b][0].module(),
+                self.module_comparer,
+            )
+        });
+        order
+            .into_iter()
+            .map(|index| std::mem::take(&mut by_module[index]))
+            .collect()
     }
 
     /// The comments that the printer writes before and after the declaration `base`, around `code`.
-    fn with_comments(&self, base: &Declaration<'a>, has_leading_comments: bool, code: &[u8], out: &mut Vec<u8>) {
+    fn with_comments(
+        &self,
+        base: &Declaration<'a>,
+        has_leading_comments: bool,
+        code: &[u8],
+        out: &mut Vec<u8>,
+    ) {
         if has_leading_comments {
             for (span, is_block) in self.leading_comments(base.full_start) {
                 out.extend_from_slice(self.file.slice(span));
-                let is_on_its_own_line = !is_block || self.line_break_end(self.skip_blanks(span.end)).is_some();
-                out.extend_from_slice(if is_on_its_own_line { self.end_of_line } else { b" " });
+                let is_on_its_own_line =
+                    !is_block || self.line_break_end(self.skip_blanks(span.end)).is_some();
+                out.extend_from_slice(if is_on_its_own_line {
+                    self.end_of_line
+                } else {
+                    b" "
+                });
             }
         }
         out.extend_from_slice(code);
@@ -642,7 +825,11 @@ impl<'a> Organizer<'a, '_> {
         loop {
             at = self.text[..at as usize].trim_ascii_end().len() as u32;
             let index = self.comments.partition_point(|comment| comment.0.end < at);
-            match self.comments.get(index).filter(|comment| comment.0.end == at) {
+            match self
+                .comments
+                .get(index)
+                .filter(|comment| comment.0.end == at)
+            {
                 Some(comment) => at = comment.0.start,
                 None => return at,
             }
@@ -650,12 +837,21 @@ impl<'a> Organizer<'a, '_> {
     }
 
     fn has_line_break_in(&self, from: u32, to: u32) -> bool {
-        strings::index_of_any(self.text.get(from as usize..to as usize).unwrap_or_default(), b"\n\r").is_some()
+        strings::index_of_any(
+            self.text
+                .get(from as usize..to as usize)
+                .unwrap_or_default(),
+            b"\n\r",
+        )
+        .is_some()
     }
 
     fn write_comment(&self, comment: (Span, bool), out: &mut Vec<u8>) {
         out.extend_from_slice(self.file.slice(comment.0));
-        let ends_line = !comment.1 || self.line_break_end(self.skip_blanks(comment.0.end)).is_some();
+        let ends_line = !comment.1
+            || self
+                .line_break_end(self.skip_blanks(comment.0.end))
+                .is_some();
         out.extend_from_slice(if ends_line { self.end_of_line } else { b" " });
     }
 
@@ -666,7 +862,9 @@ impl<'a> Organizer<'a, '_> {
         if !leading.is_empty() {
             self.write_line(out);
         }
-        leading.into_iter().for_each(|it| self.write_comment(it, out));
+        leading
+            .into_iter()
+            .for_each(|it| self.write_comment(it, out));
     }
 
     /// `writer.writeLine()`: nothing at the start of a line.
@@ -682,16 +880,30 @@ impl<'a> Organizer<'a, '_> {
     /// `emitNodeListItems` for the elements of named imports or exports, with the comments that
     /// the printer writes with them. `list`: the list that the braces are those of.
     /// `prefers_new_lines`: `ListFormat.PreferNewLine`.
-    fn write_elements(&self, elements: &[Element], list: u32, prefers_new_lines: bool, has_trailing_comma: bool, out: &mut Vec<u8>) {
+    fn write_elements(
+        &self,
+        elements: &[Element],
+        list: u32,
+        prefers_new_lines: bool,
+        has_trailing_comma: bool,
+        out: &mut Vec<u8>,
+    ) {
         if elements.is_empty() {
             return out.extend_from_slice(b"{ }");
         }
         out.push(b'{');
         // `getLeadingLineTerminatorCount`
         let starts_on_new_line = prefers_new_lines
-            || (elements.first().filter(|it| it.place.0 == list).and_then(|it| it.span))
-                .is_some_and(|span| self.has_line_break_in(self.full_start_of(span.start), span.start));
-        out.extend_from_slice(if starts_on_new_line { self.end_of_line } else { b" " });
+            || (elements
+                .first()
+                .filter(|it| it.place.0 == list)
+                .and_then(|it| it.span))
+            .is_some_and(|span| self.has_line_break_in(self.full_start_of(span.start), span.start));
+        out.extend_from_slice(if starts_on_new_line {
+            self.end_of_line
+        } else {
+            b" "
+        });
         // Whether what is between the `,` before an element and the end of that line is written.
         let mut writes_intervening_comments = !starts_on_new_line;
         let mut previous: Option<&Element> = None;
@@ -704,7 +916,9 @@ impl<'a> Organizer<'a, '_> {
                 out.push(b',');
                 // `getSeparatingLineTerminatorCount`
                 let is_on_new_line = match (previous.span, element.span) {
-                    (Some(before), Some(span)) if previous.place == (element.place.0, element.place.1.wrapping_sub(1)) => {
+                    (Some(before), Some(span))
+                        if previous.place == (element.place.0, element.place.1.wrapping_sub(1)) =>
+                    {
                         self.has_line_break_in(before.end, span.start)
                     }
                     _ => prefers_new_lines,
@@ -720,7 +934,9 @@ impl<'a> Organizer<'a, '_> {
                 }
             }
             if let (true, Some(full_start)) = (writes_intervening_comments, full_start) {
-                self.trailing_comments(full_start).into_iter().for_each(|it| self.write_comment(it, out));
+                self.trailing_comments(full_start)
+                    .into_iter()
+                    .for_each(|it| self.write_comment(it, out));
             }
             writes_intervening_comments = true;
             if let Some(full_start) = full_start {
@@ -735,7 +951,10 @@ impl<'a> Organizer<'a, '_> {
             Some(last) if has_trailing_comma => {
                 self.write_leading_comments(last.end, out);
                 out.push(b',');
-                self.write_trailing_comments(Some(self.skip_trivia(last.end, false, false) + 1), out);
+                self.write_trailing_comments(
+                    Some(self.skip_trivia(last.end, false, false) + 1),
+                    out,
+                );
             }
             Some(last) => self.write_leading_comments(last.end, out),
             None if has_trailing_comma && previous.is_some() => out.push(b','),
@@ -766,7 +985,8 @@ impl<'a> Organizer<'a, '_> {
         while at < within.end && self.text.get(at as usize) != Some(&b'{') {
             at = self.comment_at(at).map_or(at + 1, |comment| comment.0.end);
         }
-        (at < within.end && self.text.get(within.end as usize - 1) == Some(&b'}')).then(|| Span::new(at, within.end))
+        (at < within.end && self.text.get(within.end as usize - 1) == Some(&b'}'))
+            .then(|| Span::new(at, within.end))
     }
 
     /// `"m" with { type: "json" };`
@@ -774,7 +994,9 @@ impl<'a> Organizer<'a, '_> {
         let Some(source) = statement.module_specifier_span() else {
             return;
         };
-        let end = statement.import_attributes().map_or(source.end, |it| it.braces_span().end);
+        let end = statement
+            .import_attributes()
+            .map_or(source.end, |it| it.braces_span().end);
         out.extend_from_slice(self.file.slice(Span::new(source.start, end)));
     }
 
@@ -785,11 +1007,18 @@ impl<'a> Organizer<'a, '_> {
         let original = import.base.import();
         // What is before and after the braces is written as it is, with its comments.
         let own_braces = original
-            .filter(|it| import.named.is_some() && import.braces.is_some_and(|braces| braces.0 == *it))
+            .filter(|it| {
+                import.named.is_some() && import.braces.is_some_and(|braces| braces.0 == *it)
+            })
             .and_then(|it| self.braces_in(it.clause_span()));
-        let has_same_name = import.namespace.is_none() && import.name.map(|it| it.span()) == original.and_then(|it| it.default()).map(|it| it.span());
+        let has_same_name = import.namespace.is_none()
+            && import.name.map(|it| it.span())
+                == original.and_then(|it| it.default()).map(|it| it.span());
         let mut out = match own_braces.filter(|_| has_same_name) {
-            Some(braces) => self.file.slice(Span::new(import.base.span().start, braces.start)).to_vec(),
+            Some(braces) => self
+                .file
+                .slice(Span::new(import.base.span().start, braces.start))
+                .to_vec(),
             None => {
                 let mut out = b"import ".to_vec();
                 if import.is_type_only() {
@@ -819,28 +1048,60 @@ impl<'a> Organizer<'a, '_> {
                         place: (0, 0),
                     },
                     Specifier::Written(it) => {
-                        let is_redundant = it.is_renamed() && !it.imported().is_string() && it.imported().bytes() == it.local().bytes();
+                        let is_redundant = it.is_renamed()
+                            && !it.imported().is_string()
+                            && it.imported().bytes() == it.local().bytes();
                         Element {
                             span: Some(it.span()),
                             code: match is_redundant {
-                                true => [if it.is_type_only() { &b"type "[..] } else { b"" }, self.file.slice(it.local().span())].concat(),
+                                true => [
+                                    if it.is_type_only() {
+                                        &b"type "[..]
+                                    } else {
+                                        b""
+                                    },
+                                    self.file.slice(it.local().span()),
+                                ]
+                                .concat(),
                                 false => self.file.slice(it.span()).to_vec(),
                             },
-                            place: (it.import().stmt().span().start, it.import().named().iter().position(|other| other == *it).unwrap_or(0)),
+                            place: (
+                                it.import().stmt().span().start,
+                                it.import()
+                                    .named()
+                                    .iter()
+                                    .position(|other| other == *it)
+                                    .unwrap_or(0),
+                            ),
                         }
                     }
                 })
                 .collect();
-            let braces = import.braces.and_then(|it| Some((it.0, it.1, self.braces_in(it.0.clause_span())?)));
-            let is_multi_line = braces.is_some_and(|it| self.has_line_break_in(it.2.start, it.2.end));
+            let braces = import
+                .braces
+                .and_then(|it| Some((it.0, it.1, self.braces_in(it.0.clause_span())?)));
+            let is_multi_line =
+                braces.is_some_and(|it| self.has_line_break_in(it.2.start, it.2.end));
             let has_trailing_comma = braces.is_some_and(|it| {
-                let after_last = it.0.named().last().map(|last| self.skip_trivia(last.span().end, false, false));
+                let after_last =
+                    it.0.named()
+                        .last()
+                        .map(|last| self.skip_trivia(last.span().end, false, false));
                 it.1 && after_last.is_some_and(|at| self.text.get(at as usize) == Some(&b','))
             });
-            self.write_elements(&elements, braces.map_or(0, |it| it.0.stmt().span().start), is_multi_line, has_trailing_comma, &mut out);
+            self.write_elements(
+                &elements,
+                braces.map_or(0, |it| it.0.stmt().span().start),
+                is_multi_line,
+                has_trailing_comma,
+                &mut out,
+            );
         }
         if let Some(braces) = own_braces {
-            out.extend_from_slice(self.file.slice(Span::new(braces.end, import.base.span().end)));
+            out.extend_from_slice(
+                self.file
+                    .slice(Span::new(braces.end, import.base.span().end)),
+            );
             if !out.ends_with(b";") {
                 out.push(b';');
             }
@@ -862,7 +1123,13 @@ impl<'a> Organizer<'a, '_> {
         };
         if new.is_empty() {
             for declaration in old {
-                self.changes.push((Span::new(declaration.span().start, self.adjusted_end(declaration.span().end)), Vec::new()));
+                self.changes.push((
+                    Span::new(
+                        declaration.span().start,
+                        self.adjusted_end(declaration.span().end),
+                    ),
+                    Vec::new(),
+                ));
             }
             return;
         }
@@ -874,12 +1141,22 @@ impl<'a> Organizer<'a, '_> {
             self.with_comments(base, base.span() != first.span(), code, &mut text);
         }
         text.extend_from_slice(self.end_of_line);
-        self.changes.push((Span::new(first.span().start, self.adjusted_end(first.span().end)), text));
-        let mut has_trailing_comment = self.end_of_multiline_trailing_comment(first.span().end).is_some();
+        self.changes.push((
+            Span::new(first.span().start, self.adjusted_end(first.span().end)),
+            text,
+        ));
+        let mut has_trailing_comment = self
+            .end_of_multiline_trailing_comment(first.span().end)
+            .is_some();
         for declaration in rest {
             let start = self.adjusted_start(declaration, has_trailing_comment);
-            self.changes.push((Span::new(start, self.adjusted_end(declaration.span().end)), Vec::new()));
-            has_trailing_comment = self.end_of_multiline_trailing_comment(declaration.span().end).is_some();
+            self.changes.push((
+                Span::new(start, self.adjusted_end(declaration.span().end)),
+                Vec::new(),
+            ));
+            has_trailing_comment = self
+                .end_of_multiline_trailing_comment(declaration.span().end)
+                .is_some();
         }
     }
 
@@ -887,9 +1164,13 @@ impl<'a> Organizer<'a, '_> {
     /// is between them, no comment that is written with the second or a later one, and none has
     /// its `;` on a later line.
     fn is_plain(&self, declarations: &[Declaration<'a>]) -> bool {
-        !declarations.iter().any(|it| self.before_far_semicolon(it).is_some())
-            && (declarations.iter().zip(declarations.iter().skip(1)))
-                .all(|(a, b)| a.span().end == b.full_start && (self.comments.is_empty() || self.leading_comments(b.full_start).is_empty()))
+        !declarations
+            .iter()
+            .any(|it| self.before_far_semicolon(it).is_some())
+            && (declarations.iter().zip(declarations.iter().skip(1))).all(|(a, b)| {
+                a.span().end == b.full_start
+                    && (self.comments.is_empty() || self.leading_comments(b.full_start).is_empty())
+            })
     }
 
     /// Of a declaration with its `;` on a later line, what is before the `;`.
@@ -897,8 +1178,12 @@ impl<'a> Organizer<'a, '_> {
         let text = self.file.slice(declaration.span()).strip_suffix(b";")?;
         let before = text.trim_ascii_end();
         let end = declaration.span().start + before.len() as u32;
-        let is_after_comment = self.comments.get(self.comments.partition_point(|it| it.0.end < end)).is_some_and(|it| it.0.end == end);
-        (!is_after_comment && strings::index_of_any(&text[before.len()..], b"\n\r").is_some()).then_some(before)
+        let is_after_comment = self
+            .comments
+            .get(self.comments.partition_point(|it| it.0.end < end))
+            .is_some_and(|it| it.0.end == end);
+        (!is_after_comment && strings::index_of_any(&text[before.len()..], b"\n\r").is_some())
+            .then_some(before)
     }
 
     /// `declaration` the way it is written, with its `;` where the printer writes it.
@@ -910,21 +1195,31 @@ impl<'a> Organizer<'a, '_> {
     }
 
     fn has_comment_in(&self, span: Span) -> bool {
-        let next = self.comments.partition_point(|comment| comment.0.start < span.start);
-        self.comments.get(next).is_some_and(|comment| comment.0.end <= span.end)
+        let next = self
+            .comments
+            .partition_point(|comment| comment.0.start < span.start);
+        self.comments
+            .get(next)
+            .is_some_and(|comment| comment.0.end <= span.end)
     }
 
     /// Whether the printer writes `import` the way it is written. It makes a new list of what is
     /// in the braces, and leaves out some of the comments there.
     fn is_written_alike(&self, import: &NewImport<'a>) -> bool {
-        import.is_unchanged() && !(import.base.import()).and_then(|it| self.braces_in(it.clause_span())).is_some_and(|it| self.has_comment_in(it))
+        import.is_unchanged()
+            && !(import.base.import())
+                .and_then(|it| self.braces_in(it.clause_span()))
+                .is_some_and(|it| self.has_comment_in(it))
     }
 
     /// `organizeImportsWorker`
     fn organize_imports(&mut self, old: &[Declaration<'a>]) {
         let mut new: Vec<NewImport<'a>> = Vec::with_capacity(old.len());
         for group in self.sorted_by_module(old) {
-            let mut imports: Vec<NewImport<'a>> = group.iter().filter_map(|it| Some(NewImport::of(*it, it.import()?))).collect();
+            let mut imports: Vec<NewImport<'a>> = group
+                .iter()
+                .filter_map(|it| Some(NewImport::of(*it, it.import()?)))
+                .collect();
             if !self.options.skips_destructive_code_actions {
                 imports = self.remove_unused_imports(imports);
             }
@@ -934,20 +1229,42 @@ impl<'a> Organizer<'a, '_> {
         }
         let is_same = new.len() == old.len()
             && self.is_plain(old)
-            && new.iter().zip(old).all(|(new, old)| new.base.span() == old.span() && self.is_written_alike(new));
+            && new
+                .iter()
+                .zip(old)
+                .all(|(new, old)| new.base.span() == old.span() && self.is_written_alike(new));
         if !is_same {
-            let new: Vec<(Declaration<'a>, Vec<u8>)> = new.iter().map(|it| (it.base, self.import_code(it))).collect();
+            let new: Vec<(Declaration<'a>, Vec<u8>)> = new
+                .iter()
+                .map(|it| (it.base, self.import_code(it)))
+                .collect();
             self.replace(old, &new);
         }
     }
 
-    fn export_code(&self, base: &Declaration<'a>, export: Export<'a>, items: &[ExportSpec<'a>]) -> Vec<u8> {
-        let mut out = if export.is_type_only() { b"export type ".to_vec() } else { b"export ".to_vec() };
+    fn export_code(
+        &self,
+        base: &Declaration<'a>,
+        export: Export<'a>,
+        items: &[ExportSpec<'a>],
+    ) -> Vec<u8> {
+        let mut out = if export.is_type_only() {
+            b"export type ".to_vec()
+        } else {
+            b"export ".to_vec()
+        };
         let elements: Vec<Element> = (items.iter())
             .map(|it| Element {
                 span: Some(it.span()),
                 code: self.file.slice(it.span()).to_vec(),
-                place: (it.export().stmt().span().start, it.export().items().iter().position(|other| other == *it).unwrap_or(0)),
+                place: (
+                    it.export().stmt().span().start,
+                    it.export()
+                        .items()
+                        .iter()
+                        .position(|other| other == *it)
+                        .unwrap_or(0),
+                ),
             })
             .collect();
         self.write_elements(&elements, base.span().start, false, false, &mut out);
@@ -966,14 +1283,28 @@ impl<'a> Organizer<'a, '_> {
         let mut is_same = true;
         for group in self.sorted_by_module(old) {
             // `coalesceExportsWorker`
-            let is_star = |it: &&Declaration| matches!(it.statement.kind(), StmtKind::ExportStar { alias: None, .. });
-            new.extend(group.iter().find(is_star).map(|it| (*it, self.as_written(it))));
+            let is_star = |it: &&Declaration| {
+                matches!(
+                    it.statement.kind(),
+                    StmtKind::ExportStar { alias: None, .. }
+                )
+            };
+            new.extend(
+                group
+                    .iter()
+                    .find(is_star)
+                    .map(|it| (*it, self.as_written(it))),
+            );
             is_same &= group.iter().filter(is_star).count() <= 1;
             for is_type_only in [false, true] {
                 let of_kind: Vec<&Declaration> = (group.iter())
                     .filter(|it| match it.statement.kind() {
                         StmtKind::ExportNamed(export) => export.is_type_only() == is_type_only,
-                        StmtKind::ExportStar { alias: Some(_), type_only, .. } => type_only == is_type_only,
+                        StmtKind::ExportStar {
+                            alias: Some(_),
+                            type_only,
+                            ..
+                        } => type_only == is_type_only,
                         _ => false,
                     })
                     .collect();
@@ -986,20 +1317,47 @@ impl<'a> Organizer<'a, '_> {
                     continue;
                 };
                 let written: Vec<ExportSpec<'a>> = (of_kind.iter())
-                    .filter_map(|it| if let StmtKind::ExportNamed(export) = it.statement.kind() { Some(export.items()) } else { None })
+                    .filter_map(|it| {
+                        if let StmtKind::ExportNamed(export) = it.statement.kind() {
+                            Some(export.items())
+                        } else {
+                            None
+                        }
+                    })
                     .flat_map(List::iter)
                     .collect();
                 let mut items = written.clone();
                 stable_sort_by(&mut items, |a, b| {
                     let key = |it: &ExportSpec<'a>| (it.is_type_only(), it.exported().bytes());
-                    compare_specifiers(key(a), key(b), self.named_comparer.unwrap_or(Comparer::CaseSensitive), type_order)
+                    compare_specifiers(
+                        key(a),
+                        key(b),
+                        self.named_comparer.unwrap_or(Comparer::CaseSensitive),
+                        type_order,
+                    )
                 });
-                let is_sorted = items.iter().zip(&written).all(|(a, b)| a.span() == b.span()) && !self.has_comment_in(first.span());
+                let is_sorted = items
+                    .iter()
+                    .zip(&written)
+                    .all(|(a, b)| a.span() == b.span())
+                    && !self.has_comment_in(first.span());
                 is_same &= is_sorted;
-                new.push((*first, if is_sorted && of_kind.len() == 1 { self.as_written(first) } else { self.export_code(first, export, &items) }));
+                new.push((
+                    *first,
+                    if is_sorted && of_kind.len() == 1 {
+                        self.as_written(first)
+                    } else {
+                        self.export_code(first, export, &items)
+                    },
+                ));
             }
         }
-        is_same &= new.len() == old.len() && self.is_plain(old) && new.iter().zip(old).all(|(new, old)| new.0.span() == old.span());
+        is_same &= new.len() == old.len()
+            && self.is_plain(old)
+            && new
+                .iter()
+                .zip(old)
+                .all(|(new, old)| new.0.span() == old.span());
         if !is_same {
             self.replace(old, &new);
         }
@@ -1007,15 +1365,26 @@ impl<'a> Organizer<'a, '_> {
 
     /// The imports, and the groups of exports (`getTopLevelExportGroups`), among `statements`,
     /// before which the token before ends at `start`.
-    fn declarations_in(&self, statements: List<'a, Stmt<'a>>, start: u32) -> (Vec<Declaration<'a>>, Vec<Vec<Declaration<'a>>>) {
-        let (mut imports, mut exports): (Vec<Declaration<'a>>, Vec<Vec<Declaration<'a>>>) = (Vec::new(), vec![Vec::new()]);
+    fn declarations_in(
+        &self,
+        statements: List<'a, Stmt<'a>>,
+        start: u32,
+    ) -> (Vec<Declaration<'a>>, Vec<Vec<Declaration<'a>>>) {
+        let (mut imports, mut exports): (Vec<Declaration<'a>>, Vec<Vec<Declaration<'a>>>) =
+            (Vec::new(), vec![Vec::new()]);
         let mut full_start = start;
         // Exports without a `from` that follow each other end a group.
         let mut is_in_local_run = false;
         for statement in statements.iter() {
-            let declaration = Declaration { statement, full_start };
+            let declaration = Declaration {
+                statement,
+                full_start,
+            };
             full_start = statement.span().end;
-            let is_export = matches!(statement.kind(), StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. });
+            let is_export = matches!(
+                statement.kind(),
+                StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. }
+            );
             if is_in_local_run && !is_export {
                 is_in_local_run = false;
                 exports.push(Vec::new());
@@ -1038,17 +1407,34 @@ impl<'a> Organizer<'a, '_> {
 fn stable_sort_by_clone<T: Clone>(items: &mut Vec<T>, compare: impl Fn(&T, &T) -> Ordering) {
     let mut order: Vec<usize> = (0..items.len()).collect();
     stable_sort_by(&mut order, |a, b| compare(&items[*a], &items[*b]));
-    *items = order.into_iter().map(|index| items[index].clone()).collect();
+    *items = order
+        .into_iter()
+        .map(|index| items[index].clone())
+        .collect();
 }
 
 /// The text that the plugin hands to Prettier in place of `file`. `None`: the same text, or one
 /// that is formatted the same.
-pub(super) fn preprocess<'a>(file: &'a File<'a>, options: &Options, end_of_line: &'static [u8]) -> Option<Vec<u8>> {
+pub(super) fn preprocess<'a>(
+    file: &'a File<'a>,
+    options: &Options,
+    end_of_line: &'static [u8],
+) -> Option<Vec<u8>> {
     let text = file.text();
-    if strings::contains(text, b"// organize-imports-ignore") || strings::contains(text, b"// tslint:disable:ordered-imports") {
+    if strings::contains(text, b"// organize-imports-ignore")
+        || strings::contains(text, b"// tslint:disable:ordered-imports")
+    {
         return None;
     }
-    let is_declaration = |it: Stmt| matches!(it.kind(), StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } | StmtKind::Module(_));
+    let is_declaration = |it: Stmt| {
+        matches!(
+            it.kind(),
+            StmtKind::Import(_)
+                | StmtKind::ExportNamed(_)
+                | StmtKind::ExportStar { .. }
+                | StmtKind::Module(_)
+        )
+    };
     if !file.body().iter().any(is_declaration) {
         return None;
     }
@@ -1057,50 +1443,92 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>, options: &Options, end_of_line:
         text,
         options,
         end_of_line,
-        comments: (file.comments().filter(|it| it.kind() != TokenKind::Shebang)).map(|it| (it.span(), it.kind() == TokenKind::Block)).collect(),
+        comments: (file.comments().filter(|it| it.kind() != TokenKind::Shebang))
+            .map(|it| (it.span(), it.kind() == TokenKind::Block))
+            .collect(),
         module_comparer: Comparer::IgnoringCase,
         named_comparer: None,
         type_order: TypeOrder::Last,
         jsx_names: Vec::new(),
         changes: Vec::new(),
     };
-    let start = file.comments().next().filter(|it| it.kind() == TokenKind::Shebang).map_or(0, |it| it.span().end);
+    let start = file
+        .comments()
+        .next()
+        .filter(|it| it.kind() == TokenKind::Shebang)
+        .map_or(0, |it| it.span().end);
     let (imports, exports) = organizer.declarations_in(file.body(), start);
     let groups = organizer.group_by_newline_contiguous(&imports);
 
-    let names: Vec<Vec<&[u8]>> = groups.iter().map(|group| group.iter().map(|it| it.module().unwrap_or_default()).collect()).collect();
+    let names: Vec<Vec<&[u8]>> = groups
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(|it| it.module().unwrap_or_default())
+                .collect()
+        })
+        .collect();
     organizer.module_comparer = detect_case_sensitivity_by_sort(&names);
-    let orders = options.type_order.map_or_else(|| vec![TypeOrder::Last, TypeOrder::Inline, TypeOrder::First], |order| vec![order]);
+    let orders = options.type_order.map_or_else(
+        || vec![TypeOrder::Last, TypeOrder::Inline, TypeOrder::First],
+        |order| vec![order],
+    );
     let detected = detect_named_import_organization_by_sort(&imports, &orders);
     organizer.named_comparer = detected.map(|it| it.0);
-    organizer.type_order = options.type_order.or_else(|| detected.and_then(|it| it.1)).unwrap_or(TypeOrder::Last);
+    organizer.type_order = options
+        .type_order
+        .or_else(|| detected.and_then(|it| it.1))
+        .unwrap_or(TypeOrder::Last);
 
     if options.jsx_needs_import && file.has_exprs([ExprTag::Jsx]) {
         // `/** @jsx h */`
         let pragma = |name: &[u8]| {
             let first_token = file.program_span().start;
-            organizer.comments.iter().take_while(|it| it.0.end <= first_token).filter(|it| it.1).find_map(|it| {
-                let text = file.slice(it.0);
-                let rest = text[strings::index_of(text, name)? + name.len()..].strip_prefix(b" ")?.trim_ascii_start();
-                Some(rest[..rest.iter().take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')).count()].to_vec())
-            })
+            organizer
+                .comments
+                .iter()
+                .take_while(|it| it.0.end <= first_token)
+                .filter(|it| it.1)
+                .find_map(|it| {
+                    let text = file.slice(it.0);
+                    let rest = text[strings::index_of(text, name)? + name.len()..]
+                        .strip_prefix(b" ")?
+                        .trim_ascii_start();
+                    Some(
+                        rest[..rest
+                            .iter()
+                            .take_while(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
+                            })
+                            .count()]
+                            .to_vec(),
+                    )
+                })
         };
         let namespace = pragma(b"@jsx").unwrap_or_else(|| options.jsx_namespace.to_vec());
-        let fragment_factory = pragma(b"@jsxFrag").or_else(|| options.jsx_fragment_factory.as_deref().map(<[u8]>::to_vec));
+        let fragment_factory = pragma(b"@jsxFrag")
+            .or_else(|| options.jsx_fragment_factory.as_deref().map(<[u8]>::to_vec));
         organizer.jsx_names = std::iter::once(namespace).chain(fragment_factory).collect();
     }
 
     for group in &groups {
         organizer.organize_imports(group);
     }
-    for group in exports.iter().flat_map(|group| organizer.group_by_newline_contiguous(group)).collect::<Vec<_>>() {
+    for group in exports
+        .iter()
+        .flat_map(|group| organizer.group_by_newline_contiguous(group))
+        .collect::<Vec<_>>()
+    {
         organizer.organize_exports(&group);
     }
     for statement in file.body().iter() {
         let StmtKind::Module(module) = statement.kind() else {
             continue;
         };
-        let (ModuleName::String(_) | ModuleName::Global, Some(body)) = (module.name(), module.body_span()) else {
+        let (ModuleName::String(_) | ModuleName::Global, Some(body)) =
+            (module.name(), module.body_span())
+        else {
             continue;
         };
         let (imports, exports) = organizer.declarations_in(module.body(), body.start + 1);
@@ -1119,7 +1547,10 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>, options: &Options, end_of_line:
     let mut out = Vec::with_capacity(text.len());
     let mut at = 0;
     for (span, new_text) in changes {
-        out.extend_from_slice(text.get(at..(span.start as usize).max(at)).unwrap_or_default());
+        out.extend_from_slice(
+            text.get(at..(span.start as usize).max(at))
+                .unwrap_or_default(),
+        );
         out.extend_from_slice(&new_text);
         at = at.max(span.end as usize);
     }

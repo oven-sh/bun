@@ -348,7 +348,8 @@ impl Parser<'_> {
                     } else {
                         let index = self.type_in_list();
                         self.expect(T::CloseBracket);
-                        ty = self.finish_type(TypeNodeKind::IndexedAccess { obj: ty, index }, start);
+                        ty =
+                            self.finish_type(TypeNodeKind::IndexedAccess { obj: ty, index }, start);
                     }
                 }
                 T::Question => {
@@ -648,7 +649,9 @@ impl Parser<'_> {
 
     /// `parseTypeArguments`, at the `<`: the list, and what `checkGrammarTypeArguments` reports
     /// about it where it is called.
-    pub(crate) fn type_arguments_unchecked(&mut self) -> (IdList<TypeNodeId>, Option<GrammarError>) {
+    pub(crate) fn type_arguments_unchecked(
+        &mut self,
+    ) -> (IdList<TypeNodeId>, Option<GrammarError>) {
         if self.is_flow {
             return (self.flow_type_arguments(), None);
         }
@@ -1144,11 +1147,12 @@ impl Parser<'_> {
         let params = self.parameter_list(0, T::CloseBracket);
         self.expect(T::CloseBracket);
         // `checkGrammarIndexSignatureParameters`
-        let is_plain = params.len() == 1
-            && self.f.params.get(params.start as usize).is_some_and(|it| {
-                it.flags.is_empty() && it.default.is_none() && it.ty.is_some()
-            })
-            && self.lx.src.get(self.prev_end() as usize - 2) != Some(&b',');
+        let is_plain =
+            params.len() == 1
+                && self.f.params.get(params.start as usize).is_some_and(|it| {
+                    it.flags.is_empty() && it.default.is_none() && it.ty.is_some()
+                })
+                && self.lx.src.get(self.prev_end() as usize - 2) != Some(&b',');
         if !is_plain {
             self.refuse(Refusal::Reported);
         }
@@ -1241,8 +1245,7 @@ impl Parser<'_> {
         };
         if let Some((kind, fn_kind)) = signature_kind {
             member.kind = kind;
-            member.func =
-                self.signature(fn_kind, Flags::empty(), Atom::NONE, start.pos, start.pos);
+            member.func = self.signature(fn_kind, Flags::empty(), Atom::NONE, start.pos, start.pos);
         } else {
             let first_modifier = self.s.modifiers.len();
             if self.token().is_modifier() {

@@ -19,7 +19,14 @@ pub(crate) fn write_ts_function_type<'a>(ty: TypeNode<'a>, func: Func<'a>, f: &m
     match func.kind() {
         FnKind::ConstructorType => write!(
             f,
-            group(&format_args!(func.flags().contains(Flags::ABSTRACT).then_some("abstract "), "new", space(), signature))
+            group(&format_args!(
+                func.flags()
+                    .contains(Flags::ABSTRACT)
+                    .then_some("abstract "),
+                "new",
+                space(),
+                signature
+            ))
         ),
         _ => write!(f, signature),
     }
@@ -37,7 +44,11 @@ pub(crate) fn write_ts_construct_signature_declaration<'a>(func: Func<'a>, f: &m
 }
 
 /// `a(b: B): R`, `get a(): R`, `set a(b: B)`
-pub(crate) fn write_ts_method_signature<'a>(member: Member<'a>, func: Func<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_method_signature<'a>(
+    member: Member<'a>,
+    func: Func<'a>,
+    f: &mut Formatter<'a>,
+) {
     let format_inner = format_with(|f| {
         match member.kind() {
             MemberKind::Getter => write!(f, ["get", space()]),
@@ -59,7 +70,10 @@ pub(crate) fn write_ts_method_signature<'a>(member: Member<'a>, func: Func<'a>, 
         let format_return_type = FormatReturnType(func).memoized();
 
         match should_group_function_parameters(func, &format_return_type, f) {
-            true => write!(f, group(&format_args!(format_type_parameters, format_parameters))),
+            true => write!(
+                f,
+                group(&format_args!(format_type_parameters, format_parameters))
+            ),
             false => write!(f, [format_type_parameters, format_parameters]),
         }
         write!(f, group(&format_return_type));
@@ -78,16 +92,28 @@ fn format_grouped_parameters_with_return_type<'a>(
         let format_type_parameters = FormatTypeParameters(func).memoized();
         let format_parameters = FormatFormalParameters(func).memoized();
         let return_type = func.return_type().map(|_| FormatReturnType(func));
-        let format_return_type = return_type.as_ref().map(FormatNodeWithoutTrailingComments).memoized();
+        let format_return_type = return_type
+            .as_ref()
+            .map(FormatNodeWithoutTrailingComments)
+            .memoized();
 
         format_type_parameters.inspect(f);
         format_parameters.inspect(f);
 
         match should_group_function_parameters(func, &format_return_type, f) {
-            true => write!(f, group(&format_args!(format_type_parameters, format_parameters))),
+            true => write!(
+                f,
+                group(&format_args!(format_type_parameters, format_parameters))
+            ),
             false => write!(f, [format_type_parameters, format_parameters]),
         }
-        write!(f, [is_function_or_constructor_type.then_some(space()), format_return_type]);
+        write!(
+            f,
+            [
+                is_function_or_constructor_type.then_some(space()),
+                format_return_type
+            ]
+        );
     }))
     .fmt(f);
 }
@@ -99,7 +125,13 @@ impl<'a> Format<'a> for FormatTypeParameters<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let params = self.0.type_params();
         if !params.is_empty() {
-            write!(f, [type_parameters(params, Node::Func(self.0)), FormatCommentsAroundParenthesis(self.0)]);
+            write!(
+                f,
+                [
+                    type_parameters(params, Node::Func(self.0)),
+                    FormatCommentsAroundParenthesis(self.0)
+                ]
+            );
         }
     }
 }
@@ -129,7 +161,10 @@ struct FormatReturnType<'a>(Func<'a>);
 
 impl Spanned for FormatReturnType<'_> {
     fn span(&self) -> Span {
-        self.0.return_type().map(TypeNode::annotation_span).unwrap_or_default()
+        self.0
+            .return_type()
+            .map(TypeNode::annotation_span)
+            .unwrap_or_default()
     }
 }
 
@@ -138,7 +173,9 @@ impl<'a> Format<'a> for FormatReturnType<'a> {
         let Some(return_type) = self.0.return_type() else {
             return;
         };
-        let has_comment = !f.is_quiet() && f.comments().has_comment_before(return_type.annotation_span().start);
+        let has_comment = !f.is_quiet()
+            && f.comments()
+                .has_comment_before(return_type.annotation_span().start);
         write!(f, has_comment.then_some(space()));
         match self.0.owner() {
             Node::Type(_) => write!(f, FormatReturnTypeOfFunctionType(return_type)),

@@ -144,8 +144,13 @@ impl<'a> File<'a> {
 pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
     // With the offset in place of the line.
     let mut requests = Vec::new();
-    let has_dynamic_imports = !flavor.ignores_dynamic_imports() && may_have_import_call(file.text());
-    for e in has_dynamic_imports.then(|| file.exprs_of_kind(ExprTag::ImportCall)).into_iter().flatten() {
+    let has_dynamic_imports =
+        !flavor.ignores_dynamic_imports() && may_have_import_call(file.text());
+    for e in has_dynamic_imports
+        .then(|| file.exprs_of_kind(ExprTag::ImportCall))
+        .into_iter()
+        .flatten()
+    {
         if let ExprKind::ImportCall { args } = e.kind()
             && let Some(source) = args.first()
             && let Some(specifier) = source.as_string()
@@ -191,12 +196,15 @@ fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) 
             StmtKind::Import(import) => {
                 let has_values = import.default().is_some() || import.namespace().is_some();
                 let named = import.named();
-                let are_all_types = !has_values && !named.is_empty() && named.iter().all(|it| it.is_type_only());
+                let are_all_types =
+                    !has_values && !named.is_empty() && named.iter().all(|it| it.is_type_only());
                 (Some(import.spec()), import.is_type_only() || are_all_types)
             }
             // eslint-plugin-import does not look at `exportKind` here.
             StmtKind::ExportNamed(export) => (export.spec(), false),
-            StmtKind::ExportStar { spec, type_only, .. } => (spec, type_only),
+            StmtKind::ExportStar {
+                spec, type_only, ..
+            } => (spec, type_only),
             _ => continue,
         };
         if let (Some(specifier), Some(span)) = (specifier, stmt.module_specifier_span()) {
@@ -222,24 +230,54 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
     for stmt in file.body() {
         let (specifier, types, values) = match stmt.kind() {
             StmtKind::Import(import) => {
-                let whole = usize::from(import.default().is_some()) + usize::from(import.namespace().is_some());
+                let whole = usize::from(import.default().is_some())
+                    + usize::from(import.namespace().is_some());
                 let types = import.named().iter().filter(|it| it.is_type_only()).count();
                 let all = whole + import.named().len();
-                (Some(import.spec()), if import.is_type_only() { all } else { types }, if import.is_type_only() { 0 } else { all - types })
+                (
+                    Some(import.spec()),
+                    if import.is_type_only() { all } else { types },
+                    if import.is_type_only() {
+                        0
+                    } else {
+                        all - types
+                    },
+                )
             }
             StmtKind::ExportNamed(export) => {
                 let types = export.items().iter().filter(|it| it.is_type_only()).count();
                 let all = export.items().len();
-                (export.spec(), if export.is_type_only() { all } else { types }, if export.is_type_only() { 0 } else { all - types })
+                (
+                    export.spec(),
+                    if export.is_type_only() { all } else { types },
+                    if export.is_type_only() {
+                        0
+                    } else {
+                        all - types
+                    },
+                )
             }
-            StmtKind::ExportStar { spec, alias, type_only } => {
+            StmtKind::ExportStar {
+                spec,
+                alias,
+                type_only,
+            } => {
                 let names = usize::from(alias.is_some());
-                (spec, if type_only { names } else { 0 }, if type_only { 0 } else { names })
+                (
+                    spec,
+                    if type_only { names } else { 0 },
+                    if type_only { 0 } else { names },
+                )
             }
             _ => continue,
         };
         if let (Some(specifier), Some(span)) = (specifier, stmt.module_specifier_span()) {
-            names.push((specifier, types + values > 0, values > 0, types + values > 0 && stmt.tag() != StmtTag::Import));
+            names.push((
+                specifier,
+                types + values > 0,
+                values > 0,
+                types + values > 0 && stmt.tag() != StmtTag::Import,
+            ));
             requests.push(Request {
                 specifier: specifier.bytes(),
                 span,
@@ -253,7 +291,8 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
     if !names.spilled() {
         for (request, &(specifier, ..)) in requests[first..].iter_mut().zip(&names) {
             let mut same = names.iter().filter(|it| it.0 == specifier);
-            request.is_only_importing_types = same.clone().any(|it| it.1) && !same.clone().any(|it| it.2);
+            request.is_only_importing_types =
+                same.clone().any(|it| it.1) && !same.clone().any(|it| it.2);
             request.may_be_itself = same.any(|it| it.3);
         }
         return;
@@ -265,7 +304,8 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
         *all = (all.0 | has_names, all.1 | has_values, all.2 | exports_names);
     }
     for (request, (specifier, ..)) in requests[first..].iter_mut().zip(&names) {
-        let (has_names, has_values, exports_names) = by_specifier.get(specifier).copied().unwrap_or_default();
+        let (has_names, has_values, exports_names) =
+            by_specifier.get(specifier).copied().unwrap_or_default();
         request.is_only_importing_types = has_names && !has_values;
         request.may_be_itself = exports_names;
     }

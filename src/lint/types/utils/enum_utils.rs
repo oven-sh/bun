@@ -124,13 +124,19 @@ impl<'a> EnumComparisons<'a> {
 
     fn compared(&mut self, ty: Type<'a>) -> Rc<ComparedType<'a>> {
         match union_constituents(ty).len() > Self::MANY {
-            true => Rc::clone(self.of_many.entry(ty).or_insert_with(|| Rc::new(ComparedType::new(ty)))),
+            true => Rc::clone(
+                self.of_many
+                    .entry(ty)
+                    .or_insert_with(|| Rc::new(ComparedType::new(ty))),
+            ),
             false => Rc::new(ComparedType::new(ty)),
         }
     }
 
     pub fn is_mismatched(&mut self, left_type: Type<'a>, right_type: Type<'a>) -> bool {
-        if union_constituents(left_type).len() <= Self::MANY && union_constituents(right_type).len() <= Self::MANY {
+        if union_constituents(left_type).len() <= Self::MANY
+            && union_constituents(right_type).len() <= Self::MANY
+        {
             return is_mismatched_enum_comparison_types(left_type, right_type);
         }
         let (left, right) = (self.compared(left_type), self.compared(right_type));

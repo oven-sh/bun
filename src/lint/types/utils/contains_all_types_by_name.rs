@@ -18,7 +18,14 @@ pub fn contains_all_types_by_name(
     match_any_instead: bool,
 ) -> bool {
     let mut known = BaseTypeAnswers::default();
-    contains(ty, allow_any, allowed_names, match_any_instead, 0, &mut known)
+    contains(
+        ty,
+        allow_any,
+        allowed_names,
+        match_any_instead,
+        0,
+        &mut known,
+    )
 }
 
 fn contains<'a>(
@@ -50,8 +57,16 @@ fn contains<'a>(
         false => ty.get_base_types(),
     };
     let ask = |known: &mut BaseTypeAnswers<'a>| {
-        let predicate =
-            |t: Type<'a>| contains(t, allow_any, allowed_names, match_any_instead, depth + 1, known);
+        let predicate = |t: Type<'a>| {
+            contains(
+                t,
+                allow_any,
+                allowed_names,
+                match_any_instead,
+                depth + 1,
+                known,
+            )
+        };
         match match_any_instead {
             true => types.iter().any(predicate),
             false => (is_constituents || !types.is_empty()) && types.iter().all(predicate),

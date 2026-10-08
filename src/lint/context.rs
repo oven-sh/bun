@@ -129,7 +129,13 @@ impl<'a, R: Rule> Cx<'a, R> {
             suggestions: Vec::new(),
         };
         if !self.is_capped.get() {
-            let bytes = self.file.sink.bytes.borrow().get(self.rule as usize).copied();
+            let bytes = self
+                .file
+                .sink
+                .bytes
+                .borrow()
+                .get(self.rule as usize)
+                .copied();
             let closing = match self.reports.get() {
                 MAX_REPORTS => Some(TOO_MANY_PROBLEMS),
                 _ if bytes.is_some_and(|it| it > MAX_REPORTED_BYTES) => Some(TOO_LARGE_PROBLEMS),
@@ -252,7 +258,9 @@ impl<'a> Report<'a> {
         {
             diagnostic.suggestions.push(Suggestion {
                 message_id: message.id,
-                message: interpolate(message, |name| data.iter().find(|it| it.0 == name).map(|it| it.1)),
+                message: interpolate(message, |name| {
+                    data.iter().find(|it| it.0 == name).map(|it| it.1)
+                }),
                 data: data.iter().map(|it| (it.0, it.1.to_vec())).collect(),
                 fix,
             });
@@ -264,9 +272,16 @@ impl<'a> Report<'a> {
 impl Drop for Report<'_> {
     fn drop(&mut self) {
         if let Some(mut diagnostic) = self.diagnostic.take() {
-            diagnostic.message = interpolate(self.message, |name| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1));
-            let suggested = diagnostic.suggestions.iter().map(|it| it.message.len() + it.fix.text.len());
-            let size = diagnostic.message.len() + diagnostic.fix.as_ref().map_or(0, |it| it.text.len()) + suggested.sum::<usize>();
+            diagnostic.message = interpolate(self.message, |name| {
+                self.data.iter().find(|it| it.0 == name).map(|it| &*it.1)
+            });
+            let suggested = diagnostic
+                .suggestions
+                .iter()
+                .map(|it| it.message.len() + it.fix.text.len());
+            let size = diagnostic.message.len()
+                + diagnostic.fix.as_ref().map_or(0, |it| it.text.len())
+                + suggested.sum::<usize>();
             let mut bytes = self.file.sink.bytes.borrow_mut();
             if bytes.len() <= diagnostic.rule as usize {
                 bytes.resize(diagnostic.rule as usize + 1, 0);
@@ -295,7 +310,8 @@ fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) ->
             continue;
         }
         let name_start = open + 2;
-        let name_len = bun_core::strings::index_of_any(&bytes[name_start..], b"{}").unwrap_or(bytes.len() - name_start);
+        let name_len = bun_core::strings::index_of_any(&bytes[name_start..], b"{}")
+            .unwrap_or(bytes.len() - name_start);
         let name_end = name_start + name_len;
         let value = match name_len > 0 && bytes[name_end..].starts_with(b"}}") {
             true => data(text[name_start..name_end].trim()),

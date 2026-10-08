@@ -55,8 +55,11 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         let mut next = self.tree.first_child(id);
         while let Some(child) = next {
             next = self.tree.next(child);
-            let is_in_svg_foreign_object = is_in_svg_foreign_object || self.is_svg_foreign_object(child);
-            self.tree[child].css_display = self.tree.css_display(child, is_in_svg_foreign_object, self.options);
+            let is_in_svg_foreign_object =
+                is_in_svg_foreign_object || self.is_svg_foreign_object(child);
+            self.tree[child].css_display =
+                self.tree
+                    .css_display(child, is_in_svg_foreign_object, self.options);
             self.add_is_self_closing(child);
             self.add_has_htm_component_closing_tag(child);
         }
@@ -66,8 +69,14 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         let mut next = self.tree.first_child(id);
         while let Some(child) = next {
             next = self.tree.next(child);
-            if !matches!(self.tree[child].kind, Kind::Text | Kind::Comment | Kind::DocType) {
-                self.visit(child, is_in_svg_foreign_object || self.is_svg_foreign_object(child));
+            if !matches!(
+                self.tree[child].kind,
+                Kind::Text | Kind::Comment | Kind::DocType
+            ) {
+                self.visit(
+                    child,
+                    is_in_svg_foreign_object || self.is_svg_foreign_object(child),
+                );
             }
         }
         if has_children_property {
@@ -90,7 +99,10 @@ impl<'a> Preprocessor<'_, 'a, '_> {
     fn remove_ignorable_first_lf(&mut self, id: Id) {
         let node = &self.tree[id];
         // The first child was a comment when Prettier asked.
-        if node.kind != Kind::Element || !node.tag_definition.ignore_first_lf || node.has(Flags::HAS_CONDITION) {
+        if node.kind != Kind::Element
+            || !node.tag_definition.ignore_first_lf
+            || node.has(Flags::HAS_CONDITION)
+        {
             return;
         }
         let Some(first) = self.tree.first_child(id) else {
@@ -115,7 +127,9 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             if self.tree[child].kind != Kind::Element {
                 continue;
             }
-            let (Some(start_comment), Some(end_comment)) = (self.tree.prev(child), self.tree.first_child(child)) else {
+            let (Some(start_comment), Some(end_comment)) =
+                (self.tree.prev(child), self.tree.first_child(child))
+            else {
                 continue;
             };
             let start_span = self.tree[child].start_span;
@@ -128,7 +142,10 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             }
             self.tree.remove(start_comment);
             self.tree.remove(end_comment);
-            let start_span = Span::new(self.tree[start_comment].span.start, self.tree[end_comment].span.end);
+            let start_span = Span::new(
+                self.tree[start_comment].span.start,
+                self.tree[end_comment].span.end,
+            );
             let condition = std::mem::take(&mut self.tree[start_comment].value);
             let node = &mut self.tree[child];
             node.value = condition;
@@ -152,10 +169,17 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 }
                 _ => continue,
             }
-            let Some(prev) = self.tree.prev(child).filter(|&prev| self.tree[prev].kind == Kind::Text) else {
+            let Some(prev) = self
+                .tree
+                .prev(child)
+                .filter(|&prev| self.tree[prev].kind == Kind::Text)
+            else {
                 continue;
             };
-            let (value, end) = (std::mem::take(&mut self.tree[child].value), self.tree[child].span.end);
+            let (value, end) = (
+                std::mem::take(&mut self.tree[child].value),
+                self.tree[child].span.end,
+            );
             let node = &mut self.tree[prev];
             node.value.to_mut().extend_from_slice(&value);
             node.span.end = end;
@@ -186,22 +210,31 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             // `value.split(/\{\{(.+?)\}\}/s)`
             let mut from = 0;
             loop {
-                let found = strings::index_of(&value[from..], b"{{").map(|at| from + at).and_then(|open| {
-                    let close = strings::index_of(value.get(open + 3..)?, b"}}")?;
-                    Some((open, open + 3 + close))
-                });
+                let found = strings::index_of(&value[from..], b"{{")
+                    .map(|at| from + at)
+                    .and_then(|open| {
+                        let close = strings::index_of(value.get(open + 3..)?, b"}}")?;
+                        Some((open, open + 3 + close))
+                    });
                 let text_end = found.map_or(value.len(), |(open, _)| open);
                 if text_end > from {
                     let span = Span::new(base + from as u32, base + text_end as u32);
-                    let text = self.tree.add(Node::text(slice(&value, from, text_end), span));
+                    let text = self
+                        .tree
+                        .add(Node::text(slice(&value, from, text_end), span));
                     self.tree.insert_before(child, text);
                 }
                 let Some((open, close)) = found else {
                     break;
                 };
                 let inner = Span::new(base + open as u32 + 2, base + close as u32);
-                let interpolation = self.tree.add(Node::new(Kind::Interpolation, Span::new(inner.start - 2, inner.end + 2)));
-                let text = self.tree.add(Node::text(slice(&value, open + 2, close), inner));
+                let interpolation = self.tree.add(Node::new(
+                    Kind::Interpolation,
+                    Span::new(inner.start - 2, inner.end + 2),
+                ));
+                let text = self
+                    .tree
+                    .add(Node::text(slice(&value, open + 2, close), inner));
                 self.tree.append_child(interpolation, text);
                 self.tree.insert_before(child, interpolation);
                 from = close + 2;
@@ -214,12 +247,16 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         let is_blank = match self.tree.first_child(id) {
             None => true,
             Some(first) => {
-                self.tree.next(first).is_none() && self.tree[first].kind == Kind::Text && html_trim(&self.tree[first].value).is_empty()
+                self.tree.next(first).is_none()
+                    && self.tree[first].kind == Kind::Text
+                    && html_trim(&self.tree[first].value).is_empty()
             }
         };
         if is_blank {
             let has_dangling_spaces = self.tree.has_children(id);
-            self.tree[id].flags.set(Flags::HAS_DANGLING_SPACES, has_dangling_spaces);
+            self.tree[id]
+                .flags
+                .set(Flags::HAS_DANGLING_SPACES, has_dangling_spaces);
             self.tree.clear_children(id);
             return;
         }
@@ -236,13 +273,17 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 let value = &self.tree[child].value;
                 let leading = utilities::leading_whitespace_count(value);
                 let trailing = utilities::trailing_whitespace_count(&value[leading..]);
-                let (is_all_whitespace, is_empty) = (leading + trailing == value.len(), value.is_empty());
+                let (is_all_whitespace, is_empty) =
+                    (leading + trailing == value.len(), value.is_empty());
                 if is_all_whitespace {
                     self.tree.remove(child);
                 } else {
                     let node = &mut self.tree[child];
                     node.value = slice(&node.value, leading, node.value.len() - trailing);
-                    node.span = Span::new(node.span.start + leading as u32, node.span.end.saturating_sub(trailing as u32));
+                    node.span = Span::new(
+                        node.span.start + leading as u32,
+                        node.span.end.saturating_sub(trailing as u32),
+                    );
                     node.flags.set(Flags::HAS_LEADING_SPACES, leading > 0);
                     node.flags.set(Flags::HAS_TRAILING_SPACES, trailing > 0);
                 }
@@ -267,7 +308,8 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         let node = &mut self.tree[id];
         let is_self_closing = !node.has_children_property()
             || (node.kind == Kind::Element
-                && (node.tag_definition.is_void || (node.has(Flags::HAS_END_SPAN) && node.start_span == node.end_span)));
+                && (node.tag_definition.is_void
+                    || (node.has(Flags::HAS_END_SPAN) && node.start_span == node.end_span)));
         node.flags.set(Flags::IS_SELF_CLOSING, is_self_closing);
     }
 
@@ -289,13 +331,18 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             }
             rest.is_empty()
         });
-        node.flags.set(Flags::HAS_HTM_COMPONENT_CLOSING_TAG, has_htm_component_closing_tag);
+        node.flags.set(
+            Flags::HAS_HTM_COMPONENT_CLOSING_TAG,
+            has_htm_component_closing_tag,
+        );
     }
 
     fn add_is_space_sensitive(&mut self, id: Id) {
         let Some(first) = self.tree.first_child(id) else {
             let is_sensitive = self.tree.is_dangling_space_sensitive(id, self.options);
-            self.tree[id].flags.set(Flags::IS_DANGLING_SPACE_SENSITIVE, is_sensitive);
+            self.tree[id]
+                .flags
+                .set(Flags::IS_DANGLING_SPACE_SENSITIVE, is_sensitive);
             return;
         };
         let mut next = Some(first);
@@ -311,11 +358,23 @@ impl<'a> Preprocessor<'_, 'a, '_> {
         let mut next = Some(first);
         while let Some(child) = next {
             next = self.tree.next(child);
-            if self.tree.prev_of(child).is_some_and(|prev| !prev.has(Flags::IS_TRAILING_SPACE_SENSITIVE)) {
-                self.tree[child].flags.remove(Flags::IS_LEADING_SPACE_SENSITIVE);
+            if self
+                .tree
+                .prev_of(child)
+                .is_some_and(|prev| !prev.has(Flags::IS_TRAILING_SPACE_SENSITIVE))
+            {
+                self.tree[child]
+                    .flags
+                    .remove(Flags::IS_LEADING_SPACE_SENSITIVE);
             }
-            if self.tree.next_of(child).is_some_and(|next| !next.has(Flags::IS_LEADING_SPACE_SENSITIVE)) {
-                self.tree[child].flags.remove(Flags::IS_TRAILING_SPACE_SENSITIVE);
+            if self
+                .tree
+                .next_of(child)
+                .is_some_and(|next| !next.has(Flags::IS_LEADING_SPACE_SENSITIVE))
+            {
+                self.tree[child]
+                    .flags
+                    .remove(Flags::IS_TRAILING_SPACE_SENSITIVE);
             }
         }
     }
@@ -329,12 +388,22 @@ impl<'a> Preprocessor<'_, 'a, '_> {
                 let only = &self.tree[only];
                 only.kind == Kind::Text
                     && !has_html_whitespace(&only.value)
-                    && !only.flags.intersects(Flags::HAS_LEADING_SPACES | Flags::HAS_TRAILING_SPACES)
+                    && !only
+                        .flags
+                        .intersects(Flags::HAS_LEADING_SPACES | Flags::HAS_TRAILING_SPACES)
             })
             && node.has(Flags::IS_LEADING_SPACE_SENSITIVE | Flags::IS_TRAILING_SPACE_SENSITIVE)
-            && !node.flags.intersects(Flags::HAS_LEADING_SPACES | Flags::HAS_TRAILING_SPACES)
-            && self.tree.prev_of(id).is_some_and(|prev| prev.kind == Kind::Text)
-            && self.tree.next_of(id).is_some_and(|next| next.kind == Kind::Text)
+            && !node
+                .flags
+                .intersects(Flags::HAS_LEADING_SPACES | Flags::HAS_TRAILING_SPACES)
+            && self
+                .tree
+                .prev_of(id)
+                .is_some_and(|prev| prev.kind == Kind::Text)
+            && self
+                .tree
+                .next_of(id)
+                .is_some_and(|next| next.kind == Kind::Text)
     }
 
     fn merge_simple_element_into_text(&mut self, id: Id) {
@@ -344,13 +413,20 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             if !self.is_simple_element(child) {
                 continue;
             }
-            let (Some(prev), Some(next), Some(only)) = (self.tree.prev(child), self.tree.next(child), self.tree.first_child(child)) else {
+            let (Some(prev), Some(next), Some(only)) = (
+                self.tree.prev(child),
+                self.tree.next(child),
+                self.tree.first_child(child),
+            ) else {
                 continue;
             };
             next_child = self.tree.next(next);
             let mut value = std::mem::take(&mut self.tree[prev].value).into_owned();
             let (namespace, name) = self.tree[child].raw_name();
-            for (open, close) in [(&b"<"[..], &self.tree[only].value[..]), (b"</", &self.tree[next].value)] {
+            for (open, close) in [
+                (&b"<"[..], &self.tree[only].value[..]),
+                (b"</", &self.tree[next].value),
+            ] {
                 value.extend_from_slice(open);
                 if !namespace.is_empty() {
                     value.extend_from_slice(namespace);
@@ -364,8 +440,14 @@ impl<'a> Preprocessor<'_, 'a, '_> {
             let text = &mut self.tree[prev];
             text.value = Cow::Owned(value);
             text.span.end = end;
-            text.flags.set(Flags::IS_TRAILING_SPACE_SENSITIVE, flags.contains(Flags::IS_TRAILING_SPACE_SENSITIVE));
-            text.flags.set(Flags::HAS_TRAILING_SPACES, flags.contains(Flags::HAS_TRAILING_SPACES));
+            text.flags.set(
+                Flags::IS_TRAILING_SPACE_SENSITIVE,
+                flags.contains(Flags::IS_TRAILING_SPACE_SENSITIVE),
+            );
+            text.flags.set(
+                Flags::HAS_TRAILING_SPACES,
+                flags.contains(Flags::HAS_TRAILING_SPACES),
+            );
             self.tree.remove(child);
             self.tree.remove(next);
         }

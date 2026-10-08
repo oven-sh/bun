@@ -37,14 +37,19 @@ impl<'a> Format<'a> for FormatModifiers<'a> {
 
 /// The `+` or `-` of a property of a class.
 pub(crate) fn write_variance_sign<'a>(modifiers: List<'a, Modifier<'a>>, f: &mut Formatter<'a>) {
-    for modifier in modifiers.iter().filter(|it| it.flag().intersects(Flags::IN | Flags::OUT)) {
+    for modifier in modifiers
+        .iter()
+        .filter(|it| it.flag().intersects(Flags::IN | Flags::OUT))
+    {
         write!(f, source_text(modifier.token_span()));
     }
 }
 
 /// Whether the word `word`, which TypeScript has no flag for, is among `modifiers`.
 fn has_word<'a>(modifiers: List<'a, Modifier<'a>>, word: &[u8], f: &Formatter<'a>) -> bool {
-    modifiers.iter().any(|it| it.decorator().is_none() && it.flag().is_empty() && f.file().slice(it.token_span()) == word)
+    modifiers.iter().any(|it| {
+        it.decorator().is_none() && it.flag().is_empty() && f.file().slice(it.token_span()) == word
+    })
 }
 
 fn is_declared<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
@@ -102,7 +107,9 @@ fn is_optional_indexed_access(mut ty: TypeNode<'_>) -> bool {
 /// A parameter of a function type, of a signature or of a function that is declared: Flow's
 /// `FunctionTypeParam`, as opposed to a pattern with a type annotation.
 fn is_function_type_param(param: Param<'_>) -> bool {
-    param.func().is_some_and(|func| !func.has_body() && !func.is_arrow())
+    param
+        .func()
+        .is_some_and(|func| !func.has_body() && !func.is_arrow())
 }
 
 /// Prettier's `needsParentheses` for the types of Flow.
@@ -112,10 +119,15 @@ pub(crate) fn needs_parentheses(ty: TypeNode<'_>) -> bool {
         _ => None,
     };
     let parent_tag = parent.map(TypeNode::tag);
-    let is_object_type = parent.is_some_and(|it| matches!(it.kind(), TypeKind::IndexedAccess { obj, .. } if obj == ty));
+    let is_object_type = parent
+        .is_some_and(|it| matches!(it.kind(), TypeKind::IndexedAccess { obj, .. } if obj == ty));
     match ty.tag() {
         TypeTag::Unique => {
-            is_object_type || matches!(parent_tag, Some(TypeTag::Array | TypeTag::JSDoc | TypeTag::Unique))
+            is_object_type
+                || matches!(
+                    parent_tag,
+                    Some(TypeTag::Array | TypeTag::JSDoc | TypeTag::Unique)
+                )
         }
         TypeTag::Typeof | TypeTag::Keyof => is_object_type || parent_tag == Some(TypeTag::Array),
         TypeTag::Array => parent_tag == Some(TypeTag::JSDoc),
@@ -165,8 +177,7 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
         Some(_) if func.return_type().is_none() => return false,
         _ => {}
     }
-    let is_return_type_of_arrow =
-        |it: TypeNode<'a>| matches!(it.parent(), Node::Func(owner) if owner.is_arrow() && owner.return_type() == Some(it));
+    let is_return_type_of_arrow = |it: TypeNode<'a>| matches!(it.parent(), Node::Func(owner) if owner.is_arrow() && owner.return_type() == Some(it));
     if is_return_type_of_arrow(ty) {
         return true;
     }
@@ -174,7 +185,9 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
     let mut ancestor = parent;
     if let Node::Type(parent) = parent {
         // The inner `=>` would be taken for that of the arrow function.
-        if matches!(parent.tag(), TypeTag::JSDoc | TypeTag::Predicate) && is_return_type_of_arrow(parent) {
+        if matches!(parent.tag(), TypeTag::JSDoc | TypeTag::Predicate)
+            && is_return_type_of_arrow(parent)
+        {
             return true;
         }
         match parent.kind() {
@@ -194,12 +207,17 @@ fn function_type_needs_parentheses<'a>(ty: TypeNode<'a>, func: Func<'a>) -> bool
     }
     match (ancestor, parent) {
         (Node::Type(ancestor), _) if !is_interface_type(ancestor) => {
-            matches!(ancestor.tag(), TypeTag::Union | TypeTag::Intersection | TypeTag::Array | TypeTag::JSDoc)
+            matches!(
+                ancestor.tag(),
+                TypeTag::Union | TypeTag::Intersection | TypeTag::Array | TypeTag::JSDoc
+            )
         }
         (_, Node::Param(param)) => {
             param.pat().tag() == PatTag::Missing
                 && is_function_type_param(param)
-                && func.params_with_this().any(|it| it.ty().is_some_and(|it| it.tag() == TypeTag::JSDoc))
+                && func
+                    .params_with_this()
+                    .any(|it| it.ty().is_some_and(|it| it.tag() == TypeTag::JSDoc))
         }
         _ => false,
     }
@@ -216,7 +234,10 @@ fn write_in_parentheses<'a>(ty: TypeNode<'a>, content: &impl Format<'a>, f: &mut
 // ───────────────────────────── types ─────────────────────────────
 
 /// `?T`, `renders T`. Returns whether `ty` is one of them.
-pub(crate) fn write_nullable_type_or_type_operator<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_nullable_type_or_type_operator<'a>(
+    ty: TypeNode<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
     if let Some(operand) = ty.flow_nullable_operand() {
         write_in_parentheses(ty, &format_args!("?", operand), f);
         return true;
@@ -279,7 +300,16 @@ pub(crate) fn write_declared_predicate<'a>(
     if ty.first_token() == b"typeof" {
         return false;
     }
-    write!(f, [args.first(), args.first().map(|_| space()), "%checks(", expr, ")"]);
+    write!(
+        f,
+        [
+            args.first(),
+            args.first().map(|_| space()),
+            "%checks(",
+            expr,
+            ")"
+        ]
+    );
     true
 }
 
@@ -287,11 +317,12 @@ pub(crate) fn write_declared_predicate<'a>(
 pub(crate) fn write_interface_type<'a>(parts: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
     let count = parts.len().saturating_sub(1);
     let extends = format_with(|f| {
-        f.join_with(soft_line_break_or_space()).entries_with_trailing_separator(
-            parts.iter().take(count),
-            ",",
-            TrailingSeparator::Disallowed,
-        );
+        f.join_with(soft_line_break_or_space())
+            .entries_with_trailing_separator(
+                parts.iter().take(count),
+                ",",
+                TrailingSeparator::Disallowed,
+            );
     });
     write!(f, "interface");
     match count {
@@ -311,14 +342,24 @@ pub(crate) fn write_interface_type<'a>(parts: List<'a, TypeNode<'a>>, f: &mut Fo
 
 /// `hook (A) => B` starts with the word. `component(a: A) renders B` is written here: returns
 /// whether `ty` is one.
-pub(crate) fn write_function_type_keyword<'a>(ty: TypeNode<'a>, func: Func<'a>, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_function_type_keyword<'a>(
+    ty: TypeNode<'a>,
+    func: Func<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
     match keyword_of_function_type(ty, func) {
         Some("hook") => {
             write!(f, "hook ");
             false
         }
         Some(_) => {
-            write!(f, ["component", type_parameters(func.type_params(), Node::Func(func))]);
+            write!(
+                f,
+                [
+                    "component",
+                    type_parameters(func.type_params(), Node::Func(func))
+                ]
+            );
             write_component_parameters_and_renders(func, f);
             true
         }
@@ -328,7 +369,14 @@ pub(crate) fn write_function_type_keyword<'a>(ty: TypeNode<'a>, func: Func<'a>, 
 
 fn write_component_parameters_and_renders<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     let renders = func.return_type();
-    write!(f, group(&format_args!(FormatFormalParameters(func), renders.map(|_| space()), renders)));
+    write!(
+        f,
+        group(&format_args!(
+            FormatFormalParameters(func),
+            renders.map(|_| space()),
+            renders
+        ))
+    );
 }
 
 // ───────────────────────────── parameters ─────────────────────────────
@@ -346,7 +394,9 @@ fn is_component<'a>(func: Func<'a>, f: &Formatter<'a>) -> bool {
 pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>) -> bool {
     let is_unnamed = param.pat().tag() == PatTag::Missing;
     let outer_name = match param.modifiers().is_empty() {
-        true => param.flow_outer_name().filter(|_| param.func().is_some_and(|func| is_component(func, f))),
+        true => param
+            .flow_outer_name()
+            .filter(|_| param.func().is_some_and(|func| is_component(func, f))),
         false => None,
     };
     if let Some(span) = outer_name {
@@ -391,7 +441,9 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
         Node::Member(member) => !member.is_static(),
         Node::Param(param) => !is_function_type_param(param),
         Node::VarDecl(_) | Node::Func(_) => true,
-        Node::Stmt(statement) => statement.tag() == StmtTag::TypeAlias && !is_declared(statement.modifiers()),
+        Node::Stmt(statement) => {
+            statement.tag() == StmtTag::TypeAlias && !is_declared(statement.modifiers())
+        }
         Node::Type(parent) => matches!(parent.tag(), TypeTag::Union | TypeTag::Intersection),
         Node::Expr(e) => e.is_flow_type_cast(),
         _ => false,
@@ -400,9 +452,17 @@ pub(crate) fn is_shorthand_function_type(func: Func<'_>) -> bool {
 
 /// The parameter of a function type for which [`is_shorthand_function_type`] holds.
 pub(crate) fn write_shorthand_parameter<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
-    let is_hook = matches!(func.owner(), Node::Type(ty) if keyword_of_function_type(ty, func).is_some());
+    let is_hook =
+        matches!(func.owner(), Node::Type(ty) if keyword_of_function_type(ty, func).is_some());
     let has_parentheses = is_hook || !f.options().arrow_parentheses.is_as_needed();
-    write!(f, [has_parentheses.then_some("("), func.params().first(), has_parentheses.then_some(")")]);
+    write!(
+        f,
+        [
+            has_parentheses.then_some("("),
+            func.params().first(),
+            has_parentheses.then_some(")")
+        ]
+    );
 }
 
 /// The modifiers of a type parameter: `const`, `+`, `in`.
@@ -411,7 +471,11 @@ pub(crate) fn write_type_parameter_modifiers<'a>(param: TypeParam<'a>, f: &mut F
 }
 
 /// `: Bound`, ` extends Bound`
-pub(crate) fn write_type_parameter_bound<'a>(param: TypeParam<'a>, bound: TypeNode<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_type_parameter_bound<'a>(
+    param: TypeParam<'a>,
+    bound: TypeNode<'a>,
+    f: &mut Formatter<'a>,
+) {
     match param.has_flow_colon() {
         true => write!(f, [": ", bound]),
         false => write!(f, [" extends ", bound]),
@@ -446,20 +510,29 @@ pub(crate) fn is_inexact_mark(member: Member<'_>) -> bool {
 
 /// `{ a: A }`, `{| a: A |}`, `{ a: A, ... }`. Prettier's `printClassBody` for an object type that is
 /// not the body of an interface or a class.
-pub(crate) fn write_object_type<'a>(ty: TypeNode<'a>, members: List<'a, Member<'a>>, f: &mut Formatter<'a>) {
+pub(crate) fn write_object_type<'a>(
+    ty: TypeNode<'a>,
+    members: List<'a, Member<'a>>,
+    f: &mut Formatter<'a>,
+) {
     let (open, close) = match ty.is_flow_exact_object() {
         true => ("{|", "|}"),
         false => ("{", "}"),
     };
     write!(f, open);
     match members.first() {
-        None => write!(f, format_dangling_comments(ty.span()).with_soft_block_indent()),
+        None => write!(
+            f,
+            format_dangling_comments(ty.span()).with_soft_block_indent()
+        ),
         Some(first) => {
             let should_expand = f.options().expand == Expand::Auto
                 && !is_inexact_mark(first)
-                && f.source_text().contains_newline_between(ty.span().start, first.span().start);
+                && f.source_text()
+                    .contains_newline_between(ty.span().start, first.span().start);
             let content = format_with(|f| write_ts_signatures(members, f));
-            let inner = soft_block_indent_with_maybe_space(&content, f.options().bracket_spacing.value());
+            let inner =
+                soft_block_indent_with_maybe_space(&content, f.options().bracket_spacing.value());
             match ObjectLike::TSTypeLiteral(ty, members).should_hug(f) {
                 true => write!(f, inner),
                 false => write!(f, group(&inner).should_expand(should_expand)),
@@ -480,7 +553,15 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
     let optional = member.flags().contains(Flags::OPTIONAL).then_some("?");
     match (member.kind(), member.func()) {
         (MemberKind::IndexSignature, Some(signature)) => {
-            write!(f, ["[", signature.params().first(), "]: ", signature.return_type()]);
+            write!(
+                f,
+                [
+                    "[",
+                    signature.params().first(),
+                    "]: ",
+                    signature.return_type()
+                ]
+            );
         }
         (MemberKind::CallSignature, Some(func)) => write_ts_call_signature_declaration(func, f),
         (_, Some(func)) => match member.flow_internal_slot() {
@@ -514,7 +595,15 @@ fn write_mapped_type_property<'a>(mapped: Mapped<'a>, f: &mut Formatter<'a>) {
         MappedModifier::Add => "?",
         MappedModifier::Remove => "-?",
     };
-    write!(f, group(&format_args!(group(&format_args!("[", soft_block_indent(&key), "]")), optional, ": ", mapped.ty())));
+    write!(
+        f,
+        group(&format_args!(
+            group(&format_args!("[", soft_block_indent(&key), "]")),
+            optional,
+            ": ",
+            mapped.ty()
+        ))
+    );
 }
 
 // ───────────────────────────── declarations ─────────────────────────────
@@ -525,7 +614,11 @@ pub(crate) fn is_opaque_type<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool
 }
 
 /// `opaque type A<T>: B = C`, `opaque type A super B extends C = D`
-pub(crate) fn write_opaque_type<'a>(statement: Stmt<'a>, interface: Interface<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_opaque_type<'a>(
+    statement: Stmt<'a>,
+    interface: Interface<'a>,
+    f: &mut Formatter<'a>,
+) {
     let node = AstNodes::TSInterfaceDeclaration(statement);
     write!(
         f,
@@ -545,11 +638,22 @@ pub(crate) fn write_opaque_type<'a>(statement: Stmt<'a>, interface: Interface<'a
     match bounds.first() {
         Some(supertype) if follows(supertype, b":") => write!(f, [": ", supertype]),
         Some(_) => {
-            let keywords: SmallVec<[&'static str; 2]> =
-                bounds.iter().map(|it| if follows(it, b"super") { "super " } else { "extends " }).collect();
+            let keywords: SmallVec<[&'static str; 2]> = bounds
+                .iter()
+                .map(|it| {
+                    if follows(it, b"super") {
+                        "super "
+                    } else {
+                        "extends "
+                    }
+                })
+                .collect();
             let content = format_with(|f| {
                 for (bound, keyword) in bounds.iter().zip(keywords.iter().copied()) {
-                    write!(f, indent(&format_args!(soft_line_break_or_space(), keyword, bound)));
+                    write!(
+                        f,
+                        indent(&format_args!(soft_line_break_or_space(), keyword, bound))
+                    );
                 }
             });
             write!(f, group(&content));
@@ -564,9 +668,20 @@ pub(crate) fn write_opaque_type<'a>(statement: Stmt<'a>, interface: Interface<'a
 
 /// `declare module.exports: T`, and the `T` of `declare export default T`. Returns whether the type
 /// alias stands for one of them.
-pub(crate) fn write_what_is_no_type_alias<'a>(statement: Stmt<'a>, alias: Alias<'a>, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_what_is_no_type_alias<'a>(
+    statement: Stmt<'a>,
+    alias: Alias<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
     if alias.name().name().is("module.exports") {
-        write!(f, ["declare module.exports", FormatTypeAnnotation(alias.ty()), OptionalSemicolon]);
+        write!(
+            f,
+            [
+                "declare module.exports",
+                FormatTypeAnnotation(alias.ty()),
+                OptionalSemicolon
+            ]
+        );
         return true;
     }
     if statement.is_default_export() {
@@ -610,7 +725,10 @@ pub(crate) fn write_declared_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) 
         }
         write!(f, type_arguments(class.extends_args(), Node::Class(class)));
     });
-    let (format_mixins, format_implements) = (FormatClassImplements(mixins), FormatClassImplements(implements));
+    let (format_mixins, format_implements) = (
+        FormatClassImplements(mixins),
+        FormatClassImplements(implements),
+    );
     let clauses = format_with(|f| {
         let clauses: [(&'static str, bool, &dyn Format<'a>); 3] = [
             ("extends", class.extends().is_some(), &format_extends),
@@ -619,8 +737,21 @@ pub(crate) fn write_declared_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) 
         ];
         for (keyword, _, list) in clauses.into_iter().filter(|it| it.1) {
             match (has_multiple_heritage, group_mode) {
-                (true, _) => write!(f, [soft_line_break_or_space(), keyword, group(&soft_line_indent_or_space(list))]),
-                (false, true) => write!(f, [soft_line_break_or_space(), group(&format_args!(keyword, space(), list))]),
+                (true, _) => write!(
+                    f,
+                    [
+                        soft_line_break_or_space(),
+                        keyword,
+                        group(&soft_line_indent_or_space(list))
+                    ]
+                ),
+                (false, true) => write!(
+                    f,
+                    [
+                        soft_line_break_or_space(),
+                        group(&format_args!(keyword, space(), list))
+                    ]
+                ),
                 (false, false) => write!(f, [space(), keyword, space(), list]),
             }
         }
@@ -631,10 +762,19 @@ pub(crate) fn write_declared_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) 
         type_parameters(class.type_params(), Node::Class(class))
     );
 
-    write!(f, [is_declared(class.modifiers()).then_some("declare "), "class"]);
+    write!(
+        f,
+        [
+            is_declared(class.modifiers()).then_some("declare "),
+            "class"
+        ]
+    );
     if group_mode {
         let heritage_id = f.group_id("heritageGroup");
-        write!(f, group(&format_args!(head, indent(&clauses))).with_group_id(Some(heritage_id)));
+        write!(
+            f,
+            group(&format_args!(head, indent(&clauses))).with_group_id(Some(heritage_id))
+        );
         match class.members().is_empty() {
             true => write!(f, space()),
             false => write!(
@@ -650,20 +790,43 @@ pub(crate) fn write_declared_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) 
     }
     // `Class::body_span` knows nothing of `mixins`.
     let body_span = match (mixins.last(), implements.is_empty()) {
-        (Some(last), true) => Span::new(skip_trivia(f.file().text(), last.span().end), class.span().end),
+        (Some(last), true) => Span::new(
+            skip_trivia(f.file().text(), last.span().end),
+            class.span().end,
+        ),
         _ => class.body_span(),
     };
     match class.members().is_empty() {
-        true => write!(f, ["{", format_dangling_comments(body_span).with_block_indent(), "}"]),
+        true => write!(
+            f,
+            [
+                "{",
+                format_dangling_comments(body_span).with_block_indent(),
+                "}"
+            ]
+        ),
         false => {
-            write!(f, ["{", block_indent(&format_with(|f| write_ts_interface_signatures(class.members(), f))), "}"]);
+            write!(
+                f,
+                [
+                    "{",
+                    block_indent(&format_with(|f| write_ts_interface_signatures(
+                        class.members(),
+                        f
+                    ))),
+                    "}"
+                ]
+            );
         }
     }
 }
 
 /// `hook` or `function`: what the declaration of `func` starts with. A component is written here:
 /// then it is `None`.
-pub(crate) fn write_component_or_keyword<'a>(func: Func<'a>, f: &mut Formatter<'a>) -> Option<&'static str> {
+pub(crate) fn write_component_or_keyword<'a>(
+    func: Func<'a>,
+    f: &mut Formatter<'a>,
+) -> Option<&'static str> {
     let Node::Stmt(statement) = func.owner() else {
         return Some("function");
     };
@@ -680,7 +843,8 @@ pub(crate) fn write_component_or_keyword<'a>(func: Func<'a>, f: &mut Formatter<'
             is_declared(modifiers).then_some("declare "),
             func.is_async().then_some("async "),
             "component ",
-            func.name().map(|name| identifier(name, AstNodes::Function(func))),
+            func.name()
+                .map(|name| identifier(name, AstNodes::Function(func))),
             type_parameters(func.type_params(), Node::Func(func))
         ]
     );
@@ -707,7 +871,12 @@ pub(crate) fn is_unknown_members_mark(member: EnumMember<'_>) -> bool {
 /// `typeof ` or `type `: how the import, or the specifier, that starts at `start` after its `import`
 /// is written.
 pub(crate) fn import_kind(start: u32, f: &Formatter<'_>) -> &'static str {
-    match f.file().text().get(start as usize..).is_some_and(|it| it.starts_with(b"typeof")) {
+    match f
+        .file()
+        .text()
+        .get(start as usize..)
+        .is_some_and(|it| it.starts_with(b"typeof"))
+    {
         true => "typeof ",
         false => "type ",
     }

@@ -13,7 +13,8 @@ pub(crate) struct Options<'f> {
     pub(crate) lexer: lexer::Options,
     pub(crate) is_tag_name_case_sensitive: bool,
     /// Prettier's `shouldParseAsRawText(tagName, prefix, hasParent, attrs)`
-    pub(crate) should_parse_as_raw_text: Option<&'f dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> bool>,
+    pub(crate) should_parse_as_raw_text:
+        Option<&'f dyn Fn(&[u8], bool, &[LexedAttribute<'_>]) -> bool>,
 }
 
 pub(crate) struct ParseResult {
@@ -153,28 +154,43 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     }
 
     fn closest_element_like_parent(&self) -> Option<Id> {
-        self.container_stack.iter().rev().copied().find(|&id| self.tree[id].kind == Kind::Element)
+        self.container_stack
+            .iter()
+            .rev()
+            .copied()
+            .find(|&id| self.tree[id].kind == Kind::Element)
     }
 
     fn add_to_parent(&mut self, node: Node<'a>) -> Id {
         let id = self.tree.add(node);
-        self.tree.append_child(self.container().unwrap_or(self.root), id);
+        self.tree
+            .append_child(self.container().unwrap_or(self.root), id);
         id
     }
 
     /// Whether a line feed at the start of a text in `parent` does not count.
     fn ignores_first_lf(&self, parent: Option<Id>) -> bool {
-        parent.is_some_and(|parent| !self.tree.has_children(parent) && self.definition_of_node(parent).is_some_and(|it| it.ignore_first_lf))
+        parent.is_some_and(|parent| {
+            !self.tree.has_children(parent)
+                && self
+                    .definition_of_node(parent)
+                    .is_some_and(|it| it.ignore_first_lf)
+        })
     }
 
     fn consume_cdata(&mut self, start_token: Token) {
         let text = self.advance();
         let mut value = text.span.of(self.text);
-        if value.first() == Some(&b'\n') && self.ignores_first_lf(self.closest_element_like_parent()) {
+        if value.first() == Some(&b'\n')
+            && self.ignores_first_lf(self.closest_element_like_parent())
+        {
             value = &value[1..];
         }
         let end_token = self.advance_if(TokenType::CdataEnd);
-        let mut node = Node::new(Kind::Cdata, Span::new(start_token.span.start, end_token.unwrap_or(text).span.end));
+        let mut node = Node::new(
+            Kind::Cdata,
+            Span::new(start_token.span.start, end_token.unwrap_or(text).span.end),
+        );
         node.value = Cow::Borrowed(value);
         self.add_to_parent(node);
     }
@@ -191,7 +207,9 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         let end_token = self.advance_if(TokenType::DocTypeEnd);
         let end = end_token.or(text).unwrap_or(start_token).span.end;
         let mut node = Node::new(Kind::DocType, Span::new(start_token.span.start, end));
-        node.value = Cow::Borrowed(text.map_or(&b""[..], |text| crate::css::text::trim(text.span.of(self.text))));
+        node.value = Cow::Borrowed(text.map_or(&b""[..], |text| {
+            crate::css::text::trim(text.span.of(self.text))
+        }));
         self.add_to_parent(node);
     }
 
@@ -207,7 +225,9 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     fn consume_expansion(&mut self, token: Token) {
         let switch_value = self.advance();
         let kind = self.advance();
-        let expansion = self.tree.add(Node::new(Kind::AngularIcuExpression, token.span));
+        let expansion = self
+            .tree
+            .add(Node::new(Kind::AngularIcuExpression, token.span));
         while self.peek().kind == TokenType::ExpansionCaseValue {
             match self.parse_expansion_case() {
                 Some(case) => self.tree.append_child(expansion, case),
@@ -223,7 +243,8 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         node.span.end = end;
         node.value = Cow::Borrowed(switch_value.span.of(self.text));
         node.name = Cow::Borrowed(kind.span.of(self.text));
-        self.tree.append_child(self.container().unwrap_or(self.root), expansion);
+        self.tree
+            .append_child(self.container().unwrap_or(self.root), expansion);
     }
 
     fn parse_expansion_case(&mut self) -> Option<Id> {
@@ -242,7 +263,10 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             self.is_nested_too_deeply = true;
             return None;
         }
-        let mut node = Node::new(Kind::AngularIcuCase, Span::new(value.span.start, end.span.end));
+        let mut node = Node::new(
+            Kind::AngularIcuCase,
+            Span::new(value.span.start, end.span.end),
+        );
         node.value = Cow::Borrowed(self.value_of(value));
         let case = self.tree.add(node);
         let mut builder = TreeBuilder {
@@ -277,7 +301,9 @@ impl<'a> TreeBuilder<'a, '_, '_> {
 
     /// `_collectExpansionExpTokens`: goes on to the token that ends the case.
     fn skip_expansion_exp_tokens(&mut self, start: Token) -> Option<()> {
-        use TokenType::{Eof, ExpansionCaseExpEnd, ExpansionCaseExpStart, ExpansionFormEnd, ExpansionFormStart};
+        use TokenType::{
+            Eof, ExpansionCaseExpEnd, ExpansionCaseExpStart, ExpansionFormEnd, ExpansionFormStart,
+        };
         let mut stack = vec![ExpansionCaseExpStart];
         loop {
             let kind = self.peek().kind;
@@ -313,10 +339,15 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         let start = token.span.start;
         let mut end = token.span.end;
         let mut len = token.span.len();
-        if token.span.of(self.text).first() == Some(&b'\n') && self.ignores_first_lf(self.container()) {
+        if token.span.of(self.text).first() == Some(&b'\n')
+            && self.ignores_first_lf(self.container())
+        {
             len -= 1;
         }
-        while matches!(self.peek().kind, TokenType::Interpolation | TokenType::Text | TokenType::EncodedEntity) {
+        while matches!(
+            self.peek().kind,
+            TokenType::Interpolation | TokenType::Text | TokenType::EncodedEntity
+        ) {
             let token = self.advance();
             len += token.span.len();
             end = token.span.end;
@@ -327,7 +358,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     }
 
     fn close_void_element(&mut self) {
-        if self.container().and_then(|it| self.definition_of_node(it)).is_some_and(|it| it.is_void) {
+        if self
+            .container()
+            .and_then(|it| self.definition_of_node(it))
+            .is_some_and(|it| it.is_void)
+        {
             self.container_stack.pop();
         }
     }
@@ -343,13 +378,17 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         let name = name.of(self.text);
         let mut prefix = prefix.of(self.text);
         if prefix.is_empty() {
-            prefix = definition_of(name, self.is_tag_name_case_sensitive).implicit_namespace_prefix.unwrap_or_default();
+            prefix = definition_of(name, self.is_tag_name_case_sensitive)
+                .implicit_namespace_prefix
+                .unwrap_or_default();
         }
         if prefix.is_empty()
             && let Some(parent) = parent
         {
             let parent = self.full_name_of(parent);
-            if !definition_of(parent.name, self.is_tag_name_case_sensitive).prevent_namespace_inheritance {
+            if !definition_of(parent.name, self.is_tag_name_case_sensitive)
+                .prevent_namespace_inheritance
+            {
                 prefix = parent.prefix;
             }
         }
@@ -385,7 +424,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         if self.peek().kind == TokenType::TagOpenEndVoid {
             self.advance();
             is_self_closing = true;
-            if !(self.can_self_close || definition.can_self_close || !full_name.prefix.is_empty() || definition.is_void) {
+            if !(self.can_self_close
+                || definition.can_self_close
+                || !full_name.prefix.is_empty()
+                || definition.is_void)
+            {
                 self.errors.push(start_tag_token.span.start);
             }
         } else if self.peek().kind == TokenType::TagOpenEnd {
@@ -399,10 +442,13 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         node.namespace = full_name.prefix;
         node.attrs = (first_attr, self.tree.attrs.len() as u32);
         node.start_tag_comments = (first_comment, self.tree.start_tag_comments.len() as u32);
-        let is_closed_by_child = self.container().and_then(|it| self.definition_of_node(it)).is_some_and(|it| {
-            // The full name of the child is asked for: with a namespace, no list has it.
-            it.is_void || (full_name.prefix.is_empty() && it.is_closed_by_child(full_name.name))
-        });
+        let is_closed_by_child = self
+            .container()
+            .and_then(|it| self.definition_of_node(it))
+            .is_some_and(|it| {
+                // The full name of the child is asked for: with a namespace, no list has it.
+                it.is_void || (full_name.prefix.is_empty() && it.is_closed_by_child(full_name.name))
+            });
         self.push_container(node, is_closed_by_child);
         if is_self_closing {
             self.pop_container(Some(full_name), Kind::Element, Some(span));
@@ -424,10 +470,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     }
 
     fn consume_element_end_tag(&mut self, end_tag_token: Token) {
-        let full_name = match self.allow_htm_component_closing_tags && end_tag_token.parts == Parts::None {
-            true => None,
-            false => Some(self.full_name(end_tag_token, self.closest_element_like_parent())),
-        };
+        let full_name =
+            match self.allow_htm_component_closing_tags && end_tag_token.parts == Parts::None {
+                true => None,
+                false => Some(self.full_name(end_tag_token, self.closest_element_like_parent())),
+            };
         if full_name.is_some_and(|it| self.definition(it).is_void)
             || !self.pop_container(full_name, Kind::Element, Some(end_tag_token.span))
         {
@@ -436,7 +483,12 @@ impl<'a> TreeBuilder<'a, '_, '_> {
     }
 
     /// `_popContainer`
-    fn pop_container(&mut self, expected_name: Option<FullName<'a>>, expected_kind: Kind, end_span: Option<Span>) -> bool {
+    fn pop_container(
+        &mut self,
+        expected_name: Option<FullName<'a>>,
+        expected_kind: Kind,
+        end_span: Option<Span>,
+    ) -> bool {
         let mut unexpected_close_tag_detected = false;
         for stack_index in (0..self.container_stack.len()).rev() {
             let id = self.container_stack[stack_index];
@@ -445,7 +497,10 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             let name = self.full_name_of(id);
             let is_expected = match kind == Kind::Element && !name.prefix.is_empty() {
                 true => Some(name) == expected_name,
-                false => expected_name.is_none_or(|expected| kind == Kind::Element && expected == name) && kind == expected_kind,
+                false => {
+                    expected_name.is_none_or(|expected| kind == Kind::Element && expected == name)
+                        && kind == expected_kind
+                }
             };
             if is_expected {
                 let node = &mut self.tree[id];
@@ -456,7 +511,11 @@ impl<'a> TreeBuilder<'a, '_, '_> {
                 self.container_stack.truncate(stack_index);
                 return !unexpected_close_tag_detected;
             }
-            if kind == Kind::AngularControlFlowBlock || !self.definition_of_node(id).is_some_and(|it| it.closed_by_parent) {
+            if kind == Kind::AngularControlFlowBlock
+                || !self
+                    .definition_of_node(id)
+                    .is_some_and(|it| it.closed_by_parent)
+            {
                 unexpected_close_tag_detected = true;
             }
         }
@@ -473,7 +532,9 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             value_end = Some(self.peek().span.end);
             while matches!(
                 self.peek().kind,
-                TokenType::AttrValueText | TokenType::AttrValueInterpolation | TokenType::EncodedEntity
+                TokenType::AttrValueText
+                    | TokenType::AttrValueInterpolation
+                    | TokenType::EncodedEntity
             ) {
                 attr_end = self.advance().span.end;
                 value_end = Some(attr_end);
@@ -490,7 +551,9 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         Attribute {
             span: Span::new(attr_name.span.start, attr_end),
             name_span: attr_name.span,
-            value_span: value_start.zip(value_end).map(|(start, end)| Span::new(start_quote.map_or(start, |it| it.span.start), end)),
+            value_span: value_start
+                .zip(value_end)
+                .map(|(start, end)| Span::new(start_quote.map_or(start, |it| it.span.start), end)),
             name: Cow::Borrowed(name),
             namespace: prefix,
             has_explicit_namespace: false,
@@ -506,7 +569,12 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             let mut node = Node::new(Kind::AngularControlFlowBlockParameter, token.span);
             node.value = Cow::Borrowed(token.span.of(self.text));
             let parameter = self.tree.add(node);
-            let list = *parameters.get_or_insert_with(|| self.tree.add(Node::new(Kind::AngularControlFlowBlockParameters, token.span)));
+            let list = *parameters.get_or_insert_with(|| {
+                self.tree.add(Node::new(
+                    Kind::AngularControlFlowBlockParameters,
+                    token.span,
+                ))
+            });
             self.tree[list].span.end = token.span.end;
             self.tree.append_child(list, parameter);
         }
@@ -557,7 +625,10 @@ impl<'a> TreeBuilder<'a, '_, '_> {
             return;
         };
         // Prettier's `normalizeAngularLetDeclaration`.
-        let mut node = Node::new(Kind::AngularLetDeclaration, Span::new(start_token.span.start, end_token.span.end));
+        let mut node = Node::new(
+            Kind::AngularLetDeclaration,
+            Span::new(start_token.span.start, end_token.span.end),
+        );
         node.name = Cow::Borrowed(self.value_of(start_token));
         node.name_span = value_token.span;
         node.value = Cow::Borrowed(value_token.span.of(self.text));
@@ -566,14 +637,26 @@ impl<'a> TreeBuilder<'a, '_, '_> {
 }
 
 /// `new HtmlParser().parse(..)`, of the part of `text` from `start` on.
-pub(crate) fn parse<'a>(tree: &mut Tree<'a>, text: &'a [u8], start: usize, options: Options<'_>) -> ParseResult {
+pub(crate) fn parse<'a>(
+    tree: &mut Tree<'a>,
+    text: &'a [u8],
+    start: usize,
+    options: Options<'_>,
+) -> ParseResult {
     let is_case_sensitive = options.is_tag_name_case_sensitive;
     let get_tag_content_type = |name: &[u8], has_parent: bool, attrs: &[LexedAttribute<'_>]| {
-        let is_raw = options.should_parse_as_raw_text.is_some_and(|should| match is_case_sensitive {
-            true => should(name, has_parent, attrs),
-            false => should(&name.to_ascii_lowercase(), has_parent, attrs),
-        });
-        if is_raw { ContentType::RawText } else { definition_of(name, is_case_sensitive).content_type }
+        let is_raw =
+            options
+                .should_parse_as_raw_text
+                .is_some_and(|should| match is_case_sensitive {
+                    true => should(name, has_parent, attrs),
+                    false => should(&name.to_ascii_lowercase(), has_parent, attrs),
+                });
+        if is_raw {
+            ContentType::RawText
+        } else {
+            definition_of(name, is_case_sensitive).content_type
+        }
     };
     let get_tag_content_type: GetTagContentType<'_> = &get_tag_content_type;
     let (tokens, mut errors) = lexer::tokenize(text, start, get_tag_content_type, options.lexer);

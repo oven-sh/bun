@@ -38,7 +38,8 @@ impl<'a> Formatter<'a> {
         }
         next == u32::MAX || {
             let rest = self.source_text().slice_range(span.end, next);
-            matches!(rest.first(), Some(b'\n' | b'\r')) || bun_core::strings::index_of_any(rest, b"\n\r").is_some()
+            matches!(rest.first(), Some(b'\n' | b'\r'))
+                || bun_core::strings::index_of_any(rest, b"\n\r").is_some()
         }
     }
 
@@ -70,7 +71,8 @@ impl<'a> Formatter<'a> {
         let cursor = self.context().cursor;
         let outer = self.context().is_quiet;
         // What the region is in, and the nodes before and after it, are not quiet, so that this is called for them.
-        self.context_mut().is_quiet = outer || (!cursor.overlaps(span) && self.has_no_comments_in(span));
+        self.context_mut().is_quiet =
+            outer || (!cursor.overlaps(span) && self.has_no_comments_in(span));
         cursor.enter(span, self);
         write(self);
         cursor.exit(span, self);
@@ -124,13 +126,15 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
             f.comments().without_semicolon(span)
         }
         // What is exported ends where the `export` around it ends.
-        AstNodes::TSTypeAliasDeclaration(statement) | AstNodes::TSImportEqualsDeclaration(statement)
+        AstNodes::TSTypeAliasDeclaration(statement)
+        | AstNodes::TSImportEqualsDeclaration(statement)
             if statement.is_exported() =>
         {
             f.comments().without_semicolon(span)
         }
         AstNodes::Function(func)
-            if !func.has_body() && matches!(func.owner(), Node::Stmt(statement) if statement.is_exported()) =>
+            if !func.has_body()
+                && matches!(func.owner(), Node::Stmt(statement) if statement.is_exported()) =>
         {
             f.comments().without_semicolon(span)
         }
@@ -167,7 +171,11 @@ fn ends_before_semicolon(mut statement: Stmt<'_>) -> bool {
 }
 
 /// The comments after the child of `parent` at `span`.
-fn write_trailing_comments_in<'a>(span: Span, parent: impl FnOnce() -> AstNodes<'a>, f: &mut Formatter<'a>) {
+fn write_trailing_comments_in<'a>(
+    span: Span,
+    parent: impl FnOnce() -> AstNodes<'a>,
+    f: &mut Formatter<'a>,
+) {
     if f.comments().next_start() == u32::MAX {
         return;
     }
@@ -184,7 +192,10 @@ fn write_trailing_comments_in<'a>(span: Span, parent: impl FnOnce() -> AstNodes<
 /// the node is in.
 #[inline]
 pub(crate) fn no_comment_trails_what_is_before_another(f: &Formatter<'_>) -> bool {
-    f.comments().unprinted_comments().first().is_none_or(|it| it.preceded_by_newline())
+    f.comments()
+        .unprinted_comments()
+        .first()
+        .is_none_or(|it| it.preceded_by_newline())
 }
 
 /// The comments after `node`.
@@ -219,8 +230,8 @@ fn format_node_in_list<'a>(
     if f.is_quiet() {
         return write(f);
     }
-    let is_suppressed =
-        f.comments().is_suppressed(span.start) || f.comments().has_trailing_suppression_comment(span.end);
+    let is_suppressed = f.comments().is_suppressed(span.start)
+        || f.comments().has_trailing_suppression_comment(span.end);
     format_leading_comments(span).fmt(f);
     if is_suppressed {
         f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
@@ -271,7 +282,12 @@ pub(crate) fn identifier<'a>(ident: Ident<'a>, parent: AstNodes<'a>) -> FormatId
 impl<'a> Format<'a> for FormatIdentifier<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_node(self.span, || self.parent, f, |f| write!(f, source_text(self.span)));
+        format_node(
+            self.span,
+            || self.parent,
+            f,
+            |f| write!(f, source_text(self.span)),
+        );
     }
 }
 
@@ -348,14 +364,20 @@ impl<'a> FormatExpr<'a> {
             true => AstNodes::ChainExpression(self.expr),
             false => self.expr.as_chain_element(),
         };
-        let write_target = |f: &mut Formatter<'a>| self.fmt_in_type_casts(node, is_chain_expression, f);
+        let write_target =
+            |f: &mut Formatter<'a>| self.fmt_in_type_casts(node, is_chain_expression, f);
         if self.is_in_chain_expression || !write_type_casts(self.expr, node, f, &write_target) {
             write_target(f);
         }
     }
 
     /// The expression with its comments, in the parentheses of type casts if there are any.
-    fn fmt_in_type_casts(self, node: AstNodes<'a>, is_chain_expression: bool, f: &mut Formatter<'a>) {
+    fn fmt_in_type_casts(
+        self,
+        node: AstNodes<'a>,
+        is_chain_expression: bool,
+        f: &mut Formatter<'a>,
+    ) {
         let (expr, span) = (self.expr, self.expr.span());
 
         // ESTree's `Expression`, as opposed to the `ChainElement` in a `ChainExpression`.
@@ -387,7 +409,9 @@ impl<'a> FormatExpr<'a> {
             && parentheses::expression::chain_expression_needs_parentheses(expr, f)
         {
             write!(f, ["(", format_leading_comments(span)]);
-            f.in_scope(span, |f| print::expressions::write_chain_expression(expr, f));
+            f.in_scope(span, |f| {
+                print::expressions::write_chain_expression(expr, f)
+            });
             write_trailing_comments_of(node, f);
             return write!(f, ")");
         }
@@ -402,14 +426,19 @@ impl<'a> FormatExpr<'a> {
 }
 
 /// Prettier's `printIgnored` for an expression, in the parentheses that it needs.
-fn write_suppressed_expression<'a>(expr: Expr<'a>, is_chain_expression: bool, f: &mut Formatter<'a>) {
+fn write_suppressed_expression<'a>(
+    expr: Expr<'a>,
+    is_chain_expression: bool,
+    f: &mut Formatter<'a>,
+) {
     let span = expr.span();
     let needs_parentheses = match is_chain_expression {
         true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
         false => parentheses::expression::needs_parentheses(expr, f),
     };
     // A class expression with decorators is on lines of its own.
-    let is_decorated_class = matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
+    let is_decorated_class =
+        matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
     f.around_cursor(span, |f| {
         write!(f, needs_parentheses.then_some("("));
         match is_decorated_class {
@@ -427,7 +456,10 @@ impl<'a> Format<'a> for FormatExpr<'a> {
             return;
         }
         let is_chain_expression = !self.is_in_chain_expression
-            && matches!(self.expr.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull)
+            && matches!(
+                self.expr.tag(),
+                ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
+            )
             && is_chain_root(self.expr);
         match f.is_quiet() {
             true => self.write_in_parentheses(is_chain_expression, f),
@@ -470,8 +502,10 @@ fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if !f.context_mut().has_stack_left() {
         return;
     }
-    let is_chain_expression =
-        matches!(tag, ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull) && is_chain_root(e);
+    let is_chain_expression = matches!(
+        tag,
+        ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
+    ) && is_chain_root(e);
     match is_chain_expression || parentheses::expression::needs_parentheses(e, f) {
         true => format_expression_in_general(e, f),
         false => write_expression_of(tag, e, ExprOptions::None, f),
@@ -490,8 +524,17 @@ impl<'a> Format<'a> for FormatNonNullMarks<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let mut inner = self.0.inner_non_null_spans().peekable();
         while inner.next().is_some() {
-            let next_mark = inner.peek().map_or_else(|| self.0.span().end, |next| next.end).saturating_sub(1);
-            write!(f, ["!", FormatTrailingComments::Comments(f.comments().comments_before(next_mark))]);
+            let next_mark = inner
+                .peek()
+                .map_or_else(|| self.0.span().end, |next| next.end)
+                .saturating_sub(1);
+            write!(
+                f,
+                [
+                    "!",
+                    FormatTrailingComments::Comments(f.comments().comments_before(next_mark))
+                ]
+            );
         }
         write!(f, "!");
     }
@@ -573,8 +616,15 @@ fn write_function_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Form
         (true, ExprOptions::Arrow(options)) => {
             print::arrow_function_expression::write_arrow_function_expression(e, func, options, f);
         }
-        (true, _) => print::arrow_function_expression::write_arrow_function_expression(e, func, Default::default(), f),
-        (false, ExprOptions::Function(options)) => print::function::write_function(func, options, f),
+        (true, _) => print::arrow_function_expression::write_arrow_function_expression(
+            e,
+            func,
+            Default::default(),
+            f,
+        ),
+        (false, ExprOptions::Function(options)) => {
+            print::function::write_function(func, options, f)
+        }
         (false, _) => print::function::write_function(func, Default::default(), f),
     }
 }
@@ -638,25 +688,39 @@ fn write_less_common_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         ExprKind::BigInt(_) => literals::write_big_int_literal(e, f),
         ExprKind::Regex(regex) => literals::write_reg_exp_literal(e, regex, f),
         ExprKind::Template(template) => print::template::write_template_literal(e, template, f),
-        ExprKind::TaggedTemplate(call) => print::template::write_tagged_template_expression(e, call, f),
+        ExprKind::TaggedTemplate(call) => {
+            print::template::write_tagged_template_expression(e, call, f)
+        }
         ExprKind::Class(class) => print::class::write_class(class, f),
-        ExprKind::Spread(_) if e.jsx_container_span().is_some() => print::jsx::write_jsx_spread_child(e, f),
+        ExprKind::Spread(_) if e.jsx_container_span().is_some() => {
+            print::jsx::write_jsx_spread_child(e, f)
+        }
         ExprKind::Spread(argument) => write!(f, ["...", argument]),
         ExprKind::Await(argument) => expressions::write_await_expression(e, argument, f),
         ExprKind::Yield { value, star } => expressions::write_yield_expression(value, star, f),
-        ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => match f.file().is_flow() {
-            true => print::flow::write_type_cast_expression(e, f),
-            false => expressions::write_ts_type_assertion(e, f),
-        },
+        ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => {
+            match f.file().is_flow() {
+                true => print::flow::write_type_cast_expression(e, f),
+                false => expressions::write_ts_type_assertion(e, f),
+            }
+        }
         ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => {
             print::as_or_satisfies_expression::write_as_or_satisfies_expression(e, f);
         }
         ExprKind::NonNull(expression) => write!(f, [expression, FormatNonNullMarks(e)]),
         ExprKind::Instantiation { expr, type_args } => {
-            write!(f, [expr, print::type_parameters::type_arguments(type_args, Node::Expr(e))]);
+            write!(
+                f,
+                [
+                    expr,
+                    print::type_parameters::type_arguments(type_args, Node::Expr(e))
+                ]
+            );
         }
         ExprKind::Jsx(jsx) => print::jsx::write_jsx_element(e, jsx, f),
-        ExprKind::ImportCall { args } => print::call_like_expression::write_import_expression(e, args, f),
+        ExprKind::ImportCall { args } => {
+            print::call_like_expression::write_import_expression(e, args, f)
+        }
         ExprKind::ImportMeta | ExprKind::NewTarget => expressions::write_meta_property(e, f),
         _ => {}
     }
@@ -710,13 +774,18 @@ fn format_statement<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Fo
 }
 
 #[cold]
-fn format_statement_with_comments<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Formatter<'a>) {
+fn format_statement_with_comments<'a>(
+    statement: Stmt<'a>,
+    is_before_another: bool,
+    f: &mut Formatter<'a>,
+) {
     let node = statement.as_ast_nodes();
     let mut span = span_for_comments(node, f);
     // Prettier's `locStart`: the decorators of a class can be before its `export`.
     span.start = span.start.min(statement.span().start);
     // The `;` can be behind the comment: `a() // prettier-ignore ⏎ ;`
-    if f.comments().has_trailing_suppression_comment(node.span().end)
+    if f.comments()
+        .has_trailing_suppression_comment(node.span().end)
         || (span.end < node.span().end && f.comments().has_trailing_suppression_comment(span.end))
     {
         format_leading_comments(span).fmt(f);
@@ -731,7 +800,12 @@ fn format_statement_with_comments<'a>(statement: Stmt<'a>, is_before_another: bo
                 write_ignored_statement(statement, span, f);
                 return write_trailing_comments_in(span, || node.parent(), f);
             }
-            format_node_without_comments(span, || node.parent(), f, |f| write_statement(statement, f));
+            format_node_without_comments(
+                span,
+                || node.parent(),
+                f,
+                |f| write_statement(statement, f),
+            );
         }
         _ => format_declaration_with_comments(statement, is_before_another, f),
     }
@@ -739,10 +813,16 @@ fn format_statement_with_comments<'a>(statement: Stmt<'a>, is_before_another: bo
 
 /// `statement` without its `export`, with the comments around it. `is_before_another`: it has no
 /// `export`, and another statement follows it in the same list.
-fn format_declaration_with_comments<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Formatter<'a>) {
+fn format_declaration_with_comments<'a>(
+    statement: Stmt<'a>,
+    is_before_another: bool,
+    f: &mut Formatter<'a>,
+) {
     let is_exported = statement.is_exported();
     let span = match is_exported {
-        true => f.comments().without_semicolon(statement.span_without_export()),
+        true => f
+            .comments()
+            .without_semicolon(statement.span_without_export()),
         false => span_for_comments(statement.as_ast_nodes(), f),
     };
     let parent = || match is_exported {
@@ -754,7 +834,9 @@ fn format_declaration_with_comments<'a>(statement: Stmt<'a>, is_before_another: 
         write_ignored_statement(statement, span, f);
         return write_trailing_comments_in(span, parent, f);
     }
-    format_node_in_list(span, is_before_another, parent, f, |f| write_declaration(statement, f));
+    format_node_in_list(span, is_before_another, parent, f, |f| {
+        write_declaration(statement, f)
+    });
 }
 
 /// Prettier's `printIgnored` for a statement. `span`: of the statement, without its `;`, which is
@@ -765,20 +847,35 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
     }
     let has_semicolon = match statement.kind() {
         // `export var a` is an `ExportNamedDeclaration`.
-        StmtKind::Var(_) if statement.is_exported() && span.start < statement.span_without_export().start => {
+        StmtKind::Var(_)
+            if statement.is_exported() && span.start < statement.span_without_export().start =>
+        {
             span.end < statement.span().end
         }
         StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Debugger | StmtKind::Var(_) => true,
         _ => span.end < statement.span().end,
     };
     if f.options().semicolons.is_always() {
-        return f.around_cursor(span, |f| write!(f, [FormatSuppressedNode(span), has_semicolon.then_some(";")]));
+        return f.around_cursor(span, |f| {
+            write!(
+                f,
+                [FormatSuppressedNode(span), has_semicolon.then_some(";")]
+            )
+        });
     }
     let needs_leading_semicolon = matches!(
         statement.kind(),
         StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
     );
-    f.around_cursor(span, |f| write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(span)]));
+    f.around_cursor(span, |f| {
+        write!(
+            f,
+            [
+                needs_leading_semicolon.then_some(";"),
+                FormatSuppressedNode(span)
+            ]
+        )
+    });
 }
 
 /// For oxfmt the `;` at the end of a statement or a member of a class is not part of what a
@@ -790,14 +887,22 @@ pub(crate) fn terminator_of_what_is_ignored_follows_semi(f: &Formatter<'_>) -> b
 }
 
 /// See [`terminator_of_what_is_ignored_follows_semi`]. `span`: as for [`write_ignored_statement`].
-fn write_ignored_statement_without_terminator<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatter<'a>) {
+fn write_ignored_statement_without_terminator<'a>(
+    statement: Stmt<'a>,
+    span: Span,
+    f: &mut Formatter<'a>,
+) {
     let content = match ends_with_terminator(statement) {
-        true => f.comments().without_semicolon(Span::new(span.start, statement.span().end)),
+        true => f
+            .comments()
+            .without_semicolon(Span::new(span.start, statement.span().end)),
         false => span,
     };
     if f.options().semicolons.is_always() {
         let terminator = ends_with_terminator(statement).then_some(";");
-        return f.around_cursor(content, |f| write!(f, [FormatSuppressedNode(content), terminator]));
+        return f.around_cursor(content, |f| {
+            write!(f, [FormatSuppressedNode(content), terminator])
+        });
     }
     // The text can start with a parenthesis that would not be written.
     let needs_leading_semicolon = matches!(
@@ -805,7 +910,15 @@ fn write_ignored_statement_without_terminator<'a>(statement: Stmt<'a>, span: Spa
         StmtKind::Expr(expression) if f.source_text().byte_at(content.start) == Some(b'(')
             || print::statements::expression_statement_needs_semicolon(statement, expression, f)
     );
-    f.around_cursor(content, |f| write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(content)]));
+    f.around_cursor(content, |f| {
+        write!(
+            f,
+            [
+                needs_leading_semicolon.then_some(";"),
+                FormatSuppressedNode(content)
+            ]
+        )
+    });
 }
 
 /// Whether `statement` is written with a `;` at its end, if semicolons are.
@@ -813,7 +926,9 @@ fn ends_with_terminator(statement: Stmt<'_>) -> bool {
     // The `;` after the declaration in the head of a loop separates.
     let is_in_head = |body: Stmt<'_>| statement.span().end <= body.span().start;
     if let Node::Stmt(parent) = statement.parent()
-        && let StmtKind::For { body, .. } | StmtKind::ForIn { body, .. } | StmtKind::ForOf { body, .. } = parent.kind()
+        && let StmtKind::For { body, .. }
+        | StmtKind::ForIn { body, .. }
+        | StmtKind::ForOf { body, .. } = parent.kind()
         && is_in_head(body)
     {
         return false;
@@ -860,7 +975,10 @@ impl Spanned for FormatDeclaration<'_> {
 
 /// Step 5 for a statement.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    let is_declaration = !matches!(statement.tag(), StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar);
+    let is_declaration = !matches!(
+        statement.tag(),
+        StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar
+    );
     match is_declaration && !statement.modifiers().is_empty() && statement.is_exported() {
         true => print::export_declarations::write_exported_declaration(statement, f),
         false => write_declaration(statement, f),
@@ -873,60 +991,100 @@ pub(crate) fn write_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) 
     match statement.kind() {
         StmtKind::Empty => statements::write_empty_statement(statement, f),
         StmtKind::Debugger => write!(f, ["debugger", print::semicolon::OptionalSemicolon]),
-        StmtKind::Expr(expression) if expression.tag() == ExprTag::String && statement.directive().is_some() => {
+        StmtKind::Expr(expression)
+            if expression.tag() == ExprTag::String && statement.directive().is_some() =>
+        {
             print::program::write_directive(statement, f);
         }
-        StmtKind::Expr(expression) => statements::write_expression_statement(statement, expression, f),
+        StmtKind::Expr(expression) => {
+            statements::write_expression_statement(statement, expression, f)
+        }
         StmtKind::Var(declarations) => {
             print::variable_declaration::write_variable_declaration(statement, declarations, f);
         }
         StmtKind::Fn(func) => print::function::write_function(func, Default::default(), f),
         StmtKind::Class(class) => print::class::write_class(class, f),
-        StmtKind::Interface(interface) => ts_declarations::write_ts_interface_declaration(statement, interface, f),
-        StmtKind::TypeAlias(alias) => ts_declarations::write_ts_type_alias_declaration(statement, alias, f),
-        StmtKind::Enum(declaration) => ts_declarations::write_ts_enum_declaration(statement, declaration, f),
-        StmtKind::Module(module) => ts_declarations::write_ts_module_declaration(statement, module, f),
+        StmtKind::Interface(interface) => {
+            ts_declarations::write_ts_interface_declaration(statement, interface, f)
+        }
+        StmtKind::TypeAlias(alias) => {
+            ts_declarations::write_ts_type_alias_declaration(statement, alias, f)
+        }
+        StmtKind::Enum(declaration) => {
+            ts_declarations::write_ts_enum_declaration(statement, declaration, f)
+        }
+        StmtKind::Module(module) => {
+            ts_declarations::write_ts_module_declaration(statement, module, f)
+        }
         StmtKind::Return(argument) => {
             print::return_or_throw_statement::write_return_statement(statement, argument, f);
         }
-        StmtKind::If { test, yes, no } => statements::write_if_statement(statement, test, yes, no, f),
+        StmtKind::If { test, yes, no } => {
+            statements::write_if_statement(statement, test, yes, no, f)
+        }
         StmtKind::For {
             init,
             test,
             update,
             body,
         } => statements::write_for_statement(statement, init, test, update, body, f),
-        StmtKind::ForIn { left, expr, body } => statements::write_for_in_statement(statement, left, expr, body, f),
+        StmtKind::ForIn { left, expr, body } => {
+            statements::write_for_in_statement(statement, left, expr, body, f)
+        }
         StmtKind::ForOf {
             left,
             expr,
             body,
             is_await,
         } => statements::write_for_of_statement(statement, left, expr, body, is_await, f),
-        StmtKind::While { test, body } => statements::write_while_statement(statement, test, body, f),
-        StmtKind::DoWhile { body, test } => statements::write_do_while_statement(statement, body, test, f),
+        StmtKind::While { test, body } => {
+            statements::write_while_statement(statement, test, body, f)
+        }
+        StmtKind::DoWhile { body, test } => {
+            statements::write_do_while_statement(statement, body, test, f)
+        }
         StmtKind::Block(body) => print::block_statement::write_block_statement(statement, body, f),
-        StmtKind::With { object, body } => statements::write_with_statement(statement, object, body, f),
-        StmtKind::Switch { expr, cases } => print::switch_statement::write_switch_statement(statement, expr, cases, f),
+        StmtKind::With { object, body } => {
+            statements::write_with_statement(statement, object, body, f)
+        }
+        StmtKind::Switch { expr, cases } => {
+            print::switch_statement::write_switch_statement(statement, expr, cases, f)
+        }
         StmtKind::Try {
             block,
             param,
             handler,
             finalizer,
-        } => print::try_statement::write_try_statement(statement, block, param, handler, finalizer, f),
-        StmtKind::Throw(argument) => print::return_or_throw_statement::write_throw_statement(statement, argument, f),
+        } => print::try_statement::write_try_statement(
+            statement, block, param, handler, finalizer, f,
+        ),
+        StmtKind::Throw(argument) => {
+            print::return_or_throw_statement::write_throw_statement(statement, argument, f)
+        }
         StmtKind::Break(_) => statements::write_break_statement(statement, f),
         StmtKind::Continue(_) => statements::write_continue_statement(statement, f),
         StmtKind::Labeled { body, .. } => statements::write_labeled_statement(statement, body, f),
-        StmtKind::Import(import) => print::import_declaration::write_import_declaration(statement, import, f),
-        StmtKind::ImportEquals(import) => ts_declarations::write_ts_import_equals_declaration(statement, import, f),
-        StmtKind::ExportNamed(export) => print::export_declarations::write_export_named_declaration(statement, export, f),
-        StmtKind::ExportStar { .. } => print::export_declarations::write_export_all_declaration(statement, f),
+        StmtKind::Import(import) => {
+            print::import_declaration::write_import_declaration(statement, import, f)
+        }
+        StmtKind::ImportEquals(import) => {
+            ts_declarations::write_ts_import_equals_declaration(statement, import, f)
+        }
+        StmtKind::ExportNamed(export) => {
+            print::export_declarations::write_export_named_declaration(statement, export, f)
+        }
+        StmtKind::ExportStar { .. } => {
+            print::export_declarations::write_export_all_declaration(statement, f)
+        }
         StmtKind::ExportDefault(expression) => {
             print::export_declarations::write_export_default_expression(statement, expression, f);
         }
-        StmtKind::ExportAssign(expression) => ts_declarations::write_ts_export_assignment(expression, f),
-        StmtKind::ExportAsNamespace(_) => ts_declarations::write_ts_namespace_export_declaration(statement, f),
+        StmtKind::ExportAssign(expression) => {
+            ts_declarations::write_ts_export_assignment(expression, f)
+        }
+        StmtKind::ExportAsNamespace(_) => {
+            ts_declarations::write_ts_namespace_export_declaration(statement, f)
+        }
     }
 }
 
@@ -983,9 +1141,12 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let is_union = matches!(ty.kind(), TypeKind::Union(_));
     let is_suppressed = match is_union {
         // On a line of its own it is about the first type only.
-        true => f.comments().comments_before_iter(span.start).any(|comment| {
-            f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline()
-        }),
+        true => f
+            .comments()
+            .comments_before_iter(span.start)
+            .any(|comment| {
+                f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline()
+            }),
         false => f.comments().is_suppressed(span.start),
     };
     if !is_union || is_suppressed {
@@ -994,7 +1155,14 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     if is_suppressed {
         let needs_parentheses = parentheses::ts_type::needs_parentheses(ty, f);
         f.around_cursor(span, |f| {
-            write!(f, [needs_parentheses.then_some("("), FormatSuppressedNode(span), needs_parentheses.then_some(")")]);
+            write!(
+                f,
+                [
+                    needs_parentheses.then_some("("),
+                    FormatSuppressedNode(span),
+                    needs_parentheses.then_some(")")
+                ]
+            );
         });
     } else {
         f.in_scope(span, |f| write_type_in_parentheses(ty, f));
@@ -1010,7 +1178,13 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
             if f.file().is_flow() && print::flow::write_nullable_type_or_type_operator(ty, f) => {}
         TypeKind::Error => write!(f, FormatSuppressedNode(ty.span())),
         TypeKind::Heritage { expr, args } => {
-            write!(f, [expr, print::type_parameters::type_arguments(args, Node::Type(ty))]);
+            write!(
+                f,
+                [
+                    expr,
+                    print::type_parameters::type_arguments(args, Node::Type(ty))
+                ]
+            );
         }
         TypeKind::Keyword(_) | TypeKind::BoolLit(_) => write!(f, source_text(ty.span())),
         TypeKind::Ref { name, args } => ts_types::write_ts_type_reference(ty, name, args, f),
@@ -1018,11 +1192,15 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
             ts_types::write_ts_literal_type(ty, f);
         }
         TypeKind::Template(_) => print::template::write_ts_template_literal_type(ty, f),
-        TypeKind::Array(element) if f.file().is_flow() => print::flow::write_array_type(ty, element, f),
+        TypeKind::Array(element) if f.file().is_flow() => {
+            print::flow::write_array_type(ty, element, f)
+        }
         TypeKind::Array(element) => write!(f, [element, "[]"]),
         TypeKind::Tuple(elements) => print::tuple_type::write_ts_tuple_type(ty, elements, f),
         TypeKind::Union(types) => print::union_type::write_ts_union_type(ty, types, f),
-        TypeKind::Intersection(types) => print::intersection_type::write_ts_intersection_type(ty, types, f),
+        TypeKind::Intersection(types) => {
+            print::intersection_type::write_ts_intersection_type(ty, types, f)
+        }
         TypeKind::Fn(func) => print::function_type::write_ts_function_type(ty, func, f),
         TypeKind::Object(members) => ts_types::write_ts_type_literal(ty, members, f),
         TypeKind::Cond { .. } => ts_types::write_ts_conditional_type(ty, f),
@@ -1135,7 +1313,13 @@ impl<'a> Format<'a> for FormatMemberBeforeAnother<'a> {
         let it = self.0;
         match f.is_quiet() {
             true => print::class::write_member(it, f),
-            false => format_node_in_list(it.span(), true, || it.as_ast_nodes().parent(), f, |f| print::class::write_member(it, f)),
+            false => format_node_in_list(
+                it.span(),
+                true,
+                || it.as_ast_nodes().parent(),
+                f,
+                |f| print::class::write_member(it, f),
+            ),
         }
     }
 }
@@ -1170,7 +1354,12 @@ impl<'a> Format<'a> for Pat<'a> {
         let pat = *self;
         match f.is_quiet() {
             true => print::patterns::write_binding_pattern(pat, f),
-            false => format_node(pat.span(), || pat.ast_parent(), f, |f| print::patterns::write_binding_pattern(pat, f)),
+            false => format_node(
+                pat.span(),
+                || pat.ast_parent(),
+                f,
+                |f| print::patterns::write_binding_pattern(pat, f),
+            ),
         }
     }
 }
@@ -1200,4 +1389,3 @@ impl<'a> Format<'a> for TupleElem<'a> {
         );
     }
 }
-

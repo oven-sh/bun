@@ -117,7 +117,11 @@ pub(crate) struct StartTagComment<'a> {
 fn is_full_name(namespace: &[u8], own: &[u8], name: &[u8]) -> bool {
     match namespace {
         b"" => own == name,
-        _ => name.strip_prefix(namespace).and_then(|rest| rest.strip_prefix(b":")) == Some(own),
+        _ => {
+            name.strip_prefix(namespace)
+                .and_then(|rest| rest.strip_prefix(b":"))
+                == Some(own)
+        }
     }
 }
 
@@ -136,7 +140,14 @@ impl<'a> Attribute<'a> {
 
     /// `rawName`, in two parts.
     pub(crate) fn raw_name(&self) -> (&[u8], &[u8]) {
-        (if self.has_explicit_namespace { self.namespace } else { b"" }, &self.name)
+        (
+            if self.has_explicit_namespace {
+                self.namespace
+            } else {
+                b""
+            },
+            &self.name,
+        )
     }
 }
 
@@ -214,7 +225,14 @@ impl<'a> Node<'a> {
 
     /// `rawName`, in two parts: the namespace, if it is written, and the name.
     pub(crate) fn raw_name(&self) -> (&[u8], &[u8]) {
-        (if self.has(Flags::HAS_EXPLICIT_NAMESPACE) { self.namespace } else { b"" }, &self.name)
+        (
+            if self.has(Flags::HAS_EXPLICIT_NAMESPACE) {
+                self.namespace
+            } else {
+                b""
+            },
+            &self.name,
+        )
     }
 
     pub(crate) fn has_attrs(&self) -> bool {
@@ -330,12 +348,16 @@ impl<'a> Tree<'a> {
 
     pub(crate) fn attrs(&self, id: Id) -> &[Attribute<'a>] {
         let (start, end) = self[id].attrs;
-        self.attrs.get(start as usize..end as usize).unwrap_or_default()
+        self.attrs
+            .get(start as usize..end as usize)
+            .unwrap_or_default()
     }
 
     pub(crate) fn start_tag_comments(&self, id: Id) -> &[StartTagComment<'a>] {
         let (start, end) = self[id].start_tag_comments;
-        self.start_tag_comments.get(start as usize..end as usize).unwrap_or_default()
+        self.start_tag_comments
+            .get(start as usize..end as usize)
+            .unwrap_or_default()
     }
 
     /// Makes `child`, which is nowhere, the last child of `parent`.
@@ -404,11 +426,17 @@ impl<'a> Tree<'a> {
     /// `attrMap[name]`: `None` if there is no such attribute, `Some(None)` if it has no value.
     pub(crate) fn attribute(&self, id: Id, name: &[u8]) -> Option<Option<&'a [u8]>> {
         // The last with the name counts.
-        self.attrs(id).iter().rev().find(|attr| attr.is_full_name(name)).map(|attr| attr.value)
+        self.attrs(id)
+            .iter()
+            .rev()
+            .find(|attr| attr.is_full_name(name))
+            .map(|attr| attr.value)
     }
 
     /// `attrMap[name]`, if it is a string that is not empty.
     pub(crate) fn attribute_value(&self, id: Id, name: &[u8]) -> Option<&'a [u8]> {
-        self.attribute(id, name).flatten().filter(|value| !value.is_empty())
+        self.attribute(id, name)
+            .flatten()
+            .filter(|value| !value.is_empty())
     }
 }

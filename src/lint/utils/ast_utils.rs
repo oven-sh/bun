@@ -20,9 +20,9 @@ use super::estree_compat::{
 };
 use super::text;
 use crate::ast::{
-    BinOp, Case, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind,
-    Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp,
-    VarKind,
+    BinOp, Case, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Ident, Key,
+    KeyKind, Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind,
+    UnOp, VarKind,
 };
 use crate::semantic::{Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
@@ -222,7 +222,8 @@ pub fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
         return !text::has_line_break(file.slice(span));
     }
     let middle = span.start + LOOKED_AT;
-    !text::has_line_break(file.slice(Span::new(span.start, middle))) && file.is_on_same_line(middle, span.end)
+    !text::has_line_break(file.slice(Span::new(span.start, middle)))
+        && file.is_on_same_line(middle, span.end)
 }
 
 /// What `equal_tokens` is for the texts `left` and `right`, if that shows without splitting them into tokens: they are compared
@@ -259,7 +260,9 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
                 return None;
             }
             // `<!--` and `-->` can start a comment.
-            if a == b'-' && left.get(l + 1) == Some(&b'-') || b == b'-' && right.get(r + 1) == Some(&b'-') {
+            if a == b'-' && left.get(l + 1) == Some(&b'-')
+                || b == b'-' && right.get(r + 1) == Some(&b'-')
+            {
                 return None;
             }
         }
@@ -279,7 +282,8 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
 pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Spanned) -> bool {
     // In JSX whitespace can be text, and what a name is depends on where it is.
     if file.hir.jsx.is_empty()
-        && let Some(answer) = equal_tokens_of_plain_text(file.slice(left.span()), file.slice(right.span()))
+        && let Some(answer) =
+            equal_tokens_of_plain_text(file.slice(left.span()), file.slice(right.span()))
     {
         return answer;
     }
@@ -1527,7 +1531,9 @@ pub fn is_constant_in(e: Expr<'_>, in_boolean_position: bool, constants: &mut Co
                     _ => false,
                 };
                 let is_right_constant = is_constant(right, in_boolean);
-                let is_identity_of = |operator: BinOp, is_left: bool| op == operator && (is_left || is_logical_identity(right, operator));
+                let is_identity_of = |operator: BinOp, is_left: bool| {
+                    op == operator && (is_left || is_logical_identity(right, operator))
+                };
                 Constant {
                     is_constant: left.is_constant && (is_right_constant || is_left_identity)
                         || in_boolean && is_right_constant && is_logical_identity(right, op),
@@ -1579,7 +1585,11 @@ fn is_constant_unless_binary(e: Expr<'_>, in_boolean_position: bool) -> bool {
             UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => false,
             _ => is_constant(operand, false),
         },
-        ExprKind::Binary { op: BinOp::Comma, right, .. } => is_constant(right, in_boolean_position),
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            right,
+            ..
+        } => is_constant(right, in_boolean_position),
         ExprKind::Binary { .. } => is_constant(e, in_boolean_position),
         ExprKind::New(_) => in_boolean_position,
         ExprKind::Assign { op, value, .. } => match op {

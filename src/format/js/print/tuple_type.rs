@@ -3,21 +3,30 @@ use crate::prelude::*;
 use crate::write;
 
 /// `[A, B]`
-pub(crate) fn write_ts_tuple_type<'a>(ty: TypeNode<'a>, elements: List<'a, TupleElem<'a>>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_tuple_type<'a>(
+    ty: TypeNode<'a>,
+    elements: List<'a, TupleElem<'a>>,
+    f: &mut Formatter<'a>,
+) {
     write!(f, "[");
     if elements.is_empty() {
-        write!(f, format_dangling_comments(ty.span()).with_soft_block_indent());
+        write!(
+            f,
+            format_dangling_comments(ty.span()).with_soft_block_indent()
+        );
     } else {
         let element_types = format_with(|f| {
-            let trailing_separator = match f.file().is_flow() && super::flow::is_inexact_tuple(elements) {
-                true => TrailingSeparator::Disallowed,
-                false => FormatTrailingCommas::ES5.trailing_separator(f.options()),
-            };
-            f.join_nodes_with_soft_line().entries_with_trailing_separator(
-                elements.iter().map(FormatTupleElement),
-                ",",
-                trailing_separator,
-            );
+            let trailing_separator =
+                match f.file().is_flow() && super::flow::is_inexact_tuple(elements) {
+                    true => TrailingSeparator::Disallowed,
+                    false => FormatTrailingCommas::ES5.trailing_separator(f.options()),
+                };
+            f.join_nodes_with_soft_line()
+                .entries_with_trailing_separator(
+                    elements.iter().map(FormatTupleElement),
+                    ",",
+                    trailing_separator,
+                );
         });
         write!(f, group(&soft_block_indent(&element_types)));
     }

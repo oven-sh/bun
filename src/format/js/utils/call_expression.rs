@@ -16,7 +16,8 @@ pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 /// Prettier's `isMemberExpression`. See [`is_call_expression`].
 #[inline]
 pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && (f.context().has_tree_of_babel() || !is_chain_root(e))
+    matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
+        && (f.context().has_tree_of_babel() || !is_chain_root(e))
 }
 
 /// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` is
@@ -35,9 +36,20 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
 /// is behind `position` on its line may be `,`, `;` and comments.
 #[inline]
 pub(crate) fn is_next_line_empty(source_text: SourceText<'_>, position: u32) -> bool {
-    match source_text.as_bytes().get(position as usize..).unwrap_or_default() {
+    match source_text
+        .as_bytes()
+        .get(position as usize..)
+        .unwrap_or_default()
+    {
         // Something else follows on the line.
-        [b',', b' ', next, ..] if !matches!(next, b',' | b';' | b' ' | b'\t' | b'/' | b'\n' | b'\r' | 0xE2) => false,
+        [b',', b' ', next, ..]
+            if !matches!(
+                next,
+                b',' | b';' | b' ' | b'\t' | b'/' | b'\n' | b'\r' | 0xE2
+            ) =>
+        {
+            false
+        }
         rest => is_line_after_the_rest_of_the_line_empty(rest),
     }
 }
@@ -45,17 +57,25 @@ pub(crate) fn is_next_line_empty(source_text: SourceText<'_>, position: u32) -> 
 fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
     fn skip_newline(text: &[u8]) -> Option<&[u8]> {
         match text {
-            [b'\r', b'\n', rest @ ..] | [b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
+            [b'\r', b'\n', rest @ ..]
+            | [b'\n' | b'\r', rest @ ..]
+            | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
             _ => None,
         }
     }
     fn skip_spaces(text: &[u8]) -> &[u8] {
-        let count = text.iter().take_while(|b| matches!(b, b' ' | b'\t')).count();
+        let count = text
+            .iter()
+            .take_while(|b| matches!(b, b' ' | b'\t'))
+            .count();
         text.get(count..).unwrap_or_default()
     }
 
     loop {
-        let count = rest.iter().take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t')).count();
+        let count = rest
+            .iter()
+            .take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t'))
+            .count();
         rest = rest.get(count..).unwrap_or_default();
         // A block comment on one line.
         let Some(comment) = rest.strip_prefix(b"/*") else {
@@ -89,14 +109,22 @@ fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
 /// Without type arguments and arguments there is nothing else that they could belong to. Otherwise
 /// they lead what is next, unless something is between them and it: the end of the line, if they
 /// are on the line of the callee, the `?.`, or the `)` of a callee in parentheses.
-pub(crate) fn callee_trailing_comments<'a>(call: Call<'a>, callee_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+pub(crate) fn callee_trailing_comments<'a>(
+    call: Call<'a>,
+    callee_end: u32,
+    f: &Formatter<'a>,
+) -> &'a [Comment] {
     match call.type_args().is_empty() {
         true => comments_before_arguments(call, callee_end, f),
         false => trailing_prefix(f.comments().comments_before_character(callee_end, b'<'), f),
     }
 }
 
-fn comments_before_arguments<'a>(call: Call<'a>, callee_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+fn comments_before_arguments<'a>(
+    call: Call<'a>,
+    callee_end: u32,
+    f: &Formatter<'a>,
+) -> &'a [Comment] {
     let comments = f.comments().comments_before_character(callee_end, b'(');
     match call.args().is_empty() {
         true => comments,
@@ -107,7 +135,11 @@ fn comments_before_arguments<'a>(call: Call<'a>, callee_end: u32, f: &Formatter<
 /// The comments that trail the type arguments of `call`, which end at `end`. One behind the `(` at
 /// the end of the line is among them: Prettier's `handleCallExpressionComments` only gives it to
 /// the first argument if what is before it is the callee.
-pub(crate) fn type_arguments_trailing_comments<'a>(call: Call<'a>, end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+pub(crate) fn type_arguments_trailing_comments<'a>(
+    call: Call<'a>,
+    end: u32,
+    f: &Formatter<'a>,
+) -> &'a [Comment] {
     match call.args().first() {
         Some(first) => trailing_prefix(f.comments().comments_in_range(end, first.span().start), f),
         None => f.comments().comments_before_character(end, b'('),
@@ -163,19 +195,33 @@ fn contains_a_test_pattern_of_oxfmt(e: Expr<'_>) -> bool {
     third.is_none()
         && matches!(
             (first, second),
-            (Some(b"it"), Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails"))
-                | (Some(b"describe"), Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"shuffle" | b"todo"))
-                | (
-                    Some(b"test"),
-                    Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails" | b"extend"),
-                )
-                | (Some(b"bench"), None | Some(b"only" | b"skip" | b"todo"))
+            (
+                Some(b"it"),
+                Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails")
+            ) | (
+                Some(b"describe"),
+                Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"shuffle" | b"todo")
+            ) | (
+                Some(b"test"),
+                Some(
+                    b"skipIf"
+                        | b"runIf"
+                        | b"concurrent"
+                        | b"sequential"
+                        | b"todo"
+                        | b"fails"
+                        | b"extend"
+                ),
+            ) | (Some(b"bench"), None | Some(b"only" | b"skip" | b"todo"))
                 | (Some(b"Deno"), Some(b"test"))
         )
 }
 
 fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
-    let Some(call) = e.call().filter(|call| e.tag() == ExprTag::Call && !call.is_optional()) else {
+    let Some(call) = e
+        .call()
+        .filter(|call| e.tag() == ExprTag::Call && !call.is_optional())
+    else {
         return false;
     };
     let callee = call.callee();
@@ -220,12 +266,20 @@ fn is_angular_test_wrapper_expression(e: Expr<'_>) -> bool {
 /// a call.
 pub(crate) fn is_angular_test_wrapper(e: Expr<'_>) -> bool {
     e.callee().is_some_and(|callee| {
-        callee.tag() == ExprTag::Ident && matches!(callee.text(), b"async" | b"inject" | b"fakeAsync" | b"waitForAsync")
+        callee.tag() == ExprTag::Ident
+            && matches!(
+                callee.text(),
+                b"async" | b"inject" | b"fakeAsync" | b"waitForAsync"
+            )
     })
 }
 
 fn is_unit_test_set_up_callee(callee: Expr<'_>) -> bool {
-    callee.tag() == ExprTag::Ident && matches!(callee.text(), b"beforeEach" | b"beforeAll" | b"afterEach" | b"afterAll")
+    callee.tag() == ExprTag::Ident
+        && matches!(
+            callee.text(),
+            b"beforeEach" | b"beforeAll" | b"afterEach" | b"afterAll"
+        )
 }
 
 /// The names of `a.b.c`, from the left. `None` if there are more than five or it is anything but
@@ -291,7 +345,9 @@ fn contains_a_test_pattern(e: Expr<'_>) -> bool {
             },
             _ => false,
         },
-        Some(b"skip" | b"xit" | b"xdescribe" | b"xtest" | b"fit" | b"fdescribe" | b"ftest") => names.next().is_none(),
+        Some(b"skip" | b"xit" | b"xdescribe" | b"xtest" | b"fit" | b"fdescribe" | b"ftest") => {
+            names.next().is_none()
+        }
         _ => false,
     }
 }
@@ -301,7 +357,13 @@ pub(crate) fn is_test_each_pattern(e: Expr<'_>) -> bool {
     let Some(mut names) = callee_name_iterator(e) else {
         return false;
     };
-    let (first, second, third, fourth, fifth) = (names.next(), names.next(), names.next(), names.next(), names.next());
+    let (first, second, third, fourth, fifth) = (
+        names.next(),
+        names.next(),
+        names.next(),
+        names.next(),
+        names.next(),
+    );
     match first {
         Some(b"describe" | b"xdescribe" | b"fdescribe") => match second {
             Some(b"each") => third.is_none(),

@@ -121,7 +121,9 @@ struct Segment {
 
 /// What `.` in a regular expression does not match.
 fn has_line_terminator(text: &[u8]) -> bool {
-    strings::index_of_any(text, b"\n\r").is_some() || strings::contains(text, "\u{2028}".as_bytes()) || strings::contains(text, "\u{2029}".as_bytes())
+    strings::index_of_any(text, b"\n\r").is_some()
+        || strings::contains(text, "\u{2028}".as_bytes())
+        || strings::contains(text, "\u{2029}".as_bytes())
 }
 
 /// `/^this(?:\..+)?$/u`
@@ -165,16 +167,26 @@ impl Parser<'_> {
 
     fn expect(&mut self, kind: TokenKind) -> Result<Token, Error> {
         let token = self.next();
-        if token.kind == kind { Ok(token) } else { Err(Error::Syntax) }
+        if token.kind == kind {
+            Ok(token)
+        } else {
+            Err(Error::Syntax)
+        }
     }
 
     fn enter(&mut self) -> Result<(), Error> {
         self.depth += 1;
-        if self.depth > MAX_DEPTH { Err(Error::NestedTooDeeply) } else { Ok(()) }
+        if self.depth > MAX_DEPTH {
+            Err(Error::NestedTooDeeply)
+        } else {
+            Ok(())
+        }
     }
 
     fn slice(&self, token: Token) -> &[u8] {
-        self.source.get(token.start as usize..token.end as usize).unwrap_or_default()
+        self.source
+            .get(token.start as usize..token.end as usize)
+            .unwrap_or_default()
     }
 
     fn text(&self, text: Text) -> &[u8] {
@@ -192,14 +204,22 @@ impl Parser<'_> {
 
     fn add_statement(&mut self, kind: StatementKind, start: u32, end: u32) -> usize {
         let next = self.statements.len() as u32 + 1;
-        self.statements.push(Statement { kind, start, end, next });
+        self.statements.push(Statement {
+            kind,
+            start,
+            end,
+            next,
+        });
         self.statements.len() - 1
     }
 
     /// The statement `index` ends with the last token, and has all the statements in it that follow it.
     fn end_statement(&mut self, index: usize, kind: StatementKind) {
         let next = self.statements.len() as u32;
-        let end = self.tokens.get(self.at.wrapping_sub(1)).map_or(0, |token| token.end);
+        let end = self
+            .tokens
+            .get(self.at.wrapping_sub(1))
+            .map_or(0, |token| token.end);
         if let Some(statement) = self.statements.get_mut(index) {
             (statement.kind, statement.end, statement.next) = (kind, end, next);
         }
@@ -211,7 +231,9 @@ impl Parser<'_> {
     fn unescape(&mut self, start: usize, end: usize, escaped: &[u8]) -> Text {
         let source = self.source;
         let text = source.get(start..end).unwrap_or_default();
-        let is_escape = |at: usize| text[at] == b'\\' && text.get(at + 1).is_some_and(|next| escaped.contains(next));
+        let is_escape = |at: usize| {
+            text[at] == b'\\' && text.get(at + 1).is_some_and(|next| escaped.contains(next))
+        };
         if !strings::contains_char(text, b'\\') || !(0..text.len()).any(is_escape) {
             return Text::source(start, end);
         }
@@ -269,7 +291,9 @@ impl Parser<'_> {
     fn literal(&mut self, kind: Kind, original: Original, is_splat: bool) -> Expression {
         let token = self.next();
         Expression {
-            node: self.tree.add(kind, token.start as usize, token.end as usize),
+            node: self
+                .tree
+                .add(kind, token.start as usize, token.end as usize),
             class: Class::Literal,
             is_valid: true,
             original,
@@ -298,12 +322,16 @@ impl Parser<'_> {
             }
             TokenKind::String => {
                 let quote = self.slice(token).first().copied().unwrap_or(b'"');
-                let value = self.unescape(token.start as usize + 1, token.end as usize - 1, &[quote]);
+                let value =
+                    self.unescape(token.start as usize + 1, token.end as usize - 1, &[quote]);
                 let is_splat = self.text(value) == b"...attributes";
                 Ok(self.literal(Kind::String { value }, Original::Text(value), is_splat))
             }
             TokenKind::Number => {
-                let value = std::str::from_utf8(self.slice(token)).ok().and_then(|it| it.parse().ok()).unwrap_or(f64::NAN);
+                let value = std::str::from_utf8(self.slice(token))
+                    .ok()
+                    .and_then(|it| it.parse().ok())
+                    .unwrap_or(f64::NAN);
                 let token = Text::source(token.start as usize, token.end as usize);
                 Ok(self.literal(Kind::Number { token }, Original::Number(value), false))
             }
@@ -336,7 +364,14 @@ impl Parser<'_> {
             let value = self.expression()?;
             is_valid &= value.is_valid && value.class != Class::HashLiteral;
             let end = self.tokens.get(self.at - 1).map_or(0, |token| token.end);
-            let pair = self.tree.add(Kind::HashPair { key, value: value.node }, token.start as usize, end as usize);
+            let pair = self.tree.add(
+                Kind::HashPair {
+                    key,
+                    value: value.node,
+                },
+                token.start as usize,
+                end as usize,
+            );
             self.pending.push(pair);
         }
         Ok(is_valid)
@@ -362,7 +397,14 @@ impl Parser<'_> {
             // It is taken for `undefined`, which only matters where its position is asked for.
             Class::HashLiteral => (NOTHING, !params.is_empty()),
         };
-        Ok((Call { path: node, params, pairs }, is_valid && is_path_valid))
+        Ok((
+            Call {
+                path: node,
+                params,
+                pairs,
+            },
+            is_valid && is_path_valid,
+        ))
     }
 
     /// `sexpr`
@@ -386,7 +428,11 @@ impl Parser<'_> {
             let (call, is_valid) = self.call(path)?;
             let close = self.expect(TokenKind::CloseSexpr)?;
             Expression {
-                node: self.tree.add(Kind::SubExpression { call }, open.start as usize, close.end as usize),
+                node: self.tree.add(
+                    Kind::SubExpression { call },
+                    open.start as usize,
+                    close.end as usize,
+                ),
                 class: Class::SubExpression,
                 is_valid,
                 original: Original::Undefined,
@@ -470,7 +516,11 @@ impl Parser<'_> {
             }
             for segment in &segments {
                 if let Some(separator) = segment.separator {
-                    self.tree.write(self.source.get(separator.start as usize..separator.end as usize).unwrap_or_default());
+                    self.tree.write(
+                        self.source
+                            .get(separator.start as usize..separator.end as usize)
+                            .unwrap_or_default(),
+                    );
                 }
                 self.tree.write_text(self.source, segment.part);
             }
@@ -480,7 +530,11 @@ impl Parser<'_> {
         let text = self.text(original);
         let has_slash = strings::contains_char(text, b'/');
         let is_refused = match has_slash {
-            true => text.starts_with(b"./") || text.starts_with(b"../") || strings::contains_char(text, b'.'),
+            true => {
+                text.starts_with(b"./")
+                    || text.starts_with(b"../")
+                    || strings::contains_char(text, b'.')
+            }
             false => text == b".",
         };
         let is_this = is_this_path(text);
@@ -529,7 +583,9 @@ impl Parser<'_> {
             };
             let name = match (is_data, segments.first()) {
                 (false, _) => *first,
-                (true, Some(segment)) if is_plain && !has_dropped => Text::source(start, segment.token.end as usize),
+                (true, Some(segment)) if is_plain && !has_dropped => {
+                    Text::source(start, segment.token.end as usize)
+                }
                 (true, _) => {
                     let owned = self.tree.start_text();
                     self.tree.write(b"@");
@@ -573,14 +629,24 @@ impl Parser<'_> {
             return Err(Error::Syntax);
         };
         // `yy.id` is given the list. It takes it for a text, and if that is in brackets, fails.
-        if self.text(*first).starts_with(b"[") && self.text(*last).ends_with(b"]") && !names.iter().any(|name| has_line_terminator(self.text(*name))) {
+        if self.text(*first).starts_with(b"[")
+            && self.text(*last).ends_with(b"]")
+            && !names
+                .iter()
+                .any(|name| has_line_terminator(self.text(*name)))
+        {
             return Err(Error::Syntax);
         }
         Ok(self.tree.add_names(&names))
     }
 
     /// What is behind `open`: `helperName expr* hash? blockParams?` and `close`.
-    fn header(&mut self, open: Token, close: TokenKind, takes_block_params: bool) -> Result<Header, Error> {
+    fn header(
+        &mut self,
+        open: Token,
+        close: TokenKind,
+        takes_block_params: bool,
+    ) -> Result<Header, Error> {
         let path = self.helper_name()?;
         let (call, is_valid) = self.call(path)?;
         let block_params = match self.peek().kind {
@@ -620,18 +686,31 @@ impl Parser<'_> {
 
     fn set_close_strip(&mut self, block: NodeId, close: Strip) {
         if let Some(Kind::BlockStatement { strip, .. }) = self.tree.kind_mut(block) {
-            *strip = (*strip & !(ast::CLOSE_OPEN | ast::CLOSE_CLOSE)) | close.flags(ast::CLOSE_OPEN, ast::CLOSE_CLOSE);
+            *strip = (*strip & !(ast::CLOSE_OPEN | ast::CLOSE_CLOSE))
+                | close.flags(ast::CLOSE_OPEN, ast::CLOSE_CLOSE);
         }
     }
 
     /// `prepareBlock`, for the statement `index`, whose first program ends at `first_end`. `close`: `close.strip`.
-    fn end_block(&mut self, index: usize, header: &Header, first_end: u32, inverse: Option<&Inverse>, close: Option<Strip>, is_inverted: bool) -> NodeId {
+    fn end_block(
+        &mut self,
+        index: usize,
+        header: &Header,
+        first_end: u32,
+        inverse: Option<&Inverse>,
+        close: Option<Strip>,
+        is_inverted: bool,
+    ) -> NodeId {
         if let Some(chained) = inverse.and_then(|inverse| inverse.chained) {
             self.set_close_strip(chained, close.unwrap_or_default());
         }
         let strip = header.strip.flags(ast::OPEN_OPEN, ast::OPEN_CLOSE)
-            | inverse.map_or(0, |inverse| inverse.strip.flags(ast::INVERSE_OPEN, ast::INVERSE_CLOSE))
-            | close.unwrap_or_default().flags(ast::CLOSE_OPEN, ast::CLOSE_CLOSE);
+            | inverse.map_or(0, |inverse| {
+                inverse.strip.flags(ast::INVERSE_OPEN, ast::INVERSE_CLOSE)
+            })
+            | close
+                .unwrap_or_default()
+                .flags(ast::CLOSE_OPEN, ast::CLOSE_CLOSE);
         let kind = Kind::BlockStatement {
             call: header.call,
             program: NOTHING,
@@ -666,7 +745,8 @@ impl Parser<'_> {
                 let first_end = self.statements.len() as u32;
                 let inverse = self.inverse_chain()?;
                 let close = inverse.as_ref().map(|inverse| inverse.strip);
-                let node = self.end_block(index, &header, first_end, inverse.as_ref(), close, false);
+                let node =
+                    self.end_block(index, &header, first_end, inverse.as_ref(), close, false);
                 self.depth -= 1;
                 Ok(Some(Inverse {
                     strip: header.strip,
@@ -699,7 +779,14 @@ impl Parser<'_> {
             }
             self.end_statement(index, StatementKind::Unsupported);
         } else {
-            self.end_block(index, &header, first_end, inverse.as_ref(), Some(close), is_inverted);
+            self.end_block(
+                index,
+                &header,
+                first_end,
+                inverse.as_ref(),
+                Some(close),
+                is_inverted,
+            );
         }
         self.depth -= 1;
         Ok(())
@@ -740,7 +827,15 @@ impl Parser<'_> {
             self.hash()?;
             self.pending.truncate(base);
             let (params, pairs) = no_arguments;
-            (None, Call { path: NOTHING, params, pairs }, false)
+            (
+                None,
+                Call {
+                    path: NOTHING,
+                    params,
+                    pairs,
+                },
+                false,
+            )
         } else {
             let path = self.expression()?;
             let (call, is_valid) = self.call(path)?;
@@ -758,11 +853,17 @@ impl Parser<'_> {
         let kind = Kind::Mustache {
             call,
             is_trusting,
-            strip: self.strip(open, close).flags(ast::OPEN_OPEN, ast::OPEN_CLOSE),
+            strip: self
+                .strip(open, close)
+                .flags(ast::OPEN_OPEN, ast::OPEN_CLOSE),
         };
         let node = self.tree.add(kind, open.start as usize, close.end as usize);
         let is_valid = is_valid && !path.is_some_and(|path| path.is_splat);
-        self.add_statement(StatementKind::Mustache { node, is_valid }, open.start, close.end);
+        self.add_statement(
+            StatementKind::Mustache { node, is_valid },
+            open.start,
+            close.end,
+        );
         Ok(())
     }
 
@@ -778,7 +879,12 @@ impl Parser<'_> {
     /// `stripComment`
     fn comment_value(&self, token: Token) -> Text {
         let text = self.slice(token);
-        let dashes = |text: &[u8]| text.iter().take(2).take_while(|byte| **byte == b'-').count();
+        let dashes = |text: &[u8]| {
+            text.iter()
+                .take(2)
+                .take_while(|byte| **byte == b'-')
+                .count()
+        };
         let mut start = if text.get(2) == Some(&b'~') { 4 } else { 3 };
         start += dashes(text.get(start..).unwrap_or_default());
         let mut rest = text.get(start..).unwrap_or_default();
@@ -814,7 +920,8 @@ impl Parser<'_> {
                 TokenKind::OpenPartialBlock => {
                     self.enter()?;
                     let open = self.partial()?;
-                    let index = self.add_statement(StatementKind::Unsupported, token.start, token.end);
+                    let index =
+                        self.add_statement(StatementKind::Unsupported, token.start, token.end);
                     self.program()?;
                     self.close_block(open)?;
                     self.end_statement(index, StatementKind::Unsupported);
@@ -827,7 +934,12 @@ impl Parser<'_> {
 }
 
 /// Writes the statements that `tokens` are to `statements`, which is empty, and their expressions to `tree`.
-pub(crate) fn parse(source: &[u8], tokens: &[Token], tree: &mut Tree, statements: &mut Vec<Statement>) -> Result<(), Error> {
+pub(crate) fn parse(
+    source: &[u8],
+    tokens: &[Token],
+    tree: &mut Tree,
+    statements: &mut Vec<Statement>,
+) -> Result<(), Error> {
     let mut parser = Parser {
         source,
         tokens,

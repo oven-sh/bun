@@ -138,12 +138,16 @@ impl<'a> Signature<'a> {
 
     /// `signature.thisParameter`
     pub fn this_parameter(self) -> Option<TsSymbol<'a>> {
-        self.info().this_parameter.map(|id| TsSymbol::new(self.file, id))
+        self.info()
+            .this_parameter
+            .map(|id| TsSymbol::new(self.file, id))
     }
 
     /// `signature.declaration`, `signature.getDeclaration()`
     pub fn declaration(self) -> Option<TsNode<'a>> {
-        self.info().declaration.map(|node| TsNode::of(self.file, node))
+        self.info()
+            .declaration
+            .map(|node| TsNode::of(self.file, node))
     }
 
     /// `signature.minArgumentCount`
@@ -158,12 +162,17 @@ impl<'a> Signature<'a> {
 
     /// `signature.getReturnType()`, `checker.getReturnTypeOfSignature(signature)`
     pub fn get_return_type(self) -> Type<'a> {
-        Type::new(self.file, self.file.query(|q| q.return_type_of_signature(self.id)))
+        Type::new(
+            self.file,
+            self.file.query(|q| q.return_type_of_signature(self.id)),
+        )
     }
 
     /// `checker.getTypePredicateOfSignature(signature)`
     pub fn get_type_predicate(self) -> Option<TypePredicate<'a>> {
-        let data = self.file.query(|q| q.type_predicate_of_signature(self.id))?;
+        let data = self
+            .file
+            .query(|q| q.type_predicate_of_signature(self.id))?;
         Some(TypePredicate {
             file: self.file,
             data,
@@ -174,7 +183,9 @@ impl<'a> Signature<'a> {
     /// against, which for a rest parameter is the type of an element. `None`: there are fewer
     /// parameters.
     pub fn get_type_at_position(self, index: usize) -> Option<Type<'a>> {
-        let id = self.file.query(|q| q.type_at_position(self.id, index as u32))?;
+        let id = self
+            .file
+            .query(|q| q.type_at_position(self.id, index as u32))?;
         Some(Type::new(self.file, id))
     }
 
@@ -256,6 +267,8 @@ impl<'a> IndexInfo<'a> {
     /// `info.declaration`
     #[inline]
     pub fn declaration(self) -> Option<TsNode<'a>> {
-        self.data.declaration.map(|node| TsNode::of(self.file, node))
+        self.data
+            .declaration
+            .map(|node| TsNode::of(self.file, node))
     }
 }

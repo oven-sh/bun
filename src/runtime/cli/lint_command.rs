@@ -145,11 +145,12 @@ impl LintCommand {
     /// `args`: what follows `lint`.
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
-        if HAS_TEST_RUNNER
-            && let [b"--run-eslint-tests", rest @ ..] = &args[..]
-        {
+        if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
             run_and_exit(b"lint", None, |environment| Outcome {
-                exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(rest, environment)),
+                exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(
+                    rest,
+                    environment,
+                )),
                 ..Outcome::default()
             })
         }

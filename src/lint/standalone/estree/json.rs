@@ -74,7 +74,11 @@ impl<'a> Writer<'a, '_> {
     fn start_node(&mut self, node: VNode<'a>) {
         let span = node.span();
         let (start, end) = (self.offsets.of(span.start), self.offsets.of(span.end));
-        let _ = write!(self.out, "{{\"type\":\"{}\",\"range\":[{start},{end}]", node.node_type().name());
+        let _ = write!(
+            self.out,
+            "{{\"type\":\"{}\",\"range\":[{start},{end}]",
+            node.node_type().name()
+        );
         self.open.push(Frame::Node(node, 0));
     }
 
@@ -90,7 +94,10 @@ impl<'a> Writer<'a, '_> {
                     };
                     *next += 1;
                     let value = (entry.get)(node);
-                    if matches!(value, Value::Undefined) || entry.is_hidden || !entry.is_in(node.dialect()) {
+                    if matches!(value, Value::Undefined)
+                        || entry.is_hidden
+                        || !entry.is_in(node.dialect())
+                    {
                         continue;
                     }
                     let _ = write!(self.out, ",\"{}\":", entry.field.name());
@@ -116,7 +123,10 @@ impl<'a> Writer<'a, '_> {
             Value::Undefined | Value::Null | Value::Regex { .. } | Value::BigInt(_) => {
                 self.out.extend_from_slice(b"null");
             }
-            Value::Bool(value) => self.out.extend_from_slice(if value { b"true" } else { b"false" }),
+            Value::Bool(value) => {
+                self.out
+                    .extend_from_slice(if value { b"true" } else { b"false" })
+            }
             // What JSON has no number for is `null`, as for `JSON.stringify`.
             Value::Number(value) if !value.is_finite() => self.out.extend_from_slice(b"null"),
             Value::Number(value) => {
@@ -154,7 +164,8 @@ impl<'a> Writer<'a, '_> {
                 }
                 // A surrogate, which is not valid in UTF-8.
                 0xED if matches!(after, [0xA0..=0xBF, 0x80..=0xBF, ..]) => {
-                    let unit = 0xD000 | u32::from(after[0] & 0x3F) << 6 | u32::from(after[1] & 0x3F);
+                    let unit =
+                        0xD000 | u32::from(after[0] & 0x3F) << 6 | u32::from(after[1] & 0x3F);
                     let _ = write!(self.out, "\\u{unit:04x}");
                     rest = &after[2..];
                     continue;

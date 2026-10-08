@@ -4,7 +4,9 @@ use super::parameters::{FormatFormalParameters, follows_name_or_type_parameters}
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
-use crate::js::format::{ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression};
+use crate::js::format::{
+    ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression,
+};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::end_of_line_comments;
@@ -18,7 +20,11 @@ pub(crate) struct FormatFunctionOptions {
 }
 
 /// A function declaration or expression. Not a method: see `class.rs`.
-pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions, f: &mut Formatter<'a>) {
+pub(crate) fn write_function<'a>(
+    func: Func<'a>,
+    options: FormatFunctionOptions,
+    f: &mut Formatter<'a>,
+) {
     let node = AstNodes::Function(func);
     let keyword = match f.file().is_flow() {
         true => match super::flow::write_component_or_keyword(func, f) {
@@ -27,8 +33,7 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
         },
         false => "function",
     };
-    let is_declared =
-        matches!(func.owner(), Node::Stmt(statement) if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT));
+    let is_declared = matches!(func.owner(), Node::Stmt(statement) if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT));
     let head = format_with(|f| {
         write!(
             f,
@@ -46,23 +51,30 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
     });
     FormatContentWithCacheMode::new(|| node.span(), head, options.cache_mode).fmt(f);
 
-    let format_parameters =
-        FormatContentWithCacheMode::new(|| FormatFormalParameters(func).span(), FormatFormalParameters(func), options.cache_mode);
+    let format_parameters = FormatContentWithCacheMode::new(
+        || FormatFormalParameters(func).span(),
+        FormatFormalParameters(func),
+        options.cache_mode,
+    );
 
-    let format_return_type = func
-        .return_type()
-        .map(|return_type| {
-            let return_type = FormatTypeAnnotation(return_type);
-            let content = format_with(move |f: &mut Formatter<'a>| {
-                let needs_space = f.comments().has_comment_before(return_type.span().start);
-                // The comments before the `{` are written with the body.
-                match func.has_body() {
-                    true => write!(f, [maybe_space(needs_space), FormatNodeWithoutTrailingComments(&return_type)]),
-                    false => write!(f, [maybe_space(needs_space), return_type]),
-                }
-            });
-            FormatContentWithCacheMode::new(|| return_type.span(), content, options.cache_mode)
+    let format_return_type = func.return_type().map(|return_type| {
+        let return_type = FormatTypeAnnotation(return_type);
+        let content = format_with(move |f: &mut Formatter<'a>| {
+            let needs_space = f.comments().has_comment_before(return_type.span().start);
+            // The comments before the `{` are written with the body.
+            match func.has_body() {
+                true => write!(
+                    f,
+                    [
+                        maybe_space(needs_space),
+                        FormatNodeWithoutTrailingComments(&return_type)
+                    ]
+                ),
+                false => write!(f, [maybe_space(needs_space), return_type]),
+            }
         });
+        FormatContentWithCacheMode::new(|| return_type.span(), content, options.cache_mode)
+    });
 
     write!(
         f,
@@ -70,7 +82,10 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
             if !can_group_function_parameters(func) {
                 return write!(f, [format_parameters, format_return_type]);
             }
-            let (format_parameters, format_return_type) = ((&format_parameters).memoized(), (&format_return_type).memoized());
+            let (format_parameters, format_return_type) = (
+                (&format_parameters).memoized(),
+                (&format_return_type).memoized(),
+            );
             // The parameters have to be formatted before the return type, which
             // `should_group_function_parameters` may do.
             format_parameters.inspect(f);
@@ -140,7 +155,11 @@ fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
 /// ```
 ///
 /// Returns whether `e` is such a function and has been written.
-pub(crate) fn write_called_function_with_comments<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_called_function_with_comments<'a>(
+    e: Expr<'a>,
+    options: ExprOptions,
+    f: &mut Formatter<'a>,
+) -> bool {
     if e.as_fn().is_none() || !is_iife_callee_or_tagged_template_tag(e) {
         return false;
     }
@@ -157,7 +176,10 @@ pub(crate) fn write_called_function_with_comments<'a>(e: Expr<'a>, options: Expr
     };
     let count_trailing = |f: &Formatter<'a>| {
         let comments = f.comments().comments_in_range(span.end, end);
-        comments.iter().take_while(|it| !(is_followed && it.preceded_by_newline())).count()
+        comments
+            .iter()
+            .take_while(|it| !(is_followed && it.preceded_by_newline()))
+            .count()
     };
     let has_comments = f.comments().has_comment_before(span.start) || count_trailing(f) > 0;
     if has_comments {
@@ -169,7 +191,15 @@ pub(crate) fn write_called_function_with_comments<'a>(e: Expr<'a>, options: Expr
                 false => write_expression(e, options, f),
             }
             let count = count_trailing(f);
-            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end).get(..count).unwrap_or_default()));
+            write!(
+                f,
+                FormatTrailingComments::Comments(
+                    f.comments()
+                        .comments_before(end)
+                        .get(..count)
+                        .unwrap_or_default()
+                )
+            );
         });
         write!(f, ["(", soft_block_indent(&content), ")"]);
     }
@@ -190,13 +220,28 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
         if f.is_quiet() {
             return match is_empty_block(statements) {
                 true => write!(f, [space(), "{}"]),
-                false => write!(f, [space(), "{", block_indent(&FormatStatements(statements)), "}"]),
+                false => write!(
+                    f,
+                    [
+                        space(),
+                        "{",
+                        block_indent(&FormatStatements(statements)),
+                        "}"
+                    ]
+                ),
             };
         }
         let write = |f: &mut Formatter<'a>| {
             write!(f, [FormatCommentsBeforeBody(func), space()]);
             if is_empty_block(statements) {
-                write!(f, ["{", format_dangling_comments(self.span()).with_block_indent(), "}"]);
+                write!(
+                    f,
+                    [
+                        "{",
+                        format_dangling_comments(self.span()).with_block_indent(),
+                        "}"
+                    ]
+                );
             } else {
                 write!(f, ["{", block_indent(&FormatStatements(statements)), "}"]);
             }
@@ -214,7 +259,9 @@ impl<'a> Format<'a> for FormatCommentsBeforeBody<'a> {
         if f.is_quiet() {
             return;
         }
-        let comments = f.comments().comments_before(FormatFunctionBody(self.0).span().start);
+        let comments = f
+            .comments()
+            .comments_before(FormatFunctionBody(self.0).span().start);
         if comments.is_empty() {
             return;
         }
@@ -224,11 +271,24 @@ impl<'a> Format<'a> for FormatCommentsBeforeBody<'a> {
         // `handleArrowExpressionComments`.
         let is_arrow = self.0.is_arrow();
         let count = (comments.iter())
-            .take_while(|it| (it.is_block() && !(is_arrow && it.followed_by_newline())) || it.end() <= parameters_start)
+            .take_while(|it| {
+                (it.is_block() && !(is_arrow && it.followed_by_newline()))
+                    || it.end() <= parameters_start
+            })
             .count();
         let comments = comments.get(..count).unwrap_or_default();
-        let (moved, comments) = comments.split_at(comments.iter().take_while(|it| it.end() <= parameters_start).count());
-        let (trailing, leading) = comments.split_at(comments.iter().take_while(|it| !it.preceded_by_newline()).count());
+        let (moved, comments) = comments.split_at(
+            comments
+                .iter()
+                .take_while(|it| it.end() <= parameters_start)
+                .count(),
+        );
+        let (trailing, leading) = comments.split_at(
+            comments
+                .iter()
+                .take_while(|it| !it.preceded_by_newline())
+                .count(),
+        );
         write!(
             f,
             [
@@ -256,8 +316,10 @@ pub(crate) fn should_group_function_parameters<'a>(
 ) -> bool {
     can_group_function_parameters(func)
         && func.return_type().is_some_and(|return_type| {
-            matches!(return_type.kind(), TypeKind::Object(_) | TypeKind::Mapped(_))
-                || formatted_return_type.inspect(f).will_break()
+            matches!(
+                return_type.kind(),
+                TypeKind::Object(_) | TypeKind::Mapped(_)
+            ) || formatted_return_type.inspect(f).will_break()
         })
 }
 
@@ -267,13 +329,17 @@ fn can_group_function_parameters(func: Func<'_>) -> bool {
     match type_parameters.len() {
         0 => {}
         1 => {
-            if type_parameters.first().is_some_and(|first| first.constraint().is_some() || first.default().is_some()) {
+            if type_parameters
+                .first()
+                .is_some_and(|first| first.constraint().is_some() || first.default().is_some())
+            {
                 return false;
             }
         }
         _ => return false,
     }
-    func.return_type().is_some() && func.params().len() + usize::from(func.this_param().is_some()) == 1
+    func.return_type().is_some()
+        && func.params().len() + usize::from(func.this_param().is_some()) == 1
 }
 
 /// Content that is formatted once and written as often as it takes to find the layout of a call
@@ -287,7 +353,11 @@ pub(crate) struct FormatContentWithCacheMode<T> {
 impl<T> FormatContentWithCacheMode<T> {
     /// `key`: a span that nothing else is cached under.
     #[inline]
-    pub(crate) fn new(key: impl FnOnce() -> Span, content: T, cache_mode: FunctionCacheMode) -> Self {
+    pub(crate) fn new(
+        key: impl FnOnce() -> Span,
+        content: T,
+        cache_mode: FunctionCacheMode,
+    ) -> Self {
         Self {
             key: match cache_mode {
                 FunctionCacheMode::NoCache => Span::default(),

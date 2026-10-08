@@ -28,7 +28,10 @@ impl<'a> ExpressionLeftSide<'a> {
     /// The last of the expressions down the left edge of `expression` that ESTree calls an
     /// `Expression`.
     pub(crate) fn leftmost(expression: Expr<'a>) -> Expr<'a> {
-        ExpressionLeftSide::from(expression).iter_expression().last().unwrap_or(expression)
+        ExpressionLeftSide::from(expression)
+            .iter_expression()
+            .last()
+            .unwrap_or(expression)
     }
 
     pub(crate) fn left(self) -> Option<Self> {
@@ -67,7 +70,11 @@ impl<'a> ExpressionLeftSide<'a> {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => expression(obj),
             ExprKind::TaggedTemplate(call) | ExprKind::Call(call) => expression(call.callee()),
             ExprKind::Cond { test, .. } => expression(test),
-            ExprKind::As { .. } | ExprKind::AsConst(_) if self.expr.is_angle_bracket_assertion() => None,
+            ExprKind::As { .. } | ExprKind::AsConst(_)
+                if self.expr.is_angle_bracket_assertion() =>
+            {
+                None
+            }
             ExprKind::As { expr, .. }
             | ExprKind::AsConst(expr)
             | ExprKind::Satisfies { expr, .. }
@@ -88,7 +95,9 @@ impl<'a> ExpressionLeftSide<'a> {
 
     /// The same without the assignment targets.
     pub(crate) fn iter_expression(self) -> impl Iterator<Item = Expr<'a>> {
-        self.iter().filter(|it| !it.is_assignment_target).map(|it| it.expr)
+        self.iter()
+            .filter(|it| !it.is_assignment_target)
+            .map(|it| it.expr)
     }
 
     pub(crate) fn span(self) -> Span {

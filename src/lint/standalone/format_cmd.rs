@@ -34,17 +34,38 @@ use std::path::{Path, PathBuf};
 
 /// Parses `code` the way Prettier's parsers do, as a module or as a script, and calls `then` with
 /// the file.
-fn with_file_as<R>(dialect: Dialect, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+fn with_file_as<R>(
+    dialect: Dialect,
+    path: &str,
+    code: &[u8],
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> R {
     with_bound_file_as(false, dialect, path, code, then)
 }
 
 /// `needs_symbols`: with the symbols and scopes of the file, which formatting does not take.
-fn with_bound_file_as<R>(needs_symbols: bool, dialect: Dialect, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+fn with_bound_file_as<R>(
+    needs_symbols: bool,
+    dialect: Dialect,
+    path: &str,
+    code: &[u8],
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> R {
     // What typescript-estree refuses while it converts the tree, Prettier refuses too.
-    let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
+    let is_typescript = [".ts", ".tsx", ".mts", ".cts"]
+        .iter()
+        .any(|it| path.ends_with(it));
     let language = LanguageOptions {
-        parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
-        source_type: if dialect.script { SourceType::Script } else { SourceType::Module },
+        parser: if is_typescript {
+            Parser::TypeScript
+        } else {
+            Parser::Espree
+        },
+        source_type: if dialect.script {
+            SourceType::Script
+        } else {
+            SourceType::Module
+        },
         ..LanguageOptions::default()
     };
     let session = Session::new();
@@ -72,7 +93,14 @@ fn with_bound_file_as<R>(needs_symbols: bool, dialect: Dialect, path: &str, code
         true => bind(&hir, bind_options, &atoms, arena),
         false => bind_for_format(&hir, bind_options, &atoms, arena),
     };
-    then(&File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None))
+    then(&File::new(
+        path.as_bytes(),
+        &hir,
+        &bound,
+        &atoms,
+        &language,
+        None,
+    ))
 }
 
 /// Puts `<|>` where the cursor is, which is counted in UTF-16 code units.
@@ -103,15 +131,31 @@ type WithCursor = (Vec<u8>, Option<u32>);
 /// For `FormatOptions::format_javascript`.
 fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
     let formatted = format_text_with_cursor(&crate::text(path), code, options);
-    formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
+    formatted
+        .map(|(formatted, _)| out.extend_from_slice(&formatted))
+        .is_ok()
 }
 
 /// For `FormatOptions::parse_javascript`.
-fn parse_javascript(path: &[u8], code: &[u8], is_script: bool, then: &mut dyn for<'b> FnMut(&'b File<'b>)) {
-    with_file_as(Dialect::babel(is_script), &crate::text(path), code, |file| then(file));
+fn parse_javascript(
+    path: &[u8],
+    code: &[u8],
+    is_script: bool,
+    then: &mut dyn for<'b> FnMut(&'b File<'b>),
+) {
+    with_file_as(
+        Dialect::babel(is_script),
+        &crate::text(path),
+        code,
+        |file| then(file),
+    );
 }
 
-fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> Result<WithCursor, FormatError> {
+fn format_text_with_cursor(
+    path: &str,
+    code: &[u8],
+    options: &FormatOptions,
+) -> Result<WithCursor, FormatError> {
     let with_format_javascript;
     let options = match options.format_javascript {
         Some(_) => options,
@@ -124,10 +168,16 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
             &with_format_javascript
         }
     };
-    fn format<'a>(file: &'a File<'a>, dialect: Dialect, options: &FormatOptions) -> Result<WithCursor, FormatError> {
+    fn format<'a>(
+        file: &'a File<'a>,
+        dialect: Dialect,
+        options: &FormatOptions,
+    ) -> Result<WithCursor, FormatError> {
         // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
         let types = match options.parser.as_deref() {
-            Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts") => bun_lint::linter::TypesInJavaScript::Tolerated,
+            Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts") => {
+                bun_lint::linter::TypesInJavaScript::Tolerated
+            }
             _ => bun_lint::linter::TypesInJavaScript::Refused,
         };
         if bun_lint::linter::refused_by_prettier_with(file, types) {
@@ -135,11 +185,18 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         }
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
         let path = crate::text(file.path());
-        let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file_as(dialect, &path, slice, |file| then(file));
-        let cursor = bun_format::range::format_with_cursor(file, options, &mut scratch, &mut out, parse)?;
+        let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
+            with_file_as(dialect, &path, slice, |file| then(file))
+        };
+        let cursor =
+            bun_format::range::format_with_cursor(file, options, &mut scratch, &mut out, parse)?;
         Ok((out, cursor))
     }
-    let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path.as_bytes());
+    let name = options
+        .filepath
+        .as_deref()
+        .filter(|it| !it.is_empty())
+        .unwrap_or(path.as_bytes());
     let json_parser = match &options.parser {
         Some(parser) => bun_format::json::Parser::from_name(parser),
         None => bun_format::json::parser_for_path(name),
@@ -153,11 +210,14 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         let mut sorted = Vec::new();
         let is_package_json = name == b"package.json" || name.ends_with(b"/package.json");
         let code = match options.sort_package_json.filter(|_| is_package_json) {
-            Some(sort) if bun_format::json::sort_package_json(code, sort, &mut sorted) => &sorted[..],
+            Some(sort) if bun_format::json::sort_package_json(code, sort, &mut sorted) => {
+                &sorted[..]
+            }
             _ => code,
         };
         let mut out = Vec::new();
-        return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+        return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out)
+            .map(|()| with_cursor(code, out));
     }
     let css_parser = match &options.parser {
         Some(parser) => bun_format::css::Parser::from_name(parser),
@@ -165,7 +225,8 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if let Some(parser) = css_parser {
         let mut out = Vec::new();
-        return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+        return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out)
+            .map(|()| with_cursor(code, out));
     }
     let is_yaml = match &options.parser {
         Some(parser) => &parser[..] == b"yaml",
@@ -173,7 +234,8 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if is_yaml {
         let mut out = Vec::new();
-        return bun_format::yaml::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+        return bun_format::yaml::format(code, options, &mut Default::default(), &mut out)
+            .map(|()| with_cursor(code, out));
     }
     let is_markdown = match &options.parser {
         Some(parser) => matches!(&parser[..], b"markdown" | b"remark" | b"markdown-ast"),
@@ -185,7 +247,8 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
             bun_format::markdown::dump_ast(code, &mut out);
             return Ok((out, None));
         }
-        return bun_format::markdown::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+        return bun_format::markdown::format(code, options, &mut Default::default(), &mut out)
+            .map(|()| with_cursor(code, out));
     }
     let is_mdx = match &options.parser {
         Some(parser) => &parser[..] == b"mdx",
@@ -193,7 +256,8 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if is_mdx {
         let mut out = Vec::new();
-        return bun_format::markdown::format_mdx(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+        return bun_format::markdown::format_mdx(code, options, &mut Default::default(), &mut out)
+            .map(|()| with_cursor(code, out));
     }
     let is_handlebars = match &options.parser {
         Some(parser) => &parser[..] == b"glimmer",
@@ -201,7 +265,8 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if is_handlebars {
         let mut out = Vec::new();
-        return bun_format::handlebars::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+        return bun_format::handlebars::format(code, options, &mut Default::default(), &mut out)
+            .map(|()| with_cursor(code, out));
     }
     let is_graphql = match &options.parser {
         Some(parser) => &parser[..] == b"graphql",
@@ -209,7 +274,8 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if is_graphql {
         let mut out = Vec::new();
-        return bun_format::graphql::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+        return bun_format::graphql::format(code, options, &mut Default::default(), &mut out)
+            .map(|()| with_cursor(code, out));
     }
     let html_parser = match &options.parser {
         Some(parser) => bun_format::html::Parser::from_name(parser),
@@ -217,10 +283,20 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if let Some(parser) = html_parser {
         let mut out = Vec::new();
-        return bun_format::html::format_with_cursor(name, code, parser, options, &mut Default::default(), &mut out).map(|cursor| (out, cursor));
+        return bun_format::html::format_with_cursor(
+            name,
+            code,
+            parser,
+            options,
+            &mut Default::default(),
+            &mut out,
+        )
+        .map(|cursor| (out, cursor));
     }
     let code = match bun_format::pragma::before_parsing(code, options) {
-        bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok((code.to_vec(), options.cursor_offset)),
+        bun_format::pragma::BeforeParsing::LeaveAsItIs => {
+            return Ok((code.to_vec(), options.cursor_offset));
+        }
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
     // `babel` hands a file of Flow to `babel-flow`.
@@ -235,13 +311,21 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
             false => Dialect::babel(is_script),
         };
         let how = options.sort_imports.as_deref();
-        with_bound_file_as(how.is_some_and(|it| it.needs_symbols()), dialect, path, &code, |file| {
-            // A file whose imports move is parsed again.
-            match how.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-                Some(sorted) => with_file_as(dialect, path, &sorted, |file| format(file, dialect, options)),
-                None => format(file, dialect, options),
-            }
-        })
+        with_bound_file_as(
+            how.is_some_and(|it| it.needs_symbols()),
+            dialect,
+            path,
+            &code,
+            |file| {
+                // A file whose imports move is parsed again.
+                match how.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
+                    Some(sorted) => with_file_as(dialect, path, &sorted, |file| {
+                        format(file, dialect, options)
+                    }),
+                    None => format(file, dialect, options),
+                }
+            },
+        )
     };
     // What is not a module may be a script.
     match name.rsplit(|&byte| byte == b'.').next() {
@@ -252,7 +336,11 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
 }
 
 /// The same, but a panic is an error.
-fn format_text_or_panic(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u8>, String> {
+fn format_text_or_panic(
+    path: &str,
+    code: &[u8],
+    options: &FormatOptions,
+) -> Result<Vec<u8>, String> {
     match std::panic::catch_unwind(|| format_text(path, code, options)) {
         Ok(Ok(out)) => Ok(out),
         Ok(Err(error)) => Err(format!("{error:?}")),
@@ -280,7 +368,11 @@ impl Args {
                 continue;
             };
             let (name, value) = flag.split_once('=').unwrap_or((flag, "true"));
-            if parsed.options.set(name.as_bytes(), value.as_bytes()).is_err() {
+            if parsed
+                .options
+                .set(name.as_bytes(), value.as_bytes())
+                .is_err()
+            {
                 parsed.flags.insert(name.to_owned(), value.to_owned());
             }
         }
@@ -314,13 +406,24 @@ fn is_other_language(path: &Path) -> bool {
 fn collect_files(paths: &[String]) -> Vec<PathBuf> {
     fn visit(path: &Path, found: &mut Vec<PathBuf>) {
         if path.is_dir() {
-            if path.file_name().is_some_and(|it| it == "node_modules" || it == ".git") {
+            if path
+                .file_name()
+                .is_some_and(|it| it == "node_modules" || it == ".git")
+            {
                 return;
             }
-            let mut entries: Vec<_> = std::fs::read_dir(path).into_iter().flatten().flatten().map(|it| it.path()).collect();
+            let mut entries: Vec<_> = std::fs::read_dir(path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|it| it.path())
+                .collect();
             entries.sort();
             entries.iter().for_each(|it| visit(it, found));
-        } else if path.extension().and_then(|it| it.to_str()).is_some_and(|it| EXTENSIONS.contains(&it))
+        } else if path
+            .extension()
+            .and_then(|it| it.to_str())
+            .is_some_and(|it| EXTENSIONS.contains(&it))
             || is_other_language(path)
         {
             found.push(path.to_owned());
@@ -398,8 +501,12 @@ pub(crate) fn run(args: &[String]) {
                 Err(error) => println!("{error:?}"),
             }
         }
-        Some("conformance") => conformance::run(&args, raw, bun_format_conformance::run_prettier_tests),
-        Some("oxfmt-fixtures") => conformance::run(&args, raw, bun_format_conformance::run_oxfmt_tests),
+        Some("conformance") => {
+            conformance::run(&args, raw, bun_format_conformance::run_prettier_tests)
+        }
+        Some("oxfmt-fixtures") => {
+            conformance::run(&args, raw, bun_format_conformance::run_oxfmt_tests)
+        }
         Some("check-idempotent") => check_idempotent(&args),
         Some("verify") => verify::verify(&args),
         Some("verify-pairs") => verify::verify_pairs(&args),
@@ -407,6 +514,8 @@ pub(crate) fn run(args: &[String]) {
         Some("serve") => serve(&args),
         Some("cursor") => cursor::run(&args),
         Some("sort-imports") => sort_imports::run(&args),
-        _ => println!("usage: bun-lint format file|ir|conformance|check-idempotent|verify|bench|serve .."),
+        _ => println!(
+            "usage: bun-lint format file|ir|conformance|check-idempotent|verify|bench|serve .."
+        ),
     }
 }

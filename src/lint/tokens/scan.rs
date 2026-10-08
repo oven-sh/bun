@@ -19,7 +19,8 @@ use crate::language::Parser;
 use bun_core::{lexer, strings};
 use bun_sema::atom::known;
 use bun_sema::hir::{
-    self, BinOp, ExprKind, Flags, MemberKind, ModifierKind, NameKind, PropKey, StmtKind, TypeNodeKind,
+    self, BinOp, ExprKind, Flags, MemberKind, ModifierKind, NameKind, PropKey, StmtKind,
+    TypeNodeKind,
 };
 
 /// The two parsers agree on where every token is. They disagree on the type of some words.
@@ -168,7 +169,9 @@ impl Marks {
             marks.name(text, spec.pos);
         }
         for stmt in hir.stmts {
-            if let StmtKind::ExportStar { alias, alias_pos, .. } = stmt.kind
+            if let StmtKind::ExportStar {
+                alias, alias_pos, ..
+            } = stmt.kind
                 && alias.is_some()
             {
                 marks.name(text, alias_pos);
@@ -209,7 +212,8 @@ impl Marks {
     /// `A.B` in a type is not an expression, with two exceptions.
     fn accesses_in_types(&mut self, file: &File) {
         let hir = &file.hir;
-        let names = |names: hir::Span<hir::NameId>| hir.names.get(names.range()).unwrap_or_default().iter();
+        let names =
+            |names: hir::Span<hir::NameId>| hir.names.get(names.range()).unwrap_or_default().iter();
         // The operand of `typeof a.b` is an expression in the HIR only.
         let mut operands = Vec::new();
         for ty in hir.types {
@@ -219,17 +223,28 @@ impl Marks {
         }
         if !operands.is_empty() {
             operands.sort_unstable();
-            self.accesses.list.retain(|at| operands.binary_search(at).is_err());
+            self.accesses
+                .list
+                .retain(|at| operands.binary_search(at).is_err());
         }
         // What a class implements and what an interface extends is an expression for TypeScript.
-        let of_classes = hir.classes.iter().flat_map(|it| [it.implements, it.other_implements]);
-        let of_interfaces = hir.interfaces.iter().flat_map(|it| [it.extends, it.other_heritage]);
+        let of_classes = hir
+            .classes
+            .iter()
+            .flat_map(|it| [it.implements, it.other_implements]);
+        let of_interfaces = hir
+            .interfaces
+            .iter()
+            .flat_map(|it| [it.extends, it.other_heritage]);
         for list in of_classes.chain(of_interfaces) {
             for &ty in hir.ids.get(list.range()).unwrap_or_default() {
-                if let Some(TypeNodeKind::Ref { name, .. }) = hir.types.get(ty as usize).map(|ty| ty.kind)
+                if let Some(TypeNodeKind::Ref { name, .. }) =
+                    hir.types.get(ty as usize).map(|ty| ty.kind)
                     && name.len() > 1
                 {
-                    self.accesses.list.extend(names(name).map(|name| name.pos()));
+                    self.accesses
+                        .list
+                        .extend(names(name).map(|name| name.pos()));
                 }
             }
         }
@@ -239,7 +254,11 @@ impl Marks {
         let (hir, text) = (&file.hir, file.text());
         for elem in hir.tuple_elems {
             if elem.name.is_some() {
-                let start = if elem.has_dots { skip_trivia(text, elem.start + 3) } else { elem.start };
+                let start = if elem.has_dots {
+                    skip_trivia(text, elem.start + 3)
+                } else {
+                    elem.start
+                };
                 self.name(text, start);
             }
         }
@@ -261,7 +280,10 @@ impl Marks {
     /// a comment.
     fn as_const(&mut self, text: &[u8], e: &hir::Expr) {
         for at in [skip_trivia(text, e.pos + 1), e.end.saturating_sub(5)] {
-            if text.get(at as usize..).is_some_and(|rest| rest.starts_with(b"const")) {
+            if text
+                .get(at as usize..)
+                .is_some_and(|rest| rest.starts_with(b"const"))
+            {
                 self.names.push(at);
             }
         }
@@ -270,16 +292,23 @@ impl Marks {
     fn strict_mode_keywords(&mut self, file: &File) {
         let (hir, text) = (&file.hir, file.text());
         let mut word_before = |at: u32, word: &[u8]| {
-            if text.get(..at as usize).is_some_and(|before| before.ends_with(word)) {
+            if text
+                .get(..at as usize)
+                .is_some_and(|before| before.ends_with(word))
+            {
                 self.keywords.push(at - word.len() as u32);
             }
         };
         for modifier in hir.modifiers {
-            const WORDS: Flags = (Flags::STATIC.union(Flags::PRIVATE)).union(Flags::PROTECTED.union(Flags::PUBLIC));
+            const WORDS: Flags =
+                (Flags::STATIC.union(Flags::PRIVATE)).union(Flags::PROTECTED.union(Flags::PUBLIC));
             if let ModifierKind::Keyword(flag) = modifier.kind
                 && WORDS.contains(flag)
             {
-                word_before(modifier.pos + hir::modifier_text(flag).len() as u32, hir::modifier_text(flag).as_bytes());
+                word_before(
+                    modifier.pos + hir::modifier_text(flag).len() as u32,
+                    hir::modifier_text(flag).as_bytes(),
+                );
             }
         }
         for decl in hir.var_decls {
@@ -291,7 +320,10 @@ impl Marks {
             word_before(skip_trivia_back(text, interface.name_pos), b"interface");
         }
         for class in hir.classes {
-            let first = hir.ids.get(class.implements.start as usize).filter(|_| !class.implements.is_empty());
+            let first = hir
+                .ids
+                .get(class.implements.start as usize)
+                .filter(|_| !class.implements.is_empty());
             if let Some(first) = first.and_then(|&first| hir.types.get(first as usize)) {
                 word_before(skip_trivia_back(text, first.pos), b"implements");
             }
@@ -329,7 +361,10 @@ const fn between(bytes: u64, first: u8, last: u8) -> u64 {
 /// The ASCII characters that continue an identifier.
 #[inline]
 const fn identifier_parts(bytes: u64) -> u64 {
-    between(bytes | (ONES * 0x20), b'a', b'z') | between(bytes, b'0', b'9') | equal_to(bytes, b'_') | equal_to(bytes, b'$')
+    between(bytes | (ONES * 0x20), b'a', b'z')
+        | between(bytes, b'0', b'9')
+        | equal_to(bytes, b'_')
+        | equal_to(bytes, b'$')
 }
 
 /// The whitespace of ASCII, and the control characters, which are in no token.
@@ -357,7 +392,9 @@ fn find(text: &[u8], at: usize, stops: &[u8]) -> usize {
 #[inline]
 fn find_nearby<const N: usize>(text: &[u8], mut at: usize, stops: [u8; N]) -> usize {
     let first = |bytes: u64| {
-        let found = stops.iter().fold(0, |found, &stop| found | first_equal_to(bytes, stop));
+        let found = stops
+            .iter()
+            .fold(0, |found, &stop| found | first_equal_to(bytes, stop));
         (found & HIGH_BITS).trailing_zeros() / 8
     };
     for _ in 0..2 {
@@ -405,7 +442,10 @@ impl Chunk {
     #[inline]
     fn count(self, class: impl Fn(u64) -> u64) -> usize {
         let others = |bytes: u64| !(class(bytes & !HIGH_BITS) & !bytes) & HIGH_BITS;
-        let (first, second) = (others(self.0).trailing_zeros() / 8, others(self.1).trailing_zeros() / 8);
+        let (first, second) = (
+            others(self.0).trailing_zeros() / 8,
+            others(self.1).trailing_zeros() / 8,
+        );
         (first + if first == 8 { second } else { 0 }) as usize
     }
 }
@@ -508,10 +548,22 @@ impl Word {
         if !(2..=10).contains(&len) {
             return Word::Name;
         }
-        let low = if len < 8 { chunk.0 & ((1 << (8 * len)) - 1) } else { chunk.0 };
-        let high = if len > 8 { chunk.1 & ((1 << (8 * (len - 8))) - 1) } else { 0 };
+        let low = if len < 8 {
+            chunk.0 & ((1 << (8 * len)) - 1)
+        } else {
+            chunk.0
+        };
+        let high = if len > 8 {
+            chunk.1 & ((1 << (8 * (len - 8))) - 1)
+        } else {
+            0
+        };
         let candidate = Word::BY_HASH[Word::hash(low as u8, (low >> 8) as u8, len)];
-        if (candidate.0, candidate.1) == (low, high) { candidate.2 } else { Word::Name }
+        if (candidate.0, candidate.1) == (low, high) {
+            candidate.2
+        } else {
+            Word::Name
+        }
     }
 
     #[inline]
@@ -580,7 +632,9 @@ pub(super) fn scan(file: &File) -> (Vec<RawToken>, Vec<RawToken>) {
 /// The comments of `file`. `None`: they cannot be told without the tokens.
 pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
     let text = file.text();
-    if has_html_comments(file) && (strings::contains(text, b"<!--") || strings::contains(text, b"-->")) {
+    if has_html_comments(file)
+        && (strings::contains(text, b"<!--") || strings::contains(text, b"-->"))
+    {
         return None;
     }
     let listed = file.hir.comments;
@@ -804,7 +858,11 @@ impl<'a> Scanner<'a> {
                     }
                 }
                 b'.' if next.is_ascii_digit() => self.number(),
-                b'.' => self.punctuator(if next == b'.' && self.byte(at + 2) == b'.' { 3 } else { 1 }),
+                b'.' => self.punctuator(if next == b'.' && self.byte(at + 2) == b'.' {
+                    3
+                } else {
+                    1
+                }),
                 b'0'..=b'9' => self.number(),
                 b'"' | b'\'' => self.string(first),
                 b'`' => self.template(),
@@ -843,7 +901,10 @@ impl<'a> Scanner<'a> {
                         None => self.punctuator(if next == b'=' { 2 } else { 1 }),
                     },
                 },
-                b'<' if next == b'!' && self.has_html_comments && text[at..].starts_with(b"<!--") => {
+                b'<' if next == b'!'
+                    && self.has_html_comments
+                    && text[at..].starts_with(b"<!--") =>
+                {
                     self.line_comment(TokenKind::Line);
                 }
                 b'<' => {
@@ -861,7 +922,11 @@ impl<'a> Scanner<'a> {
                 }
                 b'>' => {
                     if matches!(next, b'>' | b'=') && self.marks.shifts.has(at) {
-                        let same = text[at..].iter().take(3).take_while(|&&b| b == b'>').count();
+                        let same = text[at..]
+                            .iter()
+                            .take(3)
+                            .take_while(|&&b| b == b'>')
+                            .count();
                         self.punctuator(same + usize::from(self.byte(at + same) == b'='));
                     } else if let Some(mode) = self.close_angle() {
                         return mode;
@@ -908,7 +973,9 @@ impl<'a> Scanner<'a> {
     #[inline]
     fn is_after_dot(&self) -> bool {
         self.tokens.last().is_some_and(|last| {
-            last.end - last.start <= 2 && last.kind == TokenKind::Punctuator && self.byte((last.end as usize).saturating_sub(1)) == b'.'
+            last.end - last.start <= 2
+                && last.kind == TokenKind::Punctuator
+                && self.byte((last.end as usize).saturating_sub(1)) == b'.'
         })
     }
 
@@ -945,13 +1012,23 @@ impl<'a> Scanner<'a> {
             (Word::Name, _) => return TokenKind::Identifier,
             (Word::StrictAndEspree, Dialect::Espree { is_es5 }) => {
                 let is_keyword = !is_es5 || self.byte(self.at) == b's';
-                return if is_keyword { TokenKind::Keyword } else { TokenKind::Identifier };
+                return if is_keyword {
+                    TokenKind::Keyword
+                } else {
+                    TokenKind::Identifier
+                };
             }
             (Word::Strict | Word::Enum, Dialect::Espree { .. })
-            | (Word::ReservedSinceEs6, Dialect::Espree { is_es5: true }) => return TokenKind::Identifier,
+            | (Word::ReservedSinceEs6, Dialect::Espree { is_es5: true }) => {
+                return TokenKind::Identifier;
+            }
             (Word::Strict | Word::StrictAndEspree, Dialect::TypeScript) => {
                 let is_keyword = self.marks.keywords.has(self.at);
-                return if is_keyword { TokenKind::Keyword } else { TokenKind::Identifier };
+                return if is_keyword {
+                    TokenKind::Keyword
+                } else {
+                    TokenKind::Identifier
+                };
             }
             (Word::Null, _) => TokenKind::Null,
             (Word::Boolean, _) => TokenKind::Boolean,
@@ -991,7 +1068,10 @@ impl<'a> Scanner<'a> {
                 (len, at) = (len + 1, at + size);
             }
             let is_es5 = self.dialect == Dialect::Espree { is_es5: true };
-            if at == end && Word::of(&word[..len]) == Word::StrictAndEspree && (!is_es5 || word[0] == b's') {
+            if at == end
+                && Word::of(&word[..len]) == Word::StrictAndEspree
+                && (!is_es5 || word[0] == b's')
+            {
                 kind = TokenKind::Keyword;
             }
         } else if self.elements > 0 && self.marks.accesses.has(start) {
@@ -1010,15 +1090,25 @@ impl<'a> Scanner<'a> {
             at
         };
         let mut end = start;
-        if text[start] == b'0' && matches!(self.byte(start + 1), b'x' | b'X' | b'o' | b'O' | b'b' | b'B') {
+        if text[start] == b'0'
+            && matches!(
+                self.byte(start + 1),
+                b'x' | b'X' | b'o' | b'O' | b'b' | b'B'
+            )
+        {
             end += 2;
-            while text.get(end).is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_') {
+            while text
+                .get(end)
+                .is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_')
+            {
                 end += 1;
             }
             return self.token(TokenKind::Numeric, start, end);
         }
         end = digits(end);
-        let is_legacy_octal = text[start] == b'0' && end > start + 1 && text[start..end].iter().all(|b| matches!(b, b'0'..=b'7'));
+        let is_legacy_octal = text[start] == b'0'
+            && end > start + 1
+            && text[start..end].iter().all(|b| matches!(b, b'0'..=b'7'));
         if is_legacy_octal {
             return self.token(TokenKind::Numeric, start, end);
         }
@@ -1043,7 +1133,13 @@ impl<'a> Scanner<'a> {
         loop {
             end = find_nearby(text, end, [quote, b'\\', b'\n', b'\r']);
             match text.get(end) {
-                Some(b'\\') => end += if text[end + 1..].starts_with(b"\r\n") { 3 } else { 2 },
+                Some(b'\\') => {
+                    end += if text[end + 1..].starts_with(b"\r\n") {
+                        3
+                    } else {
+                        2
+                    }
+                }
                 Some(&b) => {
                     end += usize::from(b == quote);
                     break;
@@ -1154,7 +1250,11 @@ impl<'a> Scanner<'a> {
                     return Mode::Code;
                 }
                 b'"' | b'\'' => {
-                    self.token(TokenKind::JsxText, at, find_nearby(self.text, at + 1, [first]) + 1);
+                    self.token(
+                        TokenKind::JsxText,
+                        at,
+                        find_nearby(self.text, at + 1, [first]) + 1,
+                    );
                 }
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80.. => self.jsx_name(),
                 _ => self.punctuator(1),
@@ -1181,7 +1281,10 @@ impl<'a> Scanner<'a> {
         let mut kind = TokenKind::JsxIdentifier;
         if self.dialect == Dialect::TypeScript {
             let is_colon = |at: usize| self.byte(at) == b':';
-            let is_after_colon = self.tokens.last().is_some_and(|last| is_colon(last.start as usize));
+            let is_after_colon = self
+                .tokens
+                .last()
+                .is_some_and(|last| is_colon(last.start as usize));
             if is_after_colon || is_colon(skip_trivia(text, end as u32) as usize) {
                 kind = TokenKind::Identifier;
             } else if &text[start..end] == b"this" && !self.is_after_dot() && self.is_tag_name() {
@@ -1193,7 +1296,9 @@ impl<'a> Scanner<'a> {
 
     /// Whether the last token is the `<` or the `/` that the name of a tag follows.
     fn is_tag_name(&self) -> bool {
-        self.tokens.last().is_some_and(|last| matches!(self.byte(last.start as usize), b'<' | b'/'))
+        self.tokens
+            .last()
+            .is_some_and(|last| matches!(self.byte(last.start as usize), b'<' | b'/'))
     }
 
     /// The text between JSX tags, up to and including the `{` or the `<` that ends it.

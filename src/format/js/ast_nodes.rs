@@ -18,12 +18,13 @@
 //! - `nodes.span()`: the range that the node has in oxc.
 //! - `nodes.ancestors()`: itself, its parent, and so on up to `Program`.
 
+use super::print::flow::is_declared_class;
 use bun_lint::ast::{
     BinOp, Case, Chain, Class, EnumMember, ExportSpec, Expr, ExprKind, File, Flags, FnBody, FnKind,
     Func, ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp,
-    Prop, PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
+    Prop, PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp,
+    VarDecl,
 };
-use super::print::flow::is_declared_class;
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::skip_trivia_back;
 use bun_sema::hir::ExprTag;
@@ -58,7 +59,9 @@ impl<'a> ExpressionStatement<'a> {
     pub(crate) fn span(self) -> Span {
         match self {
             ExpressionStatement::Stmt(statement) => statement.span(),
-            ExpressionStatement::ArrowBody(_) => self.expression().map_or_else(Span::default, Expr::span),
+            ExpressionStatement::ArrowBody(_) => {
+                self.expression().map_or_else(Span::default, Expr::span)
+            }
         }
     }
 }
@@ -356,13 +359,18 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
         ExprTag::Call => N::CallExpression(e),
         ExprTag::New => N::NewExpression(e),
         ExprTag::Unary => match e.unary_op() {
-            Some(UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec) => N::UpdateExpression(e),
+            Some(UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec) => {
+                N::UpdateExpression(e)
+            }
             _ => N::UnaryExpression(e),
         },
         ExprTag::Binary => match e.binary_op() {
             Some(BinOp::And | BinOp::Or | BinOp::Nullish) => N::LogicalExpression(e),
             Some(BinOp::Comma) => N::SequenceExpression(e),
-            Some(BinOp::In) if e.left().is_some_and(|left| left.tag() == ExprTag::PrivateIdentifier) => {
+            Some(BinOp::In)
+                if e.left()
+                    .is_some_and(|left| left.tag() == ExprTag::PrivateIdentifier) =>
+            {
                 N::PrivateInExpression(e)
             }
             _ => N::BinaryExpression(e),
@@ -377,15 +385,19 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
         ExprTag::Spread => N::SpreadElement(Node::Expr(e)),
         ExprTag::Await => N::AwaitExpression(e),
         ExprTag::Yield => N::YieldExpression(e),
-        ExprTag::As | ExprTag::AsConst if e.is_angle_bracket_assertion() => match e.file().is_flow() {
-            true => N::TypeCastExpression(e),
-            false => N::TSTypeAssertion(e),
-        },
+        ExprTag::As | ExprTag::AsConst if e.is_angle_bracket_assertion() => {
+            match e.file().is_flow() {
+                true => N::TypeCastExpression(e),
+                false => N::TSTypeAssertion(e),
+            }
+        }
         ExprTag::As | ExprTag::AsConst => N::TSAsExpression(e),
         ExprTag::Satisfies => N::TSSatisfiesExpression(e),
         ExprTag::NonNull => N::TSNonNullExpression(e),
         ExprTag::Instantiation => N::TSInstantiationExpression(e),
-        ExprTag::Jsx if matches!(e.kind(), ExprKind::Jsx(jsx) if jsx.is_fragment()) => N::JSXFragment(e),
+        ExprTag::Jsx if matches!(e.kind(), ExprKind::Jsx(jsx) if jsx.is_fragment()) => {
+            N::JSXFragment(e)
+        }
         ExprTag::Jsx => N::JSXElement(e),
         ExprTag::ImportCall => N::ImportExpression(e),
         ExprTag::ImportMeta | ExprTag::NewTarget => N::MetaProperty(e),
@@ -456,7 +468,9 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
         Node::VarDecl(declaration) => declaration.as_ast_nodes(),
         Node::Param(param) if param.default() == Some(e) => param.as_ast_nodes(),
         Node::Param(_) => N::Decorator(e),
-        Node::PatProp(prop) if prop.default() == Some(e) => N::AssignmentPattern(Node::PatProp(prop)),
+        Node::PatProp(prop) if prop.default() == Some(e) => {
+            N::AssignmentPattern(Node::PatProp(prop))
+        }
         Node::PatProp(prop) => N::BindingProperty(prop),
         Node::PatElem(element) => N::AssignmentPattern(Node::PatElem(element)),
         Node::Prop(prop) => prop.as_ast_nodes(),
@@ -517,7 +531,9 @@ impl<'a> AsAstNodes<'a> for Member<'a> {
             MemberKind::CallSignature => N::TSCallSignatureDeclaration(self),
             MemberKind::ConstructSignature => N::TSConstructSignatureDeclaration(self),
             MemberKind::Property if !is_in_class => N::TSPropertySignature(self),
-            MemberKind::Property if self.flags().contains(Flags::ACCESSOR) => N::AccessorProperty(self),
+            MemberKind::Property if self.flags().contains(Flags::ACCESSOR) => {
+                N::AccessorProperty(self)
+            }
             MemberKind::Property => N::PropertyDefinition(self),
             _ if !is_in_class => N::TSMethodSignature(self),
             _ => N::MethodDefinition(self),
@@ -531,7 +547,11 @@ impl<'a> AsAstNodes<'a> for Prop<'a> {
         let is_spread = self.kind() == PropKind::Spread;
         let owner = self.parent();
         if self.is_jsx_attribute() || matches!(owner, Node::Expr(e) if e.tag() == ExprTag::Jsx) {
-            return if is_spread { N::JSXSpreadAttribute(self) } else { N::JSXAttribute(self) };
+            return if is_spread {
+                N::JSXSpreadAttribute(self)
+            } else {
+                N::JSXAttribute(self)
+            };
         }
         let is_target = matches!(owner, Node::Expr(object) if is_assignment_target(object));
         match (is_target, self.kind()) {
@@ -550,7 +570,9 @@ impl<'a> AsAstNodes<'a> for Prop<'a> {
 impl<'a> AsAstNodes<'a> for VarDecl<'a> {
     fn as_ast_nodes(self) -> AstNodes<'a> {
         match self.parent() {
-            Node::Stmt(statement) if statement.tag() == StmtTag::Try => AstNodes::CatchParameter(self),
+            Node::Stmt(statement) if statement.tag() == StmtTag::Try => {
+                AstNodes::CatchParameter(self)
+            }
             _ => AstNodes::VariableDeclarator(self),
         }
     }
@@ -615,12 +637,17 @@ fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
 
 /// `export` or `export default` is written before `statement`, which is a declaration.
 fn export_around<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
-    if matches!(statement.tag(), StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar) {
+    if matches!(
+        statement.tag(),
+        StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar
+    ) {
         return None;
     }
     let flags = statement.flags();
     match flags.contains(Flags::EXPORT) {
-        true if flags.contains(Flags::DEFAULT) => Some(AstNodes::ExportDefaultDeclaration(statement)),
+        true if flags.contains(Flags::DEFAULT) => {
+            Some(AstNodes::ExportDefaultDeclaration(statement))
+        }
         true => Some(AstNodes::ExportNamedDeclaration(statement)),
         false => None,
     }
@@ -678,16 +705,23 @@ impl<'a> AsAstNodes<'a> for TypeNode<'a> {
             TypeKind::Tuple(_) => N::TSTupleType(self),
             TypeKind::Union(_) => N::TSUnionType(self),
             TypeKind::Intersection(_) => N::TSIntersectionType(self),
-            TypeKind::Fn(func) if func.kind() == FnKind::ConstructorType => N::TSConstructorType(self),
+            TypeKind::Fn(func) if func.kind() == FnKind::ConstructorType => {
+                N::TSConstructorType(self)
+            }
             TypeKind::Fn(_) => N::TSFunctionType(self),
             TypeKind::Object(_) => N::TSTypeLiteral(self),
             TypeKind::Cond { .. } => N::TSConditionalType(self),
             TypeKind::Infer(_) => N::TSInferType(self),
             TypeKind::Mapped(_) => N::TSMappedType(self),
             TypeKind::IndexedAccess { .. } => N::TSIndexedAccessType(self),
-            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => N::TSTypeOperator(self),
+            TypeKind::Keyof(_)
+            | TypeKind::Readonly(_)
+            | TypeKind::UniqueSymbol
+            | TypeKind::Unique(_) => N::TSTypeOperator(self),
             TypeKind::Typeof { .. } => N::TSTypeQuery(self),
-            TypeKind::Import { is_typeof: true, .. } => N::TSTypeQuery(self),
+            TypeKind::Import {
+                is_typeof: true, ..
+            } => N::TSTypeQuery(self),
             TypeKind::Import { .. } => N::TSImportType(self),
             TypeKind::Predicate { .. } => N::TSTypePredicate(self),
         }
@@ -750,7 +784,9 @@ impl<'a> AsAstNodes<'a> for Pat<'a> {
 
     fn ast_parent(self) -> AstNodes<'a> {
         match self.parent() {
-            Node::PatProp(prop) if prop.is_rest() => AstNodes::BindingRestElement(Node::PatProp(prop)),
+            Node::PatProp(prop) if prop.is_rest() => {
+                AstNodes::BindingRestElement(Node::PatProp(prop))
+            }
             Node::PatProp(prop) if prop.default().is_some() => {
                 AstNodes::AssignmentPattern(Node::PatProp(prop))
             }
@@ -880,7 +916,9 @@ impl<'a> AstNodes<'a> {
             N::SpreadElement(Node::Expr(e)) => parent_of_expr(e, Level::Itself),
             N::SpreadElement(node) => node_as_ast_nodes(node.parent()),
 
-            N::ExpressionStatement(ExpressionStatement::Stmt(statement)) => parent_of_stmt(statement),
+            N::ExpressionStatement(ExpressionStatement::Stmt(statement)) => {
+                parent_of_stmt(statement)
+            }
             N::ExpressionStatement(ExpressionStatement::ArrowBody(func)) => N::FunctionBody(func),
 
             N::Function(func) | N::ArrowFunctionExpression(func) => parent_of_owner(func.owner()),
@@ -978,10 +1016,14 @@ impl<'a> AstNodes<'a> {
             N::ImportSpecifier(spec) => N::ImportDeclaration(spec.import().stmt()),
             N::ExportSpecifier(spec) => N::ExportNamedDeclaration(spec.export().stmt()),
 
-            N::BindingIdentifier(pat) | N::ObjectPattern(pat) | N::ArrayPattern(pat) => pat.ast_parent(),
+            N::BindingIdentifier(pat) | N::ObjectPattern(pat) | N::ArrayPattern(pat) => {
+                pat.ast_parent()
+            }
             N::BindingProperty(prop) => node_as_ast_nodes(prop.parent()),
             N::AssignmentPattern(Node::PatProp(prop)) => N::BindingProperty(prop),
-            N::AssignmentPattern(node) | N::BindingRestElement(node) => node_as_ast_nodes(node.parent()),
+            N::AssignmentPattern(node) | N::BindingRestElement(node) => {
+                node_as_ast_nodes(node.parent())
+            }
 
             N::TSTypeAnnotation(ty) => node_as_ast_nodes(ty.parent()),
             N::TSKeywordType(ty)
@@ -1007,18 +1049,22 @@ impl<'a> AstNodes<'a> {
             | N::TSClassImplements(ty)
             | N::TSInterfaceHeritage(ty) => ty.ast_parent(),
 
-            N::TSNamedTupleMember(element) | N::TSOptionalType(element) | N::TSRestType(element) => {
-                node_as_ast_nodes(element.parent())
-            }
+            N::TSNamedTupleMember(element)
+            | N::TSOptionalType(element)
+            | N::TSRestType(element) => node_as_ast_nodes(element.parent()),
             N::TSTypeParameter(param) => match param.parent() {
                 Node::Type(ty) => ty.as_ast_nodes(),
                 owner => N::TSTypeParameterDeclaration(owner),
             },
-            N::TSTypeParameterInstantiation(owner) | N::TSTypeParameterDeclaration(owner) => match owner {
-                Node::Stmt(statement) => inner_of_stmt(statement),
-                Node::Expr(e) if matches!(e.kind(), ExprKind::Jsx(_)) => N::JSXOpeningElement(e),
-                owner => node_as_ast_nodes(owner),
-            },
+            N::TSTypeParameterInstantiation(owner) | N::TSTypeParameterDeclaration(owner) => {
+                match owner {
+                    Node::Stmt(statement) => inner_of_stmt(statement),
+                    Node::Expr(e) if matches!(e.kind(), ExprKind::Jsx(_)) => {
+                        N::JSXOpeningElement(e)
+                    }
+                    owner => node_as_ast_nodes(owner),
+                }
+            }
         }
     }
 
@@ -1041,7 +1087,9 @@ impl<'a> AstNodes<'a> {
     /// Whether it is a call or a `new` expression whose callee is `e`.
     pub(crate) fn is_call_like_callee(self, e: Expr<'a>) -> bool {
         match self {
-            AstNodes::CallExpression(call) | AstNodes::NewExpression(call) => call.callee() == Some(e),
+            AstNodes::CallExpression(call) | AstNodes::NewExpression(call) => {
+                call.callee() == Some(e)
+            }
             _ => false,
         }
     }
@@ -1118,17 +1166,23 @@ impl<'a> AstNodes<'a> {
                 Some(default) => prop.value().span().to(default.span()),
                 None => prop.span(),
             },
-            N::SpreadElement(node) | N::AssignmentPattern(node) | N::BindingRestElement(node) => node.span(),
+            N::SpreadElement(node) | N::AssignmentPattern(node) | N::BindingRestElement(node) => {
+                node.span()
+            }
             N::ExpressionStatement(statement) => statement.span(),
             N::Function(func) | N::ArrowFunctionExpression(func) => func.estree_span(),
             N::FunctionBody(func) => match func.body() {
                 FnBody::Expr(e) => e.span(),
-                _ => func.body_span().unwrap_or_else(|| Span::empty(func.span().end)),
+                _ => func
+                    .body_span()
+                    .unwrap_or_else(|| Span::empty(func.span().end)),
             },
             N::FormalParameters(func) => func.params_span().unwrap_or_else(|| func.span()),
             N::Class(class) => class.estree_span(),
             N::ClassBody(class) => class.body_span(),
-            N::FormalParameter(param) | N::FormalParameterRest(param) | N::TSThisParameter(param) => param.span(),
+            N::FormalParameter(param)
+            | N::FormalParameterRest(param)
+            | N::TSThisParameter(param) => param.span(),
             N::MethodDefinition(member)
             | N::PropertyDefinition(member)
             | N::AccessorProperty(member)
@@ -1143,11 +1197,15 @@ impl<'a> AstNodes<'a> {
             | N::JSXSpreadAttribute(prop)
             | N::AssignmentTargetPropertyIdentifier(prop)
             | N::AssignmentTargetPropertyProperty(prop) => prop.span(),
-            N::VariableDeclarator(declaration) | N::CatchParameter(declaration) => declaration.span(),
+            N::VariableDeclarator(declaration) | N::CatchParameter(declaration) => {
+                declaration.span()
+            }
             N::ExportNamedDeclaration(statement) | N::ExportDefaultDeclaration(statement) => {
                 statement.export_span().unwrap_or_else(|| statement.span())
             }
-            N::CatchClause(statement) => statement.catch_clause_span().unwrap_or_else(|| statement.span()),
+            N::CatchClause(statement) => statement
+                .catch_clause_span()
+                .unwrap_or_else(|| statement.span()),
             N::TSInterfaceBody(statement) => match statement.kind() {
                 StmtKind::Interface(interface) => interface.body_span(),
                 _ => statement.span(),
@@ -1157,7 +1215,10 @@ impl<'a> AstNodes<'a> {
                 _ => statement.span(),
             },
             N::TSModuleBlock(statement) => match statement.kind() {
-                StmtKind::Module(module) => module.innermost().body_span().unwrap_or_else(|| statement.span()),
+                StmtKind::Module(module) => module
+                    .innermost()
+                    .body_span()
+                    .unwrap_or_else(|| statement.span()),
                 _ => statement.span(),
             },
             N::Directive(statement)
@@ -1218,14 +1279,16 @@ impl<'a> AstNodes<'a> {
             | N::TSTypePredicate(ty)
             | N::TSClassImplements(ty)
             | N::TSInterfaceHeritage(ty) => ty.span(),
-            N::TSNamedTupleMember(element) | N::TSOptionalType(element) | N::TSRestType(element) => element.span(),
+            N::TSNamedTupleMember(element)
+            | N::TSOptionalType(element)
+            | N::TSRestType(element) => element.span(),
             N::TSTypeParameter(param) => param.span(),
-            N::TSTypeParameterInstantiation(owner) => {
-                type_arguments_of(owner).and_then(|it| it.angle_brackets_span()).unwrap_or_else(|| owner.span())
-            }
-            N::TSTypeParameterDeclaration(owner) => {
-                type_parameters_of(owner).and_then(|it| it.angle_brackets_span()).unwrap_or_else(|| owner.span())
-            }
+            N::TSTypeParameterInstantiation(owner) => type_arguments_of(owner)
+                .and_then(|it| it.angle_brackets_span())
+                .unwrap_or_else(|| owner.span()),
+            N::TSTypeParameterDeclaration(owner) => type_parameters_of(owner)
+                .and_then(|it| it.angle_brackets_span())
+                .unwrap_or_else(|| owner.span()),
         }
     }
 }
@@ -1237,10 +1300,14 @@ impl Spanned for AstNodes<'_> {
 }
 
 /// The type arguments that `owner` has.
-pub(crate) fn type_arguments_of<'a>(owner: Node<'a>) -> Option<bun_lint::ast::List<'a, TypeNode<'a>>> {
+pub(crate) fn type_arguments_of<'a>(
+    owner: Node<'a>,
+) -> Option<bun_lint::ast::List<'a, TypeNode<'a>>> {
     match owner {
         Node::Expr(e) => match e.kind() {
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => Some(call.type_args()),
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                Some(call.type_args())
+            }
             ExprKind::Instantiation { type_args, .. } => Some(type_args),
             ExprKind::Jsx(jsx) => Some(jsx.type_args()),
             _ => None,
@@ -1258,7 +1325,9 @@ pub(crate) fn type_arguments_of<'a>(owner: Node<'a>) -> Option<bun_lint::ast::Li
 }
 
 /// The type parameters that `owner` declares.
-pub(crate) fn type_parameters_of<'a>(owner: Node<'a>) -> Option<bun_lint::ast::List<'a, TypeParam<'a>>> {
+pub(crate) fn type_parameters_of<'a>(
+    owner: Node<'a>,
+) -> Option<bun_lint::ast::List<'a, TypeParam<'a>>> {
     match owner {
         Node::Func(func) => Some(func.type_params()),
         Node::Class(class) => Some(class.type_params()),
@@ -1270,4 +1339,3 @@ pub(crate) fn type_parameters_of<'a>(owner: Node<'a>) -> Option<bun_lint::ast::L
         _ => None,
     }
 }
-

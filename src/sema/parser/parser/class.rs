@@ -78,7 +78,12 @@ impl Parser<'_> {
         if let Some(less_than) = less_than
             && type_params.is_empty()
         {
-            self.flag(DiagnosticKind::Grammar, 1098, (less_than, self.prev_end()), &[]);
+            self.flag(
+                DiagnosticKind::Grammar,
+                1098,
+                (less_than, self.prev_end()),
+                &[],
+            );
         }
         let (mut extends, mut extends_args) = (ExprId::NONE, IdList::EMPTY);
         if self.eat(T::Extends) {
@@ -251,12 +256,17 @@ impl Parser<'_> {
                 self.lx.reset(mark);
             }
         }
-        if kind == MemberKind::Property && self.token() == T::OpenBracket && self.is_index_signature()
+        if kind == MemberKind::Property
+            && self.token() == T::OpenBracket
+            && self.is_index_signature()
         {
             // It is placed after its decorators.
             let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
             let written = self.s.modifiers.get(first_modifier..).unwrap_or_default();
-            let name_pos = written.iter().find(is_keyword).map_or(self.pos(), |it| it.pos);
+            let name_pos = written
+                .iter()
+                .find(is_keyword)
+                .map_or(self.pos(), |it| it.pos);
             let modifiers = self.take_modifiers(first_modifier);
             let mut member = self.index_signature(start, flags, modifiers);
             member.name_pos = name_pos;

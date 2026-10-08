@@ -153,10 +153,10 @@ pub(crate) fn has_top_level_function(file: &File) -> bool {
 pub(crate) fn kind_of_function(file: &File, f: usize) -> Option<ScopeKind> {
     let is_signature = || {
         matches!(file.bound.fns.get(f).map(|it| it.owner), Some(FnOwner::Member(m))
-            if matches!(
-                file.bound.member_owner.get(m.idx()),
-                Some(MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_))
-            ))
+        if matches!(
+            file.bound.member_owner.get(m.idx()),
+            Some(MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_))
+        ))
     };
     Some(match file.hir.fns.get(f)?.kind {
         FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Constructor => ScopeKind::Function,
@@ -192,7 +192,10 @@ fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) ->
         else {
             return false;
         };
-        let written = hir.text.get(*pos as usize..*end as usize).unwrap_or_default();
+        let written = hir
+            .text
+            .get(*pos as usize..*end as usize)
+            .unwrap_or_default();
         // A template, or a string in parentheses, is no directive.
         if !matches!(written.first(), Some(b'"' | b'\''))
             || hir.parens.binary_search_by_key(&e.0, |it| it.0.0).is_ok()
@@ -215,8 +218,9 @@ impl ScopeTree {
             unvisited,
             ..
         } = Collector::run(file);
-        let mut order: Vec<u128> =
-            (protos.iter().enumerate()).map(|(i, it)| sort_key(it.start, it.end, it.rank, i)).collect();
+        let mut order: Vec<u128> = (protos.iter().enumerate())
+            .map(|(i, it)| sort_key(it.start, it.end, it.rank, i))
+            .collect();
         order.sort();
 
         let language = file.language();
@@ -364,15 +368,19 @@ impl ScopeTree {
                 _,
             ) => true,
             // "Force strictness of GlobalScope to false when using node.js scope."
-            (ScopeKind::Global, _) => !has_top_level_function(file) && has_use_strict(file, top_level()),
+            (ScopeKind::Global, _) => {
+                !has_top_level_function(file) && has_use_strict(file, top_level())
+            }
             (ScopeKind::Function, Block::File) => has_use_strict(file, top_level()),
-            (ScopeKind::Function, Block::Fn(f)) => match file.hir.fns.get(f.idx()).map(|it| it.body) {
-                Some(hir::FnBody::Block(statements)) => {
-                    let ids = file.hir.ids.get(statements.range()).unwrap_or_default();
-                    has_use_strict(file, ids.iter().map(|&it| hir::StmtId(it)))
+            (ScopeKind::Function, Block::Fn(f)) => {
+                match file.hir.fns.get(f.idx()).map(|it| it.body) {
+                    Some(hir::FnBody::Block(statements)) => {
+                        let ids = file.hir.ids.get(statements.range()).unwrap_or_default();
+                        has_use_strict(file, ids.iter().map(|&it| hir::StmtId(it)))
+                    }
+                    _ => false,
                 }
-                _ => false,
-            },
+            }
             _ => false,
         }
     }
@@ -380,13 +388,16 @@ impl ScopeTree {
     /// ESLint's `reference.from` for what is written at `pos`.
     pub(crate) fn scope_at(&self, pos: u32) -> u32 {
         let after = self.changes.partition_point(|it| it.pos <= pos);
-        self.changes.get(after.wrapping_sub(1)).map_or(0, |it| it.from)
+        self.changes
+            .get(after.wrapping_sub(1))
+            .map_or(0, |it| it.from)
     }
 
     fn regions(&self) -> &[Region] {
         self.regions.get_or_init(|| {
             let scopes = self.scopes.iter().enumerate();
-            let scopes = scopes.map(|(i, it)| sort_key(it.start, it.end, rank_of(it.kind, it.block), i));
+            let scopes =
+                scopes.map(|(i, it)| sort_key(it.start, it.end, rank_of(it.kind, it.block), i));
             let zones = self.zones.iter().enumerate();
             let zones = zones.map(|(i, it)| sort_key(it.start, it.end, 2, self.scopes.len() + i));
             let mut order: Vec<u128> = scopes.chain(zones).collect();
@@ -402,7 +413,10 @@ impl ScopeTree {
                         (it.start, it.end, it.scope)
                     }
                 };
-                while stack.last().is_some_and(|&top| regions[top as usize].end <= start) {
+                while stack
+                    .last()
+                    .is_some_and(|&top| regions[top as usize].end <= start)
+                {
                     stack.pop();
                 }
                 let region = regions.len() as u32;
@@ -431,7 +445,8 @@ impl ScopeTree {
                 return region.get;
             }
             // What has the range of the node is created by something in the node.
-            let is_around = end.max(start + 1) <= region.end && (region.start, region.end) != (start, end);
+            let is_around =
+                end.max(start + 1) <= region.end && (region.start, region.end) != (start, end);
             if is_around || region.parent as usize == at {
                 return region.get;
             }
@@ -452,7 +467,11 @@ impl ScopeTree {
     /// Whether `inner` is `outer` or inside it.
     #[inline]
     pub(crate) fn contains(&self, outer: u32, inner: u32) -> bool {
-        outer <= inner && self.scopes.get(outer as usize).is_some_and(|it| inner <= it.last)
+        outer <= inner
+            && self
+                .scopes
+                .get(outer as usize)
+                .is_some_and(|it| inner <= it.last)
     }
 }
 
@@ -548,7 +567,9 @@ impl<'f, 'a> Collector<'f, 'a> {
             return;
         }
         (0..hir.types.len()).for_each(|i| self.ty(i));
-        hir.interfaces.iter().for_each(|it| self.interface(Some(it)));
+        hir.interfaces
+            .iter()
+            .for_each(|it| self.interface(Some(it)));
         hir.aliases.iter().for_each(|it| self.alias(Some(it)));
         hir.enums.iter().for_each(|it| self.enumeration(Some(it)));
         hir.modules.iter().for_each(|it| self.module(Some(it)));
@@ -607,11 +628,16 @@ impl<'f, 'a> Collector<'f, 'a> {
         let (block, start, end) = (Block::Stmt(hir::StmtId(i as u32)), stmt.start, stmt.loc.end);
         match stmt.kind {
             StmtKind::Block(parts) if is_with_statement(self.file, stmt) => {
-                let object = hir.ids.get(parts.start as usize).and_then(|&it| hir.stmts.get(it as usize));
+                let object = hir
+                    .ids
+                    .get(parts.start as usize)
+                    .and_then(|&it| hir.stmts.get(it as usize));
                 let inside = object.map_or(start, |it| it.loc.end);
                 self.scope_from(ScopeKind::With, block, start, inside, end);
             }
-            StmtKind::Block(_) if self.has_block_scopes => self.scope(ScopeKind::Block, block, start, end),
+            StmtKind::Block(_) if self.has_block_scopes => {
+                self.scope(ScopeKind::Block, block, start, end)
+            }
             StmtKind::For { init: head, .. }
             | StmtKind::ForIn { left: head, .. }
             | StmtKind::ForOf { left: head, .. }
@@ -629,10 +655,15 @@ impl<'f, 'a> Collector<'f, 'a> {
                 handler,
                 ..
             } => {
-                if let (Some(tried), Some(handler)) = (hir.stmts.get(tried.idx()), hir.stmts.get(handler.idx())) {
+                if let (Some(tried), Some(handler)) =
+                    (hir.stmts.get(tried.idx()), hir.stmts.get(handler.idx()))
+                {
                     self.scope(ScopeKind::Catch, block, tried.loc.end, handler.loc.end);
                 }
-                let ty = hir.var_decls.get(param.idx()).and_then(|it| hir.types.get(it.ty.idx()));
+                let ty = hir
+                    .var_decls
+                    .get(param.idx())
+                    .and_then(|it| hir.types.get(it.ty.idx()));
                 self.unvisited.extend(ty.map(|it| (it.pos, it.end)));
             }
             StmtKind::ExportAsNamespace(_) => self.namespace_exports.push(hir::StmtId(i as u32)),
@@ -646,7 +677,8 @@ impl<'f, 'a> Collector<'f, 'a> {
         let (Some(func), Some(kind)) = (hir.fns.get(i), kind_of_function(file, i)) else {
             return;
         };
-        if self.is_synthetic(func.start) || (self.is_javascript && kind == ScopeKind::FunctionType) {
+        if self.is_synthetic(func.start) || (self.is_javascript && kind == ScopeKind::FunctionType)
+        {
             return;
         }
         let range = match bound.fns.get(i).map(|it| it.owner) {
@@ -663,7 +695,9 @@ impl<'f, 'a> Collector<'f, 'a> {
         // After the name.
         let from_params = match hir.type_params.get(func.type_params.start as usize) {
             // Not those of a `@template` tag.
-            Some(first) if !func.type_params.is_empty() && !self.is_synthetic(first.start) => first.start,
+            Some(first) if !func.type_params.is_empty() && !self.is_synthetic(first.start) => {
+                first.start
+            }
             _ => func.anchor,
         };
         match func.kind {
@@ -678,7 +712,9 @@ impl<'f, 'a> Collector<'f, 'a> {
                 self.scope(kind, block, from_params, end);
             }
             // The block of a method signature is the member.
-            _ if kind == ScopeKind::FunctionType => self.scope_from(kind, block, whole_start, from_params, end),
+            _ if kind == ScopeKind::FunctionType => {
+                self.scope_from(kind, block, whole_start, from_params, end)
+            }
             _ => self.scope(kind, block, from_params, end),
         }
         if kind != ScopeKind::Function {
@@ -701,12 +737,23 @@ impl<'f, 'a> Collector<'f, 'a> {
         }
         // The decorators of the parameters of a method are evaluated in the scope of the class.
         if !hir.modifiers_of_params.is_empty()
-            && matches!(bound.fns.get(i).map(|it| it.owner), Some(FnOwner::Member(_)))
+            && matches!(
+                bound.fns.get(i).map(|it| it.owner),
+                Some(FnOwner::Member(_))
+            )
             && !matches!(func.body, hir::FnBody::None)
         {
             for p in func.params.iter() {
-                let modifiers = hir.modifiers_of_params.get(p.idx()).copied().unwrap_or_default();
-                let decorators_end = hir.modifiers.get(modifiers.range()).unwrap_or_default().iter();
+                let modifiers = hir
+                    .modifiers_of_params
+                    .get(p.idx())
+                    .copied()
+                    .unwrap_or_default();
+                let decorators_end = hir
+                    .modifiers
+                    .get(modifiers.range())
+                    .unwrap_or_default()
+                    .iter();
                 let decorators_end = decorators_end
                     .filter_map(|it| match it.kind {
                         hir::ModifierKind::Decorator(e) => hir.exprs.get(e.idx()).map(|e| e.end),
@@ -743,9 +790,14 @@ impl<'f, 'a> Collector<'f, 'a> {
         let inside = match class.name.is_some() {
             true => class.name_pos + 1,
             false => {
-                let modifiers = hir.modifiers.get(class.modifiers.range()).unwrap_or_default();
+                let modifiers = hir
+                    .modifiers
+                    .get(class.modifiers.range())
+                    .unwrap_or_default();
                 let ends = modifiers.iter().map(|it| match it.kind {
-                    hir::ModifierKind::Decorator(e) => hir.exprs.get(e.idx()).map_or(it.pos, |e| e.end),
+                    hir::ModifierKind::Decorator(e) => {
+                        hir.exprs.get(e.idx()).map_or(it.pos, |e| e.end)
+                    }
                     hir::ModifierKind::Keyword(_) => it.pos + 1,
                 });
                 ends.max().unwrap_or(class.start).max(class.start)
@@ -767,10 +819,18 @@ impl<'f, 'a> Collector<'f, 'a> {
         {
             // The HIR positions a class expression after its decorators.
             let start = match init.kind {
-                hir::ExprKind::Class(c) => hir.classes.get(c.idx()).map_or(init.pos, |it| it.start.min(init.pos)),
+                hir::ExprKind::Class(c) => hir
+                    .classes
+                    .get(c.idx())
+                    .map_or(init.pos, |it| it.start.min(init.pos)),
                 _ => init.pos,
             };
-            self.scope(ScopeKind::ClassFieldInitializer, Block::Expr(member.init), start, init.end);
+            self.scope(
+                ScopeKind::ClassFieldInitializer,
+                Block::Expr(member.init),
+                start,
+                init.end,
+            );
         }
     }
 
@@ -788,7 +848,11 @@ impl<'f, 'a> Collector<'f, 'a> {
         let block = Block::Type(hir::TypeNodeId(i as u32));
         match ty.kind {
             TypeNodeKind::Cond { yes, .. } => {
-                let inside_end = hir.types.get(yes.idx()).map_or(ty.end, |it| it.end).min(ty.end);
+                let inside_end = hir
+                    .types
+                    .get(yes.idx())
+                    .map_or(ty.end, |it| it.end)
+                    .min(ty.end);
                 self.zones.push(Zone {
                     start: inside_end,
                     end: ty.end,
@@ -802,7 +866,10 @@ impl<'f, 'a> Collector<'f, 'a> {
 
     fn declaration(&mut self, kind: ScopeKind, s: hir::StmtId, name_pos: u32) {
         if let Some(stmt) = self.file.hir.stmts.get(s.idx())
-            && !matches!(self.file.bound.stmt_parent.get(s.idx()), None | Some(Parent::None))
+            && !matches!(
+                self.file.bound.stmt_parent.get(s.idx()),
+                None | Some(Parent::None)
+            )
             && !self.is_synthetic(name_pos)
         {
             self.scope_from(kind, Block::Stmt(s), stmt.start, name_pos + 1, stmt.loc.end);
@@ -839,12 +906,19 @@ impl<'f, 'a> Collector<'f, 'a> {
 pub(crate) fn is_with_statement(file: &File, stmt: &hir::Stmt) -> bool {
     !file.hir.with_bodies.is_empty()
         && matches!(stmt.kind, StmtKind::Block(parts) if parts.len() == 2)
-        && file.hir.text.get(stmt.start as usize..).is_some_and(|it| it.starts_with(b"with"))
+        && file
+            .hir
+            .text
+            .get(stmt.start as usize..)
+            .is_some_and(|it| it.starts_with(b"with"))
 }
 
 /// Whether `module` is the `B` of `namespace A.B`.
 pub(crate) fn is_after_dot(file: &File, module: &hir::Module) -> bool {
-    file.hir.stmts.get(module.stmt.idx()).is_some_and(|it| it.start == module.name_pos)
+    file.hir
+        .stmts
+        .get(module.stmt.idx())
+        .is_some_and(|it| it.start == module.name_pos)
         && matches!(module.name, hir::ModuleName::Ident(_))
 }
 
@@ -853,9 +927,16 @@ pub(crate) fn after_dot<'a>(file: &File<'a>, module: &hir::Module) -> Option<&'a
     if module.body.len() != 1 {
         return None;
     }
-    let only = file.hir.stmts.get(*file.hir.ids.get(module.body.start as usize)? as usize)?;
+    let only = file
+        .hir
+        .stmts
+        .get(*file.hir.ids.get(module.body.start as usize)? as usize)?;
     match only.kind {
-        StmtKind::Module(inner) => file.hir.modules.get(inner.idx()).filter(|it| is_after_dot(file, it)),
+        StmtKind::Module(inner) => file
+            .hir
+            .modules
+            .get(inner.idx())
+            .filter(|it| is_after_dot(file, it)),
         _ => None,
     }
 }

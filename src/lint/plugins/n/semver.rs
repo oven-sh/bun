@@ -44,26 +44,29 @@ impl Version {
     }
 
     fn compare(&self, other: &Version) -> Ordering {
-        let main = (self.major, self.minor, self.patch).cmp(&(other.major, other.minor, other.patch));
-        main.then_with(|| match (self.prerelease.is_empty(), other.prerelease.is_empty()) {
-            (true, true) => Ordering::Equal,
-            (true, false) => Ordering::Greater,
-            (false, true) => Ordering::Less,
-            (false, false) => {
-                for (a, b) in self.prerelease.iter().zip(&other.prerelease) {
-                    let order = match (a, b) {
-                        (Identifier::Number(a), Identifier::Number(b)) => a.cmp(b),
-                        (Identifier::Number(_), Identifier::Text(_)) => Ordering::Less,
-                        (Identifier::Text(_), Identifier::Number(_)) => Ordering::Greater,
-                        (Identifier::Text(a), Identifier::Text(b)) => a.cmp(b),
-                    };
-                    if order != Ordering::Equal {
-                        return order;
+        let main =
+            (self.major, self.minor, self.patch).cmp(&(other.major, other.minor, other.patch));
+        main.then_with(
+            || match (self.prerelease.is_empty(), other.prerelease.is_empty()) {
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => {
+                    for (a, b) in self.prerelease.iter().zip(&other.prerelease) {
+                        let order = match (a, b) {
+                            (Identifier::Number(a), Identifier::Number(b)) => a.cmp(b),
+                            (Identifier::Number(_), Identifier::Text(_)) => Ordering::Less,
+                            (Identifier::Text(_), Identifier::Number(_)) => Ordering::Greater,
+                            (Identifier::Text(a), Identifier::Text(b)) => a.cmp(b),
+                        };
+                        if order != Ordering::Equal {
+                            return order;
+                        }
                     }
+                    self.prerelease.len().cmp(&other.prerelease.len())
                 }
-                self.prerelease.len().cmp(&other.prerelease.len())
-            }
-        })
+            },
+        )
     }
 }
 
@@ -108,7 +111,10 @@ impl Comparator {
     fn is_satisfied_by(&self, version: &Version) -> bool {
         self.test(version)
             && (version.prerelease.is_empty()
-                || self.0.as_ref().is_some_and(|it| !it.1.prerelease.is_empty() && it.1.has_same_tuple(version)))
+                || self
+                    .0
+                    .as_ref()
+                    .is_some_and(|it| !it.1.prerelease.is_empty() && it.1.has_same_tuple(version)))
     }
 }
 
@@ -126,7 +132,11 @@ struct Partial {
 fn parse_identifiers(text: &[u8]) -> Option<Vec<Identifier>> {
     let mut identifiers = Vec::new();
     for part in strings::split(text, b".") {
-        if part.is_empty() || !part.iter().all(|it| it.is_ascii_alphanumeric() || *it == b'-') {
+        if part.is_empty()
+            || !part
+                .iter()
+                .all(|it| it.is_ascii_alphanumeric() || *it == b'-')
+        {
             return None;
         }
         identifiers.push(match part.iter().all(u8::is_ascii_digit) {
@@ -140,12 +150,20 @@ fn parse_identifiers(text: &[u8]) -> Option<Vec<Identifier>> {
 }
 
 fn parse_partial(text: &[u8]) -> Option<Partial> {
-    let text = &text[text.iter().take_while(|it| matches!(it, b'v' | b'=')).count()..];
+    let text = &text[text
+        .iter()
+        .take_while(|it| matches!(it, b'v' | b'='))
+        .count()..];
     let (text, build) = match strings::index_of_char_usize(text, b'+') {
         Some(plus) => (&text[..plus], Some(&text[plus + 1..])),
         None => (text, None),
     };
-    if build.is_some_and(|it| it.is_empty() || !it.iter().all(|it| it.is_ascii_alphanumeric() || matches!(it, b'-' | b'.'))) {
+    if build.is_some_and(|it| {
+        it.is_empty()
+            || !it
+                .iter()
+                .all(|it| it.is_ascii_alphanumeric() || matches!(it, b'-' | b'.'))
+    }) {
         return None;
     }
     let (numbers, prerelease) = match strings::index_of_char_usize(text, b'-') {
@@ -159,7 +177,12 @@ fn parse_partial(text: &[u8]) -> Option<Partial> {
         count += 1;
         *slot = match part {
             b"x" | b"X" | b"*" => None,
-            _ if part.is_empty() || !part.iter().all(u8::is_ascii_digit) || part.len() > 1 && part[0] == b'0' => return None,
+            _ if part.is_empty()
+                || !part.iter().all(u8::is_ascii_digit)
+                || part.len() > 1 && part[0] == b'0' =>
+            {
+                return None;
+            }
             _ => Some(std::str::from_utf8(part).ok()?.parse().ok()?),
         };
     }
@@ -188,7 +211,8 @@ fn desugar(operator: &[u8], version: &Partial, out: &mut Vec<Comparator>) -> Opt
         patch,
         prerelease,
     } = version;
-    let from = |major, minor, patch| Comparator::new(GreaterOrEqual, Version::of(major, minor, patch));
+    let from =
+        |major, minor, patch| Comparator::new(GreaterOrEqual, Version::of(major, minor, patch));
     let below = |major, minor, patch| Comparator::new(Less, Version::before(major, minor, patch));
     let exact = |major, minor, patch| Version {
         prerelease: prerelease.clone(),
@@ -196,10 +220,18 @@ fn desugar(operator: &[u8], version: &Partial, out: &mut Vec<Comparator>) -> Opt
     };
     match (operator, *major, *minor, *patch) {
         (b"^" | b"~" | b"~>", None, ..) => out.push(Comparator(None)),
-        (b"^" | b"~" | b"~>", Some(major), None, _) => out.extend([from(major, 0, 0), below(major + 1, 0, 0)]),
-        (b"^", Some(0), Some(minor), None) => out.extend([from(0, minor, 0), below(0, minor + 1, 0)]),
-        (b"^", Some(major), Some(minor), None) => out.extend([from(major, minor, 0), below(major + 1, 0, 0)]),
-        (b"~" | b"~>", Some(major), Some(minor), None) => out.extend([from(major, minor, 0), below(major, minor + 1, 0)]),
+        (b"^" | b"~" | b"~>", Some(major), None, _) => {
+            out.extend([from(major, 0, 0), below(major + 1, 0, 0)])
+        }
+        (b"^", Some(0), Some(minor), None) => {
+            out.extend([from(0, minor, 0), below(0, minor + 1, 0)])
+        }
+        (b"^", Some(major), Some(minor), None) => {
+            out.extend([from(major, minor, 0), below(major + 1, 0, 0)])
+        }
+        (b"~" | b"~>", Some(major), Some(minor), None) => {
+            out.extend([from(major, minor, 0), below(major, minor + 1, 0)])
+        }
         (b"^", Some(major), Some(minor), Some(patch)) => {
             out.push(Comparator::new(GreaterOrEqual, exact(major, minor, patch)));
             out.push(match (major, minor) {
@@ -209,12 +241,19 @@ fn desugar(operator: &[u8], version: &Partial, out: &mut Vec<Comparator>) -> Opt
             });
         }
         (b"~" | b"~>", Some(major), Some(minor), Some(patch)) => {
-            out.extend([Comparator::new(GreaterOrEqual, exact(major, minor, patch)), below(major, minor + 1, 0)]);
+            out.extend([
+                Comparator::new(GreaterOrEqual, exact(major, minor, patch)),
+                below(major, minor + 1, 0),
+            ]);
         }
         (b">" | b"<", None, ..) => out.push(below(0, 0, 0)),
         (_, None, ..) => out.push(Comparator(None)),
-        (b"" | b"=", Some(major), None, _) => out.extend([from(major, 0, 0), below(major + 1, 0, 0)]),
-        (b"" | b"=", Some(major), Some(minor), None) => out.extend([from(major, minor, 0), below(major, minor + 1, 0)]),
+        (b"" | b"=", Some(major), None, _) => {
+            out.extend([from(major, 0, 0), below(major + 1, 0, 0)])
+        }
+        (b"" | b"=", Some(major), Some(minor), None) => {
+            out.extend([from(major, minor, 0), below(major, minor + 1, 0)])
+        }
         (b">", Some(major), None, _) => out.push(from(major + 1, 0, 0)),
         (b">", Some(major), Some(minor), None) => out.push(from(major, minor + 1, 0)),
         (b"<=", Some(major), None, _) => out.push(below(major + 1, 0, 0)),
@@ -260,10 +299,17 @@ fn parse_set(text: &[u8]) -> Option<Vec<Comparator>> {
     } else {
         let mut words = words.into_iter();
         while let Some(word) = words.next() {
-            let operator = word.iter().take_while(|it| matches!(it, b'<' | b'>' | b'=' | b'~' | b'^')).count();
+            let operator = word
+                .iter()
+                .take_while(|it| matches!(it, b'<' | b'>' | b'=' | b'~' | b'^'))
+                .count();
             let (operator, version) = word.split_at(operator);
             // `> 1.2.3` is `>1.2.3`.
-            let version = if version.is_empty() && !operator.is_empty() { words.next()? } else { version };
+            let version = if version.is_empty() && !operator.is_empty() {
+                words.next()?
+            } else {
+                version
+            };
             desugar(operator, &parse_partial(version)?, &mut comparators)?;
         }
         if comparators.is_empty() {
@@ -311,7 +357,11 @@ impl Range {
             set.retain(|it| !matches!(&it[..], [only] if only.is_null_set()));
             if set.is_empty() {
                 set.push(first);
-            } else if let Some(any) = set.iter().find(|it| matches!(&it[..], [Comparator(None)])).cloned() {
+            } else if let Some(any) = set
+                .iter()
+                .find(|it| matches!(&it[..], [Comparator(None)]))
+                .cloned()
+            {
                 set = vec![any];
             }
         }
@@ -345,7 +395,10 @@ impl Range {
             true => Comparator(None),
             false => Comparator::new(GreaterOrEqual, latest),
         }]);
-        Some(Range { raw: Vec::new(), set })
+        Some(Range {
+            raw: Vec::new(),
+            set,
+        })
     }
 
     /// `subset(self, dom)`: every version that satisfies `self` satisfies `dom`.
@@ -417,12 +470,21 @@ fn simple_subset(sub: &[Comparator], dom: &[Comparator]) -> Option<bool> {
     let gtlt = gt.zip(lt).map(|(gt, lt)| gt.1.compare(lt.1));
     match gtlt {
         Some(Ordering::Greater) => return None,
-        Some(Ordering::Equal) if gt.is_some_and(|it| it.0 != GreaterOrEqual) || lt.is_some_and(|it| it.0 != LessOrEqual) => return None,
+        Some(Ordering::Equal)
+            if gt.is_some_and(|it| it.0 != GreaterOrEqual)
+                || lt.is_some_and(|it| it.0 != LessOrEqual) =>
+        {
+            return None;
+        }
         _ => {}
     }
     let as_comparator = |bound: (Operator, &Version)| Comparator::new(bound.0, bound.1.clone());
     if let Some(eq) = eq {
-        if [gt, lt].into_iter().flatten().any(|it| !as_comparator(it).is_satisfied_by(eq)) {
+        if [gt, lt]
+            .into_iter()
+            .flatten()
+            .any(|it| !as_comparator(it).is_satisfied_by(eq))
+        {
             return None;
         }
         return Some(dom.iter().all(|it| it.is_satisfied_by(eq)));
@@ -432,7 +494,9 @@ fn simple_subset(sub: &[Comparator], dom: &[Comparator]) -> Option<bool> {
     let mut need_dom_lt_pre = lt.map(|it| it.1).filter(|it| !it.prerelease.is_empty());
     let mut need_dom_gt_pre = gt.map(|it| it.1).filter(|it| !it.prerelease.is_empty());
     // `<1.2.3-0` is the same as `<1.2.3`.
-    if lt.is_some_and(|it| it.0 == Less) && need_dom_lt_pre.is_some_and(|it| it.prerelease == [Identifier::Number(0)]) {
+    if lt.is_some_and(|it| it.0 == Less)
+        && need_dom_lt_pre.is_some_and(|it| it.prerelease == [Identifier::Number(0)])
+    {
         need_dom_lt_pre = None;
     }
     let (mut has_dom_lt, mut has_dom_gt) = (false, false);
@@ -442,7 +506,8 @@ fn simple_subset(sub: &[Comparator], dom: &[Comparator]) -> Option<bool> {
         };
         has_dom_gt |= matches!(operator, Greater | GreaterOrEqual);
         has_dom_lt |= matches!(operator, Less | LessOrEqual);
-        let has_pre_of = |needed: &Version| !version.prerelease.is_empty() && version.has_same_tuple(needed);
+        let has_pre_of =
+            |needed: &Version| !version.prerelease.is_empty() && version.has_same_tuple(needed);
         if let Some(gt) = gt {
             if need_dom_gt_pre.is_some_and(has_pre_of) {
                 need_dom_gt_pre = None;
@@ -473,6 +538,11 @@ fn simple_subset(sub: &[Comparator], dom: &[Comparator]) -> Option<bool> {
             return Some(false);
         }
     }
-    let is_unbounded = gt.is_some() && has_dom_lt && lt.is_none() || lt.is_some() && has_dom_gt && gt.is_none();
-    Some(!(is_unbounded && gtlt != Some(Ordering::Equal)) && need_dom_gt_pre.is_none() && need_dom_lt_pre.is_none())
+    let is_unbounded =
+        gt.is_some() && has_dom_lt && lt.is_none() || lt.is_some() && has_dom_gt && gt.is_none();
+    Some(
+        !(is_unbounded && gtlt != Some(Ordering::Equal))
+            && need_dom_gt_pre.is_none()
+            && need_dom_lt_pre.is_none(),
+    )
 }

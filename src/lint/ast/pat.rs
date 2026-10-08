@@ -76,7 +76,9 @@ impl<'a> Pat<'a> {
     #[inline]
     fn around(file: &'a super::File<'a>, inner: hir::PatId) -> Node<'a> {
         match file.bound.pat_parent.get(inner.idx()) {
-            Some(&(PatParent::Prop(owner, _) | PatParent::Elem(owner, _))) => Node::Pat(Pat::new(file, owner)),
+            Some(&(PatParent::Prop(owner, _) | PatParent::Elem(owner, _))) => {
+                Node::Pat(Pat::new(file, owner))
+            }
             _ => Node::File(file),
         }
     }
@@ -103,7 +105,9 @@ impl<'a> Pat<'a> {
                 PatKind::Missing => {}
                 PatKind::Ident(_) => visit(pat),
                 PatKind::Object(props) => pending.extend(props.iter().rev().map(PatProp::value)),
-                PatKind::Array(elems) => pending.extend(elems.iter().rev().filter_map(PatElem::pat)),
+                PatKind::Array(elems) => {
+                    pending.extend(elems.iter().rev().filter_map(PatElem::pat))
+                }
             }
         }
     }
@@ -198,6 +202,13 @@ impl<'a> PatElem<'a> {
     /// The array pattern.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Pat::around(self.file, self.file.hir.pat_elems.get(self.id.idx()).map_or(hir::PatId::NONE, |it| it.pat))
+        Pat::around(
+            self.file,
+            self.file
+                .hir
+                .pat_elems
+                .get(self.id.idx())
+                .map_or(hir::PatId::NONE, |it| it.pat),
+        )
     }
 }

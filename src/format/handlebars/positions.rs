@@ -32,7 +32,9 @@ fn index_of_separator(text: &[u8]) -> Option<usize> {
 }
 
 fn utf16_len(text: &[u8]) -> u32 {
-    text.iter().map(|&byte| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0)).sum()
+    text.iter()
+        .map(|&byte| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0))
+        .sum()
 }
 
 impl Positions {
@@ -79,8 +81,12 @@ impl Positions {
 
     /// By how many UTF-16 code units the column of the token that starts or ends at `offset` is too small.
     pub(crate) fn deficit_at(&self, offset: usize) -> u32 {
-        let after = self.deficits.partition_point(|change| change.0 as usize <= offset);
-        after.checked_sub(1).map_or(0, |index| self.deficits[index].1)
+        let after = self
+            .deficits
+            .partition_point(|change| change.0 as usize <= offset);
+        after
+            .checked_sub(1)
+            .map_or(0, |index| self.deficits[index].1)
     }
 
     /// `offset` in `text`, moved by so many UTF-16 code units: where the character starts that is there. Where no
@@ -93,7 +99,11 @@ impl Positions {
                 while at > 0 && text.get(at).is_some_and(|byte| byte & 0xC0 == 0x80) {
                     at -= 1;
                 }
-                left = left.saturating_sub(if text.get(at).is_some_and(|byte| *byte >= 0xF0) { 2 } else { 1 });
+                left = left.saturating_sub(if text.get(at).is_some_and(|byte| *byte >= 0xF0) {
+                    2
+                } else {
+                    1
+                });
             }
             while left > 0 {
                 let (len, units) = match *text.get(at)? {
@@ -117,7 +127,9 @@ impl Positions {
     pub(crate) fn of_token(&self, text: &[u8], offset: usize) -> usize {
         match self.deficit_at(offset) {
             0 => offset,
-            deficit => self.moved(text, offset, -i64::from(deficit)).unwrap_or(offset),
+            deficit => self
+                .moved(text, offset, -i64::from(deficit))
+                .unwrap_or(offset),
         }
     }
 }

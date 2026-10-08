@@ -636,8 +636,7 @@ pub(super) fn type_to_string_with(
     if counts && checker.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
         return b"?".to_vec();
     }
-    let no_truncation =
-        checker.files().options.no_error_truncation || flags & NO_TRUNCATION != 0;
+    let no_truncation = checker.files().options.no_error_truncation || flags & NO_TRUNCATION != 0;
     let flags = if no_truncation {
         flags | NO_TRUNCATION
     } else {

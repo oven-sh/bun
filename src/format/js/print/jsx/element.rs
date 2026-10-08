@@ -33,14 +33,19 @@ impl<'a> AnyJsxTagWithChildren<'a> {
             && statement.is_arrow_function_body()
         {
             // All up to the end of the arrow function
-            f.comments().comments_before(parent.parent().parent().span().end)
+            f.comments()
+                .comments_before(parent.parent().parent().span().end)
         } else if let AstNodes::ConditionalExpression(conditional) = parent {
             match conditional.alternate() == Some(self.expr) {
                 true => f.comments().comments_before(conditional.span().end),
                 false => f.comments().end_of_line_comments_after(self.span().end),
             }
-        } else if matches!(parent, AstNodes::TemplateLiteral(_) | AstNodes::TSTemplateLiteralType(_)) {
-            f.comments().comments_before_character(self.span().end, b'}')
+        } else if matches!(
+            parent,
+            AstNodes::TemplateLiteral(_) | AstNodes::TSTemplateLiteralType(_)
+        ) {
+            f.comments()
+                .comments_before_character(self.span().end, b'}')
         } else {
             return write_trailing_comments_of(self.expr.as_ast_nodes(), f);
         };
@@ -57,7 +62,9 @@ impl<'a> AnyJsxTagWithChildren<'a> {
             | AstNodes::CallExpression(_)
             | AstNodes::NewExpression(_)
             | AstNodes::Program(_) => WrapState::NoWrap,
-            AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body() => WrapState::NoWrap,
+            AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body() => {
+                WrapState::NoWrap
+            }
             _ => WrapState::WrapOnBreak,
         }
     }
@@ -85,10 +92,15 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         let mut children = self.jsx.children_with_whitespace();
         match (children.next(), children.next()) {
             (None, _) if !self.jsx.is_fragment() => ElementLayout::NoChildren,
-            (Some(JsxChild::Whitespace(_)), None) if !self.jsx.is_fragment() => ElementLayout::NoChildren,
+            (Some(JsxChild::Whitespace(_)), None) if !self.jsx.is_fragment() => {
+                ElementLayout::NoChildren
+            }
             (Some(JsxChild::Expr(child)), None)
                 if child.jsx_container_span().is_some()
-                    && matches!(child.kind(), ExprKind::Template(_) | ExprKind::TaggedTemplate(_)) =>
+                    && matches!(
+                        child.kind(),
+                        ExprKind::Template(_) | ExprKind::TaggedTemplate(_)
+                    ) =>
             {
                 ElementLayout::Template(child)
             }
@@ -111,7 +123,10 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
             match self.layout() {
                 ElementLayout::NoChildren => write!(f, [format_opening, format_closing]),
                 ElementLayout::Template(expression) => {
-                    write!(f, [format_opening, FormatJsxChild(expression), format_closing]);
+                    write!(
+                        f,
+                        [format_opening, FormatJsxChild(expression), format_closing]
+                    );
                 }
                 ElementLayout::Default => {
                     let format_opening = format_opening.memoized();
@@ -120,17 +135,28 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
 
                     // Prettier's `isMdxBlock`
                     let is_mdx_block = f.options().is_mdx_jsx && self.span().start == 0;
-                    match format_children(self.jsx, multiple_attributes || opening_breaks, is_mdx_block, f) {
+                    match format_children(
+                        self.jsx,
+                        multiple_attributes || opening_breaks,
+                        is_mdx_block,
+                        f,
+                    ) {
                         FormatChildrenResult::ForceMultiline(children)
                         | FormatChildrenResult::BestFitting {
                             expanded_children: children,
                             ..
                         } if is_mdx_block => children.fmt_content(f),
                         FormatChildrenResult::SingleChild(child) => {
-                            write!(f, group(&format_args!(format_opening, child, format_closing)));
+                            write!(
+                                f,
+                                group(&format_args!(format_opening, child, format_closing))
+                            );
                         }
                         FormatChildrenResult::ForceMultiline(multiline) => {
-                            write!(f, group(&format_args!(format_opening, multiline, format_closing)));
+                            write!(
+                                f,
+                                group(&format_args!(format_opening, multiline, format_closing))
+                            );
                         }
                         FormatChildrenResult::BestFitting {
                             flat_children,
@@ -140,8 +166,14 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
                             write!(
                                 f,
                                 best_fitting![
-                                    group(&format_args!(format_opening, flat_children, format_closing)),
-                                    group(&format_args!(format_opening, expanded_children, format_closing))
+                                    group(&format_args!(
+                                        format_opening,
+                                        flat_children, format_closing
+                                    )),
+                                    group(&format_args!(
+                                        format_opening,
+                                        expanded_children, format_closing
+                                    ))
                                 ]
                             );
                         }
@@ -191,8 +223,12 @@ fn should_expand(parent: AstNodes<'_>) -> bool {
     let arrow = parent.parent().parent();
     match arrow.parent() {
         call @ AstNodes::CallExpression(e) => {
-            e.callee().is_none_or(|callee| callee.span() != arrow.span())
-                && matches!(call.parent().without_chain_expression(), AstNodes::JSXExpressionContainer(_))
+            e.callee()
+                .is_none_or(|callee| callee.span() != arrow.span())
+                && matches!(
+                    call.parent().without_chain_expression(),
+                    AstNodes::JSXExpressionContainer(_)
+                )
         }
         _ => false,
     }

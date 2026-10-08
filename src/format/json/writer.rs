@@ -44,7 +44,13 @@ struct Writer<'t, 'o> {
 }
 
 /// Appends `tree`, which has a node and no comments, to `out`.
-pub(super) fn write(text: &[u8], tree: &Tree, config: &Config, frames: &mut Frames, out: &mut Vec<u8>) {
+pub(super) fn write(
+    text: &[u8],
+    tree: &Tree,
+    config: &Config,
+    frames: &mut Frames,
+    out: &mut Vec<u8>,
+) {
     let frames = &mut frames.0;
     frames.clear();
     out.reserve(text.len() + text.len() / 4);
@@ -86,8 +92,17 @@ pub(super) fn write(text: &[u8], tree: &Tree, config: &Config, frames: &mut Fram
                     writer.put(b" ", 1);
                 }
             } else if frame.is_concise && !is_first && !is_after_blank {
-                let comma = if node.next == frame.end { trailing_comma } else { 1 };
-                match writer.column.saturating_add(1 + comma).saturating_add(node.width) <= config.print_width {
+                let comma = if node.next == frame.end {
+                    trailing_comma
+                } else {
+                    1
+                };
+                match writer
+                    .column
+                    .saturating_add(1 + comma)
+                    .saturating_add(node.width)
+                    <= config.print_width
+                {
                     true => writer.put(b" ", 1),
                     false => writer.new_line(),
                 }
@@ -108,14 +123,22 @@ pub(super) fn write(text: &[u8], tree: &Tree, config: &Config, frames: &mut Fram
             }
             frame.is_after_blank = node.has(BLANK_AFTER);
             frame.is_after_hole = node.kind == Kind::Hole;
-            rest = if node.next == frame.end { trailing_comma } else { 1 };
+            rest = if node.next == frame.end {
+                trailing_comma
+            } else {
+                1
+            };
         }
 
         index += 1;
         if !node.is_container() {
             if node.kind == Kind::Unary {
                 if !(config.is_stringify() && text.get(node.start as usize) == Some(&b'+')) {
-                    writer.put(text.get(node.start as usize..node.start as usize + 1).unwrap_or_default(), 1);
+                    writer.put(
+                        text.get(node.start as usize..node.start as usize + 1)
+                            .unwrap_or_default(),
+                        1,
+                    );
                 }
                 if let Some(operand) = nodes.get(index as usize) {
                     writer.scalar(operand);
@@ -133,7 +156,11 @@ pub(super) fn write(text: &[u8], tree: &Tree, config: &Config, frames: &mut Fram
         }
         let is_flat = is_flat
             || (node.width != MUST_BREAK
-                && writer.column.saturating_add(node.width).saturating_add(rest) <= config.print_width);
+                && writer
+                    .column
+                    .saturating_add(node.width)
+                    .saturating_add(rest)
+                    <= config.print_width);
         writer.put(if is_object { b"{" } else { b"[" }, 1);
         writer.level += u32::from(!is_flat);
         frames.push(Frame {
@@ -168,7 +195,10 @@ impl Writer<'_, '_> {
             IndentStyle::Space => alignment.saturating_add(self.level.saturating_mul(indent_width)),
             // What is left of the alignment is a tab too, unless it is the end of the indentation.
             IndentStyle::Tab => {
-                let (tabs, spaces) = (alignment / indent_width.max(1) + self.level, alignment % indent_width.max(1));
+                let (tabs, spaces) = (
+                    alignment / indent_width.max(1) + self.level,
+                    alignment % indent_width.max(1),
+                );
                 if tabs == 0 {
                     self.out.resize(len + spaces as usize, b' ');
                     self.column = spaces;
@@ -204,7 +234,9 @@ impl Writer<'_, '_> {
 
     fn name(&mut self, node: &Node) {
         if node.has(UNQUOTED) {
-            let source = self.text.get(node.start as usize + 1..(node.end as usize).saturating_sub(1));
+            let source = self
+                .text
+                .get(node.start as usize + 1..(node.end as usize).saturating_sub(1));
             self.put(source.unwrap_or_default(), node.width);
         } else if node.has(QUOTED) {
             let quote = [self.config.name_quote.as_byte()];
@@ -219,19 +251,34 @@ impl Writer<'_, '_> {
     /// Anything but an object, an array and a sign.
     fn scalar(&mut self, node: &Node) {
         self.column = self.column.saturating_add(node.width);
-        let source = self.text.get(node.start as usize..node.end as usize).unwrap_or_default();
+        let source = self
+            .text
+            .get(node.start as usize..node.end as usize)
+            .unwrap_or_default();
         match node.kind {
             Kind::Hole if self.config.is_stringify() => self.out.extend_from_slice(b"null"),
-            Kind::Template if self.config.is_stringify() => write_template_as_string(source, self.out),
+            Kind::Template if self.config.is_stringify() => {
+                write_template_as_string(source, self.out)
+            }
             Kind::String if node.has(REWRITTEN) => {
                 let quote = match source.first() {
                     Some(b'"') => QuoteStyle::Single,
                     _ => QuoteStyle::Double,
                 };
-                make_string(source.get(1..source.len().saturating_sub(1)).unwrap_or_default(), quote, self.out);
+                make_string(
+                    source
+                        .get(1..source.len().saturating_sub(1))
+                        .unwrap_or_default(),
+                    quote,
+                    self.out,
+                );
             }
-            Kind::Number if node.has(REWRITTEN) => self.out.extend_from_slice(&format_trimmed_number(source)),
-            Kind::String | Kind::Template if node.width == MUST_BREAK && self.config.line_ending != b"\n" => {
+            Kind::Number if node.has(REWRITTEN) => {
+                self.out.extend_from_slice(&format_trimmed_number(source))
+            }
+            Kind::String | Kind::Template
+                if node.width == MUST_BREAK && self.config.line_ending != b"\n" =>
+            {
                 for (index, line) in bun_core::strings::split(source, b"\n").enumerate() {
                     if index > 0 {
                         self.out.extend_from_slice(self.config.line_ending);
@@ -248,11 +295,15 @@ impl Writer<'_, '_> {
 #[cold]
 fn write_template_as_string(source: &[u8], out: &mut Vec<u8>) {
     use bun_lint::utils::text::{json_stringify, push_code_point};
-    let raw = source.get(1..source.len().saturating_sub(1)).unwrap_or_default();
+    let raw = source
+        .get(1..source.len().saturating_sub(1))
+        .unwrap_or_default();
     let mut cooked = Vec::with_capacity(raw.len());
     let mut rest = raw;
     let hex = |digits: &[u8]| {
-        digits.iter().try_fold(0u32, |value, digit| Some(value.checked_mul(16)? + (*digit as char).to_digit(16)?))
+        digits.iter().try_fold(0u32, |value, digit| {
+            Some(value.checked_mul(16)? + (*digit as char).to_digit(16)?)
+        })
     };
     while let Some((&byte, tail)) = rest.split_first() {
         rest = tail;

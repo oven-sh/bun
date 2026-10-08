@@ -2,7 +2,12 @@
 
 use super::{Info, Map};
 
-const fn m(read: Option<u16>, call: Option<u16>, construct: Option<u16>, members: &'static [(&'static str, Map)]) -> Map {
+const fn m(
+    read: Option<u16>,
+    call: Option<u16>,
+    construct: Option<u16>,
+    members: &'static [(&'static str, Map)],
+) -> Map {
     Map {
         read,
         call,

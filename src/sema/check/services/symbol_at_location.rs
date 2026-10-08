@@ -94,7 +94,10 @@ pub(in crate::check) struct SymbolFinder<'c, 'p, 's> {
 
 impl<'p> SymbolFinder<'_, 'p, '_> {
     /// `getSymbolAtLocation`
-    pub(in crate::check) fn get_symbol_at_visited_node(&mut self, kind: VisitedKind) -> Option<Found<'p>> {
+    pub(in crate::check) fn get_symbol_at_visited_node(
+        &mut self,
+        kind: VisitedKind,
+    ) -> Option<Found<'p>> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         match kind {
@@ -439,9 +442,7 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
                 self.symbol_of_type(ty)
             }
             // The `meta` of `import.meta` is the member of `getGlobalImportMetaExpressionType`.
-            ExprKind::ImportMeta if is_name => {
-                Some(Found::Undeclared(Undeclared::ImportMeta))
-            }
+            ExprKind::ImportMeta if is_name => Some(Found::Undeclared(Undeclared::ImportMeta)),
             // `getSymbolAtLocation`, `KindMetaProperty`: the name has a symbol only if it is the
             // expected one.
             ExprKind::NewTarget(name) if is_name && self.c.atoms().bytes(name) != b"target" => None,
@@ -940,7 +941,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     Undeclared::Name(name) => name,
                     Undeclared::Path(names) => {
                         let last = names.last().copied().unwrap_or(Atom::NONE);
-                        let names: Vec<&[u8]> = names.iter().map(|&name| atoms.bytes(name)).collect();
+                        let names: Vec<&[u8]> =
+                            names.iter().map(|&name| atoms.bytes(name)).collect();
                         let path = atoms.intern(&names.join(&b"."[..]));
                         return self.named_symbol(Key::Undeclared(path), last);
                     }
@@ -949,12 +951,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                         return self.named_symbol(Key::Undeclared(name), name);
                     }
                     Undeclared::ImportMeta => atoms.intern(b"meta"),
-                    Undeclared::GlobalThis => return self.symbol(self.c.files().global_this_symbol),
+                    Undeclared::GlobalThis => {
+                        return self.symbol(self.c.files().global_this_symbol);
+                    }
                 };
                 self.intern_symbol(Key::Undeclared(name), None)
             }
             Found::Prototype(class) => self.intern_symbol(Key::Prototype(class), None),
-            Found::SyntheticDefault(module) => self.intern_symbol(Key::SyntheticDefault(module), None),
+            Found::SyntheticDefault(module) => {
+                self.intern_symbol(Key::SyntheticDefault(module), None)
+            }
             Found::IndexSignature {
                 of, declarations, ..
             } => match declarations[..] {
@@ -983,8 +989,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 // `Symbol.iterator`: the property of the global `SymbolConstructor`.
                 UniqueSymbolDeclaration::SymbolConstructor => {
                     let atoms = self.c.atoms();
-                    let written = atoms.bytes(name).strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)?;
-                    let (written, constructor) = (atoms.lookup(written)?, atoms.lookup(b"SymbolConstructor")?);
+                    let written = atoms
+                        .bytes(name)
+                        .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)?;
+                    let (written, constructor) =
+                        (atoms.lookup(written)?, atoms.lookup(b"SymbolConstructor")?);
                     let constructor = self.c.global_type_symbol(constructor)?;
                     let constructor = self.c.declared_type(constructor);
                     let (prop, mapper) = self.c.get_property_of_type(constructor, written)?;
@@ -999,9 +1008,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             SymbolAtLocation::Anonymous(file, node) => match self.c.hir(file).data(node) {
                 NodeData::Member(member) => {
                     let symbol = self.c.symbol_of_member(file, member);
-                    let name = self.c.declared_member_name(file, self.c.hir(file)[member].key);
+                    let name = self
+                        .c
+                        .declared_member_name(file, self.c.hir(file)[member].key);
                     let symbol = self.c.files().canonical(symbol);
-                    return Some(self.named_symbol(Key::Symbol(symbol), name.unwrap_or(Atom::NONE)));
+                    return Some(
+                        self.named_symbol(Key::Symbol(symbol), name.unwrap_or(Atom::NONE)),
+                    );
                 }
                 NodeData::Prop(p) => {
                     let prop: &'c Prop<'c> = self.arena.alloc(Prop {
@@ -1010,7 +1023,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                         source: PropSource::Literal(file, p),
                         mapper: MapperId::IDENTITY,
                     });
-                    return Some(self.intern_symbol(Key::LiteralMember(file, p), Some((prop, MapperId::IDENTITY))));
+                    return Some(self.intern_symbol(
+                        Key::LiteralMember(file, p),
+                        Some((prop, MapperId::IDENTITY)),
+                    ));
                 }
                 _ => Key::Anonymous(file, node),
             },
@@ -1024,7 +1040,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let (hir, at) = self.valid(node)?;
         let (file, files) = (node.file, self.c.files());
         if at == Node::FILE {
-            return files.module(file).is_module().then(|| self.symbol(files.file_symbol(file)));
+            return files
+                .module(file)
+                .is_module()
+                .then(|| self.symbol(files.file_symbol(file)));
         }
         let start = hir.start(at);
         if hir.is_in_with(start) || hir.is_in_jsdoc(start) {
@@ -1045,7 +1064,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         {
             let name = match hir[literal].kind {
                 TypeNodeKind::StringLit(text) => text,
-                TypeNodeKind::NumberLit(number) => self.c.number_name(*hir.numbers.get(number as usize)?),
+                TypeNodeKind::NumberLit(number) => {
+                    self.c.number_name(*hir.numbers.get(number as usize)?)
+                }
                 _ => return None,
             };
             let object = self.c.type_from_node(file, obj);
@@ -1077,7 +1098,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let ExprKind::Ident(name) = hir[value].kind else {
             return None;
         };
-        let symbol = self.c.resolve_identifier(node.file, value, name, true).ok()??;
+        let symbol = self
+            .c
+            .resolve_identifier(node.file, value, name, true)
+            .ok()??;
         Some(self.symbol(symbol))
     }
 
@@ -1108,18 +1132,33 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     /// `getSymbolsInScope(node, meaning).find(it => it.name === name)`, without the others.
-    pub fn symbol_in_scope(&mut self, node: NodeRef, meaning: SymbolFlags, name: &[u8]) -> Option<SymbolRef> {
+    pub fn symbol_in_scope(
+        &mut self,
+        node: NodeRef,
+        meaning: SymbolFlags,
+        name: &[u8],
+    ) -> Option<SymbolRef> {
         let name = self.c.atoms().lookup(name)?;
-        let found = self.copy_symbols_in_scope(node, meaning, Some(name)).pop()?;
+        let found = self
+            .copy_symbols_in_scope(node, meaning, Some(name))
+            .pop()?;
         Some(self.symbol(found))
     }
 
     /// `only`: nothing but the symbol that has this name.
-    fn copy_symbols_in_scope(&self, node: NodeRef, meaning: SymbolFlags, only: Option<Atom>) -> Vec<Sym> {
+    fn copy_symbols_in_scope(
+        &self,
+        node: NodeRef,
+        meaning: SymbolFlags,
+        only: Option<Atom>,
+    ) -> Vec<Sym> {
         let Some((hir, at)) = self.valid(node) else {
             return Vec::new();
         };
-        let Some(mut scope) = self.scope_at(node).filter(|_| !hir.is_in_with(hir.start(at))) else {
+        let Some(mut scope) = self
+            .scope_at(node)
+            .filter(|_| !hir.is_in_with(hir.start(at)))
+        else {
             return Vec::new();
         };
         let (files, bound, file) = (self.c.files(), self.c.bound(node.file), node.file);
@@ -1135,7 +1174,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             };
             let text = files.atoms.bytes(name);
             let is_reserved = text.first() == Some(&0xFE) || text == b"this";
-            if (own.flags | exported).intersects(meaning) && seen.insert(name, ()).is_none() && !is_reserved {
+            if (own.flags | exported).intersects(meaning)
+                && seen.insert(name, ()).is_none()
+                && !is_reserved
+            {
                 found.push(symbol);
             }
         };
@@ -1157,7 +1199,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                             copy(name, Sym { file, id }, meaning_of_locals);
                         }
                     }
-                    None => bound.table(at.locals).iter().for_each(|&(name, id)| copy(name, Sym { file, id }, meaning_of_locals)),
+                    None => bound
+                        .table(at.locals)
+                        .iter()
+                        .for_each(|&(name, id)| copy(name, Sym { file, id }, meaning_of_locals)),
                 }
             }
             let meaning_of_exports = match at.kind {
@@ -1169,17 +1214,26 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let container = files.sym(file, at.symbol);
                 // `copyLocallyVisibleExportSymbols`
                 let is_visible = |name: Atom, symbol: Sym| {
-                    let is_reexport = |it: &(FileId, Decl)| matches!(it.1, Decl::ExportSpec(_) | Decl::ExportStarAs(_));
-                    matches!(at.kind, ScopeKind::Enum(_)) || name != known::default && !files.decls_of(symbol).iter().any(is_reexport)
+                    let is_reexport = |it: &(FileId, Decl)| {
+                        matches!(it.1, Decl::ExportSpec(_) | Decl::ExportStarAs(_))
+                    };
+                    matches!(at.kind, ScopeKind::Enum(_))
+                        || name != known::default && !files.decls_of(symbol).iter().any(is_reexport)
                 };
                 match only {
                     Some(name) => {
-                        if let Some(symbol) = files.export(container, name).filter(|&it| is_visible(name, it)) {
+                        if let Some(symbol) = files
+                            .export(container, name)
+                            .filter(|&it| is_visible(name, it))
+                        {
                             copy(name, symbol, meaning_of_exports);
                         }
                     }
                     None => {
-                        for (name, symbol) in files.each_export(container).filter(|&(name, it)| is_visible(name, it)) {
+                        for (name, symbol) in files
+                            .each_export(container)
+                            .filter(|&(name, it)| is_visible(name, it))
+                        {
                             copy(name, symbol, meaning_of_exports);
                         }
                     }
@@ -1198,7 +1252,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     copy(name, symbol, meaning);
                 }
             }
-            None => files.globals.iter().for_each(|&(name, symbol)| copy(name, symbol, meaning)),
+            None => files
+                .globals
+                .iter()
+                .for_each(|&(name, symbol)| copy(name, symbol, meaning)),
         }
         found
     }

@@ -23,9 +23,9 @@ use super::views::*;
 use super::vnode::{Leaf, Part, VNode};
 use super::{Dialect, Field};
 use crate::ast::{
-    ExprKind, ExprTag, Flags, FnBody, FnKind, MappedModifier, MemberKind, ModuleName, Node, PatKind,
-    PropKind, StmtKind, StmtTag, TypeKind, TypeTag, UnOp, VarDecl, VarKind, assign_op_text,
-    bin_op_text, un_op_text,
+    ExprKind, ExprTag, Flags, FnBody, FnKind, MappedModifier, MemberKind, ModuleName, Node,
+    PatKind, PropKind, StmtKind, StmtTag, TypeKind, TypeTag, UnOp, VarDecl, VarKind,
+    assign_op_text, bin_op_text, un_op_text,
 };
 use crate::rule::NodeTags;
 

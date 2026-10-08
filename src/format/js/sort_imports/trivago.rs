@@ -45,7 +45,9 @@ pub(super) struct Exclude {
 
 impl std::fmt::Debug for Exclude {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Exclude").field("has_slash", &self.has_slash).finish_non_exhaustive()
+        f.debug_struct("Exclude")
+            .field("has_slash", &self.has_slash)
+            .finish_non_exhaustive()
     }
 }
 
@@ -70,21 +72,33 @@ impl Options {
 
     /// `shouldSkipFile`
     fn skips(&self, path: &[u8]) -> bool {
-        let name = bun_core::strings::last_index_of_char(path, b'/').map_or(path, |slash| &path[slash + 1..]);
-        self.exclude.iter().any(|it| it.glob.matches(if it.has_slash { path } else { name }))
+        let name = bun_core::strings::last_index_of_char(path, b'/')
+            .map_or(path, |slash| &path[slash + 1..]);
+        self.exclude
+            .iter()
+            .any(|it| it.glob.matches(if it.has_slash { path } else { name }))
     }
 
     /// `getImportNodesMatchedGroup`
     fn group_of(&self, source: &[u8], is_type: bool) -> usize {
-        if let Some(builtin) = self.index_of(BUILTIN_MODULES).filter(|_| is_builtin_module(source)) {
+        if let Some(builtin) = self
+            .index_of(BUILTIN_MODULES)
+            .filter(|_| is_builtin_module(source))
+        {
             return builtin;
         }
         let mut matching = (self.order.iter())
             .filter(|group| (is_type || !group.is_for_types()) && group.regex.test(source))
             .map(|group| (group.same_as, group.is_for_types()));
         let Some(first) = matching.next() else {
-            let for_types = if is_type { self.index_of(THIRD_PARTY_TYPES) } else { None };
-            return for_types.or_else(|| self.index_of(THIRD_PARTY_MODULES)).unwrap_or(0);
+            let for_types = if is_type {
+                self.index_of(THIRD_PARTY_TYPES)
+            } else {
+                None
+            };
+            return for_types
+                .or_else(|| self.index_of(THIRD_PARTY_MODULES))
+                .unwrap_or(0);
         };
         match is_type && !first.1 {
             true => matching.find(|it| it.1).unwrap_or(first).0,
@@ -104,32 +118,54 @@ fn is_ignored(model: &Model, comments: super::babel::List) -> bool {
 }
 
 /// `getSortedNodesByImportOrder`
-fn sorted_by_import_order(model: &mut Model, nodes: &[u32], options: &Options, out: &mut Vec<Node>) {
+fn sorted_by_import_order(
+    model: &mut Model,
+    nodes: &[u32],
+    options: &Options,
+    out: &mut Vec<Node>,
+) {
     let mut grouped: Vec<(usize, u32)> = nodes
         .iter()
         .map(|&index| {
             let declaration = &model.declarations[index as usize];
-            (options.group_of(model.source_of(declaration), declaration.is_type), index)
+            (
+                options.group_of(model.source_of(declaration), declaration.is_type),
+                index,
+            )
         })
         .collect();
 
     let has_namespace = |declaration: &Declaration| {
-        model.specifiers_of(declaration).iter().any(|it| model.specifiers[*it as usize].kind == SpecifierKind::Namespace)
+        model
+            .specifiers_of(declaration)
+            .iter()
+            .any(|it| model.specifiers[*it as usize].kind == SpecifierKind::Namespace)
     };
-    let length = |declaration: &Declaration| declaration.span.map_or(0, |span| utf16_len(model.file.slice(span)));
+    let length = |declaration: &Declaration| {
+        declaration
+            .span
+            .map_or(0, |span| utf16_len(model.file.slice(span)))
+    };
     // `getSortedNodesGroup`, for each group.
     grouped.sort_by_key(|it| it.0);
     for group in grouped.chunk_by_mut(|a, b| a.0 == b.0) {
         stable_sort_by(group, |a, b| {
-            let (a, b) = (&model.declarations[a.1 as usize], &model.declarations[b.1 as usize]);
+            let (a, b) = (
+                &model.declarations[a.1 as usize],
+                &model.declarations[b.1 as usize],
+            );
             let by_namespace = match options.group_namespace_specifiers {
                 true => has_namespace(b).cmp(&has_namespace(a)),
                 false => Ordering::Equal,
             };
             let (a_source, b_source) = (model.source_of(a), model.source_of(b));
             by_namespace.then_with(|| match options.sort_by_length {
-                Some(ByLength::Ascending) => length(a).cmp(&length(b)).then_with(|| locale_compare(a_source, b_source)),
-                Some(ByLength::Descending) => length(b).cmp(&length(a)).then_with(|| locale_compare(a_source, b_source)),
+                Some(ByLength::Ascending) => length(a)
+                    .cmp(&length(b))
+                    .then_with(|| locale_compare(a_source, b_source)),
+                Some(ByLength::Descending) => length(b)
+                    .cmp(&length(a))
+                    .then_with(|| locale_compare(a_source, b_source)),
                 None => natural_sort(a_source, b_source, options.is_case_insensitive),
             })
         });
@@ -148,7 +184,12 @@ fn sorted_by_import_order(model: &mut Model, nodes: &[u32], options: &Options, o
             out.push(Node::NewLine);
         }
         let before = out.len();
-        out.extend(grouped.iter().filter(|it| it.0 == group.same_as).map(|it| Node::Import(it.1)));
+        out.extend(
+            grouped
+                .iter()
+                .filter(|it| it.0 == group.same_as)
+                .map(|it| Node::Import(it.1)),
+        );
         if out.len() == before {
             continue;
         }
@@ -165,9 +206,16 @@ fn sort_specifiers(model: &mut Model, index: u32, options: &Options) {
     let mut order = std::mem::take(&mut model.orders);
     if let Some(specifiers) = order.get_mut(start as usize..(start + len) as usize) {
         stable_sort_by(specifiers, |a, b| {
-            let (a, b) = (&model.specifiers[*a as usize], &model.specifiers[*b as usize]);
+            let (a, b) = (
+                &model.specifiers[*a as usize],
+                &model.specifiers[*b as usize],
+            );
             match a.kind == b.kind {
-                true => natural_sort(a.local.bytes(), b.local.bytes(), options.is_case_insensitive),
+                true => natural_sort(
+                    a.local.bytes(),
+                    b.local.bytes(),
+                    options.is_case_insensitive,
+                ),
                 false if a.kind == SpecifierKind::Default => Ordering::Less,
                 false => Ordering::Greater,
             }
@@ -178,13 +226,17 @@ fn sort_specifiers(model: &mut Model, index: u32, options: &Options) {
 
 /// `getSortedNodes`
 fn sorted_nodes(model: &mut Model, options: &Options) -> Vec<Node> {
-    let is_side_effect = |model: &Model, index: u32| !options.side_effects && model.declarations[index as usize].specifiers.1 == 0;
+    let is_side_effect = |model: &Model, index: u32| {
+        !options.side_effects && model.declarations[index as usize].specifiers.1 == 0
+    };
     let count = model.declarations.len() as u32;
     let mut nodes = Vec::with_capacity(count as usize + options.order.len() + 1);
     let mut start = 0;
     while start < count {
         let kind = is_side_effect(model, start);
-        let end = (start..count).find(|index| is_side_effect(model, *index) != kind).unwrap_or(count);
+        let end = (start..count)
+            .find(|index| is_side_effect(model, *index) != kind)
+            .unwrap_or(count);
         match kind {
             true => nodes.extend((start..end).map(Node::Import)),
             false => {
@@ -223,19 +275,32 @@ fn sorted_nodes(model: &mut Model, options: &Options) -> Vec<Node> {
 
 /// The text that the plugin hands to Prettier in place of the file of `model`. `None`: it is
 /// formatted the same.
-pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'static [u8]) -> Option<Vec<u8>> {
+pub(super) fn preprocess(
+    model: &mut Model,
+    options: &Options,
+    end_of_line: &'static [u8],
+) -> Option<Vec<u8>> {
     if options.skips(model.file.path()) {
         return None;
     }
     let (first_start, first_comments) = model.first_statement?;
-    if is_ignored(model, first_comments) || model.declarations.iter().any(|it| is_ignored(model, it.comments.leading)) {
+    if is_ignored(model, first_comments)
+        || model
+            .declarations
+            .iter()
+            .any(|it| is_ignored(model, it.comments.leading))
+    {
         return None;
     }
-    let inject_at = model.list(first_comments).first().map_or(first_start, |it| model.comments[*it as usize].span.start);
+    let inject_at = model
+        .list(first_comments)
+        .first()
+        .map_or(first_start, |it| model.comments[*it as usize].span.start);
 
     let nodes = sorted_nodes(model, options);
     let model = &*model;
-    let printer = Printer::new(model, options.attributes_keyword, end_of_line).generate(false, false, &nodes);
+    let printer =
+        Printer::new(model, options.attributes_keyword, end_of_line).generate(false, false, &nodes);
     if printer.has_failed {
         return None;
     }
@@ -243,7 +308,12 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
     // `assembleUpdatedCode`
     let mut removed: Vec<Span> = model.declarations.iter().filter_map(|it| it.span).collect();
     for declaration in &model.declarations {
-        removed.extend(model.list(declaration.comments.leading).iter().map(|it| model.comments[*it as usize].span));
+        removed.extend(
+            model
+                .list(declaration.comments.leading)
+                .iter()
+                .map(|it| model.comments[*it as usize].span),
+        );
     }
     removed.sort_unstable_by_key(|span| span.start);
     let (text, code) = (model.text, printer.code());
@@ -289,7 +359,9 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
     let rest_start = model.rest_start.max(at);
     keep(&mut out, at, rest_start);
     let new_rest_start = out.len() as u32;
-    if !printer.has_changed_comment && is_unchanged(model, inject_at, &out, inject_at, &pieces, new_rest_start) {
+    if !printer.has_changed_comment
+        && is_unchanged(model, inject_at, &out, inject_at, &pieces, new_rest_start)
+    {
         return None;
     }
     out.extend_from_slice(&text[rest_start as usize..]);

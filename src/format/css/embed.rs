@@ -15,12 +15,19 @@ fn find_placeholder(text: &[u8]) -> Option<(usize, usize, usize)> {
     let mut from = 0;
     while let Some(start) = text::index_of_from(text, PLACEHOLDER, from) {
         let digits_start = start + PLACEHOLDER.len();
-        let digits = text[digits_start..].iter().take_while(|b| b.is_ascii_digit()).count();
+        let digits = text[digits_start..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
         let end = digits_start + digits;
         if digits > 0 && text[end..].starts_with(b"-id") {
-            let number = text[digits_start..end].iter().fold(0usize, |number, digit| {
-                number.saturating_mul(10).saturating_add(usize::from(digit - b'0'))
-            });
+            let number = text[digits_start..end]
+                .iter()
+                .fold(0usize, |number, digit| {
+                    number
+                        .saturating_mul(10)
+                        .saturating_add(usize::from(digit - b'0'))
+                });
             return Some((start, end + 3, number));
         }
         from = digits_start;
@@ -43,7 +50,9 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
             }
             Some(found)
         }
-        Doc::Array(parts) | Doc::Fill(parts) => parts.iter().try_fold(0, |all, part| Some(all + count_placeholders(part, count)?)),
+        Doc::Array(parts) | Doc::Fill(parts) => parts
+            .iter()
+            .try_fold(0, |all, part| Some(all + count_placeholders(part, count)?)),
         Doc::Indent(contents)
         | Doc::Align(_, contents)
         | Doc::Dedent(contents)
@@ -55,7 +64,9 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
             break_contents,
             flat_contents,
             ..
-        } => Some(count_placeholders(break_contents, count)? + count_placeholders(flat_contents, count)?),
+        } => Some(
+            count_placeholders(break_contents, count)? + count_placeholders(flat_contents, count)?,
+        ),
         Doc::LineSuffixBoundary | Doc::BreakParent | Doc::Line(_) => Some(0),
     }
 }
@@ -73,7 +84,9 @@ struct Writer<'a> {
 fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
     match doc {
         Doc::BreakParent => true,
-        Doc::Array(parts) | Doc::Fill(parts) => parts.iter().any(has_break_parent_outside_of_groups),
+        Doc::Array(parts) | Doc::Fill(parts) => {
+            parts.iter().any(has_break_parent_outside_of_groups)
+        }
         Doc::Indent(contents)
         | Doc::Align(_, contents)
         | Doc::Dedent(contents)
@@ -83,8 +96,15 @@ fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
             break_contents,
             flat_contents,
             ..
-        } => has_break_parent_outside_of_groups(break_contents) || has_break_parent_outside_of_groups(flat_contents),
-        Doc::Text(_) | Doc::Group { .. } | Doc::LineSuffix(_) | Doc::LineSuffixBoundary | Doc::Line(_) => false,
+        } => {
+            has_break_parent_outside_of_groups(break_contents)
+                || has_break_parent_outside_of_groups(flat_contents)
+        }
+        Doc::Text(_)
+        | Doc::Group { .. }
+        | Doc::LineSuffix(_)
+        | Doc::LineSuffixBoundary
+        | Doc::Line(_) => false,
     }
 }
 
@@ -98,7 +118,9 @@ impl<'a> Writer<'a> {
         let width = match TextWidth::from_text(text, 0) {
             width if !width.is_multiline() => width,
             _ => TextWidth::multiline_string(
-                bun_core::strings::split(text, b"\n").map(|line| TextWidth::from_text(line, 0).value()).sum(),
+                bun_core::strings::split(text, b"\n")
+                    .map(|line| TextWidth::from_text(line, 0).value())
+                    .sum(),
             ),
         };
         f.write_text(text, Some(width));
@@ -124,7 +146,9 @@ impl<'a> Writer<'a> {
     fn write(&mut self, doc: &Doc<'_>, f: &mut Formatter<'a>) {
         match doc {
             // Only a string with a substitution in it is taken apart.
-            Doc::Text(text) if !self.has_placeholders || find_placeholder(text).is_none() => self.write_string(text, f),
+            Doc::Text(text) if !self.has_placeholders || find_placeholder(text).is_none() => {
+                self.write_string(text, f)
+            }
             Doc::Text(text) => {
                 let mut rest = &text[..];
                 while let Some((start, end, number)) = find_placeholder(rest) {
@@ -140,19 +164,38 @@ impl<'a> Writer<'a> {
                 let mut index = 0;
                 while let Some(part) = parts.get(index) {
                     // Two line breaks in a row are an empty line.
-                    if let [Doc::Line(Line::Hard), Doc::BreakParent, Doc::Line(Line::Hard), Doc::BreakParent, ..] = parts[index..] {
+                    if let [
+                        Doc::Line(Line::Hard),
+                        Doc::BreakParent,
+                        Doc::Line(Line::Hard),
+                        Doc::BreakParent,
+                        ..,
+                    ] = parts[index..]
+                    {
                         f.write_element(FormatElement::Line(LineMode::Empty));
                         index += 4;
                         continue;
                     }
                     // The group is broken, so this is two line breaks as well.
-                    if let [Doc::Line(Line::Hard), Doc::BreakParent, Doc::Line(Line::Space | Line::Soft), ..] = parts[index..] {
+                    if let [
+                        Doc::Line(Line::Hard),
+                        Doc::BreakParent,
+                        Doc::Line(Line::Space | Line::Soft),
+                        ..,
+                    ] = parts[index..]
+                    {
                         f.write_element(FormatElement::Line(LineMode::Empty));
                         index += 3;
                         continue;
                     }
                     // The same the other way round: declarations in the `style` attribute of HTML with an empty line between them.
-                    if let [Doc::Line(Line::Space | Line::Soft), Doc::Line(Line::Hard), Doc::BreakParent, ..] = parts[index..] {
+                    if let [
+                        Doc::Line(Line::Space | Line::Soft),
+                        Doc::Line(Line::Hard),
+                        Doc::BreakParent,
+                        ..,
+                    ] = parts[index..]
+                    {
                         f.write_element(FormatElement::Line(LineMode::Empty));
                         index += 3;
                         continue;
@@ -169,27 +212,41 @@ impl<'a> Writer<'a> {
                     index += 1;
                 }
             }
-            Doc::Indent(contents) => self.write_between(Tag::StartIndent, contents, Tag::EndIndent, f),
+            Doc::Indent(contents) => {
+                self.write_between(Tag::StartIndent, contents, Tag::EndIndent, f)
+            }
             Doc::Dedent(contents) => {
                 use crate::ir::element::DedentMode::Level;
                 self.write_between(Tag::StartDedent(Level), contents, Tag::EndDedent(Level), f);
             }
             // Style sheets have none of these.
-            Doc::Align(_, contents) | Doc::DedentToRoot(contents) | Doc::MarkAsRoot(contents) => self.write(contents, f),
+            Doc::Align(_, contents) | Doc::DedentToRoot(contents) | Doc::MarkAsRoot(contents) => {
+                self.write(contents, f)
+            }
             Doc::Group {
                 contents,
                 should_break,
                 ..
             } => {
-                let mode = if *should_break { GroupMode::Expand } else { GroupMode::Flat };
+                let mode = if *should_break {
+                    GroupMode::Expand
+                } else {
+                    GroupMode::Flat
+                };
                 let is_directly_in_fill = std::mem::replace(&mut self.is_directly_in_fill, false);
-                self.write_between(Tag::StartGroup(Group::new().with_mode(mode)), contents, Tag::EndGroup, f);
+                self.write_between(
+                    Tag::StartGroup(Group::new().with_mode(mode)),
+                    contents,
+                    Tag::EndGroup,
+                    f,
+                );
                 self.is_directly_in_fill = is_directly_in_fill;
             }
             Doc::Fill(parts) => {
                 // For Prettier, a `breakParent` is about the groups around it, and says nothing about
                 // whether an item fits.
-                if !self.is_directly_in_fill && parts.iter().any(has_break_parent_outside_of_groups) {
+                if !self.is_directly_in_fill && parts.iter().any(has_break_parent_outside_of_groups)
+                {
                     f.write_element(FormatElement::ExpandParent);
                 }
                 let is_directly_in_fill = std::mem::replace(&mut self.is_directly_in_fill, true);
@@ -205,7 +262,10 @@ impl<'a> Writer<'a> {
                 flat_contents,
                 ..
             } => {
-                for (mode, contents) in [(PrintMode::Expanded, break_contents), (PrintMode::Flat, flat_contents)] {
+                for (mode, contents) in [
+                    (PrintMode::Expanded, break_contents),
+                    (PrintMode::Flat, flat_contents),
+                ] {
                     if !contents.is_empty_text() {
                         let start = Tag::StartConditionalContent(Condition::new(mode));
                         self.write_between(start, contents, Tag::EndConditionalContent, f);
@@ -250,7 +310,11 @@ enum Action<'w, 'a> {
 
 /// Prettier's `printEmbedCss`. Nothing is written and `false` is returned if the text cannot be parsed
 /// as SCSS, or if not every substitution is in the document exactly once.
-fn print_embed_css<'a>(template: Template<'a>, options: &FormatOptions, action: Action<'_, 'a>) -> bool {
+fn print_embed_css<'a>(
+    template: Template<'a>,
+    options: &FormatOptions,
+    action: Action<'_, 'a>,
+) -> bool {
     let count = template.quasi_count().saturating_sub(1);
     let mut text = Vec::new();
     for index in 0..template.quasi_count() {
@@ -263,11 +327,19 @@ fn print_embed_css<'a>(template: Template<'a>, options: &FormatOptions, action: 
     }
     let text = super::normalize_end_of_line(&text);
     let mut memo = Default::default();
-    let Ok(sink) = super::parse_and_print(&text, super::Parser::Scss, options, Sink::to_document(), &mut memo) else {
+    let Ok(sink) = super::parse_and_print(
+        &text,
+        super::Parser::Scss,
+        options,
+        Sink::to_document(),
+        &mut memo,
+    ) else {
         return false;
     };
     let document = doc::strip_trailing_hardline(doc::clean(sink.into_document()));
-    if document.is_empty_text() || (count > 0 && count_placeholders(&document, count) != Some(count)) {
+    if document.is_empty_text()
+        || (count > 0 && count_placeholders(&document, count) != Some(count))
+    {
         return false;
     }
     if let Action::Write(f) = action {
@@ -345,7 +417,8 @@ fn is_styled_tag(tag: Expr<'_>) -> bool {
     is_identifier(callee, b"styled")
         || member_object(callee).is_some_and(|object| {
             // styled.foo.attrs({})``, Component.extend.attrs({})``, styled(Component).attrs({})``
-            is_styled_object(object) || call_callee(object).is_some_and(|callee| is_identifier(callee, b"styled"))
+            is_styled_object(object)
+                || call_callee(object).is_some_and(|callee| is_identifier(callee, b"styled"))
         })
 }
 
@@ -401,8 +474,10 @@ pub(crate) fn is_embed_css(e: Expr<'_>) -> bool {
 
 /// Whether Prettier's `embed` has something to say about the template `e`.
 fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, options: &FormatOptions) -> bool {
-    matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Auto)
-        && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())
+    matches!(
+        options.embedded_language_formatting,
+        EmbeddedLanguageFormatting::Auto
+    ) && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())
         && is_embed_css(e)
 }
 
@@ -412,7 +487,11 @@ fn is_blank(template: Template<'_>) -> bool {
 
 /// Prettier's `embed`, for the languages that there is a formatter for. Returns whether it has written
 /// the template `e`.
-pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) -> bool {
+pub(crate) fn write_template<'a>(
+    e: Expr<'a>,
+    template: Template<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
     if !is_candidate(e, template, f.options()) {
         return false;
     }
@@ -431,8 +510,11 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         ExprKind::TaggedTemplate(call) => call.template(),
         _ => Some(e),
     };
-    let Some((quasi, ExprKind::Template(template))) = quasi.map(|quasi| (quasi, quasi.kind())) else {
+    let Some((quasi, ExprKind::Template(template))) = quasi.map(|quasi| (quasi, quasi.kind()))
+    else {
         return false;
     };
-    is_candidate(quasi, template, f.options()) && !is_blank(template) && print_embed_css(template, f.options(), Action::Check)
+    is_candidate(quasi, template, f.options())
+        && !is_blank(template)
+        && print_embed_css(template, f.options(), Action::Check)
 }

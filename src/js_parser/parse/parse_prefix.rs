@@ -1568,7 +1568,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let is_primary = p.is_ecmascript();
         let starts_jsx = is_primary
             || level.lte(Level::Prefix)
-            && (must_be_unary
+                && (must_be_unary
                 // `nextTokenIsIdentifierOrKeywordOrGreaterThan`
                 || p.next_token_matches(|p| {
                     p.lexer.is_identifier_or_keyword()
@@ -1587,16 +1587,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // The element is returned as it is, not as the start of a member or call expression.
         if !is_primary
             && matches!(
-            p.lexer.token,
-            T::TDot
-                | T::TQuestionDot
-                | T::TOpenBracket
-                | T::TOpenParen
-                | T::TTemplateHead
-                | T::TNoSubstitutionTemplateLiteral
-                | T::TExclamation
-                | T::TPlusPlus
-                | T::TMinusMinus
+                p.lexer.token,
+                T::TDot
+                    | T::TQuestionDot
+                    | T::TOpenBracket
+                    | T::TOpenParen
+                    | T::TTemplateHead
+                    | T::TNoSubstitutionTemplateLiteral
+                    | T::TExclamation
+                    | T::TPlusPlus
+                    | T::TMinusMinus
             )
         {
             p.forbid_suffix_after_as_loc = p.lexer.loc();

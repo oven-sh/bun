@@ -84,7 +84,11 @@ impl RawLiteral {
             Node::ExportSpec(it) => (Sort::ExportSpec, it.id().0),
             _ => return None,
         };
-        Some(RawLiteral { span: literal.span, owner, sort })
+        Some(RawLiteral {
+            span: literal.span,
+            owner,
+            sort,
+        })
     }
 
     #[inline]
@@ -100,7 +104,10 @@ impl RawLiteral {
             Sort::ImportSpec => Node::ImportSpec(Handle::from_raw(file, self.owner)),
             Sort::ExportSpec => Node::ExportSpec(Handle::from_raw(file, self.owner)),
         };
-        Literal { span: self.span, owner }
+        Literal {
+            span: self.span,
+            owner,
+        }
     }
 }
 
@@ -123,7 +130,8 @@ impl<'a> File<'a> {
     }
 
     fn find_string_literals(&'a self, mut visit: impl FnMut(Literal<'a>)) {
-        let is_quoted = |span: Span| matches!(self.text().get(span.start as usize), Some(b'"' | b'\''));
+        let is_quoted =
+            |span: Span| matches!(self.text().get(span.start as usize), Some(b'"' | b'\''));
         // What may be a name as well as a string.
         let mut name = |span: Span, owner: Node<'a>| {
             if is_quoted(span) {
@@ -137,17 +145,27 @@ impl<'a> File<'a> {
                 name(key.inner_span(self), owner);
             }
         };
-        let attributes = |attributes: Option<ImportAttributes<'a>>, owner: Node<'a>, name: &mut dyn FnMut(Span, Node<'a>)| {
+        let attributes = |attributes: Option<ImportAttributes<'a>>,
+                          owner: Node<'a>,
+                          name: &mut dyn FnMut(Span, Node<'a>)| {
             for entry in attributes.into_iter().flat_map(|it| it.entries()) {
                 key(entry.key(), owner, name);
             }
         };
         self.every_stmt_of(
-            &[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar, StmtTag::ImportEquals, StmtTag::Module],
+            &[
+                StmtTag::Import,
+                StmtTag::ExportNamed,
+                StmtTag::ExportStar,
+                StmtTag::ImportEquals,
+                StmtTag::Module,
+            ],
             |stmt| {
                 let owner = Node::Stmt(stmt);
                 match stmt.kind() {
-                    StmtKind::ExportStar { alias: Some(alias), .. } => name(alias.span(), owner),
+                    StmtKind::ExportStar {
+                        alias: Some(alias), ..
+                    } => name(alias.span(), owner),
                     StmtKind::Module(module) => name(module.name_span(), owner),
                     _ => {}
                 }
@@ -191,7 +209,10 @@ impl<'a> File<'a> {
             if let Some(key) = key
                 && matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))
             {
-                visit(Literal { span: key.inner_span(self), owner });
+                visit(Literal {
+                    span: key.inner_span(self),
+                    owner,
+                });
             }
         };
         self.every_prop(|it| key(it.key(), Node::Prop(it)));
@@ -206,8 +227,16 @@ impl<'a> File<'a> {
                 true => Span::new(skip_trivia(self.text(), ty.span().start + 1), ty.span().end),
                 false => ty.span(),
             };
-            visit(Literal { span, owner: Node::Type(ty) });
+            visit(Literal {
+                span,
+                owner: Node::Type(ty),
+            });
         });
-        self.every_expr_of(&[ExprTag::Number, ExprTag::BigInt], |e| visit(Literal { span: e.span(), owner: Node::Expr(e) }));
+        self.every_expr_of(&[ExprTag::Number, ExprTag::BigInt], |e| {
+            visit(Literal {
+                span: e.span(),
+                owner: Node::Expr(e),
+            })
+        });
     }
 }

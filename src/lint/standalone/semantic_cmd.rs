@@ -11,7 +11,9 @@
 use bun_lint::ast::{File, Node, StmtKind, TypeKind};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
-use bun_lint::semantic::{Declaration, DeclarationKind, DeclarationKinds, Reference, Scope, ScopeKind, Symbol};
+use bun_lint::semantic::{
+    Declaration, DeclarationKind, DeclarationKinds, Reference, Scope, ScopeKind, Symbol,
+};
 
 fn string(text: impl AsRef<[u8]>) -> Json {
     Json::String(text.as_ref().to_vec())
@@ -45,7 +47,11 @@ impl Offsets {
 
     fn of(&self, offset: u32) -> u32 {
         match &self.0 {
-            Some(table) => table.get(offset as usize).or_else(|| table.last()).copied().unwrap_or(0),
+            Some(table) => table
+                .get(offset as usize)
+                .or_else(|| table.last())
+                .copied()
+                .unwrap_or(0),
             None => offset,
         }
     }
@@ -91,41 +97,60 @@ fn declaration_kind_name(kind: Option<DeclarationKind>) -> &'static str {
 }
 
 fn scope_key(scope: Scope, offsets: &Offsets) -> Json {
-    string(format!("{}@{}", kind_name(scope.kind()), offsets.of(scope.span().start)))
+    string(format!(
+        "{}@{}",
+        kind_name(scope.kind()),
+        offsets.of(scope.span().start)
+    ))
 }
 
 fn symbol_key(symbol: Symbol, offsets: &Offsets) -> Json {
     match symbol.declarations().next().and_then(|it| it.name_span()) {
         Some(name) => number(offsets.of(name.start)),
-        None => string(format!("arguments@{}", offsets.of(symbol.scope().span().start))),
+        None => string(format!(
+            "arguments@{}",
+            offsets.of(symbol.scope().span().start)
+        )),
     }
 }
 
 fn dump_reference(it: Reference, offsets: &Offsets) -> Json {
-    let letters = |pairs: [(bool, char); 2]| -> String { pairs.iter().filter(|it| it.0).map(|it| it.1).collect() };
+    let letters = |pairs: [(bool, char); 2]| -> String {
+        pairs.iter().filter(|it| it.0).map(|it| it.1).collect()
+    };
     Json::Array(vec![
         number(offsets.of(it.span().start)),
         string(it.name().bytes()),
         string(letters([(it.is_read(), 'r'), (it.is_write(), 'w')])),
         string(letters([(it.is_value(), 'v'), (it.is_type(), 't')])),
         number(u32::from(it.is_init())),
-        it.symbol().map_or(Json::Null, |symbol| symbol_key(symbol, offsets)),
+        it.symbol()
+            .map_or(Json::Null, |symbol| symbol_key(symbol, offsets)),
         scope_key(it.scope(), offsets),
-        it.write_expr().map_or(Json::Null, |value| number(offsets.of(value.span().start))),
+        it.write_expr()
+            .map_or(Json::Null, |value| number(offsets.of(value.span().start))),
         scope_key(it.node().scope(), offsets),
     ])
 }
 
 /// Whether what is answered with one load is what the declarations and the references say.
 fn summaries_hold(symbol: Symbol) -> bool {
-    let kinds: DeclarationKinds = symbol.declarations().filter_map(|it| it.kind()).map(DeclarationKinds::from).collect();
-    let is_listed = symbol.file().symbols_declared_as(kinds).any(|it| it == symbol);
+    let kinds: DeclarationKinds = symbol
+        .declarations()
+        .filter_map(|it| it.kind())
+        .map(DeclarationKinds::from)
+        .collect();
+    let is_listed = symbol
+        .file()
+        .symbols_declared_as(kinds)
+        .any(|it| it == symbol);
     symbol.declaration_count() == symbol.declarations().len()
         && symbol.declaration_kinds() == kinds
         && (kinds.is_empty() || is_listed)
         && symbol.has_reads() == symbol.references().any(|it| it.is_read())
         && symbol.has_writes() == symbol.references().any(|it| it.is_write())
-        && symbol.has_modifying_references() == symbol.references().any(|it| it.is_write() && !it.is_init())
+        && symbol.has_modifying_references()
+            == symbol.references().any(|it| it.is_write() && !it.is_init())
 }
 
 fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
@@ -137,40 +162,74 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
             number(offsets.of(scope.span().start)),
             number(offsets.of(scope.span().end)),
             number(u32::from(scope.is_strict())),
-            scope.parent().map_or(Json::Null, |it| scope_key(it, offsets)),
+            scope
+                .parent()
+                .map_or(Json::Null, |it| scope_key(it, offsets)),
             scope_key(scope.variable_scope(), offsets),
             {
-                let mut through: Vec<u32> = scope.through().map(|it| offsets.of(it.span().start)).collect();
+                let mut through: Vec<u32> = scope
+                    .through()
+                    .map(|it| offsets.of(it.span().start))
+                    .collect();
                 through.sort_unstable();
                 Json::Array(through.into_iter().map(number).collect())
             },
         ]));
         for symbol in scope.symbols() {
-            assert!(summaries_hold(symbol), "what is kept for a symbol is not what its lists say");
+            assert!(
+                summaries_hold(symbol),
+                "what is kept for a symbol is not what its lists say"
+            );
             let names = symbol.declarations().filter_map(|it| it.name_span());
             variables.push(Json::Array(vec![
                 string(symbol.name().bytes()),
                 scope_key(scope, offsets),
                 Json::Array(names.map(|it| number(offsets.of(it.start))).collect()),
-                Json::Array(symbol.declarations().map(|it| string(declaration_kind_name(it.kind()))).collect()),
+                Json::Array(
+                    symbol
+                        .declarations()
+                        .map(|it| string(declaration_kind_name(it.kind())))
+                        .collect(),
+                ),
                 // The order of the writes. ESLint has those of a class declaration in two variables.
-                match symbol.declarations().any(|it| matches!(it, Declaration::Class(c) if matches!(c.owner(), Node::Stmt(_)))) {
+                match symbol.declarations().any(
+                    |it| matches!(it, Declaration::Class(c) if matches!(c.owner(), Node::Stmt(_))),
+                ) {
                     true => Json::Null,
                     false => {
                         let writes = symbol.references().filter(|it| it.is_write());
-                        Json::Array(writes.map(|it| number(offsets.of(it.span().start))).collect())
+                        Json::Array(
+                            writes
+                                .map(|it| number(offsets.of(it.span().start)))
+                                .collect(),
+                        )
                     }
                 },
             ]));
         }
     }
-    let references = file.references().map(|it| dump_reference(it, offsets)).collect();
-    let name_and_start = |it: Reference| Json::Array(vec![string(it.name().bytes()), number(offsets.of(it.span().start))]);
+    let references = file
+        .references()
+        .map(|it| dump_reference(it, offsets))
+        .collect();
+    let name_and_start = |it: Reference| {
+        Json::Array(vec![
+            string(it.name().bytes()),
+            number(offsets.of(it.span().start)),
+        ])
+    };
     let implicit = file.implicit_globals().map(name_and_start).collect();
     // Where `Expr::symbol` is not the value that the reference resolves to.
     let is_value = |it: &Symbol| it.is_value_variable() && !it.is_implicit_arguments();
-    let differs = |it: &Reference| it.expr().is_some_and(|e| e.symbol() != it.symbol().filter(is_value));
-    let shortcut = file.references().filter(differs).map(name_and_start).collect();
+    let differs = |it: &Reference| {
+        it.expr()
+            .is_some_and(|e| e.symbol() != it.symbol().filter(is_value))
+    };
+    let shortcut = file
+        .references()
+        .filter(differs)
+        .map(name_and_start)
+        .collect();
     let mut declared = Vec::new();
     let mut nodes = vec![Node::File(file)];
     let mut scopes_of_nodes = Vec::new();
@@ -205,7 +264,9 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
             Node::EnumMember(_) | Node::ImportSpec(_) => Some(node.span().start),
             Node::Type(t) if matches!(t.kind(), TypeKind::Mapped(_)) => Some(t.span().start),
             Node::Stmt(s) => match s.kind() {
-                StmtKind::Try { block, .. } => Some(bun_lint::tokens::skip_trivia(file.text(), block.span().end)),
+                StmtKind::Try { block, .. } => {
+                    Some(bun_lint::tokens::skip_trivia(file.text(), block.span().end))
+                }
                 StmtKind::Fn(_) | StmtKind::Class(_) => None,
                 StmtKind::Import(_) => Some(s.span().start),
                 _ => Some(s.span_without_export().start),
@@ -222,7 +283,10 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
                 })
                 .collect();
             keys.sort();
-            declared.push(Json::Array(vec![number(offsets.of(start)), string(keys.join(","))]));
+            declared.push(Json::Array(vec![
+                number(offsets.of(start)),
+                string(keys.join(",")),
+            ]));
         }
     }
     let nodes = with_nodes.then(|| (b"nodes".to_vec(), Json::Array(scopes_of_nodes)));
@@ -240,21 +304,35 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
 
 fn path_of(case: &Json) -> &str {
     let path = case.get(b"filename").and_then(Json::as_str);
-    path.and_then(|it| std::str::from_utf8(it).ok()).unwrap_or("file.js")
+    path.and_then(|it| std::str::from_utf8(it).ok())
+        .unwrap_or("file.js")
 }
 
 fn language_of(case: &Json, path: &str) -> LanguageOptions {
     let object = |keys: &[&str], from: &Json| {
-        let fields = keys.iter().filter_map(|key| Some((key.as_bytes().to_vec(), from.get(key.as_bytes())?.clone())));
+        let fields = keys
+            .iter()
+            .filter_map(|key| Some((key.as_bytes().to_vec(), from.get(key.as_bytes())?.clone())));
         fields.collect::<Vec<_>>()
     };
-    let is_javascript = [".js", ".jsx", ".mjs", ".cjs"].iter().any(|it| path.ends_with(it));
+    let is_javascript = [".js", ".jsx", ".mjs", ".cjs"]
+        .iter()
+        .any(|it| path.ends_with(it));
     let mut parser_options = object(&["jsxPragma", "jsxFragmentName"], case);
     let features = Json::Object(object(&["jsx", "globalReturn", "impliedStrict"], case));
     parser_options.push((b"ecmaFeatures".to_vec(), features));
     let mut language = object(&["ecmaVersion", "sourceType"], case);
     let parser = case.get(b"parser").cloned();
-    language.push((b"parser".to_vec(), parser.unwrap_or_else(|| string(if is_javascript { "espree" } else { "typescript" }))));
+    language.push((
+        b"parser".to_vec(),
+        parser.unwrap_or_else(|| {
+            string(if is_javascript {
+                "espree"
+            } else {
+                "typescript"
+            })
+        }),
+    ));
     language.push((b"parserOptions".to_vec(), Json::Object(parser_options)));
     LanguageOptions::from_json(&Json::Object(language), &Json::Null)
 }
@@ -295,7 +373,12 @@ fn print(fields: Vec<(Vec<u8>, Json)>) {
     println!("{}", bstr::BStr::new(&line));
 }
 
-fn dump_case(path: &str, code: &[u8], language: &LanguageOptions, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
+fn dump_case(
+    path: &str,
+    code: &[u8],
+    language: &LanguageOptions,
+    with_nodes: bool,
+) -> Vec<(Vec<u8>, Json)> {
     dump_code(path, code, language, with_nodes, false)
 }
 
@@ -319,7 +402,13 @@ fn dump_code(
 }
 
 /// The same for the code as a file of the project in `root`, after the program is checked.
-fn dump_typed(root: &str, path: &str, code: &[u8], language: &LanguageOptions, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
+fn dump_typed(
+    root: &str,
+    path: &str,
+    code: &[u8],
+    language: &LanguageOptions,
+    with_nodes: bool,
+) -> Vec<(Vec<u8>, Json)> {
     let files = [format!("{root}/{path}")];
     let config = format!("{root}/tsconfig.json");
     let dumped = std::panic::catch_unwind(|| {
@@ -334,7 +423,9 @@ fn dump_typed(root: &str, path: &str, code: &[u8], language: &LanguageOptions, w
             then
         }
         let then = for_any_file(|file| (!file.has_parse_errors()).then(|| dump(file, with_nodes)));
-        crate::types_cmd::lint_project(project, language, &then).pop().and_then(|it| it.1)
+        crate::types_cmd::lint_project(project, language, &then)
+            .pop()
+            .and_then(|it| it.1)
     });
     match dumped {
         Ok(Some(fields)) => fields,
@@ -346,7 +437,10 @@ fn dump_typed(root: &str, path: &str, code: &[u8], language: &LanguageOptions, w
 fn dump_command(args: &[String]) {
     let with_nodes = args.iter().any(|it| it == "--nodes");
     let typed = args.iter().find_map(|it| it.strip_prefix("--typed="));
-    let args: Vec<&String> = args.iter().filter(|it| *it == "--batch" || !it.starts_with("--")).collect();
+    let args: Vec<&String> = args
+        .iter()
+        .filter(|it| *it == "--batch" || !it.starts_with("--"))
+        .collect();
     match args[..] {
         [batch, cases] if batch == "--batch" => {
             std::panic::set_hook(Box::new(|_| {}));
@@ -355,7 +449,10 @@ fn dump_command(args: &[String]) {
                 let case = bun_lint::json::parse(line).expect("a case");
                 let path = path_of(&case);
                 let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-                let mut fields = vec![(b"id".to_vec(), case.get(b"id").cloned().unwrap_or(Json::Null))];
+                let mut fields = vec![(
+                    b"id".to_vec(),
+                    case.get(b"id").cloned().unwrap_or(Json::Null),
+                )];
                 let language = language_of(&case, path);
                 fields.extend(match typed {
                     Some(root) => dump_typed(root, path, code, &language, with_nodes),
@@ -366,16 +463,28 @@ fn dump_command(args: &[String]) {
         }
         [path] => {
             let code = std::fs::read(path).expect("the file");
-            print(dump_case(path, &code, &LanguageOptions::default(), with_nodes));
+            print(dump_case(
+                path,
+                &code,
+                &LanguageOptions::default(),
+                with_nodes,
+            ));
         }
-        _ => println!("usage: bun-lint semantic dump <file> | bun-lint semantic dump --batch <cases.jsonl>"),
+        _ => println!(
+            "usage: bun-lint semantic dump <file> | bun-lint semantic dump --batch <cases.jsonl>"
+        ),
     }
 }
 
 /// `fuzz <cases.jsonl> [--rounds=n]`: damages the code of each case in `n` ways and reports what panics.
 fn fuzz(args: &[String]) {
-    let rounds: u64 = (args.iter().find_map(|a| a.strip_prefix("--rounds="))).and_then(|n| n.parse().ok()).unwrap_or(4);
-    let cases = args.iter().find(|a| !a.starts_with("--")).expect("the cases");
+    let rounds: u64 = (args.iter().find_map(|a| a.strip_prefix("--rounds=")))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(4);
+    let cases = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .expect("the cases");
     std::panic::set_hook(Box::new(|_| {}));
     let cases = std::fs::read(cases).expect("the cases");
     let (mut state, mut tried, mut panicked) = (0x9E37_79B9_7F4A_7C15u64, 0usize, 0usize);
@@ -409,7 +518,8 @@ fn fuzz(args: &[String]) {
             }
             tried += 1;
             let dumped = dump_code(path, &damaged, &language, true, true);
-            if matches!(dumped.first(), Some((key, Json::String(what))) if key == b"error" && what == b"panicked") {
+            if matches!(dumped.first(), Some((key, Json::String(what))) if key == b"error" && what == b"panicked")
+            {
                 panicked += 1;
                 println!("──── {path}\n{}", bstr::BStr::new(&damaged));
             }
@@ -419,7 +529,9 @@ fn fuzz(args: &[String]) {
 }
 
 fn bench(args: &[String]) {
-    let repeat: usize = (args.iter().find_map(|a| a.strip_prefix("--repeat="))).and_then(|n| n.parse().ok()).unwrap_or(1);
+    let repeat: usize = (args.iter().find_map(|a| a.strip_prefix("--repeat=")))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(1);
     let mut paths = Vec::new();
     for arg in args.iter().filter(|a| !a.starts_with("--")) {
         crate::collect(std::path::Path::new(arg), &mut paths);
@@ -476,6 +588,8 @@ pub(crate) fn run(args: &[String]) {
         Some("dump") => dump_command(&args[1..]),
         Some("bench") => bench(&args[1..]),
         Some("fuzz") => fuzz(&args[1..]),
-        _ => println!("usage: bun-lint semantic dump <file> | dump --batch <cases.jsonl> | bench <paths..>"),
+        _ => println!(
+            "usage: bun-lint semantic dump <file> | dump --batch <cases.jsonl> | bench <paths..>"
+        ),
     }
 }

@@ -96,7 +96,12 @@ pub(crate) struct Loader<'l> {
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {
-    Json::Object(entries.into_iter().map(|(key, value)| (key.to_vec(), value)).collect())
+    Json::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.to_vec(), value))
+            .collect(),
+    )
 }
 
 fn strings_of(items: &[Vec<u8>]) -> Json {
@@ -123,7 +128,9 @@ fn plugin_shorthand(name: &[u8]) -> Vec<u8> {
             _ => name.to_vec(),
         };
     }
-    name.strip_prefix(b"eslint-plugin-").unwrap_or(name).to_vec()
+    name.strip_prefix(b"eslint-plugin-")
+        .unwrap_or(name)
+        .to_vec()
 }
 
 /// `--global a,b:true`
@@ -146,12 +153,17 @@ fn globals_of(options: &Options) -> Option<Json> {
 /// `preprocessConfig` under `--no-ignore`: an object that only has `ignores` loses them.
 fn without_global_ignores(json: Json, depth: usize) -> Json {
     match json {
-        Json::Array(items) if depth < 64 => {
-            Json::Array(items.into_iter().map(|item| without_global_ignores(item, depth + 1)).collect())
-        }
+        Json::Array(items) if depth < 64 => Json::Array(
+            items
+                .into_iter()
+                .map(|item| without_global_ignores(item, depth + 1))
+                .collect(),
+        ),
         Json::Object(mut entries) => {
             let is_meta = |key: &[u8]| matches!(key, b"name" | b"basePath");
-            if entries.iter().any(|it| it.0 == b"ignores") && entries.iter().filter(|it| !is_meta(&it.0)).count() == 1 {
+            if entries.iter().any(|it| it.0 == b"ignores")
+                && entries.iter().filter(|it| !is_meta(&it.0)).count() == 1
+            {
                 entries.retain(|it| it.0 != b"ignores");
             }
             Json::Object(entries)
@@ -161,14 +173,27 @@ fn without_global_ignores(json: Json, depth: usize) -> Json {
 }
 
 /// The categories of oxlint's rules, but `nursery`.
-const CATEGORIES: [&[u8]; 6] = [b"correctness", b"suspicious", b"pedantic", b"perf", b"style", b"restriction"];
+const CATEGORIES: [&[u8]; 6] = [
+    b"correctness",
+    b"suspicious",
+    b"pedantic",
+    b"perf",
+    b"style",
+    b"restriction",
+];
 
 /// oxlint's `-A`, `-W` and `-D`, which come after the `rules` of the file and before its
 /// `overrides`. A category only counts for the rules that `rules` does not name.
 /// The one name of the built-in plugin of oxlint that `name` is a name of: `LintPlugins::try_from`.
 fn plugin_of_oxlint(name: &[u8]) -> &[u8] {
-    let name = [&b"/eslint-plugin"[..], b"/oxlint-plugin"].iter().find_map(|it| name.strip_suffix(*it)).unwrap_or(name);
-    let name = [&b"eslint-plugin-"[..], b"oxlint-plugin-"].iter().find_map(|it| name.strip_prefix(*it)).unwrap_or(name);
+    let name = [&b"/eslint-plugin"[..], b"/oxlint-plugin"]
+        .iter()
+        .find_map(|it| name.strip_suffix(*it))
+        .unwrap_or(name);
+    let name = [&b"eslint-plugin-"[..], b"oxlint-plugin-"]
+        .iter()
+        .find_map(|it| name.strip_prefix(*it))
+        .unwrap_or(name);
     match name {
         b"react-hooks" | b"react_hooks" => b"react",
         b"typescript-eslint" | b"typescript_eslint" | b"@typescript-eslint" => b"typescript",
@@ -182,7 +207,10 @@ fn plugin_of_oxlint(name: &[u8]) -> &[u8] {
 
 fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u8>)]) {
     fn put(entries: &mut Vec<(Vec<u8>, Json)>, section: &[u8], key: &[u8], severity: Severity) {
-        if !entries.iter().any(|it| it.0 == section && matches!(it.1, Json::Object(_))) {
+        if !entries
+            .iter()
+            .any(|it| it.0 == section && matches!(it.1, Json::Object(_)))
+        {
             entries.retain(|it| it.0 != section);
             entries.push((section.to_vec(), Json::Object(Vec::new())));
         }
@@ -191,7 +219,9 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
         };
         match section.iter_mut().find(|it| it.0 == key) {
             // The options stay.
-            Some((_, Json::Array(items))) if !items.is_empty() => items[0] = severity_name(severity),
+            Some((_, Json::Array(items))) if !items.is_empty() => {
+                items[0] = severity_name(severity)
+            }
             Some((_, value)) => *value = severity_name(severity),
             None => section.push((key.to_vec(), severity_name(severity))),
         }
@@ -201,7 +231,9 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
             if *severity == Severity::Off {
                 entries.retain(|it| it.0 != b"rules");
             }
-            CATEGORIES.iter().for_each(|category| put(entries, b"categories", category, *severity));
+            CATEGORIES
+                .iter()
+                .for_each(|category| put(entries, b"categories", category, *severity));
         } else if CATEGORIES.contains(&&name[..]) || name == b"nursery" {
             put(entries, b"categories", name, *severity);
         } else {
@@ -211,7 +243,12 @@ fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u
 }
 
 impl<'l> Loader<'l> {
-    pub(crate) fn new(linter: &'l Linter, options: &'l Options, environment: &'l Environment<'l>, js_plugins: &'l Host<'l>) -> Loader<'l> {
+    pub(crate) fn new(
+        linter: &'l Linter,
+        options: &'l Options,
+        environment: &'l Environment<'l>,
+        js_plugins: &'l Host<'l>,
+    ) -> Loader<'l> {
         Loader {
             linter,
             options,
@@ -248,7 +285,10 @@ impl<'l> Loader<'l> {
             language_options.push((&b"globals"[..], globals));
         }
         if !options.parser_options.is_empty() {
-            language_options.push((b"parserOptions", Json::Object(options.parser_options.clone())));
+            language_options.push((
+                b"parserOptions",
+                Json::Object(options.parser_options.clone()),
+            ));
         }
         if let Some(parser) = &options.parser {
             language_options.push((b"parser", Json::String(parser.clone())));
@@ -260,7 +300,10 @@ impl<'l> Loader<'l> {
         first.push((b"rules", Json::Object(options.rule.clone())));
         let mut linter_options = Vec::new();
         if options.report_unused_disable_directives {
-            linter_options.push((&b"reportUnusedDisableDirectives"[..], severity_name(Severity::Error)));
+            linter_options.push((
+                &b"reportUnusedDisableDirectives"[..],
+                severity_name(Severity::Error),
+            ));
         } else if let Some(severity) = options.report_unused_disable_directives_severity {
             linter_options.push((b"reportUnusedDisableDirectives", severity_name(severity)));
         }
@@ -271,13 +314,20 @@ impl<'l> Loader<'l> {
             first.push((b"linterOptions", object(linter_options)));
         }
         if !options.plugin.is_empty() {
-            let plugins = options.plugin.iter().map(|name| (plugin_shorthand(name), Json::String(name.clone())));
+            let plugins = options
+                .plugin
+                .iter()
+                .map(|name| (plugin_shorthand(name), Json::String(name.clone())));
             first.push((b"plugins", Json::Object(plugins.collect())));
         }
         let mut all = vec![object(first)];
         if let Some(extensions) = &options.ext {
             let patterns = extensions.iter().map(|extension| {
-                let dot: &[u8] = if extension.starts_with(b".") { b"" } else { b"." };
+                let dot: &[u8] = if extension.starts_with(b".") {
+                    b""
+                } else {
+                    b"."
+                };
                 Json::String([b"**/*", dot, extension].concat())
             });
             all.push(object(vec![(b"files", Json::Array(patterns.collect()))]));
@@ -299,26 +349,45 @@ impl<'l> Loader<'l> {
         if !self.options.ignore {
             all = without_global_ignores(all, 0);
         }
-        let mut load_plugin = |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
-        Config::from_flat_json_with_plugins(self.linter.registry(), base_path, &all, &mut load_plugin).map_err(|error| Fatal(error.message))
+        let mut load_plugin =
+            |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
+        Config::from_flat_json_with_plugins(
+            self.linter.registry(),
+            base_path,
+            &all,
+            &mut load_plugin,
+        )
+        .map_err(|error| Fatal(error.message))
     }
 
     /// An `.oxlintrc.json` or `.eslintrc.json`, with what the command line adds.
     fn rc(&self, path: &[u8], mut json: Json, flavor: RcFlavor) -> Result<Config, Fatal> {
         let options = self.options;
         if let Json::Object(entries) = &mut json {
-            let mut put = |key: &[u8], add: Vec<Json>| match entries.iter_mut().find(|it| it.0 == key) {
-                Some((_, Json::Array(items))) => items.extend(add),
-                Some((_, other)) => {
-                    let first = std::mem::replace(other, Json::Null);
-                    *other = Json::Array(std::iter::once(first).chain(add).collect());
-                }
-                None => entries.push((key.to_vec(), Json::Array(add))),
-            };
+            let mut put =
+                |key: &[u8], add: Vec<Json>| match entries.iter_mut().find(|it| it.0 == key) {
+                    Some((_, Json::Array(items))) => items.extend(add),
+                    Some((_, other)) => {
+                        let first = std::mem::replace(other, Json::Null);
+                        *other = Json::Array(std::iter::once(first).chain(add).collect());
+                    }
+                    None => entries.push((key.to_vec(), Json::Array(add))),
+                };
             if !options.ignore_pattern.is_empty() && options.ignore {
-                put(b"ignorePatterns", options.ignore_pattern.iter().cloned().map(Json::String).collect());
+                put(
+                    b"ignorePatterns",
+                    options
+                        .ignore_pattern
+                        .iter()
+                        .cloned()
+                        .map(Json::String)
+                        .collect(),
+                );
             }
-            let mut last = vec![(&b"files"[..], Json::Array(vec![Json::String(b"**/*".to_vec())]))];
+            let mut last = vec![(
+                &b"files"[..],
+                Json::Array(vec![Json::String(b"**/*".to_vec())]),
+            )];
             if !options.rule.is_empty() {
                 last.push((b"rules", Json::Object(options.rule.clone())));
             }
@@ -326,7 +395,10 @@ impl<'l> Loader<'l> {
                 last.push((b"globals", globals));
             }
             if !options.parser_options.is_empty() {
-                last.push((b"parserOptions", Json::Object(options.parser_options.clone())));
+                last.push((
+                    b"parserOptions",
+                    Json::Object(options.parser_options.clone()),
+                ));
             }
             if last.len() > 1 {
                 put(b"overrides", vec![object(last)]);
@@ -339,10 +411,15 @@ impl<'l> Loader<'l> {
             if flavor == RcFlavor::Oxlint && !options.plugins.is_empty() {
                 let mut plugins: Vec<Json> = match entries.iter().find(|it| it.0 == b"plugins") {
                     Some((_, Json::Array(plugins))) => plugins.clone(),
-                    _ => [&b"unicorn"[..], b"typescript", b"oxc"].iter().map(|it| Json::String(it.to_vec())).collect(),
+                    _ => [&b"unicorn"[..], b"typescript", b"oxc"]
+                        .iter()
+                        .map(|it| Json::String(it.to_vec()))
+                        .collect(),
                 };
                 for (name, is_on) in &options.plugins {
-                    plugins.retain(|it| it.as_str().map(plugin_of_oxlint) != Some(plugin_of_oxlint(name)));
+                    plugins.retain(|it| {
+                        it.as_str().map(plugin_of_oxlint) != Some(plugin_of_oxlint(name))
+                    });
                     if *is_on {
                         plugins.push(Json::String(name.to_vec()));
                     }
@@ -350,50 +427,96 @@ impl<'l> Loader<'l> {
                 entries.retain(|it| it.0 != b"plugins");
                 entries.push((b"plugins".to_vec(), Json::Array(plugins)));
             }
-            let of_file = (entries.iter().find(|it| it.0 == b"options").filter(|_| flavor == RcFlavor::Oxlint))
-                .and_then(|it| it.1.get(b"reportUnusedDisableDirectives"))
-                .and_then(|it| match it.as_str()? {
-                    b"allow" | b"off" => Some(Severity::Off),
-                    b"warn" => Some(Severity::Warn),
-                    b"deny" | b"error" => Some(Severity::Error),
-                    _ => None,
-                });
+            let of_file = (entries
+                .iter()
+                .find(|it| it.0 == b"options")
+                .filter(|_| flavor == RcFlavor::Oxlint))
+            .and_then(|it| it.1.get(b"reportUnusedDisableDirectives"))
+            .and_then(|it| match it.as_str()? {
+                b"allow" | b"off" => Some(Severity::Off),
+                b"warn" => Some(Severity::Warn),
+                b"deny" | b"error" => Some(Severity::Error),
+                _ => None,
+            });
             let unused = match (options.report_unused_disable_directives, flavor) {
                 // oxlint warns.
                 (true, RcFlavor::Oxlint) => Some(Severity::Warn),
                 (true, RcFlavor::Eslint) => Some(Severity::Error),
-                (false, _) => options.report_unused_disable_directives_severity.or(of_file),
+                (false, _) => options
+                    .report_unused_disable_directives_severity
+                    .or(of_file),
             };
             if let Some(severity) = unused {
                 entries.retain(|it| it.0 != b"reportUnusedDisableDirectives");
-                entries.push((b"reportUnusedDisableDirectives".to_vec(), severity_name(severity)));
+                entries.push((
+                    b"reportUnusedDisableDirectives".to_vec(),
+                    severity_name(severity),
+                ));
             }
         }
         // An `.eslintrc.json` that `--config` names is for the working directory, wherever it is. What
         // it extends is next to it. The patterns of oxlint are from the directory of the file.
-        let base_path = if options.config.is_some() && flavor == RcFlavor::Eslint { self.cwd() } else { paths::dirname(path) };
-        let mut moved: Vec<(Vec<u8>, Vec<u8>)> = vec![(base_path.to_vec(), paths::dirname(path).to_vec())];
+        let base_path = if options.config.is_some() && flavor == RcFlavor::Eslint {
+            self.cwd()
+        } else {
+            paths::dirname(path)
+        };
+        let mut moved: Vec<(Vec<u8>, Vec<u8>)> =
+            vec![(base_path.to_vec(), paths::dirname(path).to_vec())];
         let mut load = |directory: &[u8], name: &[u8]| {
             // A package, which would have to be run.
             if !name.starts_with(b".") && !paths::is_absolute(name) {
-                self.warn(&[b"\"", name, b"\", which ", path, b" extends, is not supported and was skipped"]);
+                self.warn(&[
+                    b"\"",
+                    name,
+                    b"\", which ",
+                    path,
+                    b" extends, is not supported and was skipped",
+                ]);
                 return Some(Json::Object(Vec::new()));
             }
             // Where the reader takes a file to be, and where it is.
-            let real = moved.iter().find(|it| it.0 == directory).map_or(directory, |it| &it.1[..]);
+            let real = moved
+                .iter()
+                .find(|it| it.0 == directory)
+                .map_or(directory, |it| &it.1[..]);
             let file = paths::resolve(real, name);
             let taken_for = paths::resolve(directory, name);
             if taken_for != file {
-                moved.push((paths::dirname(&taken_for).to_vec(), paths::dirname(&file).to_vec()));
+                moved.push((
+                    paths::dirname(&taken_for).to_vec(),
+                    paths::dirname(&file).to_vec(),
+                ));
             }
             bun_lint::json::parse(&fs::read(&file).ok()?)
         };
         let mut load_plugin = |directory: &[u8], specifier: &[u8], alias: Option<&[u8]>| {
-            let directory = if directory == base_path { paths::dirname(path) } else { directory };
+            let directory = if directory == base_path {
+                paths::dirname(path)
+            } else {
+                directory
+            };
             self.js_plugins.load(directory, specifier, alias)
         };
-        Config::from_rc_json_with_plugins(self.linter.registry(), base_path, &json, flavor, &mut load, &mut load_plugin)
-            .map_err(|error| Fatal([b"Cannot use the configuration file ", path, b":\n", &error.message[..]].concat()))
+        Config::from_rc_json_with_plugins(
+            self.linter.registry(),
+            base_path,
+            &json,
+            flavor,
+            &mut load,
+            &mut load_plugin,
+        )
+        .map_err(|error| {
+            Fatal(
+                [
+                    b"Cannot use the configuration file ",
+                    path,
+                    b":\n",
+                    &error.message[..],
+                ]
+                .concat(),
+            )
+        })
     }
 
     fn built_in(&self) -> Found {
@@ -418,17 +541,36 @@ impl<'l> Loader<'l> {
         let name = paths::basename(path);
         let known = NAMES.iter().find(|it| it.0 == name).map(|it| (it.1, it.2));
         let is_json = name.ends_with(b".json") || name.ends_with(b".jsonc");
-        let syntax = known.map_or(if is_json { Syntax::Json } else { Syntax::Program }, |it| it.1);
+        let syntax = known.map_or(
+            if is_json {
+                Syntax::Json
+            } else {
+                Syntax::Program
+            },
+            |it| it.1,
+        );
         let json = match syntax {
-            Syntax::Program => {
-                evaluate::evaluate(self.environment, evaluate::ESLINT, path, self.options.config_cache)?
-            }
+            Syntax::Program => evaluate::evaluate(
+                self.environment,
+                evaluate::ESLINT,
+                path,
+                self.options.config_cache,
+            )?,
             Syntax::Json => {
                 let text = fs::read(path).map_err(|error| {
-                    Fatal([b"Cannot read the configuration file ", path, b": ", &fs::describe(&error)].concat())
+                    Fatal(
+                        [
+                            b"Cannot read the configuration file ",
+                            path,
+                            b": ",
+                            &fs::describe(&error),
+                        ]
+                        .concat(),
+                    )
                 })?;
-                bun_lint::json::parse(&text)
-                    .ok_or_else(|| Fatal([b"The configuration file ", path, b" is not valid JSON."].concat()))?
+                bun_lint::json::parse(&text).ok_or_else(|| {
+                    Fatal([b"The configuration file ", path, b" is not valid JSON."].concat())
+                })?
             }
         };
         // A file by another name is what it looks like.
@@ -439,9 +581,17 @@ impl<'l> Loader<'l> {
             },
             |it| it.0,
         );
-        let option = |name: &[u8]| json.get(b"options").filter(|_| flavor == Flavor::Oxlint).and_then(|it| it.get(name)).cloned();
+        let option = |name: &[u8]| {
+            json.get(b"options")
+                .filter(|_| flavor == Flavor::Oxlint)
+                .and_then(|it| it.get(name))
+                .cloned()
+        };
         let is_on = |name: &[u8]| option(name).and_then(|it| it.as_bool()) == Some(true);
-        let (is_type_aware, denies_warnings) = (is_on(b"typeAware") || is_on(b"typeCheck"), is_on(b"denyWarnings"));
+        let (is_type_aware, denies_warnings) = (
+            is_on(b"typeAware") || is_on(b"typeCheck"),
+            is_on(b"denyWarnings"),
+        );
         let max_warnings = match option(b"maxWarnings") {
             Some(Json::Number(count)) => Some(count as i64),
             _ => None,
@@ -461,7 +611,14 @@ impl<'l> Loader<'l> {
                         b" is empty. Export [{}] if that is what you want.",
                     ]);
                 }
-                self.flat(base_path, if is_empty { Json::Array(Vec::new()) } else { json })?
+                self.flat(
+                    base_path,
+                    if is_empty {
+                        Json::Array(Vec::new())
+                    } else {
+                        json
+                    },
+                )?
             }
             Flavor::Oxlint => self.rc(path, json, RcFlavor::Oxlint)?,
             Flavor::EslintRc => self.rc(path, json, RcFlavor::Eslint)?,
@@ -493,12 +650,24 @@ impl<'l> Loader<'l> {
             let count = format!("{}", rules.len()).into_bytes();
             let of: Vec<u8> = match plugin {
                 b"" => b"ESLint".to_vec(),
-                b"@typescript-eslint" | b"typescript" | b"typescript-eslint" => b"typescript-eslint".to_vec(),
+                b"@typescript-eslint" | b"typescript" | b"typescript-eslint" => {
+                    b"typescript-eslint".to_vec()
+                }
                 plugin => [b"the plugin \"", plugin, b"\""].concat(),
             };
             match rules[..] {
-                [only] => self.warn(&[b"1 rule of ", &of, b" is not supported yet and was skipped: ", only]),
-                _ => self.warn(&[&count, b" rules of ", &of, b" are not supported yet and were skipped"]),
+                [only] => self.warn(&[
+                    b"1 rule of ",
+                    &of,
+                    b" is not supported yet and was skipped: ",
+                    only,
+                ]),
+                _ => self.warn(&[
+                    &count,
+                    b" rules of ",
+                    &of,
+                    b" are not supported yet and were skipped",
+                ]),
             }
         }
     }
@@ -523,8 +692,12 @@ impl<'l> Loader<'l> {
 
     /// The name of the configuration file among `names`, which are those of a directory.
     fn pick<'n>(names: impl Iterator<Item = &'n [u8]>) -> Option<&'static [u8]> {
-        let candidates = names.filter(|name| name.starts_with(b"eslint.") || name.starts_with(b".") || name.starts_with(b"oxlint."));
-        let best = candidates.filter_map(|name| NAMES.iter().position(|it| it.0 == name)).min()?;
+        let candidates = names.filter(|name| {
+            name.starts_with(b"eslint.") || name.starts_with(b".") || name.starts_with(b"oxlint.")
+        });
+        let best = candidates
+            .filter_map(|name| NAMES.iter().position(|it| it.0 == name))
+            .min()?;
         Some(NAMES[best].0)
     }
 
@@ -532,12 +705,19 @@ impl<'l> Loader<'l> {
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
         if self.has_one_configuration() {
             return match &self.options.config {
-                Some(path) => self.load(&paths::resolve(self.cwd(), &paths::from_native(path)), self.cwd()),
+                Some(path) => self.load(
+                    &paths::resolve(self.cwd(), &paths::from_native(path)),
+                    self.cwd(),
+                ),
                 None => self.load(b"", self.cwd()),
             };
         }
         // oxlint's `--disable-nested-config`: that of the working directory is for everything.
-        let directory = if self.options.disable_nested_config { self.cwd() } else { directory };
+        let directory = if self.options.disable_nested_config {
+            self.cwd()
+        } else {
+            directory
+        };
         let mut asked: Vec<&[u8]> = Vec::new();
         let mut found = None;
         for ancestor in paths::ancestors(directory) {
@@ -546,7 +726,10 @@ impl<'l> Loader<'l> {
                 break;
             }
             asked.push(ancestor);
-            let name = NAMES.iter().map(|it| it.0).find(|name| fs::is_file(&paths::join(ancestor, name)));
+            let name = NAMES
+                .iter()
+                .map(|it| it.0)
+                .find(|name| fs::is_file(&paths::join(ancestor, name)));
             if let Some(name) = name {
                 found = Some(self.load(&paths::join(ancestor, name), ancestor));
                 break;
@@ -593,7 +776,11 @@ impl<'l> Loader<'l> {
     /// The names of the ignore files that count in a directory, the one that overrides the other
     /// last.
     pub(crate) fn ignore_file_names(&self) -> &'static [&'static [u8]] {
-        if self.options.ignore { &[b".gitignore", b".eslintignore"] } else { &[b".gitignore"] }
+        if self.options.ignore {
+            &[b".gitignore", b".eslintignore"]
+        } else {
+            &[b".gitignore"]
+        }
     }
 
     /// Whether a file that is an argument is left out all the same, as by oxlint: `.eslintignore`
@@ -602,9 +789,17 @@ impl<'l> Loader<'l> {
         if loaded.flavor != Flavor::Oxlint || !self.options.ignore {
             return false;
         }
-        let file = self.options.ignore_path.as_deref().map_or_else(|| b".eslintignore".to_vec(), paths::from_native);
+        let file = self
+            .options
+            .ignore_path
+            .as_deref()
+            .map_or_else(|| b".eslintignore".to_vec(), paths::from_native);
         let file = paths::resolve(self.cwd(), &file);
-        gitignore::is_ignored(&gitignore::with_file(None, paths::dirname(&file), &file, true), path, false)
+        gitignore::is_ignored(
+            &gitignore::with_file(None, paths::dirname(&file), &file, true),
+            path,
+            false,
+        )
     }
 
     /// The ignore files that count in `directory`, where a search starts.
@@ -613,8 +808,18 @@ impl<'l> Loader<'l> {
             return None;
         }
         let chain = gitignore::above_and_in(directory, self.ignore_file_names());
-        match self.options.ignore_path.as_ref().filter(|_| self.options.ignore) {
-            Some(path) => gitignore::with_file(chain, self.cwd(), &paths::resolve(self.cwd(), &paths::from_native(path)), true),
+        match self
+            .options
+            .ignore_path
+            .as_ref()
+            .filter(|_| self.options.ignore)
+        {
+            Some(path) => gitignore::with_file(
+                chain,
+                self.cwd(),
+                &paths::resolve(self.cwd(), &paths::from_native(path)),
+                true,
+            ),
             None => chain,
         }
     }

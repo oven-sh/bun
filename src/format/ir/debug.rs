@@ -10,7 +10,13 @@ pub(crate) fn dump(root: Interned, storage: &Storage, source: &[u8]) -> String {
     out
 }
 
-fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usize, out: &mut String) {
+fn dump_range(
+    range: Interned,
+    storage: &Storage,
+    source: &[u8],
+    mut depth: usize,
+    out: &mut String,
+) {
     let mut elements = storage.interned(range).iter();
     while let Some(element) = elements.next() {
         if let FormatElement::Skip(it) = element {
@@ -38,12 +44,18 @@ fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usiz
             FormatElement::IndentedLineGroup(id) => writeln!(out, "group(id: {id:?} indent(line))"),
             FormatElement::LineSuffixBoundary => writeln!(out, "lineSuffixBoundary"),
             FormatElement::Token(token) => writeln!(out, "{}", text(token.as_bytes())),
-            FormatElement::TokenIfBreaks(token) => writeln!(out, "ifBreak({})", text(token.as_bytes())),
+            FormatElement::TokenIfBreaks(token) => {
+                writeln!(out, "ifBreak({})", text(token.as_bytes()))
+            }
             FormatElement::SourceText(it) => {
                 writeln!(out, "{}", text(source.get(it.range()).unwrap_or_default()))
             }
             FormatElement::OwnedText(it) => {
-                writeln!(out, "{}", text(storage.text.get(it.range()).unwrap_or_default()))
+                writeln!(
+                    out,
+                    "{}",
+                    text(storage.text.get(it.range()).unwrap_or_default())
+                )
             }
             FormatElement::Interned(interned) => {
                 let _ = writeln!(out, "interned@{} [", interned.start);

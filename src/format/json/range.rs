@@ -69,9 +69,12 @@ fn find_node_at_offset(nodes: &[Node], text: &[u8], offset: u32, end: End, path:
             Step::Root => true,
             Step::Property(_) => false,
             Step::Node(index) => nodes.get(index as usize).is_some_and(|node| {
-                let source = text.get(node.start as usize..node.end as usize).unwrap_or_default();
+                let source = text
+                    .get(node.start as usize..node.end as usize)
+                    .unwrap_or_default();
                 node.kind != Kind::Identifier
-                    || (before != Step::Property(index) && matches!(source, b"null" | b"true" | b"false"))
+                    || (before != Step::Property(index)
+                        && matches!(source, b"null" | b"true" | b"false"))
             }),
         };
         if is_source_element {
@@ -82,7 +85,12 @@ fn find_node_at_offset(nodes: &[Node], text: &[u8], offset: u32, end: End, path:
 }
 
 /// Prettier's `calculateRange`. `start` and `end` are offsets in bytes.
-fn calculate_range(text: &[u8], tree: &Tree, mut start: usize, mut end: usize) -> Option<(usize, usize)> {
+fn calculate_range(
+    text: &[u8],
+    tree: &Tree,
+    mut start: usize,
+    mut end: usize,
+) -> Option<(usize, usize)> {
     // Without the white space at its ends.
     let range = text.get(start..end)?;
     let trimmed = trim(range);
@@ -101,9 +109,15 @@ fn calculate_range(text: &[u8], tree: &Tree, mut start: usize, mut end: usize) -
         return None;
     }
     // Prettier's `findCommonAncestor`
-    let common = start_path.iter().rev().find(|step| !matches!(step, Step::Property(_)) && end_path.contains(step))?;
+    let common = start_path
+        .iter()
+        .rev()
+        .find(|step| !matches!(step, Step::Property(_)) && end_path.contains(step))?;
     match *common {
-        Step::Node(index) => tree.nodes.get(index as usize).map(|node| (node.start as usize, node.end as usize)),
+        Step::Node(index) => tree
+            .nodes
+            .get(index as usize)
+            .map(|node| (node.start as usize, node.end as usize)),
         _ => Some((0, text.len())),
     }
 }
@@ -126,8 +140,14 @@ pub(super) fn format(
     let body = original.strip_prefix(BOM).unwrap_or(original);
     let to_byte = |offset: Option<u32>| {
         let offset = offset.filter(|it| *it <= original_len)?;
-        let offset = if has_bom { offset.checked_sub(1)? } else { offset };
-        let before = body.get(..utf16_offset_to_byte(body, offset)).unwrap_or_default();
+        let offset = if has_bom {
+            offset.checked_sub(1)?
+        } else {
+            offset
+        };
+        let before = body
+            .get(..utf16_offset_to_byte(body, offset))
+            .unwrap_or_default();
         // A `\r\n` is one byte of `text`.
         let mut pairs = 0;
         let mut rest = before;
@@ -160,7 +180,8 @@ pub(super) fn format(
     };
 
     // The indentation of the line that it starts on.
-    let line_start = bun_core::strings::last_index_of_char(&text[..start], b'\n').map_or(0, |at| at + 1);
+    let line_start =
+        bun_core::strings::last_index_of_char(&text[..start], b'\n').map_or(0, |at| at + 1);
     let indentation = &text[line_start..start];
     let indentation_len = {
         let mut at = 0;
@@ -178,10 +199,11 @@ pub(super) fn format(
     };
     // Prettier's `getAlignmentSize`
     let tab_width = config.indent_width.max(1);
-    config.alignment = bstr::ByteSlice::chars(&indentation[..indentation_len]).fold(0u32, |size, c| match c {
-        '\t' => size + tab_width - size % tab_width,
-        _ => size + 1,
-    });
+    config.alignment =
+        bstr::ByteSlice::chars(&indentation[..indentation_len]).fold(0u32, |size, c| match c {
+            '\t' => size + tab_width - size % tab_width,
+            _ => size + 1,
+        });
 
     let mut formatted = Vec::new();
     format_normalized(&text[start..end], &config, options, scratch, &mut formatted)?;

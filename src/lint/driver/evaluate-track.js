@@ -43,7 +43,11 @@ wrap(fs, [...reads, ...reads.map(name => `${name}Sync`), "createReadStream"], to
 wrap(fs.promises, reads, touch);
 wrap(fs, ["glob", "globSync", "watch", "watchFile"], giveUp);
 wrap(fs.promises, ["glob", "watch"], giveUp);
-wrap(require("node:child_process"), ["exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork"], giveUp);
+wrap(
+  require("node:child_process"),
+  ["exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync", "fork"],
+  giveUp,
+);
 wrap(globalThis, ["fetch"], giveUp);
 wrap(globalThis.Bun, ["spawn", "spawnSync", "$", "Glob", "connect"], giveUp);
 wrap(globalThis.Bun, ["file"], touch);
@@ -70,6 +74,7 @@ function finish(config) {
     const match = /^(.*[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+)[\\/]/.exec(file);
     files.add(match ? resolve(match[1], "package.json") : file);
   }
-  process.stdout.write(marker + JSON.stringify({ config, files: [...files], environment: [...environment], uncacheable }));
+  process.stdout.write(
+    marker + JSON.stringify({ config, files: [...files], environment: [...environment], uncacheable }),
+  );
 }
-

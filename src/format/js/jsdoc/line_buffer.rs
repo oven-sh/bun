@@ -64,7 +64,9 @@ impl LineBuffer {
                 _ => break line,
             }
         };
-        list_marker(last).is_some() || trim_start(last).starts_with(b"```") || last.starts_with(b"    ")
+        list_marker(last).is_some()
+            || trim_start(last).starts_with(b"```")
+            || last.starts_with(b"    ")
     }
 
     pub(super) fn into_bytes(self) -> Vec<u8> {

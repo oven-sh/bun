@@ -199,7 +199,10 @@ impl Selector {
             return Err(Error::unknown_class(name.of(&program.bytes)));
         }
         let mut analysis = compile::Analysis::default();
-        let types = match (analysis.analyze(&program, root), compile::possible_types(&program, root)) {
+        let types = match (
+            analysis.analyze(&program, root),
+            compile::possible_types(&program, root),
+        ) {
             (Some(looked_up), Some(possible)) => Some(looked_up.intersection(possible)),
             (looked_up, possible) => looked_up.or(possible),
         };
@@ -209,7 +212,9 @@ impl Selector {
             is_exit: source.ends_with(b":exit"),
             always_matches: compile::always_matches(&program, root),
             tags: match types {
-                Some(types) => types.iter().fold(NodeTags::EMPTY, |tags, it| tags | it.listens_to()),
+                Some(types) => types
+                    .iter()
+                    .fold(NodeTags::EMPTY, |tags, it| tags | it.listens_to()),
                 None => NodeTags::ALL,
             },
             program,

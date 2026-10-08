@@ -13,9 +13,13 @@ use crate::FormatError;
 use crate::ir::width::string_width;
 use crate::js::utils::array::{is_line_after_element_empty, is_next_line_empty};
 use crate::js::utils::number::format_trimmed_number;
-use crate::js::utils::string::{is_canonical_simple_number, is_es5_identifier_name, is_simple_number};
+use crate::js::utils::string::{
+    is_canonical_simple_number, is_es5_identifier_name, is_simple_number,
+};
 use crate::options::{QuoteProperties, QuoteStyle};
-use bun_lint::utils::text::{code_point_at, is_identifier_part, is_identifier_start, is_js_whitespace};
+use bun_lint::utils::text::{
+    code_point_at, is_identifier_part, is_identifier_start, is_js_whitespace,
+};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Kind {
@@ -185,7 +189,11 @@ enum State {
 }
 
 /// Fills `tree`. It has no nodes if there is nothing but white space and comments.
-pub(super) fn parse(text: &[u8], config: &Config, tree: &mut Tree) -> std::result::Result<(), FormatError> {
+pub(super) fn parse(
+    text: &[u8],
+    config: &Config,
+    tree: &mut Tree,
+) -> std::result::Result<(), FormatError> {
     tree.nodes.clear();
     tree.comments.clear();
     tree.open.clear();
@@ -230,7 +238,11 @@ impl Reader<'_, '_> {
                 State::AfterValue(value) => {
                     if self.tree.open.is_empty() {
                         self.skip_trivia(Owner::NONE, Owner::node(value))?;
-                        return if self.at == self.text.len() { Ok(()) } else { Err(SyntaxError) };
+                        return if self.at == self.text.len() {
+                            Ok(())
+                        } else {
+                            Err(SyntaxError)
+                        };
                     }
                     self.after_value(value)?
                 }
@@ -267,10 +279,12 @@ impl Reader<'_, '_> {
         let rest = self.text.get(start + 2..).unwrap_or_default();
         let (len, is_block) = match self.text.get(start + 1) {
             Some(b'/') => {
-                let mut len = bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
+                let mut len =
+                    bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
                 // U+2028 and U+2029 end a line too.
                 if let Some(at) = bun_core::strings::index_of(&rest[..len], &[0xE2, 0x80])
-                    && let Some(separator) = (at..len).find(|&i| matches!(rest.get(i..i + 3), Some([0xE2, 0x80, 0xA8 | 0xA9])))
+                    && let Some(separator) = (at..len)
+                        .find(|&i| matches!(rest.get(i..i + 3), Some([0xE2, 0x80, 0xA8 | 0xA9])))
                 {
                     len = separator;
                 }
@@ -389,7 +403,9 @@ impl Reader<'_, '_> {
             _ => {
                 let identifier = self.identifier()?;
                 match self.source_of(identifier) {
-                    b"null" | b"true" | b"false" | b"Infinity" | b"NaN" | b"undefined" => Ok(State::AfterValue(identifier)),
+                    b"null" | b"true" | b"false" | b"Infinity" | b"NaN" | b"undefined" => {
+                        Ok(State::AfterValue(identifier))
+                    }
                     _ => Err(SyntaxError),
                 }
             }
@@ -505,23 +521,36 @@ impl Reader<'_, '_> {
         let container = self.tree.nodes[open.node as usize].kind;
         if container == Kind::Array {
             let previous = open.last_value.map(|it| self.tree.nodes[it as usize].kind);
-            open.is_matrix &= node.is_container() && node.count > 1 && previous.is_none_or(|it| it == node.kind);
+            open.is_matrix &=
+                node.is_container() && node.count > 1 && previous.is_none_or(|it| it == node.kind);
             open.is_concise &= match node.kind {
                 Kind::Number => true,
-                Kind::Unary => self.tree.nodes.get(value as usize + 1).is_some_and(|it| it.kind == Kind::Number),
+                Kind::Unary => self
+                    .tree
+                    .nodes
+                    .get(value as usize + 1)
+                    .is_some_and(|it| it.kind == Kind::Number),
                 _ => false,
             };
         }
         open.count += 1;
         open.width = open.width.saturating_add(node.width);
         open.last_value = Some(value);
-        open.last_child = if container == Kind::Object { Owner::property(open.name) } else { Owner::node(value) };
+        open.last_child = if container == Kind::Object {
+            Owner::property(open.name)
+        } else {
+            Owner::node(value)
+        };
         open.is_last_hole = false;
         let (enclosing, preceding) = (Owner::node(open.node), open.last_child);
 
         self.line_breaks = 0;
         self.skip_trivia(enclosing, preceding)?;
-        let end = if container == Kind::Object { b'}' } else { b']' };
+        let end = if container == Kind::Object {
+            b'}'
+        } else {
+            b']'
+        };
         match self.peek() {
             Some(b',') => {
                 self.at += 1;
@@ -530,7 +559,9 @@ impl Reader<'_, '_> {
                     return Ok(self.close());
                 }
                 // What is asked skips any number of commas: those of holes too.
-                if (self.line_breaks > 1 || self.peek() == Some(b',')) && !self.config.is_stringify() {
+                if (self.line_breaks > 1 || self.peek() == Some(b','))
+                    && !self.config.is_stringify()
+                {
                     let is_blank = match container {
                         Kind::Object => is_next_line_empty(self.text, node.end as usize),
                         _ => is_line_after_element_empty(self.text, node.end as usize),
@@ -542,7 +573,11 @@ impl Reader<'_, '_> {
                         }
                     }
                 }
-                Ok(if container == Kind::Object { State::NameOrEnd } else { State::ElementOrEnd })
+                Ok(if container == Kind::Object {
+                    State::NameOrEnd
+                } else {
+                    State::ElementOrEnd
+                })
             }
             Some(byte) if byte == end => Ok(self.close()),
             _ => Err(SyntaxError),
@@ -583,7 +618,10 @@ impl Reader<'_, '_> {
             }
         };
         let is_object = node.kind == Kind::Object;
-        if is_object && config.parser == Parser::Json5 && config.quote_properties == QuoteProperties::Consistent {
+        if is_object
+            && config.parser == Parser::Json5
+            && config.quote_properties == QuoteProperties::Consistent
+        {
             sum = self.make_names_consistent(open.node, open.requires_quotes, sum);
         }
         let node = &mut self.tree.nodes[open.node as usize];
@@ -594,7 +632,9 @@ impl Reader<'_, '_> {
                 .saturating_add(separators)
                 .saturating_add(open.count.saturating_mul(2))
                 .saturating_add(2 + 2 * u32::from(config.bracket_spacing)),
-            (false, false) => sum.saturating_add(separators).saturating_add(2 + u32::from(open.is_last_hole)),
+            (false, false) => sum
+                .saturating_add(separators)
+                .saturating_add(2 + u32::from(open.is_last_hole)),
         };
         State::AfterValue(open.node)
     }
@@ -612,9 +652,10 @@ impl Reader<'_, '_> {
             let node = self.tree.nodes[name as usize];
             let source = &self.text[node.start as usize..node.end as usize];
             let (width, flags) = match node.kind {
-                Kind::String if !requires_quotes => {
-                    (string_width(&source[1..source.len() - 1]), (node.flags | UNQUOTED) & !REWRITTEN)
-                }
+                Kind::String if !requires_quotes => (
+                    string_width(&source[1..source.len() - 1]),
+                    (node.flags | UNQUOTED) & !REWRITTEN,
+                ),
                 Kind::Identifier if requires_quotes => (node.width + 2, node.flags | QUOTED),
                 Kind::Number if requires_quotes => {
                     let printed = format_trimmed_number(source);
@@ -632,7 +673,11 @@ impl Reader<'_, '_> {
             node.width = width;
             node.flags = flags;
             // Past the value.
-            name = self.tree.nodes.get(name as usize + 1).map_or(end, |value| value.next);
+            name = self
+                .tree
+                .nodes
+                .get(name as usize + 1)
+                .map_or(end, |value| value.next);
         }
         sum
     }
@@ -670,12 +715,24 @@ impl Reader<'_, '_> {
             // Prettier's `getPreferredQuote`
             None => {
                 let preferred = self.config.preferred_quote;
-                let count = |quote: QuoteStyle| bun_core::strings::count_char(content, quote.as_byte());
-                if count(preferred) > count(preferred.other()) { preferred.other() } else { preferred }
+                let count =
+                    |quote: QuoteStyle| bun_core::strings::count_char(content, quote.as_byte());
+                if count(preferred) > count(preferred.other()) {
+                    preferred.other()
+                } else {
+                    preferred
+                }
             }
         };
         let (width, flags) = if wanted.as_byte() == quote {
-            (if is_plain { source.len() as u32 } else { string_width(source) }, 0)
+            (
+                if is_plain {
+                    source.len() as u32
+                } else {
+                    string_width(source)
+                },
+                0,
+            )
         } else {
             let mut scratch = std::mem::take(&mut self.tree.scratch);
             scratch.clear();
@@ -684,22 +741,39 @@ impl Reader<'_, '_> {
             self.tree.scratch = scratch;
             (width, REWRITTEN)
         };
-        Ok(self.push(Kind::String, start, if has_line_break { MUST_BREAK } else { width }, flags))
+        Ok(self.push(
+            Kind::String,
+            start,
+            if has_line_break { MUST_BREAK } else { width },
+            flags,
+        ))
     }
 
     /// The length of the escape sequence at `at`, where there is a backslash.
     fn escape_len(&self, at: usize) -> Result<usize> {
         let hex = |range: std::ops::Range<usize>| {
-            self.text.get(range).is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit))
+            self.text
+                .get(range)
+                .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit))
         };
         match *self.text.get(at + 1).ok_or(SyntaxError)? {
             b'x' if hex(at + 2..at + 4) => Ok(4),
             b'u' if self.text.get(at + 2) == Some(&b'{') => {
-                let digits = self.text[at + 3..].iter().take_while(|b| b.is_ascii_hexdigit()).count();
-                let value = self.text[at + 3..at + 3 + digits].iter().fold(0u32, |value, digit| {
-                    value.saturating_mul(16).saturating_add((*digit as char).to_digit(16).unwrap_or(0))
-                });
-                match digits > 0 && value <= 0x10_FFFF && self.text.get(at + 3 + digits) == Some(&b'}') {
+                let digits = self.text[at + 3..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_hexdigit())
+                    .count();
+                let value = self.text[at + 3..at + 3 + digits]
+                    .iter()
+                    .fold(0u32, |value, digit| {
+                        value
+                            .saturating_mul(16)
+                            .saturating_add((*digit as char).to_digit(16).unwrap_or(0))
+                    });
+                match digits > 0
+                    && value <= 0x10_FFFF
+                    && self.text.get(at + 3 + digits) == Some(&b'}')
+                {
                     true => Ok(digits + 4),
                     false => Err(SyntaxError),
                 }
@@ -715,7 +789,10 @@ impl Reader<'_, '_> {
         let start = self.at;
         let text = self.text;
         let digits = |at: usize, is_digit: fn(&u8) -> bool| {
-            text[at..].iter().take_while(|b| is_digit(b) || **b == b'_').count()
+            text[at..]
+                .iter()
+                .take_while(|b| is_digit(b) || **b == b'_')
+                .count()
         };
         let decimal = |b: &u8| b.is_ascii_digit();
         let mut at = start;
@@ -758,7 +835,9 @@ impl Reader<'_, '_> {
         // No name, which includes the `n` of a `bigint`, right after a number.
         match text.get(at) {
             Some(b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' | b'\\') => return Err(SyntaxError),
-            Some(0x80..) if is_identifier_start(code_point_at(text, at).0) => return Err(SyntaxError),
+            Some(0x80..) if is_identifier_start(code_point_at(text, at).0) => {
+                return Err(SyntaxError);
+            }
             _ => {}
         }
         self.at = at;
@@ -784,7 +863,11 @@ impl Reader<'_, '_> {
                 Some(b'0'..=b'9') if at > start => at += 1,
                 Some(0x80..) => {
                     let (c, len) = code_point_at(self.text, at);
-                    let is_part = if at == start { is_identifier_start(c) } else { is_identifier_part(c) };
+                    let is_part = if at == start {
+                        is_identifier_start(c)
+                    } else {
+                        is_identifier_part(c)
+                    };
                     if !is_part {
                         break;
                     }
@@ -798,7 +881,11 @@ impl Reader<'_, '_> {
             return Err(SyntaxError);
         }
         self.at = at;
-        let width = if is_ascii { (at - start) as u32 } else { string_width(&self.text[start..at]) };
+        let width = if is_ascii {
+            (at - start) as u32
+        } else {
+            string_width(&self.text[start..at])
+        };
         Ok(self.push(Kind::Identifier, start, width, 0))
     }
 
@@ -815,10 +902,11 @@ impl Reader<'_, '_> {
         }
         self.at = at + 1;
         let source = &self.text[start..self.at];
-        let width = match bun_core::strings::contains_char(source, b'\n') && !self.config.is_stringify() {
-            true => MUST_BREAK,
-            false => string_width(source),
-        };
+        let width =
+            match bun_core::strings::contains_char(source, b'\n') && !self.config.is_stringify() {
+                true => MUST_BREAK,
+                false => string_width(source),
+            };
         Ok(self.push(Kind::Template, start, width, 0))
     }
 }

@@ -246,7 +246,11 @@ impl Fold {
 }
 
 fn folds(unicode: bool) -> impl Iterator<Item = Fold> {
-    fold_table(unicode).as_chunks::<3>().0.iter().filter_map(|triple| fold_at(triple))
+    fold_table(unicode)
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter_map(|triple| fold_at(triple))
 }
 
 fn fold_table(unicode: bool) -> &'static [i32] {

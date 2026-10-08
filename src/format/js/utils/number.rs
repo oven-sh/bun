@@ -19,7 +19,10 @@ pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
     }
     let mut out: SmallVec<[u8; 32]> = text.iter().map(u8::to_ascii_lowercase).collect();
 
-    let mantissa_len = out.iter().take_while(|b| b.is_ascii_digit() || **b == b'.').count();
+    let mantissa_len = out
+        .iter()
+        .take_while(|b| b.is_ascii_digit() || **b == b'.')
+        .count();
     if mantissa_len > 0 && out.get(mantissa_len) == Some(&b'e') {
         // `^([\d.]+e)(?:\+|(-))?0*(?=\d)` becomes `$1$2`
         let sign = mantissa_len + 1;
@@ -29,7 +32,10 @@ pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
             Some(next) if next.is_ascii_digit() => zeros,
             _ => zeros.saturating_sub(1),
         };
-        if out.get(digits + removed_zeros).is_some_and(u8::is_ascii_digit) {
+        if out
+            .get(digits + removed_zeros)
+            .is_some_and(u8::is_ascii_digit)
+        {
             out.drain(digits..digits + removed_zeros);
             if out.get(sign) == Some(&b'+') {
                 out.remove(sign);
@@ -49,13 +55,20 @@ pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
 
     // Angular takes a number with more than one dot. Each of the two is done at the first dot where it can be.
     let next_dot = |out: &[u8], from: usize| {
-        out.get(from..).and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'.')).map(|at| from + at)
+        out.get(from..)
+            .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'.'))
+            .map(|at| from + at)
     };
     // `(\.\d+?)0+(?=e|$)` becomes `$1`
     let mut from = 0;
     while let Some(dot) = next_dot(&out, from) {
         let fraction = dot + 1;
-        let fraction_end = fraction + out.iter().skip(fraction).take_while(|b| b.is_ascii_digit()).count();
+        let fraction_end = fraction
+            + out
+                .iter()
+                .skip(fraction)
+                .take_while(|b| b.is_ascii_digit())
+                .count();
         if matches!(out.get(fraction_end), None | Some(b'e')) {
             let digits = out.get(fraction..fraction_end).unwrap_or_default();
             let zeros = digits.iter().rev().take_while(|b| **b == b'0').count();

@@ -49,9 +49,15 @@ impl Parser {
 pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     use bun_core::strings::last_index_of_char;
     let separator = last_index_of_char(path, b'/').max(last_index_of_char(path, b'\\'));
-    let basename = path.get(separator.map_or(0, |at| at + 1)..).unwrap_or_default().to_ascii_lowercase();
+    let basename = path
+        .get(separator.map_or(0, |at| at + 1)..)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let basename = &basename[..];
-    if matches!(basename, b"package.json" | b"package-lock.json" | b"composer.json") {
+    if matches!(
+        basename,
+        b"package.json" | b"package-lock.json" | b"composer.json"
+    ) {
         return Some(Parser::JsonStringify);
     }
     // Prettier compares the name in lower case with the extensions as they are, so those with an
@@ -115,7 +121,10 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     if FILENAMES.contains(&basename) {
         return Some(Parser::Json);
     }
-    EXTENSIONS.iter().find(|(extension, _)| basename.ends_with(extension)).map(|(_, parser)| *parser)
+    EXTENSIONS
+        .iter()
+        .find(|(extension, _)| basename.ends_with(extension))
+        .map(|(_, parser)| *parser)
 }
 
 /// What the options and the parser come down to.
@@ -146,7 +155,8 @@ impl Config {
         // Prettier's `printString`. `json5` with `quoteProps: "preserve"` is how JSON with trailing
         // commas was asked for before there was `jsonc`.
         let is_double = parser != Parser::Json5
-            || (options.quote_properties == QuoteProperties::Preserve && options.quote_style.is_double());
+            || (options.quote_properties == QuoteProperties::Preserve
+                && options.quote_style.is_double());
         Config {
             parser,
             print_width: u32::from(options.line_width.value()),
@@ -155,11 +165,16 @@ impl Config {
             line_ending: options.line_ending.resolve(text).as_bytes(),
             bracket_spacing: options.bracket_spacing.value(),
             preserves_wrap: options.expand == Expand::Auto,
-            trailing_comma: matches!(parser, Parser::Jsonc | Parser::Json5) && !options.trailing_commas.is_none(),
+            trailing_comma: matches!(parser, Parser::Jsonc | Parser::Json5)
+                && !options.trailing_commas.is_none(),
             quote_properties: options.quote_properties,
             string_quote: is_double.then_some(QuoteStyle::Double),
             preferred_quote: options.quote_style,
-            name_quote: if is_double { QuoteStyle::Double } else { options.quote_style },
+            name_quote: if is_double {
+                QuoteStyle::Double
+            } else {
+                options.quote_style
+            },
             alignment: 0,
         }
     }
@@ -203,7 +218,9 @@ pub fn format(
     // For Prettier, every `json` document has a pragma and none has one that says to ignore it.
     let mut with_pragma = Vec::new();
     let mut text = text;
-    if parser != Parser::Json && (options.require_pragma || options.check_ignore_pragma || options.insert_pragma) {
+    if parser != Parser::Json
+        && (options.require_pragma || options.check_ignore_pragma || options.insert_pragma)
+    {
         if (options.require_pragma && !crate::pragma::has_pragma(text))
             || (options.check_ignore_pragma && crate::pragma::has_ignore_pragma(text))
         {
@@ -229,11 +246,32 @@ pub fn format(
         normalize_line_breaks(text, &mut normalized);
     }
     let result = if options.range_start.is_some() || options.range_end.is_some() {
-        range::format(original, if has_carriage_return { &normalized } else { text }, config, options, scratch, out)
+        range::format(
+            original,
+            if has_carriage_return {
+                &normalized
+            } else {
+                text
+            },
+            config,
+            options,
+            scratch,
+            out,
+        )
     } else {
         // It stays, even if nothing but white space follows, which is nothing.
         out.extend_from_slice(bom);
-        format_normalized(if has_carriage_return { &normalized } else { text }, &config, options, scratch, out)
+        format_normalized(
+            if has_carriage_return {
+                &normalized
+            } else {
+                text
+            },
+            &config,
+            options,
+            scratch,
+            out,
+        )
     };
     scratch.normalized = normalized;
     result

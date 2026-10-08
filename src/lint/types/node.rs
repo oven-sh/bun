@@ -39,7 +39,13 @@ impl std::hash::Hash for TsNode<'_> {
 }
 impl std::fmt::Debug for TsNode<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}({}:{})", self.kind(), self.raw.file.0, self.raw.node.0)
+        write!(
+            f,
+            "{:?}({}:{})",
+            self.kind(),
+            self.raw.file.0,
+            self.raw.node.0
+        )
     }
 }
 
@@ -62,7 +68,8 @@ impl<'a> TsNode<'a> {
 
     #[inline]
     fn some(self, node: RawNode) -> Option<Self> {
-        node.is_some().then(|| TsNode::new(self.file, self.raw.file, node))
+        node.is_some()
+            .then(|| TsNode::new(self.file, self.raw.file, node))
     }
 
     #[inline]
@@ -139,7 +146,9 @@ impl<'a> TsNode<'a> {
     /// `ts.forEachChild(node, ..)`
     pub fn children(self) -> impl ExactSizeIterator<Item = TsNode<'a>> + 'a {
         let children = self.file.query(|q| q.node_children(self.raw));
-        children.iter().map(move |&node| TsNode::new(self.file, self.raw.file, node))
+        children
+            .iter()
+            .map(move |&node| TsNode::new(self.file, self.raw.file, node))
     }
 
     /// `node.text` of an identifier, a private identifier, a string or a numeric literal. Empty for
@@ -252,7 +261,9 @@ impl<'a> TsNode<'a> {
             NodeData::ExportSpec(id) => ast::Node::ExportSpec(ast::ExportSpec::some(file, id)?),
             NodeData::TupleElem(id) => ast::Node::TupleElem(ast::TupleElem::some(file, id)?),
             NodeData::Paren(_) => return self.expression()?.to_ast(),
-            NodeData::None | NodeData::Modifier(_) | NodeData::Name(_) | NodeData::Part(..) => return None,
+            NodeData::None | NodeData::Modifier(_) | NodeData::Name(_) | NodeData::Part(..) => {
+                return None;
+            }
         })
     }
 
@@ -271,7 +282,10 @@ impl<'a> TsNode<'a> {
 
     /// `checker.getTypeFromTypeNode(node)`
     pub fn get_type_from_type_node(self) -> Type<'a> {
-        Type::new(self.file, self.file.query(|q| q.type_from_type_node(self.raw)))
+        Type::new(
+            self.file,
+            self.file.query(|q| q.type_from_type_node(self.raw)),
+        )
     }
 
     /// `checker.getContextualType(node)`
@@ -282,14 +296,18 @@ impl<'a> TsNode<'a> {
 
     /// `getApparentTypeOfContextualType(node)`
     pub fn get_apparent_type_of_contextual_type(self) -> Option<Type<'a>> {
-        let id = self.file.query(|q| q.apparent_type_of_contextual_type(self.raw))?;
+        let id = self
+            .file
+            .query(|q| q.apparent_type_of_contextual_type(self.raw))?;
         Some(Type::new(self.file, id))
     }
 
     /// `checker.getContextualTypeForArgumentAtIndex(node, index)`
     pub fn get_contextual_type_for_argument_at_index(self, index: usize) -> Option<Type<'a>> {
         let index = index as u32;
-        let id = self.file.query(|q| q.contextual_type_for_argument_at_index(self.raw, index))?;
+        let id = self
+            .file
+            .query(|q| q.contextual_type_for_argument_at_index(self.raw, index))?;
         Some(Type::new(self.file, id))
     }
 
@@ -301,18 +319,22 @@ impl<'a> TsNode<'a> {
 
     /// `checker.getSignatureFromDeclaration(node)`
     pub fn get_signature_from_declaration(self) -> Option<Signature<'a>> {
-        let id = self.file.query(|q| q.signature_from_declaration(self.raw))?;
+        let id = self
+            .file
+            .query(|q| q.signature_from_declaration(self.raw))?;
         Some(Signature::new(self.file, id))
     }
 
     /// `checker.getShorthandAssignmentValueSymbol(node)`
     pub fn get_shorthand_assignment_value_symbol(self) -> Option<TsSymbol<'a>> {
-        let id = self.file.query(|q| q.shorthand_assignment_value_symbol(self.raw))?;
+        let id = self
+            .file
+            .query(|q| q.shorthand_assignment_value_symbol(self.raw))?;
         Some(TsSymbol::new(self.file, id))
     }
 
     /// `getAccessedPropertyName(node)`: the name that a property access, an element access with a
-    /// key of a literal type, a binding element or a parameter reads. 
+    /// key of a literal type, a binding element or a parameter reads.
     pub fn get_accessed_property_name(self) -> Option<&'a [u8]> {
         self.file.query(|q| q.accessed_property_name(self.raw))
     }
@@ -329,13 +351,19 @@ impl<'a> TsNode<'a> {
 
     /// `getFlowTypeOfReference(node, declaredType)`
     pub fn get_flow_type_of_reference(self, declared: Type<'a>) -> Type<'a> {
-        let id = self.file.query(|q| q.flow_type_of_reference(self.raw, declared.id()));
+        let id = self
+            .file
+            .query(|q| q.flow_type_of_reference(self.raw, declared.id()));
         Type::new(self.file, id)
     }
 
     /// `getContextFreeTypeOfExpression(node)`
     pub fn get_context_free_type_of_expression(self) -> Type<'a> {
-        Type::new(self.file, self.file.query(|q| q.context_free_type_of_expression(self.raw)))
+        Type::new(
+            self.file,
+            self.file
+                .query(|q| q.context_free_type_of_expression(self.raw)),
+        )
     }
 
     /// The text after `@deprecated` in the JSDoc comment of the declaration. `None`: it has no

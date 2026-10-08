@@ -223,7 +223,9 @@ fn ranges<'a>(
             }
             Label::Disable => {
                 for &(name, span) in &names {
-                    by_name.entry(name).or_insert_with(|| open(content.end, span));
+                    by_name
+                        .entry(name)
+                        .or_insert_with(|| open(content.end, span));
                 }
             }
             Label::DisableNextLine => {
@@ -311,9 +313,14 @@ struct Index<'a> {
 impl<'a> Index<'a> {
     fn new(ranges: &[Range<'a>], places: &[(Place, Place)]) -> Self {
         let numbered = ranges.iter().zip(0u32..);
-        let mut entries: Vec<_> = numbered.map(|(it, i)| (it.name.map_or(&b""[..], last_part), i)).collect();
+        let mut entries: Vec<_> = numbered
+            .map(|(it, i)| (it.name.map_or(&b""[..], last_part), i))
+            .collect();
         entries.sort_unstable();
-        let mut index = Index { last_stop: vec![(0, 0); entries.len()], entries };
+        let mut index = Index {
+            last_stop: vec![(0, 0); entries.len()],
+            entries,
+        };
         let mut start = 0;
         while let Some(&(name, _)) = index.entries.get(start) {
             let len = index.entries[start..].partition_point(|it| it.0 == name);
@@ -329,13 +336,21 @@ impl<'a> Index<'a> {
         }
         let middle = start + (end - start) / 2;
         let own = places[self.entries[middle].1 as usize].1;
-        let last = own.max(self.note_stops(places, start, middle)).max(self.note_stops(places, middle + 1, end));
+        let last = own
+            .max(self.note_stops(places, start, middle))
+            .max(self.note_stops(places, middle + 1, end));
         self.last_stop[middle] = last;
         last
     }
 
     /// Adds the numbers of the ranges with the key `name` that overlap `start..end`, in ascending order.
-    fn overlapping(&self, name: &[u8], places: &[(Place, Place)], (start, end): (Place, Place), found: &mut SmallVec<[u32; 8]>) {
+    fn overlapping(
+        &self,
+        name: &[u8],
+        places: &[(Place, Place)],
+        (start, end): (Place, Place),
+        found: &mut SmallVec<[u32; 8]>,
+    ) {
         let first = self.entries.partition_point(|it| it.0 < name);
         let len = self.entries[first..].partition_point(|it| it.0 == name);
         self.search(places, (first, first + len), (start, end), found);
@@ -396,8 +411,15 @@ pub(crate) fn apply<'a>(
         index.overlapping(b"", &places, (start, end), &mut overlapping);
         let for_all_rules = overlapping.len();
         match id {
-            RuleId::Known(meta) => index.overlapping(last_part(meta.name.as_bytes()), &places, (start, end), &mut overlapping),
-            RuleId::Js(rule) => index.overlapping(last_part(&rule.id), &places, (start, end), &mut overlapping),
+            RuleId::Known(meta) => index.overlapping(
+                last_part(meta.name.as_bytes()),
+                &places,
+                (start, end),
+                &mut overlapping,
+            ),
+            RuleId::Js(rule) => {
+                index.overlapping(last_part(&rule.id), &places, (start, end), &mut overlapping)
+            }
             RuleId::Unknown(_) => {}
         }
         if for_all_rules > 0 && overlapping.len() > for_all_rules {

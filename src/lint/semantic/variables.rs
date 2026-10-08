@@ -3,8 +3,8 @@
 //! The declarations are read off the lists of the HIR. What is derived here is which scope of
 //! [`ScopeTree`] each is in, and which of them declare one variable.
 
-use super::{DeclarationKind, ScopeKind};
 use super::scopes::{self, Block, NONE, ScopeTree};
+use super::{DeclarationKind, ScopeKind};
 use crate::ast::File;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent};
@@ -71,9 +71,10 @@ pub(crate) fn kind_bit(decl: Decl, is_catch_parameter: bool) -> u16 {
         Decl::Enum(_) => DeclarationKind::TsEnumName,
         Decl::EnumMember(_) => DeclarationKind::TsEnumMember,
         Decl::Module(_) => DeclarationKind::TsModuleName,
-        Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_) => {
-            DeclarationKind::ImportBinding
-        }
+        Decl::ImportDefault(_)
+        | Decl::ImportNamespace(_)
+        | Decl::ImportSpec(_)
+        | Decl::ImportEquals(_) => DeclarationKind::ImportBinding,
         _ => return 0,
     };
     1 << kind as u16
@@ -128,7 +129,9 @@ impl NameTable {
 pub(crate) fn root_of_pattern(file: &File, mut pat: hir::PatId) -> PatParent {
     loop {
         match file.bound.pat_parent.get(pat.idx()) {
-            Some(&(PatParent::Prop(outer, _) | PatParent::Elem(outer, _))) if outer != pat => pat = outer,
+            Some(&(PatParent::Prop(outer, _) | PatParent::Elem(outer, _))) if outer != pat => {
+                pat = outer
+            }
             Some(&root) => return root,
             None => return PatParent::None,
         }
@@ -137,7 +140,11 @@ pub(crate) fn root_of_pattern(file: &File, mut pat: hir::PatId) -> PatParent {
 
 /// Whether `d` is the `e` of `catch (e)`.
 pub(crate) fn is_catch_parameter(file: &File, d: hir::VarDeclId) -> bool {
-    let statement = file.bound.var_stmt.get(d.idx()).and_then(|it| file.hir.stmts.get(it.idx()));
+    let statement = file
+        .bound
+        .var_stmt
+        .get(d.idx())
+        .and_then(|it| file.hir.stmts.get(it.idx()));
     matches!(statement.map(|it| it.kind), Some(StmtKind::Try { .. }))
 }
 
@@ -161,7 +168,10 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             }
         }
         Decl::Class(c) => hir.classes.get(c.idx()).map(|it| (it.name, it.name_pos))?,
-        Decl::Interface(i) => hir.interfaces.get(i.idx()).map(|it| (it.name, it.name_pos))?,
+        Decl::Interface(i) => hir
+            .interfaces
+            .get(i.idx())
+            .map(|it| (it.name, it.name_pos))?,
         Decl::Alias(a) => hir.aliases.get(a.idx()).map(|it| (it.name, it.name_pos))?,
         Decl::Enum(e) => hir.enums.get(e.idx()).map(|it| (it.name, it.name_pos))?,
         Decl::EnumMember(m) => {
@@ -185,10 +195,19 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             }
         }
         Decl::TypeParam(p) => hir.type_params.get(p.idx()).map(|it| (it.name, it.pos))?,
-        Decl::ImportDefault(i) => hir.imports.get(i.idx()).map(|it| (it.default, it.default_pos))?,
-        Decl::ImportNamespace(i) => hir.imports.get(i.idx()).map(|it| (it.namespace, it.namespace_pos))?,
+        Decl::ImportDefault(i) => hir
+            .imports
+            .get(i.idx())
+            .map(|it| (it.default, it.default_pos))?,
+        Decl::ImportNamespace(i) => hir
+            .imports
+            .get(i.idx())
+            .map(|it| (it.namespace, it.namespace_pos))?,
         Decl::ImportSpec(s) => hir.import_specs.get(s.idx()).map(|it| (it.local, it.pos))?,
-        Decl::ImportEquals(i) => hir.import_equals.get(i.idx()).map(|it| (it.name, it.name_pos))?,
+        Decl::ImportEquals(i) => hir
+            .import_equals
+            .get(i.idx())
+            .map(|it| (it.name, it.name_pos))?,
         _ => return None,
     };
     (name.is_some() && name != known::empty).then_some((name, pos))
@@ -198,7 +217,11 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
 #[inline(never)]
 fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
     let (hir, bound) = (&file.hir, &file.bound);
-    let room = hir.pats.len() + hir.fns.len() / 4 + hir.type_params.len() + hir.import_specs.len() + hir.classes.len();
+    let room = hir.pats.len()
+        + hir.fns.len() / 4
+        + hir.type_params.len()
+        + hir.import_specs.len()
+        + hir.classes.len();
     let mut entries: Vec<Entry> = Vec::with_capacity(room);
     // The position and the index of each entry.
     let mut in_order: Vec<u64> = Vec::with_capacity(room);
@@ -218,7 +241,8 @@ fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
         }
     };
     // What the parser has left behind where it backtracked is part of nothing.
-    let is_in_tree = |s: hir::StmtId| !matches!(bound.stmt_parent.get(s.idx()), None | Some(Parent::None));
+    let is_in_tree =
+        |s: hir::StmtId| !matches!(bound.stmt_parent.get(s.idx()), None | Some(Parent::None));
     for (i, pat) in hir.pats.iter().enumerate() {
         let PatKind::Ident(name) = pat.kind else {
             continue;
@@ -249,7 +273,10 @@ fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
         if is_in_tree(import.stmt) {
             add(Decl::ImportDefault(hir::ImportId(i as u32)));
             add(Decl::ImportNamespace(hir::ImportId(i as u32)));
-            import.named.iter().for_each(|spec| add(Decl::ImportSpec(spec)));
+            import
+                .named
+                .iter()
+                .for_each(|spec| add(Decl::ImportSpec(spec)));
         }
     }
     if !scopes::is_javascript_mode(file) {
@@ -271,7 +298,9 @@ fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
         for (i, it) in hir.enums.iter().enumerate() {
             if is_in_tree(it.stmt) {
                 add(Decl::Enum(hir::EnumId(i as u32)));
-                it.members.iter().for_each(|member| add(Decl::EnumMember(member)));
+                it.members
+                    .iter()
+                    .for_each(|member| add(Decl::EnumMember(member)));
             }
         }
         for (i, it) in hir.modules.iter().enumerate() {
@@ -294,7 +323,12 @@ fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
 /// that declare no variable are left without. Returns how many are declared in each scope, at the
 /// index after that of the scope.
 #[inline(never)]
-fn assign_scopes(file: &File, tree: &ScopeTree, entries: &mut [Entry], in_order: &[u64]) -> Vec<u32> {
+fn assign_scopes(
+    file: &File,
+    tree: &ScopeTree,
+    entries: &mut [Entry],
+    in_order: &[u64],
+) -> Vec<u32> {
     let (hir, bound) = (&file.hir, &file.bound);
     let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
     let mut cursor = tree.cursor();
@@ -308,7 +342,11 @@ fn assign_scopes(file: &File, tree: &ScopeTree, entries: &mut [Entry], in_order:
                     continue;
                 };
                 is_catch = is_catch_parameter(file, d);
-                let is_hoisted = hir.var_decls.get(d.idx()).is_some_and(|it| it.kind == VarKind::Var) && !is_catch;
+                let is_hoisted = hir
+                    .var_decls
+                    .get(d.idx())
+                    .is_some_and(|it| it.kind == VarKind::Var)
+                    && !is_catch;
                 let scope = match is_hoisted {
                     true => tree.scopes[here as usize].variable_scope,
                     false => here,
@@ -317,7 +355,10 @@ fn assign_scopes(file: &File, tree: &ScopeTree, entries: &mut [Entry], in_order:
             }
             Decl::Param(p) => match root_of_pattern(file, p) {
                 PatParent::Param(param) => {
-                    let scope = bound.param_fn.get(param.idx()).and_then(|f| tree.of_fn.get(f.idx()));
+                    let scope = bound
+                        .param_fn
+                        .get(param.idx())
+                        .and_then(|f| tree.of_fn.get(f.idx()));
                     (scope.copied().unwrap_or(NONE), VALUE)
                 }
                 _ if name == known::this => (here, VALUE),
@@ -325,7 +366,10 @@ fn assign_scopes(file: &File, tree: &ScopeTree, entries: &mut [Entry], in_order:
             },
             Decl::Fn(_) => (here, VALUE),
             Decl::Class(c) => match bound.class_owner.get(c.idx()) {
-                Some(ClassOwner::Expr(_)) => (tree.of_class.get(c.idx()).copied().unwrap_or(NONE), VALUE | TYPE),
+                Some(ClassOwner::Expr(_)) => (
+                    tree.of_class.get(c.idx()).copied().unwrap_or(NONE),
+                    VALUE | TYPE,
+                ),
                 _ => (here, VALUE | TYPE),
             },
             Decl::Interface(_) | Decl::Alias(_) => (here, TYPE),
@@ -419,7 +463,10 @@ impl Variables {
             // "NOTE Arrow functions never have an arguments objects."
             let has_arguments = match (data.kind, data.block) {
                 (ScopeKind::Function, Block::File) => true,
-                (ScopeKind::Function, Block::Fn(f)) => hir.fns.get(f.idx()).is_some_and(|it| it.kind != FnKind::Arrow),
+                (ScopeKind::Function, Block::Fn(f)) => hir
+                    .fns
+                    .get(f.idx())
+                    .is_some_and(|it| it.kind != FnKind::Arrow),
                 _ => false,
             };
             if has_arguments {
@@ -444,7 +491,10 @@ impl Variables {
             mut later,
         } = made;
         starts.push(list.len() as u32);
-        let declared = in_order.iter().map(|&key| &entries[key as u32 as usize]).filter(|it| it.scope != NONE);
+        let declared = in_order
+            .iter()
+            .map(|&key| &entries[key as u32 as usize])
+            .filter(|it| it.scope != NONE);
         let declared_at = declared.map(|it| (it.pos, it.scope)).collect();
 
         // The variables name by name.
@@ -467,8 +517,11 @@ impl Variables {
             declarations.push(variable.first);
             declarations.extend(of_one.iter().map(|it| it.1));
             // `Referencer.visitFunction` defines the parameters before the type parameters.
-            if tree.scopes[variable.scope as usize].kind == ScopeKind::Function && variable.flags == VALUE | TYPE {
-                declarations[variable.start as usize..].sort_by_key(|it| !matches!(it, Decl::Param(_)));
+            if tree.scopes[variable.scope as usize].kind == ScopeKind::Function
+                && variable.flags == VALUE | TYPE
+            {
+                declarations[variable.start as usize..]
+                    .sort_by_key(|it| !matches!(it, Decl::Param(_)));
             }
         }
         Variables {
@@ -483,7 +536,9 @@ impl Variables {
 
     /// The index in `list` of what the declaration whose name is at `pos` declares.
     pub(crate) fn declared_at(&self, pos: u32) -> Option<u32> {
-        let found = self.declared_at.get(self.declared_at.partition_point(|it| it.0 < pos))?;
+        let found = self
+            .declared_at
+            .get(self.declared_at.partition_point(|it| it.0 < pos))?;
         (found.0 == pos).then_some(found.1)
     }
 
@@ -501,7 +556,10 @@ impl Variables {
 
     #[inline]
     pub(crate) fn range_of_scope(&self, scope: u32) -> std::ops::Range<usize> {
-        match (self.starts.get(scope as usize), self.starts.get(scope as usize + 1)) {
+        match (
+            self.starts.get(scope as usize),
+            self.starts.get(scope as usize + 1),
+        ) {
             (Some(&start), Some(&end)) => start as usize..end as usize,
             _ => 0..0,
         }
@@ -512,7 +570,10 @@ impl Variables {
         match variable.count {
             0 => &[],
             1 => std::slice::from_ref(&variable.first),
-            count => self.declarations.get(variable.start as usize..(variable.start + count) as usize).unwrap_or_default(),
+            count => self
+                .declarations
+                .get(variable.start as usize..(variable.start + count) as usize)
+                .unwrap_or_default(),
         }
     }
 
@@ -526,7 +587,10 @@ impl Variables {
     fn named(&self, name: Atom) -> &[u32] {
         let slot = &self.names.slots[self.names.place(name)];
         match slot.name.is_some() {
-            true => self.by_name.get(slot.start as usize..(slot.start + slot.count) as usize).unwrap_or_default(),
+            true => self
+                .by_name
+                .get(slot.start as usize..(slot.start + slot.count) as usize)
+                .unwrap_or_default(),
             false => &[],
         }
     }
@@ -541,7 +605,14 @@ impl Variables {
 
     /// What a reference to `name` that is written at `pos`, in the scope `from`, resolves to:
     /// ESLint's `Scope#__resolve`, scope by scope. `wants`: `VALUE`, `TYPE` or both.
-    pub(crate) fn resolve(&self, tree: &ScopeTree, from: u32, name: Atom, pos: u32, wants: u8) -> Option<u32> {
+    pub(crate) fn resolve(
+        &self,
+        tree: &ScopeTree,
+        from: u32,
+        name: Atom,
+        pos: u32,
+        wants: u8,
+    ) -> Option<u32> {
         let named = self.named(name);
         if named.is_empty() {
             return None;
@@ -593,7 +664,11 @@ fn scope_of_type_parameter(file: &File, tree: &ScopeTree, here: u32, pos: u32) -
         return here;
     }
     let before = crate::tokens::skip_trivia_back(file.text(), pos) as usize;
-    if !file.text().get(..before).is_some_and(|it| it.ends_with(b"infer")) {
+    if !file
+        .text()
+        .get(..before)
+        .is_some_and(|it| it.ends_with(b"infer"))
+    {
         return here;
     }
     // `TypeVisitor.TSInferType`: "In cases where there is a sub-type scope created within a

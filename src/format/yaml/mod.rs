@@ -57,7 +57,11 @@ pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'stat
 }
 
 /// Writes the document for `text`, whose line breaks are `\n`, to `out`, which is empty.
-fn write_document(text: &[u8], options: &FormatOptions, out: &mut Elements) -> Result<(), FormatError> {
+fn write_document(
+    text: &[u8],
+    options: &FormatOptions,
+    out: &mut Elements,
+) -> Result<(), FormatError> {
     let lexemes = lexer::lex(text);
     let tokens = cst::parse(text, &lexemes).map_err(|error| match error {
         cst::ParseError::Syntax => FormatError::SyntaxError,
@@ -95,7 +99,10 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     let Some(rest) = without_blanks(rest).strip_prefix(b"@") else {
         return false;
     };
-    pragmas.iter().any(|pragma| rest.strip_prefix(*pragma).is_some_and(|rest| matches!(without_blanks(rest).first(), None | Some(b'\n'))))
+    pragmas.iter().any(|pragma| {
+        rest.strip_prefix(*pragma)
+            .is_some_and(|rest| matches!(without_blanks(rest).first(), None | Some(b'\n')))
+    })
 }
 
 /// `/(?:[/\\]|^)\.(?:prettier|stylelint|lintstaged)rc$/`: a file that Prettier first tries to format as JSON.
@@ -105,7 +112,12 @@ fn can_be_json(path: &[u8]) -> bool {
 }
 
 /// Appends the formatted `text` to `out`. `options.filepath` says whether it can be JSON.
-pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
+pub fn format(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
     const BOM: &[u8] = "\u{FEFF}".as_bytes();
     let original = text;
     let (has_bom, text) = match text.strip_prefix(BOM) {
@@ -120,9 +132,15 @@ pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: 
         return Ok(());
     }
     // Nothing in YAML is something that Prettier formats on its own.
-    let is_range =
-        options.range_start.is_some_and(|start| start > 0) || options.range_end.is_some_and(|end| (end as usize) < text.len());
-    if options.insert_pragma && !options.require_pragma && !is_range && !has_pragma(&text, [b"format", b"prettier"]) {
+    let is_range = options.range_start.is_some_and(|start| start > 0)
+        || options
+            .range_end
+            .is_some_and(|end| (end as usize) < text.len());
+    if options.insert_pragma
+        && !options.require_pragma
+        && !is_range
+        && !has_pragma(&text, [b"format", b"prettier"])
+    {
         text = Cow::Owned([b"# @format\n\n", &text[..]].concat());
     }
     let start = out.len();
@@ -137,12 +155,25 @@ pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: 
     document.clear();
     write_document(&text, options, document).inspect_err(|_| out.truncate(start))?;
     if is_range {
-        doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(&text)), options, original, out);
+        doc::print(
+            doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(&text)),
+            options,
+            original,
+            out,
+        );
         return Ok(());
     }
     if options.filepath.as_deref().is_some_and(can_be_json) {
         let end = out.len();
-        if crate::json::format(&text, crate::json::Parser::Json, options, &mut Default::default(), out).is_ok() {
+        if crate::json::format(
+            &text,
+            crate::json::Parser::Json,
+            options,
+            &mut Default::default(),
+            out,
+        )
+        .is_ok()
+        {
             return Ok(());
         }
         out.truncate(end);

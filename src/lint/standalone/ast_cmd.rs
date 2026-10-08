@@ -123,7 +123,7 @@ fn with_input<R>(
 fn estree(path: &str, language: &LanguageOptions) {
     let code = std::fs::read(path).expect("the file");
     crate::with_file(path, &code, language, |file| {
-        if file.has_parse_errors() {
+        if bun_lint::linter::parse_error(file).is_some() {
             return println!("the parser rejects the code");
         }
         let mut out = Vec::new();
@@ -141,7 +141,7 @@ fn estree_batch(path: &str, language: &LanguageOptions) {
         out.clear();
         let _ = write!(out, "{{\"id\":{:?},\"ast\":", input.id);
         let prefix = out.len();
-        let outcome = with_input(&input, language, |file| match file.has_parse_errors() {
+        let outcome = with_input(&input, language, |file| match bun_lint::linter::parse_error(file).is_some() {
             true => Err("parse".to_owned()),
             false => {
                 estree_json::write_json(file, &mut out);
@@ -660,7 +660,7 @@ fn check_files(paths: &[String]) {
     for path in paths {
         let code = std::fs::read(path).expect("the file");
         crate::with_file(path, &code, &language_of(&[]), |file| {
-            if file.has_parse_errors() {
+            if bun_lint::linter::parse_error(file).is_some() {
                 return println!("{path}: the parser rejects the code");
             }
             for (kind, place) in check(file) {
@@ -676,7 +676,7 @@ fn check_batch(path: &str) {
     let (mut checked, mut rejected, mut with_problems) = (0, 0, 0);
     let mut by_kind: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
     for input in &inputs {
-        let outcome = with_input(input, &language_of(&[]), |file| (!file.has_parse_errors()).then(|| check(file)));
+        let outcome = with_input(input, &language_of(&[]), |file| (!bun_lint::linter::parse_error(file).is_some()).then(|| check(file)));
         let problems = match outcome {
             Ok(None) => {
                 rejected += 1;

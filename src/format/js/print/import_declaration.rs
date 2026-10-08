@@ -155,12 +155,12 @@ pub(crate) struct FormatSpecifiers<'a, T>(pub(crate) Stmt<'a>, pub(crate) List<'
 impl<'a, T: Handle<'a> + Format<'a> + Spanned> Format<'a> for FormatSpecifiers<'a, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let FormatSpecifiers(statement, specifiers) = *self;
-        let last_end = specifiers.last().map(|last| last.span().end);
         let format_specifiers = format_with(|f| {
             let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
-            let iter = specifiers.iter().map(|specifier| FormatSpecifier {
-                is_last_of: (Some(specifier.span().end) == last_end).then_some(statement),
+            let iter = specifiers.iter().enumerate().map(|(index, specifier)| FormatSpecifier {
                 specifier,
+                statement,
+                next_start: specifiers.get(index + 1).map(|next| next.span().start),
             });
             f.join_with(soft_line_break_or_space())
                 .entries(FormatSeparatedIter::new(iter, ",").with_trailing_separator(trailing_separator));
@@ -172,8 +172,10 @@ impl<'a, T: Handle<'a> + Format<'a> + Spanned> Format<'a> for FormatSpecifiers<'
 
 struct FormatSpecifier<'a, T> {
     specifier: T,
-    /// The import or export that it is the last specifier of.
-    is_last_of: Option<Stmt<'a>>,
+    /// The import or export.
+    statement: Stmt<'a>,
+    /// Where the next specifier starts.
+    next_start: Option<u32>,
 }
 
 impl<T: Spanned> Spanned for FormatSpecifier<'_, T> {
@@ -184,19 +186,21 @@ impl<T: Spanned> Spanned for FormatSpecifier<'_, T> {
 
 impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() {
-            return write!(f, self.specifier);
-        }
-        // An empty line before the comments before it is kept.
-        let span = self.specifier.span();
-        if f.comments().has_comment_before(span.start) && f.lines_before(span) > 1 {
-            write!(f, empty_line());
-        }
         write!(f, self.specifier);
-
-        if let Some(statement) = self.is_last_of {
-            write!(f, FormatTrailingComments::Comments(comments_before_from(span.end, statement, f)));
+        if f.is_quiet() {
+            return;
         }
+        // Prettier's `handleModuleSpecifiersComments`: a comment after a specifier that ends its
+        // line trails the specifier, also if it is on a line of its own.
+        let comments = match self.next_start {
+            Some(next_start) => {
+                let comments = f.comments().comments_before(next_start);
+                let count = comments.iter().rposition(|it| it.followed_by_newline()).map_or(0, |last| last + 1);
+                comments.get(..count).unwrap_or_default()
+            }
+            None => comments_before_from(self.specifier.span().end, self.statement, f),
+        };
+        write!(f, FormatTrailingComments::Comments(comments));
     }
 }
 

@@ -38,7 +38,6 @@ pub(crate) fn write_variable_declaration<'a>(
             var_kind_text(kind),
             space(),
             FormatVariableDeclarators {
-                statement,
                 declarations,
                 is_parent_for_loop: matches!(
                     parent,
@@ -51,7 +50,6 @@ pub(crate) fn write_variable_declaration<'a>(
 }
 
 struct FormatVariableDeclarators<'a> {
-    statement: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
     is_parent_for_loop: bool,
 }
@@ -72,12 +70,7 @@ impl<'a> Format<'a> for FormatVariableDeclarators<'a> {
         };
 
         if length == 1 && !f.comments().has_comment_before(first_declarator.span().start) {
-            let has_comment_after = first_declarator.init().is_none()
-                && f.comments().has_comment_in_range(first_declarator.span().end, self.statement.span().end);
-            return match has_comment_after {
-                true => write!(f, indent(&first_declarator)),
-                false => write!(f, first_declarator),
-            };
+            return write!(f, first_declarator);
         }
 
         write!(

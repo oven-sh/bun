@@ -1024,6 +1024,7 @@ dependencies = [
  "bun_js_parser",
  "bun_lint",
  "bun_lint_eslint",
+ "bun_lint_graph",
  "bun_lint_plugins",
  "bun_lint_typescript",
  "bun_paths",

@@ -4,12 +4,11 @@ use super::class::format_grouped_parameters_with_return_type_for_method;
 use super::function::FormatFunctionBody;
 use super::object_like::ObjectLike;
 use super::object_pattern_like::ObjectPatternLike;
-use super::return_or_throw_statement::FormatAdjacentArgument;
 use crate::js::format::FormatExpr;
+use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
-use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::object::{FormatKey, format_computed_or_property_key, should_preserve_quote};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
@@ -70,6 +69,16 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
         return write!(f, FormatSuppressedNode(property.span()));
     }
     let Some(value) = property.func() else {
+        // Prettier's `handlePropertyComments`: a comment at the end of the line of the key leads
+        // the property.
+        if !f.is_quiet()
+            && property.kind() != PropKind::Shorthand
+            && let (Some(key), Some(value)) = (property.key(), property.value())
+            && (f.comments().comments_in_range(key.span(f.file()).end, value.span().start).iter())
+                .any(|comment| comment.followed_by_newline() && f.comments().is_suppression_comment(comment))
+        {
+            return write!(f, FormatSuppressedNode(property.span()));
+        }
         return write!(f, AssignmentLike::ObjectProperty(property));
     };
     match property.kind() {
@@ -106,14 +115,60 @@ pub(crate) fn write_update_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut F
 /// `!a`, `typeof a`
 pub(crate) fn write_unary_expression<'a>(e: Expr<'a>, op: UnOp, operand: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, [op.as_str(), op.is_keyword().then_some(space())]);
-    let Span { start, end } = operand.span();
-    if !f.is_quiet()
-        && (f.comments().has_comment_before(start) || f.comments().has_comment_in_range(end, e.span().end))
-    {
+    if !f.is_quiet() && unary_argument_has_comments(e, operand, f) {
         write!(f, group(&format_args!("(", soft_block_indent(&operand), ")")));
     } else {
         write!(f, operand);
     }
+}
+
+/// Whether a comment leads or trails `argument`, which is the operand of `unary`. The answer does
+/// not depend on which comments are printed already.
+pub(crate) fn unary_argument_has_comments<'a>(unary: Expr<'a>, argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let (outer, inner) = (unary.span(), argument.span());
+    let is_leading = |comment: &Comment| comment.span.start >= outer.start && comment.span.end <= inner.start;
+    let comments = f.comments();
+    if comments.printed_comments().last().is_some_and(is_leading) {
+        return true;
+    }
+    let unprinted = comments.unprinted_comments();
+    match unprinted.first() {
+        Some(first) if first.span.start < outer.end => {
+            if is_leading(first) {
+                return true;
+            }
+        }
+        _ => return false,
+    }
+    let after = unprinted.partition_point(|comment| comment.span.start < inner.end);
+    unprinted
+        .get(after..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|comment| comment.span.end <= outer.end)
+        .any(|comment| !is_last_binary_operand_comment(argument, comment, f))
+}
+
+/// Prettier's `handleLastBinaryOperatorOperand`: whether `comment`, which is after `argument`, the
+/// operand of a unary expression, trails the last operand of `argument` and not all of it:
+///
+/// ```javascript
+/// !(
+///   a || // 1
+///   b // 2
+/// );
+/// ```
+pub(crate) fn is_last_binary_operand_comment<'a>(argument: Expr<'a>, comment: &Comment, f: &Formatter<'a>) -> bool {
+    let ExprKind::Binary { op, right, .. } = argument.kind() else {
+        return false;
+    };
+    let source_text = f.source_text();
+    op != BinOp::Comma
+        && !comment.preceded_by_newline()
+        && comment.followed_by_newline()
+        && !comment.is_multiline_block()
+        && source_text.contains_newline_between(argument.span().start, right.span().start)
+        && !source_text.contains_newline_between(right.span().start, comment.span.start)
 }
 
 /// `a = b`, `a += b`. In the target of a destructuring assignment, a target with its default value.
@@ -166,37 +221,27 @@ pub(crate) fn write_object_assignment_target<'a>(e: Expr<'a>, props: List<'a, Pr
 /// `await a`
 pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mut Formatter<'a>) {
     let format_inner = format_args!("await", space(), argument);
-    let parent = e.ast_parent();
-
-    let is_callee_or_object = match parent {
-        AstNodes::StaticMemberExpression(_) => true,
+    let is_callee_or_object = match e.ast_parent() {
+        AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
         AstNodes::ComputedMemberExpression(member) => member.object() == Some(e),
-        _ => parent.is_call_like_callee(e),
+        AstNodes::CallExpression(call) => call.callee() == Some(e),
+        _ => false,
     };
     if !is_callee_or_object {
         return write!(f, format_inner);
     }
 
     // `await (await a).b`: the parentheses break along with what the outer `await` is in.
-    let enclosing_await = parent.ancestors().find_map(|ancestor| match ancestor {
-        AstNodes::BlockStatement(_) | AstNodes::Program(_) => Some(None),
-        AstNodes::FunctionBody(func) if !matches!(func.body(), FnBody::Expr(_)) => Some(None),
-        AstNodes::AwaitExpression(outer) => Some(Some(outer)),
-        _ => None,
-    });
     let indented = soft_block_indent(&format_inner);
-    match enclosing_await.flatten() {
-        Some(outer) if outer.argument().is_some_and(|it| ExpressionLeftSide::leftmost(it) == e) => write!(f, indented),
+    match left_edge_end(e, AstNodes::AwaitExpression(e)).1 {
+        AstNodes::AwaitExpression(_) => write!(f, indented),
         _ => write!(f, group(&indented)),
     }
 }
 
 /// `yield a`, `yield* a`
 pub(crate) fn write_yield_expression<'a>(argument: Option<Expr<'a>>, delegate: bool, f: &mut Formatter<'a>) {
-    write!(f, ["yield", delegate.then_some("*")]);
-    if let Some(argument) = argument {
-        write!(f, [space(), FormatAdjacentArgument(argument)]);
-    }
+    write!(f, ["yield", delegate.then_some("*"), argument.map(|_| space()), argument]);
 }
 
 /// `<T>a`

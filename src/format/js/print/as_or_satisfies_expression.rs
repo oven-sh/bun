@@ -48,11 +48,11 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
         }
     });
 
-    let is_callee_or_object = match e.ast_parent() {
-        AstNodes::StaticMemberExpression(_) => true,
+    let parent = e.ast_parent();
+    let is_callee_or_object = match parent {
+        AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
         AstNodes::ComputedMemberExpression(member) => member.object() == Some(e),
-        AstNodes::CallExpression(call) => call.callee() == Some(e),
-        _ => false,
+        _ => parent.is_call_like_callee(e),
     };
     match is_callee_or_object {
         true => write!(f, group(&soft_block_indent(&format_inner))),

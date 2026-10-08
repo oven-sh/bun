@@ -14,6 +14,7 @@ use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpression
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
 use crate::js::print::decorators::FormatDecorators;
 use crate::js::print::patterns::FormatBindingPropertyValue;
+use crate::js::print::sequence_expression::write_comments_before_closing_parenthesis;
 use crate::js::print::type_parameters::{type_arguments, type_parameters};
 use crate::js::print::union_type::write_ts_union_type_in;
 use crate::prelude::*;
@@ -238,6 +239,9 @@ impl<'a> AssignmentLike<'a> {
                 if let Some(right) = self.get_right_expression() {
                     write!(f, with_assignment_layout(right, Some(layout)));
                 }
+                if let Self::AssignmentExpression(assignment) = *self {
+                    write_comments_before_closing_parenthesis(assignment, f);
+                }
             }
         }
     }
@@ -245,13 +249,22 @@ impl<'a> AssignmentLike<'a> {
     /// Prettier's `chooseLayout`.
     fn layout(&self, is_left_short: bool, left_may_break: bool, f: &mut Formatter<'a>) -> AssignmentLikeLayout {
         let right_expression = self.get_right_expression();
+        let mut is_type_cast = false;
         if let Some(e) = right_expression {
             if let Some(layout) = self.chain_formatting_layout(e) {
                 return layout;
             }
+            // `a = b = c = d`
+            if matches!(e.kind(), ExprKind::Assign { value, .. } if matches!(value.kind(), ExprKind::Assign { .. })) {
+                return AssignmentLikeLayout::BreakAfterOperator;
+            }
+            match leading_comments_of_right_side(e, f) {
+                LeadingComments::None => {}
+                LeadingComments::Break => return AssignmentLikeLayout::BreakAfterOperator,
+                LeadingComments::TypeCast => is_type_cast = true,
+            }
             if let AstNodes::CallExpression(call) = e.as_ast_nodes()
                 && call.callee().is_some_and(|callee| matches!(callee.kind(), ExprKind::Ident(_)) && callee.text() == b"require")
-                && !f.comments().has_leading_own_line_comment(e.span().start)
             {
                 return AssignmentLikeLayout::NeverBreakAfterOperator;
             }
@@ -260,7 +273,7 @@ impl<'a> AssignmentLike<'a> {
         if self.should_break_left_hand_side(left_may_break) {
             return AssignmentLikeLayout::BreakLeftHandSide;
         }
-        if self.should_break_after_operator(right_expression, is_left_short, f) {
+        if !is_type_cast && self.should_break_after_operator(right_expression, is_left_short, f) {
             return AssignmentLikeLayout::BreakAfterOperator;
         }
         if self.is_complex_type_alias() {
@@ -317,7 +330,8 @@ impl<'a> AssignmentLike<'a> {
         let upper_chain_is_eligible = match parent {
             AstNodes::VariableDeclarator(_) => !right_is_tail,
             AstNodes::AssignmentExpression(_) => {
-                !right_is_tail || !matches!(parent.parent(), AstNodes::ExpressionStatement(_))
+                !right_is_tail
+                    || !matches!(parent.parent(), AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())
             }
             _ => false,
         };
@@ -430,31 +444,46 @@ impl<T> Spanned for WithSpan<T> {
     }
 }
 
+/// What the comments before the right side of an assignment mean for its layout.
+enum LeadingComments {
+    None,
+    /// One ends its line, or is a block whose lines all start with `*`: the right side starts on
+    /// its own line.
+    Break,
+    /// `/** @type {T} */ (e)`: the right side is in parentheses.
+    TypeCast,
+}
+
+fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> LeadingComments {
+    if f.is_quiet() {
+        return LeadingComments::None;
+    }
+    let start = right.span().start;
+    if matches!(right.kind(), ExprKind::Jsx(_)) {
+        return match f.comments().is_suppressed(start) {
+            true => LeadingComments::Break,
+            false => LeadingComments::None,
+        };
+    }
+    for comment in f.comments().comments_before_iter(start) {
+        if comment.followed_by_newline() || comment.is_indentable_block() {
+            return LeadingComments::Break;
+        }
+        if f.comments().is_type_cast_comment(comment) {
+            return LeadingComments::TypeCast;
+        }
+    }
+    LeadingComments::None
+}
+
 /// Prettier's `shouldBreakAfterOperator`.
 fn should_break_after_operator<'a>(right: Expr<'a>, is_left_short: bool, f: &mut Formatter<'a>) -> bool {
-    if matches!(right.kind(), ExprKind::Jsx(_)) {
-        return false;
-    }
-    for comment in f.comments().comments_before_iter(right.span().start) {
-        if comment.preceded_by_newline() || comment.followed_by_newline() {
-            return true;
-        }
-        // It is going to be in parentheses.
-        if f.comments().is_type_cast_comment(comment) {
-            return false;
-        }
-    }
-
     let can_inline = |e: Expr<'a>| e.right().is_some_and(BinaryLikeExpression::can_inline_logical_expr);
     match right.as_ast_nodes() {
-        // `a = b = c = d`
-        AstNodes::AssignmentExpression(assignment) => {
-            assignment.right().is_some_and(|it| matches!(it.kind(), ExprKind::Assign { .. }))
-        }
-        AstNodes::BinaryExpression(_) | AstNodes::SequenceExpression(_) => true,
+        AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_) | AstNodes::SequenceExpression(_) => true,
         AstNodes::LogicalExpression(logical) => !can_inline(logical),
         AstNodes::ConditionalExpression(conditional) => match conditional.test().map(|test| test.as_ast_nodes()) {
-            Some(AstNodes::BinaryExpression(_)) => true,
+            Some(AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_)) => true,
             Some(AstNodes::LogicalExpression(logical)) => !can_inline(logical),
             _ => false,
         },

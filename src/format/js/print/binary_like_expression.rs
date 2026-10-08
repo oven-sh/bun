@@ -1,11 +1,12 @@
 //! `a + b`, `a && b`. Prettier's `printBinaryishExpression`.
 
+use super::expressions::{is_last_binary_operand_comment, unary_argument_has_comments};
 use crate::js::format::write_trailing_comments_of;
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
 
-/// ESTree's `BinaryExpression` or `LogicalExpression`. Not `a, b` and not `#a in b`.
+/// ESTree's `BinaryExpression` or `LogicalExpression`. Not `a, b`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BinaryLikeExpression<'a> {
     expr: Expr<'a>,
@@ -20,11 +21,6 @@ impl<'a> BinaryLikeExpression<'a> {
             ExprKind::Binary {
                 op: BinOp::Comma, ..
             } => None,
-            ExprKind::Binary {
-                op: BinOp::In,
-                left,
-                ..
-            } if matches!(left.kind(), ExprKind::PrivateIdentifier(_)) => None,
             ExprKind::Binary { op, left, right } => Some(BinaryLikeExpression {
                 expr: e,
                 operator: op,
@@ -81,12 +77,13 @@ impl<'a> BinaryLikeExpression<'a> {
     }
 
     /// Whether `parent` indents it already.
-    pub(crate) fn should_not_indent_if_parent_indents(&self, parent: AstNodes<'a>) -> bool {
+    fn should_not_indent_if_parent_indents(&self, parent: AstNodes<'a>) -> bool {
         match parent {
             AstNodes::ReturnStatement(_)
             | AstNodes::ThrowStatement(_)
             | AstNodes::ForStatement(_)
-            | AstNodes::TemplateLiteral(_) => true,
+            | AstNodes::TemplateLiteral(_)
+            | AstNodes::UnaryExpression(_) => true,
             AstNodes::JSXExpressionContainer(_) => matches!(parent.parent(), AstNodes::JSXAttribute(_)),
             AstNodes::ExpressionStatement(statement) => statement.is_arrow_function_body(),
             AstNodes::ConditionalExpression(_) => !matches!(
@@ -95,13 +92,12 @@ impl<'a> BinaryLikeExpression<'a> {
                     | AstNodes::ThrowStatement(_)
                     | AstNodes::CallExpression(_)
                     | AstNodes::NewExpression(_)
-                    | AstNodes::ImportExpression(_)
-                    | AstNodes::MetaProperty(_)
             ),
             // `Boolean(a && b)`
-            AstNodes::CallExpression(call) => call.call().is_some_and(|call| {
+            AstNodes::CallExpression(call_expression) => call_expression.call().is_some_and(|call| {
                 let callee = call.callee();
                 callee != self.expr
+                    && !call_expression.optional()
                     && call.args().len() == 1
                     && matches!(callee.kind(), ExprKind::Ident(_))
                     && callee.text() == b"Boolean"
@@ -134,7 +130,9 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
 
         // Where it is in parentheses: `(a + b)()`, `!(a + b)`, `(a + b).c`.
         let is_inside_parenthesis = match parent {
-            AstNodes::StaticMemberExpression(_) | AstNodes::UnaryExpression(_) => true,
+            AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
+            // It writes the parentheses and indents an argument with comments.
+            AstNodes::UnaryExpression(unary) => !unary_argument_has_comments(unary, self.expr, f),
             _ => parent.is_call_like_callee(self.expr),
         };
         if is_inside_parenthesis {
@@ -170,9 +168,13 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
 
         let group_id = f.group_id("logicalChain");
 
-        // A line comment before a JSX element at the end breaks the chain.
-        let should_expand_chain = jsx_element
-            .is_some_and(|jsx| f.comments().comments_before_iter(jsx.span().start).any(|comment| comment.is_line()));
+        // A line comment behind the operator before a JSX element at the end trails what is before
+        // the operator, which is in the chain.
+        let should_expand_chain = !f.is_quiet()
+            && jsx_element.is_some_and(|jsx| {
+                (f.comments().comments_before_iter(jsx.span().start))
+                    .any(|comment| comment.is_line() && !comment.preceded_by_newline())
+            });
 
         let format_non_jsx_parts = format_with(|f| {
             write!(
@@ -244,6 +246,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             && let Some(right_logical) = BinaryLikeExpression::new(binary_like_expression.right)
             && right_logical.operator == operator
         {
+            write_trailing_comments_of_nested(binary_like_expression.left, f);
             write!(f, [space(), operator.as_str(), soft_line_break_or_space()]);
             match BinaryLikeExpression::new(right_logical.left).filter(|left| left.operator == operator) {
                 Some(left_logical_child) => format_flattened_logical_expression(left_logical_child, inside_parenthesis, f),
@@ -253,6 +256,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         }
 
         let (left, right) = (binary_like_expression.left, binary_like_expression.right);
+        let parent = binary_like_expression.parent();
         let is_jsx = matches!(right.kind(), ExprKind::Jsx(_));
 
         let operator_and_right_expression = format_with(|f| {
@@ -266,21 +270,29 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                 write!(f, soft_line_break_or_space());
             }
             write!(f, right);
+            // See `is_last_binary_operand_comment`.
+            if !f.is_quiet()
+                && let AstNodes::UnaryExpression(unary) = parent
+                && let [comment, ..] = f.comments().unprinted_comments()
+                && comment.span.start >= right.span().end
+                && comment.span.end <= unary.span().end
+                && is_last_binary_operand_comment(binary_like_expression.expr, comment, f)
+            {
+                write!(f, FormatTrailingComments::Comments(std::slice::from_ref(comment)));
+            }
         });
 
         let is_same_kind = |other: AstNodes<'a>| match binary_like_expression.is_logical() {
             true => matches!(other, AstNodes::LogicalExpression(_)),
-            false => matches!(other, AstNodes::BinaryExpression(_)),
+            false => matches!(other, AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_)),
         };
         let left_ast_nodes = left.as_ast_nodes();
-        let should_group = !(is_same_kind(binary_like_expression.parent())
+        let should_group = !(is_same_kind(parent)
             || is_same_kind(left_ast_nodes)
             || is_same_kind(right.as_ast_nodes())
             || (inside_parenthesis && logical_operator.is_some()));
 
-        if !f.is_quiet() && matches!(left_ast_nodes, AstNodes::LogicalExpression(_) | AstNodes::BinaryExpression(_)) {
-            write_trailing_comments_of(left_ast_nodes, f);
-        }
+        write_trailing_comments_of_nested(left, f);
 
         if !should_group {
             return write!(f, operator_and_right_expression);
@@ -296,6 +308,17 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                 .take_while(|comment| left.span().end < comment.span.start && right.span().start > comment.span.end)
                 .any(|comment| comment.is_line());
         write!(f, group(&operator_and_right_expression).should_expand(should_break));
+    }
+}
+
+/// The comments after `left`, if it is written as a part of the chain and not as a node of its own.
+fn write_trailing_comments_of_nested<'a>(left: Expr<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return;
+    }
+    let node = left.as_ast_nodes();
+    if matches!(node, AstNodes::LogicalExpression(_) | AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_)) {
+        write_trailing_comments_of(node, f);
     }
 }
 

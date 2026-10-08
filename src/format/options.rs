@@ -43,6 +43,9 @@ pub struct FormatOptions {
     pub embedded_language_formatting: EmbeddedLanguageFormatting,
     /// For YAML and Markdown.
     pub prose_wrap: ProseWrap,
+    /// For HTML and what is like it.
+    pub html_whitespace_sensitivity: HtmlWhitespaceSensitivity,
+    pub vue_indent_script_and_style: bool,
     /// The name of the file, if it is not the one that it was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
     /// Prettier's `parser`, if it is not left to the name of the file: `json5`, `babel`, ..
@@ -187,9 +190,15 @@ impl FormatOptions {
                     _ => return Err(InvalidOption),
                 };
             }
-            // For languages that are not formatted.
-            b"htmlWhitespaceSensitivity" if matches!(value, b"css" | b"strict" | b"ignore") => {}
-            b"vueIndentScriptAndStyle" => _ = boolean()?,
+            b"htmlWhitespaceSensitivity" => {
+                self.html_whitespace_sensitivity = match value {
+                    b"css" => HtmlWhitespaceSensitivity::Css,
+                    b"strict" => HtmlWhitespaceSensitivity::Strict,
+                    b"ignore" => HtmlWhitespaceSensitivity::Ignore,
+                    _ => return Err(InvalidOption),
+                };
+            }
+            b"vueIndentScriptAndStyle" => self.vue_indent_script_and_style = boolean()?,
             b"filepath" => self.filepath = Some(value.into()),
             b"parser" => self.parser = Some(value.into()),
             b"rangeStart" => self.range_start = Some(number(u32::MAX)?),
@@ -226,6 +235,18 @@ impl FormatOptions {
 }
 
 /// How a paragraph is divided into lines.
+/// Which white space in HTML counts.
+#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+pub enum HtmlWhitespaceSensitivity {
+    /// What the default value of the CSS property `display` says.
+    #[default]
+    Css,
+    /// All of it.
+    Strict,
+    /// None of it.
+    Ignore,
+}
+
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum ProseWrap {
     /// At the print width.

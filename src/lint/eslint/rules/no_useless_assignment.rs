@@ -42,7 +42,9 @@ pub struct State<'a> {
     stack: Vec<ScopeStack<'a>>,
     /// Only the reachable ones.
     current_segments: CurrentSegments<'a>,
-    code_path_start_scopes: FxHashSet<Scope<'a>>,
+    code_path_start_scopes: StartScopes<'a>,
+    /// For `code_path_scope`.
+    code_path_scopes: Nearest<'a>,
     /// By the id of a segment: from the start of the first identifier in it to the end of the last.
     /// Only identifiers that are expressions count, as only the place of those is asked for.
     identifier_ranges: Vec<Span>,
@@ -81,11 +83,91 @@ fn is_identifier_used_between_assigned_and_equal_sign(
     })
 }
 
-fn get_code_path_start_scope<'a>(
-    starts: &FxHashSet<Scope<'a>>,
-    scope: Scope<'a>,
-) -> Option<Scope<'a>> {
-    scope.chain().find(|it| starts.contains(it))
+/// Finds the nearest scope of some sort around a scope, where only scopes in which a `var` ends up
+/// are of that sort: the blocks in between are not gone through.
+#[derive(Default)]
+struct Nearest<'a> {
+    /// For a scope with many such scopes between it and the answer: the `version` and the answer.
+    known: FxHashMap<Scope<'a>, (usize, Option<Scope<'a>>)>,
+}
+
+impl<'a> Nearest<'a> {
+    /// How far up it goes before it looks at what is known.
+    const PLAIN_STEPS: usize = 8;
+
+    fn up(scope: Scope<'a>) -> Option<Scope<'a>> {
+        scope.parent().map(Scope::variable_scope)
+    }
+
+    /// `scope.chain().find(is_it)`. `version`: another one when `is_it` holds of other scopes.
+    fn find(
+        &mut self,
+        scope: Scope<'a>,
+        version: usize,
+        is_it: impl Fn(Scope<'a>) -> bool,
+    ) -> Option<Scope<'a>> {
+        let first = scope.variable_scope();
+        let (mut at, mut steps) = (Some(first), 0);
+        let answer = loop {
+            let Some(it) = at else {
+                break None;
+            };
+            if is_it(it) {
+                break Some(it);
+            }
+            if steps >= Self::PLAIN_STEPS
+                && let Some(&(_, known)) = self.known.get(&it).filter(|known| known.0 == version)
+            {
+                break known;
+            }
+            at = Self::up(it);
+            steps += 1;
+        };
+        self.keep(first, steps, version, answer);
+        answer
+    }
+
+    /// `answer` is the answer for the scopes that `steps` steps up from `first` have passed.
+    fn keep(&mut self, first: Scope<'a>, steps: usize, version: usize, answer: Option<Scope<'a>>) {
+        if steps <= Self::PLAIN_STEPS {
+            return;
+        }
+        let mut passed = Some(first);
+        for step in 0..steps {
+            let Some(it) = passed else {
+                break;
+            };
+            if step >= Self::PLAIN_STEPS {
+                self.known.insert(it, (version, answer));
+            }
+            passed = Self::up(it);
+        }
+    }
+}
+
+/// The scopes that the code paths have started with so far.
+#[derive(Default)]
+struct StartScopes<'a> {
+    all: FxHashSet<Scope<'a>>,
+    /// Whether one of them is a scope in which no `var` ends up.
+    has_other: bool,
+    nearest: Nearest<'a>,
+}
+
+impl<'a> StartScopes<'a> {
+    fn insert(&mut self, scope: Scope<'a>) {
+        self.has_other |= scope.variable_scope() != scope;
+        self.all.insert(scope);
+    }
+
+    /// ESLint's `getCodePathStartScope`.
+    fn around(&mut self, scope: Scope<'a>) -> Option<Scope<'a>> {
+        let all = &self.all;
+        if self.has_other {
+            return scope.chain().find(|it| all.contains(it));
+        }
+        self.nearest.find(scope, all.len(), |it| all.contains(&it))
+    }
 }
 
 /// Whether a variable of the scope of a module is exported, other than by `export default`.
@@ -1142,8 +1224,8 @@ fn written_by<'a>(reference: Reference<'a>) -> Option<Written<'a>> {
 }
 
 /// The scope that the code path around `scope` starts with.
-fn code_path_scope(scope: Scope<'_>) -> Option<Scope<'_>> {
-    scope.chain().find(|it| match it.kind() {
+fn code_path_scope<'a>(scope: Scope<'a>, nearest: &mut Nearest<'a>) -> Option<Scope<'a>> {
+    nearest.find(scope, 0, |it| match it.kind() {
         ScopeKind::Global | ScopeKind::ClassStaticBlock => true,
         ScopeKind::Function | ScopeKind::ClassFieldInitializer => {
             !matches!(it.node(), Node::File(_)) && starts_code_path(it.node())
@@ -1772,24 +1854,26 @@ impl NoUselessAssignment {
             return;
         }
         let mut uses = Uses::of(variable);
+        let nearest = &mut cx.state.code_path_scopes;
+        let scope = code_path_scope(variable.scope(), nearest);
         // What a function assigns to a variable from outside it is not looked at.
         let is_unknown = variable
             .references()
             .filter(|it| it.is_write())
             .any(|reference| {
                 written_by(reference).is_some_and(|written| !uses.is_known_to_be_read(&written))
-                    && code_path_scope(reference.scope()) == code_path_scope(variable.scope())
+                    && code_path_scope(reference.scope(), nearest) == scope
             });
         if !is_unknown {
             return;
         }
-        let Some(scope) = code_path_scope(variable.scope()) else {
+        let Some(scope) = scope else {
             return;
         };
         // What a function reads can be read at any time.
         if variable
             .references()
-            .any(|it| it.is_read() && code_path_scope(it.scope()) != Some(scope))
+            .any(|it| it.is_read() && code_path_scope(it.scope(), nearest) != Some(scope))
         {
             return;
         }
@@ -1829,7 +1913,7 @@ impl NoUselessAssignment {
         }
     }
 
-    fn verify<'a>(mut target: ScopeStack<'a>, cx: &Cx<'a, Self>) {
+    fn verify<'a>(mut target: ScopeStack<'a>, cx: &mut Cx<'a, Self>) {
         // Each block ends where the last of those up to it ends: a block that starts before an
         // identifier is around it if one of these ends after it.
         let mut end = 0;
@@ -1852,8 +1936,7 @@ impl NoUselessAssignment {
             let mut read_references: SmallVec<[Span; 8]> = SmallVec::new();
             for reference in variable.references().filter(|it| it.is_read()) {
                 // It can be called at any time.
-                let start =
-                    get_code_path_start_scope(&cx.state.code_path_start_scopes, reference.scope());
+                let start = cx.state.code_path_start_scopes.around(reference.scope());
                 if start != Some(target.scope) {
                     continue 'variables;
                 }
@@ -1896,8 +1979,7 @@ impl NoUselessAssignment {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
-                let is_ignored = get_code_path_start_scope(&state.code_path_start_scopes, scope)
-                    != Some(top.scope)
+                let is_ignored = state.code_path_start_scopes.around(scope) != Some(top.scope)
                     || variable.is_marked_used()
                     || scope.kind() == ScopeKind::Module && is_exported(variable);
                 entry.insert((!is_ignored).then(SmallVec::new))

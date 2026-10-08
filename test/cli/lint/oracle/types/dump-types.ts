@@ -8,7 +8,7 @@
 // `checker.typeToString(services.getTypeAtLocation(node))`.
 //
 // With `--ts-nodes`, a line `[start, end, "<SyntaxKind>", "<type>", symbol]` for each node of
-// TypeScript's own tree, where the symbol is `null` or `[name, flags, [[file, start], ..]]`.
+// TypeScript's own tree, where the symbol is `null` or `[name, flags, [[file, start], ..], deprecation]`.
 //
 // With `--profiles`, a line `[start, end, "<SyntaxKind>", { .. }]` for each expression, with what many
 // functions of the checker say about its type.
@@ -141,6 +141,10 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
       const offsets = byteOffsets(testCase.code);
       const lines: any[] = [];
       const at = (offset: number) => (offsets ? offsets[offset] : offset);
+      const deprecationOf = (tags: import("typescript").JSDocTagInfo[]) => {
+        const tag = tags.find(tag => tag.name === "deprecated");
+        return tag ? ts.displayPartsToString(tag.text) : null;
+      };
       if (process.argv.includes("--profiles")) {
         const sourceFile = program.getSourceFile(filePath)!;
         const text = (type: import("typescript").Type) => checker.typeToString(type);
@@ -198,6 +202,7 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
             const signature = checker.getResolvedSignature(node);
             field("resolved", () => (signature ? checker.signatureToString(signature) : null));
             field("resolvedDeclaration", () => (signature?.declaration ? ts.SyntaxKind[signature.declaration.kind] : null));
+            field("resolvedDeprecation", () => (signature ? deprecationOf(signature.getJsDocTags()) : null));
             field("predicate", () => {
               const predicate = signature && checker.getTypePredicateOfSignature(signature);
               return predicate ? [ts.TypePredicateKind[predicate.kind], predicate.parameterIndex ?? -1, optional(predicate.type)] : null;
@@ -217,6 +222,7 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
             const start = program.isSourceFileDefaultLibrary(file) ? -1 : declaration.getStart(file, false);
             return [file.fileName.slice(file.fileName.lastIndexOf("/") + 1), isSame ? at(start) : start];
           }),
+          deprecationOf(symbol.getJsDocTags(checker)),
         ];
         const visit = (node: import("typescript").Node) => {
           let type: string;

@@ -229,8 +229,8 @@ fn dump<'a>(file: &'a File<'a>, with_symbols: bool) -> String {
     out
 }
 
-/// A symbol as `[name, flags, [[file, start], ..]]`, with the base name of the file of each
-/// declaration. The start is -1 in the default library.
+/// A symbol as `[name, flags, [[file, start], ..], deprecation]`, with the base name of the file of
+/// each declaration. The start is -1 in the default library.
 fn describe_symbol(symbol: TsSymbol) -> String {
     let declarations = symbol.declarations().map(|it| {
         let source_file = it.get_source_file();
@@ -242,7 +242,14 @@ fn describe_symbol(symbol: TsSymbol) -> String {
         }
     });
     let declarations: Vec<String> = declarations.collect();
-    format!("[{}, {}, [{}]]", json_string(symbol.name()), symbol.flags().bits(), declarations.join(", "))
+    let deprecation = symbol.deprecation().map(json_string);
+    format!(
+        "[{}, {}, [{}], {}]",
+        json_string(symbol.name()),
+        symbol.flags().bits(),
+        declarations.join(", "),
+        deprecation.as_deref().unwrap_or("null")
+    )
 }
 
 /// One line for each node of TypeScript's tree of `file`: `[start, end, kind, type, symbol]`.
@@ -371,6 +378,8 @@ fn dump_profiles<'a>(file: &'a File<'a>) -> String {
             fields.push(("resolved", signature.map_or_else(|| "null".to_owned(), |it| json_string(&it.to_text()))));
             let declaration = signature.and_then(|it| it.declaration()).map(|it| format!("\"{:?}\"", it.kind()));
             fields.push(("resolvedDeclaration", declaration.unwrap_or_else(|| "null".to_owned())));
+            let deprecation = signature.and_then(|it| it.deprecation()).map(json_string);
+            fields.push(("resolvedDeprecation", deprecation.unwrap_or_else(|| "null".to_owned())));
             let predicate = signature.and_then(|it| it.get_type_predicate());
             fields.push(("predicate", predicate.map_or_else(|| "null".to_owned(), |it| {
                 format!("[\"{:?}\", {}, {}]", it.kind(), it.parameter_index().map_or(-1, |index| index as i64), optional(it.ty()))

@@ -977,14 +977,23 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         {
             return Some(self.symbol(symbol));
         }
-        if let TypeData::UniqueSymbol { symbol, .. } = *self.c.data(ty) {
+        if let TypeData::UniqueSymbol { symbol, name } = *self.c.data(ty) {
             return match symbol {
                 UniqueSymbolDeclaration::Variable(symbol) => Some(self.symbol(symbol)),
                 UniqueSymbolDeclaration::Member(file, member) => {
                     let symbol = self.c.symbol_of_member(file, member);
                     Some(self.symbol(symbol))
                 }
-                UniqueSymbolDeclaration::SymbolConstructor => None,
+                // `Symbol.iterator`: the property of the global `SymbolConstructor`.
+                UniqueSymbolDeclaration::SymbolConstructor => {
+                    let atoms = self.c.atoms();
+                    let written = atoms.bytes(name).strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)?;
+                    let (written, constructor) = (atoms.lookup(written)?, atoms.lookup(b"SymbolConstructor")?);
+                    let constructor = self.c.global_type_symbol(constructor)?;
+                    let constructor = self.c.declared_type(constructor);
+                    let (prop, mapper) = self.c.get_property_of_type(constructor, written)?;
+                    Some(self.symbol_of_prop(prop, mapper))
+                }
             };
         }
         use super::super::errors_small::SymbolAtLocation;

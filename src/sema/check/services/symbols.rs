@@ -283,6 +283,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                         info.flags |= SymbolFlags::TRANSIENT;
                         info.check_flags |= CheckFlags::REVERSE_MAPPED;
                     }
+                    // `bindClassLikeDeclaration`
+                    PropSource::Type(_) if name == known::prototype => info.flags |= SymbolFlags::PROTOTYPE,
                     _ => info.flags |= SymbolFlags::TRANSIENT,
                 }
             }
@@ -348,7 +350,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
         }
         if let Some((prop, _)) = prop {
-            if !matches!(key, Key::Symbol(_) | Key::Instantiated(..)) && prop.flags.contains(PropFlags::METHOD) {
+            let is_declared = matches!(key, Key::Symbol(_) | Key::Instantiated(..) | Key::LiteralMember(..))
+                || matches!(prop.source, PropSource::Literal(..));
+            if !is_declared && prop.flags.contains(PropFlags::METHOD) {
                 // `createUnionOrIntersectionProperty` makes a property of methods.
                 match info.check_flags.contains(CheckFlags::SYNTHETIC_PROPERTY) {
                     true => {

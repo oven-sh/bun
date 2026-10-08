@@ -49,7 +49,7 @@ const sameKind: Record<string, string> = {
   LastLiteralToken: "NoSubstitutionTemplateLiteral",
 };
 
-const tally = { nodes: 0, missing: 0, extra: 0, types: 0, symbols: 0, flags: 0, declarations: 0 };
+const tally = { nodes: 0, missing: 0, extra: 0, types: 0, symbols: 0, flags: 0, declarations: 0, deprecations: 0 };
 const groups = new Map<string, Map<string, { count: number; example: string }>>();
 function note(group: string, what: string, example: string) {
   const all = groups.get(group) ?? new Map();
@@ -91,6 +91,10 @@ for (const [header, lines] of ours) {
       note("symbols", `${kind}: ours ${a?.[0] ?? null} | theirs ${b?.[0] ?? null}`, `${header} @${at}`);
     } else if (a) {
       if (a[1] !== b[1]) (tally.flags++, note("flags", `${kind} ${a[0]}: ours ${a[1]} | theirs ${b[1]}`, `${header} @${at}`));
+      if (a[3] !== b[3]) {
+        tally.deprecations++;
+        note("deprecations", `${kind} ${a[0]}: ours ${JSON.stringify(a[3])} | theirs ${JSON.stringify(b[3])}`, `${header} @${at}`);
+      }
       if (JSON.stringify(a[2]) !== JSON.stringify(b[2])) {
         tally.declarations++;
         note("declarations", `${kind} ${a[0]}: ours ${JSON.stringify(a[2]).slice(0, 80)} | theirs ${JSON.stringify(b[2]).slice(0, 80)}`, `${header} @${at}`);

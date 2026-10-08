@@ -1564,7 +1564,9 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message, _, handle) {
-    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+    const handled = this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+    // A raw descriptor (NODE_HANDLE type "fd") is owned by whoever handles the message.
+    if (!handled && typeof handle === "number") require("node:fs").closeSync(handle);
   }
 
   #send(message, handle, options, callback) {

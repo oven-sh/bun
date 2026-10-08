@@ -28,19 +28,26 @@ pub(crate) enum FormatLeadingComments<'a> {
 impl<'a> Format<'a> for FormatLeadingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let comments = match *self {
-            Self::Node(span) if f.comments().next_start() >= span.start => return,
-            Self::Node(span) => f.comments().comments_before(span.start),
-            Self::Comments(comments) => comments,
+        let (comments, node_start) = match *self {
+            Self::Node(span) if f.comments().next_start() > span.start => return,
+            Self::Node(span) => (f.comments().comments_before(span.start), span.start),
+            Self::Comments(comments) => (comments, u32::MAX),
         };
-        write_leading_comments(comments, f);
+        write_leading_comments(comments, node_start, f);
     }
 }
 
+/// `node_start`: where the node starts that they lead.
 #[cold]
-fn write_leading_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
+fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut Formatter<'a>) {
+    // A comment that has been moved out of a node that is written as it is in the source is in that
+    // text.
+    let is_ignored = comments.iter().any(|comment| comment.is_moved() && f.comments().is_suppression_comment(comment));
     for (index, comment) in comments.iter().enumerate() {
         f.comments_mut().increment_printed_count();
+        if is_ignored && comment.is_moved() && comment.span.start >= node_start {
+            continue;
+        }
         write!(f, comment);
 
         let lines_after = f.source_text().lines_after(comment.span.end);
@@ -206,7 +213,7 @@ impl<'a> Format<'a> for FormatDanglingComments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (comments, indent) = match *self {
             Self::Node { span, .. } if f.comments().next_start() >= span.end => return,
-            Self::Node { span, indent } => (f.comments().comments_before(span.end), indent),
+            Self::Node { span, indent } => (f.comments().comments_before_end_of(span), indent),
             Self::Comments { comments, indent } => (comments, indent),
         };
         if !comments.is_empty() {

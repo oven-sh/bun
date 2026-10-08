@@ -29,6 +29,7 @@ pub(crate) use error_jsc::get_js_sign_error;
 pub(crate) use error_jsc::s3_error_to_js;
 pub(crate) use error_jsc::throw_sign_error;
 
+pub(crate) use bun_s3_signing::credentials::S3ContentHeaders;
 pub(crate) use bun_s3_signing::credentials::S3Credentials;
 pub(crate) use bun_s3_signing::credentials::S3CredentialsWithOptions;
 use bun_s3_signing::credentials::encode_uri_component;

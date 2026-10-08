@@ -836,6 +836,7 @@ pub mod store {
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
         pub request_payer: bool,
+        pub content: Option<std::sync::Arc<bun_s3_signing::S3ContentHeaders>>,
     }
 
     impl S3 {
@@ -851,6 +852,18 @@ pub mod store {
                     .as_ref()
                     .map(|c| c.estimated_size())
                     .unwrap_or(0)
+                + self
+                    .content
+                    .as_deref()
+                    .map_or(0, bun_s3_signing::S3ContentHeaders::estimated_size)
+        }
+
+        pub fn content_disposition(&self) -> Option<&[u8]> {
+            self.content.as_deref()?.content_disposition.as_deref()
+        }
+
+        pub fn content_encoding(&self) -> Option<&[u8]> {
+            self.content.as_deref()?.content_encoding.as_deref()
         }
 
         pub fn path(&self) -> &[u8] {
@@ -882,6 +895,7 @@ pub mod store {
                 acl: None,
                 storage_class: None,
                 request_payer: false,
+                content: None,
             }
         }
     }

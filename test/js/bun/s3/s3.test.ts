@@ -1,10 +1,10 @@
-import type { S3Options } from "bun";
+import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer, type S3Server } from "s3-server";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -2167,5 +2167,205 @@ describe("presigned url signature", () => {
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
     }
+  });
+});
+
+// `contentDisposition` and `contentEncoding` given to a client or to a file are the defaults of
+// each upload of that file. A value in the options of the upload takes priority.
+// Not concurrent: on a debug build, uploads that run at the same time each take as long as all of them.
+describe("s3 contentDisposition and contentEncoding of a file or a client", () => {
+  const content = {
+    contentDisposition: 'attachment; filename="report.csv"',
+    contentEncoding: "identity",
+  } as const satisfies S3Options;
+
+  /** The two headers of each request that the server got, and the ones that the signature covers. */
+  function requests(server: S3Server) {
+    return server.requests.map(({ operation, headers }) => {
+      const signed = /SignedHeaders=([^,]*)/.exec(headers.get("authorization") ?? "")?.[1].split(";") ?? [];
+      return {
+        operation,
+        "content-disposition": headers.get("content-disposition"),
+        "content-encoding": headers.get("content-encoding"),
+        signed: ["content-disposition", "content-encoding"].filter(name => signed.includes(name)),
+      };
+    });
+  }
+
+  const sent = (
+    operation: string,
+    contentDisposition: string | null = content.contentDisposition,
+    contentEncoding: string | null = content.contentEncoding,
+  ) => ({
+    operation,
+    "content-disposition": contentDisposition,
+    "content-encoding": contentEncoding,
+    signed: [contentDisposition && "content-disposition", contentEncoding && "content-encoding"].filter(Boolean),
+  });
+
+  const streamOf = (text: string) =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      },
+    });
+
+  async function writeWithWriter(s3file: S3File, data: string | Uint8Array, options?: S3Options) {
+    const writer = options === undefined ? s3file.writer() : s3file.writer(options);
+    writer.write(data);
+    await writer.end();
+  }
+
+  const uploads: [string, (s3file: S3File, localFile: string) => unknown][] = [
+    ["write(string)", s3file => s3file.write("hello")],
+    ["write(empty string)", s3file => s3file.write("")],
+    ["write(Bun.file())", (s3file, localFile) => s3file.write(Bun.file(localFile))],
+    ["write(Response of a stream)", s3file => s3file.write(new Response(streamOf("hello")))],
+    ["write(string, {})", s3file => s3file.write("hello", {})],
+    ["Bun.write(file, string)", s3file => Bun.write(s3file, "hello")],
+    ["Bun.write(file, ReadableStream)", s3file => Bun.write(s3file, streamOf("hello"))],
+    ["writer()", s3file => writeWithWriter(s3file, "hello")],
+    ["writer({})", s3file => writeWithWriter(s3file, "hello", {})],
+  ];
+
+  it.each(uploads)("%s sends the values of client.file(key, options)", async (_, upload) => {
+    using dir = tempDir("s3-content-headers", { "local.txt": "hello" });
+    await using server = serve({ buckets: ["bucket"] });
+    const s3file = new S3Client(server.clientOptions("bucket")).file("key", content);
+
+    await upload(s3file, path.join(String(dir), "local.txt"));
+
+    expect(requests(server)).toEqual([sent("PutObject")]);
+  });
+
+  // The last three rows give the options to the upload. They pass without the options of a file.
+  const withOptions = (server: S3Server) => ({ ...server.clientOptions("bucket"), ...content });
+  const plainClient = (server: S3Server) => new S3Client(server.clientOptions("bucket"));
+  const entryPoints: [string, (server: S3Server) => unknown][] = [
+    ["S3Client.file(key, options).write(data)", server => S3Client.file("key", withOptions(server)).write("hello")],
+    [
+      "new S3Client(options).file(key).write(data)",
+      server => new S3Client(withOptions(server)).file("key").write("hello"),
+    ],
+    [
+      "new S3Client(options).file(key).writer()",
+      server => writeWithWriter(new S3Client(withOptions(server)).file("key"), "hello"),
+    ],
+    ["new S3Client(options).write(key, data)", server => new S3Client(withOptions(server)).write("key", "hello")],
+    [
+      "new S3Client({ contentEncoding }).write(key, data, { contentDisposition })",
+      server =>
+        new S3Client({ ...server.clientOptions("bucket"), contentEncoding: content.contentEncoding }).write(
+          "key",
+          "hello",
+          { contentDisposition: content.contentDisposition },
+        ),
+    ],
+    ["client.write(key, data, options)", server => plainClient(server).write("key", "hello", content)],
+    ["S3Client.write(key, data, options)", server => S3Client.write("key", "hello", withOptions(server))],
+    [
+      "S3Client.write(file, data, options)",
+      // The declared type of the first parameter is `string`. The function also takes an S3 file.
+      server => (S3Client.write as any)(plainClient(server).file("key"), "hello", content),
+    ],
+  ];
+
+  it.each(entryPoints)("%s sends both values", async (_, upload) => {
+    await using server = serve({ buckets: ["bucket"] });
+
+    await upload(server);
+
+    expect(requests(server)).toEqual([sent("PutObject")]);
+  });
+
+  it("a value of the upload wins over the file, and a value of the file wins over the client", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client({ ...server.clientOptions("bucket"), ...content, contentDisposition: "inline" });
+    const s3file = client.file("key", { contentDisposition: "attachment" });
+    const ofUpload = { contentDisposition: 'attachment; filename="upload.csv"' };
+
+    await s3file.write("hello");
+    await s3file.write("hello", ofUpload);
+    await writeWithWriter(s3file, "hello", ofUpload);
+    // The options of an upload do not stay on the file.
+    await writeWithWriter(s3file, "hello");
+    await client.file("other-key").write("hello");
+
+    expect(requests(server)).toEqual([
+      sent("PutObject", "attachment"),
+      sent("PutObject", ofUpload.contentDisposition),
+      sent("PutObject", ofUpload.contentDisposition),
+      sent("PutObject", "attachment"),
+      sent("PutObject", "inline"),
+    ]);
+  });
+
+  it("an empty string sends no header, also when the file or the client has a value", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client({ ...server.clientOptions("bucket"), ...content });
+    const s3file = client.file("key");
+
+    await s3file.write("hello", { contentDisposition: "" });
+    await writeWithWriter(s3file, "hello", { contentEncoding: "" });
+    await client.write("key", "hello", { contentEncoding: "" });
+    await client.file("key", { contentDisposition: "" }).write("hello");
+    await writeWithWriter(client.file("key", { contentDisposition: "", contentEncoding: "" }), "hello");
+    // The empty string of one upload does not stay on the file.
+    await s3file.write("hello");
+
+    expect(requests(server)).toEqual([
+      sent("PutObject", null, content.contentEncoding),
+      sent("PutObject", content.contentDisposition, null),
+      sent("PutObject", content.contentDisposition, null),
+      sent("PutObject", null, content.contentEncoding),
+      sent("PutObject", null, null),
+      sent("PutObject"),
+    ]);
+  });
+
+  it("a multipart upload sends the values of file() with CreateMultipartUpload", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const s3file = new S3Client(server.clientOptions("bucket")).file("key", content);
+
+    await writeWithWriter(s3file, Buffer.alloc(5 * 1024 * 1024 + 1, "a"));
+
+    expect(requests(server).sort((a, b) => a.operation.localeCompare(b.operation))).toEqual([
+      sent("CompleteMultipartUpload", null, null),
+      sent("CreateMultipartUpload"),
+      sent("UploadPart", null, null),
+      sent("UploadPart", null, null),
+    ]);
+  });
+
+  it("only uploads use the values of file()", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client({ ...server.clientOptions("bucket"), ...content });
+    const s3file = client.file("key", content);
+    await s3file.write("hello");
+    server.requests.length = 0;
+
+    await s3file.stat();
+    await s3file.text();
+    await client.list();
+    await s3file.delete();
+
+    expect(requests(server)).toEqual([
+      sent("HeadObject", null, null),
+      sent("GetObject", null, null),
+      sent("ListObjectsV2", null, null),
+      sent("DeleteObject", null, null),
+    ]);
+    // A presigned URL has the value of the options of `presign()` only.
+    const responseContentDisposition = (url: string) => new URL(url).searchParams.get("response-content-disposition");
+    expect({
+      "presign()": responseContentDisposition(s3file.presign()),
+      "presign({ expiresIn })": responseContentDisposition(s3file.presign({ expiresIn: 60 })),
+      "presign({ contentDisposition })": responseContentDisposition(s3file.presign({ contentDisposition: "inline" })),
+    }).toEqual({
+      "presign()": null,
+      "presign({ expiresIn })": null,
+      "presign({ contentDisposition })": "inline",
+    });
   });
 });

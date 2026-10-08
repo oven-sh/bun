@@ -7,6 +7,12 @@ const REDUNDANT_BLOCK: Message = Message::new("redundantBlock", "Block is redund
 const REDUNDANT_NESTED_BLOCK: Message =
     Message::new("redundantNestedBlock", "Nested block is redundant.");
 
+/// `list.len() == 1`, without counting a long list for each of its elements.
+fn has_one<'a>(list: List<'a, Stmt<'a>>) -> bool {
+    let mut rest = list.iter();
+    rest.next().is_some() && rest.next().is_none()
+}
+
 /// Whether a statement directly in `body` declares something in the scope of the block.
 fn has_block_level_binding<'a>(body: List<'a, Stmt<'a>>) -> bool {
     let is_lexical = |statement: Stmt<'a>| match statement.kind() {
@@ -32,12 +38,12 @@ impl NoLoneBlocks {
         // Whether it is in a block, which the body of a function is too, and alone in it.
         let (is_nested, is_only_child) = match block.parent() {
             Node::Stmt(parent) => match parent.kind() {
-                StmtKind::Block(siblings) => (true, siblings.len() == 1),
+                StmtKind::Block(siblings) => (true, has_one(siblings)),
                 _ => return,
             },
-            Node::Func(func) => (true, func.body_statements().is_some_and(|it| it.len() == 1)),
+            Node::Func(func) => (true, func.body_statements().is_some_and(has_one)),
             Node::File(_) => (false, false),
-            Node::Case(case) if case.body().len() != 1 => (false, false),
+            Node::Case(case) if !has_one(case.body()) => (false, false),
             _ => return,
         };
         if !is_only_child && cx.language().ecma_version >= 2015 && has_block_level_binding(body) {

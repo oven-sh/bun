@@ -47,7 +47,7 @@ impl Rule for NoLonelyIf {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         on.stmts([StmtTag::If], |_, node, cx| {
             if let Node::Stmt(block) = node.parent()
-                && block.as_block().is_some_and(|body| body.len() == 1)
+                && block.as_block().is_some_and(|body| body.iter().nth(1).is_none())
                 && let Node::Stmt(outer) = block.parent()
                 && matches!(outer.kind(), StmtKind::If { no: Some(no), .. } if no == block)
                 && !ast_utils::are_braces_necessary(block)

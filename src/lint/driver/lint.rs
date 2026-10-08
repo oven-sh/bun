@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 /// What is the same for all files of a run.
-pub(crate) struct Context<'c> {
+pub(crate) struct Context<'c, 'm> {
     pub(crate) linter: &'c Linter,
     pub(crate) options: &'c Options,
     pub(crate) cwd: &'c [u8],
@@ -33,7 +33,7 @@ pub(crate) struct Context<'c> {
     /// Runs the rules that are written in JavaScript.
     pub(crate) js_plugins: &'c Host<'c>,
     /// Which file imports which, for the rules that are about several files.
-    pub(crate) modules: &'c Graph<'c>,
+    pub(crate) modules: &'c Graph<'m>,
     pub(crate) timing: &'c Timing,
     /// The names in all files that are linted without types. They are freed when the run ends: what
     /// they take is bounded by the distinct names and strings of the project.
@@ -44,7 +44,7 @@ fn only_errors(_: &RuleId, severity: Severity) -> bool {
     severity == Severity::Error
 }
 
-impl Context<'_> {
+impl Context<'_, '_> {
     pub(crate) fn lint_options(&self) -> LintOptions<'_> {
         LintOptions {
             allow_inline_config: self.options.inline_config,

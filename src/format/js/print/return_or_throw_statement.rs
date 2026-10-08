@@ -39,7 +39,11 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
 
         if !is_jsx && !f.is_quiet() && has_argument_leading_comments(argument, f) {
             write!(f, ["(", block_indent(&argument), ")"]);
-        } else if matches!(argument.kind(), ExprKind::Binary { .. }) && !is_sequence {
+        } else if (matches!(argument.kind(), ExprKind::Binary { .. }) && !is_sequence)
+            || (f.options().experimental_ternaries
+                && matches!(argument.kind(), ExprKind::Cond { yes, no, .. }
+                    if matches!(yes.kind(), ExprKind::Cond { .. }) || matches!(no.kind(), ExprKind::Cond { .. })))
+        {
             write!(
                 f,
                 group(&format_args!(if_group_breaks(&"("), soft_block_indent(&argument), if_group_breaks(&")")))

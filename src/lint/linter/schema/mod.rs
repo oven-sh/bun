@@ -85,7 +85,7 @@ pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
 
 /// The same for a rule of a JavaScript plugin. `Ok`: ESLint's `context.options`, which are `options` with the default options of
 /// the rule, and with the defaults that its schema has.
-pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
+pub fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
     match &rule.schema {
         js_plugin::Schema::Any => Ok(with_js_defaults(rule, options)),
         js_plugin::Schema::None => validate_with(None, &rule.default_options, options),

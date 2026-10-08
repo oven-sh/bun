@@ -33,6 +33,8 @@ export const PROXY_ENV_KEYS = [
   "http_proxy",
   "HTTPS_PROXY",
   "https_proxy",
+  "ALL_PROXY",
+  "all_proxy",
 ] as const;
 
 export function clearProxyEnv(): Record<string, string | undefined> {
@@ -60,6 +62,8 @@ export const proxyFreeEnv = {
   http_proxy: undefined,
   HTTPS_PROXY: undefined,
   https_proxy: undefined,
+  ALL_PROXY: undefined,
+  all_proxy: undefined,
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -546,7 +550,7 @@ function buildResponse(opts: AdversarialOriginOptions, reqBody: Buffer): Buffer 
   const framing = opts.framing ?? "content-length";
   const encoded = encodeBody(rawBody, encoding);
 
-  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : STATUS_TEXT[status] ?? "Status"}\r\n`;
+  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : (STATUS_TEXT[status] ?? "Status")}\r\n`;
   for (const [k, v] of Object.entries(opts.headers ?? {})) head += `${k}: ${v}\r\n`;
   if (encoding !== "identity") head += `Content-Encoding: ${encoding}\r\n`;
 

@@ -103,7 +103,9 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             | kind(ExprTag::As)
             | kind(ExprTag::AsConst)
             | kind(ExprTag::Satisfies)
-            | kind(ExprTag::Fn);
+            | kind(ExprTag::Fn)
+            | kind(ExprTag::Template)
+            | kind(ExprTag::TaggedTemplate);
         if has & CAN_BE_GROUPED != 0
             && let Some(group_layout) = arguments_grouped_layout(self.args, f)
         {
@@ -257,6 +259,10 @@ fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
+    // The only argument is a template that is written as the language in it.
+    if args.len() == 1 && args.first().is_some_and(|only| crate::css::embed::has_embed_label(only, f)) {
+        return Some(GroupedCallArgumentLayout::GroupedLastArgument);
+    }
     if args.len() == 2 {
         let (first, second) = (args.first()?, as_expression(args.last()?)?);
         let first = as_expression(first);

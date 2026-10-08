@@ -1,6 +1,6 @@
 // bun sweep.ts <bun-lint executable> <scratch directory> <configuration file> <wide|deep> <n> [flags] [part of a name ..]
 //
-// Lints every shape at the sizes n and 4n with `<bun-lint> cli`, one file at a time in a process of its own with a limit on time and
+// Lints every shape at the sizes n and 4n (or --factor times n) with `<bun-lint> cli`, one file at a time in a process of its own with a limit on time and
 // on address space, and prints the shapes on which it ends abnormally, and those on which it takes much more than four times as
 // long at four times the size. With all rules on and --more, each shape, which was written with some rule in mind, meets all the
 // others: that found what the sweeps of some rules on their own shapes had not.
@@ -8,8 +8,9 @@
 //   --more           also the shapes that are each for some rules: see sets.ts
 //   --args="a b"     more arguments for the executable, such as --fix-dry-run or --type-aware
 //   --jobs=4  --seconds=20  --megabytes=4000
-//   --growth=7       what counts as much more than four times
-//   --least=0.3      a run that is shorter than that many seconds at 4n is not looked at
+//   --factor=4       the second size is that many times the first
+//   --growth=7       what counts as much more than that many times: 1.75 times the factor unless it is given
+//   --least=0.3      a run that is shorter than that many seconds at the second size is not looked at
 //
 // A sweep that finds nothing says something only about the files that were linted. So it counts those that the parser refuses as
 // nested too deeply, in which no rule has run. It cannot tell whether a rule has run: have a file on which each must report.
@@ -32,9 +33,10 @@ const [jobs, seconds, megabytes] = [
   Number(flag("seconds") ?? 20),
   Number(flag("megabytes") ?? 4000),
 ];
-const [growth, least] = [Number(flag("growth") ?? 7), Number(flag("least") ?? 0.3)];
+const factor = Number(flag("factor") ?? 4);
+const [growth, least] = [Number(flag("growth") ?? 1.75 * factor), Number(flag("least") ?? 0.3)];
 const more = flag("args")?.split(" ").filter(Boolean) ?? [];
-const sizes = [Number(size), 4 * Number(size)];
+const sizes = [Number(size), factor * Number(size)];
 
 type Run = { seconds: number; end: "linted" | "refused" | string };
 

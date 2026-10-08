@@ -80,6 +80,15 @@ export const cases: Case[] = [
   },
 
   {
+    name: "a constant behind 27,000 operators, and one that 44,000 assignments pass on",
+    file: "a.js",
+    text: () => `if (${rep("!", 27_000)}1) {}\nif ((${rep("a = ", 44_000)}1)) {}\n`,
+    rules: { "no-constant-condition": "error" },
+    // How deep the parser goes depends on the size of the stack frames of the build.
+    matches: /Unexpected constant condition|nested too deeply/,
+    exitCode: 1,
+  },
+  {
     name: "an assignment to a member at the end of 100,000 dots",
     file: "a.js",
     text: () => `a${rep(".b", 100_000)} = x;\n`,

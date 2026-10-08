@@ -1,0 +1,1 @@
+//! `@eslint-community/eslint-utils`.

@@ -29,7 +29,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
     let body_span = interface.body_span();
 
     // Whether the head is a group that can break before `extends`: there are several types, or one
-    // that is `A.B` without type arguments, or a comment before it.
+    // that is `A.B` without type arguments, or a comment trails the name or the type parameters.
     let group_mode = extends.len() > 1
         || extends.first().is_some_and(|first| {
             let is_member = match first.kind() {
@@ -39,9 +39,14 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
                 }
                 _ => false,
             };
+            // A comment after `extends` on its line leads the type. All others trail what is before.
             is_member || {
-                let previous = type_params.angle_brackets_span().unwrap_or(id.span());
-                f.comments().has_comment_in_range(previous.end, first.span().start)
+                let previous_end = type_params.angle_brackets_span().unwrap_or(id.span()).end;
+                let comments = f.comments().comments_in_range(previous_end, first.span().start);
+                comments.iter().any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
+                    || comments.first().is_some_and(|comment| {
+                        f.source_text().all_bytes_match(previous_end, comment.span.start, |b| b.is_ascii_whitespace())
+                    })
             }
         });
 

@@ -88,14 +88,23 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
             write!(f, FormatLiteralStringToken::new(text, false, StringLiteralParentKind::Expression));
         }
         _ => {
-            let (sign, digits) = match text.strip_prefix(b"-") {
-                Some(digits) => (Some("-"), digits.trim_ascii_start()),
-                None => (None, text),
+            let format_digits = |digits: &'a [u8]| {
+                format_with(move |f: &mut Formatter<'a>| match digits.ends_with(b"n") {
+                    true => write!(f, text_without_whitespace(&digits.to_ascii_lowercase())),
+                    false => write!(f, format_number_token(digits)),
+                })
             };
-            match digits.ends_with(b"n") {
-                true => write!(f, [sign, text_without_whitespace(&digits.to_ascii_lowercase())]),
-                false => write!(f, [sign, format_number_token(digits)]),
-            }
+            let Some(rest) = text.strip_prefix(b"-") else {
+                return write!(f, format_digits(text));
+            };
+            // `- /* comment */ 1`: like a unary expression whose operand has a comment.
+            let comments = f.comments().comments_before(ty.span().end);
+            let Some(last) = comments.last() else {
+                return write!(f, ["-", format_digits(rest.trim_ascii_start())]);
+            };
+            let digits = f.source_text().slice_range(last.span.end, ty.span().end).trim_ascii_start();
+            let operand = format_args!(FormatLeadingComments::Comments(comments), format_digits(digits));
+            write!(f, ["-", group(&format_args!("(", soft_block_indent(&operand), ")"))]);
         }
     }
 }
@@ -295,6 +304,12 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
         parent: node,
     };
 
+    // Up to what follows the `)`, they lead or trail the module specifier.
+    let has_comment = !f.is_quiet() && {
+        let following = name.first().map(|it| it.span()).or_else(|| args.angle_brackets_span());
+        f.comments().has_comment_in_range(ty.span().start, following.map_or(ty.span().end, |it| it.start))
+    };
+
     write!(f, is_typeof.then_some("typeof "));
     match ty.import_attributes() {
         Some(options) => {
@@ -302,7 +317,7 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
             write!(f, group(&format_args!("import", arguments)));
         }
         // A long module name does not break.
-        None if !f.comments().has_comment_before(source.start) => write!(f, ["import(", format_source, ")"]),
+        None if !has_comment => write!(f, ["import(", format_source, ")"]),
         None => write!(f, group(&format_args!("import(", soft_block_indent(&format_source), ")"))),
     }
 

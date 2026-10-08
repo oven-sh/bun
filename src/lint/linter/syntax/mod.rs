@@ -104,6 +104,29 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
     })
 }
 
+/// Whether Prettier refuses to format the file, which was parsed in the dialect of Babel
+/// ([`Dialect::babel`](bun_sema::resolve::Dialect::babel)): its parser throws. That is `typescript`, which is typescript-estree, for
+/// a TypeScript file, and `babel` for a JavaScript file. What `languageOptions` of the file say about a parser does not count.
+pub fn refused_by_prettier<'a>(file: &'a File<'a>) -> bool {
+    let is_javascript = file.is_javascript();
+    // `import a from "a" assert { .. }`, which typescript-estree accepts and Babel does not without a plugin.
+    let is_assert = |it: &Diagnostic| it.code == 2880;
+    let is_reported = |it: &Diagnostic| {
+        it.kind == DiagnosticKind::Parse && !is_assert(it) && !file.is_in_jsdoc(it.start)
+    };
+    let mut of_parser = file.hir.diagnostics.iter();
+    let says_why = of_parser.clone().any(|it| it.kind == DiagnosticKind::Parse);
+    if file.has_parse_errors() && (of_parser.clone().any(is_reported) || !says_why)
+        || is_javascript && of_parser.any(is_assert)
+    {
+        return true;
+    }
+    match is_javascript {
+        true => espree::is_refused_by_babel(file),
+        false => typescript_estree::first_error(file).is_some(),
+    }
+}
+
 /// What `@typescript-eslint/parser` throws for the file at `path`, which is absolute, if `parserOptions.projectService` is on and
 /// no `tsconfig.json` includes the file. It has no place. ESLint does not lint such a file, whatever the rules are.
 ///

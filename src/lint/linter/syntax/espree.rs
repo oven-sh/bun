@@ -33,6 +33,76 @@ struct Checks<'a> {
     is_all_strict: bool,
     /// The tree is whole: the parser has reported nothing.
     is_whole: bool,
+    /// Only what Prettier refuses counts: see [`is_refused_by_babel`].
+    is_babel: bool,
+}
+
+/// The errors, in the words of acorn, that Babel has too, that it does not recover from or Prettier does not let pass, and that
+/// it reports wherever acorn does. What is not listed does not count: Prettier formats a file with such an error.
+const REFUSED_BY_BABEL: [&str; 44] = [
+    "A string literal cannot be used as an exported binding without `from`.",
+    "Assigning to rvalue",
+    "Async functions can only be declared at the top level or inside a block",
+    "Await expression cannot be a default value",
+    "Cannot use 'arguments' in class field initializer",
+    "Cannot use arguments in class static initialization block",
+    "Cannot use new with import",
+    "Classes can't have",
+    "Classes may not have a static property named prototype",
+    "Comma is not permitted after the rest element",
+    "Constructor can't",
+    "Duplicate constructor in the same class",
+    "Duplicate export 'default'",
+    "Duplicate regular expression flag",
+    "Identifier '#",
+    "Illegal 'use strict' directive in function with non-simple parameter list",
+    "Illegal newline after throw",
+    "Invalid regular expression flag",
+    "Label '",
+    "Lexical declaration cannot appear in a single-statement context",
+    "Logical expressions and coalesce expressions cannot be mixed",
+    "Multiple default clauses",
+    "No line break is allowed before '=>'",
+    "Object pattern can't contain getter or setter",
+    "Only `import defer * as x` is valid",
+    "Optional chaining cannot appear in left-hand side",
+    "Optional chaining cannot appear in the tag of tagged template expressions",
+    "Private fields can not be deleted",
+    "Private fields can't be accessed on super",
+    "Redefinition of __proto__ property",
+    "Rest elements cannot have a default value",
+    "Setter cannot use rest params",
+    "Shorthand property assignments are valid only in destructuring patterns",
+    "The only valid meta property for",
+    "Unsyntactic break",
+    "Unsyntactic continue",
+    "Using declaration",
+    "Yield expression cannot be a default value",
+    "`...` is not allowed in `import()`",
+    "`import()` requires exactly one or two arguments",
+    "getter should have no params",
+    "let is disallowed as a lexically bound name",
+    "setter should have exactly one param",
+    "super() call outside constructor of a subclass",
+];
+
+/// Whether Prettier's `babel` parser throws on a JavaScript file that the parser here, in that dialect, has nothing to say about.
+///
+/// Prettier lets Babel go on after an error, and lets pass what is only wrong in strict mode, names that are declared twice or
+/// not at all, `return`, `import` and `export` where they do not belong, and more. It is meant to format code that is not quite
+/// right. So only errors count here of which it is known that it throws. Nothing is asked of the scopes of the file.
+pub(super) fn is_refused_by_babel<'a>(file: &'a File<'a>) -> bool {
+    let mut checks = Checks {
+        file,
+        first: None,
+        noticed: 0,
+        is_all_strict: false,
+        is_whole: true,
+        is_babel: true,
+    };
+    checks.keywords_as_names();
+    checks.early_errors();
+    checks.first.is_some()
 }
 
 /// `of_parser`: the error of TypeScript's parser, if it has one, and where it is.
@@ -47,6 +117,7 @@ pub(super) fn first_error<'a>(
         noticed: 0,
         is_all_strict: language.source_type == SourceType::Module || language.implied_strict,
         is_whole: of_parser.is_none(),
+        is_babel: false,
     };
     if let Some((diagnostic, at)) = of_parser {
         checks.error_of_parser(diagnostic, at);
@@ -74,15 +145,14 @@ fn is_identifier_byte(byte: u8) -> bool {
 impl<'a> Checks<'a> {
     /// Of two errors that acorn would notice at one place, the one that is found first counts.
     fn fail(&mut self, at: u32, message: impl Into<Vec<u8>>) {
+        let message = message.into();
+        if self.is_babel && !(REFUSED_BY_BABEL.iter()).any(|it| message.starts_with(it.as_bytes()))
+        {
+            return;
+        }
         let noticed = self.noticed.max(at);
         if self.first.as_ref().is_none_or(|it| noticed < it.0) {
-            self.first = Some((
-                noticed,
-                SyntaxError {
-                    at,
-                    message: message.into(),
-                },
-            ));
+            self.first = Some((noticed, SyntaxError { at, message }));
         }
     }
 
@@ -149,7 +219,8 @@ impl<'a> Checks<'a> {
 
     /// Whether the code at `node` is strict.
     fn is_strict(&self, node: Node<'a>) -> bool {
-        self.is_all_strict || self.is_whole && node.scope().is_strict()
+        // What is only wrong in strict mode does not keep Prettier from formatting.
+        !self.is_babel && (self.is_all_strict || self.is_whole && node.scope().is_strict())
     }
 
     // ───────────────────────────── the words for an error of the parser ─────────────────────────────

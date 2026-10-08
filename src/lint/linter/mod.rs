@@ -56,7 +56,7 @@ pub(crate) use per_file::PerFile;
 pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 pub(crate) use space::trim as trim_js_space;
-pub use syntax::{not_in_a_project, parse_error};
+pub use syntax::{not_in_a_project, parse_error, refused_by_prettier};
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};

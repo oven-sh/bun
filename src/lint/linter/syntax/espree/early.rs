@@ -83,6 +83,8 @@ impl<'a> Checks<'a> {
                 continue;
             }
             self.when_read_to(target.outer_span().end, |checks| match op {
+                // `a?.b = c` is a proposal that Prettier has Babel accept.
+                _ if checks.is_babel && target.is_in_optional_chain() => {}
                 None => checks.to_assignable(target, 0),
                 Some(_) => checks.check_simple_target(target),
             });
@@ -170,7 +172,9 @@ impl<'a> Checks<'a> {
                             if matches!(value.kind(), ExprKind::Object(_) | ExprKind::Array(_)) {
                                 self.fail(value.span().start, "Unexpected token");
                             }
-                            self.comma_after_rest(value.outer_span().end);
+                            if !self.is_babel {
+                                self.comma_after_rest(value.outer_span().end);
+                            }
                         }
                         PropKind::Init | PropKind::Shorthand => {
                             self.to_assignable(value, depth + 1)
@@ -191,7 +195,10 @@ impl<'a> Checks<'a> {
                         "Rest elements cannot have a default value",
                     );
                 }
-                self.comma_after_rest(target.outer_span().end);
+                // Babel recovers from it in what it has parsed as an expression.
+                if !self.is_babel {
+                    self.comma_after_rest(target.outer_span().end);
+                }
             }
             ExprKind::Assign {
                 op, target: left, ..
@@ -210,7 +217,11 @@ impl<'a> Checks<'a> {
 
     fn comma_after_rest(&mut self, end: u32) {
         if let Some(comma) = self.next_is(end, b',') {
-            self.fail(comma, "Comma is not permitted after the rest element");
+            // Babel recovers from a comma that nothing follows.
+            let next = self.file.text().get(self.after_token(comma) as usize);
+            if !self.is_babel || !matches!(next, Some(b']' | b'}' | b')')) {
+                self.fail(comma, "Comma is not permitted after the rest element");
+            }
         }
     }
 
@@ -219,7 +230,11 @@ impl<'a> Checks<'a> {
         let file = self.file;
         let rest = |checks: &mut Self, default: Option<Expr<'a>>, end: u32| {
             if let Some(default) = default {
-                checks.unexpected(checks.before_token(default.outer_span().start));
+                let equals = checks.before_token(default.outer_span().start);
+                match checks.is_babel {
+                    true => checks.fail(equals, "Rest elements cannot have a default value"),
+                    false => checks.unexpected(equals),
+                }
             }
             checks.comma_after_rest(end);
         };
@@ -256,6 +271,8 @@ impl<'a> Checks<'a> {
                         )
                     });
                 }
+                // Babel recovers from what is wrong with `...` in the parameters of an arrow function.
+                None if self.is_babel && is_parameter && arrow.is_some() => {}
                 None => rest(self, it.default(), raw.end),
             }
         }
@@ -418,7 +435,13 @@ impl<'a> Checks<'a> {
             .map(|it| it.pat())
             .filter(|it| !matches!(it.kind(), PatKind::Ident(_)))
         {
-            self.unexpected(pattern.span().start);
+            match self.is_babel {
+                true => self.fail(
+                    pattern.span().start,
+                    "Using declaration cannot have destructuring patterns",
+                ),
+                false => self.unexpected(pattern.span().start),
+            }
         }
     }
 
@@ -450,6 +473,29 @@ impl<'a> Checks<'a> {
 
     fn declaration_as_body(&mut self, it: Stmt<'a>, parent: Stmt<'a>) {
         let start = it.span().start;
+        let is_lexical = match it.kind() {
+            StmtKind::Var(list) => {
+                matches!(
+                    list.first().map(|it| it.var_kind()),
+                    Some(VarKind::Let | VarKind::Const)
+                )
+            }
+            StmtKind::Class(_) => true,
+            _ => false,
+        };
+        if self.is_babel && is_lexical {
+            let message = "Lexical declaration cannot appear in a single-statement context";
+            return self.fail(start, message);
+        }
+        if self.is_babel {
+            // Where else a function cannot be is an error of strict mode for it, or one of sloppy mode.
+            if matches!(it.kind(), StmtKind::Fn(func) if func.is_async()) {
+                let message =
+                    "Async functions can only be declared at the top level or inside a block";
+                self.fail(start, message);
+            }
+            return;
+        }
         match it.kind() {
             StmtKind::Var(list) => match list.first().map(|it| it.var_kind()) {
                 Some(VarKind::Var) | None => {}
@@ -547,7 +593,9 @@ impl<'a> Checks<'a> {
             else {
                 continue;
             };
+            // Babel does not look into parentheses, which Prettier has it keep.
             if matches!(operand.kind(), ExprKind::Dot { name, .. } if name.bytes().starts_with(b"#"))
+                && !(self.is_babel && operand.is_parenthesized())
             {
                 self.when_read_to(it.span().end, |checks| {
                     checks.fail(it.span().start, "Private fields can not be deleted")
@@ -561,7 +609,8 @@ impl<'a> Checks<'a> {
         let file = self.file;
         let of_import = "The only valid meta property for import is 'import.meta'";
         for it in file.exprs_of_kind(ExprTag::ImportCall) {
-            if it.is_deferred_import_call() {
+            // Proposals that Prettier has Babel accept.
+            if it.is_deferred_import_call() && !self.is_babel {
                 self.fail(
                     self.after_token(self.after_token(it.span().start)),
                     of_import,
@@ -570,7 +619,19 @@ impl<'a> Checks<'a> {
         }
         // `import defer * as a from "a"`: `defer` is the name of the default import.
         for raw in file.hir.imports.iter().filter(|it| it.is_deferred) {
-            self.unexpected(self.after_token(raw.clause_start));
+            if !self.is_babel {
+                self.unexpected(self.after_token(raw.clause_start));
+                continue;
+            }
+            // `import defer * as a from "a"`, `import source a from "a"`
+            let (has_default, has_namespace) = (!raw.default.is_none(), !raw.namespace.is_none());
+            let is_valid = match self.token_at(raw.clause_start) {
+                b"source" => has_default && !has_namespace,
+                _ => has_namespace && !has_default,
+            };
+            if !is_valid || raw.has_named_imports {
+                self.fail(raw.clause_start, "Only `import defer * as x` is valid");
+            }
         }
         for it in file
             .hir
@@ -711,9 +772,11 @@ impl<'a> Checks<'a> {
                 continue;
             };
             // Not after `new`, which acorn-jsx forgets.
-            if !self.file.language().jsx && !it.is_parenthesized() {
+            if (self.is_babel || !self.file.language().jsx) && !it.is_parenthesized() {
                 let mut callee = it;
-                while let Node::Expr(outer) = callee.parent()
+                // Babel only looks at what follows `new`.
+                while !self.is_babel
+                    && let Node::Expr(outer) = callee.parent()
                     && matches!(
                         outer.kind(),
                         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == callee
@@ -725,10 +788,13 @@ impl<'a> Checks<'a> {
                 if let Node::Expr(outer) = callee.parent()
                     && matches!(outer.kind(), ExprKind::New(call) if call.callee() == callee)
                 {
-                    self.unexpected(self.after_token(it.span().start));
+                    match self.is_babel {
+                        true => self.fail(it.span().start, "Cannot use new with import"),
+                        false => self.unexpected(self.after_token(it.span().start)),
+                    }
                 }
             }
-            if it.is_deferred_import_call() {
+            if it.is_deferred_import_call() && !self.is_babel {
                 continue;
             }
             let written: SmallVec<[Expr<'a>; 4]> =
@@ -737,12 +803,21 @@ impl<'a> Checks<'a> {
                 // At the `)`.
                 self.unexpected(self.after_token(self.after_token(it.span().start)));
             }
+            if self.is_babel && !matches!(written.len(), 1 | 2) {
+                self.fail(
+                    it.span().start,
+                    "`import()` requires exactly one or two arguments",
+                );
+            }
             if let Some(spread) = written
                 .iter()
                 .take(2)
                 .find(|it| matches!(it.kind(), ExprKind::Spread(_)))
             {
-                self.unexpected(spread.span().start);
+                match self.is_babel {
+                    true => self.fail(spread.span().start, "`...` is not allowed in `import()`"),
+                    false => self.unexpected(spread.span().start),
+                }
             }
             if let Some(third) = written.get(2) {
                 self.unexpected(third.outer_span().start);
@@ -867,7 +942,11 @@ impl<'a> Checks<'a> {
                 None => false,
             };
             if !allows_super {
-                self.fail(start, "'super' keyword outside a method");
+                match self.is_babel && scope.is_some() {
+                    // At the top level Prettier has Babel allow it.
+                    true => self.fail(start, "super() call outside constructor of a subclass"),
+                    false => self.fail(start, "'super' keyword outside a method"),
+                }
                 continue;
             }
             let is_called = matches!(it.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Call(call) if call.callee() == it));
@@ -927,7 +1006,10 @@ impl<'a> Checks<'a> {
             }
             if matches!(it.kind(), ExprKind::Dot { obj, .. } if matches!(obj.kind(), ExprKind::Super))
             {
-                self.unexpected(name.start());
+                match self.is_babel {
+                    true => self.fail(name.start(), "Private fields can't be accessed on super"),
+                    false => self.unexpected(name.start()),
+                }
             } else if !is_declared(Node::Expr(it), name.bytes()) {
                 // Noticed at the end of the outermost class.
                 let outermost = Node::Expr(it)
@@ -1098,6 +1180,10 @@ impl<'a> Checks<'a> {
             {
                 continue;
             }
+            if self.is_babel {
+                self.fail(arrow.start, "No line break is allowed before '=>'");
+                continue;
+            }
             // Without parameters there is nothing that the parentheses could be instead.
             match it.params().is_empty() && it.open_paren().is_some() {
                 true => self.unexpected(before.saturating_sub(1)),
@@ -1203,7 +1289,9 @@ impl<'a> Checks<'a> {
                             self.when_read_to(it.span().end, |checks| {
                                 checks.fail(local.start(), message)
                             });
-                        } else if file.top_level_scope().get_name(local.name()).is_none() {
+                        } else if !self.is_babel
+                            && file.top_level_scope().get_name(local.name()).is_none()
+                        {
                             let message =
                                 [b"Export '", local.bytes(), b"' is not defined"].concat();
                             self.when_read_to(file.text().len() as u32, |checks| {

@@ -855,6 +855,48 @@ fn diagnostics(args: &[String]) {
     print(&out);
 }
 
+/// `prettier <cases.json>`: for each `{ code, filename }`, whether Prettier refuses it, and whether the parser has reported
+/// something. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
+fn prettier(args: &[String]) {
+    let mut all = Vec::new();
+    for case in &read_cases(args) {
+        let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+        let path = (case.get(b"filename").and_then(Json::as_str)).unwrap_or(b"file.js");
+        let language = LanguageOptions::default();
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let arena = session.arena();
+        let options = language.parse_options(path);
+        let mut hir = bun_js_parser::sema::summarize_as(
+            bun_sema::resolve::Dialect::babel(false),
+            arena,
+            path,
+            options.script_kind,
+            code,
+            &atoms,
+            options.experimental_decorators,
+            options.every_file_is_a_module,
+        )
+        .0;
+        hir.text = code.to_vec().into();
+        let bind_options = BindOptions {
+            emit_standard_class_fields: true,
+            before_es2020: false,
+            before_es2017: false,
+        };
+        let bound = bun_sema::bind::bind_for_format(&hir, bind_options, &atoms, arena);
+        let file = File::new(path, &hir, &bound, &atoms, &language, None);
+        all.push(Json::Array(vec![
+            Json::Bool(bun_lint::linter::refused_by_prettier(&file)),
+            Json::Bool(file.has_parse_errors()),
+        ]));
+    }
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Array(all));
+    out.push(b'\n');
+    print(&out);
+}
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -862,6 +904,7 @@ fn text(bytes: &[u8]) -> String {
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("verify") => verify(&args[1..]),
+        Some("prettier") => prettier(&args[1..]),
         Some("comment-parser") => comment_parser(&args[1..]),
         Some("json-parse") => json_parse(&args[1..]),
         Some("globals") => globals(&args[1..]),

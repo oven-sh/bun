@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::get_static_string_value;
 use bun_lint::utils::text::{code_points, to_lower_case};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -407,17 +408,35 @@ fn collect_immediate_this_property_names(initializer: Expr<'_>) -> SmallVec<[Cow
     names
 }
 
-/// Upstream's `isBlockedByEarlierMemberReferences`. `earlier`: the members that `member` would
-/// have to be moved before.
-fn is_blocked_by_earlier_member_references<'a>(member: Member<'a>, earlier: &[Member<'a>]) -> bool {
-    let Some(initializer) = get_member_initializer(member) else {
-        return false;
-    };
-    let referenced = collect_immediate_this_property_names(initializer);
-    !referenced.is_empty()
-        && earlier.iter().any(|&other| {
-            get_member_initializer(other).is_some() && referenced.contains(&get_member_name(other))
-        })
+/// The names of the members with an initializer among those that a member would have to be moved before.
+#[derive(Default)]
+struct EarlierMembers<'a> {
+    names: FxHashSet<Cow<'a, [u8]>>,
+    /// The positions of the members that `names` is about.
+    range: std::ops::Range<usize>,
+}
+
+impl<'a> EarlierMembers<'a> {
+    /// Upstream's `isBlockedByEarlierMemberReferences`. `earlier`: the positions in `members` of those that `member` would have
+    /// to be moved before. From one call to the next, it starts where it did or where it has ended or later: a member is looked
+    /// at once.
+    fn block(&mut self, member: Member<'a>, members: &[Member<'a>], earlier: std::ops::Range<usize>) -> bool {
+        let Some(initializer) = get_member_initializer(member) else {
+            return false;
+        };
+        let referenced = collect_immediate_this_property_names(initializer);
+        if referenced.is_empty() {
+            return false;
+        }
+        if self.range.start != earlier.start {
+            self.names.clear();
+            self.range = earlier.start..earlier.start;
+        }
+        let added = members.get(self.range.end..earlier.end).unwrap_or_default();
+        self.names.extend(added.iter().filter(|it| get_member_initializer(**it).is_some()).map(|it| get_member_name(*it)));
+        self.range.end = self.range.end.max(earlier.end);
+        referenced.iter().any(|it| self.names.contains(it))
+    }
 }
 
 /// Upstream's `getRank`: the index in `types` of the most specific member group of `member` that
@@ -685,14 +704,14 @@ impl<'a> Validation<'_, 'a> {
     fn check_alpha_sort(&self, members: &[Member<'a>], order: Order) {
         let mut previous_name: Cow<'a, [u8]> = Cow::default();
         let mut previous_index = 0;
+        let mut earlier = EarlierMembers::default();
         for (index, &member) in members.iter().enumerate() {
             let name = get_member_name(member);
             if name.is_empty() {
                 continue;
             }
             if natural_out_of_order(&name, &previous_name, order) {
-                let earlier = members.get(previous_index..index).unwrap_or_default();
-                if is_blocked_by_earlier_member_references(member, earlier) {
+                if earlier.block(member, members, previous_index..index) {
                     continue;
                 }
                 self.cx

@@ -45,27 +45,36 @@ impl<'o> Out<'o> {
         &mut self.buffer[self.len..self.len + len]
     }
 
-    #[inline]
-    pub(super) fn token(&mut self, token: &Token) {
-        self.next(Token::MAX).copy_from_slice(token.padded());
-        self.len += token.len();
+    /// Writes the first `len` bytes of `block`. What is behind them in the vector is overwritten.
+    #[inline(always)]
+    fn block<const N: usize>(&mut self, block: &[u8; N], len: usize) {
+        loop {
+            if let Some(next) = self.buffer.get_mut(self.len..).and_then(|rest| rest.first_chunk_mut()) {
+                *next = *block;
+                self.len += len;
+                return;
+            }
+            self.grow(N);
+        }
     }
 
-    #[inline]
+    #[inline(always)]
+    pub(super) fn token(&mut self, token: &Token) {
+        self.block(token.padded(), token.len());
+    }
+
+    #[inline(always)]
     pub(super) fn byte(&mut self, byte: u8) {
-        self.next(1)[0] = byte;
-        self.len += 1;
+        self.block(&[byte], 1);
     }
 
     /// Writes the part of `text` at `range`.
-    #[inline]
+    #[inline(always)]
     pub(super) fn part(&mut self, text: &[u8], range: std::ops::Range<usize>) {
         if range.len() <= BLOCK
-            && let Some(block) = text.get(range.start..range.start + BLOCK)
+            && let Some(block) = text.get(range.start..).and_then(|rest| rest.first_chunk::<BLOCK>())
         {
-            self.next(BLOCK).copy_from_slice(block);
-            self.len += range.len();
-            return;
+            return self.block(block, range.len());
         }
         self.bytes(text.get(range).unwrap_or_default());
     }

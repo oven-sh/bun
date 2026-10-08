@@ -22,6 +22,7 @@ use super::element::{
 };
 use super::formatter::{END_LINE_SUFFIX, HARD_LINE_BREAK, Storage};
 use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
+use smallvec::SmallVec;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PrintError {
@@ -72,6 +73,62 @@ impl Run {
     }
 }
 
+/// A [`Run`] that is being gone through.
+#[derive(Clone)]
+struct Elements<'d> {
+    rest: std::slice::Iter<'d, FormatElement>,
+    /// [`Run::end`]
+    end: u32,
+}
+
+impl<'d> Elements<'d> {
+    #[inline]
+    fn new(run: Run, pool: &'d [FormatElement]) -> Self {
+        let rest = pool.get(run.at as usize..run.end as usize).unwrap_or_default();
+        Elements {
+            rest: rest.iter(),
+            end: run.at + rest.len() as u32,
+        }
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<&'d FormatElement> {
+        self.rest.next()
+    }
+
+    /// The index of the next element.
+    #[inline]
+    fn at(&self) -> u32 {
+        self.end - self.rest.len() as u32
+    }
+
+    /// What is left.
+    #[inline]
+    fn run(&self) -> Run {
+        Run {
+            at: self.at(),
+            end: self.end,
+        }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.rest.len() == 0
+    }
+
+    /// Passes over the next `count` elements.
+    #[inline]
+    fn skip(&mut self, count: u32) {
+        self.rest = self.rest.as_slice().get(count as usize..).unwrap_or_default().iter();
+    }
+
+    /// The element at `index`, which is not behind, is the next.
+    #[inline]
+    fn move_to(&mut self, index: u32) {
+        self.skip(index.saturating_sub(self.at()));
+    }
+}
+
 /// The tags that set the mode of their content.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum FrameKind {
@@ -106,7 +163,6 @@ pub(crate) struct PrinterBuffers {
     line_suffixes: Vec<(Interned, PrintMode)>,
     /// By [`GroupId::index`].
     group_modes: Vec<Option<PrintMode>>,
-    flat_queue: Vec<Run>,
     /// What a [`Measure`] puts on top of `queue` and `frames`, which it leaves as they are.
     measure_queue: Vec<Run>,
     measure_frames: Vec<Frame>,
@@ -128,7 +184,7 @@ struct Printer<'d> {
     has_empty_line: bool,
     line_width: usize,
     /// What is being printed.
-    run: Run,
+    elements: Elements<'d>,
     /// That of the last of `buffers.frames`.
     mode: PrintMode,
     /// `buffers.marks[i]` is after the pending indentation and space, if those are printed.
@@ -173,7 +229,7 @@ pub(crate) fn print(
         measured_group_fits: true,
         has_empty_line: false,
         line_width: 0,
-        run: Run::of(root),
+        elements: Elements::new(Run::of(root), &storage.pool),
         mode: PrintMode::Expanded,
         is_mark_pending: [false; 2],
         start,
@@ -198,29 +254,29 @@ impl<'d> Printer<'d> {
 
     // ───────────────────────────── the queue ─────────────────────────────
 
-    /// The index of the next element, which is removed from the queue.
+    /// The next element, which is removed from the queue.
     #[inline]
-    fn next(&mut self) -> Option<u32> {
-        while self.run.at >= self.run.end {
-            self.run = self.buffers.queue.pop()?;
+    fn next(&mut self) -> Option<&'d FormatElement> {
+        loop {
+            if let Some(element) = self.elements.next() {
+                return Some(element);
+            }
+            self.elements = Elements::new(self.buffers.queue.pop()?, self.pool);
         }
-        let index = self.run.at;
-        self.run.at += 1;
-        Some(index)
     }
 
     /// Puts `elements` before everything that is in the queue.
     #[inline]
     fn print_next(&mut self, elements: Interned) {
-        if self.run.at < self.run.end {
-            self.buffers.queue.push(self.run);
+        if !self.elements.is_empty() {
+            self.buffers.queue.push(self.elements.run());
         }
-        self.run = Run::of(elements);
+        self.elements = Elements::new(Run::of(elements), self.pool);
     }
 
     /// The next element that stands for itself.
     fn peek(&self) -> Option<&'d FormatElement> {
-        first_of(self.run, self.pool)
+        first_of(self.elements.run(), self.pool)
             .or_else(|| self.buffers.queue.iter().rev().find_map(|&run| first_of(run, self.pool)))
     }
 
@@ -304,13 +360,13 @@ impl<'d> Printer<'d> {
     fn print_elements<const ENTRY: bool>(&mut self, entry_mode: PrintMode) -> PrintResult<()> {
         let mut depth = 0usize;
         loop {
-            let Some(index) = self.next() else {
+            let Some(element) = self.next() else {
                 return if ENTRY { Err(PrintError::InvalidDocument) } else { Ok(()) };
             };
-            match self.pool.get(index as usize).ok_or(PrintError::InvalidDocument)? {
+            match element {
                 FormatElement::Nop => {}
                 FormatElement::Cursor(mark) => self.note_mark(*mark),
-                FormatElement::Skip(skip) => self.run.at = self.run.at.saturating_add(skip.len),
+                FormatElement::Skip(skip) => self.elements.skip(skip.len),
                 FormatElement::Space => {
                     if self.line_width > 0 {
                         self.pending_space = true;
@@ -340,7 +396,7 @@ impl<'d> Printer<'d> {
 
                     if !self.buffers.line_suffixes.is_empty() {
                         let again = Interned {
-                            start: index,
+                            start: self.elements.at() - 1,
                             len: 1,
                         };
                         self.flush_line_suffixes(Some(again));
@@ -385,12 +441,12 @@ impl<'d> Printer<'d> {
                         if let Some(id) = group.id() {
                             self.insert_group_mode(id, group_mode);
                         }
-                        if group_mode.is_flat() && self.can_print_flat(group.flat()) && group.end() < self.run.end {
+                        if group_mode.is_flat() && self.can_print_flat(group.flat()) && group.end() < self.elements.end {
                             let content = Run {
-                                at: self.run.at,
+                                at: self.elements.at(),
                                 end: group.end(),
                             };
-                            self.run.at = group.end() + 1;
+                            self.elements.move_to(group.end() + 1);
                             self.print_flat(content)?;
                         } else {
                             self.push(FrameKind::Group, group_mode);
@@ -438,7 +494,7 @@ impl<'d> Printer<'d> {
                             Some(id) => self.group_mode(*id).ok_or(PrintError::InvalidDocument)?,
                         };
                         if group_mode != *wanted {
-                            skip_conditional_content(&mut self.run, self.pool)?;
+                            skip_conditional_content(&mut self.elements)?;
                         }
                     }
                     Tag::StartIndentIfGroupBreaks(id) => {
@@ -454,7 +510,7 @@ impl<'d> Printer<'d> {
                     Tag::StartLineSuffix => {
                         let indention = self.indention();
                         self.buffers.suffix_indentions.push(indention);
-                        let content = take_line_suffix(&mut self.run, self.pool)?;
+                        let content = take_line_suffix(&mut self.elements)?;
                         self.buffers.line_suffixes.push((content, self.mode));
                     }
                     Tag::EndLineSuffix => {
@@ -487,12 +543,10 @@ impl<'d> Printer<'d> {
     /// Prints content on one line that is [`FlatFlags::MEASURED`]: there is nothing in it that
     /// could break the line, and nothing that depends on anything outside of it.
     fn print_flat(&mut self, content: Run) -> PrintResult<()> {
-        self.buffers.flat_queue.clear();
-        let mut run = content;
+        let mut queue = SmallVec::<[Elements<'d>; 8]>::new();
+        let mut elements = Elements::new(content, self.pool);
         loop {
-            while run.at < run.end {
-                let element = self.pool.get(run.at as usize).ok_or(PrintError::InvalidDocument)?;
-                run.at += 1;
+            while let Some(element) = elements.next() {
                 match element {
                     FormatElement::Token(token) => {
                         self.print_pending();
@@ -506,15 +560,13 @@ impl<'d> Printer<'d> {
                             self.pending_space = true;
                         }
                     }
-                    FormatElement::Skip(skip) => run.at = run.at.saturating_add(skip.len),
+                    FormatElement::Skip(skip) => elements.skip(skip.len),
                     FormatElement::Interned(interned) => {
-                        self.buffers.flat_queue.push(run);
-                        run = Run::of(*interned);
+                        queue.push(std::mem::replace(&mut elements, Elements::new(Run::of(*interned), self.pool)));
                     }
                     FormatElement::BestFitting(best_fitting) => {
                         let flattest = self.variants_of(*best_fitting).first().ok_or(PrintError::InvalidDocument)?;
-                        self.buffers.flat_queue.push(run);
-                        run = Run::of(*flattest);
+                        queue.push(std::mem::replace(&mut elements, Elements::new(Run::of(*flattest), self.pool)));
                     }
                     FormatElement::Tag(Tag::StartGroup(group)) => {
                         if let Some(id) = group.id() {
@@ -523,7 +575,7 @@ impl<'d> Printer<'d> {
                     }
                     FormatElement::Tag(Tag::StartConditionalContent(condition)) => {
                         if condition.mode != PrintMode::Flat {
-                            skip_conditional_content(&mut run, self.pool)?;
+                            skip_conditional_content(&mut elements)?;
                         }
                     }
                     FormatElement::Line(LineMode::Hard | LineMode::Empty) | FormatElement::Tag(Tag::StartLineSuffix) => {
@@ -537,8 +589,8 @@ impl<'d> Printer<'d> {
                     | FormatElement::Tag(_) => {}
                 }
             }
-            match self.buffers.flat_queue.pop() {
-                Some(rest) => run = rest,
+            match queue.pop() {
+                Some(rest) => elements = rest,
                 None => break,
             }
         }
@@ -686,7 +738,7 @@ impl<'d> Printer<'d> {
     }
 
     /// The indentation and the space that are due before the next text.
-    #[inline]
+    #[inline(always)]
     fn print_pending(&mut self) {
         if !self.pending_indent.is_empty() {
             self.print_pending_indent();
@@ -738,6 +790,7 @@ impl<'d> Printer<'d> {
         }
     }
 
+    #[inline(never)]
     fn print_pending_indent(&mut self) {
         let indent = std::mem::take(&mut self.pending_indent);
         let (level, align) = (indent.level() as usize, indent.align() as usize);
@@ -754,7 +807,7 @@ impl<'d> Printer<'d> {
     }
 
     /// Prints the part of `text` at `range`.
-    #[inline]
+    #[inline(always)]
     fn print_text(&mut self, text: &[u8], range: std::ops::Range<usize>, width: TextWidth) {
         self.print_pending();
         self.has_empty_line = false;
@@ -765,6 +818,7 @@ impl<'d> Printer<'d> {
         self.line_width += width.value() as usize;
     }
 
+    #[cold]
     fn print_lines(&mut self, text: &[u8]) {
         let mut lines = bun_core::strings::split(text, b"\n");
         if let Some(first) = lines.next() {
@@ -810,15 +864,13 @@ fn first_of(run: Run, pool: &[FormatElement]) -> Option<&FormatElement> {
     None
 }
 
-/// Moves the start of `run`, which is after a [`Tag::StartConditionalContent`], after the end tag
-/// for it. The two are in the same run, as they are if a builder writes them.
-fn skip_conditional_content(run: &mut Run, pool: &[FormatElement]) -> PrintResult<()> {
+/// Passes over what is left of conditional content, whose start tag has just been taken from
+/// `elements`, and its end tag. The two are in the same run, as they are if a builder writes them.
+fn skip_conditional_content(elements: &mut Elements<'_>) -> PrintResult<()> {
     let mut depth = 1usize;
-    while run.at < run.end {
-        let element = pool.get(run.at as usize).ok_or(PrintError::InvalidDocument)?;
-        run.at += 1;
+    while let Some(element) = elements.next() {
         match element {
-            FormatElement::Skip(skip) => run.at = run.at.saturating_add(skip.len),
+            FormatElement::Skip(skip) => elements.skip(skip.len),
             FormatElement::Tag(Tag::StartConditionalContent(_)) => depth += 1,
             FormatElement::Tag(Tag::EndConditionalContent) => {
                 depth -= 1;
@@ -833,12 +885,10 @@ fn skip_conditional_content(run: &mut Run, pool: &[FormatElement]) -> PrintResul
 }
 
 /// The same for a [`Tag::StartLineSuffix`]. Returns what is between the tags.
-fn take_line_suffix(run: &mut Run, pool: &[FormatElement]) -> PrintResult<Interned> {
-    let start = run.at;
+fn take_line_suffix(elements: &mut Elements<'_>) -> PrintResult<Interned> {
+    let start = elements.at();
     let mut depth = 1usize;
-    while run.at < run.end {
-        let element = pool.get(run.at as usize).ok_or(PrintError::InvalidDocument)?;
-        run.at += 1;
+    while let Some(element) = elements.next() {
         match element {
             FormatElement::Tag(Tag::StartLineSuffix) => depth += 1,
             FormatElement::Tag(Tag::EndLineSuffix) => {
@@ -846,7 +896,7 @@ fn take_line_suffix(run: &mut Run, pool: &[FormatElement]) -> PrintResult<Intern
                 if depth == 0 {
                     return Ok(Interned {
                         start,
-                        len: run.at - 1 - start,
+                        len: elements.at() - 1 - start,
                     });
                 }
             }

@@ -290,10 +290,21 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
-        if let Some(bytes) = self.ptr.bytes() {
-            bytes.error_native_consumer(reason);
-        } else if let Some(file) = self.ptr.file() {
-            file.error_native_consumer(reason);
+        // Before `done()`, which drops what the sources look at. No wildcard: a new source kind has to decide.
+        match self.ptr {
+            Source::Bytes(_) => self
+                .ptr
+                .bytes()
+                .expect("matched Bytes")
+                .error_native_consumer(reason),
+            Source::File(_) => self
+                .ptr
+                .file()
+                .expect("matched File")
+                .error_native_consumer(reason),
+            // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
+            Source::Blob(blob) => unsafe { (*blob).error_native_consumer() },
+            Source::JavaScript | Source::Invalid => {}
         }
         self.done();
         result

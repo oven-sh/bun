@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CommonAbortReason, JSGlobalObject, JSValue, JsResult};
 use bun_ptr::RefPtr;
 
 use crate::webcore::blob::store::StoreExt as _;
@@ -14,6 +14,8 @@ pub struct ByteBlobLoader {
     pub(crate) chunk_size: blob::SizeType,
     pub(crate) remain: blob::SizeType,
     pub(crate) done: bool,
+    /// The stream was errored while bytes were still unread, so the next pull fails and does not report `Done`.
+    pub(crate) failed: bool,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
@@ -29,6 +31,7 @@ impl Default for ByteBlobLoader {
             chunk_size: 1024 * 1024 * 2,
             remain: 1024 * 1024 * 2,
             done: false,
+            failed: false,
             content_type: blob::BlobContentType::default(),
         }
     }
@@ -94,6 +97,7 @@ impl ByteBlobLoader {
             .min(1024 * 1024 * 2),
             remain: size,
             done: false,
+            failed: false,
             content_type,
         };
     }
@@ -107,6 +111,12 @@ impl ByteBlobLoader {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
         let Some(store) = self.store.clone() else {
+            if self.failed {
+                // Generic: a stored reason would be a GC root.
+                return streams::Result::Err(streams::StreamError::AbortReason(
+                    CommonAbortReason::UserAbort,
+                ));
+            }
             return streams::Result::Done;
         };
         if self.done {
@@ -177,6 +187,13 @@ impl ByteBlobLoader {
             return Some(store);
         }
         None
+    }
+
+    /// The JS stream was errored. A reader that holds this source and has bytes left to pull fails at its next pull.
+    pub(crate) fn error_native_consumer(&mut self) {
+        if self.store.is_some() && self.remain > 0 {
+            self.failed = true;
+        }
     }
 
     pub(crate) fn on_cancel(&mut self) {

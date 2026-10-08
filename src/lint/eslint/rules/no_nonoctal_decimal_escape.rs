@@ -109,10 +109,11 @@ impl Rule for NoNonoctalDecimalEscape {
         });
         // The strings that are not expressions: keys, module specifiers, literal types.
         on.finish(|_, cx| {
+            cx.state.sort_unstable();
             for token in cx.file().tokens() {
                 if token.kind() == TokenKind::String
                     && has_decimal_escape(token.text())
-                    && !cx.state.contains(&token.start())
+                    && cx.state.binary_search(&token.start()).is_err()
                 {
                     check(token.span(), cx);
                 }

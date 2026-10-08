@@ -55,10 +55,11 @@ impl Rule for NoMultiStr {
         });
         // The strings that are not expressions: keys, module specifiers, literal types.
         on.finish(|_, cx| {
+            cx.state.sort_unstable();
             for token in cx.file().tokens() {
                 if token.kind() == TokenKind::String
                     && ast_utils::has_linebreak(token.text())
-                    && !cx.state.contains(&token.start())
+                    && cx.state.binary_search(&token.start()).is_err()
                 {
                     cx.report(token, MULTILINE_STRING);
                 }

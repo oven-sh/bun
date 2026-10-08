@@ -149,7 +149,17 @@ fn member_fields(finder: &mut Finder, member: Member<'_>) {
 
 /// Where the next sibling of the child of `parent` at `span` starts, or 0 if there is none. The child
 /// can be a name or something else that there is no [`AstNodes`] for.
-pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
+pub(crate) fn following_span_start_in(mut span: Span, mut parent: AstNodes<'_>) -> u32 {
+    loop {
+        match following_span_start_among_siblings(span, parent) {
+            Some(following) => return following,
+            None => (span, parent) = (parent.span(), parent.parent()),
+        }
+    }
+}
+
+/// `None`: the child is the last one, and what follows `parent` follows it.
+fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Option<u32> {
     use AstNodes as N;
     let mut finder = Finder {
         me: span,
@@ -276,7 +286,7 @@ pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
                 let mut name = jsx.tag();
                 while let Some(ExprKind::Dot { obj, name: property, .. }) = name.map(|it| it.kind()) {
                     if obj.span() == span {
-                        return property.span().start;
+                        return Some(property.span().start);
                     }
                     name = Some(obj);
                 }
@@ -607,8 +617,7 @@ pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
     }
 
     match finder.following {
-        Some(following) => following,
-        None if inherits => following_span_start_in(parent.span(), parent.parent()),
-        None => 0,
+        None if !inherits => Some(0),
+        following => following,
     }
 }

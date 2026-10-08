@@ -3,7 +3,7 @@
 use crate::ast::walk::{Visitor, walk};
 use crate::ast::{
     Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle, ImportSpec, Member,
-    Node, Param, Pat, PatTag, Prop, Stmt, StmtTag, TypeNode, TypeParam, TypeTag, VarDecl,
+    Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, VarDecl,
 };
 use crate::code_path::{Analyzer, Event};
 use crate::context::{Cx, Diagnostic, Severity};
@@ -117,6 +117,47 @@ impl File<'_> {
     }
 }
 
+/// Declares `File::$method`, which calls a function with every `$handle` of the file that is part of the tree.
+macro_rules! every {
+    ($($method:ident $handle:ident $field:ident |$hir:ident, $bound:ident, $i:ident| $is_reached:expr;)*) => {
+        impl<'a> File<'a> {
+            $(
+                #[inline]
+                fn $method(&'a self, mut visit: impl FnMut($handle<'a>)) {
+                    let ($hir, $bound) = (&self.hir, &self.bound);
+                    for $i in 0..$hir.$field.len() {
+                        let it = <$handle as Handle>::from_raw(self, $i as u32);
+                        if $is_reached && !it.is_synthetic() {
+                            visit(it);
+                        }
+                    }
+                }
+            )*
+        }
+    };
+}
+
+every! {
+    every_func Func fns |hir, bound, i| bound.fns.get(i).is_some_and(|f| f.owner != FnOwner::None);
+    every_class Class classes |hir, bound, i| bound.class_scope.get(i).is_some_and(|scope| scope.is_some());
+    every_member Member members |hir, bound, i| !matches!(bound.member_owner.get(i), None | Some(MemberOwner::None));
+    every_prop Prop props |hir, bound, i| bound.prop_owner.get(i).is_some_and(|owner| owner.is_some());
+    every_param Param params |hir, bound, i| bound.param_fn.get(i).is_some_and(|f| f.is_some());
+    every_type_param TypeParam type_params |hir, bound, i| bound.type_param_scope.get(i).is_some_and(|scope| scope.is_some());
+    every_var_decl VarDecl var_decls |hir, bound, i| bound.var_stmt.get(i).is_some_and(|s| s.is_some());
+    every_case Case cases |hir, bound, i| bound.case_stmt.get(i).is_some_and(|s| s.is_some());
+    every_enum_member EnumMember enum_members |hir, _bound, _i| true;
+    every_import_spec ImportSpec import_specs |hir, _bound, _i| true;
+    every_export_spec ExportSpec export_specs |hir, _bound, _i| true;
+    every_tuple_elem TupleElem tuple_elems |hir, _bound, _i| true;
+    every_pat_prop PatProp pat_props |hir, bound, i| {
+        !matches!(bound.pat_parent.get(hir.pat_props[i].value.idx()), None | Some(PatParent::None))
+    };
+    every_pat_elem PatElem pat_elems |hir, bound, i| {
+        !matches!(bound.pat_parent.get(hir.pat_elems[i].pat.idx()), None | Some(PatParent::None))
+    };
+}
+
 // ───────────────────────────── a rule, whatever its type ─────────────────────────────
 
 /// A [`Rule`] with its options, whatever its type.
@@ -203,18 +244,6 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
     fn run_unordered(&mut self) {
         let (rule, cx) = (self.rule, &mut self.cx);
         let file = cx.file;
-        let (hir, bound) = (&file.hir, &file.bound);
-        // All of a vector, except what `is_reached` rejects.
-        macro_rules! all {
-            ($handle:ident, $field:ident, $listener:expr, |$i:ident| $is_reached:expr) => {
-                for $i in 0..hir.$field.len() {
-                    let it = <$handle as Handle>::from_raw(file, $i as u32);
-                    if $is_reached && !it.is_synthetic() {
-                        $listener(rule, it, cx);
-                    }
-                }
-            };
-        }
         for entry in &self.entries {
             match *entry {
                 Entry::Exprs(tag, listener) => {
@@ -237,33 +266,17 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
                         listener(rule, Pat::from_raw(file, id), cx);
                     }
                 }
-                Entry::Funcs(listener) => all!(Func, fns, listener, |i| {
-                    bound.fns.get(i).is_some_and(|f| f.owner != FnOwner::None)
-                }),
-                Entry::Classes(listener) => all!(Class, classes, listener, |i| {
-                    bound.class_scope.get(i).is_some_and(|scope| scope.is_some())
-                }),
-                Entry::Members(listener) => all!(Member, members, listener, |i| {
-                    !matches!(bound.member_owner.get(i), None | Some(MemberOwner::None))
-                }),
-                Entry::Props(listener) => all!(Prop, props, listener, |i| {
-                    bound.prop_owner.get(i).is_some_and(|owner| owner.is_some())
-                }),
-                Entry::Params(listener) => all!(Param, params, listener, |i| {
-                    bound.param_fn.get(i).is_some_and(|f| f.is_some())
-                }),
-                Entry::TypeParams(listener) => all!(TypeParam, type_params, listener, |i| {
-                    bound.type_param_scope.get(i).is_some_and(|scope| scope.is_some())
-                }),
-                Entry::VarDecls(listener) => all!(VarDecl, var_decls, listener, |i| {
-                    bound.var_stmt.get(i).is_some_and(|s| s.is_some())
-                }),
-                Entry::Cases(listener) => all!(Case, cases, listener, |i| {
-                    bound.case_stmt.get(i).is_some_and(|s| s.is_some())
-                }),
-                Entry::EnumMembers(listener) => all!(EnumMember, enum_members, listener, |_i| true),
-                Entry::ImportSpecs(listener) => all!(ImportSpec, import_specs, listener, |_i| true),
-                Entry::ExportSpecs(listener) => all!(ExportSpec, export_specs, listener, |_i| true),
+                Entry::Funcs(listener) => file.every_func(|it| listener(rule, it, cx)),
+                Entry::Classes(listener) => file.every_class(|it| listener(rule, it, cx)),
+                Entry::Members(listener) => file.every_member(|it| listener(rule, it, cx)),
+                Entry::Props(listener) => file.every_prop(|it| listener(rule, it, cx)),
+                Entry::Params(listener) => file.every_param(|it| listener(rule, it, cx)),
+                Entry::TypeParams(listener) => file.every_type_param(|it| listener(rule, it, cx)),
+                Entry::VarDecls(listener) => file.every_var_decl(|it| listener(rule, it, cx)),
+                Entry::Cases(listener) => file.every_case(|it| listener(rule, it, cx)),
+                Entry::EnumMembers(listener) => file.every_enum_member(|it| listener(rule, it, cx)),
+                Entry::ImportSpecs(listener) => file.every_import_spec(|it| listener(rule, it, cx)),
+                Entry::ExportSpecs(listener) => file.every_export_spec(|it| listener(rule, it, cx)),
                 Entry::Symbols(listener) => {
                     for symbol in file.symbols() {
                         listener(rule, symbol, cx);
@@ -388,6 +401,128 @@ impl<'a> Visitor<'a> for Walk<'_, '_, 'a> {
     }
 }
 
+/// What `walk` does for a `Walk` without code paths, without walking: the nodes of a file nest, so their spans determine the order.
+/// Only the nodes of the kinds that are listened for are collected, from the vectors they are in, and sorted. The cost depends on
+/// how many of those there are, not on the size of the file.
+fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
+    struct Found<'a> {
+        start: u32,
+        end: u32,
+        /// Of two nodes with the same span, the one with the lower rank contains the other.
+        rank: u8,
+        node: Node<'a>,
+    }
+    fn rank(node: Node) -> u8 {
+        match node {
+            Node::File(_) => 0,
+            Node::Stmt(_) => 1,
+            Node::Case(_) => 2,
+            Node::Member(_) => 3,
+            Node::Prop(_) => 4,
+            Node::VarDecl(_) => 5,
+            Node::Param(_) => 6,
+            Node::PatProp(_) => 7,
+            Node::PatElem(_) => 8,
+            Node::EnumMember(_) => 9,
+            Node::ImportSpec(_) => 10,
+            Node::ExportSpec(_) => 11,
+            Node::TypeParam(_) => 12,
+            Node::TupleElem(_) => 13,
+            Node::Type(_) => 14,
+            Node::Expr(_) => 15,
+            Node::Class(_) => 16,
+            Node::Func(_) => 17,
+            Node::Pat(_) => 18,
+        }
+    }
+    let mut found: Vec<Found<'a>> = Vec::new();
+    let mut add = |node: Node<'a>| {
+        let span = node.span();
+        found.push(Found {
+            start: span.start,
+            end: span.end,
+            rank: rank(node),
+            node,
+        });
+    };
+    let is_listened = |tags: NodeTags| {
+        (0..NodeTags::COUNT).any(|i| tags.has_index(i as u32) && !(walk.enter[i].is_empty() && walk.exit[i].is_empty()))
+    };
+    for tag in EXPR_TAGS {
+        if is_listened(tag.into()) {
+            file.exprs_of(tag).iter().for_each(|&id| add(Node::Expr(Expr::from_raw(file, id))));
+        }
+    }
+    for tag in StmtTag::ALL {
+        if is_listened(tag.into()) {
+            file.stmts_of(tag).iter().for_each(|&id| add(Node::Stmt(Stmt::from_raw(file, id))));
+        }
+    }
+    for tag in TypeTag::ALL {
+        if is_listened(tag.into()) {
+            file.types_of(tag).iter().for_each(|&id| add(Node::Type(TypeNode::from_raw(file, id))));
+        }
+    }
+    if is_listened(NodeTags::PAT) {
+        for tag in PatTag::ALL {
+            file.pats_of(tag).iter().for_each(|&id| add(Node::Pat(Pat::from_raw(file, id))));
+        }
+    }
+    macro_rules! sorts {
+        ($($tags:ident $every:ident $variant:ident;)*) => {
+            $(if is_listened(NodeTags::$tags) {
+                file.$every(|it| add(Node::$variant(it)));
+            })*
+        };
+    }
+    sorts! {
+        FUNC every_func Func;
+        CLASS every_class Class;
+        MEMBER every_member Member;
+        PROP every_prop Prop;
+        PARAM every_param Param;
+        TYPE_PARAM every_type_param TypeParam;
+        VAR_DECL every_var_decl VarDecl;
+        CASE every_case Case;
+        ENUM_MEMBER every_enum_member EnumMember;
+        IMPORT_SPEC every_import_spec ImportSpec;
+        EXPORT_SPEC every_export_spec ExportSpec;
+        TUPLE_ELEM every_tuple_elem TupleElem;
+        PAT_PROP every_pat_prop PatProp;
+        PAT_ELEM every_pat_elem PatElem;
+    }
+    if is_listened(NodeTags::FILE) {
+        add(Node::File(file));
+    }
+    found.sort_unstable_by_key(|it| (it.start, std::cmp::Reverse(it.end), it.rank));
+
+    // The nodes that have been entered and not left, each with its end.
+    let mut open: Vec<(u32, Node<'a>)> = Vec::new();
+    for it in &found {
+        while let Some(&(end, node)) = open.last()
+            && end <= it.start
+            && !matches!(node, Node::File(_))
+        {
+            open.pop();
+            walk.exit(node);
+        }
+        walk.enter(it.node);
+        open.push((it.end, it.node));
+    }
+    while let Some((_, node)) = open.pop() {
+        walk.exit(node);
+    }
+}
+
+const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
+    use ExprTag::*;
+    [
+        Missing, Ident, PrivateIdentifier, This, Super, Null, True, False, Number, String, BigInt, Regex, Template,
+        TaggedTemplate, Array, Object, Fn, Class, Dot, Index, Call, New, Unary, Binary, Assign, Cond, Spread, Await, Yield, As,
+        Satisfies, AsConst, NonNull, Instantiation, Jsx, ImportCall, ImportMeta, NewTarget,
+    ]
+};
+
 // ───────────────────────────── a file ─────────────────────────────
 
 /// A rule that is enabled for a file.
@@ -451,16 +586,18 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
     }
     if needs_walk {
         let analyzer = (!code_path.is_empty()).then(|| Analyzer::new(file));
-        walk(
-            file,
-            &mut Walk {
-                running: &mut running,
-                enter,
-                exit,
-                code_path,
-                analyzer,
-            },
-        );
+        let mut listeners = Walk {
+            running: &mut running,
+            enter,
+            exit,
+            code_path,
+            analyzer,
+        };
+        // The analysis of code paths looks at every node.
+        match listeners.analyzer.is_some() {
+            true => walk(file, &mut listeners),
+            false => walk_listened(file, &mut listeners),
+        }
     }
 
     for rule in &mut running {

@@ -851,3 +851,9 @@ describe("what ends a table", () => {
     expect(markdown.html("| a |\n| --- |\n| b |\n" + block)).toBe(table + html);
   });
 });
+
+describe("indented delimiter row", () => {
+  test("a delimiter row that is indented by four columns is a line of the paragraph", () => {
+    expect(markdown.html("| a | b |\n    | --- | --- |\n")).toBe("<p>| a | b |\n| --- | --- |</p>\n");
+  });
+});

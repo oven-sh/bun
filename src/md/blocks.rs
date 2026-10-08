@@ -512,6 +512,7 @@ impl Parser<'_> {
 
             // Check for table underline
             if self.flags.tables
+                && line.indent < self.code_indent_offset
                 && effective_pivot_type == LineType::Text
                 && off < self.size
                 && (self.text[off as usize] == b'|'

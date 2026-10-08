@@ -470,7 +470,10 @@ declare module "bun" {
       cancelled: boolean;
 
       /**
-       * Cancels the executing query
+       * Cancels the executing query.
+       *
+       * A query that is cancelled before it starts never runs. It rejects with
+       * the adapter's `QUERY_CANCELLED` error when it is awaited or executed.
        */
       cancel(): Query<T>;
 

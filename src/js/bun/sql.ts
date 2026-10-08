@@ -43,8 +43,8 @@ interface TransactionState {
   reject: (err: Error) => void;
   storedError?: Error | null | undefined;
   queries: Set<Query<any, any>>;
-  /// The ROLLBACK of a closing transaction. close() and the transaction runner share it.
-  rollback?: Promise<void> | null;
+  /// The latest ROLLBACK of a closing transaction. close() or the runner starts it, and the other one reads it.
+  rollback?: Promise<void>;
 }
 
 /// Bound as `this` to both callbacks of a reserve({ signal }) call, so each can
@@ -80,6 +80,23 @@ function waitForPendingWork(pending: PromiseLike<unknown>[], timeout: number): P
   // allSettled: one rejected query must not cut the grace period short for the rest
   Promise.allSettled(pending).then(onPendingWorkSettled.bind(null, timer, resolve));
   return promise;
+}
+
+/// Rolls a closing transaction back. `run` is the transaction's sender of BEGIN, COMMIT and ROLLBACK.
+async function rollbackTransaction(
+  state: TransactionState,
+  run: (statement: string) => PromiseLike<unknown>,
+  before: string | null,
+  rollback: string,
+) {
+  for (const query of state.queries) {
+    query.cancel();
+  }
+  if (before) {
+    await run(before);
+  }
+  await run(rollback);
+  state.connectionState |= ReservedConnectionState.closed;
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): Adapter | ListenableAdapter {
@@ -275,23 +292,6 @@ const SQL = function SQL(
     } catch (err) {
       return Promise.$reject(err);
     }
-  }
-
-  /// Rolls a closing transaction back. Declared outside onTransactionConnected: no closure per transaction.
-  async function rollbackTransaction(
-    state: TransactionState,
-    pooledConnection: PooledConnection,
-    before: string | null,
-    rollback: string,
-  ) {
-    for (const query of state.queries) {
-      query.cancel();
-    }
-    if (before) {
-      await unsafeQueryFromTransaction(before, [], pooledConnection, state.queries);
-    }
-    await unsafeQueryFromTransaction(rollback, [], pooledConnection, state.queries);
-    state.connectionState |= ReservedConnectionState.closed;
   }
 
   function onTransactionDisconnected(this: TransactionState, err: Error) {
@@ -806,18 +806,12 @@ const SQL = function SQL(
         }
       }
       state.connectionState |= ReservedConnectionState.closing;
-      try {
-        await (state.rollback ??= rollbackTransaction(
-          state,
-          pooledConnection,
-          BEFORE_COMMIT_OR_ROLLBACK_COMMAND,
-          ROLLBACK_COMMAND,
-        ));
-      } catch (err) {
-        // close() reports the failure, and the runner sends ROLLBACK again when the callback settles
-        state.rollback = null;
-        throw err;
-      }
+      return (state.rollback = rollbackTransaction(
+        state,
+        run_internal_transaction_sql,
+        BEFORE_COMMIT_OR_ROLLBACK_COMMAND,
+        ROLLBACK_COMMAND,
+      ));
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
     transaction_sql.options = sql.options;
@@ -908,13 +902,20 @@ const SQL = function SQL(
       return resolve(transaction_result);
     } catch (err) {
       try {
-        const { connectionState } = state;
-        if (!(connectionState & ReservedConnectionState.closed) && needs_rollback) {
-          if (connectionState & ReservedConnectionState.closing) {
-            // close() owns the ROLLBACK: join it, or send it if close() still waits
-            await (state.rollback ??= rollbackTransaction(
+        const closing = state.connectionState & ReservedConnectionState.closing;
+        if (closing && needs_rollback) {
+          try {
+            // the ROLLBACK that close() has in flight, if any
+            await state.rollback;
+          } catch {
+            // close() reports that failure, and the runner sends its own ROLLBACK below
+          }
+        }
+        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
+          if (closing) {
+            await (state.rollback = rollbackTransaction(
               state,
-              pooledConnection,
+              run_internal_transaction_sql,
               BEFORE_COMMIT_OR_ROLLBACK_COMMAND,
               ROLLBACK_COMMAND,
             ));

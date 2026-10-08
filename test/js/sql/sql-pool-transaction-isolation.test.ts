@@ -953,27 +953,38 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'T1a'", "COMMIT"), ...afterTransaction(0)]);
   });
 
-  // The server rejects the ROLLBACK of close(). close() reports that, and the transaction is
-  // still closing: when the callback returns, the runner sends ROLLBACK again and no COMMIT.
-  test("transaction.close() whose ROLLBACK fails leaves the rollback to the runner", async () => {
-    await using pool = await closeTestPool({ failOnce: "ROLLBACK" });
-    let closeError: unknown;
-    const outcome = await settledCode(
-      pool.sql.begin(async tx => {
-        await tx.unsafe("SELECT 'T1a'");
-        closeError = await tx.close().then(
-          () => null,
-          error => error.message,
-        );
-      }),
-    );
-    expect({ closeError, outcome }).toEqual({ closeError: "mock failure", outcome: connectionClosedCode });
-    await expectConnectionKept(pool);
-    expect(pool.received).toEqual([
-      ...onConn0(beginCommand, "SELECT 'T1a'", "ROLLBACK", "ROLLBACK"),
-      ...afterTransaction(0),
-    ]);
-  });
+  // The server rejects the ROLLBACK of close(), and close() reports that. The transaction is
+  // still open, so the runner sends ROLLBACK once more before the connection goes back to the
+  // pool, and it sends no COMMIT.
+  test.each([
+    { when: "after close() rejected", awaitClose: true },
+    { when: "while the ROLLBACK of close() is in flight", awaitClose: false },
+  ])(
+    "the runner sends ROLLBACK again when the ROLLBACK of close() fails and the callback settles $when",
+    async ({ awaitClose }) => {
+      await using pool = await closeTestPool({ failOnce: "ROLLBACK" });
+      let closeError: Promise<unknown> | undefined;
+      const outcome = await settledCode(
+        pool.sql.begin(async tx => {
+          await tx.unsafe("SELECT 'T1a'");
+          closeError = tx.close().then(
+            () => null,
+            error => error.message,
+          );
+          if (awaitClose) await closeError;
+        }),
+      );
+      expect({ closeError: await closeError, outcome }).toEqual({
+        closeError: "mock failure",
+        outcome: connectionClosedCode,
+      });
+      await expectConnectionKept(pool);
+      expect(pool.received).toEqual([
+        ...onConn0(beginCommand, "SELECT 'T1a'", "ROLLBACK", "ROLLBACK"),
+        ...afterTransaction(0),
+      ]);
+    },
+  );
 
   // A savepoint whose callback parks until finish() is called.
   function parkedSavepoint(tx: Bun.TransactionSQL) {

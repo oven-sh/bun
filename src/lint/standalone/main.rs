@@ -126,7 +126,7 @@ pub(crate) fn reported(entry: &'static RuleEntry, code: &[u8], message: &bun_lin
             Some(id) => Some(text(&id.to_vec())),
             None => Some(String::new()),
         },
-        message_id: message.message_id.unwrap_or_default().to_owned(),
+        message_id: message.message_id.as_deref().unwrap_or_default().to_owned(),
         message: text(&message.message),
         line: message.line,
         column: message.column,
@@ -134,7 +134,7 @@ pub(crate) fn reported(entry: &'static RuleEntry, code: &[u8], message: &bun_lin
         fix: message.fix.as_ref().map(edit),
         suggestions: (message.suggestions.iter())
             .map(|s| Suggested {
-                message_id: s.message_id.to_owned(),
+                message_id: s.message_id.to_string(),
                 desc: text(&s.message),
                 fix: Some(edit(&s.fix)),
                 output: text(&apply(&s.fix)),

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::text::{number_to_string, string_to_number};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Disallow duplicate enum member values.
@@ -25,26 +26,40 @@ impl Value<'_> {
     }
 }
 
-fn member_value(initializer: Expr<'_>) -> Option<Value<'_>> {
-    match initializer.kind() {
-        ExprKind::String(value) => Some(Value::String(value)),
-        ExprKind::Number(value) => Some(Value::Number(value)),
-        ExprKind::Template(template) => template.as_static().map(Value::String),
-        ExprKind::Unary {
-            op: op @ (UnOp::Minus | UnOp::Plus),
-            operand,
-        } => {
-            let inner = match member_value(operand)? {
-                Value::Number(value) => value,
-                Value::String(value) => string_to_number(value.bytes()),
-            };
-            if inner.is_nan() {
-                return None;
-            }
-            Some(Value::Number(if op == UnOp::Minus { -inner } else { inner }))
+impl Value<'_> {
+    /// The same for two values if and only if [`Value::is`] holds.
+    fn key(self) -> (bool, u64) {
+        match self {
+            Value::Number(value) => (false, value.to_bits()),
+            Value::String(value) => (true, u64::from(value.atom().0)),
         }
-        _ => None,
     }
+}
+
+fn member_value(initializer: Expr<'_>) -> Option<Value<'_>> {
+    let (mut operand, mut has_sign, mut is_negated) = (initializer, false, false);
+    while let ExprKind::Unary {
+        op: op @ (UnOp::Minus | UnOp::Plus),
+        operand: inner,
+    } = operand.kind()
+    {
+        (operand, has_sign) = (inner, true);
+        is_negated ^= op == UnOp::Minus;
+    }
+    let value = match operand.kind() {
+        ExprKind::String(value) => Value::String(value),
+        ExprKind::Number(value) => Value::Number(value),
+        ExprKind::Template(template) => Value::String(template.as_static()?),
+        _ => return None,
+    };
+    if !has_sign {
+        return Some(value);
+    }
+    let number = match value {
+        Value::Number(value) => value,
+        Value::String(value) => string_to_number(value.bytes()),
+    };
+    (!number.is_nan()).then_some(Value::Number(if is_negated { -number } else { number }))
 }
 
 impl Rule for NoDuplicateEnumValues {
@@ -61,12 +76,23 @@ impl Rule for NoDuplicateEnumValues {
                 return;
             };
             let mut seen: SmallVec<[Value<'a>; 8]> = SmallVec::new();
+            // All of them, as soon as they are more than a few.
+            let mut keys: FxHashSet<(bool, u64)> = FxHashSet::default();
             for member in declaration.members() {
                 let Some(value) = member.init().and_then(member_value) else {
                     continue;
                 };
-                if !seen.iter().any(|it| it.is(value)) {
-                    seen.push(value);
+                if seen.len() == 16 && keys.is_empty() {
+                    keys.extend(seen.iter().map(|it| it.key()));
+                }
+                let is_new = match keys.is_empty() {
+                    true => !seen.iter().any(|it| it.is(value)),
+                    false => keys.insert(value.key()),
+                };
+                if is_new {
+                    if keys.is_empty() {
+                        seen.push(value);
+                    }
                     continue;
                 }
                 let report = cx.report(member, DUPLICATE_VALUE);

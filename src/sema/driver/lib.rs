@@ -1228,8 +1228,7 @@ impl Projects {
         })
     }
 
-    /// The files that `config` counts as its own: `Project::files`, and under `counts_javascript`
-    /// those that `allowJs` would add to them. None if it cannot be read.
+    /// `Project::files` of `config`, or under `counts_javascript` what `allowJs` makes of them.
     fn listed(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &[Vec<u8>] {
         if !self.counts_javascript {
             return match self.load(disk, request, config) {
@@ -1601,20 +1600,18 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             (std::iter::once(at).chain(below.into_iter().map(Some))).collect();
         let is_below =
             |dir: &&[u8]| !is_same(dir, path) && contains_path(path, dir, is_case_sensitive);
-        // One in a directory that `nested_configs` does not look in has no say: what is there is
-        // of a project outside it that lists it.
+        // What `nested_configs` skips has no say: the nearest one is looked for outside it.
         let nearest = |file: &[u8]| {
             config_in(dirname::<Posix>(
                 skipped_directory(file, is_below).unwrap_or(file),
             ))
         };
-        // The directory stands for the files that the projects have in it. The projects know
-        // their files: those with a say, as they are spelled here, and then what they reference.
-        // Each adds the files of which it is the owner.
+        // The projects know their files: each adds those in the directory that it owns.
         let mut included: FxHashMap<Cow<[u8]>, (&Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)> =
             (with_a_say.iter().flatten())
                 .map(|it| (to_path(it, is_case_sensitive), (it, Vec::new())))
                 .collect();
+        // Those with a say come first, as they are spelled here, and then what they reference.
         let mut graph: Vec<Vec<u8>> = with_a_say.iter().flatten().cloned().collect();
         let mut next = 0;
         while next < graph.len() {
@@ -1629,6 +1626,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             }
             let project = &graph[next];
             next += 1;
+            // One that `nested_configs` skips adds nothing that is beside it.
             let skipped = skipped_directory(project, is_below);
             let is_beside = |file: &[u8]| {
                 skipped.is_some_and(|dir| contains_path(dir, file, is_case_sensitive))

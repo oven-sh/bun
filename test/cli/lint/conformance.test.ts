@@ -38,6 +38,8 @@ test.skipIf(!hasRunner)(
         `--threads=${Math.min(availableParallelism(), 8)}`,
       ],
       env: bunEnv,
+      // Not where a `package.json` has a script `lint`.
+      cwd: root,
       stdout: "pipe",
       stderr: "inherit",
     });

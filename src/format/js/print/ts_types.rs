@@ -16,6 +16,7 @@ use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::{end_of_line_comments, without_lone_operator};
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
+use smallvec::SmallVec;
 use std::cell::Cell;
 
 /// `A.B.C`. `parent`: what it is a name in.
@@ -83,7 +84,9 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
     let text = ty.text();
     match ty.kind() {
         // A template without substitutions.
-        TypeKind::StringLit(_) if text.starts_with(b"`") => write!(f, FormatSuppressedNode(ty.span())),
+        TypeKind::StringLit(_) if text.starts_with(b"`") => {
+            write!(f, [line_suffix_boundary(), FormatSuppressedNode(ty.span())]);
+        }
         TypeKind::StringLit(_) => {
             write!(f, FormatLiteralStringToken::new(text, false, StringLiteralParentKind::Expression));
         }
@@ -281,7 +284,18 @@ pub(crate) fn write_ts_type_query<'a>(
     args: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    write!(f, ["typeof ", expr, type_arguments(args, Node::Type(ty))]);
+    // The name is ESTree's `TSQualifiedName`, which does not break like a member expression.
+    let mut names: SmallVec<[Ident<'a>; 4]> = SmallVec::new();
+    let mut leftmost = expr;
+    while let ExprKind::Dot { obj, name, .. } = leftmost.kind() {
+        names.push(name);
+        leftmost = obj;
+    }
+    write!(f, ["typeof ", leftmost]);
+    for &name in names.iter().rev() {
+        write!(f, [".", identifier(name, AstNodes::TSTypeQuery(ty))]);
+    }
+    write!(f, type_arguments(args, Node::Type(ty)));
 }
 
 /// `import("a").B<C>`, `typeof import("a")`

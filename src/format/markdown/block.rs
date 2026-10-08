@@ -408,11 +408,23 @@ impl<'t> Parser<'t> {
                 Continuation::Yes => cursor = attempt,
                 Continuation::NextItem => {
                     // The flow and what is in the item are closed, the list goes on.
-                    self.close_leaf();
+                    let has_line_break = self.close_flow(line_start);
+                    if has_line_break {
+                        self.end_containers(continued + 1, line_start, true);
+                    }
                     self.close_containers(continued + 1);
                     self.note_blank_line_before(continued, true);
+                    let previous_item = match self.containers[continued].kind {
+                        ContainerKind::List { item, .. } => item,
+                        _ => NONE,
+                    };
                     self.start_item(continued, cursor, &mut attempt);
                     cursor = attempt;
+                    // With no line break between them, mdast-util-from-markdown ends an item where the marker of
+                    // the next ends.
+                    if has_line_break {
+                        self.set_end(previous_item, cursor.offset);
+                    }
                     continued += 1;
                     starts_item = true;
                     break;
@@ -433,11 +445,17 @@ impl<'t> Parser<'t> {
             let mut is_first = true;
             loop {
                 let mut attempt = cursor;
-                let Some(new) = self.line.find_container(&mut attempt, interrupts && is_first) else {
+                let Some(new) = self.line.find_container(&mut attempt, interrupts) else {
                     break;
                 };
                 if is_first && !starts_item {
-                    self.close_leaf();
+                    // micromark closes the containers here, and then moves their ends back over line breaks and
+                    // indentation. The marker of a block quote is in the way of that.
+                    let has_line_break = self.close_flow(line_start);
+                    let has_marker = self.containers[..continued].iter().any(|it| matches!(it.kind, ContainerKind::Blockquote));
+                    if has_line_break || has_marker {
+                        self.end_containers(continued, cursor.offset, has_line_break);
+                    }
                     self.close_containers(continued);
                     self.note_blank_line_before(continued.wrapping_sub(1), false);
                 }
@@ -454,6 +472,41 @@ impl<'t> Parser<'t> {
 
         let is_lazy = !has_new_container && !all_continued;
         self.flow(cursor, is_lazy, continued, has_new_container);
+    }
+
+    /// Closes the leaf block because a container ends. Code and HTML that have not been closed have taken the
+    /// line break before the line that starts at `line_start`. Returns whether that is so.
+    fn close_flow(&mut self, line_start: usize) -> bool {
+        let node = match self.leaf {
+            Leaf::Fenced { node, .. } => node,
+            Leaf::Html { node, kind, .. } if kind <= 5 => node,
+            _ => {
+                self.close_leaf();
+                return false;
+            }
+        };
+        self.segments.push(Segment {
+            start: line_start as u32,
+            end: line_start as u32,
+            virtual_spaces: 0,
+            is_indented: false,
+        });
+        self.set_end(node, line_start);
+        self.close_leaf();
+        true
+    }
+
+    /// The containers from `first` on end at `end`, and their items if `with_items`.
+    fn end_containers(&mut self, first: usize, end: usize, with_items: bool) {
+        for index in first..self.containers.len() {
+            let container = self.containers[index];
+            self.set_end(container.node, end);
+            if let ContainerKind::List { item, .. } = container.kind
+                && with_items
+            {
+                self.set_end(item, end);
+            }
+        }
     }
 
     /// A line that is not blank follows blank lines. `deepest`: the index of the innermost container that
@@ -1193,6 +1246,11 @@ impl<'t> Parser<'t> {
                 first_segment,
                 certain: first_segment + 1,
             };
+            // At the end of a line, micromark asks whether that line goes on without the markers of its
+            // containers, not the next.
+            if is_lazy {
+                self.close_leaf();
+            }
             return;
         }
         match self.find_leaf_start(content, false, false) {

@@ -601,8 +601,6 @@ impl Context<'_> {
         let mut items: Vec<Item> = Vec::new();
         // The indices of the label starts that can still be matched.
         let mut label_starts: Vec<usize> = Vec::new();
-        // How many label starts have been matched or can still be: no literal autolinks behind them.
-        let mut unbalanced = 0usize;
         let mut first_resolver = None;
         let mut index = 0;
         // Where the data that has not been made an item yet starts.
@@ -733,7 +731,13 @@ impl Context<'_> {
                         None => index += 1,
                     }
                 }
-                b'*' | b'_' => {
+                // An address can start with an underscore.
+                b'*' | b'_'
+                    if byte == b'*'
+                        || !label_starts.is_empty()
+                        || index.checked_sub(1).is_some_and(|before| bytes[before] == b'/' || is_gfm_atext(bytes[before]))
+                        || parse_email_literal(bytes, index).is_none() =>
+                {
                     flush!(index);
                     let end = index + bytes[index..].iter().take_while(|&&it| it == byte).count();
                     let (before, after) = (class_before(bytes, index), class_at(bytes, end));
@@ -793,7 +797,6 @@ impl Context<'_> {
                 b'!' if bytes.get(index + 1) == Some(&b'[') => {
                     flush!(index);
                     label_starts.push(items.len());
-                    unbalanced += 1;
                     items.push(Item::LabelStart {
                         is_image: true,
                         start: index,
@@ -811,7 +814,6 @@ impl Context<'_> {
                     } else {
                         flush!(index);
                         label_starts.push(items.len());
-                        unbalanced += 1;
                         items.push(Item::LabelStart {
                             is_image: false,
                             start: index,
@@ -850,13 +852,11 @@ impl Context<'_> {
                         }
                         LabelEnd::FootnoteCall { end } => {
                             label_starts.pop();
-                            unbalanced -= 1;
                             index = end;
                             data_start = index;
                         }
                         LabelEnd::No => {
                             label_starts.pop();
-                            unbalanced -= 1;
                             index += 1;
                         }
                     }
@@ -870,7 +870,8 @@ impl Context<'_> {
                     }
                     None => index += 1,
                 },
-                _ if is_gfm_atext(byte) && unbalanced == 0 => {
+                // No literal autolinks in what can still become the text of a link.
+                _ if is_gfm_atext(byte) && label_starts.is_empty() => {
                     let previous = index.checked_sub(1).map(|before| bytes[before]);
                     let end = (previous.is_none_or(|it| it != b'/' && !is_gfm_atext(it)))
                         .then(|| parse_email_literal(bytes, index).map(|end| (end, &b"mailto:"[..])))

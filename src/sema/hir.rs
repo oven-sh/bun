@@ -2712,35 +2712,27 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
 }
 
 /// `isNarrowableReference`
-pub fn is_narrowable_reference(hir: &File, mut e: ExprId) -> bool {
-    loop {
-        match narrowable_reference_step(hir, e) {
-            Ok(answer) => return answer,
-            Err(same) => e = same,
-        }
-    }
-}
-
-/// `isNarrowableReference` of `e`, or the expression for which the answer is the same.
-pub(crate) fn narrowable_reference_step(hir: &File, e: ExprId) -> Result<bool, ExprId> {
+pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
     match hir[e].kind {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super
         | ExprKind::NewTarget(_)
-        | ExprKind::ImportMeta => Ok(true),
-        ExprKind::Dot { obj, .. } => Err(obj),
-        ExprKind::NonNull(x) => Err(x),
+        | ExprKind::ImportMeta => true,
+        ExprKind::Dot { obj, .. } => is_narrowable_reference(hir, obj),
+        ExprKind::NonNull(x) => is_narrowable_reference(hir, x),
         // With a literal key the object is not checked.
-        ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => Ok(true),
-        ExprKind::Index { obj, index, .. } if is_entity_name_expression(hir, index) => Err(obj),
+        ExprKind::Index { obj, index, .. } => {
+            is_string_or_numeric_literal_like(hir, index)
+                || is_entity_name_expression(hir, index) && is_narrowable_reference(hir, obj)
+        }
         ExprKind::Binary {
             op: BinOp::Comma,
             right,
             ..
-        } => Err(right),
-        ExprKind::Assign { target, .. } => Ok(is_left_hand_side_expression(hir, target)),
-        _ => Ok(false),
+        } => is_narrowable_reference(hir, right),
+        ExprKind::Assign { target, .. } => is_left_hand_side_expression(hir, target),
+        _ => false,
     }
 }
 

@@ -12,7 +12,7 @@
 //! somewhere else, the comment is moved before anything is printed: see [`Comment::start`].
 
 use super::source_text::SourceText;
-use bun_lint::ast::{Expr, ExprKind, File, FnBody, Func, Node, StmtKind, TypeKind};
+use bun_lint::ast::{Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind};
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::TokenKind;
 
@@ -198,6 +198,19 @@ fn moved_out_of_member_expression<'a>(file: &'a File<'a>, comment: Comment) -> O
     Some(member.span().start)
 }
 
+/// Prettier's `handlePropertyComments`: a comment at the end of a line that is in a property of an
+/// object and in nothing in it leads the property. This is for one after the value, which is in
+/// parentheses then.
+fn moved_out_of_property<'a>(file: &'a File<'a>, comment: Comment) -> Option<u32> {
+    let Node::Prop(property) = innermost_node_at(file, comment.span.start) else {
+        return None;
+    };
+    let is_in_object = matches!(property.parent(), Node::Expr(object) if matches!(object.kind(), ExprKind::Object(_)));
+    let value = property.value()?;
+    (is_in_object && property.kind() == PropKind::Init && value.span().end <= comment.span.start)
+        .then(|| property.span().start)
+}
+
 /// A comment before the `(` of the parameters at `open_paren`.
 ///
 /// For a function with a body Prettier has `handleFunctionNameComments`: it trails the name. For
@@ -262,7 +275,7 @@ fn move_comments<'a>(file: &'a File<'a>, comments: &mut [Comment]) {
                     between.unwrap_or_default().iter().all(|b| matches!(b, b' ' | b'\t'))
                 }));
         is_after_own_line_comment = is_own_line;
-        if !is_own_line && !is_typescript {
+        if !is_own_line && !is_typescript && !comment.followed_by_newline() {
             continue;
         }
 
@@ -279,6 +292,14 @@ fn move_comments<'a>(file: &'a File<'a>, comments: &mut [Comment]) {
 
         let moved_to = match after {
             [b'(', ..] if is_typescript => moved_over_parenthesis(file, comment, (text.len() - after.len()) as u32),
+            // `a: (b // comment ⏎ ),`
+            [b')', ..] if !is_own_line => {
+                let after_parentheses = after.iter().find(|b| **b != b')' && !b.is_ascii_whitespace());
+                match (comment.followed_by_newline(), after_parentheses) {
+                    (true, Some(b',' | b'}')) => moved_out_of_property(file, comment),
+                    _ => None,
+                }
+            }
             _ if !is_own_line => None,
             [b'.', b'.', ..] => None,
             [b'.', ..] | [b'?', b'.', ..] => moved_out_of_member_expression(file, comment),
@@ -604,7 +625,7 @@ impl<'a> Comments<'a> {
                 // `a || /** @type {T} */ (b)`: it leads the next sibling.
                 type_cast_comment = Some(comment);
                 break;
-            } else if comment.preceded_by_newline() {
+            } else if comment.preceded_by_newline() || comment.is_moved() {
                 // On a line of its own: it leads the next sibling.
                 break;
             } else if comment.followed_by_newline() {

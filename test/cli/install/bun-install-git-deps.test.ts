@@ -5,7 +5,7 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -51,6 +51,8 @@ interface BranchPackage {
   dependencies?: Record<string, string>;
   /** Files committed next to package.json; an `index.js` entry replaces the default one. */
   files?: Record<string, string>;
+  /** Symbolic links committed to the branch: path -> target. */
+  links?: Record<string, string>;
 }
 
 function indexJs(marker: string) {
@@ -75,6 +77,7 @@ interface Commit {
   from?: string;
   message: string;
   files: Record<string, string>;
+  links?: Record<string, string>;
 }
 
 function fastImportData(text: string) {
@@ -86,7 +89,7 @@ function fastImportData(text: string) {
 // regenerates the static files that dumb HTTP clients read.
 async function commitTo(bare: string, commits: Commit[]) {
   let stream = "";
-  for (const { ref, from, message, files } of commits) {
+  for (const { ref, from, message, files, links } of commits) {
     stream += `commit ${ref}\n`;
     stream += `committer ${gitEnv.GIT_COMMITTER_NAME} <${gitEnv.GIT_COMMITTER_EMAIL}> 0 +0000\n`;
     stream += fastImportData(message);
@@ -95,6 +98,9 @@ async function commitTo(bare: string, commits: Commit[]) {
     if (from) stream += `from ${from}^0\n`;
     for (const [path, contents] of Object.entries(files)) {
       stream += `M 100644 inline ${path}\n${fastImportData(contents)}`;
+    }
+    for (const [path, target] of Object.entries(links ?? {})) {
+      stream += `M 120000 inline ${path}\n${fastImportData(target)}`;
     }
     stream += "\n";
   }
@@ -117,6 +123,7 @@ async function makeSharedRepo(
       ref: `refs/heads/${pkg.branch}`,
       message: pkg.branch,
       files: { ...packageFiles(pkg.name, pkg.branch, pkg.dependencies), ...pkg.files },
+      links: pkg.links,
     })),
   );
   return bare;
@@ -586,6 +593,107 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(await lockedPackages(project)).toEqual(locked);
   expect(exitCode).toBe(0);
 });
+
+// Every symbolic link below `dir`, as `<path> -> <target>`. It does not follow them.
+function linksIn(dir: string, prefix = ""): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .flatMap(entry => {
+      const path = join(dir, entry.name);
+      if (entry.isSymbolicLink()) return [`${prefix}${entry.name} -> ${readlinkSync(path)}`];
+      return entry.isDirectory() ? linksIn(path, `${prefix}${entry.name}/`) : [];
+    })
+    .sort();
+}
+
+// bun puts a dependency's own nested packages in node_modules/<dep>/node_modules.
+// This repository commits node_modules/@x as a link to three directories up,
+// which from node_modules/a/node_modules is the project, and it needs its own
+// copy of @x/docs. That copy belongs in node_modules, not in the project's docs/.
+test.concurrent(
+  "a link committed in a git dependency's node_modules does not move its nested packages into the project",
+  async () => {
+    using dir = tempDir("git-dep-committed-link", {});
+    const root = String(dir);
+
+    // a registry with two versions of `y`, so the project and the dependency
+    // each get their own `@x/docs` and the dependency's copy is nested
+    const versions = ["1.0.0", "2.0.0"];
+    const tarballs = new Map<string, Uint8Array>();
+    for (const version of versions) {
+      const files = { "package.json": JSON.stringify({ name: "y", version }), "index.js": indexJs(`y@${version}`) };
+      tarballs.set(`/y/-/y-${version}.tgz`, await tarballOf("package", files));
+    }
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/y") {
+          return Response.json({
+            name: "y",
+            "dist-tags": { latest: "2.0.0" },
+            versions: Object.fromEntries(
+              versions.map(version => [
+                version,
+                { name: "y", version, dist: { tarball: `${registry.url}y/-/y-${version}.tgz` } },
+              ]),
+            ),
+          });
+        }
+        const tarball = tarballs.get(pathname);
+        return tarball ? new Response(tarball) : new Response("not found", { status: 404 });
+      },
+    });
+
+    const bare = await makeSharedRepo(
+      root,
+      [
+        {
+          name: "a",
+          branch: "main",
+          dependencies: { "@x/docs": "npm:y@2.0.0" },
+          links: { "node_modules/@x": "../../.." },
+        },
+      ],
+      "a.git",
+    );
+    const project = writeProject(root, { a: `git+${pathToFileURL(bare)}#main`, "@x/docs": "npm:y@1.0.0" });
+    writeFileSync(join(project, "bunfig.toml"), `[install]\nlinker = "hoisted"\nregistry = "${registry.url}"\n`);
+    mkdirSync(join(project, "docs"));
+    writeFileSync(join(project, "docs", "guide.md"), "# guide\n");
+
+    const nestedScope = join(project, "node_modules", "a", "node_modules", "@x");
+    const projectState = async () => ({
+      "docs/": existsSync(join(project, "docs")) ? readdirSync(join(project, "docs")).sort() : null,
+      "@x/docs": await installedVersionOf(project, "@x/docs"),
+      "a's @x/docs": await installedVersionOf(join(project, "node_modules", "a"), "@x/docs"),
+      "a/node_modules/@x is a link": lstatSync(nestedScope, { throwIfNoEntry: false })?.isSymbolicLink(),
+    });
+    const untouched = {
+      "docs/": ["guide.md"],
+      "@x/docs": "y@1.0.0",
+      "a's @x/docs": "y@2.0.0",
+      "a/node_modules/@x is a link": false,
+    };
+
+    const cache = join(root, "cache");
+    const install = await runInstall(project, cache, {});
+    expect(install.stderr).toContain("Saved lockfile");
+    const afterInstall = await projectState();
+    const cachedLinks = linksIn(join(cache, `@G@${branchCommits(bare).main}`));
+
+    // a reinstall removes what is at the package's path before it writes there
+    const reinstall = await runInstall(project, cache, {}, "--force");
+    const afterReinstall = await projectState();
+
+    expect({ afterInstall, cachedLinks, afterReinstall }).toEqual({
+      afterInstall: untouched,
+      cachedLinks: [],
+      afterReinstall: untouched,
+    });
+    expect({ install: install.exitCode, reinstall: reinstall.exitCode }).toEqual({ install: 0, reinstall: 0 });
+  },
+  30_000,
+);
 
 // issue #40803: `bun install <git url>` (no alias) sorted the workspace dep
 // under its version literal. The real name is only known once the repo is

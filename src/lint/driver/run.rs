@@ -108,11 +108,19 @@ pub(crate) struct Timing {
     pub(crate) read: AtomicU64,
     pub(crate) parse: AtomicU64,
     pub(crate) rules: AtomicU64,
+    /// Files in which `File::mentions` says yes to every name, so that each rule about a name listens.
+    pub(crate) without_filter: AtomicU64,
 }
 
 impl Timing {
     pub(crate) fn now(&self) -> Option<Instant> {
         self.is_on.then(Instant::now)
+    }
+
+    pub(crate) fn count(&self, what: &AtomicU64) {
+        if self.is_on {
+            what.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Adds the time since `started`. Returns the time.
@@ -685,7 +693,8 @@ impl Run<'_> {
                 count => _ = write!(self.out.stderr, ", refused ({why:?}): {count}"),
             }
         }
-        self.out.stderr.push(b'\n');
+        let without_filter = timing.without_filter.load(Ordering::Relaxed);
+        let _ = writeln!(self.out.stderr, "\n  without a filter of the names they mention: {without_filter} files");
     }
 }
 

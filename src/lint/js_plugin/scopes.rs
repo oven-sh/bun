@@ -7,7 +7,7 @@
 //!   the scope around it, its variable scope, the index of its first variable
 //! - for each variable, scope by scope, 2 words: the index of its first definition, flags
 //! - for each definition 2 words: the node that is the name, its [`DeclarationKind`]
-//! - for each reference, in the order of [`File::references`], 5 words: the identifier,
+//! - for each reference, in the order of [`File::references_as_visited`], 5 words: the identifier,
 //!   flags, what is written, the variable, the scope that it is in
 //! - for each global variable that something refers to and the file does not declare, 2
 //!   words: the index of a reference to it, flags
@@ -153,9 +153,15 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
 
     let mut globals = Vec::new();
     let mut seen = FxHashSet::default();
-    let references = file.references();
-    let reference_count = references.len();
-    for (index, reference) in references.enumerate() {
+    let mut reference_count = 0;
+    for reference in file.references_as_visited() {
+        // What is not in the tree is not there for a rule either.
+        let identifier = id(identifier(reference));
+        if identifier == NONE {
+            continue;
+        }
+        let index = reference_count;
+        reference_count += 1;
         let symbol = reference.symbol();
         let global = reference.global();
         if let Some(global) = global
@@ -167,12 +173,12 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
                 | u32::from(global.is_writable) * IS_WRITABLE
                 | u32::from(global.is_in_lib) * IS_IN_LIB
                 | u32::from(!global.is_only_in_lib) * IS_CONFIGURED;
-            globals.extend_from_slice(&[index as u32, flags]);
+            globals.extend_from_slice(&[index, flags]);
         }
         wire::words(
             out,
             &[
-                id(identifier(reference)),
+                identifier,
                 u32::from(reference.flags().bits()) | u32::from(global.is_some()) * TO_GLOBAL,
                 id(reference.write_expr().and_then(expression)),
                 symbol.and_then(|it| index_of.get(it.key())).copied().unwrap_or(NONE),
@@ -203,7 +209,7 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
         scope_count as u32,
         (variables.len() / 2 - 1) as u32,
         (definitions.len() / 2) as u32,
-        reference_count as u32,
+        reference_count,
         (globals.len() / 2) as u32,
         in_comments.len() as u32,
     ];

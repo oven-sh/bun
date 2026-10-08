@@ -38,11 +38,12 @@ pub enum Dialect {
 }
 
 impl Dialect {
-    /// That of the parser that `languageOptions.parser` says.
+    /// That of the parser that ESLint would read the file with: espree's for JavaScript if that is what
+    /// `languageOptions.parser` says. espree cannot read anything else.
     #[inline]
     pub fn of(file: &File) -> Dialect {
         match file.language().parser {
-            crate::language::Parser::Espree => Dialect::Espree,
+            crate::language::Parser::Espree if file.is_javascript() => Dialect::Espree,
             _ => Dialect::TypeScript,
         }
     }

@@ -105,13 +105,39 @@ function asJson(value) {
   }
 }
 
+// What the configuration files that were needed to find a plugin export, by their paths.
+const configurations = new Map();
+
+// The plugin that an `eslint.config.js` has under `prefix`, and that is where `evaluate-eslint.js` says.
+async function locatedPlugin(location, prefix) {
+  if (location.module !== undefined) {
+    // As `require.cache` has it, which is where it was found.
+    let found = require(location.module);
+    for (const name of location.export) found = found[name];
+    return found;
+  }
+  let exported = configurations.get(location.config);
+  if (exported === undefined) {
+    exported = (await load(pathToFileURL(location.config).href)).default;
+    if (typeof exported === "function") exported = exported();
+    exported = [await exported].flat(Infinity);
+    configurations.set(location.config, exported);
+  }
+  return exported[location.index].plugins[prefix];
+}
+
 async function loadPlugin([directory, specifier, alias]) {
-  const isPath = /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
-  const file = isPath
-    ? nodePath.resolve(directory, specifier)
-    : createRequire(nodePath.join(directory, "noop.js")).resolve(specifier);
-  const module = await load(pathToFileURL(file).href);
-  const plugin = module.default ?? module;
+  const isLocated = typeof directory === "object";
+  const isPath = isLocated || /^\.{0,2}[\\/]/u.test(specifier) || nodePath.isAbsolute(specifier);
+  let plugin;
+  if (isLocated) plugin = await locatedPlugin(directory, alias);
+  else {
+    const file = isPath
+      ? nodePath.resolve(directory, specifier)
+      : createRequire(nodePath.join(directory, "noop.js")).resolve(specifier);
+    const module = await load(pathToFileURL(file).href);
+    plugin = module.default ?? module;
+  }
   if (plugin === null || typeof plugin !== "object") throw new TypeError("A plugin must export an object.");
   let name = alias;
   if (name === null && plugin.meta?.name != null) {

@@ -6,7 +6,7 @@ use super::wire::{self, ToWorker, from_worker};
 use super::{ast, schema, scopes, tokens};
 use crate::ast::File;
 use crate::fix::Fix;
-use crate::linter::write_json_string;
+use crate::linter::{write_json, write_json_string};
 use crate::options::Json;
 use crate::rule::Kind;
 use crate::selector::Selector;
@@ -317,37 +317,55 @@ impl<'e> Host<'e> {
         }
         request.pop();
         request.push(b']');
+        self.load_as(request)
+    }
+
+    /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location`: what the script that
+    /// evaluates such a file says about where the plugin is, in `$jsPlugins`.
+    pub fn load_located(&self, location: &Json, prefix: &[u8]) -> Result<Arc<Plugin>, Vec<u8>> {
+        let mut request = b"[".to_vec();
+        write_json(&mut request, location);
+        request.extend_from_slice(b",null,");
+        write_json_string(&mut request, prefix);
+        request.push(b']');
+        self.load_as(request)
+    }
+
+    /// `request`: the content of [`ToWorker::Load`].
+    fn load_as(&self, request: Vec<u8>) -> Result<Arc<Plugin>, Vec<u8>> {
         let known = |state: &State| state.plugins.iter().find(|it| it.request == request).map(|it| Arc::clone(&it.plugin));
-        if let Some(plugin) = known(&self.state.lock()) {
+        loop {
+            if let Some(plugin) = known(&self.state.lock()) {
+                return Ok(plugin);
+            }
+            let mut worker = self.acquire()?;
+            let described = match worker.load(&request) {
+                Ok(described) => described,
+                Err(why) => {
+                    // It is as it was, if it is still there.
+                    self.release(worker);
+                    return Err(why);
+                }
+            };
+            let mut state = self.state.lock();
+            // Another thread was faster, or has loaded another one, which this worker lacks.
+            if known(&state).is_some() || state.plugins.len() != worker.plugins {
+                drop(state);
+                drop(worker);
+                self.lose();
+                continue;
+            }
+            let plugin = Arc::new(plugin_of(&described, state.rules));
+            state.rules += plugin.rules.len() as u32;
+            state.plugins.push(Loaded {
+                request,
+                plugin: Arc::clone(&plugin),
+            });
+            worker.plugins += 1;
+            drop(state);
+            self.release(worker);
             return Ok(plugin);
         }
-        let mut worker = self.acquire()?;
-        let described = match worker.load(&request) {
-            Ok(described) => described,
-            Err(why) => {
-                // It is as it was, if it is still there.
-                self.release(worker);
-                return Err(why);
-            }
-        };
-        let mut state = self.state.lock();
-        // Another thread was faster, or has loaded another one, which this worker lacks.
-        if known(&state).is_some() || state.plugins.len() != worker.plugins {
-            drop(state);
-            drop(worker);
-            self.lose();
-            return self.load(directory, specifier, alias);
-        }
-        let plugin = Arc::new(plugin_of(&described, state.rules));
-        state.rules += plugin.rules.len() as u32;
-        state.plugins.push(Loaded {
-            request,
-            plugin: Arc::clone(&plugin),
-        });
-        worker.plugins += 1;
-        drop(state);
-        self.release(worker);
-        Ok(plugin)
     }
 
     /// Runs the rules `enabled` on `file`. `wants_fixes`: whether anything reads [`Report::fix`] and

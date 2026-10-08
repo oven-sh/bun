@@ -207,7 +207,11 @@ fn type_alias_layout<'a>(alias: Alias<'a>, ty: TypeNode<'a>, f: &Formatter<'a>) 
     };
     let should_break_after_operator = match ty.kind() {
         TypeKind::Union(types) if !should_hug_type(ty, types, f) => true,
-        TypeKind::Cond { check, extends, .. } if is_generic(check) || is_generic(extends) => true,
+        TypeKind::Cond { check, extends, .. }
+            if f.options().experimental_ternaries || is_generic(check) || is_generic(extends) =>
+        {
+            true
+        }
         _ => {
             !f.is_quiet()
                 && f

@@ -1,6 +1,6 @@
 use crate::js::utils::typescript::{is_object_like_type, union_leading_comments};
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 
 /// `A & B`
 pub(crate) fn write_ts_intersection_type<'a>(_ty: TypeNode<'a>, types: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
@@ -13,7 +13,7 @@ pub(crate) fn write_ts_intersection_type<'a>(_ty: TypeNode<'a>, types: List<'a, 
 /// Prettier's `printIntersectionType`: object types stay on the line of the `&`, other types go
 /// on a line of their own if it does not all fit.
 fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
-    let last_index = types.len().saturating_sub(1);
+    let is_operator_at_start = f.options().experimental_operator_position == OperatorPosition::Start;
     let mut is_prev_object_like = false;
     let mut is_chain_indented = false;
 
@@ -31,21 +31,20 @@ fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatte
             write!(f, content);
         } else if is_prev_object_like && is_object_like {
             match is_chain_indented {
-                true => write!(f, [space(), indent(&content)]),
-                false => write!(f, [space(), content]),
+                true => write!(f, [" & ", indent(&content)]),
+                false => write!(f, [" & ", content]),
             }
         } else if !(is_prev_object_like || is_object_like) || f.comments().has_leading_own_line_comment(item.span().start)
         {
-            write!(f, soft_line_indent_or_space(&content));
+            match is_operator_at_start {
+                true => write!(f, indent(&format_args!(soft_line_break_or_space(), "& ", content))),
+                false => write!(f, indent(&format_args!(" &", soft_line_break_or_space(), content))),
+            }
         } else if index > 1 {
             is_chain_indented = true;
-            write!(f, [space(), indent(&content)]);
+            write!(f, [" & ", indent(&content)]);
         } else {
-            write!(f, [space(), content]);
-        }
-
-        if index < last_index {
-            write!(f, [space(), "&"]);
+            write!(f, [" & ", content]);
         }
         is_prev_object_like = is_object_like;
     }

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 /// Disallow unmodified loop conditions.
 pub struct NoUnmodifiedLoopCondition {
@@ -38,39 +39,71 @@ struct Condition<'a> {
     is_modified: bool,
 }
 
-impl<'a> Condition<'a> {
-    /// ESLint's `isInLoop`.
-    fn is_in_loop(&self, reference: Reference<'a>) -> bool {
-        let span = reference.span();
-        self.inside.contains(span) && !self.outside.is_some_and(|it| it.contains(span))
-    }
+/// Where a variable is modified.
+#[derive(Default)]
+struct Modifiers {
+    /// The references that write to it, in the order of the source.
+    writes: Vec<Span>,
+    /// The references to the function declarations that one of these is in, in the order of the
+    /// source.
+    calls: Vec<Span>,
+}
 
-    /// ESLint's `hasModifierInLoop`: `modifier` is in the loop, or in a function declaration that
-    /// is referred to in the loop.
-    fn has_modifier_in_loop(&self, modifier: Reference<'a>) -> bool {
-        if self.is_in_loop(modifier) {
-            return true;
-        }
-        let mut functions = modifier.node().ancestors().filter_map(Node::as_func);
-        let declaration = functions.find(|it| it.kind() == FnKind::Decl && it.has_body());
-        let Some(name) = declaration.and_then(Func::name) else {
-            return false;
-        };
-        let variable = modifier.scope().parent().and_then(|it| it.resolve_name(name.name()));
-        variable.is_some_and(|it| it.references().any(|reference| self.is_in_loop(reference)))
-    }
-
-    /// Whether something writes to the variable in the loop.
-    fn find_modifier(&self) -> bool {
-        let is_modifier = |it: Reference<'a>| is_write_reference(it) && self.has_modifier_in_loop(it);
-        match self.reference.symbol() {
-            Some(symbol) => symbol.references().any(is_modifier),
-            None => {
-                let file = self.reference.node().file();
-                file.unresolved_references_to(self.reference.name().bytes()).any(is_modifier)
+impl Modifiers {
+    fn new<'a>(references: impl Iterator<Item = Reference<'a>>) -> Modifiers {
+        let mut modifiers = Modifiers::default();
+        let mut functions: FxHashSet<Symbol<'a>> = FxHashSet::default();
+        for modifier in references.filter(|it| is_write_reference(*it)) {
+            modifiers.writes.push(modifier.span());
+            let mut around = modifier.node().ancestors().filter_map(Node::as_func);
+            let declaration = around.find(|it| it.kind() == FnKind::Decl && it.has_body());
+            if let Some(name) = declaration.and_then(Func::name)
+                && let Some(variable) = modifier.scope().parent().and_then(|it| it.resolve_name(name.name()))
+                && functions.insert(variable)
+            {
+                modifiers.calls.extend(variable.references().map(Reference::span));
             }
         }
+        modifiers.writes.sort_unstable_by_key(|it| it.start);
+        modifiers.calls.sort_unstable_by_key(|it| it.start);
+        modifiers
     }
+}
+
+impl Condition<'_> {
+    /// ESLint's `isInLoop`, for any of `references`, which are in the order of the source.
+    fn is_any_in_loop(&self, references: &[Span]) -> bool {
+        let within = |span: Span| {
+            references.partition_point(|it| it.start < span.start)..references.partition_point(|it| it.end <= span.end)
+        };
+        let (inside, outside) = (within(self.inside), self.outside.map_or(0..0, within));
+        inside.start < inside.end && (inside.start < outside.start || outside.end < inside.end)
+    }
+
+    /// ESLint's `hasModifierInLoop`, for any of the modifiers: it is in the loop, or in a function
+    /// declaration that is referred to in the loop.
+    fn has_modifier_in_loop(&self, modifiers: &Modifiers) -> bool {
+        self.is_any_in_loop(&modifiers.writes) || self.is_any_in_loop(&modifiers.calls)
+    }
+}
+
+/// What is above a node that is in no call, function or statement yet.
+#[derive(Copy, Clone)]
+struct Above<'a> {
+    /// The loop whose test it is in.
+    statement: Option<Stmt<'a>>,
+    /// The outermost `BinaryExpression` or `ConditionalExpression` that it is, or is in.
+    group: Option<Expr<'a>>,
+}
+
+#[derive(Default)]
+pub struct State<'a> {
+    /// The tests of the loops.
+    tests: Vec<Span>,
+    /// For the nodes that are far below the test, as in `a + a + ..`.
+    above: FxHashMap<Node<'a>, Above<'a>>,
+    /// `has_dynamic_expressions`
+    is_dynamic: FxHashMap<Expr<'a>, bool>,
 }
 
 /// ESLint's `isWriteReference`. Of the initializers only those of `var` count: they are evaluated
@@ -105,59 +138,86 @@ fn has_dynamic_expressions(root: Expr) -> bool {
 }
 
 impl NoUnmodifiedLoopCondition {
+    /// Walks up from `node`, whose child on the way is `child`. All the walks together take time in
+    /// proportion to the number of nodes.
+    fn look_above<'a>(&self, mut child: Node<'a>, mut node: Node<'a>, state: &mut State<'a>) -> Above<'a> {
+        const NEAR: usize = 32;
+        let mut passed: SmallVec<[Node<'a>; NEAR]> = SmallVec::new();
+        // With how many nodes have been passed up to it.
+        let mut group = None;
+        let above = loop {
+            if passed.len() >= NEAR
+                && let Some(&known) = state.above.get(&node)
+            {
+                break known;
+            }
+            let node_type = utils::estree_type_name(node);
+            if is_sentinel(node_type) || matches!(node, Node::File(_)) {
+                let statement = node.as_stmt().filter(|it| {
+                    let test = match it.kind() {
+                        StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => Some(test),
+                        StmtKind::For { test, .. } => test,
+                        _ => None,
+                    };
+                    is_sentinel(node_type) && test.is_some_and(|test| Node::Expr(test) == child)
+                });
+                break Above { statement, group: None };
+            }
+            passed.push(node);
+            if (node_type == "BinaryExpression"
+                || !self.check_conditional_expressions && node_type == "ConditionalExpression")
+                && let Some(expression) = node.as_expr()
+            {
+                group = Some((expression, passed.len()));
+            }
+            child = node;
+            node = utils::estree_parent(node);
+        };
+        let group_from = |count: usize| {
+            above.group.or_else(|| group.filter(|it| count < it.1).map(|it| it.0))
+        };
+        for (count, &node) in passed.iter().enumerate().skip(NEAR) {
+            let known = Above { statement: above.statement, group: group_from(count) };
+            state.above.insert(node, known);
+        }
+        Above { statement: above.statement, group: group_from(0) }
+    }
+
     /// ESLint's `toLoopCondition`.
-    fn to_loop_condition<'a>(&self, reference: Reference<'a>) -> Option<Condition<'a>> {
+    fn to_loop_condition<'a>(&self, reference: Reference<'a>, state: &mut State<'a>) -> Option<Condition<'a>> {
         if reference.is_init() {
             return None;
         }
-        let mut child = reference.node();
-        let mut node = match child {
+        let child = reference.node();
+        let node = match child {
             Node::Expr(_) | Node::Pat(_) => utils::estree_parent(child),
             // The name is a part of it.
             _ => child,
         };
-        let mut group = None;
-        loop {
-            let node_type = utils::estree_type_name(node);
-            if is_sentinel(node_type) {
-                let (test, init) = match node.as_stmt()?.kind() {
-                    StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => (test, None),
-                    StmtKind::For { test, init, .. } => (test?, init),
-                    _ => return None,
-                };
-                // What nothing defines is not a variable.
-                if Node::Expr(test) != child
-                    || reference.symbol().is_none() && reference.global().is_none()
-                {
-                    return None;
-                }
-                return Some(Condition {
-                    reference,
-                    group,
-                    inside: node.span(),
-                    outside: init.map(|it| utils::estree_span(Node::Stmt(it))),
-                    is_modified: false,
-                });
-            }
-            if node_type == "BinaryExpression"
-                || !self.check_conditional_expressions && node_type == "ConditionalExpression"
-            {
-                let expression = node.as_expr()?;
-                if has_dynamic_expressions(expression) {
-                    return None;
-                }
-                group = Some(expression);
-            }
-            if let Node::File(_) = node {
-                return None;
-            }
-            child = node;
-            node = utils::estree_parent(node);
+        let Above { statement, group } = self.look_above(child, node, state);
+        let statement = statement?;
+        // What is dynamic in a group is so in those around it.
+        if group.is_some_and(|it| *state.is_dynamic.entry(it).or_insert_with(|| has_dynamic_expressions(it)))
+            // What nothing defines is not a variable.
+            || reference.symbol().is_none() && reference.global().is_none()
+        {
+            return None;
         }
+        let init = match statement.kind() {
+            StmtKind::For { init, .. } => init,
+            _ => None,
+        };
+        Some(Condition {
+            reference,
+            group,
+            inside: statement.span(),
+            outside: init.map(|it| utils::estree_span(Node::Stmt(it))),
+            is_modified: false,
+        })
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mut spans = std::mem::take(&mut cx.state);
+        let mut spans = std::mem::take(&mut cx.state.tests);
         if spans.is_empty() {
             return;
         }
@@ -171,14 +231,25 @@ impl NoUnmodifiedLoopCondition {
                 end = end.max(test.end);
             }
             if start < end {
-                conditions.extend(self.to_loop_condition(reference));
+                conditions.extend(self.to_loop_condition(reference, &mut cx.state));
             } else if tests.peek().is_none() {
                 break;
             }
         }
         let mut modified_groups: FxHashSet<Expr<'a>> = FxHashSet::default();
+        let mut of_symbols: FxHashMap<Symbol<'a>, Modifiers> = FxHashMap::default();
+        let mut of_globals: FxHashMap<Name<'a>, Modifiers> = FxHashMap::default();
         for condition in &mut conditions {
-            condition.is_modified = condition.find_modifier();
+            let modifiers = match condition.reference.symbol() {
+                Some(symbol) if !symbol.has_writes() => continue,
+                Some(symbol) => of_symbols.entry(symbol).or_insert_with(|| Modifiers::new(symbol.references())),
+                None => {
+                    let name = condition.reference.name();
+                    let references = || cx.file().unresolved_references_to(name.bytes());
+                    of_globals.entry(name).or_insert_with(|| Modifiers::new(references()))
+                }
+            };
+            condition.is_modified = condition.has_modifier_in_loop(modifiers);
             if condition.is_modified {
                 modified_groups.extend(condition.group);
             }
@@ -197,8 +268,7 @@ impl NoUnmodifiedLoopCondition {
 
 impl Rule for NoUnmodifiedLoopCondition {
     const META: Meta = Meta::eslint("no-unmodified-loop-condition", Kind::Problem);
-    /// The tests of the loops.
-    type State<'a> = Vec<Span>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoUnmodifiedLoopCondition {
@@ -206,16 +276,16 @@ impl Rule for NoUnmodifiedLoopCondition {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Span> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.stmts([StmtTag::While, StmtTag::DoWhile, StmtTag::For], |_, statement, cx| {
             let test = match statement.kind() {
                 StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => Some(test),
                 StmtKind::For { test, .. } => test,
                 _ => None,
             };
-            cx.state.extend(test.map(Expr::span));
+            cx.state.tests.extend(test.map(Expr::span));
         });
         on.finish(Self::finish);
-        Vec::new()
+        State::default()
     }
 }

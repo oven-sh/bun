@@ -123,7 +123,7 @@ impl Configured {
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
-    /// `{ settings, languageOptions, globals }`
+    /// `{ settings, languageOptions, globals, libs }`
     pub(super) json: Box<[u8]>,
 }
 
@@ -167,10 +167,15 @@ impl FileSettings {
         };
         let all_globals = config_globals_in_order(language).into_iter();
         let all_globals = all_globals.map(|(name, setting)| (name.into_owned(), string(setting_name(setting)))).collect();
+        // 1: a type, 2: a value.
+        let libs = language.lib_variables().map(|(name, is_type, is_value)| {
+            (name.to_vec(), Json::Number(f64::from(u8::from(is_type) | (u8::from(is_value) << 1))))
+        });
         let all = Json::Object(vec![
             (b"settings".to_vec(), settings),
             (b"languageOptions".to_vec(), language_options),
             (b"globals".to_vec(), Json::Object(all_globals)),
+            (b"libs".to_vec(), Json::Object(libs.collect())),
         ]);
         let mut json = Vec::new();
         write_json(&mut json, &all);

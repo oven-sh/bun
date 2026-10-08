@@ -363,12 +363,17 @@ class Scope {
 }
 for (const hidden of ["index", "last"]) Object.defineProperty(Scope.prototype, hidden, { writable: true });
 lazy(Scope.prototype, "variables", function () {
+  if (this.index === 0) {
+    const mentioned = mentionedGlobals(this);
+    if (tree.dialect === 1) return mentioned;
+    const known = new Set(mentioned.map(it => it.name));
+    return [...mentioned, ...Object.keys(fileSettings.libs).filter(it => !known.has(it)).map(it => libVariable(this, it))];
+  }
   const { scopeWords, innerClassNames } = scopeData;
   const variables = [];
   const inner = innerClassNames.get(this.index);
   if (inner !== undefined) variables.push(variableAt(inner));
   for (let at = scopeWords[5 * this.index + 4]; at < scopeWords[5 * this.index + 9]; at++) variables.push(variableAt(at));
-  if (this.index === 0) addGlobalVariables(this, variables);
   // typescript-eslint comes to the type parameters of a function after its parameters.
   if (this.type === "function" && this.block.typeParameters) {
     const rank = variable => {
@@ -383,8 +388,84 @@ lazy(Scope.prototype, "variables", function () {
   return variables;
 });
 lazy(Scope.prototype, "set", function () {
-  return new Map(this.variables.map(it => [it.name, it]));
+  if (this.index !== 0 || tree.dialect === 1 || Object.hasOwn(this, "variables")) return new Map(this.variables.map(it => [it.name, it]));
+  return new GlobalSet(this, mentionedGlobals(this));
 });
+
+// The variables of the global scope that the file declares, refers to or has a comment about, and those of the configuration.
+function mentionedGlobals(scope) {
+  if (scopeData.mentionedGlobals === null) {
+    const variables = (scopeData.mentionedGlobals = []);
+    for (let at = scopeData.scopeWords[4]; at < scopeData.scopeWords[9]; at++) variables.push(variableAt(at));
+    addGlobalVariables(scope, variables);
+  }
+  return scopeData.mentionedGlobals;
+}
+
+// A variable that the libraries of TypeScript define, and that nothing in the file or in the configuration mentions.
+function libVariable(scope, name) {
+  let variable = scopeData.libVariables.get(name);
+  if (variable === undefined) {
+    variable = newVariable(name, scope, NO_INDEX, fileSettings.libs[name] | IS_IN_LIB);
+    variable.defs = [];
+    variable.identifiers = [];
+    variable.references = [];
+    variable.writeable = false;
+    variable.eslintImplicitGlobalSetting = "readonly";
+    scopeData.libVariables.set(name, variable);
+  }
+  return variable;
+}
+
+// The `set` of the global scope with typescript-eslint's parser, which has more than a thousand variables of the libraries of
+// TypeScript. Most files ask for a few names. The others are made when something goes through all of them.
+class GlobalSet extends Map {
+  #scope;
+  #isComplete = false;
+  constructor(scope, variables) {
+    super();
+    this.#scope = scope;
+    for (const it of variables) super.set(it.name, it);
+  }
+  #complete() {
+    if (this.#isComplete) return;
+    this.#isComplete = true;
+    for (const it of this.#scope.variables) if (!super.has(it.name)) super.set(it.name, it);
+  }
+  get(name) {
+    const found = super.get(name);
+    if (found !== undefined || this.#isComplete || !Object.hasOwn(fileSettings.libs, name)) return found;
+    const variable = libVariable(this.#scope, name);
+    super.set(name, variable);
+    return variable;
+  }
+  has(name) {
+    return super.has(name) || (!this.#isComplete && Object.hasOwn(fileSettings.libs, name));
+  }
+  get size() {
+    this.#complete();
+    return super.size;
+  }
+  keys() {
+    this.#complete();
+    return super.keys();
+  }
+  values() {
+    this.#complete();
+    return super.values();
+  }
+  entries() {
+    this.#complete();
+    return super.entries();
+  }
+  forEach(callback, thisArg) {
+    this.#complete();
+    return super.forEach(callback, thisArg);
+  }
+  [Symbol.iterator]() {
+    return this.entries();
+  }
+}
 lazy(Scope.prototype, "references", function () {
   return scopeData.referencesByScope().of(this.index).map(referenceAt);
 });
@@ -875,6 +956,8 @@ function scopeManager() {
     innerClassNames,
     variableObjects,
     referenceObjects: new Array(referenceCount),
+    libVariables: new Map(),
+    mentionedGlobals: null,
     referencesByScope: memoize(() => group(referenceCount, scopeCount, index => references[5 * index + 4])),
     referencesByVariable: memoize(() => group(referenceCount, variableObjects.length, index => resolved[index])),
     // By the index of a variable: that of its scope.

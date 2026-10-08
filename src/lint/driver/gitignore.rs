@@ -4,6 +4,7 @@
 
 use crate::{fs, paths};
 use bun_core::strings;
+use bun_sema::util::FxHashMap;
 use std::sync::Arc;
 
 enum Matcher {
@@ -123,6 +124,12 @@ impl Pattern {
             (true, true, middle) if is_literal(middle) => Matcher::InsideAnywhere([b"/", middle, b"/"].concat()),
             (false, false, middle) if is_literal(middle) => Matcher::Path(middle.to_vec()),
             (false, true, middle) if is_literal(middle) => Matcher::Inside([middle, b"/"].concat()),
+            // `**/a*` is `a*`.
+            (true, false, middle) if !has_slash(middle) => Matcher::Pattern {
+                prefix: Vec::new(),
+                pattern: middle.to_vec(),
+                is_for_names: true,
+            },
             _ => Matcher::Pattern {
                 prefix: if has_slash(name) { from_here[..strings::index_of_any(from_here, SPECIAL).unwrap_or(0)].to_vec() } else { Vec::new() },
                 pattern: from_here.to_vec(),
@@ -136,10 +143,8 @@ impl Pattern {
         }
     }
 
-    /// `relative`: from the directory of the file that has the pattern, with a `/` at the end if
-    /// it is a directory. `name`: the last part of it.
-    fn matches(&self, relative: &[u8], name: &[u8], is_directory: bool) -> bool {
-        let path = relative.strip_suffix(b"/").unwrap_or(relative);
+    /// `path`: from the directory of the file that has the pattern. `name`: the last part of it.
+    fn matches(&self, path: &[u8], name: &[u8], is_directory: bool) -> bool {
         match &self.matcher {
             _ if self.is_for_directories && !is_directory => false,
             Matcher::Name(wanted) => name == &wanted[..],
@@ -159,7 +164,63 @@ pub(crate) struct Ignores {
     /// What the patterns are relative to.
     directory: Vec<u8>,
     patterns: Vec<Pattern>,
+    /// Where in `patterns` those are that are looked up and not tried: the names, the paths from
+    /// the directory, and `*.ext` by `ext`. The first first.
+    by_name: FxHashMap<Vec<u8>, Vec<u32>>,
+    by_path: FxHashMap<Vec<u8>, Vec<u32>>,
+    by_extension: FxHashMap<Vec<u8>, Vec<u32>>,
+    /// Where the others are.
+    others: Vec<u32>,
     above: Option<Arc<Ignores>>,
+}
+
+impl Ignores {
+    fn new(directory: &[u8], patterns: Vec<Pattern>, above: Chain) -> Ignores {
+        let mut ignores = Ignores {
+            directory: directory.to_vec(),
+            patterns: Vec::new(),
+            by_name: FxHashMap::default(),
+            by_path: FxHashMap::default(),
+            by_extension: FxHashMap::default(),
+            others: Vec::new(),
+            above,
+        };
+        for (at, pattern) in patterns.iter().enumerate() {
+            let at = at as u32;
+            match &pattern.matcher {
+                Matcher::Name(name) => ignores.by_name.entry(name.clone()).or_default().push(at),
+                Matcher::Path(path) => ignores.by_path.entry(path.clone()).or_default().push(at),
+                Matcher::Suffix(suffix) => match &suffix[..] {
+                    [b'.', extension @ ..] if !strings::contains_char(extension, b'.') => {
+                        ignores.by_extension.entry(extension.to_vec()).or_default().push(at);
+                    }
+                    _ => ignores.others.push(at),
+                },
+                _ => ignores.others.push(at),
+            }
+        }
+        ignores.patterns = patterns;
+        ignores
+    }
+
+    /// The last pattern that matches, which decides. `path`: from the directory. `name`: the last
+    /// part of it.
+    fn last_match(&self, path: &[u8], name: &[u8], is_directory: bool) -> Option<&Pattern> {
+        let last = |found: Option<&Vec<u32>>| {
+            let applies = |at: &&u32| is_directory || self.patterns.get(**at as usize).is_some_and(|it| !it.is_for_directories);
+            found.and_then(|all| all.iter().rev().find(applies)).copied()
+        };
+        let extension = strings::last_index_of_char(name, b'.').map(|dot| &name[dot + 1..]);
+        let mut best = last(self.by_name.get(name))
+            .max(last(self.by_path.get(path)))
+            .max(extension.and_then(|it| last(self.by_extension.get(it))));
+        // Those before the best so far say nothing.
+        let later = self.others.iter().rev().take_while(|at| Some(**at) > best);
+        if let Some(at) = later.copied().find(|at| self.patterns.get(*at as usize).is_some_and(|it| it.matches(path, name, is_directory))) {
+            best = Some(at);
+        }
+        self.patterns.get(best? as usize)
+    }
 }
 
 pub(crate) type Chain = Option<Arc<Ignores>>;
@@ -195,11 +256,7 @@ pub(crate) fn with_text(chain: Chain, directory: &[u8], text: &[u8], expands_bra
     if patterns.is_empty() {
         return chain;
     }
-    Some(Arc::new(Ignores {
-        directory: directory.to_vec(),
-        patterns,
-        above: chain,
-    }))
+    Some(Arc::new(Ignores::new(directory, patterns, chain)))
 }
 
 /// `chain` and the file at `path`, whose patterns are relative to `directory`.
@@ -236,18 +293,10 @@ pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
 /// anything about it decides, and in that file the last pattern.
 pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool {
     let mut next = chain.as_ref();
-    let mut relative = Vec::new();
     let name = paths::basename(path);
     while let Some(ignores) = next {
-        if let Some(inside) = paths::inside(&ignores.directory, path) {
-            relative.clear();
-            relative.extend_from_slice(inside);
-            if is_directory {
-                relative.push(b'/');
-            }
-            if let Some(pattern) = ignores.patterns.iter().rev().find(|it| it.matches(&relative, name, is_directory)) {
-                return !pattern.is_negated;
-            }
+        if let Some(pattern) = paths::inside(&ignores.directory, path).and_then(|inside| ignores.last_match(inside, name, is_directory)) {
+            return !pattern.is_negated;
         }
         next = ignores.above.as_ref();
     }

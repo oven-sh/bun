@@ -1247,11 +1247,6 @@ impl<'a> Comments<'a> {
             .is_some_and(|comment| comment.end() <= span.end)
     }
 
-    /// The same as [`Comments::has_any_comment_in`].
-    pub(crate) fn has_any_comment_in_range(&self, start: u32, end: u32) -> bool {
-        self.has_any_comment_in(Span::new(start, end))
-    }
-
     /// The position behind the first `character` after `start` that is not in a comment. `start` if
     /// there is none.
     pub(crate) fn position_after_character(&self, start: u32, character: u8) -> u32 {

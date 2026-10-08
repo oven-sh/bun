@@ -69,7 +69,15 @@ fn single_line_empty_container<'a>(file: &'a File<'a>, comment: Token<'a>) -> Op
     let ExprKind::Jsx(jsx) = element.kind() else {
         return None;
     };
-    let container = (jsx.children().iter())
+    // What is in the braces starts before the comment or after it: it is the last child that does the one or the first that
+    // does the other.
+    let children = jsx.children();
+    let after = children.after(comment.start());
+    let before = match after {
+        Some(after) => children.before(after.span().start),
+        None => children.last(),
+    };
+    let container = (before.into_iter().chain(after))
         .filter(|child| child.is_missing())
         .filter_map(Expr::jsx_container_span)
         .find(|container| container.contains_offset(comment.start()))?;

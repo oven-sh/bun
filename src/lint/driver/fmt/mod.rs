@@ -342,26 +342,6 @@ fn format(
         BeforeParsing::LeaveAsItIs => return Ok((text.to_vec(), options.cursor_offset)),
         BeforeParsing::Format(text) => text,
     };
-    let mut first_failure = None;
-    for &is_script in kinds(name) {
-        let how = How {
-            path,
-            is_script,
-            resolved,
-            verifies,
-            atoms,
-            memory,
-        };
-        match format_as(&how, &text, scratch) {
-            Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
-            done => return done,
-        }
-    }
-    Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
-}
-
-fn print<'a>(
-    (file, program): (&'a File<'a>, &Program<'a>),
     // `babel` hands a file of Flow to `babel-flow`, which reads what is in `/*:: */` and `/*: */` as code.
     let is_flow = match options.parser.as_deref() {
         Some(b"flow" | b"babel-flow") => true,
@@ -390,12 +370,32 @@ fn print<'a>(
         }
         false => text,
     };
+    let mut first_failure = None;
+    for &is_script in kinds(name) {
+        let how = How {
+            path,
+            is_script,
+            is_flow,
+            resolved,
+            verifies,
+            atoms,
+            memory,
+        };
+        match format_as(&how, &text, scratch) {
+            Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
+            done => return done,
+        }
+    }
+    Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
+}
+
+fn print<'a>(
+    (file, program): (&'a File<'a>, &Program<'a>),
     first_error: Option<&Diagnostic>,
     how: &How,
     scratch: &mut Scratches,
 ) -> Result<Formatted, Failure> {
     let options = &how.resolved.options;
-            is_flow,
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
     let takes_types = matches!(
         options.parser.as_deref(),

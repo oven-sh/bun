@@ -305,8 +305,6 @@ fn format_text_with_cursor(
         Some(b"babel") | None => bun_lint::linter::goes_to_flow(&code, name),
         Some(_) => false,
     };
-    let format_as = |is_script: bool| {
-        let dialect = match is_flow {
     // `babel-flow` reads what is in `/*:: */` and `/*: */` as code.
     let has_comment_types = is_flow
         && options.parser.as_deref() != Some(b"flow")
@@ -322,6 +320,8 @@ fn format_text_with_cursor(
         .map_or(code, std::borrow::Cow::Owned),
         false => code,
     };
+    let format_as = |is_script: bool| {
+        let dialect = match is_flow {
             true => Dialect::flow(is_script),
             false => Dialect::babel(is_script),
         };

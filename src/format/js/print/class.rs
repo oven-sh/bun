@@ -746,12 +746,6 @@ impl FormatClassElementWithSemicolon<'_> {
         }) {
             return true;
         }
-        match next.as_ast_nodes() {
-            AstNodes::PropertyDefinition(_) => is_computed,
-            AstNodes::MethodDefinition(_) => next.func().is_some_and(|value| {
-                !value.is_async()
-                    && !matches!(next.kind(), MemberKind::Getter | MemberKind::Setter)
-                    && (is_computed || value.is_generator())
         // Flow's `+a`, `-a`
         if next.kind() == MemberKind::Property
             && (has_modifier(next, Flags::IN) || has_modifier(next, Flags::OUT))
@@ -759,6 +753,12 @@ impl FormatClassElementWithSemicolon<'_> {
         {
             return true;
         }
+        match next.as_ast_nodes() {
+            AstNodes::PropertyDefinition(_) => is_computed,
+            AstNodes::MethodDefinition(_) => next.func().is_some_and(|value| {
+                !value.is_async()
+                    && !matches!(next.kind(), MemberKind::Getter | MemberKind::Setter)
+                    && (is_computed || value.is_generator())
             }),
             AstNodes::TSIndexSignature(_) => true,
             _ => false,

@@ -46,27 +46,44 @@ impl std::fmt::Debug for Type<'_> {
 pub struct TypeList<'a> {
     file: &'a File<'a>,
     ids: &'a [TypeId],
+    /// The one element, if `ids` is empty.
+    one: Option<TypeId>,
 }
 
 impl<'a> TypeList<'a> {
     #[inline]
     pub(crate) fn new(file: &'a File<'a>, ids: &'a [TypeId]) -> Self {
-        TypeList { file, ids }
+        TypeList {
+            file,
+            ids,
+            one: None,
+        }
+    }
+
+    /// `[ty]`
+    #[inline]
+    pub(crate) fn one(ty: Type<'a>) -> Self {
+        TypeList {
+            file: ty.file,
+            ids: &[],
+            one: Some(ty.id),
+        }
     }
 
     #[inline]
     pub fn len(self) -> usize {
-        self.ids.len()
+        self.ids.len() + usize::from(self.one.is_some())
     }
 
     #[inline]
     pub fn is_empty(self) -> bool {
-        self.ids.is_empty()
+        self.len() == 0
     }
 
     #[inline]
     pub fn get(self, i: usize) -> Option<Type<'a>> {
-        self.ids.get(i).map(|&id| Type::new(self.file, id))
+        let id = self.ids.get(i).copied().or(self.one.filter(|_| i == 0))?;
+        Some(Type::new(self.file, id))
     }
 
     #[inline]
@@ -76,7 +93,7 @@ impl<'a> TypeList<'a> {
 
     #[inline]
     pub fn last(self) -> Option<Type<'a>> {
-        self.ids.last().map(|&id| Type::new(self.file, id))
+        self.get(self.len().checked_sub(1)?)
     }
 
     #[inline]
@@ -84,12 +101,13 @@ impl<'a> TypeList<'a> {
         TypeIter {
             file: self.file,
             ids: self.ids.iter(),
+            one: self.one,
         }
     }
 
     #[inline]
     pub fn contains(self, ty: Type<'a>) -> bool {
-        self.ids.contains(&ty.id)
+        self.iter().any(|it| it == ty)
     }
 }
 
@@ -112,23 +130,27 @@ impl<'a> IntoIterator for TypeList<'a> {
 pub struct TypeIter<'a> {
     file: &'a File<'a>,
     ids: std::slice::Iter<'a, TypeId>,
+    one: Option<TypeId>,
 }
 
 impl<'a> Iterator for TypeIter<'a> {
     type Item = Type<'a>;
     #[inline]
     fn next(&mut self) -> Option<Type<'a>> {
-        self.ids.next().map(|&id| Type::new(self.file, id))
+        let id = self.ids.next().copied().or_else(|| self.one.take())?;
+        Some(Type::new(self.file, id))
     }
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.ids.size_hint()
+        let len = self.ids.len() + usize::from(self.one.is_some());
+        (len, Some(len))
     }
 }
 impl DoubleEndedIterator for TypeIter<'_> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.ids.next_back().map(|&id| Type::new(self.file, id))
+        let id = self.ids.next_back().copied().or_else(|| self.one.take())?;
+        Some(Type::new(self.file, id))
     }
 }
 impl ExactSizeIterator for TypeIter<'_> {}
@@ -572,6 +594,9 @@ impl<'a> Type<'a> {
         get_promised_type_of_promise PromisedTypeOfPromise;
         /// `InterfaceType.thisType`
         this_type ThisType;
+        /// `getModifiersTypeFromMappedType(type)`, `type.modifiersType`: the `T` of
+        /// `{ [P in keyof T]: .. }`.
+        get_modifiers_type_from_mapped_type ModifiersTypeOfMapped;
         /// The type of `x` in `for (const x of value)`.
         get_iterated_type Iterated;
         /// The type of `x` in `for await (const x of value)`.

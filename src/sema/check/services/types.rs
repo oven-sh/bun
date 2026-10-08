@@ -280,6 +280,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             TypeOp::Iterated => return c.iterated_type_if_any(ty, false),
             TypeOp::AsyncIterated => return c.iterated_type_if_any(ty, true),
             TypeOp::NonOptional => c.remove_missing_type(ty, true),
+            TypeOp::ModifiersTypeOfMapped => return c.mapped_modifiers_type(ty),
         })
     }
 

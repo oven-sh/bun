@@ -545,6 +545,8 @@ pub enum TypeOp {
     AsyncIterated,
     /// `getNonOptionalType`, `removeMissingType`: without the `undefined` of a `?`.
     NonOptional,
+    /// `getModifiersTypeFromMappedType`
+    ModifiersTypeOfMapped,
 }
 
 /// A property of a type that is true or false.

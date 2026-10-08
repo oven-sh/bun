@@ -129,6 +129,7 @@ absent! {
     ObjectFlags => ObjectFlags::empty(),
     ModifierFlags => ModifierFlags::empty(),
     NodeFlags => NodeFlags::empty(),
+    crate::ast::Flags => crate::ast::Flags::empty(),
     RawNode => RawNode::NONE,
     Kind => Kind::Unknown,
     NodeData => NodeData::None,
@@ -220,6 +221,8 @@ queries! {
     fn node_children(node: NodeRef) -> &'a [RawNode];
     fn node_span(node: NodeRef) -> (u32, u32);
     fn node_text(node: NodeRef) -> &'a [u8];
+    fn node_source_text(node: NodeRef) -> &'a [u8];
+    fn node_hir_flags(node: NodeRef) -> crate::ast::Flags;
     fn node_modifier_flags(node: NodeRef) -> ModifierFlags;
     fn node_flags(node: NodeRef) -> NodeFlags;
     fn deprecation_of_node(node: NodeRef) -> Option<&'a [u8]>;
@@ -708,4 +711,30 @@ impl<'a> Types<'a> {
     pub fn is_unknown_symbol(self, symbol: TsSymbol<'a>) -> bool {
         symbol.is_unknown()
     }
+}
+
+/// Calls `then` with `file` of the program that `checker` checks, with its types.
+///
+/// To be called right after `checker` has checked the file (`Request::after_file` of
+/// `bun_sema_driver`), on the thread that did. A task of the checker that turns out invalid is run
+/// again, so this can happen more than once for a file: the last time counts.
+///
+/// `None`, without a call: the file is not one that can be linted. It is part of TypeScript's
+/// library, or its tree is incomplete because the parser or the binder ran out of stack.
+pub fn with_file<R>(
+    checker: &mut bun_sema::check::Checker<'_, '_>,
+    file: FileId,
+    language: &crate::language::LanguageOptions,
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> Option<R> {
+    let module = checker.p.files.module(file);
+    let (hir, bound) = (checker.hir(file), checker.bound(file));
+    if module.is_lib || hir.ran_out_of_stack || bound.ran_out_of_stack {
+        return None;
+    }
+    let (path, atoms) = (module.file_name(), &checker.p.files.atoms);
+    Some(checker.with_services(file, |services| {
+        let types = Checker::new(services);
+        then(&File::new(path, hir, bound, atoms, language, Some(types)))
+    }))
 }

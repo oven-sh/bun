@@ -191,6 +191,10 @@ pub struct PlanOptions {
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
     /// occupies memory.
     pub projects_at_once: usize,
+    /// `Request::after_file` is only called for the files that are checked, not at the end for the
+    /// declaration files and the JSON files that are not. Then nothing reads what the last step
+    /// publishes, so it publishes nothing.
+    pub after_file_is_for_checked_files: bool,
 }
 
 impl Default for PlanOptions {
@@ -208,6 +212,7 @@ impl Default for PlanOptions {
             checkers: 0,
             reproduces_symbol_ids: true,
             projects_at_once: 4,
+            after_file_is_for_checked_files: false,
         }
     }
 }
@@ -3095,7 +3100,8 @@ fn check_named_files(
         // The tasks of split files read the ranges, and nothing else of the step before theirs.
         let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
             || request.retains_everything
-            || request.after_file.is_some();
+            || request.after_file.is_some()
+                && !request.plan_options.after_file_is_for_checked_files;
         let tasks = step.len();
         let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
         // The largest first, so that no thread begins it when the others are nearly done.
@@ -3346,7 +3352,9 @@ fn check_named_files(
         }
         // `iterateBaseline`: a caller that writes output for every file also does so for the files
         // that are not checked.
-        if let Some(after_file) = request.after_file {
+        if let Some(after_file) = request.after_file
+            && !request.plan_options.after_file_is_for_checked_files
+        {
             let mut is_checked = vec![false; program.files.modules.len()];
             for file in to_check.iter().chain(&only_emitted) {
                 is_checked[file.idx()] = true;

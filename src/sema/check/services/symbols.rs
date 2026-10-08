@@ -22,6 +22,8 @@ pub(super) enum Key<'p> {
     Parameter(SigId, u32),
     /// The `prototype` of that class.
     Prototype(Sym),
+    /// The `default` that `createDefaultPropertyWrapperForModule` creates for that module.
+    SyntheticDefault(Sym),
     /// A symbol without declarations that is known by its name: `arguments`, `require`, a type
     /// name that does not resolve.
     Undeclared(Atom),
@@ -259,6 +261,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 info.name = b"prototype";
                 info.flags = SymbolFlags::PROPERTY | SymbolFlags::PROTOTYPE;
             }
+            Key::SyntheticDefault(_) => {
+                info.name = b"default";
+                info.flags = SymbolFlags::PROPERTY | SymbolFlags::TRANSIENT;
+            }
             Key::Undeclared(name) => info.name = self.name_as_in_typescript(name),
             Key::Unique(_) => info.name = b"__index",
         }
@@ -369,7 +375,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     });
                 }
             }
-            Key::Prototype(_) | Key::Undeclared(_) | Key::Unique(_) => {}
+            Key::Prototype(_) | Key::SyntheticDefault(_) | Key::Undeclared(_) | Key::Unique(_) => {}
         }
         self.list(&out)
     }
@@ -388,7 +394,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let declaration = self.c.value_declaration_of_prop(prop?.0)?;
                 Some(self.node_of_declaration(declaration))
             }
-            Key::Index(..) | Key::Prototype(_) | Key::Undeclared(_) | Key::Unique(_) => None,
+            Key::Index(..) | Key::Prototype(_) | Key::SyntheticDefault(_) | Key::Undeclared(_) | Key::Unique(_) => None,
             Key::ThisParameter(..) | Key::Anonymous(..) | Key::Parameter(..) => self.declarations(symbol).first().copied(),
         }
     }
@@ -411,6 +417,10 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 parameters.get(index as usize).map_or(TypeId::ERROR, |it| it.ty)
             }
             Key::Prototype(class) => self.c.declared_type(class),
+            Key::SyntheticDefault(module) => {
+                let value = self.c.files().module_value(module);
+                self.c.type_of_symbol(value)
+            }
             Key::Index(ty, declaration) => {
                 let infos = self.index_infos_of_type(ty);
                 let node = self.node_of_declaration((declaration.0, Decl::Member(declaration.1)));
@@ -518,7 +528,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let class = self.c.declaring_class(prop?.0)?;
                 Some(self.symbol(class))
             }
-            (SymbolOp::Parent, Key::Prototype(class)) => Some(self.symbol(class)),
+            (SymbolOp::Parent, Key::Prototype(parent) | Key::SyntheticDefault(parent)) => Some(self.symbol(parent)),
             _ => None,
         }
     }

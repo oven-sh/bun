@@ -288,6 +288,7 @@ fn run(args: &[String]) {
                 checkers: number("--checkers=", defaults.checkers),
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
+                after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,

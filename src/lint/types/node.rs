@@ -138,6 +138,36 @@ impl<'a> TsNode<'a> {
         self.file.query(|q| q.node_text(self.raw))
     }
 
+    /// `node.getText()`. Empty in a file of the default library, whose text is not kept.
+    pub fn get_source_text(self) -> &'a [u8] {
+        self.file.query(|q| q.node_source_text(self.raw))
+    }
+
+    /// The flags that the HIR has for the node, which besides the modifiers tell of tokens.
+    fn hir_flags(self) -> ast::Flags {
+        self.file.query(|q| q.node_hir_flags(self.raw))
+    }
+
+    /// `node.questionToken !== undefined`: of a parameter, a property, a method.
+    pub fn has_question_token(self) -> bool {
+        self.hir_flags().contains(ast::Flags::OPTIONAL)
+    }
+
+    /// `node.dotDotDotToken !== undefined`: of a parameter or a binding element.
+    pub fn has_dot_dot_dot_token(self) -> bool {
+        self.hir_flags().contains(ast::Flags::REST)
+    }
+
+    /// `node.exclamationToken !== undefined`: of a variable or a property.
+    pub fn has_exclamation_token(self) -> bool {
+        self.hir_flags().contains(ast::Flags::DEFINITE)
+    }
+
+    /// `node.asteriskToken !== undefined`: of a function.
+    pub fn has_asterisk_token(self) -> bool {
+        self.hir_flags().contains(ast::Flags::GENERATOR)
+    }
+
     /// `ts.getCombinedModifierFlags(node)`
     pub fn modifier_flags(self) -> ModifierFlags {
         self.file.query(|q| q.node_modifier_flags(self.raw))
@@ -372,5 +402,18 @@ impl<'a> SourceFile<'a> {
     #[inline]
     pub fn is_linted_file(self) -> bool {
         self.id == self.file.id_in_program()
+    }
+}
+
+impl TsNode<'_> {
+    /// `clause.token` of a `HeritageClause`: `ExtendsKeyword` or `ImplementsKeyword`. `Unknown` for
+    /// any other node.
+    pub fn token(self) -> SyntaxKind {
+        use bun_sema::node::Part;
+        match self.file.query(|q| q.node_data(self.raw)) {
+            NodeData::Part(Part::Extends, _) => SyntaxKind::ExtendsKeyword,
+            NodeData::Part(Part::Implements, _) => SyntaxKind::ImplementsKeyword,
+            _ => SyntaxKind::Unknown,
+        }
     }
 }

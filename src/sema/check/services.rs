@@ -12,7 +12,7 @@
 //!   it with, a parameter of a signature is a `SigParam`. This numbers them as they come up, so
 //!   that equal numbers are what TypeScript has one object for.
 
-mod symbol_at_location;
+pub(in crate::check) mod symbol_at_location;
 mod symbols;
 mod type_at_location;
 mod types;
@@ -329,6 +329,20 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Atom::NONE => b"",
             text => self.c.atoms().bytes(text),
         }
+    }
+
+    /// The text of the file from the first token of `node` to the end of its last.
+    pub fn node_source_text(&mut self, node: NodeRef) -> &'p [u8] {
+        let (start, end) = self.node_span(node);
+        match self.valid(node) {
+            Some((hir, _)) => hir.text.get(start as usize..end as usize).unwrap_or_default(),
+            None => b"",
+        }
+    }
+
+    /// What the HIR stores for `node` besides its modifiers: `?`, `...`, `!`, `*`.
+    pub fn node_hir_flags(&mut self, node: NodeRef) -> Flags {
+        self.valid(node).map_or(Flags::empty(), |(hir, node)| hir.flags(node))
     }
 
     /// `getCombinedModifierFlags`

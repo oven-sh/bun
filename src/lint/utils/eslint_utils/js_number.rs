@@ -1,0 +1,278 @@
+//! The conversions between numbers and strings that ECMAScript defines.
+
+use crate::utils::text::{number_to_string, trim, trim_start};
+
+/// `ToInt32`
+pub(super) fn to_int32(n: f64) -> i32 {
+    to_uint32(n) as i32
+}
+
+/// `ToUint32`
+pub(super) fn to_uint32(n: f64) -> u32 {
+    if !n.is_finite() {
+        return 0;
+    }
+    n.trunc().rem_euclid(4_294_967_296.0) as u32
+}
+
+/// The length of the `StrUnsignedDecimalLiteral` that `text` starts with, without `Infinity`.
+fn decimal_literal_len(text: &[u8]) -> usize {
+    let digits = |from: usize| text.get(from..).unwrap_or_default().iter().take_while(|c| c.is_ascii_digit()).count();
+    let whole = digits(0);
+    let mut len = whole;
+    let mut fraction = 0;
+    if text.get(len) == Some(&b'.') {
+        fraction = digits(len + 1);
+        if whole + fraction > 0 {
+            len += 1 + fraction;
+        }
+    }
+    if whole + fraction == 0 {
+        return 0;
+    }
+    if matches!(text.get(len), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(text.get(len + 1), Some(b'+' | b'-')));
+        let exponent = digits(len + 1 + sign);
+        if exponent > 0 {
+            len += 1 + sign + exponent;
+        }
+    }
+    len
+}
+
+/// The value of ASCII text that `decimal_literal_len` accepts.
+fn decimal_value(text: &[u8]) -> f64 {
+    std::str::from_utf8(text).ok().and_then(|text| text.parse().ok()).unwrap_or(f64::NAN)
+}
+
+/// The number that `digits` are in `radix`. `None` if it is not a number, or has more digits than
+/// can be rounded correctly here.
+fn integer_value(digits: &[u8], radix: u32) -> Option<f64> {
+    if radix == 10 {
+        return Some(decimal_value(digits));
+    }
+    let mut value: u128 = 0;
+    for &digit in digits {
+        let digit = char::from(digit).to_digit(radix)?;
+        value = value.checked_mul(u128::from(radix))?.checked_add(u128::from(digit))?;
+    }
+    Some(value as f64)
+}
+
+fn split_sign(text: &[u8]) -> (f64, &[u8]) {
+    match text {
+        [b'-', rest @ ..] => (-1.0, rest),
+        [b'+', rest @ ..] => (1.0, rest),
+        _ => (1.0, text),
+    }
+}
+
+/// `StringToNumber`: `Number(text)`. `None` if the result cannot be computed here.
+pub(super) fn string_to_number(text: &[u8]) -> Option<f64> {
+    let text = trim(text);
+    if text.is_empty() {
+        return Some(0.0);
+    }
+    if let [b'0', prefix, digits @ ..] = text
+        && let Some(radix) = match prefix {
+            b'x' | b'X' => Some(16),
+            b'o' | b'O' => Some(8),
+            b'b' | b'B' => Some(2),
+            _ => None,
+        }
+    {
+        if digits.is_empty() || !digits.iter().all(|&c| char::from(c).is_digit(radix)) {
+            return Some(f64::NAN);
+        }
+        return integer_value(digits, radix);
+    }
+    let (sign, unsigned) = split_sign(text);
+    if unsigned == b"Infinity" {
+        return Some(sign * f64::INFINITY);
+    }
+    Some(match decimal_literal_len(unsigned) == unsigned.len() {
+        true => sign * decimal_value(unsigned),
+        false => f64::NAN,
+    })
+}
+
+/// `parseFloat(text)`
+pub(super) fn parse_float(text: &[u8]) -> f64 {
+    let (sign, unsigned) = split_sign(trim_start(text));
+    if unsigned.starts_with(b"Infinity") {
+        return sign * f64::INFINITY;
+    }
+    match decimal_literal_len(unsigned) {
+        0 => f64::NAN,
+        len => sign * decimal_value(&unsigned[..len]),
+    }
+}
+
+/// `parseInt(text, radix)`, where `radix` has gone through `ToInt32`. `None` if the result cannot
+/// be computed here.
+pub(super) fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
+    let (sign, mut digits) = split_sign(trim_start(text));
+    let mut radix = radix;
+    if radix != 0 && !(2..=36).contains(&radix) {
+        return Some(f64::NAN);
+    }
+    if matches!(radix, 0 | 16)
+        && let [b'0', b'x' | b'X', rest @ ..] = digits
+    {
+        digits = rest;
+        radix = 16;
+    }
+    let radix = if radix == 0 { 10 } else { radix as u32 };
+    let len = digits.iter().take_while(|&&c| char::from(c).is_digit(radix)).count();
+    if len == 0 {
+        return Some(f64::NAN);
+    }
+    Some(sign * integer_value(&digits[..len], radix)?)
+}
+
+/// The decimal digits of a finite `n > 0`, all of them, and the exponent of the first:
+/// `n == d1.d2d3.. * 10 ** exponent`.
+fn exact_digits(n: f64) -> (Vec<u8>, i32) {
+    // A double has at most 767 significant digits.
+    let text = format!("{n:.800e}");
+    let (mantissa, exponent) = text.as_bytes().split_at(text.len() - text.bytes().rev().take_while(|&c| c != b'e').count());
+    let digits = mantissa.iter().copied().filter(u8::is_ascii_digit).collect();
+    (digits, std::str::from_utf8(exponent).ok().and_then(|it| it.parse().ok()).unwrap_or(0))
+}
+
+/// Rounds `digits` to the first `count`, half up. Returns whether that carried into a new first
+/// digit, which makes the exponent one more.
+fn round_digits(digits: &mut Vec<u8>, count: usize) -> bool {
+    let rounds_up = digits.get(count).is_some_and(|&next| next >= b'5');
+    digits.resize(count, b'0');
+    if !rounds_up {
+        return false;
+    }
+    for digit in digits.iter_mut().rev() {
+        if *digit != b'9' {
+            *digit += 1;
+            return false;
+        }
+        *digit = b'0';
+    }
+    digits.insert(0, b'1');
+    digits.truncate(count.max(1));
+    true
+}
+
+fn with_sign(n: f64, unsigned: Vec<u8>) -> Vec<u8> {
+    match n < 0.0 {
+        true => [b"-", &unsigned[..]].concat(),
+        false => unsigned,
+    }
+}
+
+/// `n.toFixed(digits)` for `digits` in `0..=100`.
+pub(super) fn to_fixed(n: f64, fraction_digits: usize) -> Vec<u8> {
+    if !n.is_finite() || n.abs() >= 1e21 {
+        return number_to_string(n);
+    }
+    let mut digits = vec![b'0'];
+    let mut exponent = 0;
+    if n != 0.0 {
+        (digits, exponent) = exact_digits(n.abs());
+    }
+    // As many zeros in front as it takes for the first digit to be that of the units.
+    if exponent < 0 {
+        digits.splice(0..0, std::iter::repeat_n(b'0', exponent.unsigned_abs() as usize));
+        exponent = 0;
+    }
+    let mut whole = exponent as usize + 1;
+    if round_digits(&mut digits, whole + fraction_digits) {
+        whole += 1;
+        digits.push(b'0');
+    }
+    if fraction_digits > 0 {
+        digits.insert(whole, b'.');
+    }
+    with_sign(n, digits)
+}
+
+fn exponential(digits: &[u8], exponent: i32) -> Vec<u8> {
+    let mut text = Vec::with_capacity(digits.len() + 6);
+    text.extend_from_slice(&digits[..1]);
+    if digits.len() > 1 {
+        text.push(b'.');
+        text.extend_from_slice(&digits[1..]);
+    }
+    text.extend_from_slice(if exponent < 0 { b"e-" } else { b"e+" });
+    text.extend_from_slice(exponent.unsigned_abs().to_string().as_bytes());
+    text
+}
+
+/// `n.toExponential(digits)` for `digits` in `0..=100`, or `undefined`: as many as necessary.
+pub(super) fn to_exponential(n: f64, fraction_digits: Option<usize>) -> Vec<u8> {
+    if !n.is_finite() {
+        return number_to_string(n);
+    }
+    let (mut digits, mut exponent) = (vec![b'0'], 0);
+    match fraction_digits {
+        None if n != 0.0 => {
+            // The shortest digits that read back as `n`.
+            let text = format!("{:e}", n.abs());
+            let at = text.len() - text.bytes().rev().take_while(|&c| c != b'e').count();
+            digits = text.as_bytes()[..at].iter().copied().filter(u8::is_ascii_digit).collect();
+            exponent = text[at..].parse().unwrap_or(0);
+        }
+        None => {}
+        Some(count) => {
+            if n != 0.0 {
+                (digits, exponent) = exact_digits(n.abs());
+            }
+            exponent += i32::from(round_digits(&mut digits, count + 1));
+        }
+    }
+    with_sign(n, exponential(&digits, exponent))
+}
+
+/// `n.toPrecision(precision)` for `precision` in `1..=100`.
+pub(super) fn to_precision(n: f64, precision: usize) -> Vec<u8> {
+    if !n.is_finite() {
+        return number_to_string(n);
+    }
+    let (mut digits, mut exponent) = (vec![b'0'], 0);
+    if n != 0.0 {
+        (digits, exponent) = exact_digits(n.abs());
+    }
+    exponent += i32::from(round_digits(&mut digits, precision));
+    if exponent < -6 || exponent >= precision as i32 {
+        return with_sign(n, exponential(&digits, exponent));
+    }
+    if exponent < 0 {
+        let zeros = std::iter::repeat_n(b'0', exponent.unsigned_abs() as usize - 1);
+        digits.splice(0..0, b"0.".iter().copied().chain(zeros));
+    } else if exponent as usize + 1 < precision {
+        digits.insert(exponent as usize + 1, b'.');
+    }
+    with_sign(n, digits)
+}
+
+/// `n.toString(radix)` for `radix` in `2..=36`. `None` for a number with a fraction or beyond
+/// `Number.MAX_SAFE_INTEGER` in a radix other than 10: engines differ in the digits.
+pub(super) fn to_radix_string(n: f64, radix: u32) -> Option<Vec<u8>> {
+    if radix == 10 || !n.is_finite() {
+        return Some(number_to_string(n));
+    }
+    if n.fract() != 0.0 || n.abs() > 9_007_199_254_740_991.0 {
+        return None;
+    }
+    let mut rest = n.abs() as u64;
+    let mut digits = Vec::new();
+    loop {
+        digits.push(char::from_digit((rest % u64::from(radix)) as u32, radix)? as u8);
+        rest /= u64::from(radix);
+        if rest == 0 {
+            break;
+        }
+    }
+    if n < 0.0 {
+        digits.push(b'-');
+    }
+    digits.reverse();
+    Some(digits)
+}

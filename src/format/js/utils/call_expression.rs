@@ -165,7 +165,9 @@ pub(crate) fn type_arguments_trailing_comments<'a>(
     f: &Formatter<'a>,
 ) -> &'a [Comment] {
     match call.args().first() {
-        Some(first) => trailing_prefix(f.comments().comments_in(Span::before(end, first.span())), f),
+        Some(first) => {
+            trailing_prefix(f.comments().comments_in(Span::before(end, first.span())), f)
+        }
         None => f.comments().comments_before_character(end, b'('),
     }
 }
@@ -221,7 +223,8 @@ fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         }
         start = argument.span().end;
     }
-    f.comments().has_any_comment_in(Span::new(start, e.span().end))
+    f.comments()
+        .has_any_comment_in(Span::new(start, e.span().end))
 }
 
 /// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.

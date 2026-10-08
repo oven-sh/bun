@@ -481,7 +481,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 self.out.start_group();
                 self.out.token("{{");
                 self.out.start_if(false, None);
-                self.out.foreign(|f| f.write_text(b"  ", Some(TextWidth::single(1))));
+                self.out
+                    .foreign(|f| f.write_text(b"  ", Some(TextWidth::single(1))));
                 self.out.end_if();
                 self.out.softline();
                 self.out.softline();

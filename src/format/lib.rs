@@ -20,6 +20,7 @@ pub mod options;
 pub mod pragma;
 pub mod range;
 pub mod verify;
+pub mod yaml;
 
 /// Sorting imports.
 pub mod sort_imports {

@@ -6,7 +6,9 @@ A formatter for JavaScript, JSX, TypeScript, JSON, CSS, Less, SCSS, GraphQL, YAM
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
 - **There is no AST of its own**. It prints straight from the type checker's HIR through the handles of `bun_lint::ast` (`src/lint/CLAUDE.md` has the table ESTree → handles).
 
-Not there: HTML in templates (it is printed as it is. CSS, GraphQL and Markdown in templates are formatted: `css/embed.rs`, `graphql/embed.rs`, `markdown/embed.rs`), MDX unless it is asked for with `--parser mdx`, Tailwind class sorting, Vue/Svelte/Angular, Flow, Babel-only proposals, plugins.
+Not there: HTML in templates (it is printed as it is. CSS, GraphQL and Markdown in templates are formatted: `css/embed.rs`, `graphql/embed.rs`, `markdown/embed.rs`), MDX unless it is asked for with `--parser mdx`, Tailwind class sorting, Vue/Svelte/Angular, Babel-only proposals, plugins.
+
+**Flow.** A file is Flow if `--parser flow` or `babel-flow` says so, if a comment before its code has `@flow` or `@noflow`, or if it is called `.js.flow` (`bun_lint::linter::goes_to_flow`). The caller picks the dialect: `Dialect::flow_parser` for Prettier's `flow`, `Dialect::flow` for `babel-flow`, for which `flow::uncommented` first makes code of `/*:: */` and `/*: */`. The HIR has no node of its own for Flow: `src/sema/parser/parser/flow.rs` has the table of what stands for what, `src/lint/ast/flow.rs` tells the nodes apart, `js/print/flow.rs` has all that is printed differently. The functions for the nodes of TypeScript call it behind `f.file().is_flow()`, after the dispatch on the kind of node: a file that is not Flow pays one load where a hook is. Tests: `--languages=flow`.
 
 ## The pipeline
 

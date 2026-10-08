@@ -41,7 +41,7 @@ Checking formatting...
 | `prettier -l .`                  | `bun format -l`                    |
 | `prettier --stdin-filepath a.ts` | `bun format --stdin-filepath a.ts` |
 
-`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.yaml`, `.yml`, `.md`, `.graphql`, `.gql`, `.hbs`, and `.handlebars` files. It leaves HTML, Vue, MDX, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
+`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.js.flow`, `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.yaml`, `.yml`, `.md`, `.graphql`, `.gql`, `.hbs`, and `.handlebars` files. A `.js` file with a `@flow` comment at the top is read as Flow. It leaves HTML, Vue, MDX, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
 
 ```json package.json icon="file-json"
 {

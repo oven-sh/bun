@@ -7,8 +7,7 @@
 //! content on one line, `Sink::end_unit` says so. Then what has been written of the unit is taken back and it is
 //! written again, this time to a document, which is printed in its place.
 
-use super::doc::{self, Doc, Line};
-use std::borrow::Cow;
+use super::doc::{self, Doc, Elements, IndentCommand, Line};
 
 /// What is between two items of a `fill`.
 #[derive(Copy, Clone)]
@@ -20,23 +19,6 @@ pub(crate) enum Separator {
     DedentedLine,
     /// `dedent(hardline)`
     DedentedHardLine,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Frame {
-    Array,
-    Group {
-        should_break: bool,
-    },
-    Indent,
-    Dedent,
-    /// Items and separators take turns in it.
-    Fill,
-    /// The same, in an array.
-    Items,
-    Item,
-    LineSuffix,
-    WithoutLines,
 }
 
 /// Where a unit starts.
@@ -52,8 +34,13 @@ pub(crate) struct Sink<'o> {
     /// `None`: all that is wanted is the document.
     printer: Option<doc::Printer<'o>>,
 
-    /// The parts of the document that are not complete yet. Empty: what is written goes straight to the output.
-    frames: Vec<(Frame, Vec<Doc<'static>>)>,
+    /// Whether what is written goes to `elements`, not straight to the output.
+    is_document: bool,
+    elements: Elements,
+    /// Of each `fill` of `elements` that is open, whether it is one, not an array.
+    fills: Vec<bool>,
+    /// Where what `removeLines` is applied to starts.
+    without_lines: Vec<usize>,
 
     indent: u32,
     /// What `indent` is set back to.
@@ -77,7 +64,10 @@ impl<'o> Sink<'o> {
         Sink {
             line_start: printer.out.len(),
             printer: Some(printer),
-            frames: Vec::new(),
+            is_document: false,
+            elements: Elements::default(),
+            fills: Vec::new(),
+            without_lines: Vec::new(),
             indent: 0,
             outer_indents: Vec::new(),
             flat_groups: 0,
@@ -91,7 +81,10 @@ impl<'o> Sink<'o> {
     pub(crate) fn to_document() -> Self {
         Sink {
             printer: None,
-            frames: vec![(Frame::Array, Vec::new())],
+            is_document: true,
+            elements: Elements::default(),
+            fills: Vec::new(),
+            without_lines: Vec::new(),
             indent: 0,
             outer_indents: Vec::new(),
             flat_groups: 0,
@@ -104,8 +97,8 @@ impl<'o> Sink<'o> {
     }
 
     /// Everything that has been written to `Sink::to_document()`.
-    pub(crate) fn into_document(mut self) -> Doc<'static> {
-        Doc::Array(self.frames.pop().map(|(_, parts)| parts).unwrap_or_default())
+    pub(crate) fn into_document(self) -> Doc<'static> {
+        self.elements.to_tree()
     }
 
     // ───────────────────────────── units ─────────────────────────────
@@ -114,7 +107,7 @@ impl<'o> Sink<'o> {
     /// something that is written again as a whole if need be, or that is written to a document.
     pub(crate) fn start_unit(&mut self) -> Option<Mark> {
         let printer = self.printer.as_ref()?;
-        if !self.frames.is_empty() || self.has_group_in_line || self.has_failed || self.flat_groups > 0 {
+        if self.is_document || self.has_group_in_line || self.has_failed || self.flat_groups > 0 {
             return None;
         }
         Some(Mark {
@@ -142,31 +135,30 @@ impl<'o> Sink<'o> {
         self.indent = mark.indent;
         self.outer_indents.truncate(mark.outer_indents);
         self.flat_groups = 0;
-        self.frames.push((Frame::Array, Vec::new()));
+        self.elements.clear();
+        self.is_document = true;
         false
     }
 
     /// Prints the document that the unit has been written to.
     pub(crate) fn end_document(&mut self) {
-        let mut document = Doc::Array(self.frames.pop().map(|(_, parts)| parts).unwrap_or_default());
+        self.is_document = false;
         self.line_breaks += 1;
         let column = self.column();
         if let Some(printer) = &mut self.printer {
-            self.line_start_column = printer.print_part(&mut document, self.indent, column);
+            self.line_start_column = printer.print(&self.elements, self.indent, column);
             self.line_start = printer.out.len();
         }
     }
 
     /// Writes `document`, which no group is around and which ends with a line break.
-    pub(crate) fn document(&mut self, mut document: Doc<'_>) {
+    pub(crate) fn document(&mut self, document: &Doc<'_>) {
         if !self.is_straight() {
-            return self.push(doc::into_owned(document));
+            return self.elements.document(document);
         }
-        let column = self.column();
-        if let Some(printer) = &mut self.printer {
-            self.line_start_column = printer.print_part(&mut document, self.indent, column);
-            self.line_start = printer.out.len();
-        }
+        self.elements.clear();
+        self.elements.document(document);
+        self.end_document();
     }
 
     fn column(&self) -> usize {
@@ -204,55 +196,22 @@ impl<'o> Sink<'o> {
     // ───────────────────────────── the parts of a document ─────────────────────────────
 
     fn is_straight(&self) -> bool {
-        self.frames.is_empty()
-    }
-
-    fn push(&mut self, doc: Doc<'static>) {
-        if let Some((_, parts)) = self.frames.last_mut() {
-            parts.push(doc);
-        }
-    }
-
-    fn start(&mut self, frame: Frame) {
-        self.frames.push((frame, Vec::new()));
-    }
-
-    fn end(&mut self) {
-        let Some((frame, parts)) = self.frames.pop() else {
-            return;
-        };
-        let doc = match frame {
-            Frame::Array | Frame::Item | Frame::Items => Doc::Array(parts),
-            Frame::Group { should_break } => doc::group_with(parts, should_break),
-            Frame::Indent => doc::indent(parts),
-            Frame::Dedent => doc::dedent(parts),
-            Frame::Fill => Doc::Fill(parts),
-            Frame::LineSuffix => doc::line_suffix(parts),
-            Frame::WithoutLines => doc::remove_lines(Doc::Array(parts)),
-        };
-        self.push(doc);
+        !self.is_document
     }
 
     pub(crate) fn text(&mut self, text: &[u8]) {
-        match self.frames.last_mut() {
-            Some(_) if text.is_empty() => {}
-            Some((_, parts)) => parts.push(Doc::Text(Cow::Owned(text.to_vec()))),
-            None => {
-                if let Some(printer) = &mut self.printer {
-                    printer.write_text(text);
-                }
-            }
+        if self.is_document {
+            self.elements.text(text);
+        } else if let Some(printer) = &mut self.printer {
+            printer.write_text(text);
         }
     }
 
     pub(crate) fn token(&mut self, text: &'static str) {
-        match self.frames.last_mut() {
-            Some((_, parts)) => parts.push(Doc::from(text)),
-            None => {
-                if let Some(printer) = &mut self.printer {
-                    printer.out.extend_from_slice(text.as_bytes());
-                }
-            }
+        if self.is_document {
+            self.elements.text(text.as_bytes());
+        } else if let Some(printer) = &mut self.printer {
+            printer.out.extend_from_slice(text.as_bytes());
         }
     }
 
@@ -268,8 +227,8 @@ impl<'o> Sink<'o> {
     }
 
     pub(crate) fn line(&mut self) {
-        if !self.is_straight() {
-            self.push(Doc::LINE);
+        if self.is_document {
+            self.elements.line(Line::Space);
         } else if self.flat_groups > 0 {
             self.token(" ");
         } else {
@@ -278,16 +237,16 @@ impl<'o> Sink<'o> {
     }
 
     pub(crate) fn soft_line(&mut self) {
-        if !self.is_straight() {
-            self.push(Doc::SOFTLINE);
+        if self.is_document {
+            self.elements.line(Line::Soft);
         } else if self.flat_groups == 0 {
             self.write_line_break();
         }
     }
 
     pub(crate) fn hard_line(&mut self) {
-        if !self.is_straight() {
-            self.push(doc::hardline());
+        if self.is_document {
+            self.elements.hard_line();
         } else if self.flat_groups > 0 {
             self.has_failed = true;
         } else {
@@ -297,15 +256,15 @@ impl<'o> Sink<'o> {
 
     /// `literallineWithoutBreakParent`
     pub(crate) fn literal_line(&mut self) {
-        match self.is_straight() {
-            true => self.has_failed = true,
-            false => self.push(Doc::Line(Line::Literal)),
+        match self.is_document {
+            true => self.elements.line(Line::Literal),
+            false => self.has_failed = true,
         }
     }
 
     pub(crate) fn break_parent(&mut self) {
-        if !self.is_straight() {
-            self.push(Doc::BreakParent);
+        if self.is_document {
+            self.elements.break_parent();
         } else if self.flat_groups > 0 {
             self.has_failed = true;
         }
@@ -313,23 +272,26 @@ impl<'o> Sink<'o> {
 
     pub(crate) fn line_suffix_boundary(&mut self) {
         // Straight to the output, there is never a line suffix.
-        if !self.is_straight() {
-            self.push(Doc::LineSuffixBoundary);
+        if self.is_document {
+            self.elements.line_suffix_boundary();
         }
     }
 
     /// `ifBreak(text)`
     pub(crate) fn if_break(&mut self, text: &'static str) {
-        if !self.is_straight() {
-            self.push(doc::if_break(text));
+        if self.is_document {
+            self.elements.start_if_break(0);
+            self.elements.text(text.as_bytes());
+            self.elements.otherwise();
+            self.elements.end_if_break();
         } else if self.flat_groups == 0 {
             self.token(text);
         }
     }
 
     pub(crate) fn start_group(&mut self, should_break: bool) {
-        if !self.is_straight() {
-            self.start(Frame::Group { should_break });
+        if self.is_document {
+            self.elements.start_group(should_break, 0, false);
         } else if self.flat_groups > 0 {
             self.has_failed |= should_break;
             self.flat_groups += 1;
@@ -340,15 +302,15 @@ impl<'o> Sink<'o> {
     }
 
     pub(crate) fn end_group(&mut self) {
-        match self.is_straight() {
-            true => self.flat_groups = self.flat_groups.saturating_sub(1),
-            false => self.end(),
+        match self.is_document {
+            true => self.elements.end_group(),
+            false => self.flat_groups = self.flat_groups.saturating_sub(1),
         }
     }
 
     pub(crate) fn start_indent(&mut self) {
-        if !self.is_straight() {
-            self.start(Frame::Indent);
+        if self.is_document {
+            self.elements.start_indent(IndentCommand::Indent);
         } else if self.flat_groups == 0
             && let Some(printer) = &mut self.printer
         {
@@ -358,8 +320,8 @@ impl<'o> Sink<'o> {
     }
 
     pub(crate) fn start_dedent(&mut self) {
-        if !self.is_straight() {
-            self.start(Frame::Dedent);
+        if self.is_document {
+            self.elements.start_indent(IndentCommand::Dedent);
         } else if self.flat_groups == 0
             && let Some(printer) = &mut self.printer
         {
@@ -370,8 +332,8 @@ impl<'o> Sink<'o> {
 
     /// Ends an `indent` or a `dedent`.
     pub(crate) fn end_indent(&mut self) {
-        if !self.is_straight() {
-            self.end();
+        if self.is_document {
+            self.elements.end_indent();
         } else if self.flat_groups == 0 {
             self.indent = self.outer_indents.pop().unwrap_or(0);
         }
@@ -379,9 +341,10 @@ impl<'o> Sink<'o> {
 
     /// Starts a `fill` and its first item, or an array of the same shape.
     pub(crate) fn start_fill(&mut self, is_fill: bool) {
-        if !self.is_straight() {
-            self.start(if is_fill { Frame::Fill } else { Frame::Items });
-            self.start(Frame::Item);
+        if self.is_document {
+            self.fills.push(is_fill);
+            self.elements.start_fill();
+            self.elements.start_item();
         } else if self.flat_groups == 0 {
             // How much of it fits on each line is for the printer to find out.
             self.has_failed = true;
@@ -390,73 +353,82 @@ impl<'o> Sink<'o> {
 
     /// Ends an item, and starts the next one behind `separator`.
     pub(crate) fn fill_separator(&mut self, separator: Separator) {
-        if self.is_straight() {
+        if !self.is_document {
             return match separator {
                 Separator::Line | Separator::DedentedLine => self.token(" "),
                 Separator::SoftLine => {}
                 Separator::HardLine | Separator::DedentedHardLine => self.has_failed = true,
             };
         }
-        self.end();
-        self.push(match separator {
-            Separator::Line => Doc::LINE,
-            Separator::SoftLine => Doc::SOFTLINE,
-            Separator::HardLine => doc::hardline(),
-            Separator::DedentedLine => doc::dedent(Doc::LINE),
-            Separator::DedentedHardLine => doc::dedent(doc::hardline()),
-        });
-        self.start(Frame::Item);
+        let elements = &mut self.elements;
+        elements.end_item();
+        elements.start_item();
+        let is_dedented = matches!(separator, Separator::DedentedLine | Separator::DedentedHardLine);
+        if is_dedented {
+            elements.start_indent(IndentCommand::Dedent);
+        }
+        match separator {
+            Separator::Line | Separator::DedentedLine => elements.line(Line::Space),
+            Separator::SoftLine => elements.line(Line::Soft),
+            Separator::HardLine | Separator::DedentedHardLine => elements.hard_line(),
+        }
+        if is_dedented {
+            elements.end_indent();
+        }
+        elements.end_item();
+        elements.start_item();
     }
 
     /// Makes a `fill` of its own of what the `fill` has so far, which starts the only item that there is then.
     pub(crate) fn nest_fill(&mut self) {
-        if self.is_straight() {
-            return;
+        if self.is_document {
+            self.elements.nest_fill();
         }
-        self.end();
-        let inner = self.frames.last_mut().map(|(_, parts)| std::mem::take(parts)).unwrap_or_default();
-        self.start(Frame::Item);
-        self.push(Doc::Fill(inner));
     }
 
     /// Puts an empty item and a `hardline` before the items of the `fill`.
     pub(crate) fn start_fill_with_hard_line(&mut self) {
-        if let [.., (_, parts), _] = &mut self.frames[..] {
-            parts.splice(0..0, [Doc::EMPTY, doc::hardline()]);
+        if self.is_document {
+            self.elements.start_fill_with_hard_line();
         }
     }
 
     pub(crate) fn end_fill(&mut self) {
-        if !self.is_straight() {
-            self.end();
-            self.end();
+        if self.is_document {
+            self.elements.end_item();
+            match self.fills.pop() {
+                Some(false) => self.elements.end_fill_as_array(),
+                _ => self.elements.end_fill(),
+            }
         }
     }
 
     pub(crate) fn start_line_suffix(&mut self) {
-        match self.is_straight() {
-            true => self.has_failed = true,
-            false => self.start(Frame::LineSuffix),
+        match self.is_document {
+            true => self.elements.start_line_suffix(),
+            false => self.has_failed = true,
         }
     }
 
     pub(crate) fn end_line_suffix(&mut self) {
-        if !self.is_straight() {
-            self.end();
+        if self.is_document {
+            self.elements.end_line_suffix();
         }
     }
 
     /// Starts what `removeLines` is applied to.
     pub(crate) fn start_without_lines(&mut self) {
-        match self.is_straight() {
-            true => self.has_failed = true,
-            false => self.start(Frame::WithoutLines),
+        match self.is_document {
+            true => self.without_lines.push(self.elements.len()),
+            false => self.has_failed = true,
         }
     }
 
     pub(crate) fn end_without_lines(&mut self) {
-        if !self.is_straight() {
-            self.end();
+        if self.is_document
+            && let Some(start) = self.without_lines.pop()
+        {
+            self.elements.remove_lines_from(start);
         }
     }
 }

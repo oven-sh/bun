@@ -231,7 +231,7 @@ fn parse_and_print<'o>(
             ]))),
             None => Doc::from(front_matter),
         };
-        sink.document(Doc::Array(vec![
+        sink.document(&Doc::Array(vec![
             front_matter,
             doc::hardline(),
             if has_nodes { doc::hardline() } else { Doc::EMPTY },

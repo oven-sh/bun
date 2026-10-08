@@ -39,6 +39,15 @@ impl Finder {
         self
     }
 
+    /// A child that Prettier has no node for, like the parentheses around parameters. What is before
+    /// it is followed by the first thing in it, which starts at `first`.
+    fn transparent(&mut self, child: Option<Span>, first: Option<u32>) -> &mut Self {
+        if self.following.is_none() && self.is_found && child.is_some() && first.is_some() {
+            self.following = first;
+        }
+        self.one(child)
+    }
+
     /// A list of children in source order. `is_open`: what follows the list follows its last
     /// element.
     fn list<'a, T: Handle<'a> + Spanned>(&mut self, list: List<'a, T>, is_open: bool) -> &mut Self {
@@ -99,13 +108,20 @@ fn function_fields(finder: &mut Finder, func: Func<'_>) {
     finder
         .one(func.type_params().angle_brackets_span())
         .one(func.this_param().map(|it| it.span()))
-        .one(func.params_span())
+        .transparent(func.params_span(), func.params().first().map(|it| it.span().start))
         .one(func.return_type().map(|it| it.annotation_span()))
         .one(match func.body() {
             FnBody::None => None,
             FnBody::Block(_) => func.body_span(),
             FnBody::Expr(e) => Some(e.span()),
         });
+}
+
+/// The function of a method, after its key. Babel, which Prettier parses JavaScript with, has no
+/// node for it: the parameters are children of the method.
+fn method_function(finder: &mut Finder, func: Func<'_>) {
+    let first_parameter = func.params().first().filter(|it| it.file().is_javascript());
+    finder.transparent(Some(func.estree_span()), first_parameter.map(|it| it.span().start));
 }
 
 fn member_fields(finder: &mut Finder, member: Member<'_>) {
@@ -117,9 +133,7 @@ fn member_fields(finder: &mut Finder, member: Member<'_>) {
         });
     match member.func() {
         // The `Function` of a method of a class is one child.
-        Some(func) if matches!(func.as_ast_nodes(), AstNodes::Function(_)) => {
-            finder.one(Some(func.estree_span()));
-        }
+        Some(func) if matches!(func.as_ast_nodes(), AstNodes::Function(_)) => method_function(finder, func),
         Some(func) => function_fields(finder, func),
         None => {
             finder
@@ -166,8 +180,13 @@ pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
         | N::AssignmentTargetPropertyIdentifier(prop)
         | N::AssignmentTargetPropertyProperty(prop)
         | N::JSXAttribute(prop) => {
-            f.one(key_span(prop.key(), Node::Prop(prop)))
-                .one(prop.value().map(|it| it.jsx_container_span().unwrap_or_else(|| it.span())));
+            f.one(key_span(prop.key(), Node::Prop(prop)));
+            match prop.func() {
+                Some(func) => method_function(f, func),
+                None => {
+                    f.one(prop.value().map(|it| it.jsx_container_span().unwrap_or_else(|| it.span())));
+                }
+            }
         }
         N::TemplateLiteral(e) => {
             if let ExprKind::Template(template) = e.kind() {
@@ -249,6 +268,14 @@ pub(crate) fn following_span_start_in(span: Span, parent: AstNodes<'_>) -> u32 {
         }
         N::JSXOpeningElement(e) => {
             if let ExprKind::Jsx(jsx) = e.kind() {
+                // The `a` of `<a.b>` is followed by `b`.
+                let mut name = jsx.tag();
+                while let Some(ExprKind::Dot { obj, name: property, .. }) = name.map(|it| it.kind()) {
+                    if obj.span() == span {
+                        return property.span().start;
+                    }
+                    name = Some(obj);
+                }
                 f.one(jsx.tag().map(|it| it.span()))
                     .one(jsx.type_args().angle_brackets_span())
                     .list(jsx.attrs(), false);

@@ -14,6 +14,7 @@ use super::client_context::ClientContext;
 use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
+use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
 use crate::{HTTPClient, HeaderResult, Protocol};
@@ -146,7 +147,11 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) -> bool {
+    pub(crate) fn stream_body_by_http_id(
+        &mut self,
+        async_http_id: u32,
+        message: WriteMessageType,
+    ) -> bool {
         for &stream_ptr in self.pending.iter() {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
@@ -157,7 +162,11 @@ impl ClientSession {
                 continue;
             }
             if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
-                s.ended = ended;
+                if message == WriteMessageType::LengthMismatch {
+                    self.fail(stream_ptr, crate::Error::RequestBodyLengthMismatch);
+                    return true;
+                }
+                s.ended = message == WriteMessageType::End;
                 if let Some(qs) = stream.qstream_mut() {
                     encode::drain_send_body(stream, qs);
                 }

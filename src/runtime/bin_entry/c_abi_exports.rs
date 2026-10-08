@@ -4,8 +4,6 @@
 //! Everything else that used to live here has a real home in `bun_jsc` /
 //! `bun_runtime` and is exported via `generate-host-exports.ts`.
 
-#![allow(non_snake_case, clippy::missing_safety_doc)]
-
 /// Panic entry point for C/C++ callers (`bindings.cpp`, `bun-usockets`).
 /// Routes through `bun_core::output::panic` so the crash report matches
 /// Rust-originated panics.

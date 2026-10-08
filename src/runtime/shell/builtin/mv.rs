@@ -11,13 +11,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Mv {
+pub(crate) struct Mv {
     pub args: MvArgs,
     pub(crate) state: MvState,
 }
 
 #[derive(Default)]
-pub struct MvArgs {
+pub(crate) struct MvArgs {
     /// Index into argv where source paths start.
     pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
@@ -26,7 +26,7 @@ pub struct MvArgs {
 }
 
 #[derive(Default)]
-pub enum MvState {
+pub(crate) enum MvState {
     #[default]
     Idle,
     CheckTarget(Box<ShellMvCheckTargetTask>),
@@ -401,7 +401,7 @@ enum MvFlag {
 
 /// `openat(target, O_RDONLY|O_DIRECTORY)`
 /// on a worker thread to learn whether the destination is a directory.
-pub struct ShellMvCheckTargetTask {
+pub(crate) struct ShellMvCheckTargetTask {
     pub(crate) cmd: NodeId,
     pub(crate) cwd: bun_sys::Fd,
     pub(crate) target: ZBox,
@@ -425,7 +425,7 @@ impl ShellMvCheckTargetTask {
 }
 
 /// renameat() each source into the target.
-pub struct ShellMvBatchedTask {
+pub(crate) struct ShellMvBatchedTask {
     pub(crate) cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
     /// can route to `Mv::batched_move_task_done`.
@@ -712,8 +712,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
     fn run_from_thread_pool(this: &mut Self) {
         Self::run_from_thread_pool(this)
     }
-    // `*mut Self` sig forced by `ShellTaskCtx` trait contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is a live `ShellMvCheckTargetTask` held in `MvState::CheckTarget`.
@@ -727,8 +725,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     fn run_from_thread_pool(this: &mut Self) {
         Self::run_from_thread_pool(this)
     }
-    // `*mut Self` sig forced by `ShellTaskCtx` trait contract; the body's internal deref is SAFETY-commented.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is a live `ShellMvBatchedTask` held in `MvState::Executing::tasks`.

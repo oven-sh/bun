@@ -211,6 +211,8 @@ pub struct WriteMessage {
 pub enum WriteMessageType {
     Data = 0,
     End = 1,
+    /// The stream body broke its declared Content-Length; a no-op once that body was dropped.
+    LengthMismatch = 2,
 }
 
 pub struct ShutdownMessage {
@@ -223,10 +225,12 @@ pub struct CertCheckResumeMessage {
     pub(crate) async_http_id: u32,
 }
 
+pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
+
 pub struct LibdeflateState {
     pub(crate) decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
     pub(crate) compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
-    pub(crate) shared_buffer: [u8; 512 * 1024],
+    pub(crate) shared_buffer: [u8; LIBDEFLATE_SHARED_BUFFER_LEN],
 }
 
 // SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
@@ -620,7 +624,6 @@ impl HttpThread {
             };
             for write in &queued_writes {
                 let message = write.kind;
-                let ended = message == WriteMessageType::End;
 
                 if let Some(socket_ptr) = abort_tracker().get(&write.async_http_id) {
                     match *socket_ptr {
@@ -630,18 +633,13 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                if let crate::HTTPRequestBody::Stream(stream) =
-                                    &mut client.state.original_request_body
-                                {
-                                    stream.ended = ended;
-                                    client.flush_stream::<true>(socket);
-                                }
+                                client.on_request_stream_message::<true>(message, socket);
                             }
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
-                                    ended,
+                                    message,
                                 );
                             }
                         }
@@ -651,24 +649,19 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                if let crate::HTTPRequestBody::Stream(stream) =
-                                    &mut client.state.original_request_body
-                                {
-                                    stream.ended = ended;
-                                    client.flush_stream::<false>(socket);
-                                }
+                                client.on_request_stream_message::<false>(message, socket);
                             }
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
-                                    ended,
+                                    message,
                                 );
                             }
                         }
                     }
                 } else {
-                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, ended);
+                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, message);
                 }
             }
             let len = queued_writes.len();

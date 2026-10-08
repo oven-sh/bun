@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   dumpStats,
   emptyProcessMaxRSS,
   isAndroid,
@@ -29,7 +30,8 @@ import { join, resolve } from "path";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
-import net from "node:net";
+import { createServer as createHttpServer } from "node:http";
+import net, { type AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { Duplex } from "node:stream";
 import nodeTls from "node:tls";
@@ -1523,6 +1525,91 @@ it("reload() of a node:http-backed server is not treated as a mode switch", asyn
   expect(exitCode).toBe(0);
 });
 
+// reload() clears the uWS route table; the connection-open filter that backs
+// node:http's 'connection' event is not a route and must survive that. `bun --hot`
+// on a node:http app takes this reload path on every file change.
+it("reload() of a node:http-backed server keeps the 'connection' event firing", async () => {
+  let connections = 0;
+  const httpServer = createHttpServer((req, res) => res.end("ok"));
+  httpServer.on("connection", () => connections++);
+  httpServer.listen(0, "127.0.0.1");
+  await once(httpServer, "listening");
+  try {
+    const { port } = httpServer.address() as AddressInfo;
+    const hit = async () => {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      // Drain the response so 'end' (and then 'close') is delivered.
+      socket.resume();
+      await once(socket, "close");
+    };
+
+    await hit();
+    expect(connections).toBe(1);
+
+    const native = (httpServer as any)[Symbol.for("::bunternal::")] as Server;
+    native.reload({ fetch: () => new Response("x") });
+
+    await hit();
+    expect(connections).toBe(2);
+  } finally {
+    httpServer.closeAllConnections();
+    httpServer.close();
+  }
+});
+
+// Under --hot the module re-evaluates and listen() runs again against the same
+// native server from the hot map, re-invoking Server__setOnConnection. The JS
+// onServerConnection callback dedupes on socketHandle.duplex, so this asserts
+// the user-visible contract (exactly one 'connection' per accept) holds across
+// hot reloads, not the native filter-vector size.
+it("--hot reload of a node:http server fires 'connection' once per socket", async () => {
+  using dir = tempDir("hot-node-http-connection", {
+    "server.mjs": `
+      import { createServer } from "node:http";
+      import { once } from "node:events";
+      import { connect } from "node:net";
+      import { writeFileSync, readFileSync } from "node:fs";
+
+      globalThis.__reloads ??= 0;
+      const n = globalThis.__reloads++;
+
+      let fired = 0;
+      const server = createServer((req, res) => res.end("ok"));
+      server.on("connection", () => fired++);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const s = connect(server.address().port, "127.0.0.1");
+      s.on("error", () => {});
+      await once(s, "connect");
+      s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+      s.resume();
+      await once(s, "close");
+
+      console.log("[reload " + n + "] " + fired);
+      if (n < 3) {
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        process.exit(fired === 1 ? 0 : 1);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "server.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
+  expect(stdout).toBe("[reload 0] 1\n[reload 1] 1\n[reload 2] 1\n[reload 3] 1\n");
+  expect(exitCode).toBe(0);
+});
+
 it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
   // The server's kind is fixed when listen() sizes its connections' native
   // per-socket block; a reload that smuggles in the node:http handler used by
@@ -1555,10 +1642,11 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
 
 it("reload() that drops the node:http handler keeps the server's node:http stop() semantics", async () => {
   // The other direction of the kind invariant: a server created as a node:http
-  // one stays one. node's close() contract is that stop(false) neither sweeps
-  // idle keep-alive connections nor waits for them, and a reload() that routes
-  // requests to fetch instead of the node handler must not switch the server
-  // over to Bun.serve's drain (which closes the idle connection here).
+  // one stays one. stop(false) of a node:http server does not sweep idle
+  // keep-alive connections (http.Server's close() does that in JavaScript), and
+  // a reload() that routes requests to fetch instead of the node handler must
+  // not switch the server over to Bun.serve's drain (which closes the idle
+  // connection here).
   using server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -1617,8 +1705,11 @@ it("reload() that drops the node:http handler keeps the server's node:http stop(
   }
 
   expect(await request()).toBe("HTTP/1.1 200 OK ok");
-  await server.stop(false);
+  // Like Node.js's 'close', the promise settles once every connection is closed.
+  const stopped = server.stop(false);
   expect(await request()).toBe("HTTP/1.1 200 OK ok");
+  connection.end();
+  await stopped;
 });
 
 describe("status code text", () => {
@@ -3346,6 +3437,25 @@ it.concurrent(
     expect(res.text()).resolves.toBe("Hello, World!");
   },
   20_000,
+);
+
+it.concurrent(
+  "TLS: reaps every zero-byte pre-handshake connection in a burst",
+  async () => {
+    const result = await bunRun(join(import.meta.dirname, "serve-tls-prehandshake-reap-fixture.ts"), {
+      TLS_CERT: tls.cert,
+      TLS_KEY: tls.key,
+      N: "300",
+      DEADLINE_MS: "22000",
+    });
+    expect(result).toSpawn();
+    const { opened, held } = JSON.parse(result.stdout);
+    // Windows' accept backlog may drop part of the burst; the invariant is
+    // that every connection that did complete is reaped.
+    expect(opened).toBeGreaterThanOrEqual(100);
+    expect(held).toBe(0);
+  },
+  40_000,
 );
 
 it.concurrent("#6462", async () => {
@@ -5437,4 +5547,21 @@ describe("requests pipelined in one read", () => {
       expect({ ran, responses: responses(reply) }).toEqual({ ran: expected, responses: expected.length });
     });
   });
+});
+
+// node:http reads "close" from Proxy-Connection too, like llhttp. That is not a Bun.serve default.
+it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
+  using server = serve({ port: 0, fetch: req => new Response(new URL(req.url).pathname) });
+  const socket = connect(server.port, "127.0.0.1");
+  try {
+    let received = "";
+    socket.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\nProxy-Connection: close\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    socket.on("data", chunk => (received += chunk));
+    await once(socket, "close");
+    expect(received.match(/\r\n\r\n\/[ab]/g)).toEqual(["\r\n\r\n/a", "\r\n\r\n/b"]);
+  } finally {
+    socket.destroy();
+  }
 });

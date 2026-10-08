@@ -950,6 +950,19 @@ impl Lockfile {
         }
     }
 
+    /// The workspaces whose dependency lists `request` names: the ones that received it under `--filter` / `-r`, else the cwd's.
+    pub(crate) fn workspaces_of_update_request(
+        &self,
+        pending: Option<&crate::package_manager_real::add_remove_with_filter::PendingWrite>,
+        workspace_name_hash: Option<PackageNameHash>,
+        request: &UpdateRequest,
+    ) -> Vec<PackageID> {
+        match pending {
+            Some(pending) => pending.workspace_ids_receiving(self, request.name_hash),
+            None => vec![self.get_workspace_package_id(workspace_name_hash)],
+        }
+    }
+
     /// Re-runnable: package_json_write_back binds again after re-deriving the declared columns.
     #[cold]
     #[inline(never)]
@@ -963,19 +976,12 @@ impl Lockfile {
         let string_buf = self.buffers.string_bytes.as_slice();
         let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
         let slice = self.packages.slice();
-        let cwd_workspace = [self.get_workspace_package_id(workspace_name_hash)];
 
         'request_updated: for update in updates.iter_mut() {
             update.e_string = None;
-            let filtered: Vec<PackageID>;
-            let workspace_ids: &[PackageID] = match pending {
-                Some(pending) => {
-                    filtered = pending.workspace_ids_receiving(self, update.name_hash);
-                    &filtered
-                }
-                None => &cwd_workspace,
-            };
-            for &workspace_package_id in workspace_ids {
+            let workspace_ids =
+                self.workspaces_of_update_request(pending, workspace_name_hash, update);
+            for &workspace_package_id in &workspace_ids {
                 let dep_list = slice.items_dependencies()[workspace_package_id as usize];
                 let res_list = slice.items_resolutions()[workspace_package_id as usize];
                 let workspace_deps: &[Dependency] =

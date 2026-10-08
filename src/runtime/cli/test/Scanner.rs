@@ -15,7 +15,7 @@ use bun_sys::{Dir, Fd};
 
 declare_scope!(jest, hidden);
 
-pub struct Scanner<'a> {
+pub(crate) struct Scanner<'a> {
     /// Memory is borrowed.
     pub(crate) exclusion_names: &'a [&'a [u8]],
     /// When this list is empty, no filters are applied.
@@ -39,7 +39,7 @@ pub struct Scanner<'a> {
 // FIFO queue of scan entries (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
 
-pub struct ScanEntry {
+pub(crate) struct ScanEntry {
     /// `None` for children of the root, which are opened by absolute path.
     pub(crate) relative_dir: Option<Rc<Dir>>,
     // `'static` is sound here: borrows from FileSystem.dirname_store, a
@@ -49,7 +49,7 @@ pub struct ScanEntry {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ScanError {
+pub(crate) enum ScanError {
     /// The entrypoint does not exist or does not fit a `PathBuffer`; never returned for subdirectories.
     #[error("DoesNotExist")]
     DoesNotExist,

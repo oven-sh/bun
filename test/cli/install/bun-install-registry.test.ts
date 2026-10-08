@@ -9725,7 +9725,7 @@ describe("outdated", () => {
 // test/cli/install/registry/bun-install-windowsshim.test.ts:
 //
 // This test is to verify that BinLinkingShim.zig creates correct shim files as
-// well as bun_shim_impl.exe works in various edge cases. There are many fast
+// well as bun-shim-impl.exe works in various edge cases. There are many fast
 // paths for many many cases.
 describe("windows bin linking shim should work", async () => {
   if (!isWindows) return;

@@ -622,13 +622,14 @@ type OwnerCell = {
   terminate?: "either";
 };
 function a(name: string, api: Api, mode: LeafState, cell: OwnerCell) {
-  // (onError's terminate() is the host's too, issued where the error was thrown.)
+  // (onError's terminate() is the host's too, issued where the error was thrown: from a timer of the graph's.
+  // The host's next step comes once its "errored" wait has seen the error, which is a setImmediate later.)
   const terminate =
     cell.terminate ??
     hostTerminate(
       api,
       mode,
-      cell.onError === "terminate-leaf" ? ["terminate-leaf", ...cell.hostPlan.slice(2)] : cell.hostPlan,
+      cell.onError === "terminate-leaf" ? ["terminate-leaf", ...cell.hostPlan.slice(1)] : cell.hostPlan,
       cell.graphState,
     );
   const disposes =

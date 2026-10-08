@@ -1,0 +1,67 @@
+//! From a file to its formatted text.
+
+use crate::{FormatError, FormatOptions};
+use bun_lint::ast::File;
+
+/// Everything that is allocated to format a file. It is reused for the next file.
+#[derive(Default)]
+pub struct Scratch {
+    formatter: super::formatter::FormatterBuffers,
+    propagate: super::document::PropagateBuffers,
+    printer: super::printer::PrinterBuffers,
+}
+
+/// Appends the formatted text of `file` to `out`.
+pub fn format<'a>(
+    file: &'a File<'a>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
+    let root = write_document(file, options, scratch)?;
+    out.reserve(file.text().len() + file.text().len() / 8);
+    super::printer::print(
+        root,
+        &scratch.formatter.storage,
+        file.text(),
+        super::printer::PrinterOptions::new(options, file.text()),
+        &mut scratch.printer,
+        out,
+    )
+    .map_err(|_| FormatError::InvalidDocument)
+}
+
+/// The document of `file`, for debugging.
+pub fn dump_document<'a>(
+    file: &'a File<'a>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+) -> Result<String, FormatError> {
+    let root = write_document(file, options, scratch)?;
+    Ok(super::debug::dump(root, &scratch.formatter.storage, file.text()))
+}
+
+fn write_document<'a>(
+    file: &'a File<'a>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+) -> Result<super::element::Interned, FormatError> {
+    if file.has_parse_errors() {
+        return Err(FormatError::SyntaxError);
+    }
+    // The file keeps them, so that they live as long as the handles.
+    let comments = file.extension(|| {
+        let mut comments = Vec::new();
+        crate::js::comments::collect(file, &mut comments);
+        comments
+    });
+    let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| comments);
+    let context = crate::js::context::JsFormatContext::new(file, options.clone(), comments);
+    let buffers = std::mem::take(&mut scratch.formatter);
+    let mut formatter = super::formatter::Formatter::new(context, buffers);
+    crate::js::format_file(file, &mut formatter);
+    let (root, buffers) = formatter.finish();
+    scratch.formatter = buffers;
+    super::document::propagate_expand(root, &mut scratch.formatter.storage, &mut scratch.propagate);
+    Ok(root)
+}

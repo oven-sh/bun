@@ -8,6 +8,7 @@ pub(crate) mod element;
 pub(crate) mod formatter;
 pub(crate) mod macros;
 pub(crate) mod printer;
+pub(crate) mod run;
 pub(crate) mod width;
 mod width_tables;
 

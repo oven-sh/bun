@@ -179,7 +179,7 @@ function runBatches(batches: Batch[], onResult: (result: BatchResult) => void): 
       // Standard error is dropped: a stack trace or a warning can quote the code.
       const child = spawn(
         process.execPath,
-        ["--disable-warning=ExperimentalWarning", "--max-old-space-size=8192", join(import.meta.dirname, "worker.ts")],
+        ["--disable-warning=ExperimentalWarning", `--max-old-space-size=${process.env.REALWORLD_HEAP_MB ?? 8192}`, join(import.meta.dirname, "worker.ts")],
         { stdio: ["pipe", "pipe", "ignore"] },
       );
       let current: Batch | undefined;

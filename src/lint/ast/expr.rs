@@ -1312,7 +1312,7 @@ impl<'a> Iterator for JsxChildren<'a> {
             return (!rest.is_empty()).then_some(JsxChild::Whitespace(rest));
         };
         let span = child.jsx_container_span().unwrap_or_else(|| child.span());
-        let before = Span::new(self.at, span.start);
+        let before = Span::before(self.at, span);
         self.at = span.end;
         if before.is_empty() {
             return Some(JsxChild::Expr(child));

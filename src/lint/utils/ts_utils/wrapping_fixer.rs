@@ -160,8 +160,13 @@ pub fn get_moved_node_code<'a>(
 ///
 /// All of an optional chain is a `ChainExpression`, which is not one. Nor are `this` and a
 /// template.
+#[inline]
 pub fn is_strong_precedence_node<'a>(node: impl Into<Node<'a>>) -> bool {
-    match node.into() {
+    has_strong_precedence(node.into())
+}
+
+fn has_strong_precedence(node: Node<'_>) -> bool {
+    match node {
         Node::Expr(e) => match e.kind() {
             ExprKind::Null
             | ExprKind::True

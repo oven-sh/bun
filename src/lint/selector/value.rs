@@ -242,26 +242,29 @@ impl<'a> Val<'a> {
             Val::Regex { pattern, flags } => {
                 then(&[b"/", pattern, b"/", Short::of_flags(flags).as_bytes()].concat())
             }
-            Val::List(..) => {
-                let mut joined = Vec::new();
-                for (i, node) in self.elements().into_iter().flatten().enumerate() {
-                    if i > 0 {
-                        joined.push(b',');
-                    }
-                    if node.is_some() {
-                        joined.extend_from_slice(b"[object Object]");
-                    }
-                }
-                then(&joined)
-            }
-            Val::Range(node) => {
-                let (file, span) = (node.file(), node.span());
-                let mut joined = text::number_to_string(utf16_offset(file, span.start));
+            Val::List(..) | Val::Range(_) => then(&self.joined()),
+        }
+    }
+
+    /// `String(value)` of an array.
+    fn joined(self) -> Vec<u8> {
+        if let Val::Range(node) = self {
+            let (file, span) = (node.file(), node.span());
+            let mut joined = text::number_to_string(utf16_offset(file, span.start));
+            joined.push(b',');
+            joined.extend_from_slice(&text::number_to_string(utf16_offset(file, span.end)));
+            return joined;
+        }
+        let mut joined = Vec::new();
+        for (i, node) in self.elements().into_iter().flatten().enumerate() {
+            if i > 0 {
                 joined.push(b',');
-                joined.extend_from_slice(&text::number_to_string(utf16_offset(file, span.end)));
-                then(&joined)
+            }
+            if node.is_some() {
+                joined.extend_from_slice(b"[object Object]");
             }
         }
+        joined
     }
 
     /// `String(value) === String(literal)`

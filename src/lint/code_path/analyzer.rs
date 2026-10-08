@@ -14,10 +14,11 @@ use super::reach::Reach;
 use super::state::{ChoiceKind, Cx, LoopKind, State};
 use super::{CodePath, Event, Origin, Segment, SegmentIds, Store};
 use crate::ast::{
-    BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, KeyKind, Member,
-    MemberKind, Node, Pat, PatTag, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
+    BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, KeyKind, MemberKind,
+    Node, Pat, PatTag, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
 };
 use crate::rule::NodeTags;
+pub(super) use crate::utils::ast_utils::is_property_definition;
 use bun_sema::atom::Atom;
 use bun_sema::hir;
 
@@ -167,13 +168,6 @@ fn is_non_null_after_chain(e: Expr) -> bool {
 /// Whether ESLint starts a code path for `func`.
 pub(super) fn has_code_path(func: Func) -> bool {
     func.has_body() && func.kind() != FnKind::StaticBlock
-}
-
-/// Whether `member` is a `PropertyDefinition`.
-pub(super) fn is_property_definition(member: Member) -> bool {
-    member.kind() == MemberKind::Property
-        && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
-        && matches!(member.parent(), Node::Class(_))
 }
 
 /// Whether the first child that `node` has in ESTree is an `Identifier` that does not exist here

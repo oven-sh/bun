@@ -99,8 +99,8 @@ impl<'s> Builder<'s> {
         self.ast.nodes.get(id.0 as usize).map(|node| node.data)
     }
 
-    fn set_parent(&mut self, id: NodeId, parent: NodeId) {
-        if let Some(node) = self.get_mut(id) {
+    fn set_parent(&mut self, child: NodeId, parent: NodeId) {
+        if let Some(node) = self.get_mut(child) {
             node.parent = parent;
         }
     }

@@ -178,6 +178,13 @@ pub(crate) struct RawToken {
     pub(crate) kind: TokenKind,
 }
 
+impl RawToken {
+    #[inline]
+    const fn span(self) -> Span {
+        Span::new(self.start, self.end)
+    }
+}
+
 /// The tokens and the comments of a file, each in source order, each once it is asked for.
 #[derive(Default)]
 pub(crate) struct TokenStore {
@@ -200,7 +207,7 @@ impl<'a> Token<'a> {
 
     #[inline]
     pub fn span(self) -> Span {
-        Span::new(self.raw.start, self.raw.end)
+        self.raw.span()
     }
 
     #[inline]
@@ -546,7 +553,7 @@ impl<'a> File<'a> {
 
     /// The tokens before a node, a token or a comment, **the nearest first**.
     pub fn tokens_before(&'a self, at: impl Spanned) -> Tokens<'a> {
-        self.tokens_within(Span::new(0, at.span().start), true)
+        self.tokens_within(Span::before(0, at.span()), true)
     }
 
     /// The tokens between the end of `a` and the start of `b`.
@@ -653,11 +660,15 @@ impl<'a> File<'a> {
     /// The comments directly before a node, a token or a comment: after the token that precedes
     /// it. In source order.
     pub fn comments_before(&'a self, at: impl Spanned) -> Tokens<'a> {
-        let (comments, end) = (self.raw_comments(), at.span().start);
+        self.comments_that_end_before(at.span().start)
+    }
+
+    fn comments_that_end_before(&'a self, end: u32) -> Tokens<'a> {
+        let comments = self.raw_comments();
         let after = comments.partition_point(|comment| comment.end <= end);
         let (mut first, mut start) = (after, end);
         while let Some(comment) = first.checked_sub(1).and_then(|before| comments.get(before))
-            && is_whitespace(self.slice(Span::new(comment.end, start)))
+            && is_whitespace(self.slice(Span::after(comment.span(), start)))
         {
             (first, start) = (first - 1, comment.start);
         }
@@ -672,11 +683,15 @@ impl<'a> File<'a> {
 
     /// The comments directly after a node, a token or a comment: before the token that follows it.
     pub fn comments_after(&'a self, at: impl Spanned) -> Tokens<'a> {
-        let (comments, start) = (self.raw_comments(), at.span().end);
+        self.comments_that_start_after(at.span().end)
+    }
+
+    fn comments_that_start_after(&'a self, start: u32) -> Tokens<'a> {
+        let comments = self.raw_comments();
         let first = comments.partition_point(|comment| comment.start < start);
         let (mut after, mut end) = (first, start);
         while let Some(comment) = comments.get(after)
-            && is_whitespace(self.slice(Span::new(end, comment.start)))
+            && is_whitespace(self.slice(Span::before(end, comment.span())))
         {
             (after, end) = (after + 1, comment.end);
         }

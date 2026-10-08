@@ -4,8 +4,9 @@
 use super::js_string;
 use super::static_value::{Eval, PropertyKey, StaticSymbol, StaticValue, Stop};
 use bun_core::strings;
+use std::f64::consts;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) enum Member {
     /// A function in upstream's `callAllowed`.
     Call,
@@ -17,10 +18,10 @@ pub(super) enum Member {
     Namespace,
     /// The `prototype` of a constructor.
     Prototype,
-    /// The same function as another member.
-    Alias,
+    /// The same function as the member of that owner and name.
+    Alias(&'static str, &'static str),
     /// A number.
-    Constant,
+    Constant(f64),
     /// A well-known symbol.
     Symbol,
     /// An accessor property that is not in upstream's `getterAllowed`.
@@ -39,12 +40,15 @@ struct Entry {
 }
 
 macro_rules! entries {
-    ($($owner:literal { $($member:ident: $($name:ident)+;)+ })+) => {
+    ($($owner:literal { $($member:expr => $($name:ident)+;)+ })+) => {
         &[$($($(Entry {
             owner: $owner,
             name: stringify!($name),
             path: concat!($owner, ".", stringify!($name)),
-            member: Member::$member,
+            member: {
+                use Member::*;
+                $member
+            },
         },)+)+)+]
     };
 }
@@ -53,140 +57,156 @@ macro_rules! entries {
 /// and all the properties of those that are looked into.
 static ENTRIES: &[Entry] = entries! {
     "" {
-        Call: BigInt Boolean Date decodeURI decodeURIComponent encodeURI encodeURIComponent escape isFinite isNaN
+        Call => BigInt Boolean Date decodeURI decodeURIComponent encodeURI encodeURIComponent escape isFinite isNaN
             isPrototypeOf Map Number Object parseFloat parseInt RegExp Set String unescape;
-        Function: Array ArrayBuffer BigInt64Array BigUint64Array DataView Float32Array Float64Array Function Int16Array
+        Function => Array ArrayBuffer BigInt64Array BigUint64Array DataView Float32Array Float64Array Function Int16Array
             Int32Array Int8Array Promise Proxy Symbol Uint16Array Uint32Array Uint8Array Uint8ClampedArray WeakMap WeakSet;
-        Namespace: JSON Math Reflect;
+        Namespace => JSON Math Reflect;
     }
     "Array" {
-        Call: isArray of;
-        Function: from fromAsync;
-        Prototype: prototype;
+        Call => isArray of;
+        Function => from fromAsync;
+        Prototype => prototype;
     }
     "Array.prototype" {
-        Call: at concat entries every filter find findIndex flat includes indexOf join keys lastIndexOf slice some toString
+        Call => at concat entries every filter find findIndex flat includes indexOf join keys lastIndexOf slice some toString
             values;
-        Function: copyWithin fill findLast findLastIndex flatMap forEach map pop push reduce reduceRight reverse shift sort
+        Function => copyWithin fill findLast findLastIndex flatMap forEach map pop push reduce reduceRight reverse shift sort
             splice toLocaleString toReversed toSorted toSpliced unshift with;
     }
     "ArrayBuffer" {
-        Function: isView;
+        Function => isView;
     }
     "BigInt" {
-        Function: asIntN asUintN;
-        Prototype: prototype;
+        Function => asIntN asUintN;
+        Prototype => prototype;
     }
     "BigInt.prototype" {
-        Function: toLocaleString toString valueOf;
+        Function => toLocaleString toString valueOf;
     }
     "Boolean" {
-        Prototype: prototype;
+        Prototype => prototype;
     }
     "Boolean.prototype" {
-        Function: toString valueOf;
+        Function => toString valueOf;
     }
     "Date" {
-        Call: parse;
-        Function: now UTC;
+        Call => parse;
+        Function => now UTC;
     }
     "Function.prototype" {
-        Function: apply bind call toString;
-        Getter: arguments caller;
-        Opaque: length name prototype;
+        Function => apply bind call toString;
+        Getter => arguments caller;
+        Opaque => length name prototype;
     }
     "JSON" {
-        Function: isRawJSON parse rawJSON stringify;
+        Function => isRawJSON parse rawJSON stringify;
     }
     "Map" {
-        Function: groupBy;
-        Prototype: prototype;
+        Function => groupBy;
+        Prototype => prototype;
     }
     "Map.prototype" {
-        Call: entries get has keys values;
-        Function: clear delete forEach getOrInsert getOrInsertComputed set;
-        Getter: size;
+        Call => entries get has keys values;
+        Function => clear delete forEach getOrInsert getOrInsertComputed set;
+        Getter => size;
     }
     "Math" {
-        Call: abs acos acosh asin asinh atan atan2 atanh cbrt ceil clz32 cos cosh exp expm1 f16round floor fround hypot imul
+        Call => abs acos acosh asin asinh atan atan2 atanh cbrt ceil clz32 cos cosh exp expm1 f16round floor fround hypot imul
             log log10 log1p log2 max min pow round sign sin sinh sqrt tan tanh trunc;
-        Function: random;
-        Constant: E LN10 LN2 LOG10E LOG2E PI SQRT1_2 SQRT2;
+        Function => random;
+        Constant(consts::E) => E;
+        Constant(consts::LN_10) => LN10;
+        Constant(consts::LN_2) => LN2;
+        Constant(consts::LOG10_E) => LOG10E;
+        Constant(consts::LOG2_E) => LOG2E;
+        Constant(consts::PI) => PI;
+        Constant(consts::FRAC_1_SQRT_2) => SQRT1_2;
+        Constant(consts::SQRT_2) => SQRT2;
     }
     "Number" {
-        Call: isFinite isNaN;
-        Alias: parseFloat parseInt;
-        Function: isInteger isSafeInteger;
-        Constant: EPSILON MAX_SAFE_INTEGER MAX_VALUE MIN_SAFE_INTEGER MIN_VALUE NaN NEGATIVE_INFINITY POSITIVE_INFINITY;
-        Prototype: prototype;
+        Call => isFinite isNaN;
+        Alias("", "parseFloat") => parseFloat;
+        Alias("", "parseInt") => parseInt;
+        Function => isInteger isSafeInteger;
+        Constant(f64::EPSILON) => EPSILON;
+        Constant(9_007_199_254_740_991.0) => MAX_SAFE_INTEGER;
+        Constant(f64::MAX) => MAX_VALUE;
+        Constant(-9_007_199_254_740_991.0) => MIN_SAFE_INTEGER;
+        Constant(5e-324) => MIN_VALUE;
+        Constant(f64::NAN) => NaN;
+        Constant(f64::NEG_INFINITY) => NEGATIVE_INFINITY;
+        Constant(f64::INFINITY) => POSITIVE_INFINITY;
+        Prototype => prototype;
     }
     "Number.prototype" {
-        Call: toExponential toFixed toPrecision toString;
-        Function: toLocaleString valueOf;
+        Call => toExponential toFixed toPrecision toString;
+        Function => toLocaleString valueOf;
     }
     "Object" {
-        Call: entries is isExtensible isFrozen isSealed keys values;
-        PassThrough: freeze preventExtensions seal;
-        Function: assign create defineProperties defineProperty fromEntries getOwnPropertyDescriptor
+        Call => entries is isExtensible isFrozen isSealed keys values;
+        PassThrough => freeze preventExtensions seal;
+        Function => assign create defineProperties defineProperty fromEntries getOwnPropertyDescriptor
             getOwnPropertyDescriptors getOwnPropertyNames getOwnPropertySymbols getPrototypeOf groupBy hasOwn setPrototypeOf;
-        Prototype: prototype;
+        Prototype => prototype;
     }
     "Object.prototype" {
-        Alias: isPrototypeOf;
-        Function: __defineGetter__ __defineSetter__ __lookupGetter__ __lookupSetter__ hasOwnProperty propertyIsEnumerable
+        Alias("", "isPrototypeOf") => isPrototypeOf;
+        Function => __defineGetter__ __defineSetter__ __lookupGetter__ __lookupSetter__ hasOwnProperty propertyIsEnumerable
             toLocaleString toString valueOf;
-        Getter: __proto__;
+        Getter => __proto__;
     }
     "Promise" {
-        Function: all allSettled any race reject resolve try withResolvers;
+        Function => all allSettled any race reject resolve try withResolvers;
     }
     "Proxy" {
-        Function: revocable;
+        Function => revocable;
     }
     "Reflect" {
-        Function: apply construct defineProperty deleteProperty get getOwnPropertyDescriptor getPrototypeOf has isExtensible
+        Function => apply construct defineProperty deleteProperty get getOwnPropertyDescriptor getPrototypeOf has isExtensible
             ownKeys preventExtensions set setPrototypeOf;
     }
     "RegExp" {
-        Function: escape;
-        Getter: input lastMatch lastParen leftContext rightContext;
-        Prototype: prototype;
+        Function => escape;
+        Getter => input lastMatch lastParen leftContext rightContext;
+        Prototype => prototype;
     }
     "RegExp.prototype" {
-        Function: compile exec test toString;
-        Getter: dotAll flags global hasIndices ignoreCase multiline source sticky unicode unicodeSets;
+        Function => compile exec test toString;
+        Getter => dotAll flags global hasIndices ignoreCase multiline source sticky unicode unicodeSets;
     }
     "Set" {
-        Prototype: prototype;
+        Prototype => prototype;
     }
     "Set.prototype" {
-        Call: entries has values;
-        Alias: keys;
-        Function: add clear delete difference forEach intersection isDisjointFrom isSubsetOf isSupersetOf symmetricDifference
+        Call => entries has values;
+        Alias("Set.prototype", "values") => keys;
+        Function => add clear delete difference forEach intersection isDisjointFrom isSubsetOf isSupersetOf symmetricDifference
             union;
-        Getter: size;
+        Getter => size;
     }
     "String" {
-        Call: fromCharCode fromCodePoint raw;
-        Prototype: prototype;
+        Call => fromCharCode fromCodePoint raw;
+        Prototype => prototype;
     }
     "String.prototype" {
-        Call: at charAt charCodeAt codePointAt concat endsWith includes indexOf lastIndexOf normalize padEnd padStart slice
+        Call => at charAt charCodeAt codePointAt concat endsWith includes indexOf lastIndexOf normalize padEnd padStart slice
             startsWith substr substring toLowerCase toString toUpperCase trim trimEnd trimStart;
-        Alias: trimLeft trimRight;
-        Function: anchor big blink bold fixed fontcolor fontsize isWellFormed italics link localeCompare match matchAll
+        Alias("String.prototype", "trimStart") => trimLeft;
+        Alias("String.prototype", "trimEnd") => trimRight;
+        Function => anchor big blink bold fixed fontcolor fontsize isWellFormed italics link localeCompare match matchAll
             repeat replace replaceAll search small split strike sub sup toLocaleLowerCase toLocaleUpperCase toWellFormed
             valueOf;
     }
     "Symbol" {
-        Call: for keyFor;
-        Symbol: asyncDispose asyncIterator dispose hasInstance isConcatSpreadable iterator match matchAll replace search
+        Call => for keyFor;
+        Symbol => asyncDispose asyncIterator dispose hasInstance isConcatSpreadable iterator match matchAll replace search
             species split toPrimitive toStringTag unscopables;
-        Prototype: prototype;
+        Prototype => prototype;
     }
     "Symbol.prototype" {
-        Function: toString valueOf;
-        Getter: description;
+        Function => toString valueOf;
+        Getter => description;
     }
 };
 
@@ -241,28 +261,6 @@ pub(super) fn global_value(name: &[u8]) -> Option<StaticValue<'static>> {
     }
 }
 
-fn constant(path: &str) -> f64 {
-    use std::f64::consts;
-    match path {
-        "Math.E" => consts::E,
-        "Math.LN10" => consts::LN_10,
-        "Math.LN2" => consts::LN_2,
-        "Math.LOG10E" => consts::LOG10_E,
-        "Math.LOG2E" => consts::LOG2_E,
-        "Math.PI" => consts::PI,
-        "Math.SQRT1_2" => consts::FRAC_1_SQRT_2,
-        "Math.SQRT2" => consts::SQRT_2,
-        "Number.EPSILON" => f64::EPSILON,
-        "Number.MAX_SAFE_INTEGER" => 9_007_199_254_740_991.0,
-        "Number.MAX_VALUE" => f64::MAX,
-        "Number.MIN_SAFE_INTEGER" => -9_007_199_254_740_991.0,
-        "Number.MIN_VALUE" => 5e-324,
-        "Number.NEGATIVE_INFINITY" => f64::NEG_INFINITY,
-        "Number.POSITIVE_INFINITY" => f64::INFINITY,
-        _ => f64::NAN,
-    }
-}
-
 fn value_of(at: usize) -> Eval<StaticValue<'static>> {
     let entry = ENTRIES.get(at).ok_or(Stop::Abort)?;
     match entry.member {
@@ -271,19 +269,8 @@ fn value_of(at: usize) -> Eval<StaticValue<'static>> {
         | Member::Function
         | Member::Namespace
         | Member::Prototype => Ok(StaticValue::Builtin(Builtin(at as u16))),
-        Member::Alias => {
-            let (owner, name) = match entry.path {
-                "Number.parseFloat" => ("", "parseFloat"),
-                "Number.parseInt" => ("", "parseInt"),
-                "Object.prototype.isPrototypeOf" => ("", "isPrototypeOf"),
-                "Set.prototype.keys" => ("Set.prototype", "values"),
-                "String.prototype.trimLeft" => ("String.prototype", "trimStart"),
-                "String.prototype.trimRight" => ("String.prototype", "trimEnd"),
-                _ => return Err(Stop::Abort),
-            };
-            value_of(find(owner, name.as_bytes()).ok_or(Stop::Abort)?)
-        }
-        Member::Constant => Ok(StaticValue::Number(constant(entry.path))),
+        Member::Alias(owner, name) => value_of(find(owner, name.as_bytes()).ok_or(Stop::Abort)?),
+        Member::Constant(value) => Ok(StaticValue::Number(value)),
         Member::Symbol => Ok(StaticValue::Symbol(StaticSymbol::WellKnown(entry.name))),
         Member::Getter => Err(Stop::NotStatic),
         Member::Opaque => Err(Stop::Abort),

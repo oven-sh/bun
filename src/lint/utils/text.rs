@@ -516,8 +516,9 @@ pub fn compare(a: &[u8], b: &[u8]) -> Ordering {
 /// [`compare`], but a run of digits counts as the number it is, and the order of ASCII is punctuation,
 /// digits, upper case, lower case.
 pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
-    fn code_at<T: Copy + Into<u32>>(text: &[T], at: usize) -> u32 {
-        match text.get(at).map_or(0, |&c| c.into()) {
+    /// Where the code unit `code` is in the order.
+    fn rank(code: u32) -> u32 {
+        match code {
             code @ (..45 | 128..) => code,
             45 => 65,
             code @ ..48 => code - 1,
@@ -528,6 +529,9 @@ pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
             code @ ..123 => code + 5,
             code => code - 63,
         }
+    }
+    fn code_at<T: Copy + Into<u32>>(text: &[T], at: usize) -> u32 {
+        rank(text.get(at).map_or(0, |&c| c.into()))
     }
     /// The number that starts at `start`, and where it ends.
     fn number_at<T: Copy + Into<u32>>(text: &[T], start: usize) -> (f64, usize) {

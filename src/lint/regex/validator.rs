@@ -241,6 +241,14 @@ struct PropertyResult {
     strings: bool,
 }
 
+/// Which of the flags `u` and `v` the pattern is read with.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Unicode {
+    Neither,
+    U,
+    V,
+}
+
 struct Validator<'s, 'h> {
     source: &'s [u8],
     kind: SourceKind,
@@ -254,8 +262,7 @@ struct Validator<'s, 'h> {
     cp: i32,
     width: usize,
 
-    unicode_mode: bool,
-    unicode_sets_mode: bool,
+    unicode: Unicode,
     n_flag: bool,
     last_int_value: i32,
     last_number: f64,
@@ -446,8 +453,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             index: 0,
             cp: EOF,
             width: 1,
-            unicode_mode: false,
-            unicode_sets_mode: false,
+            unicode: Unicode::Neither,
             n_flag: false,
             last_int_value: 0,
             last_number: 0.0,
@@ -483,8 +489,7 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     fn validate_literal(&mut self) -> Consumed<()> {
         let end = self.source.len();
-        self.unicode_sets_mode = false;
-        self.unicode_mode = false;
+        self.unicode = Unicode::Neither;
         self.n_flag = false;
         self.reset(0, end);
 
@@ -520,11 +525,14 @@ impl<'s, 'h> Validator<'s, 'h> {
             );
         }
 
-        self.unicode_mode = unicode || unicode_sets;
+        self.unicode = match (unicode, unicode_sets) {
+            (_, true) => Unicode::V,
+            (true, false) => Unicode::U,
+            (false, false) => Unicode::Neither,
+        };
         self.n_flag = (unicode && self.ecma_version() >= 2018)
             || unicode_sets
             || (self.options.strict && self.ecma_version() >= 2023);
-        self.unicode_sets_mode = unicode_sets;
         self.reset(start, end);
         self.consume_pattern()?;
 
@@ -544,8 +552,18 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     #[inline]
+    fn unicode_mode(&self) -> bool {
+        self.unicode != Unicode::Neither
+    }
+
+    #[inline]
+    fn unicode_sets_mode(&self) -> bool {
+        self.unicode == Unicode::V
+    }
+
+    #[inline]
     fn strict(&self) -> bool {
-        self.options.strict || self.unicode_mode
+        self.options.strict || self.unicode_mode()
     }
 
     #[inline]
@@ -560,7 +578,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         if index >= self.end {
             return (EOF, 1);
         }
-        let (cp, width) = if self.unicode_mode {
+        let (cp, width) = if self.unicode_mode() {
             wtf8::code_point_at(self.source, index)
         } else {
             wtf8::unit_at(self.source, index)
@@ -645,17 +663,19 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.raise_at(message, self.index, None)
     }
 
-    #[cold]
     fn raise_at<T>(
         &mut self,
         reason: &str,
         index: usize,
         flags: Option<(bool, bool)>,
     ) -> Consumed<T> {
-        let (unicode, unicode_sets) = flags.unwrap_or((
-            self.unicode_mode && !self.unicode_sets_mode,
-            self.unicode_sets_mode,
-        ));
+        Err(self.raised_at(reason, index, flags))
+    }
+
+    #[cold]
+    fn raised_at(&mut self, reason: &str, index: usize, flags: Option<(bool, bool)>) -> Raised {
+        let (unicode, unicode_sets) =
+            flags.unwrap_or((self.unicode == Unicode::U, self.unicode == Unicode::V));
         let mut message = String::from("Invalid regular expression");
         match self.kind {
             SourceKind::Literal if !self.source.is_empty() => {
@@ -686,7 +706,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             index: (wtf8::utf16_index(self.source, index) + past) as u32,
             reason: start,
         });
-        Err(Raised)
+        Raised
     }
 
     fn raise_unexpected_character<T>(&mut self) -> Consumed<T> {
@@ -1298,7 +1318,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         }
 
         let mut negate = false;
-        if self.unicode_mode
+        if self.unicode_mode()
             && self.ecma_version() >= 2018
             && (self.eat(b'p') || {
                 negate = self.eat(b'P');
@@ -1372,7 +1392,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         if self.eat(b'[') {
             let negate = self.eat(b'^');
             self.handler
-                .on_character_class_enter(start, negate, self.unicode_sets_mode);
+                .on_character_class_enter(start, negate, self.unicode_sets_mode());
             let result = self.consume_class_contents()?;
             if !self.eat(b']') {
                 if self.cp == EOF {
@@ -1391,7 +1411,7 @@ impl<'s, 'h> Validator<'s, 'h> {
     }
 
     fn consume_class_contents(&mut self) -> Consumed<SetResult> {
-        if self.unicode_sets_mode {
+        if self.unicode_sets_mode() {
             if self.is(b']') {
                 return Ok(SetResult::default());
             }
@@ -1470,7 +1490,7 @@ impl<'s, 'h> Validator<'s, 'h> {
             return Ok(true);
         }
 
-        if self.unicode_mode && self.eat(b'-') {
+        if self.unicode_mode() && self.eat(b'-') {
             self.last_int_value = i32::from(b'-');
             self.handler
                 .on_character(start - 1, self.pos(), u32::from(b'-'));
@@ -1735,7 +1755,7 @@ impl<'s, 'h> Validator<'s, 'h> {
     /// `eatRegExpIdentifierStart` and `eatRegExpIdentifierPart`
     fn eat_regexp_identifier_char(&mut self, first: bool) -> Consumed {
         let start = self.index;
-        let force_u_flag = !self.unicode_mode && self.ecma_version() >= 2020;
+        let force_u_flag = !self.unicode_mode() && self.ecma_version() >= 2020;
         let mut cp = self.cp;
         self.advance();
 
@@ -1809,7 +1829,7 @@ impl<'s, 'h> Validator<'s, 'h> {
 
     fn eat_regexp_unicode_escape_sequence(&mut self, force_u_flag: bool) -> Consumed {
         let start = self.index;
-        let u_flag = force_u_flag || self.unicode_mode;
+        let u_flag = force_u_flag || self.unicode_mode();
 
         if self.eat(b'u') {
             if (u_flag && self.eat_regexp_unicode_surrogate_pair_escape())
@@ -1873,7 +1893,7 @@ impl<'s, 'h> Validator<'s, 'h> {
         if cp == EOF {
             return false;
         }
-        if self.unicode_mode {
+        if self.unicode_mode() {
             return is_syntax_character(cp) || cp == i32::from(b'/');
         }
         if self.strict() {
@@ -1929,23 +1949,23 @@ impl<'s, 'h> Validator<'s, 'h> {
 
         if self.eat_while(is_unicode_property_value_character) {
             let range = (start, self.index);
-            let name = self.source.get(start..self.index).unwrap_or_default();
-            if unicode::is_valid_unicode_property(version, b"General_Category", name) {
+            let name_or_value = self.source.get(start..self.index).unwrap_or_default();
+            if unicode::is_valid_unicode_property(version, b"General_Category", name_or_value) {
                 return Ok(Some(PropertyResult {
                     key: None,
                     value: Some(range),
                     strings: false,
                 }));
             }
-            if unicode::is_valid_lone_unicode_property(version, name) {
+            if unicode::is_valid_lone_unicode_property(version, name_or_value) {
                 return Ok(Some(PropertyResult {
                     key: Some(range),
                     value: None,
                     strings: false,
                 }));
             }
-            if self.unicode_sets_mode
-                && unicode::is_valid_lone_unicode_property_of_string(version, name)
+            if self.unicode_sets_mode()
+                && unicode::is_valid_lone_unicode_property_of_string(version, name_or_value)
             {
                 return Ok(Some(PropertyResult {
                     key: Some(range),

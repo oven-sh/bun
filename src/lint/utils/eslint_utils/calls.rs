@@ -1102,8 +1102,9 @@ fn escape<'a>(text: &[u8]) -> StaticValue<'a> {
             Ok(byte) => push_percent_escape(&mut escaped, byte),
             Err(_) => {
                 escaped.extend_from_slice(b"%u");
-                push_hex(&mut escaped, (unit >> 8) as u8);
-                push_hex(&mut escaped, unit as u8);
+                let [high, low] = unit.to_be_bytes();
+                push_hex(&mut escaped, high);
+                push_hex(&mut escaped, low);
             }
         }
     }

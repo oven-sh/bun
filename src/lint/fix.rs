@@ -96,7 +96,7 @@ impl IntoFix for Vec<Fix> {
             if fix.span.start < at {
                 return None;
             }
-            text.extend_from_slice(file.slice(Span::new(at, fix.span.start)));
+            text.extend_from_slice(file.slice(Span::before(at, fix.span)));
             text.extend_from_slice(&fix.text);
             at = fix.span.end;
         }

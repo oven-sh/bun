@@ -8,6 +8,7 @@ use crate::ast::{
     Expr, ExprKind, Flags, FnBody, Func, Member, MemberKind, Node, Prop, PropKind, Stmt, StmtKind,
 };
 use crate::span::Span;
+use crate::utils::ast_utils::is_property_definition;
 use crate::utils::ts_utils::get_function_head_loc;
 
 /// typescript-eslint's `FunctionInfo`. The `return` statements of a function are
@@ -54,13 +55,6 @@ enum Parent<'a> {
     /// The expression is the body of this arrow function.
     ArrowFunctionExpression(Func<'a>),
     Other,
-}
-
-/// Whether ESTree calls `member` a `PropertyDefinition`.
-fn is_property_definition(member: Member) -> bool {
-    member.kind() == MemberKind::Property
-        && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
-        && matches!(member.parent(), Node::Class(_))
 }
 
 fn parent_of_expr(e: Expr<'_>) -> Parent<'_> {

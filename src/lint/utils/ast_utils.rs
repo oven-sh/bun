@@ -205,10 +205,10 @@ pub fn is_keyword_token(token: &Token<'_>) -> bool {
 /// ESLint's `isTokenOnSameLine`: `left` ends on the line on which `right` starts. Each is a token,
 /// a comment or a node.
 pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Spanned) -> bool {
-    let (end, start) = (left.span().end, right.span().start);
-    match end <= start {
-        true => is_on_one_line(file, Span::new(end, start)),
-        false => file.line_of(end) == file.line_of(start),
+    let between = left.span().between(right.span());
+    match between.start <= between.end {
+        true => is_on_one_line(file, between),
+        false => file.line_of(between.start) == file.line_of(between.end),
     }
 }
 
@@ -625,10 +625,22 @@ pub fn is_function_with_body(func: Func<'_>) -> bool {
     func.has_body() && func.kind() != FnKind::StaticBlock
 }
 
+/// Whether ESTree calls `member` a `PropertyDefinition`.
+pub fn is_property_definition(member: Member<'_>) -> bool {
+    member.kind() == MemberKind::Property
+        && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
+        && matches!(member.parent(), Node::Class(_))
+}
+
 /// The function that `node` is, if ESLint's `isFunction` holds for it: a `Func`, or the `Expr` or
 /// the `Stmt` that owns one.
+#[inline]
 pub fn as_function<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
-    let func = match node.into() {
+    function_of(node.into())
+}
+
+fn function_of(node: Node<'_>) -> Option<Func<'_>> {
+    let func = match node {
         Node::Func(func) => func,
         Node::Expr(e) => e.as_fn()?,
         Node::Stmt(statement) => match statement.kind() {
@@ -967,8 +979,13 @@ pub fn get_static_key_name(key: Key<'_>) -> Option<Cow<'_, [u8]>> {
 /// ESLint's `getStaticPropertyName`: the name of the property that a member access (`Expr`)
 /// reads, or that a `Prop`, a `Member` or a `PatProp` defines, if it is known without evaluating
 /// anything. `None` for a private name.
+#[inline]
 pub fn get_static_property_name<'a>(node: impl Into<Node<'a>>) -> Option<Cow<'a, [u8]>> {
-    match node.into() {
+    static_property_name_of(node.into())
+}
+
+fn static_property_name_of(node: Node<'_>) -> Option<Cow<'_, [u8]>> {
+    match node {
         Node::Expr(e) => match e.kind() {
             ExprKind::Dot { name, .. } if !name.bytes().starts_with(b"#") => {
                 Some(Cow::Borrowed(name.bytes()))
@@ -1070,15 +1087,11 @@ pub fn equal_literal_value<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
     }
 }
 
-/// ESLint's `isSameReference`: `left` and `right` are the same variable or the same chain of
+/// ESLint's `isSameReference`: `a` and `b` are the same variable or the same chain of
 /// member accesses: `a.b.c` and `a["b"]?.c`. With `disable_static_computed_key`, `a.b` and `a["b"]`
 /// are not the same.
-pub fn is_same_reference<'a>(
-    left: Expr<'a>,
-    right: Expr<'a>,
-    disable_static_computed_key: bool,
-) -> bool {
-    let (mut left, mut right) = (left, right);
+pub fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>, disable_static_computed_key: bool) -> bool {
+    let (mut left, mut right) = (a, b);
     loop {
         let (left_object, right_object) = match (left.kind(), right.kind()) {
             (ExprKind::Super, ExprKind::Super) | (ExprKind::This, ExprKind::This) => return true,

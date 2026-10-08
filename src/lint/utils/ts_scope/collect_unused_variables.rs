@@ -958,8 +958,12 @@ pub struct Ranges {
 }
 
 impl Ranges {
+    #[inline]
     pub fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
-        let mut sorted: Vec<Span> = ranges.collect();
+        Ranges::of(ranges.collect())
+    }
+
+    fn of(mut sorted: Vec<Span>) -> Ranges {
         sorted.sort_unstable_by_key(|it| it.start);
         let mut end = 0;
         for range in &mut sorted {

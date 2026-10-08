@@ -24,6 +24,17 @@ pub(crate) struct Grouped<const KINDS: usize> {
 
 const MOST_KINDS: usize = 2 * ExprTag::COUNT;
 
+/// At `kind + 1`: how many of `kinds` are `kind`.
+fn count_kinds(kinds: &[u8]) -> [u32; MOST_KINDS + 2] {
+    let mut counts = [0u32; MOST_KINDS + 2];
+    for &kind in kinds {
+        if let Some(count) = counts.get_mut(kind as usize + 1) {
+            *count += 1;
+        }
+    }
+    counts
+}
+
 impl<const KINDS: usize> Grouped<KINDS> {
     /// `tags`: writes the kind of each node of a vector of the HIR, `NOT_IN_TREE` to leave it out.
     fn new(tags: impl FnOnce(&mut Vec<u8>)) -> Self {
@@ -46,13 +57,7 @@ impl<const KINDS: usize> Grouped<KINDS> {
 
     /// `kinds`: the kind of each of `all`, `NOT_IN_TREE` to leave it out.
     fn of_kinds(all: impl Iterator<Item = u32>, kinds: &[u8]) -> Self {
-        let mut counts = [0u32; MOST_KINDS + 2];
-        for &kind in kinds {
-            if let Some(count) = counts.get_mut(kind as usize + 1) {
-                *count += 1;
-            }
-        }
-        Grouped::of_counted_kinds(all, kinds, &counts)
+        Grouped::of_counted_kinds(all, kinds, &count_kinds(kinds))
     }
 
     /// `counts`: at `kind + 1`, how many of `kinds` are `kind`.

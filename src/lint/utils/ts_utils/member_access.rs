@@ -46,10 +46,14 @@ fn static_key_value(e: Expr<'_>) -> Option<MemberAccessValue<'_>> {
 /// typescript-eslint's `getStaticMemberAccessValue`: the key that a member access (an `Expr`)
 /// reads, or that a `Member` or a `Prop` declares, if it can be told without running the program.
 /// A number is a string: `a[0]` is `"0"`. As upstream, `a.#b` is `"b"`, without the `#`.
+#[inline]
 pub fn get_static_member_access_value<'a>(
     node: impl Into<NodeWithKey<'a>>,
 ) -> Option<MemberAccessValue<'a>> {
-    let node = node.into();
+    static_member_access_value_of(node.into())
+}
+
+fn static_member_access_value_of<'a>(node: NodeWithKey<'a>) -> Option<MemberAccessValue<'a>> {
     let string = |value: &'a [u8]| Some(MemberAccessValue::String(Cow::Borrowed(value)));
     match node.key() {
         None if node.is_constructor() => string(b"constructor"),

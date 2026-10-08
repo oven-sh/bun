@@ -6,7 +6,7 @@ use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{ExceptionList, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
@@ -152,6 +152,33 @@ pub(crate) struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
+    /// Prints and counts an uncaught error or unhandled rejection that no test
+    /// owns: one between tests or in a `describe` callback, or one that fires
+    /// in a `--parallel` worker that has no file. No other code counts one.
+    pub(crate) fn report_unowned(
+        vm: &mut VirtualMachine,
+        value: JSValue,
+        exception_list: Option<&mut ExceptionList>,
+    ) {
+        // The coordinator owns the summary and the exit code of a `--parallel` run.
+        if !crate::cli::test::parallel_runner::worker_emit_unowned_error()
+            && let Some(runner) = Jest::runner_ptr()
+        {
+            // SAFETY: JS thread only. Callers hold borrows of `bun_test_root` (a
+            // sibling field), so the field is written through the raw pointer
+            // and no `&mut TestRunner` is formed.
+            unsafe { (*runner.as_ptr()).unhandled_errors_between_tests += 1 };
+        }
+
+        bun_core::pretty_errorln!(
+            "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
+        );
+        Output::flush();
+        vm.run_error_handler(value, exception_list);
+        bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
+        Output::flush();
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
@@ -649,7 +676,12 @@ pub(crate) mod on_unhandled_rejection {
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
-        jsc_vm.run_error_handler(rejection, exception_list);
+        // No file is active. Only a `--parallel` worker counts the error then.
+        if crate::cli::test::parallel_runner::worker_counts_unowned_errors() {
+            TestRunner::report_unowned(jsc_vm, rejection, exception_list);
+        } else {
+            jsc_vm.run_error_handler(rejection, exception_list);
+        }
     }
 }
 

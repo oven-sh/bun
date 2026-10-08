@@ -454,7 +454,7 @@ impl<'a> Coordinator<'a> {
                 Output::flush();
             }
             frame::Kind::FileDone => {
-                let mut nums = [0u32; 9];
+                let mut nums = [0u32; 8];
                 for n in nums.iter_mut() {
                     *n = rd.u32();
                 }
@@ -467,7 +467,6 @@ impl<'a> Coordinator<'a> {
                     expectations,
                     skipped_label,
                     files,
-                    unhandled,
                 ] = nums;
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.elapsed_ns = rd.u64();
@@ -487,9 +486,8 @@ impl<'a> Coordinator<'a> {
                 }
 
                 // Reshaped for borrowck — `summary()` mutably borrows
-                // `self.reporter`, so the unhandled-errors counter (also on
-                // `self.reporter.jest`) and `bail_out()` must run after the
-                // summary borrow is released.
+                // `self.reporter`, so `bail_out()` must run after the summary
+                // borrow is released.
                 {
                     let summary = self.reporter.summary();
                     summary.pass += pass;
@@ -500,7 +498,6 @@ impl<'a> Coordinator<'a> {
                     summary.skipped_because_label += skipped_label;
                     summary.files += files;
                 }
-                self.reporter.jest.unhandled_errors_between_tests += unhandled;
                 self.record_timing(idx, w.dispatched_at);
 
                 w.inflight = None;
@@ -539,6 +536,10 @@ impl<'a> Coordinator<'a> {
                         bun_core::handle_oom(self.coverage_files.get_or_put(&report.source_url));
                     bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
+            }
+            // Not gated on `w.inflight`: the error can fire with no file in flight.
+            frame::Kind::UnownedError => {
+                self.reporter.jest.unhandled_errors_between_tests += 1;
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }

@@ -757,7 +757,13 @@ where
             // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
             crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
         }
-        *response.get_body_value() = Body::Value::Used;
+        // A Response without a body has nothing to release, and its handler can return it again.
+        if !matches!(
+            response.get_body_value(),
+            Body::Value::Null | Body::Value::Empty
+        ) {
+            *response.get_body_value() = Body::Value::Used;
+        }
     }
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.

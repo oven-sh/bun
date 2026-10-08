@@ -261,3 +261,177 @@ describe("returning a Response with an already-used body", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The server drops the Response of a request that it does not answer: the client left, the
+// request became a WebSocket, or the server stopped. A Response without a body stays unused
+// then, so a handler that keeps one can return it again.
+describe("a request that the server does not answer", () => {
+  const bodiless = [
+    { make: () => new Response(null, { status: 404 }), status: 404 },
+    { make: () => new Response(""), status: 200 },
+    { make: () => new Response(null, { status: 204 }), status: 204 },
+  ];
+  type Drop = (req: Request, server: any, response: Response, i: number) => unknown;
+
+  // `/<i>` answers with kept Response i. `/drop/<i>` is the request that `drop` leaves unanswered.
+  function setup(drop: Drop) {
+    const kept = bodiless.map(shape => shape.make());
+    const errors: unknown[] = [];
+    const options: any = {
+      port: 0,
+      fetch(req: Request, server: any) {
+        const [, first, second] = new URL(req.url).pathname.split("/");
+        return first === "drop" ? drop(req, server, kept[+second], +second) : kept[+first];
+      },
+      websocket: { message() {} },
+      error(err: any) {
+        errors.push(err.code);
+        return new Response("handled", { status: 500 });
+      },
+    };
+    return { kept, errors, options };
+  }
+
+  async function expectUnused(url: URL, kept: Response[], errors: unknown[]) {
+    const statuses: number[][] = [];
+    for (const i of bodiless.keys()) {
+      const row: number[] = [];
+      for (let n = 0; n < 3; n++) {
+        const res = await fetch(new URL(`/${i}`, url));
+        await res.arrayBuffer();
+        row.push(res.status);
+      }
+      statuses.push(row);
+    }
+    expect({ statuses, bodyUsed: kept.map(response => response.bodyUsed), errors }).toEqual({
+      statuses: bodiless.map(({ status }) => [status, status, status]),
+      bodyUsed: bodiless.map(() => false),
+      errors: [],
+    });
+  }
+
+  it("leaves a Response without a body unused when the client aborts", async () => {
+    const started = bodiless.map(() => Promise.withResolvers<void>());
+    const returned = bodiless.map(() => Promise.withResolvers<void>());
+    const { kept, errors, options } = setup(async (req, _server, response, i) => {
+      const aborted = Promise.withResolvers<void>();
+      req.signal.addEventListener("abort", () => aborted.resolve());
+      started[i].resolve();
+      await aborted.promise;
+      returned[i].resolve();
+      return response;
+    });
+    await using server = serve(options);
+
+    for (const i of bodiless.keys()) {
+      const controller = new AbortController();
+      const request = fetch(new URL(`/drop/${i}`, server.url), { signal: controller.signal });
+      await started[i].promise;
+      controller.abort();
+      await expect(request).rejects.toMatchObject({ name: "AbortError" });
+      await returned[i].promise;
+    }
+    await expectUnused(server.url, kept, errors);
+  });
+
+  it.each([
+    ["a handler", (response: Response) => response],
+    ["an async handler", async (response: Response) => response],
+  ] as const)("leaves it unused when %s returns it behind server.upgrade()", async (_name, give) => {
+    const { kept, errors, options } = setup((req, server, response) => {
+      server.upgrade(req);
+      return give(response);
+    });
+    await using server = serve(options);
+
+    for (const i of bodiless.keys()) {
+      const url = new URL(`/drop/${i}`, server.url);
+      url.protocol = "ws:";
+      const closed = Promise.withResolvers<void>();
+      const ws = new WebSocket(url);
+      ws.onopen = () => ws.close();
+      ws.onerror = () => closed.reject(new Error("the WebSocket did not open"));
+      ws.onclose = () => closed.resolve();
+      await closed.promise;
+    }
+    await expectUnused(server.url, kept, errors);
+  });
+
+  it("leaves it unused when server.stop(true) closes the request while the handler awaits", async () => {
+    const started = bodiless.map(() => Promise.withResolvers<void>());
+    const returned = bodiless.map(() => Promise.withResolvers<void>());
+    const release = Promise.withResolvers<void>();
+    const { kept, errors, options } = setup(async (_req, _server, response, i) => {
+      started[i].resolve();
+      await release.promise;
+      returned[i].resolve();
+      return response;
+    });
+    {
+      await using server = serve(options);
+      // The server closes these connections, so each request ends in a rejection.
+      const closed = [...bodiless.keys()].map(i =>
+        fetch(new URL(`/drop/${i}`, server.url)).then(
+          res => res.status,
+          () => "closed",
+        ),
+      );
+      await Promise.all(started.map(({ promise }) => promise));
+      await server.stop(true);
+      expect(await Promise.all(closed)).toEqual(bodiless.map(() => "closed"));
+      release.resolve();
+      await Promise.all(returned.map(({ promise }) => promise));
+    }
+
+    // A new server over the same Response objects.
+    await using next = serve(options);
+    await expectUnused(next.url, kept, errors);
+  });
+
+  // Unchanged: a body that has bytes, and a stream, are still given up when the request is dropped.
+  it("still marks a body with content used", async () => {
+    let cancelled = 0;
+    const withBody = [
+      new Response("kept-body"),
+      new Response(new TextEncoder().encode("kept-body")),
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled++;
+          },
+        }),
+      ),
+    ];
+    const started = withBody.map(() => Promise.withResolvers<void>());
+    const returned = withBody.map(() => Promise.withResolvers<void>());
+    await using server = serve({
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path === "/turn") return new Response(null, { status: 204 });
+        const i = +path.slice(1);
+        const aborted = Promise.withResolvers<void>();
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        started[i].resolve();
+        await aborted.promise;
+        returned[i].resolve();
+        return withBody[i];
+      },
+    });
+
+    for (const i of withBody.keys()) {
+      const controller = new AbortController();
+      const request = fetch(new URL(`/${i}`, server.url), { signal: controller.signal });
+      await started[i].promise;
+      controller.abort();
+      await expect(request).rejects.toMatchObject({ name: "AbortError" });
+      await returned[i].promise;
+    }
+    // The server drops a Response after its handler returns it. One more request waits for that.
+    expect((await fetch(new URL("/turn", server.url))).status).toBe(204);
+    expect({ bodyUsed: withBody.map(response => response.bodyUsed), cancelled }).toEqual({
+      bodyUsed: [true, true, true],
+      cancelled: 1,
+    });
+  });
+});

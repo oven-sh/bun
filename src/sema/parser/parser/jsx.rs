@@ -134,9 +134,9 @@ impl Parser<'_> {
             }
             // The text has no blanks around the colon.
             let text = [
-                self.lx.atoms.bytes(name),
+                self.lx.text_of(name),
                 b":",
-                self.lx.atoms.bytes(self.lx.atom),
+                self.lx.text_of(self.lx.atom),
             ]
             .concat();
             name = self.atom(&text);
@@ -144,7 +144,7 @@ impl Parser<'_> {
             self.next();
         }
         let _ = end;
-        let is_plain = bun_core::strings::index_of_any(self.lx.atoms.bytes(name), b"-:").is_none();
+        let is_plain = bun_core::strings::index_of_any(self.lx.text_of(name), b"-:").is_none();
         (name, start, !is_plain)
     }
 

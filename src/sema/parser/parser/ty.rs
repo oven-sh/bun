@@ -710,7 +710,7 @@ impl Parser<'_> {
             };
             let end = match self.s.names.get(index + 1) {
                 // The name ends where its text ends: no name here has an escape.
-                _ => pos + self.lx.atoms.bytes(name).len() as u32,
+                _ => pos + self.lx.text_of(name).len() as u32,
             };
             expr = self.add_expr(kind, first.1, end);
         }

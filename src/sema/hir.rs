@@ -2015,7 +2015,8 @@ impl<S: Storage> FileIn<S> {
     #[inline]
     pub fn may_mention(&self, atom: Atom) -> bool {
         let bit = atom.0 as usize % MENTIONED_BITS;
-        (self.mentioned.get(bit / 64)).is_none_or(|word| word >> (bit % 64) & 1 != 0)
+        atom.0 & crate::atom::NOT_IN_THE_FILE == 0
+            && (self.mentioned.get(bit / 64)).is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
     /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.

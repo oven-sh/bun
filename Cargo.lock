@@ -1547,6 +1547,7 @@ dependencies = [
  "bun_ast",
  "bun_core",
  "bun_sema",
+ "bun_threading",
 ]
 
 [[package]]

@@ -11,7 +11,7 @@
 mod compare;
 mod fuzz;
 
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Intern, Interner};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema_parser::{Options, Refused, Scratch};
@@ -132,13 +132,50 @@ fn compare_one(
                 comparison.run();
                 match comparison.difference.take() {
                     Some(difference) => Outcome::Different(difference),
-                    None => Outcome::Identical(comparison.other_order),
+                    None => match difference_with_own_atoms(text, options, scratch) {
+                        Some(difference) => Outcome::Different(difference),
+                        None => Outcome::Identical(comparison.other_order),
+                    },
                 }
             };
             scratch.recycle(parsed.file);
             outcome
         }
     }
+}
+
+/// Parses `text` with the atoms of an interner that has seen nothing else, and with atoms of its
+/// own. Both number a text where it first occurs, so the results have to be the same.
+fn difference_with_own_atoms(text: &[u8], options: Options, scratch: &mut Scratch) -> Option<String> {
+    let session = Session::new();
+    let interner = Interner::new_in(&session);
+    let shared = bun_sema_parser::parse(text, options, &interner, scratch).ok()?.file;
+    let Ok(own) = bun_sema_parser::parse_with_own_atoms(text, options, scratch) else {
+        return Some("refused with its own atoms".to_owned());
+    };
+    let mut comparison = compare::Comparison::new(&shared, &own.file);
+    comparison.run();
+    if let Some(difference) = comparison.difference.take() {
+        return Some(format!("with its own atoms: {difference}"));
+    }
+    let atoms = scratch.atoms(text);
+    for atom in (0..atoms.len()).map(bun_sema::atom::Atom) {
+        let written = atoms.bytes(atom);
+        if written != interner.bytes(atom) {
+            return Some(format!("the text of its own {atom:?}"));
+        }
+        if atoms.intern(written) != atom || own.file.may_mention(atom) != atoms.has(atom) {
+            return Some(format!("its own {atom:?} is not found again"));
+        }
+    }
+    let absent = atoms.intern(b"\0 a text that is in no file");
+    if atoms.bytes(absent) != b"\0 a text that is in no file"
+        || atoms.intern(b"\0 a text that is in no file") != absent
+        || own.file.may_mention(absent)
+    {
+        return Some("a text that is not in the file".to_owned());
+    }
+    None
 }
 
 #[derive(Default)]
@@ -361,6 +398,7 @@ fn bench(args: &[String]) {
     let bytes: usize = texts.iter().map(Vec::len).sum();
     let is_reference = args.iter().any(|arg| arg == "--reference");
     let is_lexer = args.iter().any(|arg| arg == "--lexer");
+    let has_own_atoms = args.iter().any(|arg| arg == "--own-atoms");
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let mut scratch = Scratch::default();
@@ -385,9 +423,13 @@ fn bench(args: &[String]) {
                 );
                 nodes += file.0.exprs.len();
                 parsed += 1;
-            } else if let Ok(file) =
-                bun_sema_parser::parse(text, options_for(path.as_bytes(), Dialect::default()), &atoms, &mut scratch)
-            {
+            } else if let Ok(file) = {
+                let options = options_for(path.as_bytes(), Dialect::default());
+                match has_own_atoms {
+                    true => bun_sema_parser::parse_with_own_atoms(text, options, &mut scratch),
+                    false => bun_sema_parser::parse(text, options, &atoms, &mut scratch),
+                }
+            } {
                 nodes += file.file.exprs.len();
                 parsed += 1;
                 scratch.recycle(file.file);

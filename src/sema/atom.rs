@@ -44,6 +44,18 @@ impl std::fmt::Debug for Atom {
     }
 }
 
+/// The texts of the atoms whose numbers are constants (`known`), by number.
+pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
+
+/// An interner of the texts of one file numbers what it is asked for and is not in the file from
+/// here. An interner of many files does not get that far.
+pub const NOT_IN_THE_FILE: u32 = 1 << 29;
+
+/// `Intern::number` for an interner that is not an `Interner`.
+pub fn next_interner_number() -> u64 {
+    NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 type Texts<'s> = AppendVec<ArenaBox<'s, [u8]>, &'s Session>;
 
 pub struct Interner<'s> {
@@ -65,6 +77,12 @@ macro_rules! known_atoms {
             enum Number { $($name),* }
             $(pub const $name: Atom = Atom(Number::$name as u32);)*
             pub(super) const TEXTS: &[&str] = &[$($text),*];
+            pub(super) const ALL_TEXTS: &[&[u8]] = &[
+                $($text.as_bytes(),)*
+                b"\xFE@iterator",
+                b"\xFE@asyncIterator",
+                b"\xFEglobal",
+            ];
             /// `[Symbol.iterator]` and `[Symbol.asyncIterator]` as property names. Interned right
             /// after `TEXTS`, because a `str` cannot contain their first byte.
             pub const sym_iterator: Atom = Atom(TEXTS.len() as u32);
@@ -474,6 +492,7 @@ impl<'s> Interner<'s> {
             known::sym_async_iterator
         );
         assert_eq!(this.intern(b"\xFEglobal"), known::global_augmentation);
+        debug_assert!((KNOWN_TEXTS.iter().zip(0..)).all(|(text, i)| this.bytes(Atom(i)) == *text));
         this
     }
 

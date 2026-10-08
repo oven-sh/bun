@@ -5,7 +5,7 @@
 //! token is the end of the file, so the parser unwinds without testing anything.
 
 use crate::Refusal;
-use crate::names::Names;
+use crate::names::{Names, Text};
 use crate::token::T;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{CommentDirective, CommentDirectiveKind};
@@ -169,6 +169,15 @@ impl<'a> Lexer<'a> {
     fn forget_comments_from(&mut self, pos: u32) {
         let kept = self.comments.partition_point(|comment| comment.0 < pos);
         self.comments.truncate(kept);
+    }
+
+    /// The text of `atom`, which is one of a token of the file. Nothing for no atom.
+    pub(crate) fn text_of(&self, atom: Atom) -> &[u8] {
+        match self.names.is_own() {
+            true => self.names.bytes(atom, self.src),
+            false if atom.is_none() => b"",
+            false => self.atoms.bytes(atom),
+        }
     }
 
     /// Gives up on the file, or on the speculative parse that is going on.
@@ -425,8 +434,8 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn new_short_name(&mut self, start: usize, len: usize, words: [u64; 2]) {
-        let text = self.src.get(start..start + len).unwrap_or_default();
-        let (atom, kind) = self.names.add_short(words, text, self.atoms);
+        let text = Text::of_source(self.src, start, start + len);
+        let (atom, kind) = self.names.short_elsewhere(words, text, self.atoms);
         self.atom = atom;
         self.set(kind, start, start + len);
     }
@@ -446,7 +455,7 @@ impl<'a> Lexer<'a> {
         if after >= 0x80 || after == b'\\' {
             return self.name_slowly(start, start + len);
         }
-        let text = src.get(start..start + len).unwrap_or_default();
+        let text = Text::of_source(src, start, start + len);
         self.atom = self.names.long(text, self.atoms);
         // No keyword is that long.
         self.set(T::Identifier, start, start + len);
@@ -465,7 +474,7 @@ impl<'a> Lexer<'a> {
             return self.name_slowly(start, end);
         }
         let text = src.get(start..end).unwrap_or_default();
-        self.atom = self.names.atom(text, self.atoms);
+        self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
         self.set(crate::token::keyword(text), start, end);
     }
 
@@ -530,7 +539,7 @@ impl<'a> Lexer<'a> {
             self.buffer = text;
             return self.refuse(Refusal::UnexpectedCharacter);
         }
-        self.atom = self.names.atom(&text, self.atoms);
+        self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
         let mut kind = crate::token::keyword(&text);
         self.buffer = text;
         if self.has_escape && kind != T::Identifier {
@@ -586,7 +595,7 @@ impl<'a> Lexer<'a> {
             return self.refuse(Refusal::UnusualPrivateName);
         }
         self.has_escape = false;
-        self.atom = self.names.atom(&src[start..end], self.atoms);
+        self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
         self.set(T::PrivateIdentifier, start, end);
     }
 
@@ -764,12 +773,12 @@ impl<'a> Lexer<'a> {
     /// bytes of the source follow.
     #[inline]
     fn atom_of_source(&mut self, start: usize, end: usize) -> Atom {
-        let text = self.src.get(start..end).unwrap_or_default();
-        let len = text.len();
+        let text = Text::of_source(self.src, start, end);
+        let len = end.saturating_sub(start);
         if len >= 16 {
             return match len {
                 16..=32 => self.names.long(text, self.atoms),
-                _ => self.names.uncached(text, self.atoms),
+                _ => self.names.other(text, self.atoms),
             };
         }
         let Some(chunk) = self.src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
@@ -781,7 +790,7 @@ impl<'a> Lexer<'a> {
         let words = crate::names::short_words(chunk, len as u32);
         match self.names.find_short(words) {
             Some((atom, _)) => atom,
-            None => self.names.add_short(words, text, self.atoms).0,
+            None => self.names.short_elsewhere(words, text, self.atoms).0,
         }
     }
 
@@ -879,7 +888,7 @@ impl<'a> Lexer<'a> {
             (!is_valid).then_some(Refusal::NotUtf8)
         });
         if refusal.is_none() {
-            self.atom = self.names.atom(&text, self.atoms);
+            self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
         }
         self.buffer = text;
         match refusal {
@@ -936,7 +945,7 @@ impl<'a> Lexer<'a> {
             }
         });
         if found.is_ok() {
-            self.atom = self.names.atom(&text, self.atoms);
+            self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
         }
         self.buffer = text;
         match found {
@@ -1048,7 +1057,7 @@ impl<'a> Lexer<'a> {
                 10 => text.clone(),
                 _ => decimal_digits(&text[2..], radix),
             };
-            self.atom = self.names.atom(&decimal, self.atoms);
+            self.atom = (self.names).atom(Text::elsewhere(self.src, &decimal), self.atoms);
             T::BigInt
         } else {
             self.number = match radix {
@@ -1140,7 +1149,8 @@ impl Lexer<'_> {
             if matches!(src.get(end), Some(b'\\' | 0x80..)) {
                 return self.refuse(Refusal::Unsupported);
             }
-            self.atom = self.names.atom(&src[self.start as usize..end], self.atoms);
+            let text = Text::of_source(src, self.start as usize, end);
+            self.atom = self.names.atom(text, self.atoms);
             self.end = end as u32;
         }
         self.token = T::Identifier;
@@ -1182,6 +1192,7 @@ impl Lexer<'_> {
         if start != before && bun_core::strings::contains_char(text, b'\\') {
             return self.refuse(Refusal::Unsupported);
         }
+        let text = Text::of_source(src, start + 1, start + 1 + len);
         self.atom = self.names.atom(text, self.atoms);
         self.set(T::String, start, start + len + 2);
     }
@@ -1217,6 +1228,7 @@ impl Lexer<'_> {
                 .iter()
                 .any(|&c| matches!(c, b'&' | b'\n' | b'\r' | 0x80..));
             if !needs_fixing {
+                let text = Text::of_source(src, start, start + len);
                 self.atom = self.names.atom(text, self.atoms);
                 return self.set(T::JsxText, start, start + len);
             }
@@ -1226,7 +1238,7 @@ impl Lexer<'_> {
                 start += len;
                 continue;
             }
-            self.atom = self.names.atom(&fixed, self.atoms);
+            self.atom = (self.names).atom(Text::elsewhere(src, &fixed), self.atoms);
             return self.set(T::JsxText, start, start + len);
         }
     }

@@ -1,7 +1,7 @@
 //! The pragmas in the comments before the first token: `/// <reference .. />`, `// @ts-check` and
 //! `// @ts-nocheck`, `/* @jsx h */` and similar.
 
-use bun_sema::atom::Intern;
+use bun_sema::atom::Atom;
 use bun_sema::hir::{FileBuilder, FileKind, JsxPragmas, ReferenceKind, ResolutionMode};
 
 /// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the comments before the first
@@ -9,20 +9,20 @@ use bun_sema::hir::{FileBuilder, FileKind, JsxPragmas, ReferenceKind, Resolution
 pub(crate) fn process_pragmas_into_fields(
     text: &[u8],
     leading: &[(u32, u32)],
-    atoms: &dyn Intern,
+    intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
     for &(start, end) in leading {
         let comment = &text[start as usize..end as usize];
         match comment.get(..2) {
             Some(b"//") => {
-                if !single_line_pragma(comment, start as usize, atoms, file) {
+                if !single_line_pragma(comment, start as usize, intern, file) {
                     return false;
                 }
             }
             // Only read for files that can contain JSX.
             Some(b"/*") if file.kind == FileKind::Tsx => {
-                multi_line_pragmas(comment, atoms, &mut file.jsx_pragmas);
+                multi_line_pragmas(comment, intern, &mut file.jsx_pragmas);
             }
             _ => {}
         }
@@ -35,7 +35,7 @@ pub(crate) fn process_pragmas_into_fields(
 fn single_line_pragma(
     text: &[u8],
     comment_pos: usize,
-    atoms: &dyn Intern,
+    intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
     let mut pos = 2;
@@ -109,7 +109,7 @@ fn single_line_pragma(
         },
         None => ResolutionMode::None,
     };
-    let value = atoms.intern(&text[from..to]);
+    let value = intern(&text[from..to]);
     file.references
         .push((kind, value, (comment_pos + from) as u32, mode));
     true
@@ -117,7 +117,7 @@ fn single_line_pragma(
 
 /// `extractPragmas` for the `/* */` comment `text`. The last of two identical pragmas wins
 /// (`GetPragmaFromSourceFile`).
-fn multi_line_pragmas(text: &[u8], atoms: &dyn Intern, pragmas: &mut JsxPragmas) {
+fn multi_line_pragmas(text: &[u8], intern: &mut dyn FnMut(&[u8]) -> Atom, pragmas: &mut JsxPragmas) {
     let text = text.strip_suffix(b"*/").unwrap_or(text);
     let mut pos = 2;
     // `skipTo`
@@ -138,11 +138,11 @@ fn multi_line_pragmas(text: &[u8], atoms: &dyn Intern, pragmas: &mut JsxPragmas)
         let argument = &text[start..skip_non_blanks(text, start)];
         let is = |it: &[u8]| !argument.is_empty() && name.eq_ignore_ascii_case(it);
         if is(b"jsx") {
-            pragmas.factory = atoms.intern(argument);
+            pragmas.factory = intern(argument);
         } else if is(b"jsxFrag") {
-            pragmas.fragment_factory = atoms.intern(argument);
+            pragmas.fragment_factory = intern(argument);
         } else if is(b"jsxImportSource") {
-            pragmas.import_source = atoms.intern(argument);
+            pragmas.import_source = intern(argument);
         } else if is(b"jsxRuntime") {
             // `GetJSXImplicitImportBase`
             pragmas.classic = match argument {

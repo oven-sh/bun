@@ -1,18 +1,28 @@
 //! From the spelling of a name to its atom and its token kind, in one probe.
 //!
-//! A file repeats the same few hundred names, and the files of a project share most of them. Two
-//! direct-mapped caches hold the spelling inline, so a hit touches one cache line and compares
-//! integers. A collision overwrites the entry. A miss asks the interner.
+//! A file repeats the same few hundred names. Tables that hold the spelling inline find them: a hit
+//! touches one cache line and compares integers.
+//!
+//! The atoms are those of an interner that many files share, or the file's own.
+//! - Shared: the tables are caches, which stay from file to file. A miss asks the interner.
+//! - Own: the tables are the interner. The atoms with fixed numbers (`atom::known`) keep them, and
+//!   every other text gets the next number where it first occurs. No memory is shared with another
+//!   thread, little of it is touched, and the numbers are dense. The readers of the HIR ask
+//!   [`FileAtoms`].
 
 use crate::token::{T, keyword};
-use bun_sema::atom::{Atom, Intern};
+use bun_sema::atom::{Atom, Intern, KNOWN_TEXTS, NOT_IN_THE_FILE};
+use bun_threading::Guarded;
+use std::sync::OnceLock;
 
-/// A text of at most 15 bytes, padded with zeros. No name contains a zero byte, so the padded
+/// A text of at most 15 bytes, padded with zeros. It does not end with a zero byte, so the padded
 /// bytes determine the length.
 #[derive(Copy, Clone)]
 struct Short {
     words: [u64; 2],
     atom: u32,
+    /// `Names::generation` when it was entered.
+    generation: u16,
     kind: T,
 }
 
@@ -21,33 +31,57 @@ struct Short {
 struct Long {
     /// The first and the last 16 bytes, which may overlap.
     words: [u64; 4],
-    len: u32,
     atom: u32,
+    generation: u16,
+    len: u8,
 }
 
 const MENTIONED_WORDS: usize = bun_sema::hir::MENTIONED_BITS / 64;
 const SHORT_BITS: u32 = 14;
 const LONG_BITS: u32 = 12;
+const KNOWN_BITS: u32 = 9;
+/// How many places after its first a text can be at.
+const WINDOW: usize = 7;
+/// The first atom that a file numbers itself.
+const FIRST_OWN: u32 = KNOWN_TEXTS.len() as u32;
+/// In `Names::spans`: the text is in `Names::cooked`, not in the source.
+const COOKED: u32 = 1 << 31;
 
-/// The caches of one thread. They belong to one interner at a time.
+/// The tables of one thread.
 pub(crate) struct Names {
     short: Box<[Short; 1 << SHORT_BITS]>,
     long: Box<[Long; 1 << LONG_BITS]>,
-    /// `Intern::number` of the interner that the atoms are of. 0: none.
+    /// The file's own atoms of all other texts, and of those that found no place above.
+    other: Table,
+    /// An entry of another generation is free. Never 0.
+    generation: u16,
+    /// `Intern::number` of the interner that the atoms are of.
     of: u64,
-    /// `hir::FileIn::mentioned` of the file that is being parsed.
+    is_own: bool,
+    /// By own atom, where its text starts, and its length.
+    spans: Vec<(u32, u32)>,
+    /// The texts that are not written in the source as they are.
+    cooked: Vec<u8>,
+    /// `hir::FileIn::mentioned` of the file, if the atoms are its own.
     mentioned: [u64; MENTIONED_WORDS],
+    /// The short ones of `KNOWN_TEXTS`. An entry without an atom is free.
+    known: Box<[([u64; 2], u32); 1 << KNOWN_BITS]>,
+    /// The others.
+    known_others: Vec<(&'static [u8], u32)>,
+    late: Late,
 }
 
 const NO_SHORT: Short = Short {
     words: [0; 2],
     atom: u32::MAX,
+    generation: 0,
     kind: T::Identifier,
 };
 const NO_LONG: Long = Long {
     words: [0; 4],
-    len: 0,
     atom: u32::MAX,
+    generation: 0,
+    len: 0,
 };
 
 fn boxed<E: Copy, const N: usize>(entry: E) -> Box<[E; N]> {
@@ -59,174 +93,605 @@ fn boxed<E: Copy, const N: usize>(entry: E) -> Box<[E; N]> {
 
 impl Default for Names {
     fn default() -> Self {
+        let mut known = boxed(([0; 2], u32::MAX));
+        let mut known_others = Vec::new();
+        for (&text, atom) in KNOWN_TEXTS.iter().zip(0u32..) {
+            if !is_short(text) {
+                known_others.push((text, atom));
+                continue;
+            }
+            let words = padded(text);
+            let mut at = known_place(words);
+            while known[at].1 != u32::MAX {
+                at = (at + 1) % known.len();
+            }
+            known[at] = (words, atom);
+        }
         Names {
             short: boxed(NO_SHORT),
             long: boxed(NO_LONG),
+            other: Table::default(),
+            generation: 1,
             of: 0,
+            is_own: false,
+            spans: Vec::new(),
+            cooked: Vec::new(),
             mentioned: [0; MENTIONED_WORDS],
+            known,
+            known_others,
+            late: Late::default(),
         }
     }
 }
 
 const MULTIPLIER: u64 = 0x9E37_79B9_7F4A_7C15;
 
-/// By the number of bytes, a mask for the leading bytes of a little endian word.
-const LEADING: [u64; 16] = {
-    let mut masks = [u64::MAX; 16];
+/// By the number of bytes, masks for the leading bytes of two little endian words.
+const LEADING: [[u64; 2]; 16] = {
+    let mut masks = [[0; 2]; 16];
     let mut len = 0;
     while len < 8 {
-        masks[len] = (1u64 << (len * 8)) - 1;
+        masks[len] = [(1u64 << (len * 8)) - 1, 0];
+        masks[len + 8] = [u64::MAX, (1u64 << (len * 8)) - 1];
         len += 1;
     }
     masks
 };
 
-/// The first `len` bytes of `word`, which is little endian. `len` is at most 8.
-#[inline(always)]
-fn leading_bytes(word: u64, len: u32) -> u64 {
-    word & LEADING[(len & 15) as usize]
-}
-
-/// The first `len` bytes of `chunk` padded with zeros. `len` is at most 16.
+/// The first `len` bytes of `chunk` padded with zeros. `len` is less than 16.
 #[inline(always)]
 pub(crate) fn short_words(chunk: &[u8; 16], len: u32) -> [u64; 2] {
     let (low, high) = chunk.split_at(8);
     let low = u64::from_le_bytes(low.try_into().unwrap_or_default());
     let high = u64::from_le_bytes(high.try_into().unwrap_or_default());
-    if len >= 8 {
-        [low, leading_bytes(high, len - 8)]
-    } else {
-        [leading_bytes(low, len), 0]
-    }
+    let masks = LEADING[(len & 15) as usize];
+    [low & masks[0], high & masks[1]]
+}
+
+#[inline(always)]
+fn short_hash(words: [u64; 2]) -> u64 {
+    (words[0] ^ words[1].rotate_left(29)).wrapping_mul(MULTIPLIER)
 }
 
 #[inline(always)]
 fn short_place(words: [u64; 2]) -> usize {
-    let hash = (words[0] ^ words[1].rotate_left(29)).wrapping_mul(MULTIPLIER);
-    (hash >> (64 - SHORT_BITS)) as usize
+    (short_hash(words) >> (64 - SHORT_BITS)) as usize
 }
 
-/// `text` padded with zeros to `N` words.
+#[inline(always)]
+fn known_place(words: [u64; 2]) -> usize {
+    (short_hash(words) >> (64 - KNOWN_BITS)) as usize
+}
+
+/// Whether `Short` can hold `text`.
 #[inline]
-fn padded<const N: usize>(text: &[u8]) -> [u64; N] {
-    let mut words = [0u64; N];
+fn is_short(text: &[u8]) -> bool {
+    matches!(text.len(), 1..=15) && text.last() != Some(&0)
+}
+
+/// `text`, which is short, padded with zeros.
+#[inline]
+fn padded(text: &[u8]) -> [u64; 2] {
+    let mut bytes = [0u8; 16];
+    for (to, from) in bytes.iter_mut().zip(text) {
+        *to = *from;
+    }
+    short_words(&bytes, 15)
+}
+
+/// The first and the last 16 bytes of `text`, which has at least 16.
+#[inline(always)]
+fn long_words(text: &[u8]) -> Option<[u64; 4]> {
+    let (first, last) = (text.first_chunk::<16>()?, text.last_chunk::<16>()?);
+    let word = |bytes: &[u8]| u64::from_le_bytes(bytes.try_into().unwrap_or_default());
+    Some([
+        word(&first[..8]),
+        word(&first[8..]),
+        word(&last[..8]),
+        word(&last[8..]),
+    ])
+}
+
+#[inline(always)]
+fn long_place(words: [u64; 4]) -> usize {
+    let mixed = (words[0] ^ words[1].rotate_left(29)).wrapping_mul(MULTIPLIER)
+        ^ (words[2] ^ words[3].rotate_left(29));
+    (mixed.wrapping_mul(MULTIPLIER) >> (64 - LONG_BITS)) as usize
+}
+
+fn hash_of(text: &[u8]) -> u32 {
     let (whole, rest) = text.as_chunks::<8>();
-    for (word, bytes) in words.iter_mut().zip(whole) {
-        *word = u64::from_le_bytes(*bytes);
+    let mut hash = text.len() as u64;
+    for bytes in whole {
+        hash = (hash.rotate_left(5) ^ u64::from_le_bytes(*bytes)).wrapping_mul(MULTIPLIER);
     }
-    if let Some(word) = words.get_mut(whole.len()) {
-        let mut last = [0u8; 8];
-        last[..rest.len()].copy_from_slice(rest);
-        *word = u64::from_le_bytes(last);
+    for &byte in rest {
+        hash = (hash.rotate_left(5) ^ u64::from(byte)).wrapping_mul(MULTIPLIER);
     }
-    words
+    (hash >> 32) as u32
+}
+
+/// A text, and the source of the file that is being parsed.
+#[derive(Copy, Clone)]
+pub(crate) struct Text<'a> {
+    source: &'a [u8],
+    /// Where the text starts in the source, if it is written there as it is.
+    start: Option<u32>,
+    text: &'a [u8],
+}
+
+impl<'a> Text<'a> {
+    #[inline(always)]
+    pub(crate) fn of_source(source: &'a [u8], start: usize, end: usize) -> Self {
+        Text {
+            source,
+            start: Some(start as u32),
+            text: source.get(start..end).unwrap_or_default(),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn elsewhere(source: &'a [u8], text: &'a [u8]) -> Self {
+        Text {
+            source,
+            start: None,
+            text,
+        }
+    }
 }
 
 impl Names {
-    /// Before a file is parsed: `atoms` is the interner of that file.
-    pub(crate) fn belong_to(&mut self, atoms: &dyn Intern) {
-        if self.of != atoms.number() {
-            if self.of != 0 {
+    /// All entries are free.
+    fn next_generation(&mut self) {
+        self.generation = match self.generation.checked_add(1) {
+            Some(next) => next,
+            None => {
                 self.short.fill(NO_SHORT);
                 self.long.fill(NO_LONG);
+                1
             }
+        };
+    }
+
+    /// Before a file is parsed whose atoms are those of `atoms`.
+    pub(crate) fn belong_to(&mut self, atoms: &dyn Intern) {
+        if self.of != atoms.number() {
+            self.next_generation();
             self.of = atoms.number();
+            self.is_own = false;
         }
+    }
+
+    /// Before a file is parsed that has its own atoms.
+    pub(crate) fn begin_own(&mut self) {
+        self.next_generation();
+        self.of = bun_sema::atom::next_interner_number();
+        self.is_own = true;
+        self.spans.clear();
+        self.cooked.clear();
+        self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];
     }
 
-    /// Every atom that was handed out since `belong_to`, as `hir::FileIn::mentioned` has them.
+    #[inline(always)]
+    pub(crate) fn is_own(&self) -> bool {
+        self.is_own
+    }
+
+    /// `hir::FileIn::mentioned`
     pub(crate) fn mentioned(&self) -> &[u64] {
-        &self.mentioned
-    }
-
-    #[inline(always)]
-    fn mention(&mut self, atom: Atom) -> Atom {
-        self.mentioned[(atom.0 as usize / 64) % MENTIONED_WORDS] |= 1 << (atom.0 % 64);
-        atom
-    }
-
-    /// The atom of a text that no cache is for.
-    pub(crate) fn uncached(&mut self, text: &[u8], atoms: &dyn Intern) -> Atom {
-        self.mention(atoms.intern(text))
-    }
-
-    /// The atom and the token kind of the name with the padded bytes `words`, if it is in the cache.
-    #[inline(always)]
-    pub(crate) fn find_short(&mut self, words: [u64; 2]) -> Option<(Atom, T)> {
-        let entry = &self.short[short_place(words)];
-        if entry.words != words {
-            return None;
+        match self.is_own {
+            true => &self.mentioned,
+            false => &[],
         }
-        let (atom, kind) = (Atom(entry.atom), entry.kind);
-        Some((self.mention(atom), kind))
     }
 
-    /// Puts the name `text`, whose padded bytes are `words`, into the cache.
-    pub(crate) fn add_short(
+    /// The atom of a text that is in no table yet.
+    fn new_atom(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
+        if !self.is_own {
+            return atoms.intern(text.text);
+        }
+        let atom = match self.known(text.text) {
+            Some(known) => known,
+            None => {
+                let start = text.start.unwrap_or_else(|| {
+                    let start = self.cooked.len() as u32;
+                    self.cooked.extend_from_slice(text.text);
+                    start | COOKED
+                });
+                self.spans.push((start, text.text.len() as u32));
+                FIRST_OWN + (self.spans.len() as u32 - 1)
+            }
+        };
+        self.mentioned[(atom as usize / 64) % MENTIONED_WORDS] |= 1 << (atom % 64);
+        Atom(atom)
+    }
+
+    /// The number of `text` if it is fixed.
+    #[inline]
+    fn known(&self, text: &[u8]) -> Option<u32> {
+        if !is_short(text) {
+            let found = self.known_others.iter().find(|it| it.0 == text);
+            return found.map(|it| it.1);
+        }
+        let words = padded(text);
+        let mut at = known_place(words);
+        loop {
+            match self.known[at] {
+                (_, u32::MAX) => return None,
+                (known, atom) if known == words => return Some(atom),
+                _ => at = (at + 1) % self.known.len(),
+            }
+        }
+    }
+
+    /// The atom and the token kind of the name with the padded bytes `words`, if it is at its first
+    /// place.
+    #[inline(always)]
+    pub(crate) fn find_short(&self, words: [u64; 2]) -> Option<(Atom, T)> {
+        let entry = &self.short[short_place(words)];
+        (entry.words == words && entry.generation == self.generation)
+            .then_some((Atom(entry.atom), entry.kind))
+    }
+
+    /// The same if it is not.
+    pub(crate) fn short_elsewhere(
         &mut self,
         words: [u64; 2],
-        text: &[u8],
+        text: Text<'_>,
         atoms: &dyn Intern,
     ) -> (Atom, T) {
-        let (atom, kind) = (self.uncached(text, atoms), keyword(text));
-        self.short[short_place(words)] = Short {
+        let first = short_place(words);
+        let mut free = None;
+        for at in (first..=first + WINDOW).map(|at| at % self.short.len()) {
+            let entry = &self.short[at];
+            if entry.generation != self.generation {
+                free = Some(at);
+                break;
+            }
+            if entry.words == words {
+                return (Atom(entry.atom), entry.kind);
+            }
+        }
+        let kind = keyword(text.text);
+        let (atom, at) = match free {
+            Some(at) => (self.new_atom(text, atoms), at),
+            None if self.is_own => return (self.other(text, atoms), kind),
+            None => (self.new_atom(text, atoms), first),
+        };
+        self.short[at] = Short {
             words,
             atom: atom.0,
+            generation: self.generation,
             kind,
         };
         (atom, kind)
     }
 
-    #[inline]
-    fn short_words(&mut self, words: [u64; 2], text: &[u8], atoms: &dyn Intern) -> (Atom, T) {
-        match self.find_short(words) {
-            Some(found) => found,
-            None => self.add_short(words, text, atoms),
-        }
-    }
-
     /// The atom of any text: a name of any length, the value of a string.
     #[inline]
-    pub(crate) fn atom(&mut self, text: &[u8], atoms: &dyn Intern) -> Atom {
-        match text.len() {
-            0 => self.mention(bun_sema::atom::known::empty),
-            // Its last byte tells a text from a shorter one that is padded.
-            _ if text.last() == Some(&0) => self.uncached(text, atoms),
-            1..=15 => self.short_words(padded::<2>(text), text, atoms).0,
+    pub(crate) fn atom(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
+        match text.text.len() {
+            _ if is_short(text.text) => {
+                let words = padded(text.text);
+                match self.find_short(words) {
+                    Some((atom, _)) => atom,
+                    None => self.short_elsewhere(words, text, atoms).0,
+                }
+            }
             16..=32 => self.long(text, atoms),
-            _ => self.uncached(text, atoms),
+            _ => self.other(text, atoms),
         }
     }
 
     /// The atom of a text of 16 to 32 bytes.
-    pub(crate) fn long(&mut self, text: &[u8], atoms: &dyn Intern) -> Atom {
-        // The first and the last 16 bytes, which may overlap, and the length determine it.
-        let (Some(first), Some(last)) = (text.first_chunk::<16>(), text.last_chunk::<16>()) else {
-            return self.uncached(text, atoms);
+    pub(crate) fn long(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
+        let Some(words) = long_words(text.text) else {
+            return self.other(text, atoms);
         };
-        let word = |bytes: &[u8]| u64::from_le_bytes(bytes.try_into().unwrap_or_default());
-        let words = [
-            word(&first[..8]),
-            word(&first[8..]),
-            word(&last[..8]),
-            word(&last[8..]),
-        ];
-        let mixed = (words[0] ^ words[1].rotate_left(29)).wrapping_mul(MULTIPLIER)
-            ^ (words[2] ^ words[3].rotate_left(29));
-        let hash = mixed.wrapping_mul(MULTIPLIER);
-        let place = (hash >> (64 - LONG_BITS)) as usize;
-        let entry = &self.long[place];
-        if entry.words == words && entry.len == text.len() as u32 {
-            let atom = Atom(entry.atom);
-            return self.mention(atom);
+        let first = long_place(words);
+        let mut free = None;
+        for at in (first..=first + WINDOW).map(|at| at % self.long.len()) {
+            let entry = &self.long[at];
+            if entry.generation != self.generation {
+                free = Some(at);
+                break;
+            }
+            if entry.words == words && usize::from(entry.len) == text.text.len() {
+                return Atom(entry.atom);
+            }
         }
-        let atom = self.uncached(text, atoms);
-        self.long[place] = Long {
+        let (atom, at) = match free {
+            Some(at) => (self.new_atom(text, atoms), at),
+            None if self.is_own => return self.other(text, atoms),
+            None => (self.new_atom(text, atoms), first),
+        };
+        self.long[at] = Long {
             words,
-            len: text.len() as u32,
             atom: atom.0,
+            generation: self.generation,
+            len: text.text.len() as u8,
         };
         atom
+    }
+
+    /// The atom of a text that `short` and `long` do not hold.
+    pub(crate) fn other(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
+        if !self.is_own {
+            return atoms.intern(text.text);
+        }
+        let hash = hash_of(text.text);
+        let found = (self.other).find(hash, |atom| self.bytes(Atom(atom), text.source) == text.text);
+        if let Some(atom) = found {
+            return Atom(atom);
+        }
+        let atom = self.new_atom(text, atoms);
+        self.other.insert(hash, atom.0);
+        atom
+    }
+
+    /// The text of `atom`, which is the own of the file with the text `source`.
+    pub(crate) fn bytes<'a>(&'a self, atom: Atom, source: &'a [u8]) -> &'a [u8] {
+        if let Some(known) = KNOWN_TEXTS.get(atom.0 as usize) {
+            return known;
+        }
+        if atom.0 >= NOT_IN_THE_FILE {
+            return self.late.bytes(atom.0 - NOT_IN_THE_FILE);
+        }
+        let Some(&(start, len)) = self.spans.get((atom.0 - FIRST_OWN) as usize) else {
+            return b"";
+        };
+        let (from, start) = match start & COOKED != 0 {
+            true => (&self.cooked[..], (start & !COOKED) as usize),
+            false => (source, start as usize),
+        };
+        from.get(start..start + len as usize).unwrap_or_default()
+    }
+
+    /// The atom of `text` if it is in the file with the text `source`, whose atoms are its own.
+    fn find(&self, text: &[u8], source: &[u8]) -> Option<Atom> {
+        if let Some(known) = self.known(text) {
+            let word = self.mentioned[(known as usize / 64) % MENTIONED_WORDS];
+            return (word >> (known % 64) & 1 != 0).then_some(Atom(known));
+        }
+        if is_short(text) {
+            let words = padded(text);
+            let first = short_place(words);
+            for at in (first..=first + WINDOW).map(|at| at % self.short.len()) {
+                let entry = &self.short[at];
+                if entry.generation != self.generation {
+                    return None;
+                }
+                if entry.words == words {
+                    return Some(Atom(entry.atom));
+                }
+            }
+        } else if let (16..=32, Some(words)) = (text.len(), long_words(text)) {
+            let first = long_place(words);
+            for at in (first..=first + WINDOW).map(|at| at % self.long.len()) {
+                let entry = &self.long[at];
+                if entry.generation != self.generation {
+                    return None;
+                }
+                if entry.words == words && usize::from(entry.len) == text.len() {
+                    return Some(Atom(entry.atom));
+                }
+            }
+        }
+        (self.other)
+            .find(hash_of(text), |atom| self.bytes(Atom(atom), source) == text)
+            .map(Atom)
+    }
+
+    /// The atoms of the file with the text `source`, which was parsed last and has its own.
+    pub(crate) fn of_file<'a>(&'a self, source: &'a [u8]) -> FileAtoms<'a> {
+        FileAtoms {
+            names: self,
+            source,
+        }
+    }
+}
+
+/// From the hash of a text to a number, for texts that are kept elsewhere. It grows.
+#[derive(Default)]
+struct Table {
+    /// Their number is a power of two, or 0. At most half of them are taken.
+    slots: Vec<Slot>,
+    taken: usize,
+    /// A slot of another generation is free. Never 0 once there are slots.
+    generation: u16,
+}
+
+#[derive(Copy, Clone, Default)]
+struct Slot {
+    hash: u32,
+    number: u32,
+    generation: u16,
+}
+
+impl Table {
+    fn clear(&mut self) {
+        self.taken = 0;
+        self.generation = match self.generation.checked_add(1) {
+            Some(next) => next,
+            None => {
+                self.slots.fill(Slot::default());
+                1
+            }
+        };
+    }
+
+    #[inline]
+    fn find(&self, hash: u32, mut is_it: impl FnMut(u32) -> bool) -> Option<u32> {
+        let mask = self.slots.len().checked_sub(1)?;
+        let mut at = hash as usize & mask;
+        loop {
+            let slot = self.slots[at];
+            if slot.generation != self.generation {
+                return None;
+            }
+            if slot.hash == hash && is_it(slot.number) {
+                return Some(slot.number);
+            }
+            at = (at + 1) & mask;
+        }
+    }
+
+    /// `number` is that of a text with the hash `hash`, which is not in the table.
+    fn insert(&mut self, hash: u32, number: u32) {
+        if self.generation == 0 {
+            self.generation = 1;
+        }
+        if (self.taken + 1) * 2 > self.slots.len() {
+            let old = std::mem::take(&mut self.slots);
+            self.slots = vec![Slot::default(); (old.len() * 2).max(256)];
+            let generation = self.generation;
+            for slot in old.iter().filter(|it| it.generation == generation) {
+                self.put(*slot);
+            }
+        }
+        self.taken += 1;
+        self.put(Slot {
+            hash,
+            number,
+            generation: self.generation,
+        });
+    }
+
+    fn put(&mut self, slot: Slot) {
+        let mask = self.slots.len() - 1;
+        let mut at = slot.hash as usize & mask;
+        while self.slots[at].generation == self.generation {
+            at = (at + 1) & mask;
+        }
+        self.slots[at] = slot;
+    }
+}
+
+/// The texts that are asked about and are not in the file at hand: the names that a rule of a
+/// linter looks for. They stay from file to file, and are entered while others are read.
+#[derive(Default)]
+struct Late {
+    numbers: Guarded<Table>,
+    texts: Chunk,
+}
+
+const CHUNK: usize = 64;
+
+/// A list that grows while its elements are borrowed.
+struct Chunk {
+    texts: [OnceLock<Box<[u8]>>; CHUNK],
+    next: OnceLock<Box<Chunk>>,
+}
+
+impl Default for Chunk {
+    fn default() -> Self {
+        Chunk {
+            texts: [const { OnceLock::new() }; CHUNK],
+            next: OnceLock::new(),
+        }
+    }
+}
+
+impl Late {
+    fn place(&self, mut number: u32) -> &OnceLock<Box<[u8]>> {
+        let mut chunk = &self.texts;
+        while number as usize >= CHUNK {
+            chunk = chunk.next.get_or_init(Default::default);
+            number -= CHUNK as u32;
+        }
+        &chunk.texts[number as usize]
+    }
+
+    fn bytes(&self, mut number: u32) -> &[u8] {
+        let mut chunk = &self.texts;
+        while number as usize >= CHUNK {
+            match chunk.next.get() {
+                Some(next) => chunk = next,
+                None => return b"",
+            }
+            number -= CHUNK as u32;
+        }
+        chunk.texts[number as usize].get().map_or(b"", |text| text)
+    }
+
+    fn intern(&self, text: &[u8]) -> u32 {
+        let hash = hash_of(text);
+        let mut numbers = self.numbers.lock();
+        if let Some(number) = numbers.find(hash, |number| self.bytes(number) == text) {
+            return number;
+        }
+        let number = numbers.taken as u32;
+        let _ = self.place(number).set(text.into());
+        numbers.insert(hash, number);
+        number
+    }
+}
+
+/// The atoms of a file that has its own. It is as if an interner had seen the texts of the file.
+/// What it is asked for from now on is numbered from `NOT_IN_THE_FILE`.
+pub struct FileAtoms<'a> {
+    names: &'a Names,
+    source: &'a [u8],
+}
+
+impl FileAtoms<'_> {
+    /// The atoms of the file are the numbers below this. Those with fixed numbers are among them
+    /// whether they are in the file or not.
+    pub fn len(&self) -> u32 {
+        FIRST_OWN + self.names.spans.len() as u32
+    }
+
+    /// Whether the text of `atom` is in the file.
+    pub fn has(&self, atom: Atom) -> bool {
+        match atom.0 < FIRST_OWN {
+            true => self.names.mentioned[atom.0 as usize / 64] >> (atom.0 % 64) & 1 != 0,
+            false => atom.0 < self.len(),
+        }
+    }
+}
+
+impl Intern for FileAtoms<'_> {
+    fn intern(&self, text: &[u8]) -> Atom {
+        match self.names.find(text, self.source) {
+            Some(atom) => atom,
+            None => match self.names.known(text) {
+                Some(known) => Atom(known),
+                None => Atom(NOT_IN_THE_FILE + self.names.late.intern(text)),
+            },
+        }
+    }
+
+    #[inline]
+    fn bytes(&self, atom: Atom) -> &[u8] {
+        self.names.bytes(atom, self.source)
+    }
+
+    #[inline]
+    fn number(&self) -> u64 {
+        self.names.of
+    }
+
+    #[inline]
+    fn of_this_thread(&self) -> &dyn Intern {
+        self
+    }
+}
+
+/// Stands where an interner is expected and the atoms are the file's own.
+pub(crate) struct NoInterner;
+
+impl Intern for NoInterner {
+    fn intern(&self, _: &[u8]) -> Atom {
+        Atom::NONE
+    }
+    fn bytes(&self, _: Atom) -> &[u8] {
+        b""
+    }
+    fn number(&self) -> u64 {
+        0
+    }
+    fn of_this_thread(&self) -> &dyn Intern {
+        self
     }
 }

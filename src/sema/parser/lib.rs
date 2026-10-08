@@ -17,6 +17,8 @@ mod parser;
 mod pragmas;
 mod token;
 
+pub use names::FileAtoms;
+
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 
@@ -124,6 +126,11 @@ impl Scratch {
     pub fn recycle(&mut self, file: FileBuilder) {
         self.recycled = file;
     }
+
+    /// The atoms of the file with the text `text`, which [`parse_with_own_atoms`] has parsed last.
+    pub fn atoms<'a>(&'a self, text: &'a [u8]) -> FileAtoms<'a> {
+        self.names.of_file(text)
+    }
 }
 
 /// What [`parse`] returns beside the file.
@@ -140,7 +147,17 @@ pub fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    parser::Parser::run(text, options, atoms, scratch)
+    parser::Parser::run(text, options, Some(atoms), scratch)
+}
+
+/// The HIR of `text`, with atoms that are the file's own: `Scratch::atoms` knows them until the next
+/// file is parsed.
+pub fn parse_with_own_atoms(
+    text: &[u8],
+    options: Options,
+    scratch: &mut Scratch,
+) -> Result<Parsed, Refused> {
+    parser::Parser::run(text, options, None, scratch)
 }
 
 /// The number of tokens of `text`, as far as that can be told without parsing. For benchmarks of

@@ -160,10 +160,6 @@ pub(crate) struct Parser<'a> {
     speculations: u32,
     /// `report` was called in one of them.
     has_reported: bool,
-    /// The token at which `fail` was called last.
-    failed_at: T,
-    /// The last `try_parse` was abandoned because of that call.
-    pub(crate) was_abandoned_at: Option<T>,
     stack_check: bun_core::StackCheck,
 }
 
@@ -171,13 +167,17 @@ impl<'a> Parser<'a> {
     pub(crate) fn run(
         text: &'a [u8],
         options: Options,
-        atoms: &'a dyn Intern,
+        atoms: Option<&'a dyn Intern>,
         scratch: &'a mut Scratch,
     ) -> Result<Parsed, Refused> {
         if text.len() >= 1 << 30 {
             return Err(Refused::new(Refusal::TooLarge));
         }
-        scratch.names.belong_to(atoms);
+        match atoms {
+            Some(atoms) => scratch.names.belong_to(atoms),
+            None => scratch.names.begin_own(),
+        }
+        let atoms = atoms.unwrap_or(&crate::names::NoInterner);
         let mut file = recycled_file(std::mem::take(&mut scratch.recycled));
         let mut stacks = std::mem::take(&mut scratch.stacks);
         stacks.clear();
@@ -207,8 +207,6 @@ impl<'a> Parser<'a> {
             last_nullable_type: (TypeNodeId::NONE, 0),
             speculations: 0,
             has_reported: false,
-            failed_at: T::Eof,
-            was_abandoned_at: None,
             stack_check: bun_core::StackCheck::init(),
         };
         this.source_file();
@@ -234,11 +232,18 @@ impl<'a> Parser<'a> {
             });
         }
         f.comment_directives = comment_directives;
-        f.mentioned.extend_from_slice(scratch.names.mentioned());
-        if !crate::pragmas::process_pragmas_into_fields(text, &leading_comments, atoms, &mut f) {
+        let names = &mut scratch.names;
+        let mut intern = |it: &[u8]| names.atom(crate::names::Text::elsewhere(text, it), atoms);
+        if !crate::pragmas::process_pragmas_into_fields(
+            text,
+            &leading_comments,
+            &mut intern,
+            &mut f,
+        ) {
             scratch.recycled = f;
             return Err(Refused::new(Refusal::Reported));
         }
+        f.mentioned.extend_from_slice(scratch.names.mentioned());
         Ok(Parsed {
             file: f,
             has_top_level_await,
@@ -353,9 +358,6 @@ impl<'a> Parser<'a> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn fail(&mut self) {
-        if !self.has_failed() {
-            self.failed_at = self.lx.token;
-        }
         self.lx.refuse(Refusal::Syntax);
     }
 
@@ -550,11 +552,8 @@ impl<'a> Parser<'a> {
                 }
                 return result;
             }
-            None => self.was_abandoned_at = None,
-            Some(Refusal::Syntax) => {
-                self.lx.refusal = None;
-                self.was_abandoned_at = Some(self.failed_at);
-            }
+            None => {}
+            Some(Refusal::Syntax) => self.lx.refusal = None,
             // The file is given up.
             Some(_) => return None,
         }
@@ -645,6 +644,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn atom(&mut self, text: &[u8]) -> Atom {
+        let text = crate::names::Text::elsewhere(self.lx.src, text);
         self.lx.names.atom(text, self.lx.atoms)
     }
 

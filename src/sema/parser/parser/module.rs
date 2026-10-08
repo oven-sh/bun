@@ -90,8 +90,8 @@ impl Parser<'_> {
             let text = self.lx.atom;
             let value = self.add_expr(ExprKind::String(text), self.lx.start, self.lx.end);
             self.next();
-            if self.lx.atoms.bytes(key) == b"resolution-mode" {
-                mode = match self.lx.atoms.bytes(text) {
+            if self.lx.text_of(key) == b"resolution-mode" {
+                mode = match self.lx.text_of(text) {
                     b"import" => ResolutionMode::Import,
                     b"require" => ResolutionMode::Require,
                     _ => ResolutionMode::None,
@@ -229,7 +229,7 @@ impl Parser<'_> {
         } else if let Some((name, _, token)) = identifier
             // For Babel `source` is a phase too. It is kept like `defer`: the text tells them apart.
             && (token == T::Defer
-                || self.options.dialect.babel && self.lx.atoms.bytes(name) == b"source")
+                || self.options.dialect.babel && self.lx.text_of(name) == b"source")
         {
             is_deferred = match self.token() {
                 T::From => self.peek() != T::String,

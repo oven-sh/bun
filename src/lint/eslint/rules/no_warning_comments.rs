@@ -5,6 +5,9 @@ use std::sync::LazyLock;
 pub struct NoWarningComments {
     /// Each term, and what matches a comment that has it in the configured location.
     terms: Vec<(Vec<u8>, Regex)>,
+    /// If the terms are looked for at the start of a comment: what can be before them beside whitespace, and what they start
+    /// with, both in lower case. `None`: it is not told from a byte whether a comment can match.
+    starts: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 const UNEXPECTED_COMMENT: Message = Message::new(
@@ -44,6 +47,24 @@ fn comment_to_display(comment: &[u8]) -> Vec<u8> {
     shown
 }
 
+/// Whether `byte` is whitespace or, but for its case, in `decoration`.
+fn is_before(decoration: &[u8], byte: u8) -> bool {
+    matches!(byte, b'\t'..=b'\r' | b' ') || decoration.contains(&byte.to_ascii_lowercase())
+}
+
+impl NoWarningComments {
+    /// Whether a term can match `value`, as far as its first byte after whitespace tells.
+    fn may_match(&self, value: &[u8]) -> bool {
+        let Some((before, first_bytes)) = &self.starts else {
+            return true;
+        };
+        match value.iter().find(|byte| !is_before(before, **byte)) {
+            Some(first) => !first.is_ascii() || first_bytes.contains(&first.to_ascii_lowercase()),
+            None => false,
+        }
+    }
+}
+
 impl Rule for NoWarningComments {
     const META: Meta = Meta::eslint("no-warning-comments", Kind::Suggestion);
     type State<'a> = ();
@@ -72,7 +93,16 @@ impl Rule for NoWarningComments {
             }
             Regex::from_bytes(&pattern, b"iu").ok()
         };
+        let first_bytes: Option<Vec<u8>> = (terms.iter())
+            .map(|term| term.as_bytes().first().filter(|it| it.is_ascii()).map(u8::to_ascii_lowercase))
+            .collect();
+        let before = object.strings("decoration").concat().into_bytes().to_ascii_lowercase();
+        // A term that starts with what can be before it starts anywhere in that.
+        let is_told_by_a_byte = |first_bytes: &Vec<u8>| {
+            is_at_start && before.is_ascii() && !first_bytes.iter().any(|it| is_before(&before, *it))
+        };
         NoWarningComments {
+            starts: first_bytes.filter(is_told_by_a_byte).map(|first_bytes| (before, first_bytes)),
             terms: terms
                 .iter()
                 .filter_map(|term| Some((term.as_bytes().to_vec(), convert_to_reg_exp(term.as_bytes())?)))
@@ -87,6 +117,9 @@ impl Rule for NoWarningComments {
                     continue;
                 }
                 let value = comment.comment_value();
+                if !rule.may_match(value) {
+                    continue;
+                }
                 let mut matches = rule.terms.iter().filter(|term| term.1.test(value)).peekable();
                 if matches.peek().is_none()
                     || ast_utils::is_directive_comment(&comment) && SELF_CONFIG.test(value)

@@ -119,6 +119,10 @@ fn is_reference_to_global_variable(e: Expr<'_>) -> bool {
 
 impl IdMatch {
     fn fails(&self, name: &[u8]) -> bool {
+        // The default.
+        if self.pattern == "^.+$" {
+            return name.is_empty() || text::has_line_break(name);
+        }
         self.regex.as_ref().is_some_and(|regex| !regex.test(name))
     }
 

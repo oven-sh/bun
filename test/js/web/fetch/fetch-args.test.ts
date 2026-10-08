@@ -402,6 +402,111 @@ describe("fetch() of a data:, blob: or file: URL", () => {
     });
   });
 
+  // A request that may not be made is refused before its scheme is asked, as for an http: URL.
+  describe("the request checks run for blob: and file:", () => {
+    function localUrls() {
+      const blob = URL.createObjectURL(new Blob(["blob-body"]));
+      return { urls: [blob, import.meta.url], [Symbol.dispose]: () => URL.revokeObjectURL(blob) };
+    }
+    const requestBody = "request body";
+
+    test("a GET or HEAD request with a body is refused, before its method", async () => {
+      using local = localUrls();
+      const refused = {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "fetch() request with GET/HEAD method cannot have body.",
+      };
+      for (const url of local.urls) {
+        expect([
+          await outcome(fetch(url, { body: requestBody })),
+          await outcome(fetch(url, { method: "HEAD", body: requestBody })),
+          await outcome(fetch(new Request(url, { method: "POST", body: requestBody }), { method: "GET" })),
+        ]).toEqual([refused, refused, refused]);
+      }
+    });
+
+    test("an aborted signal is refused, before the method", async () => {
+      using local = localUrls();
+      const reason = new Error("stop");
+      const rejection = (promise: Promise<Response>) =>
+        promise.then(
+          () => "no error",
+          error => error,
+        );
+      for (const url of local.urls) {
+        for (const init of [{}, { method: "POST", body: requestBody }]) {
+          expect(await rejection(fetch(url, { ...init, signal: AbortSignal.abort(reason) }))).toBe(reason);
+          expect(await rejection(fetch(new Request(url, { ...init, signal: AbortSignal.abort(reason) })))).toBe(reason);
+        }
+        expect(await outcome(fetch(url, { signal: AbortSignal.abort() }))).toEqual({
+          name: "AbortError",
+          code: 20,
+          message: "The operation was aborted.",
+        });
+      }
+    });
+
+    test("an aborted signal cancels a stream body with its reason", async () => {
+      using local = localUrls();
+      const reason = new Error("stop");
+      for (const url of local.urls) {
+        let cancelledWith: unknown = "not cancelled";
+        const body = new ReadableStream({
+          cancel(why) {
+            cancelledWith = why;
+          },
+        });
+        await fetch(url, { method: "POST", body, signal: AbortSignal.abort(reason) }).catch(() => {});
+        expect(cancelledWith).toBe(reason);
+      }
+    });
+  });
+
+  // fetch() kept an 8-bit string body that it did not send until the process exited.
+  test.concurrent.each([
+    [
+      "a blob: URL that refuses the method",
+      `const url = URL.createObjectURL(new Blob(["blob-body"]));
+       const send = body => fetch(url, { method: "POST", body });`,
+    ],
+    ["a GET request with a body", `const send = body => fetch("http://127.0.0.1:1/", { body });`],
+  ])("the request body is released for %s", async (_, defineSend) => {
+    const megabytesPerCall = 1;
+    const calls = 200;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          ${defineSend}
+          // Each call gets a string of its own.
+          const base = Buffer.alloc(${megabytesPerCall} * 1024 * 1024, "a").toString("latin1");
+          async function rssAfter(count) {
+            for (let i = 0; i < count; i++) {
+              await send(base + i).then(
+                response => response.arrayBuffer(),
+                () => {},
+              );
+            }
+            Bun.gc(true);
+            return process.memoryUsage.rss();
+          }
+          const before = await rssAfter(10);
+          console.log(JSON.stringify({ megabytes: Math.round(((await rssAfter(${calls})) - before) / 1024 / 1024) }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // What the process grew by over the calls. The bodies that were not sent add up to 200 MB.
+    expect(JSON.parse(stdout).megabytes).toBeLessThan((megabytesPerCall * calls) / 3);
+    expect(exitCode).toBe(0);
+  });
+
   test("node-fetch and undici.request get the same answers", async () => {
     const url = URL.createObjectURL(new Blob(["blob-body"]));
     try {

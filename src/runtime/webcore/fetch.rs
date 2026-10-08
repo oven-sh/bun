@@ -184,6 +184,7 @@ impl LocalScheme {
 }
 
 /// <https://fetch.spec.whatwg.org/#main-fetch>: the response to a HEAD request has no body.
+#[inline]
 pub(crate) fn request_method_has_null_body(method: Method) -> bool {
     method == Method::HEAD
 }
@@ -622,28 +623,38 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // The init's method, then the Request's, then the one of a `{ url, method }` input.
-    let extract_method = move || -> JsResult<Method> {
-        if let Some(options) = options_object {
-            if let Some(method_) = options.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                return Ok(method_jsc::from_js(global_this, method_)?.unwrap_or(Method::GET));
+    // A macro, not a closure: the read stays inline on the path of a remote URL.
+    macro_rules! extract_method {
+        () => {
+            'extract_method: {
+                if let Some(options) = options_object {
+                    if let Some(method_) =
+                        options.fast_get_truthy(global_this, jsc::BuiltinName::method)?
+                    {
+                        break 'extract_method method_jsc::from_js(global_this, method_)?;
+                    }
+                }
+
+                if let Some(req) = request_mut!() {
+                    break 'extract_method Some(req.method);
+                }
+
+                if let Some(req) = request_init_object {
+                    if let Some(method_) =
+                        req.fast_get_truthy(global_this, jsc::BuiltinName::method)?
+                    {
+                        break 'extract_method method_jsc::from_js(global_this, method_)?;
+                    }
+                }
+
+                break 'extract_method None;
             }
-        }
-
-        if let Some(req) = request_mut!() {
-            return Ok(req.method);
-        }
-
-        if let Some(req) = request_init_object {
-            if let Some(method_) = req.fast_get_truthy(global_this, jsc::BuiltinName::method)? {
-                return Ok(method_jsc::from_js(global_this, method_)?.unwrap_or(Method::GET));
-            }
-        }
-
-        Ok(Method::GET)
-    };
+            .unwrap_or(Method::GET)
+        };
+    }
 
     if url_str.starts_with_ascii(b"data:") {
-        return data_url_response(url_str, global_this, extract_method()?);
+        return data_url_response(url_str, global_this, extract_method!());
     }
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
@@ -670,7 +681,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // **Start with the harmless ones.**
 
     // "method"
-    let mut method = extract_method()?;
+    let mut method = extract_method!();
 
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
@@ -1309,7 +1320,40 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    // file: and blob: are answered here, without a request. The request headers are not read.
+    if !url.protocol.is_empty() {
+        // file: and blob: are answered below. Tested last, so an http: URL never pays for them.
+        if !(url.is_http() || url.is_https() || url.is_s3() || url.is_file() || url.is_blob()) {
+            let err = global_this.to_type_error(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("protocol must be http:, https: or s3:"),
+            );
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        }
+    }
+
+    // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
+    // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
+    // not enforce forbidden methods. has_request_body() encodes exactly that.
+    if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("fetch() request with GET/HEAD method cannot have body."),
+        );
+        body.detach();
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+    }
+
+    // Fetch spec step 11: reject synchronously for a pre-aborted signal. Runs
+    // after body/header extraction so Request-constructor errors (GET+body,
+    // already-used body) win and `request.bodyUsed` is set, matching Node.
+    if let Some(sig) = &signal {
+        if sig.aborted() {
+            let reason = sig.js_reason(global_this);
+            return reject_before_send(global_this, &mut body, reason);
+        }
+    }
+
+    // file: and blob: are answered here, with no request. The request headers are not used.
     if url_type != URLType::Remote {
         // No local scheme sends the request body, and `HTTPRequestBody` has no `Drop`.
         body.detach();
@@ -1505,37 +1549,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
 
         return local_scheme_response(global_this, scheme, method, blob_to_use, url_string);
-    }
-
-    if !url.protocol.is_empty() {
-        if !(url.is_http() || url.is_https() || url.is_s3()) {
-            let err = global_this.to_type_error(
-                jsc::ErrorCode::INVALID_ARG_VALUE,
-                format_args!("protocol must be http:, https: or s3:"),
-            );
-            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-        }
-    }
-
-    // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
-    // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
-    // not enforce forbidden methods. has_request_body() encodes exactly that.
-    if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
-        let err = global_this.to_type_error(
-            jsc::ErrorCode::INVALID_ARG_VALUE,
-            format_args!("fetch() request with GET/HEAD method cannot have body."),
-        );
-        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-    }
-
-    // Fetch spec step 11: reject synchronously for a pre-aborted signal. Runs
-    // after body/header extraction so Request-constructor errors (GET+body,
-    // already-used body) win and `request.bodyUsed` is set, matching Node.
-    if let Some(sig) = &signal {
-        if sig.aborted() {
-            let reason = sig.js_reason(global_this);
-            return reject_before_send(global_this, &mut body, reason);
-        }
     }
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {

@@ -513,6 +513,63 @@ describe("bundler", () => {
     if (hashed) api.writeFile(`/out/${entry}.js`, `import "./${hashed}";`);
   };
 
+  // A file that calls `import()` on itself is an `import()` target like any other: the call loads its chunk.
+  itBundled("splitting/DynamicImportOfItself", {
+    files: {
+      "/a.js": `import "./s.js"; console.log("a");`,
+      "/b.js": `import "./s.js"; console.log("b");`,
+      "/s.js": /* js */ `
+        export const s = 1;
+        export default 2;
+        console.log("s");
+        import("./s.js").then(ns => console.log(Object.keys(ns).join(), ns.s));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "s\na\ndefault,s 1" },
+      { file: "/out/b.js", stdout: "s\nb\ndefault,s 1" },
+    ],
+  });
+  itBundled("splitting/DynamicImportOfItselfIsTheNamespaceOtherFilesGet", {
+    files: {
+      "/main.js": /* js */ `
+        import { self } from "./s.js";
+        Promise.all([self, import("./s.js")]).then(([a, b]) => console.log(a === b, Object.keys(a).join()));
+      `,
+      "/s.js": `export const self = import("./s.js");`,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "true self" },
+  });
+  // The chunk names itself, with and without a hash of its content in that name, and runs once.
+  for (const entryNaming of ["[name].[ext]", "[name].entry-[hash].[ext]"]) {
+    itBundled(`splitting/DynamicImportOfItselfInEntryPoint/${entryNaming}`, {
+      files: {
+        "/main.js": /* js */ `
+          export const s = 1;
+          console.log("main");
+          import("./main.js").then(ns => console.log(ns.s));
+        `,
+      },
+      entryPoints: ["/main.js"],
+      entryNaming,
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        launchHashedEntry(api, "main");
+      },
+      run: { file: "/out/main.js", stdout: "main\n1" },
+    });
+  }
+
   // An entry point takes a fold only with [hash] in its name, so a fold test runs with both kinds of name.
   function itFolds(
     id: string,

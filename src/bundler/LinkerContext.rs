@@ -367,14 +367,19 @@ impl<'a> LinkerContext<'a> {
         source_index: u32,
     ) -> bool {
         use crate::linker_graph::FileColumns as _;
-        if !self.graph.code_splitting || record.source_index.get() == source_index {
+        if !self.graph.code_splitting {
             return false;
         }
         let crosses_chunk = match record.kind {
+            // Also of the file itself: it is an entry point like any other `import()` target.
             ImportKind::Dynamic => true,
-            ImportKind::Require => record
-                .flags
-                .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE),
+            // Not of the file itself: that call binds to the file's own wrapper.
+            ImportKind::Require => {
+                record.source_index.get() != source_index
+                    && record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+            }
             _ => false,
         };
         crosses_chunk

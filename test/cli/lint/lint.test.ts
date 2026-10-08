@@ -1079,6 +1079,13 @@ describe.concurrent("bun lint", () => {
       `);
     });
 
+    test("rules about a name do not listen in files that do not mention it", async () => {
+      const files = { "eslint.config.js": config({ "no-eval": "error" }), "a.js": "a();\n", "b.ts": "b<T>();\n", "c.tsx": "<c />;\n" };
+      const { stderr, exitCode } = await lint(files, ["--timing"]);
+      expect(stderr).toContain("without a filter of the names they mention: 0 files");
+      expect(exitCode).toBe(0);
+    });
+
     test("--help", async () => {
       const { stdout, exitCode } = await lint({}, ["--help"]);
       expect(stdout).toContain("bun lint");

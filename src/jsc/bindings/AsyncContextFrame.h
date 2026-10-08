@@ -17,6 +17,12 @@ public:
     // When given a JSFunction that you want to call later, wrap it with this function
     static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
+    // For a handler script sets on something long-lived whose events arrive from the event loop (a
+    // socket's ondata, a client's onconnect): it continues the Bun.ModuleGraph whose script set it,
+    // and nothing else of that moment. Outside any graph the callback is returned as it is, so it
+    // runs in nobody's async context, as node's does.
+    static JSC::JSValue withGraphContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
+
     // The following is JSC::call but
     // - it unwraps AsyncContextFrame
     // - does not take a CallData, because JSC::getCallData(AsyncContextFrame) -> not callable

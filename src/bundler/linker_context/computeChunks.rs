@@ -277,7 +277,7 @@ pub(crate) fn compute_chunks(
             }
         }
     }
-    if code_splitting {
+    if code_splitting && this.options.fold_chunks {
         let min_chunk_size = this.options.min_chunk_size;
         merge_small_chunks(this, temp, min_chunk_size)?;
     }

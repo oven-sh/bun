@@ -79,9 +79,14 @@ To keep those rules, run ESLint for them only. Turn off what `bun lint` covers i
 
 ## Replace oxlint
 
-`bun lint` reads `.oxlintrc.json`, including `categories`, `overrides`, `ignorePatterns`, `extends`, and nested configuration files.
+`bun lint` reads `.oxlintrc.json`, including `plugins`, `categories`, `env`, `globals`, `overrides`, `ignorePatterns`, `extends`, `options`, and nested configuration files. It takes the flags of `oxlint`.
 
-Where an `.oxlintrc.json` is the configuration, `bun lint` chooses files like oxlint: it skips what `.gitignore` ignores and follows symbolic links.
+Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
+
+- It skips what `.gitignore` ignores, and follows symbolic links.
+- The default format is `pretty`, and `-f json` prints oxlint's JSON, so scripts that read `diagnostics` keep working.
+- An argument that matches nothing is not an error, as long as there is a file to lint. If there is none, the exit code is `1`.
+- `--report-unused-disable-directives` warns.
 
 | Instead of                    | Run                             |
 | ----------------------------- | ------------------------------- |
@@ -89,8 +94,12 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` chooses files like ox
 | `oxlint -D no-console src`    | `bun lint -D no-console src`    |
 | `oxlint --type-aware`         | `bun lint --type-aware`         |
 | `oxlint --deny-warnings`      | `bun lint --deny-warnings`      |
+| `oxlint --import-plugin`      | `bun lint --import-plugin`      |
+| `oxlint --fix-suggestions`    | `bun lint --fix-suggestions`    |
+| `oxlint -f json`              | `bun lint -f json`              |
+| `oxlint --rules`              | `bun lint --rules`              |
 
-The rules of the `eslint` and `typescript` plugins run. Rules of other plugins, and `jsPlugins`, are skipped with a warning. Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does.
+Run `bun lint --rules` to list the rules that exist. A rule that does not exist is skipped with a warning. Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does, and the messages are ESLint's.
 
 ## Which configuration file
 
@@ -252,6 +261,10 @@ Choose a format with `-f`.
 | `unix`               | One line per problem: `file:line:column: message [Error/rule]`      |
 | `github`             | Workflow commands for GitHub Actions                                |
 | `agent`              | A tagged block per problem, with the source lines                   |
+| `checkstyle`         | Checkstyle XML                                                      |
+| `junit`              | JUnit XML                                                           |
+| `gitlab`             | GitLab's Code Quality report                                        |
+| `sarif`              | SARIF 2.1.0                                                         |
 
 `stylish` and `json` are byte for byte what ESLint prints, so problem matchers, editors, and scripts written for ESLint keep working.
 

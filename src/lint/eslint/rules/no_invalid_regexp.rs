@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex;
+use smallvec::SmallVec;
 
 /// Disallow invalid regular expression strings in `RegExp` constructors.
 pub struct NoInvalidRegexp {
@@ -18,13 +19,16 @@ impl NoInvalidRegexp {
         // What is left of the flags without the first occurrence of each flag that exists, and
         // those of them that exist.
         let (mut flags_to_check, mut duplicate_flags) = (Vec::new(), Vec::new());
+        // The flags that exist so far, each once.
+        let mut seen: SmallVec<[&[u8]; 8]> = SmallVec::new();
         let ends = text::code_points(flags).map(|(offset, _)| offset).skip(1).chain([flags.len()]);
         let mut start = 0;
         for end in ends.filter(|_| !flags.is_empty()) {
-            let (before, flag) = (&flags[..start], &flags[start..end]);
+            let flag = &flags[start..end];
             start = end;
             let exists = strings::contains(VALID_FLAGS, flag) || strings::contains(&self.allowed_flags, flag);
-            if exists && !strings::contains(before, flag) {
+            if exists && !seen.contains(&flag) {
+                seen.push(flag);
                 continue;
             }
             flags_to_check.extend_from_slice(flag);

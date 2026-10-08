@@ -295,9 +295,9 @@ impl<'a> Printer<'a, '_> {
             _ => return None,
         };
         match comment {
-            b"prettier-ignore" => Some(Ignore::Next),
-            b"prettier-ignore-start" => Some(Ignore::Start),
-            b"prettier-ignore-end" => Some(Ignore::End),
+            b"prettier-ignore" | b"oxfmt-ignore" => Some(Ignore::Next),
+            b"prettier-ignore-start" | b"oxfmt-ignore-start" => Some(Ignore::Start),
+            b"prettier-ignore-end" | b"oxfmt-ignore-end" => Some(Ignore::End),
             _ => None,
         }
     }

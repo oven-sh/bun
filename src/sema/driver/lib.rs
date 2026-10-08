@@ -125,24 +125,107 @@ pub fn for_each_parallel_in_runs(
     if count == 0 {
         return;
     }
-    let next = AtomicUsize::new(0);
-    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
-    bun_threading::WorkPool::get().each(
-        (),
-        |(), (), _| {
-            let _lent = caches.lend();
-            loop {
-                let from = next.fetch_add(run, Ordering::Relaxed);
-                if from >= count {
-                    break;
-                }
-                for i in from..(from + run).min(count) {
-                    work(i);
-                }
+    let region = Region {
+        caches,
+        threads: threads.clamp(1, count.div_ceil(run)),
+        next: AtomicUsize::new(0),
+        count,
+        run,
+        work,
+    };
+    // A thread of the pool does not get to what is queued for itself while it waits here.
+    if SAME_THREADS.lock().is_some() && bun_threading::thread_pool::Thread::current().is_null() {
+        return region.start_on_the_same_threads();
+    }
+    let mut runners = vec![(); region.threads];
+    bun_threading::WorkPool::get().each((), |(), (), _| region.work_off(), &mut runners);
+}
+
+/// The threads of the pool that parallel regions keep to, in the order in which they came.
+static SAME_THREADS: Guarded<Option<Vec<ThreadId>>> = Guarded::new(None);
+
+/// From now on a parallel region runs on the threads that the one before it ran on. For work that
+/// leaves something costly on its thread: `bun lint` has a VM for rules in JavaScript there.
+pub fn keep_to_the_same_threads() {
+    SAME_THREADS.lock().get_or_insert_default();
+}
+
+/// What the threads of [`for_each_parallel_in_runs`] share.
+struct Region<'a> {
+    caches: &'a ThreadCaches,
+    threads: usize,
+    next: AtomicUsize,
+    count: usize,
+    run: usize,
+    work: &'a (dyn Fn(usize) + Sync),
+}
+
+impl Region<'_> {
+    fn work_off(&self) {
+        let _lent = self.caches.lend();
+        loop {
+            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
+            if from >= self.count {
+                break;
             }
-        },
-        &mut runners,
-    );
+            for i in from..(from + self.run).min(self.count) {
+                (self.work)(i);
+            }
+        }
+    }
+
+    /// Whether the calling thread is among the first `self.threads` of [`SAME_THREADS`], which it
+    /// joins if there is room.
+    fn admits_this_thread(&self) -> bool {
+        let id = std::thread::current().id();
+        let mut same = SAME_THREADS.lock();
+        let Some(same) = same.as_mut() else {
+            return true;
+        };
+        let at = same.iter().position(|it| *it == id).unwrap_or_else(|| {
+            same.push(id);
+            same.len() - 1
+        });
+        at < self.threads
+    }
+
+    /// Every thread of the pool is asked, and those that are admitted work.
+    fn start_on_the_same_threads(&self) {
+        use bun_threading::thread_pool::{CountedTask, Task};
+        #[repr(C)]
+        struct Runner {
+            counted: CountedTask,
+            region: *const (),
+        }
+        unsafe fn start(task: *mut Task) {
+            // SAFETY: allocated below, and queued once.
+            let runner = unsafe { bun_core::heap::take(task.cast::<Runner>()) };
+            // SAFETY: `start_on_the_same_threads` waits for this task before its `&self` ends.
+            let region = unsafe { &*runner.region.cast::<Region<'_>>() };
+            if region.admits_this_thread() {
+                region.work_off();
+            }
+        }
+        let pool = bun_threading::WorkPool::get();
+        let wanted = self.threads.min(pool.max_threads());
+        pool.warm(u16::try_from(wanted).unwrap_or(u16::MAX));
+        let started = Instant::now();
+        while pool.registered_threads() < wanted && started.elapsed() < Duration::from_millis(100) {
+            std::thread::yield_now();
+        }
+        let group = bun_threading::WaitGroup::init();
+        pool.push_idle_task_to_each_thread(|| {
+            group.add_one();
+            bun_core::heap::into_raw(Box::new(Runner {
+                counted: CountedTask::new(start, &group),
+                region: std::ptr::from_ref(self).cast(),
+            }))
+            .cast::<Task>()
+        });
+        group.wait();
+        // If there was no thread to ask.
+        self.work_off();
+    }
 }
 
 /// The work of one thread between two barriers, with one `Checker` and one buffer: `check_file` for

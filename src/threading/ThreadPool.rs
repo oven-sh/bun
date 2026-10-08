@@ -304,6 +304,18 @@ impl ThreadPool {
         }
         self.wake_for_idle_events();
     }
+
+    /// How many threads [`push_idle_task_to_each_thread`](Self::push_idle_task_to_each_thread)
+    /// reaches. One that [`warm`](Self::warm) has spawned counts once it runs.
+    pub fn registered_threads(&self) -> usize {
+        let mut count = 0;
+        let mut next = self.threads.load(Ordering::Acquire);
+        while let Some(thread) = NonNull::new(next) {
+            count += 1;
+            next = bun_ptr::BackRef::from(thread).next;
+        }
+        count
+    }
 }
 
 /// Shut down the thread pool and stop the worker threads.

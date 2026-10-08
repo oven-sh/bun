@@ -71,7 +71,7 @@ pub fn first_super_statement<'a>(constructor: Func<'a>) -> Option<(impl Iterator
 
 /// Whether it can be told from the statements of the body alone that `super()` is called exactly
 /// once on every way through `constructor`: it is a statement of its own there, no `return`
-/// precedes it, and there is no other.
+/// precedes it, and there is no other. One in a function or in the constructor of a class in it is not its own.
 /// Not if there is a loop: see [`ConstructorSuper::on_segment_start`].
 fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSuper>) -> bool {
     let Some((_, call)) = first_super_statement(constructor) else {
@@ -97,7 +97,8 @@ fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSup
         callees
     });
     let inside = callees.get(callees.partition_point(|e| e.span().start < whole.start)..).unwrap_or_default();
-    !inside.iter().take_while(|e| e.span().start < whole.end).any(|&e| e != callee)
+    let is_own = |e: Expr<'a>| Node::Expr(e).enclosing_function() == Some(constructor);
+    !inside.iter().take_while(|e| e.span().start < whole.end).any(|&e| e != callee && is_own(e))
 }
 
 fn is_update_of_for(node: Node<'_>) -> bool {

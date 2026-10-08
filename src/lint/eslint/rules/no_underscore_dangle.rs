@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
-use smallvec::SmallVec;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
+use rustc_hash::FxHashSet;
 
 /// Disallow dangling underscores in identifiers.
 pub struct NoUnderscoreDangle {
@@ -39,19 +40,19 @@ fn object_and_property_name(e: Expr<'_>) -> Option<(Expr<'_>, &[u8])> {
 
 /// Whether ESTree has a `MemberExpression` for the member access `e`, and not a
 /// `JSXMemberExpression` or a `TSQualifiedName`.
-fn is_member_expression(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { obj, .. } if obj == at => at = parent,
-                ExprKind::Jsx(jsx) => return jsx.tag() != Some(at) && jsx.close_tag() != Some(at),
-                _ => return true,
-            },
-            Node::Type(_) => return false,
-            _ => return true,
-        }
-    }
+fn is_member_expression<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let found = known.find(Node::Expr(e), |at, parent| match parent {
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Dot { obj, .. } if Node::Expr(obj) == at => None,
+            ExprKind::Jsx(jsx) => {
+                Some(jsx.tag().map(Node::Expr) != Some(at) && jsx.close_tag().map(Node::Expr) != Some(at))
+            }
+            _ => Some(true),
+        },
+        Node::Type(_) => Some(false),
+        _ => Some(true),
+    });
+    found != Some(false)
 }
 
 fn is_this_constructor_reference(object: Expr<'_>) -> bool {
@@ -105,15 +106,14 @@ impl NoUnderscoreDangle {
             return;
         }
         // A name that is bound twice is one variable, which goes by its first binding.
-        let mut seen: SmallVec<[Name<'a>; 4]> = SmallVec::new();
+        let mut seen: FxHashSet<Name<'a>> = FxHashSet::default();
         pat.for_each_binding(&mut |binding| {
             let Some(name) = binding.as_ident() else {
                 return;
             };
-            if !has_dangling_underscore(name.bytes()) || seen.contains(&name) {
+            if !has_dangling_underscore(name.bytes()) || !seen.insert(name) {
                 return;
             }
-            seen.push(name);
             let is_allowed_here = match binding.parent() {
                 Node::PatElem(_) => self.allow_in_array_destructuring,
                 Node::PatProp(_) => self.allow_in_object_destructuring,
@@ -135,7 +135,7 @@ impl NoUnderscoreDangle {
             || self.allow_after_this_constructor && is_this_constructor_reference(object)
             || identifier == b"__proto__"
             || self.is_allowed(identifier)
-            || !is_member_expression(e)
+            || !is_member_expression(e, &mut cx.state)
         {
             return;
         }
@@ -153,7 +153,7 @@ impl NoUnderscoreDangle {
             return;
         }
         let is_heritage = match ty.parent() {
-            Node::Class(class) => class.implements().iter().any(|it| it == ty),
+            Node::Class(class) => class.implements().around(ty.span().start) == Some(ty),
             Node::Stmt(statement) => statement.tag() == StmtTag::Interface,
             _ => false,
         };
@@ -209,7 +209,8 @@ impl NoUnderscoreDangle {
 
 impl Rule for NoUnderscoreDangle {
     const META: Meta = Meta::eslint("no-underscore-dangle", Kind::Suggestion);
-    type State<'a> = ();
+    /// `is_member_expression`
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -226,7 +227,7 @@ impl Rule for NoUnderscoreDangle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         on.stmts([StmtTag::Fn], Self::check_function_declaration);
         on.var_decls(Self::check_variable);
         on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
@@ -242,5 +243,6 @@ impl Rule for NoUnderscoreDangle {
         if self.enforce_in_method_names {
             on.props(Self::check_property);
         }
+        AncestorMemo::default()
     }
 }

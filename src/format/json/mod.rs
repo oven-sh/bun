@@ -12,7 +12,10 @@ mod comments;
 mod document;
 mod parser;
 mod range;
+mod sort_package_json;
 mod writer;
+
+pub use sort_package_json::{SortPackageJson, sort_package_json};
 
 use crate::options::{Expand, IndentStyle, QuoteProperties, QuoteStyle};
 use crate::{FormatError, FormatOptions};

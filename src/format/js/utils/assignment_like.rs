@@ -348,15 +348,14 @@ impl<'a> AssignmentLike<'a> {
     fn write_operator(&self, f: &mut Formatter<'a>) {
         match *self {
             Self::AssignmentExpression(assignment) => {
-                let Some(op) = assignment.assign_op() else {
-                    return;
-                };
-                write!(f, [space(), assign_op_text(op)]);
+                match assignment.assign_op() {
+                    Some(None) => write!(f, " ="),
+                    Some(op) => write!(f, [space(), assign_op_text(op)]),
+                    None => {}
+                }
             }
             Self::ObjectProperty(_) | Self::BindingProperty(_) => write!(f, ":"),
-            Self::VariableDeclarator(_) | Self::PropertyDefinition(_) | Self::AccessorProperty(_) => {
-                write!(f, [space(), "="]);
-            }
+            Self::VariableDeclarator(_) | Self::PropertyDefinition(_) | Self::AccessorProperty(_) => write!(f, " ="),
         }
     }
 

@@ -978,7 +978,21 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let write = |f: &mut Formatter<'a>| write!(f, [mark, mark.map(|_| space()), ty]);
     if f.is_quiet() {
-        return write(f);
+        // These start with text, so that the space is written in any case.
+        let starts_with_text = matches!(
+            ty.tag(),
+            TypeTag::Keyword
+                | TypeTag::BoolLit
+                | TypeTag::Ref
+                | TypeTag::StringLit
+                | TypeTag::NumberLit
+                | TypeTag::Object
+                | TypeTag::Tuple
+        );
+        return match (mark, starts_with_text) {
+            (Some(":"), true) => write!(f, [": ", ty]),
+            _ => write(f),
+        };
     }
     let node = AstNodes::TSTypeAnnotation(ty);
     if f.comments().has_comment_before(node.span().start) {

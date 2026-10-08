@@ -483,7 +483,7 @@ pub(crate) fn write_if_statement<'a>(
         test,
         head: Head::Before(consequent),
     };
-    write!(f, group(&format_args!("if", space(), "(", condition, ")", FormatStatementBody::new(consequent))));
+    write!(f, group(&format_args!("if (", condition, ")", FormatStatementBody::new(consequent))));
     let Some(alternate) = alternate else {
         return;
     };

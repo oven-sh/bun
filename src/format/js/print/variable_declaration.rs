@@ -3,13 +3,14 @@ use crate::js::utils::assignment_like::AssignmentLike;
 use crate::prelude::*;
 use crate::{format_args, write};
 
+/// The keyword and the space after it.
 fn var_kind_text(kind: VarKind) -> &'static str {
     match kind {
-        VarKind::Var => "var",
-        VarKind::Let => "let",
-        VarKind::Const => "const",
-        VarKind::Using => "using",
-        VarKind::AwaitUsing => "await using",
+        VarKind::Var => "var ",
+        VarKind::Let => "let ",
+        VarKind::Const => "const ",
+        VarKind::Using => "using ",
+        VarKind::AwaitUsing => "await using ",
     }
 }
 
@@ -37,7 +38,6 @@ pub(crate) fn write_variable_declaration<'a>(
     let kind = declarations.first().map_or(VarKind::Var, VarDecl::var_kind);
     let content = format_args!(
         var_kind_text(kind),
-        space(),
         FormatVariableDeclarators {
             declarations,
             is_parent_for_loop,

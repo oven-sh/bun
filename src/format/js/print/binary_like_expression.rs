@@ -336,10 +336,10 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
 /// `is_inlined`: `right` stays on the line of the operator.
 fn write_operator<'a>(operator: BinOp, left: Expr<'a>, right: Expr<'a>, is_inlined: bool, f: &mut Formatter<'a>) {
     if is_inlined {
-        return write!(f, [space(), operator.as_str(), space()]);
+        return write!(f, [operator_after_space(operator), space()]);
     }
     if f.options().experimental_operator_position.is_end() {
-        return write!(f, [space(), operator.as_str(), soft_line_break_or_space()]);
+        return write!(f, [operator_after_space(operator), soft_line_break_or_space()]);
     }
     // A comment that ends its line stays before the operator.
     let start = right.span().start;
@@ -361,6 +361,38 @@ fn write_operator<'a>(operator: BinOp, left: Expr<'a>, right: Expr<'a>, is_inlin
         write!(f, soft_line_break_or_space());
     }
     write!(f, [operator.as_str(), space()]);
+}
+
+/// A space and `operator`.
+fn operator_after_space(operator: BinOp) -> &'static str {
+    match operator {
+        BinOp::Add => " +",
+        BinOp::Sub => " -",
+        BinOp::Mul => " *",
+        BinOp::Div => " /",
+        BinOp::Rem => " %",
+        BinOp::Pow => " **",
+        BinOp::Shl => " <<",
+        BinOp::Shr => " >>",
+        BinOp::UShr => " >>>",
+        BinOp::BitAnd => " &",
+        BinOp::BitOr => " |",
+        BinOp::BitXor => " ^",
+        BinOp::Lt => " <",
+        BinOp::Le => " <=",
+        BinOp::Gt => " >",
+        BinOp::Ge => " >=",
+        BinOp::EqEq => " ==",
+        BinOp::NotEq => " !=",
+        BinOp::EqEqEq => " ===",
+        BinOp::NotEqEq => " !==",
+        BinOp::In => " in",
+        BinOp::Instanceof => " instanceof",
+        BinOp::And => " &&",
+        BinOp::Or => " ||",
+        BinOp::Nullish => " ??",
+        BinOp::Comma => " ,",
+    }
 }
 
 /// Whether `right`, the right side of a logical expression, stays on the line of the operator.

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// Enforce the use of `for-of` loop over the standard `for` loop where possible.
 pub struct PreferForOf;
@@ -51,9 +52,27 @@ fn is_increment<'a>(update: Expr<'a>, name: Name<'a>) -> bool {
     }
 }
 
-fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, array: Expr<'a>) -> bool {
+/// The references to the variables that have many, in the order of the source.
+type References<'a> = FxHashMap<Symbol<'a>, Vec<Reference<'a>>>;
+
+fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, array: Expr<'a>, references: &mut References<'a>) -> bool {
     let (body, array_text) = (body.span(), array.text());
-    index_var.references().all(|reference| {
+    // A `var` can be the index of many loops.
+    let is_many = index_var.references().len() > 16;
+    let in_body: &[Reference<'a>] = match is_many {
+        true => {
+            let all = references.entry(index_var).or_insert_with(|| {
+                let mut all: Vec<Reference<'a>> = index_var.references().collect();
+                all.sort_unstable_by_key(|it| it.span().start);
+                all
+            });
+            let first = all.partition_point(|it| it.span().start < body.start);
+            &all[first..first + all[first..].partition_point(|it| it.span().start < body.end)]
+        }
+        false => &[],
+    };
+    let few = index_var.references().take(if is_many { 0 } else { usize::MAX });
+    in_body.iter().copied().chain(few).all(|reference| {
         if !body.contains(reference.span()) {
             return true;
         }
@@ -103,7 +122,7 @@ fn check<'a>(_: &PreferForOf, stmt: Stmt<'a>, cx: &mut Cx<'a, PreferForOf>) {
     let Some(index_var) = declarator.pat().symbol() else {
         return;
     };
-    if is_index_only_used_with_array(body, index_var, array) {
+    if is_index_only_used_with_array(body, index_var, array, &mut cx.state) {
         cx.report(stmt, PREFER_FOR_OF);
     }
 }
@@ -111,13 +130,14 @@ fn check<'a>(_: &PreferForOf, stmt: Stmt<'a>, cx: &mut Cx<'a, PreferForOf>) {
 impl Rule for PreferForOf {
     const META: Meta =
         Meta::typescript("prefer-for-of", Kind::Suggestion).presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    type State<'a> = References<'a>;
 
     fn new(_: &Options) -> Self {
         PreferForOf
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> References<'a> {
         on.stmts([StmtTag::For], check);
+        References::default()
     }
 }

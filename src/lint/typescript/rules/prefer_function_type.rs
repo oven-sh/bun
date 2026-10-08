@@ -118,14 +118,16 @@ fn fix<'a>(
     };
     let comments = file.comments_before(member).chain(file.comments_after(member));
     let Some(export) = export else {
+        // Each goes before those before it.
         let line = file.line_of(member.span().start);
-        for comment in comments {
-            let mut with_comment = comment_text(comment);
-            with_comment.push(if file.line_of(comment.start()) == line { b' ' } else { b'\n' });
-            with_comment.extend_from_slice(&suggestion);
-            suggestion = with_comment;
+        let comments: Vec<Token<'a>> = comments.collect();
+        let mut with_comments = Vec::new();
+        for comment in comments.into_iter().rev() {
+            with_comments.extend_from_slice(&comment_text(comment));
+            with_comments.push(if file.line_of(comment.start()) == line { b' ' } else { b'\n' });
         }
-        return Some(vec![fixer.replace(replaced, suggestion)]);
+        with_comments.extend_from_slice(&suggestion);
+        return Some(vec![fixer.replace(replaced, with_comments)]);
     };
     // They go before the `export`, not between it and the declaration.
     let mut comments_text = Vec::new();

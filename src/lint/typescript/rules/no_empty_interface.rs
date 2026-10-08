@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::is_definition_file;
+use rustc_hash::FxHashMap;
 
 /// Disallow the declaration of empty interfaces.
 pub struct NoEmptyInterface {
@@ -44,9 +45,11 @@ impl NoEmptyInterface {
         }
         let scope = Node::Stmt(statement).scope();
         let is_merged_with_class_declaration = scope.get_name(interface.name().name()).is_some_and(|symbol| {
-            symbol
-                .declarations()
-                .any(|it| matches!(it, Declaration::Class(class) if matches!(class.owner(), Node::Stmt(_))))
+            *cx.state.entry(symbol).or_insert_with(|| {
+                symbol
+                    .declarations()
+                    .any(|it| matches!(it, Declaration::Class(class) if matches!(class.owner(), Node::Stmt(_))))
+            })
         });
         let report = cx.report(interface.name(), NO_EMPTY_WITH_SUPER);
         if is_merged_with_class_declaration {
@@ -68,7 +71,8 @@ impl Rule for NoEmptyInterface {
         .fixable(Fixable::Code)
         .has_suggestions()
         .deprecated();
-    type State<'a> = ();
+    /// Whether one of the declarations of a name is a class declaration.
+    type State<'a> = FxHashMap<Symbol<'a>, bool>;
 
     fn new(options: &Options) -> Self {
         NoEmptyInterface {
@@ -76,7 +80,8 @@ impl Rule for NoEmptyInterface {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.stmts([StmtTag::Interface], Self::check);
+        FxHashMap::default()
     }
 }

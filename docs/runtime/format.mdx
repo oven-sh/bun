@@ -1,9 +1,9 @@
 ---
 title: "Formatting"
-description: "Format JavaScript, TypeScript, JSON, CSS, and GraphQL with bun format, a fast formatter that is compatible with Prettier"
+description: "Format JavaScript, TypeScript, JSON, CSS, YAML, and GraphQL with bun format, a fast formatter that is compatible with Prettier"
 ---
 
-`bun format` formats JavaScript, TypeScript, JSON, CSS, and GraphQL the way [Prettier](https://prettier.io) does. It reads your `.prettierrc`, and uses every CPU core.
+`bun format` formats JavaScript, TypeScript, JSON, CSS, YAML, and GraphQL the way [Prettier](https://prettier.io) does. It reads your `.prettierrc`, and uses every CPU core.
 
 ```bash terminal icon="terminal"
 bun format
@@ -41,12 +41,12 @@ Checking formatting...
 | `prettier -l .`                  | `bun format -l`                 |
 | `prettier --stdin-filepath a.ts` | `bun format --stdin-filepath a.ts` |
 
-`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.graphql`, and `.gql` files. It leaves Markdown, YAML, HTML, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
+`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.yaml`, `.yml`, `.graphql`, and `.gql` files. It leaves Markdown, HTML, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
 
 ```json package.json icon="file-json"
 {
   "scripts": {
-    "format": "bun format && prettier --write \"**/*.{md,yml}\""
+    "format": "bun format && prettier --write \"**/*.{md,html}\""
   }
 }
 ```
@@ -210,7 +210,7 @@ These differences are intentional:
 - **It writes by default.** `prettier` without `--write` prints the formatted code. `--write` is accepted and changes nothing.
 - **No arguments means the current directory.**
 - **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
-- **JavaScript, TypeScript, JSON, CSS, and GraphQL only.** Other files are skipped with a warning. Code embedded in them is not formatted either.
+- **JavaScript, TypeScript, JSON, CSS, YAML, and GraphQL only.** Other files are skipped with a warning. Code embedded in them is not formatted either.
 - **Plugins do not load.** The three that sort imports are built in.
 - **An unknown flag is an error.** Prettier warns and goes on.
 - **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.

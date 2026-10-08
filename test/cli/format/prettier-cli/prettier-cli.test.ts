@@ -12,7 +12,7 @@ import { cases, fixtures } from "./cases.json";
 type Files = Record<string, string | { link: string }>;
 const command = [bunExe(), "format"];
 // The languages that `bun format` leaves alone.
-const notCompared = /\.(md|markdown|mdx|ya?ml|html?|vue|hbs|handlebars)$|(^|\/)\.(prettierrc|stylelintrc|lintstagedrc)$/;
+const notCompared = /\.(md|markdown|mdx|html?|vue|hbs|handlebars)$/;
 const env = { ...bunEnv, NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined };
 
 describe.concurrent("bun format does what Prettier does", () => {

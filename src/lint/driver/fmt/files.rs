@@ -49,6 +49,8 @@ pub(crate) enum Kind {
     Script,
     Json(bun_format::json::Parser),
     Css(bun_format::css::Parser),
+    Yaml,
+    Markdown,
     GraphQl,
 }
 
@@ -58,8 +60,13 @@ impl Kind {
         if let Some(parser) = parser {
             let json = || bun_format::json::Parser::from_name(parser).map(Kind::Json);
             let css = || bun_format::css::Parser::from_name(parser).map(Kind::Css);
-            let graphql = || (parser == b"graphql").then_some(Kind::GraphQl);
-            return Some(json().or_else(css).or_else(graphql).unwrap_or(Kind::Script));
+            let other = || match parser {
+                b"yaml" => Some(Kind::Yaml),
+                b"markdown" | b"remark" => Some(Kind::Markdown),
+                b"graphql" => Some(Kind::GraphQl),
+                _ => None,
+            };
+            return Some(json().or_else(css).or_else(other).unwrap_or(Kind::Script));
         }
         let name = paths::basename(path);
         let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
@@ -68,20 +75,25 @@ impl Kind {
         }
         let json = || bun_format::json::parser_for_path(path).map(Kind::Json);
         let css = || bun_format::css::parser_for_path(path).map(Kind::Css);
+        let yaml = || bun_format::yaml::is_yaml_path(path).then_some(Kind::Yaml);
+        let markdown = || bun_format::markdown::is_markdown_path(path).then_some(Kind::Markdown);
         let graphql = || bun_format::graphql::is_graphql_path(path).then_some(Kind::GraphQl);
-        json().or_else(css).or_else(graphql)
+        json().or_else(css).or_else(yaml).or_else(markdown).or_else(graphql)
     }
 }
 
 pub(crate) fn language_of(path: &[u8]) -> Language {
-    if Kind::of(path, None).is_some() {
-        return Language::Supported;
+    match Kind::of(path, None) {
+        // Not good enough yet to be let loose on files.
+        Some(Kind::Markdown) => return Language::Other,
+        Some(_) => return Language::Supported,
+        None => {}
     }
     let name = paths::basename(path);
     let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
     match extension {
         b"md" | b"markdown" | b"mdx"
-        | b"yaml" | b"yml" | b"html" | b"htm" | b"xhtml" | b"vue" | b"hbs" | b"handlebars"
+        | b"html" | b"htm" | b"xhtml" | b"vue" | b"hbs" | b"handlebars"
         | b"es6" | b"jsm" | b"wxs" | b"mjml" => Language::Other,
         _ if matches!(name, b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format") => {
             Language::Other

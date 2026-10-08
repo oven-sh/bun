@@ -13,7 +13,7 @@ use crate::{fs, paths};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::pragma::BeforeParsing;
-use bun_format::{FormatError, Scratch};
+use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
@@ -124,11 +124,25 @@ struct Scratches {
     json: bun_format::json::Scratch,
     css: bun_format::css::Scratch,
     graphql: bun_format::graphql::Scratch,
+    yaml: bun_format::yaml::Scratch,
+    markdown: bun_format::markdown::Scratch,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
     let end = out.strip_suffix(b"\n").map_or(out.len(), |rest| rest.strip_suffix(b"\r").unwrap_or(rest).len());
     out.truncate(end);
+}
+
+/// For a block of code in Markdown: appends `code` formatted as the file at `path`. `false`: it cannot
+/// be, and stays as it is.
+fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
+    let resolved = Resolved {
+        options: options.clone(),
+        omits_final_newline: false,
+    };
+    let names = Session::new();
+    let formatted = format(path, code, &resolved, &Interner::new_in(&names), &mut Scratches::default(), false);
+    formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
 }
 
 /// The formatted text, and where the cursor is in it, if `cursorOffset` says where it was.
@@ -166,6 +180,18 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
         Some(Kind::Css(parser)) => {
             let done = bun_format::css::format(text, parser, options, &mut scratch.css, &mut out);
             return finish(done, out, "a style sheet");
+        }
+        Some(Kind::Yaml) => {
+            let done = bun_format::yaml::format(text, options, &mut scratch.yaml, &mut out);
+            return finish(done, out, "YAML");
+        }
+        Some(Kind::Markdown) => {
+            let options = FormatOptions {
+                format_javascript: Some(format_javascript),
+                ..options.clone()
+            };
+            let done = bun_format::markdown::format(text, &options, &mut scratch.markdown, &mut out);
+            return finish(done, out, "Markdown");
         }
         Some(Kind::GraphQl) => {
             let done = bun_format::graphql::format(text, options, &mut scratch.graphql, &mut out);
@@ -243,7 +269,7 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratch) -> Result<Formatted,
 
 /// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
 /// the cursor ends up. For the tests of the formatter. `Err(true)`: a syntax error.
-pub fn format_for_tests(path: &[u8], text: &[u8], options: &bun_format::FormatOptions) -> Result<(Vec<u8>, Option<u32>), bool> {
+pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Result<(Vec<u8>, Option<u32>), bool> {
     let resolved = Resolved {
         options: options.clone(),
         omits_final_newline: false,

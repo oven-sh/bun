@@ -92,7 +92,11 @@ impl Parser<'_> {
             }
             i += 1;
         }
-        format!("{message} at position {at} (line {line} column {})", 1 + at - line_start).into_bytes()
+        format!(
+            "{message} at position {at} (line {line} column {})",
+            1 + at - line_start
+        )
+        .into_bytes()
     }
 
     /// `ReportUnexpectedToken` without a message of its own.
@@ -106,7 +110,10 @@ impl Parser<'_> {
         let (at, len) = (self.at, self.text.len());
         // `IsSpecialString`
         let is = |special: &str| special.encode_utf16().eq(self.text.iter().copied());
-        if ["NaN", "Infinity", "undefined", "[object Object]"].into_iter().any(is) {
+        if ["NaN", "Infinity", "undefined", "[object Object]"]
+            .into_iter()
+            .any(is)
+        {
             let mut out = vec![b'"'];
             push_utf16(&mut out, self.text);
             out.extend_from_slice(b"\" is not valid JSON");
@@ -196,7 +203,10 @@ impl Parser<'_> {
                 self.at += 1;
             }
         }
-        let written: String = self.text[start..self.at].iter().map(|&c| c as u8 as char).collect();
+        let written: String = self.text[start..self.at]
+            .iter()
+            .map(|&c| c as u8 as char)
+            .collect();
         Ok(Json::Number(written.parse().unwrap_or(f64::NAN)))
     }
 
@@ -228,7 +238,9 @@ impl Parser<'_> {
                         Some(b'u') => {
                             let mut value = 0;
                             for _ in 0..4 {
-                                let digit = self.next().and_then(|c| char::from_u32(u32::from(c))?.to_digit(16));
+                                let digit = self
+                                    .next()
+                                    .and_then(|c| char::from_u32(u32::from(c))?.to_digit(16));
                                 let Some(digit) = digit else {
                                     return Err(self.error_at("Bad Unicode escape in JSON"));
                                 };
@@ -240,7 +252,9 @@ impl Parser<'_> {
                     });
                     self.at += 1;
                 }
-                0..0x20 => return Err(self.error_at("Bad control character in string literal in JSON")),
+                0..0x20 => {
+                    return Err(self.error_at("Bad control character in string literal in JSON"));
+                }
                 _ => {
                     units.push(c);
                     self.at += 1;
@@ -281,9 +295,15 @@ impl Parser<'_> {
                     if !self.check(Token::Comma) {
                         break;
                     }
-                    self.expect_next(Token::String, "Expected double-quoted property name in JSON")?;
+                    self.expect_next(
+                        Token::String,
+                        "Expected double-quoted property name in JSON",
+                    )?;
                 }
-                self.expect_next(Token::RBrace, "Expected ',' or '}' after property value in JSON")?;
+                self.expect_next(
+                    Token::RBrace,
+                    "Expected ',' or '}' after property value in JSON",
+                )?;
                 Ok(Json::Object(entries))
             }
             Token::LBrack => {
@@ -298,12 +318,18 @@ impl Parser<'_> {
                         break;
                     }
                 }
-                self.expect_next(Token::RBrack, "Expected ',' or ']' after array element in JSON")?;
+                self.expect_next(
+                    Token::RBrack,
+                    "Expected ',' or ']' after array element in JSON",
+                )?;
                 Ok(Json::Array(items))
             }
-            Token::Colon | Token::Comma | Token::Illegal | Token::RBrace | Token::RBrack | Token::Eos => {
-                Err(self.unexpected())
-            }
+            Token::Colon
+            | Token::Comma
+            | Token::Illegal
+            | Token::RBrace
+            | Token::RBrack
+            | Token::Eos => Err(self.unexpected()),
         }
     }
 }

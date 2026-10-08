@@ -99,7 +99,13 @@ impl<'a> Locator<'a> {
     }
 
     /// A message of the linter itself at `span`: `createLintingProblem`.
-    pub(crate) fn problem(&self, span: Span, severity: Severity, rule_id: Option<RuleId>, message: Vec<u8>) -> LintMessage {
+    pub(crate) fn problem(
+        &self,
+        span: Span,
+        severity: Severity,
+        rule_id: Option<RuleId>,
+        message: Vec<u8>,
+    ) -> LintMessage {
         let (line, column) = self.position(span.start);
         LintMessage {
             rule_id,
@@ -151,7 +157,9 @@ pub fn write_json(out: &mut Vec<u8>, value: &Json) {
         Json::Null => out.extend_from_slice(b"null"),
         Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
         Json::Number(value) if !value.is_finite() => out.extend_from_slice(b"null"),
-        Json::Number(value) => out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value)),
+        Json::Number(value) => {
+            out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
+        }
         Json::String(value) => write_json_string(out, value),
         Json::Array(items) => {
             out.push(b'[');
@@ -185,9 +193,15 @@ pub(crate) fn write_js_string(out: &mut Vec<u8>, value: &Json) {
         Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
         Json::Number(value) if value.is_nan() => out.extend_from_slice(b"NaN"),
         Json::Number(value) if value.is_infinite() => {
-            out.extend_from_slice(if *value < 0.0 { b"-Infinity" } else { b"Infinity" });
+            out.extend_from_slice(if *value < 0.0 {
+                b"-Infinity"
+            } else {
+                b"Infinity"
+            });
         }
-        Json::Number(value) => out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value)),
+        Json::Number(value) => {
+            out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
+        }
         Json::String(value) => out.extend_from_slice(value),
         Json::Array(items) => {
             for (i, item) in items.iter().enumerate() {
@@ -226,7 +240,11 @@ impl<'t> Utf16Offsets<'t> {
         if self.is_ascii {
             return i64::from(offset);
         }
-        let start = if self.text.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
+        let start = if self.text.starts_with(b"\xEF\xBB\xBF") {
+            3
+        } else {
+            0
+        };
         if offset < start {
             return -1;
         }
@@ -242,7 +260,10 @@ impl<'t> Utf16Offsets<'t> {
 
 fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
     use std::io::Write;
-    let (start, end) = (offsets.convert(fix.span.start), offsets.convert(fix.span.end));
+    let (start, end) = (
+        offsets.convert(fix.span.start),
+        offsets.convert(fix.span.end),
+    );
     let _ = write!(out, "{{\"range\":[{start},{end}],\"text\":");
     write_json_string(out, &fix.text);
     out.push(b'}');

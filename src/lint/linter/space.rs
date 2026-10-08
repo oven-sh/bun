@@ -55,5 +55,7 @@ pub(crate) fn trim(text: &[u8]) -> &[u8] {
 /// The length of the character that `text` starts with, which is not empty.
 #[inline]
 pub(crate) fn char_len(text: &[u8]) -> usize {
-    bun_core::lexer::char_and_size(text, 0).1.clamp(1, text.len().max(1))
+    bun_core::lexer::char_and_size(text, 0)
+        .1
+        .clamp(1, text.len().max(1))
 }

@@ -2,6 +2,7 @@
 //! @typescript-eslint/scope-manager 8.71.1 (`src/lib`). Not edited by hand.
 
 /// All names, sorted, one after the other.
+#[rustfmt::skip]
 pub(super) static NAMES: &[u8] = b"\
 $$$$0$1$2$3$4$A$F$H$R$_$bindable$break$continue$derived$effect$host$inspect$props$state$w$xAIAICreateMonitor\
 AITextSessionANGLE_instanced_arraysARIAMixinAacBitstreamFormatAacEncoderConfigAbortControllerAbortPaymentEvent\
@@ -468,6 +469,7 @@ webkitRequestFileSystemSyncwebkitResolveLocalFileSystemSyncURLwebkitResolveLocal
 whichwindowwithDefaultsxcontextxdescribexitxspecifyxtest";
 
 /// Where each name ends in `NAMES`.
+#[rustfmt::skip]
 pub(super) static NAME_ENDS: &[u16] = &[
     1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 32, 38, 47, 55, 62, 67, 75, 81,
     87, 89, 91, 93, 108, 121, 143, 152, 170, 186, 201, 218, 229, 248, 273, 281, 294, 308, 330, 343,
@@ -620,6 +622,7 @@ pub(super) static NAME_ENDS: &[u16] = &[
 
 /// The lists, one after the other, each sorted: the index of a name `<< 2`, and flags. For an
 /// environment and a version of ECMAScript, 1: writable. For a library, 1: a type, 2: a value.
+#[rustfmt::skip]
 pub(super) static ENTRIES: &[u16] = &[
     10000, 11268, 0, 312, 724, 4696, 5624, 5644, 5844, 6244, 7036, 9912, 10032, 360, 9740, 9784, 10160, 10164, 10168, 10172,
     11272, 11648, 92, 96, 100, 120, 128, 136, 144, 156, 248, 260, 264, 268, 288, 300, 368, 412, 416, 420,
@@ -945,6 +948,7 @@ pub(super) static ENTRIES: &[u16] = &[
 
 /// The environments of the `globals` package, sorted by name: where each starts in `ENTRIES`, and
 /// how many entries it has.
+#[rustfmt::skip]
 pub(super) static ENVIRONMENTS: &[(&str, u16, u16)] = &[
     ("amd", 0, 2),
     ("applescript", 2, 11),
@@ -999,6 +1003,7 @@ pub(super) static ENVIRONMENTS: &[(&str, u16, u16)] = &[
 ];
 
 /// `conf/globals.js`: what each version of ECMAScript adds to the one before it.
+#[rustfmt::skip]
 pub(super) static ECMA_VERSIONS: &[(u32, u16, u16)] = &[
     (3, 3243, 37),
     (5, 3280, 1),
@@ -1021,6 +1026,7 @@ pub(super) static COMMONJS: (u16, u16) = (3316, 4);
 
 /// The libraries of TypeScript, sorted by name: the entries, and where the libraries that it
 /// includes start in `LIB_DEPENDENCIES`, and how many they are.
+#[rustfmt::skip]
 pub(super) static LIBS: &[(&str, u16, u16, u16, u8)] = &[
     ("decorators", 3320, 12, 0, 0),
     ("decorators.legacy", 3332, 4, 0, 0),
@@ -1144,6 +1150,7 @@ pub(super) static LIBS: &[(&str, u16, u16, u16, u8)] = &[
 ];
 
 /// Indices into `LIBS`.
+#[rustfmt::skip]
 pub(super) static LIB_DEPENDENCIES: &[u8] = &[
     5, 30, 88, 7, 6, 9, 8, 10, 11, 12, 13, 14, 9, 13, 13, 5, 16, 18, 15, 2,
     117, 114, 4, 15, 20, 21, 23, 24, 25, 26, 27, 19, 2, 117, 114, 4, 13, 14, 19, 30,

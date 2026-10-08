@@ -57,7 +57,12 @@ pub struct ConfiguredRule {
 
 impl ConfiguredRule {
     /// `instance`: the rule made from `options`. It is not needed for a rule that is off.
-    pub fn new(entry: &'static RuleEntry, severity: Severity, options: Arc<[Json]>, instance: Option<Arc<dyn AnyRule>>) -> Self {
+    pub fn new(
+        entry: &'static RuleEntry,
+        severity: Severity,
+        options: Arc<[Json]>,
+        instance: Option<Arc<dyn AnyRule>>,
+    ) -> Self {
         ConfiguredRule {
             entry,
             severity,
@@ -97,7 +102,9 @@ pub struct ResolvedConfig {
 impl ResolvedConfig {
     pub fn rule(&self, entry: &RuleEntry) -> Option<&ConfiguredRule> {
         let (plugin, name) = (entry.meta.plugin, entry.meta.name);
-        self.rules.iter().find(|it| it.entry.meta.plugin == plugin && it.entry.meta.name == name)
+        self.rules
+            .iter()
+            .find(|it| it.entry.meta.plugin == plugin && it.entry.meta.name == name)
     }
 
     pub(crate) fn validate_language_options(&mut self, language_options: &Json) {
@@ -107,7 +114,12 @@ impl ResolvedConfig {
     }
 
     /// ESLint's `validateRulesConfig` for one rule. The first error is kept.
-    pub(crate) fn validate(&mut self, entry: &'static RuleEntry, severity: Severity, options: &[Json]) {
+    pub(crate) fn validate(
+        &mut self,
+        entry: &'static RuleEntry,
+        severity: Severity,
+        options: &[Json],
+    ) {
         if severity != Severity::Off
             && self.error.is_none()
             && let Err(lines) = super::schema::validate(entry.meta, options)
@@ -126,7 +138,9 @@ impl ResolvedConfig {
         // oxlint goes by the name without the plugin: `no-explicit-any` is
         // `typescript/no-explicit-any`, and `@typescript-eslint/no-undef` is `no-undef`.
         let name = parse_rule_id(id).1;
-        registry.get(Plugin::TypeScript, name).or_else(|| registry.get(Plugin::Eslint, name))
+        registry
+            .get(Plugin::TypeScript, name)
+            .or_else(|| registry.get(Plugin::Eslint, name))
     }
 
     /// Whether the rule called `id`, which does not exist here, is skipped silently: it is of a
@@ -141,8 +155,12 @@ impl ResolvedConfig {
     /// not known here is to read what is not called like JavaScript (`.vue`, `.svelte`).
     pub fn is_supported(&self, path: &[u8]) -> bool {
         self.processor.is_none()
-            && self.language_name.as_deref().is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
-            && (self.language.parser != Parser::Other || bun_sema::resolve::ScriptKind::from_file_name(path).is_some())
+            && self
+                .language_name
+                .as_deref()
+                .is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
+            && (self.language.parser != Parser::Other
+                || bun_sema::resolve::ScriptKind::from_file_name(path).is_some())
     }
 }
 
@@ -154,7 +172,11 @@ impl LinterOptions {
         }
         match json.get(b"reportUnusedDisableDirectives") {
             Some(Json::Bool(value)) => {
-                self.report_unused_disable_directives = if *value { Severity::Warn } else { Severity::Off };
+                self.report_unused_disable_directives = if *value {
+                    Severity::Warn
+                } else {
+                    Severity::Off
+                };
             }
             Some(value) => {
                 if let Some(severity) = severity_of(value) {
@@ -173,7 +195,11 @@ impl ResolvedConfig {
     /// From one configuration object of ESLint that applies to the file as it is: `rules`,
     /// `languageOptions`, `linterOptions`, `settings`, and `plugins` as an array of the prefixes of
     /// the plugins that are not implemented here. Rules that do not exist are added to `unknown`.
-    pub fn from_json(registry: &Registry, json: &Json, unknown: &mut Vec<Box<[u8]>>) -> ResolvedConfig {
+    pub fn from_json(
+        registry: &Registry,
+        json: &Json,
+        unknown: &mut Vec<Box<[u8]>>,
+    ) -> ResolvedConfig {
         let null = Json::Null;
         let mut config = ResolvedConfig {
             language: LanguageOptions::from_json(
@@ -186,12 +212,20 @@ impl ResolvedConfig {
         if let Some(linter) = json.get(b"linterOptions") {
             config.linter.merge_json(linter);
         }
-        for plugin in json.get(b"plugins").and_then(Json::as_array).unwrap_or_default() {
+        for plugin in json
+            .get(b"plugins")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+        {
             if let Some(plugin) = plugin.as_str() {
                 config.foreign_plugins.push(plugin.into());
             }
         }
-        for (id, value) in json.get(b"rules").and_then(Json::as_object).unwrap_or_default() {
+        for (id, value) in json
+            .get(b"rules")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
             let Some(entry) = registry.find(id) else {
                 unknown.push(id[..].into());
                 continue;
@@ -205,8 +239,11 @@ impl ResolvedConfig {
             };
             let options: Arc<[Json]> = value[1..].into();
             config.validate(entry, severity, &options);
-            let instance = (severity != Severity::Off).then(|| Arc::from((entry.build)(&Options::new(&options))));
-            config.rules.push(ConfiguredRule::new(entry, severity, options, instance));
+            let instance = (severity != Severity::Off)
+                .then(|| Arc::from((entry.build)(&Options::new(&options))));
+            config
+                .rules
+                .push(ConfiguredRule::new(entry, severity, options, instance));
         }
         config
     }

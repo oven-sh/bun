@@ -16,7 +16,7 @@ pub(crate) fn deep_merge(first: &mut Entries, second: &[(Vec<u8>, Json)]) {
             Some((_, Json::Object(existing))) if matches!(value, Json::Object(_)) => {
                 deep_merge(existing, value.as_object().unwrap_or_default());
             }
-            Some(existing) => existing.1 = value.clone(),
+            Some(existing) => existing.1.clone_from(value),
             None => first.push((key.clone(), value.clone())),
         }
     }
@@ -63,11 +63,17 @@ impl RuleSetting {
 
 /// The `merge` of `rulesSchema`. `keeps_options`: a setting that is only a severity keeps the
 /// options of the one before it, as in ESLint. In oxlint it resets them.
-pub(crate) fn merge_rules(first: &mut Vec<RuleSetting>, second: &[RuleSetting], keeps_options: bool) {
+pub(crate) fn merge_rules(
+    first: &mut Vec<RuleSetting>,
+    second: &[RuleSetting],
+    keeps_options: bool,
+) {
     for setting in second {
         match first.iter_mut().find(|it| it.id == setting.id) {
-            Some(existing) if setting.has_only_severity && keeps_options => existing.severity = setting.severity,
-            Some(existing) => *existing = setting.clone(),
+            Some(existing) if setting.has_only_severity && keeps_options => {
+                existing.severity = setting.severity
+            }
+            Some(existing) => existing.clone_from(setting),
             None => first.push(setting.clone()),
         }
     }

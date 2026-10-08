@@ -27,7 +27,11 @@ impl Default for Cache {
 }
 
 impl Cache {
-    pub(super) fn resolved(&self, indices: &[u32], make: impl FnOnce() -> ResolvedConfig) -> Arc<ResolvedConfig> {
+    pub(super) fn resolved(
+        &self,
+        indices: &[u32],
+        make: impl FnOnce() -> ResolvedConfig,
+    ) -> Arc<ResolvedConfig> {
         let find = |all: &Resolved| all.binary_search_by(|it| (*it.0).cmp(indices));
         {
             let all = self.resolved.read();

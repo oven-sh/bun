@@ -14,7 +14,10 @@ pub struct Registry {
 const REPLACEMENTS: &[(&str, &str)] = &[
     ("generator-star", "generator-star-spacing"),
     ("global-strict", "strict"),
-    ("no-arrow-condition", "no-confusing-arrow, no-constant-condition"),
+    (
+        "no-arrow-condition",
+        "no-confusing-arrow, no-constant-condition",
+    ),
     ("no-comma-dangle", "comma-dangle"),
     ("no-empty-class", "no-empty-character-class"),
     ("no-empty-label", "no-labels"),
@@ -24,9 +27,15 @@ const REPLACEMENTS: &[(&str, &str)] = &[
     ("no-wrap-func", "no-extra-parens"),
     ("space-after-function-name", "space-before-function-paren"),
     ("space-after-keywords", "keyword-spacing"),
-    ("space-before-function-parentheses", "space-before-function-paren"),
+    (
+        "space-before-function-parentheses",
+        "space-before-function-paren",
+    ),
     ("space-before-keywords", "keyword-spacing"),
-    ("space-in-brackets", "object-curly-spacing, array-bracket-spacing, computed-property-spacing"),
+    (
+        "space-in-brackets",
+        "object-curly-spacing, array-bracket-spacing, computed-property-spacing",
+    ),
     ("space-return-throw-case", "keyword-spacing"),
     ("space-unary-word-ops", "space-unary-ops"),
     ("spaced-line-comment", "spaced-comment"),
@@ -59,19 +68,28 @@ impl Registry {
 
     pub fn get(&self, plugin: Plugin, name: &[u8]) -> Option<&'static RuleEntry> {
         let key = (plugin as u8, name);
-        let at = self.rules.binary_search_by(|it| (it.meta.plugin as u8, it.meta.name.as_bytes()).cmp(&key));
+        let at = self
+            .rules
+            .binary_search_by(|it| (it.meta.plugin as u8, it.meta.name.as_bytes()).cmp(&key));
         Some(self.rules[at.ok()?])
     }
 
     /// The position of a rule in [`Registry::all`].
     pub fn index_of(&self, entry: &RuleEntry) -> Option<usize> {
         let key = (entry.meta.plugin as u8, entry.meta.name);
-        self.rules.binary_search_by(|it| (it.meta.plugin as u8, it.meta.name).cmp(&key)).ok()
+        self.rules
+            .binary_search_by(|it| (it.meta.plugin as u8, it.meta.name).cmp(&key))
+            .ok()
     }
 
     /// The same as [`Registry::get`]. With `prefers_typescript`, for a rule of ESLint that
     /// typescript-eslint extends, the extension.
-    pub fn get_preferring(&self, plugin: Plugin, name: &[u8], prefers_typescript: bool) -> Option<&'static RuleEntry> {
+    pub fn get_preferring(
+        &self,
+        plugin: Plugin,
+        name: &[u8],
+        prefers_typescript: bool,
+    ) -> Option<&'static RuleEntry> {
         if prefers_typescript
             && plugin == Plugin::Eslint
             && let Some(extension) = self.get(Plugin::TypeScript, name)
@@ -83,9 +101,17 @@ impl Registry {
     }
 
     /// The same as [`Registry::find`], with what [`Registry::get_preferring`] does.
-    pub fn find_preferring(&self, id: &[u8], prefers_typescript: bool) -> Option<&'static RuleEntry> {
+    pub fn find_preferring(
+        &self,
+        id: &[u8],
+        prefers_typescript: bool,
+    ) -> Option<&'static RuleEntry> {
         let entry = self.find(id)?;
-        self.get_preferring(entry.meta.plugin, entry.meta.name.as_bytes(), prefers_typescript)
+        self.get_preferring(
+            entry.meta.plugin,
+            entry.meta.name.as_bytes(),
+            prefers_typescript,
+        )
     }
 
     /// The rule that a configuration or a comment calls `id`: `no-debugger`,

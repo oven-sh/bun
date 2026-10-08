@@ -17,7 +17,9 @@ use validate::Validator;
 
 /// `[meta.schema]` or `[meta.schema, meta.defaultOptions]`. `None` if the rule takes no options.
 fn find(id: &[u8]) -> Option<Json> {
-    let at = data::SCHEMAS.binary_search_by(|it| it.0.as_bytes().cmp(id)).ok()?;
+    let at = data::SCHEMAS
+        .binary_search_by(|it| it.0.as_bytes().cmp(id))
+        .ok()?;
     crate::json::parse(data::SCHEMAS[at].1.as_bytes())
 }
 
@@ -38,17 +40,25 @@ fn deep_merge_objects(first: &Json, second: &Json) -> Json {
 
 /// `deepMergeArrays(defaults, options)`
 fn deep_merge_arrays(defaults: &[Json], options: &[Json]) -> Vec<Json> {
-    let merged = defaults.iter().enumerate().map(|(i, default)| match options.get(i) {
-        Some(option) => deep_merge_objects(default, option),
-        None => default.clone(),
-    });
-    merged.chain(options.iter().skip(defaults.len()).cloned()).collect()
+    let merged = defaults
+        .iter()
+        .enumerate()
+        .map(|(i, default)| match options.get(i) {
+            Some(option) => deep_merge_objects(default, option),
+            None => default.clone(),
+        });
+    merged
+        .chain(options.iter().skip(defaults.len()).cloned())
+        .collect()
 }
 
 /// The options of the rule with its `meta.defaultOptions` merged in: what ESLint has in
 /// `config.rules[ruleId].slice(1)`.
 pub(crate) fn with_defaults(meta: &'static Meta, options: &[Json]) -> Vec<Json> {
-    match find(&RuleId::Known(meta).to_vec()).as_ref().and_then(|it| it.as_array()?.get(1)?.as_array()) {
+    match find(&RuleId::Known(meta).to_vec())
+        .as_ref()
+        .and_then(|it| it.as_array()?.get(1)?.as_array())
+    {
         Some(defaults) => deep_merge_arrays(defaults, options),
         None => options.to_vec(),
     }

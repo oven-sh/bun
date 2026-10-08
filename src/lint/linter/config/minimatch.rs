@@ -49,7 +49,9 @@ impl Part {
             Part::Literal(literal) => name == &literal[..],
             Part::Star => !name.is_empty() && !is_dots(name),
             Part::StarExt(ext) => name.ends_with(ext),
-            Part::QuestionMarks(len, ext) => utf16_len(name) == *len && !is_dots(name) && name.ends_with(ext),
+            Part::QuestionMarks(len, ext) => {
+                utf16_len(name) == *len && !is_dots(name) && name.ends_with(ext)
+            }
             Part::StarDotStar => !is_dots(name) && strings::contains_char(name, b'.'),
             Part::DotStar => !is_dots(name) && name.starts_with(b"."),
             Part::Glob(glob) => glob.test(name),
@@ -79,10 +81,17 @@ impl Part {
         if marks > 0 && is_plain(&pattern[marks..]) {
             return Part::QuestionMarks(utf16_len(pattern), pattern[marks..].to_vec());
         }
-        if stars > 0 && after_stars[0] == b'.' && after_stars.len() > 1 && count(b'*', &after_stars[1..]) == after_stars.len() - 1 {
+        if stars > 0
+            && after_stars[0] == b'.'
+            && after_stars.len() > 1
+            && count(b'*', &after_stars[1..]) == after_stars.len() - 1
+        {
             return Part::StarDotStar;
         }
-        if pattern[0] == b'.' && pattern.len() > 1 && count(b'*', &pattern[1..]) == pattern.len() - 1 {
+        if pattern[0] == b'.'
+            && pattern.len() > 1
+            && count(b'*', &pattern[1..]) == pattern.len() - 1
+        {
             return Part::DotStar;
         }
         // Without a parenthesis there is no extglob.
@@ -158,7 +167,22 @@ fn push_regexp_escaped(out: &mut Vec<u8>, text: &[u8]) {
         let len = char_len(&text[at..]);
         let is_special = matches!(
             text[at],
-            b'-' | b'[' | b']' | b'{' | b'}' | b'(' | b')' | b'*' | b'+' | b'?' | b'.' | b',' | b'\\' | b'^' | b'$' | b'|' | b'#'
+            b'-' | b'['
+                | b']'
+                | b'{'
+                | b'}'
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b'?'
+                | b'.'
+                | b','
+                | b'\\'
+                | b'^'
+                | b'$'
+                | b'|'
+                | b'#'
         );
         if is_special || space_len(&text[at..]) > 0 {
             out.push(b'\\');
@@ -179,7 +203,8 @@ fn unescape(text: &[u8]) -> Vec<u8> {
     let bracketed = |text: &[u8]| -> Option<usize> {
         let inner = text.strip_prefix(b"[")?;
         let len = char_len(inner.get(..1).map(|_| inner)?);
-        (len < 4 && !matches!(inner[0], b'/' | b'\\') && inner.get(len) == Some(&b']')).then_some(len + 2)
+        (len < 4 && !matches!(inner[0], b'/' | b'\\') && inner.get(len) == Some(&b']'))
+            .then_some(len + 2)
     };
     // `.replace(/((?!\\).|^)\[([^/\\])\]/g, "$1$2")`
     let mut first = Vec::with_capacity(text.len());
@@ -341,8 +366,14 @@ fn parse_class(glob: &[u8]) -> Class {
         && !negate
         && let [only] = &ranges[..]
     {
-        let character = only.strip_prefix(b"\\").filter(|it| !it.is_empty()).unwrap_or(only);
-        if char_len(character) == character.len() && character.len() < 4 && !is_line_terminator(character) {
+        let character = only
+            .strip_prefix(b"\\")
+            .filter(|it| !it.is_empty())
+            .unwrap_or(only);
+        if char_len(character) == character.len()
+            && character.len() < 4
+            && !is_line_terminator(character)
+        {
             let mut source = Vec::new();
             push_regexp_escaped(&mut source, character);
             return Class {
@@ -353,7 +384,12 @@ fn parse_class(glob: &[u8]) -> Class {
             };
         }
     }
-    let positive = [if negate { &b"[^"[..] } else { b"[" }, &ranges.concat(), b"]"].concat();
+    let positive = [
+        if negate { &b"[^"[..] } else { b"[" },
+        &ranges.concat(),
+        b"]",
+    ]
+    .concat();
     let negative = [if negate { &b"["[..] } else { b"[^" }, &negs.concat(), b"]"].concat();
     Class {
         source: match (ranges.is_empty(), negs.is_empty()) {
@@ -444,16 +480,23 @@ impl Ast {
     }
 
     fn can_adopt_type(&self, node: usize, kind: u8, map: fn(u8) -> &'static [u8]) -> bool {
-        self.nodes[node].kind.is_some_and(|parent| strings::contains_char(map(parent), kind))
+        self.nodes[node]
+            .kind
+            .is_some_and(|parent| strings::contains_char(map(parent), kind))
     }
 
     /// `#parseAST`
     fn parse(&mut self, text: &[u8], node: usize, pos: usize, depth: usize) -> usize {
-        let (mut escaping, mut in_class, mut class_start, mut class_is_negated) = (false, false, usize::MAX, false);
+        let (mut escaping, mut in_class, mut class_start, mut class_is_negated) =
+            (false, false, usize::MAX, false);
         let is_extglob = self.nodes[node].kind.is_some();
         let mut i = if is_extglob { pos + 1 } else { pos };
         let mut acc: Vec<u8> = Vec::new();
-        let mut part = if is_extglob { self.create(None, Some(node)) } else { node };
+        let mut part = if is_extglob {
+            self.create(None, Some(node))
+        } else {
+            node
+        };
         let mut parts: Vec<usize> = Vec::new();
         while i < text.len() {
             let c = text[i];
@@ -483,7 +526,11 @@ impl Ast {
             }
             let can_adopt = is_extglob && self.can_adopt_type(node, c, adoption_any);
             let is_nested = depth <= MAX_EXTGLOB_RECURSION || can_adopt;
-            if is_extglob_type(c) && text.get(i) == Some(&b'(') && is_nested && self.nesting < MAX_NESTING {
+            if is_extglob_type(c)
+                && text.get(i) == Some(&b'(')
+                && is_nested
+                && self.nesting < MAX_NESTING
+            {
                 self.push_text(part, std::mem::take(&mut acc));
                 let ext = self.create(Some(c), Some(part));
                 self.nesting += 1;
@@ -615,7 +662,8 @@ impl Ast {
         if !self.is_end(parent) {
             return false;
         }
-        self.nodes[node].kind.is_none() || self.nodes[node].parent_index + 1 == self.nodes[parent].pieces.len()
+        self.nodes[node].kind.is_none()
+            || self.nodes[node].parent_index + 1 == self.nodes[parent].pieces.len()
     }
 
     /// The only piece of `child`, if `child` is not an extglob and that piece is one.
@@ -625,7 +673,9 @@ impl Ast {
         };
         self.nodes[node].kind?;
         match (&self.nodes[*child].kind, &self.nodes[*child].pieces[..]) {
-            (None, [Piece::Node(grandchild)]) if self.nodes[*grandchild].kind.is_some() => Some(*grandchild),
+            (None, [Piece::Node(grandchild)]) if self.nodes[*grandchild].kind.is_some() => {
+                Some(*grandchild)
+            }
             _ => None,
         }
     }
@@ -673,7 +723,8 @@ impl Ast {
                         self.push_node(grandchild, blank);
                         self.adopt(node, grandchild, i - 1);
                     } else if self.nodes[node].pieces.len() == 1
-                        && let Some(new_kind) = self.nodes[node].kind.and_then(|it| usurped(it, kind))
+                        && let Some(new_kind) =
+                            self.nodes[node].kind.and_then(|it| usurped(it, kind))
                     {
                         is_done = false;
                         let pieces = self.nodes[grandchild].pieces.clone();
@@ -718,7 +769,11 @@ impl Ast {
             if c == b"*" {
                 if !in_star {
                     in_star = true;
-                    re.extend_from_slice(if no_empty && is_only_stars { STAR_NO_EMPTY } else { STAR });
+                    re.extend_from_slice(if no_empty && is_only_stars {
+                        STAR_NO_EMPTY
+                    } else {
+                        STAR
+                    });
                     has_magic = true;
                 }
                 continue;
@@ -781,11 +836,15 @@ impl Ast {
         }
         let Some(kind) = self.nodes[node].kind else {
             let pieces = self.nodes[node].pieces.clone();
-            let no_empty = self.is_start(node) && self.is_end(node) && pieces.iter().all(|it| matches!(it, Piece::Text(_)));
+            let no_empty = self.is_start(node)
+                && self.is_end(node)
+                && pieces.iter().all(|it| matches!(it, Piece::Text(_)));
             let mut src = Vec::new();
             for piece in &pieces {
                 let source = match piece {
-                    Piece::Text(text) => Self::parse_glob(text, self.nodes[node].has_magic == Some(true), no_empty),
+                    Piece::Text(text) => {
+                        Self::parse_glob(text, self.nodes[node].has_magic == Some(true), no_empty)
+                    }
                     Piece::Node(child) => self.to_regexp_source(*child, allow_dot),
                 };
                 let it = &mut self.nodes[node];
@@ -809,8 +868,14 @@ impl Ast {
                     _ => b"",
                 };
             }
-            let is_in_negation = self.nodes[node].parent.is_some_and(|it| self.nodes[it].kind == Some(b'!'));
-            let end: &[u8] = if self.is_end(node) && self.has_filled_negs && is_in_negation { b"(?:$|\\/)" } else { b"" };
+            let is_in_negation = self.nodes[node]
+                .parent
+                .is_some_and(|it| self.nodes[it].kind == Some(b'!'));
+            let end: &[u8] = if self.is_end(node) && self.has_filled_negs && is_in_negation {
+                b"(?:$|\\/)"
+            } else {
+                b""
+            };
             let it = &mut self.nodes[node];
             it.has_magic = Some(it.has_magic == Some(true));
             return Source {
@@ -846,12 +911,22 @@ impl Ast {
         if !body_dot_allowed.is_empty() {
             body = [b"(?:", &body[..], b")(?:", &body_dot_allowed, b")*?"].concat();
         }
-        let no_dot: &[u8] = if self.is_start(node) && !dot { START_NO_DOT } else { b"" };
+        let no_dot: &[u8] = if self.is_start(node) && !dot {
+            START_NO_DOT
+        } else {
+            b""
+        };
         let regexp = if kind == b'!' && self.nodes[node].is_empty_ext {
             [no_dot, STAR_NO_EMPTY].concat()
         } else {
             let close: Vec<u8> = match kind {
-                b'!' => [&b"))"[..], if allow_dot == Some(true) { b"" } else { no_dot }, STAR, b")"].concat(),
+                b'!' => [
+                    &b"))"[..],
+                    if allow_dot == Some(true) { b"" } else { no_dot },
+                    STAR,
+                    b")",
+                ]
+                .concat(),
                 b'@' => b")".to_vec(),
                 b'?' => b")?".to_vec(),
                 b'+' if !body_dot_allowed.is_empty() => b")".to_vec(),
@@ -877,7 +952,9 @@ impl Ast {
             return Part::Literal(source.body);
         }
         let pattern = [b"^", &source.regexp[..], b"$"].concat();
-        let regex = std::str::from_utf8(&pattern).ok().and_then(|it| Regex::new(it, if source.needs_u_flag { "u" } else { "" }).ok());
+        let regex = std::str::from_utf8(&pattern)
+            .ok()
+            .and_then(|it| Regex::new(it, if source.needs_u_flag { "u" } else { "" }).ok());
         regex.map_or(Part::Never, |regex| Part::Regex(Box::new(regex)))
     }
 }
@@ -998,7 +1075,13 @@ impl Minimatch {
     }
 
     /// `#matchGlobStarBodySections`. `None`: no match, and no later position can match either.
-    fn match_sections(file: &[&[u8]], sections: &[(&[Part], isize)], mut at: usize, depth: usize, mut saw_tail: bool) -> Option<bool> {
+    fn match_sections(
+        file: &[&[u8]],
+        sections: &[(&[Part], isize)],
+        mut at: usize,
+        depth: usize,
+        mut saw_tail: bool,
+    ) -> Option<bool> {
         let Some(&(section, last)) = sections.first() else {
             for name in &file[at.min(file.len())..] {
                 saw_tail = true;
@@ -1010,8 +1093,15 @@ impl Minimatch {
         };
         while at as isize <= last {
             let end = (at + section.len()).min(file.len());
-            if Self::match_plain(&file[at.min(end)..end], section) && depth < MAX_GLOBSTAR_RECURSION {
-                let rest = Self::match_sections(file, &sections[1..], at + section.len(), depth + 1, saw_tail);
+            if Self::match_plain(&file[at.min(end)..end], section) && depth < MAX_GLOBSTAR_RECURSION
+            {
+                let rest = Self::match_sections(
+                    file,
+                    &sections[1..],
+                    at + section.len(),
+                    depth + 1,
+                    saw_tail,
+                );
                 if rest != Some(false) {
                     return rest;
                 }
@@ -1027,10 +1117,17 @@ impl Minimatch {
     /// `#matchGlobstar`, not partial.
     fn match_globstar(file: &[&[u8]], pattern: &[Part]) -> bool {
         let is_globstar = |part: &Part| matches!(part, Part::GlobStar);
-        let (Some(first), Some(last)) = (pattern.iter().position(is_globstar), pattern.iter().rposition(is_globstar)) else {
+        let (Some(first), Some(last)) = (
+            pattern.iter().position(is_globstar),
+            pattern.iter().rposition(is_globstar),
+        ) else {
             return false;
         };
-        let (head, body, tail) = (&pattern[..first], &pattern[(first + 1).min(last)..last], &pattern[last + 1..]);
+        let (head, body, tail) = (
+            &pattern[..first],
+            &pattern[(first + 1).min(last)..last],
+            &pattern[last + 1..],
+        );
         if !head.is_empty() && !Self::match_plain(&file[..head.len().min(file.len())], head) {
             return false;
         }
@@ -1056,7 +1153,8 @@ impl Minimatch {
         }
         if body.is_empty() {
             let between = &file[at.min(file.len() - tail_len)..file.len() - tail_len];
-            return !between.iter().any(|name| stops_globstar(name)) && (tail_len > 0 || !between.is_empty());
+            return !between.iter().any(|name| stops_globstar(name))
+                && (tail_len > 0 || !between.is_empty());
         }
         let sections: SmallVec<[&[Part]; 4]> = body.split(is_globstar).collect();
         // How many parts are before each section.
@@ -1084,10 +1182,16 @@ impl Minimatch {
         if self.is_empty {
             return matches!(path, [b""]);
         }
-        let hit = self.set.iter().any(|pattern| match pattern.iter().any(|part| matches!(part, Part::GlobStar)) {
-            true => Self::match_globstar(path, pattern),
-            false => Self::match_plain(path, pattern),
+        let hit = self.set.iter().any(|pattern| {
+            match pattern.iter().any(|part| matches!(part, Part::GlobStar)) {
+                true => Self::match_globstar(path, pattern),
+                false => Self::match_plain(path, pattern),
+            }
         });
-        if flip_negate { hit } else { hit != self.is_negated }
+        if flip_negate {
+            hit
+        } else {
+            hit != self.is_negated
+        }
     }
 }

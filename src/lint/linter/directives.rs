@@ -87,7 +87,9 @@ pub fn candidates(text: &[u8]) -> Vec<u32> {
 
 /// The range of `inner`, which is a slice of `outer`, in `outer`.
 fn range_in(outer: &[u8], inner: &[u8]) -> Span {
-    let start = (inner.as_ptr() as usize).saturating_sub(outer.as_ptr() as usize).min(outer.len());
+    let start = (inner.as_ptr() as usize)
+        .saturating_sub(outer.as_ptr() as usize)
+        .min(outer.len());
     Span::new(start as u32, (start + inner.len()).min(outer.len()) as u32)
 }
 
@@ -99,7 +101,9 @@ pub(crate) fn config_comments<'a>(file: &'a File<'a>) -> Vec<ConfigComment> {
         return Vec::new();
     }
     let comment_at = |start: u32| -> Option<(Span, bool)> {
-        let comment = file.comments_in(Span::new(start, text.len() as u32)).next()?;
+        let comment = file
+            .comments_in(Span::new(start, text.len() as u32))
+            .next()?;
         (comment.start() == start).then(|| (comment.span(), comment.kind() == TokenKind::Line))
     };
     let mut comments = Vec::with_capacity(candidates.len());

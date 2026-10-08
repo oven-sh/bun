@@ -29,7 +29,10 @@ const TYPE: u8 = 1;
 const VALUE: u8 = 2;
 
 fn name_at(id: usize) -> &'static [u8] {
-    let start = id.checked_sub(1).and_then(|it| tables::NAME_ENDS.get(it)).map_or(0, |it| *it as usize);
+    let start = id
+        .checked_sub(1)
+        .and_then(|it| tables::NAME_ENDS.get(it))
+        .map_or(0, |it| *it as usize);
     let end = tables::NAME_ENDS.get(id).map_or(start, |it| *it as usize);
     tables::NAMES.get(start..end).unwrap_or_default()
 }
@@ -49,12 +52,18 @@ fn id_of(name: &[u8]) -> Option<usize> {
 }
 
 fn entries(start: u16, len: u16) -> &'static [u16] {
-    tables::ENTRIES.get(start as usize..start as usize + len as usize).unwrap_or_default()
+    tables::ENTRIES
+        .get(start as usize..start as usize + len as usize)
+        .unwrap_or_default()
 }
 
 fn variables(start: u16, len: u16) -> impl Iterator<Item = (&'static [u8], Global)> {
     entries(start, len).iter().map(|entry| {
-        let setting = if entry & WRITABLE != 0 { Global::Writable } else { Global::Readonly };
+        let setting = if entry & WRITABLE != 0 {
+            Global::Writable
+        } else {
+            Global::Readonly
+        };
         (name_at((entry >> 2) as usize), setting)
     })
 }
@@ -62,7 +71,9 @@ fn variables(start: u16, len: u16) -> impl Iterator<Item = (&'static [u8], Globa
 /// The variables of an environment of the `globals` package: `browser`, `node`, `es2021`, `jest`,
 /// `shared-node-browser`, .. Sorted by name. `None` if there is no such environment.
 pub fn environment(name: &[u8]) -> Option<impl Iterator<Item = (&'static [u8], Global)>> {
-    let at = tables::ENVIRONMENTS.binary_search_by(|it| it.0.as_bytes().cmp(name)).ok()?;
+    let at = tables::ENVIRONMENTS
+        .binary_search_by(|it| it.0.as_bytes().cmp(name))
+        .ok()?;
     let (_, start, len) = tables::ENVIRONMENTS[at];
     Some(variables(start, len))
 }
@@ -86,18 +97,34 @@ pub struct ConfigGlobals {
 
 impl ConfigGlobals {
     pub(crate) fn new(language: &LanguageOptions) -> ConfigGlobals {
-        let mut settings: Vec<(Cow<'static, [u8]>, Global)> = Vec::with_capacity(80 + language.globals.len());
+        let mut settings: Vec<(Cow<'static, [u8]>, Global)> =
+            Vec::with_capacity(80 + language.globals.len());
         // ESLint has no table for a version that it does not know, and then defines nothing.
-        if tables::ECMA_VERSIONS.iter().any(|it| it.0 == language.ecma_version) {
-            for &(_, start, len) in tables::ECMA_VERSIONS.iter().filter(|it| it.0 <= language.ecma_version) {
-                settings.extend(variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)));
+        if tables::ECMA_VERSIONS
+            .iter()
+            .any(|it| it.0 == language.ecma_version)
+        {
+            for &(_, start, len) in tables::ECMA_VERSIONS
+                .iter()
+                .filter(|it| it.0 <= language.ecma_version)
+            {
+                settings.extend(
+                    variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)),
+                );
             }
         }
         if language.source_type == SourceType::CommonJs {
             let (start, len) = tables::COMMONJS;
-            settings.extend(variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)));
+            settings.extend(
+                variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)),
+            );
         }
-        settings.extend(language.globals.iter().map(|(name, setting)| (Cow::Owned(name.to_vec()), *setting)));
+        settings.extend(
+            language
+                .globals
+                .iter()
+                .map(|(name, setting)| (Cow::Owned(name.to_vec()), *setting)),
+        );
         // Of two with the same name, the later one counts.
         settings.reverse();
         settings.sort_by(|a, b| a.0.cmp(&b.0));
@@ -111,7 +138,11 @@ impl ConfigGlobals {
     /// `populateGlobalsFromLib` of typescript-eslint's scope manager.
     fn libs(language: &LanguageOptions) -> Box<[u8]> {
         let mut flags = vec![0u8; tables::NAME_ENDS.len().div_ceil(4)].into_boxed_slice();
-        let find = |name: &[u8]| tables::LIBS.binary_search_by(|it| it.0.as_bytes().cmp(name)).ok();
+        let find = |name: &[u8]| {
+            tables::LIBS
+                .binary_search_by(|it| it.0.as_bytes().cmp(name))
+                .ok()
+        };
         let mut included: Vec<usize> = match &language.lib {
             Some(libs) => libs.iter().filter_map(|lib| find(lib)).collect(),
             None => find(b"esnext").into_iter().collect(),
@@ -123,7 +154,10 @@ impl ConfigGlobals {
             next += 1;
             let (_, start, len, dependencies, count) = tables::LIBS[lib];
             let dependencies = dependencies as usize..dependencies as usize + count as usize;
-            for &dependency in tables::LIB_DEPENDENCIES.get(dependencies).unwrap_or_default() {
+            for &dependency in tables::LIB_DEPENDENCIES
+                .get(dependencies)
+                .unwrap_or_default()
+            {
                 if !std::mem::replace(&mut is_included[dependency as usize], true) {
                     included.push(dependency as usize);
                 }
@@ -137,7 +171,10 @@ impl ConfigGlobals {
     }
 
     fn setting(&self, name: &[u8]) -> Option<Global> {
-        let at = self.settings.binary_search_by(|it| (*it.0).cmp(name)).ok()?;
+        let at = self
+            .settings
+            .binary_search_by(|it| (*it.0).cmp(name))
+            .ok()?;
         Some(self.settings[at].1)
     }
 
@@ -239,8 +276,15 @@ impl<'a> File<'a> {
     pub fn global(&'a self, name: &[u8]) -> Option<GlobalVariable<'a>> {
         let config = self.language().config_globals();
         let implicit = config.setting(name);
-        let comment = self.globals_in_comments().iter().find(|it| *it.name == *name);
-        let lib = if self.uses_typescript_parser() { config.lib(name) } else { 0 };
+        let comment = self
+            .globals_in_comments()
+            .iter()
+            .find(|it| *it.name == *name);
+        let lib = if self.uses_typescript_parser() {
+            config.lib(name)
+        } else {
+            0
+        };
         let is_exported = self.exported_in_comments().iter().any(|it| **it == *name);
         match comment.map(|it| it.setting).or(implicit) {
             None | Some(Global::Off) if lib == 0 => None,
@@ -271,7 +315,11 @@ impl<'a> File<'a> {
     /// libraries of TypeScript. Never [`Global::Off`].
     pub fn declared_global(&'a self, name: &[u8]) -> Option<Global> {
         let global = self.global(name).filter(|it| !it.is_only_in_lib)?;
-        Some(if global.is_writable { Global::Writable } else { Global::Readonly })
+        Some(if global.is_writable {
+            Global::Writable
+        } else {
+            Global::Readonly
+        })
     }
 
     /// ESLint's `getNameLocationInGlobalDirectiveComment`: where `name` is in the `/* global */`
@@ -281,13 +329,22 @@ impl<'a> File<'a> {
         // `[\s,]name(?:$|[\s,:])`, from after the first "global".
         let floor = strings::index_of(value, b"global").map_or(5, |at| at + 6);
         let mut from = floor;
-        while let Some(found) = value.get(from..).and_then(|rest| strings::index_of(rest, name)) {
+        while let Some(found) = value
+            .get(from..)
+            .and_then(|rest| strings::index_of(rest, name))
+        {
             let at = from + found;
             from = at + 1;
             let (before, after) = (&value[..at], &value[at + name.len()..]);
-            let separator = if before.ends_with(b",") { 1 } else { space_len_back(before) };
+            let separator = if before.ends_with(b",") {
+                1
+            } else {
+                space_len_back(before)
+            };
             let is_separated = separator > 0 && at - separator >= floor;
-            if is_separated && (after.is_empty() || matches!(after[0], b',' | b':') || space_len(after) > 0) {
+            if is_separated
+                && (after.is_empty() || matches!(after[0], b',' | b':') || space_len(after) > 0)
+            {
                 let start = comment.start + 2 + at as u32;
                 return Span::new(start, start + name.len() as u32);
             }

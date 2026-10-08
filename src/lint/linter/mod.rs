@@ -44,23 +44,25 @@ pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fi
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use message::{LintMessage, RuleId, Suppression, Utf16Offsets};
 pub(crate) use per_file::PerFile;
-pub(crate) use space::trim as trim_js_space;
 pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
+pub(crate) use space::trim as trim_js_space;
 
 use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::language::{Parser, SourceType};
 use crate::options::{Json, Options};
 use crate::runner::{AnyRule, Enabled, RuleEntry};
-use directives::{ConfigComment, Label};
 use bun_sema::hir::DiagnosticKind;
+use directives::{ConfigComment, Label};
 use message::Locator;
 
 /// What a test of this module can reach of its parts.
 #[doc(hidden)]
 pub mod testing {
-    pub use super::comment::{parse_directive, parse_json_like_config, parse_list_config, parse_string_config};
+    pub use super::comment::{
+        parse_directive, parse_json_like_config, parse_list_config, parse_string_config,
+    };
     pub use super::directives::candidates;
     pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
@@ -131,10 +133,13 @@ fn is_same_rule(a: &RuleEntry, b: &RuleEntry) -> bool {
 /// The opposite of ESLint's `containsDifferentProperty`: equal, whatever the order of the keys.
 fn is_same_json(a: &Json, b: &Json) -> bool {
     match (a, b) {
-        (Json::Array(a), Json::Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_same_json(a, b)),
+        (Json::Array(a), Json::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_same_json(a, b))
+        }
         (Json::Object(a), Json::Object(_)) => {
             a.len() == b.as_object().map_or(0, <[_]>::len)
-                && a.iter().all(|(key, a)| b.get(key).is_some_and(|b| is_same_json(a, b)))
+                && a.iter()
+                    .all(|(key, a)| b.get(key).is_some_and(|b| is_same_json(a, b)))
         }
         _ => a == b,
     }
@@ -151,7 +156,12 @@ impl Linter {
 
     /// ESLint's `Linter.verify`, from after the file is parsed. `file` was made with
     /// `config.language`.
-    pub fn lint<'a>(&self, file: &'a File<'a>, config: &ResolvedConfig, options: &LintOptions) -> LintResult {
+    pub fn lint<'a>(
+        &self,
+        file: &'a File<'a>,
+        config: &ResolvedConfig,
+        options: &LintOptions,
+    ) -> LintResult {
         let locator = Locator::new(file);
         if let Some(fatal) = parse_error(file, &locator) {
             return LintResult {
@@ -227,7 +237,9 @@ impl Linter {
         }
         // Nor can what disables a rule that does not run for lack of types be called unused.
         if file.types.is_none() {
-            let without_types = running.iter().filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
+            let without_types = running
+                .iter()
+                .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
             rules_to_ignore.extend(without_types.map(|it| RuleId::Known(it.entry.meta)));
         }
         let enabled: Vec<Enabled> = (running.iter())
@@ -264,7 +276,9 @@ impl Linter {
         if disable_directives.is_empty() {
             result.messages = problems;
         } else {
-            let (suppressed, messages) = problems.into_iter().partition(|it| !it.suppressions.is_empty());
+            let (suppressed, messages) = problems
+                .into_iter()
+                .partition(|it| !it.suppressions.is_empty());
             result.messages = messages;
             result.suppressed = suppressed;
         }
@@ -300,7 +314,9 @@ fn parse_error(file: &File, locator: &Locator) -> Option<LintMessage> {
     }
     let language = file.language();
     // What is an error in strict mode only. TypeScript's parser always reports it.
-    let is_sloppy = language.parser == Parser::Espree && language.source_type != SourceType::Module && !language.implied_strict;
+    let is_sloppy = language.parser == Parser::Espree
+        && language.source_type != SourceType::Module
+        && !language.implied_strict;
     let is_tolerated = |code: u32| match code {
         // Octal literals and escapes, `\8`, `08`.
         1121 | 1487 | 1488 | 1489 => is_sloppy,
@@ -308,14 +324,23 @@ fn parse_error(file: &File, locator: &Locator) -> Option<LintMessage> {
         2880 => true,
         _ => false,
     };
-    let parse_errors = || file.hir.diagnostics.iter().filter(|it| it.kind == DiagnosticKind::Parse);
+    let parse_errors = || {
+        file.hir
+            .diagnostics
+            .iter()
+            .filter(|it| it.kind == DiagnosticKind::Parse)
+    };
     if parse_errors().next().is_some() && parse_errors().all(|it| is_tolerated(it.code)) {
         return None;
     }
-    let first = parse_errors().find(|it| !is_tolerated(it.code)).or_else(|| file.hir.diagnostics.first());
+    let first = parse_errors()
+        .find(|it| !is_tolerated(it.code))
+        .or_else(|| file.hir.diagnostics.first());
     let mut message = b"Parsing error: ".to_vec();
     match first.and_then(|it| Some((it, bun_sema::messages::message(it.code)?.1))) {
-        Some((diagnostic, text)) => bun_sema::messages::format(&mut message, text, &diagnostic.args),
+        Some((diagnostic, text)) => {
+            bun_sema::messages::format(&mut message, text, &diagnostic.args)
+        }
         None => message.extend_from_slice(b"Unexpected token"),
     }
     let (line, column) = locator.position(first.map_or(0, |it| it.start));
@@ -350,11 +375,16 @@ struct Inline<'i, 'c, 'a> {
 
 impl<'c, 'a> Inline<'_, 'c, 'a> {
     fn error(&mut self, comment: &ConfigComment, rule_id: Option<RuleId>, message: Vec<u8>) {
-        self.problems.push(self.locator.problem(comment.span, Severity::Error, rule_id, message));
+        self.problems.push(
+            self.locator
+                .problem(comment.span, Severity::Error, rule_id, message),
+        );
     }
 
     fn fatal(&mut self, comment: &ConfigComment, message: Vec<u8>) {
-        let mut problem = self.locator.problem(comment.span, Severity::Error, None, message);
+        let mut problem = self
+            .locator
+            .problem(comment.span, Severity::Error, None, message);
         problem.is_fatal = true;
         self.problems.push(problem);
     }
@@ -381,7 +411,12 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
     fn apply(&mut self, comment: &ConfigComment, running: &mut Vec<Running<'c>>) {
         match comment.label {
             Label::Rules => {}
-            Label::Env => return self.fatal(comment, b"/* eslint-env */ comments are no longer supported.".to_vec()),
+            Label::Env => {
+                return self.fatal(
+                    comment,
+                    b"/* eslint-env */ comments are no longer supported.".to_vec(),
+                );
+            }
             Label::Global => {
                 for (_, value) in comment::parse_string_config(self.file.slice(comment.value)) {
                     if let Some(value) = value
@@ -422,7 +457,11 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             };
             let Some(severity) = inline.first().and_then(severity_of) else {
                 // The message of `InvalidRuleSeverityError`, from after its first colon.
-                let full = quoted(&[b"Key \"", &id, b"\": Expected severity of \"off\", 0, \"warn\", 1, \"error\", or 2."]);
+                let full = quoted(&[
+                    b"Key \"",
+                    &id,
+                    b"\": Expected severity of \"off\", 0, \"warn\", 1, \"error\", or 2.",
+                ]);
                 let colon = bun_core::strings::index_of_char_usize(&full, b':').unwrap_or(0);
                 let mut passed = Vec::new();
                 message::write_js_string(&mut passed, &value);
@@ -445,22 +484,39 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 _ => &inline[1..],
             };
             if self.config.linter.report_unused_inline_configs != Severity::Off {
-                self.report_if_unused(comment, &id, entry, existing, severity, options, inline.len() == 1);
+                self.report_if_unused(
+                    comment,
+                    &id,
+                    entry,
+                    existing,
+                    severity,
+                    options,
+                    inline.len() == 1,
+                );
             }
             // The options of a rule that the configuration enables are validated already.
-            let is_validated = inline.len() == 1 && existing.is_some_and(|it| it.severity != Severity::Off);
+            let is_validated =
+                inline.len() == 1 && existing.is_some_and(|it| it.severity != Severity::Off);
             // ESLint leaves out what is off only if that is written `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
             if !is_validated
                 && !is_zero
                 && let Err(lines) = schema::validate(entry.meta, options)
             {
-                let message = quoted(&[b"Inline configuration for rule \"", &id, b"\" is invalid:\n\t", space::trim(&lines), b"\n"]);
+                let message = quoted(&[
+                    b"Inline configuration for rule \"",
+                    &id,
+                    b"\" is invalid:\n\t",
+                    space::trim(&lines),
+                    b"\n",
+                ]);
                 self.error(comment, Some(RuleId::Known(entry.meta)), message);
                 continue;
             }
             self.configured.push(entry);
-            let shared = existing.filter(|_| inline.len() == 1).and_then(ConfiguredRule::instance);
+            let shared = existing
+                .filter(|_| inline.len() == 1)
+                .and_then(ConfiguredRule::instance);
             let rule = match shared {
                 Some(rule) => RuleRef::Shared(rule),
                 None if severity == Severity::Off => {
@@ -469,7 +525,11 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 }
                 None => RuleRef::Own((entry.build)(&Options::new(options))),
             };
-            let new = Running { entry, severity, rule };
+            let new = Running {
+                entry,
+                severity,
+                rule,
+            };
             match running.iter_mut().find(|it| is_same_rule(it.entry, entry)) {
                 Some(running) => *running = new,
                 None => running.push(new),
@@ -500,18 +560,37 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             Some(_) => format!("is already configured to '{name}'"),
             None => "is not enabled so can't be turned off".to_owned(),
         };
-        let existing_options = existing.map_or(Vec::new(), |it| schema::with_defaults(entry.meta, &it.options));
+        let existing_options = existing.map_or(Vec::new(), |it| {
+            schema::with_defaults(entry.meta, &it.options)
+        });
         let options = schema::with_defaults(entry.meta, options);
-        let suffix: &[u8] = if existing_options.is_empty() && options.is_empty() || severity == Severity::Off {
-            b")."
-        } else if options.len() == existing_options.len() && options.iter().zip(&existing_options).all(|(a, b)| is_same_json(a, b)) {
-            if has_only_severity { b")." } else { b" with the same options)." }
-        } else {
-            return;
-        };
-        let message = quoted(&[b"Unused inline config ('", id, b"' ", already.as_bytes(), suffix]);
+        let suffix: &[u8] =
+            if existing_options.is_empty() && options.is_empty() || severity == Severity::Off {
+                b")."
+            } else if options.len() == existing_options.len()
+                && options
+                    .iter()
+                    .zip(&existing_options)
+                    .all(|(a, b)| is_same_json(a, b))
+            {
+                if has_only_severity {
+                    b")."
+                } else {
+                    b" with the same options)."
+                }
+            } else {
+                return;
+            };
+        let message = quoted(&[
+            b"Unused inline config ('",
+            id,
+            b"' ",
+            already.as_bytes(),
+            suffix,
+        ]);
         let severity = self.config.linter.report_unused_inline_configs;
-        self.problems.push(self.locator.problem(comment.span, severity, None, message));
+        self.problems
+            .push(self.locator.problem(comment.span, severity, None, message));
     }
 
     /// ESLint's `getDisableDirectives` and `createDisableDirectives`.
@@ -528,14 +607,24 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             Label::DisableNextLine => disable::Kind::DisableNextLine,
             _ => return,
         };
-        let (start, end) = (self.locator.position(comment.span.start), self.locator.position(comment.span.end));
+        let (start, end) = (
+            self.locator.position(comment.span.start),
+            self.locator.position(comment.span.end),
+        );
         if kind == disable::Kind::DisableLine && start.0 != end.0 {
-            let message = quoted(&[self.file.slice(comment.label_span), b" comment should not span multiple lines."]);
+            let message = quoted(&[
+                self.file.slice(comment.label_span),
+                b" comment should not span multiple lines.",
+            ]);
             return self.error(comment, None, message);
         }
         let list = self.file.slice(comment.value);
         let mut names = comment::parse_list_config(list);
-        let (line, column) = if kind == disable::Kind::DisableNextLine { end } else { start };
+        let (line, column) = if kind == disable::Kind::DisableNextLine {
+            end
+        } else {
+            start
+        };
         let parent = parents.len() as u32;
         let mut push = |rule: Option<RuleId>, name: &'a [u8]| {
             directives.push(disable::Directive {

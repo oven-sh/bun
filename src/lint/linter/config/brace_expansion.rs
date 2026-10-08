@@ -56,7 +56,11 @@ struct Balanced<'t> {
 /// `balanced("{", "}", text)` of the `balanced-match` package: the first pair of braces that
 /// match each other.
 fn balanced(text: &[u8]) -> Option<Balanced<'_>> {
-    let find = |byte: u8, from: usize| text.get(from..).and_then(|rest| strings::index_of_char_usize(rest, byte)).map(|i| from + i);
+    let find = |byte: u8, from: usize| {
+        text.get(from..)
+            .and_then(|rest| strings::index_of_char_usize(rest, byte))
+            .map(|i| from + i)
+    };
     let mut open = Some(find(b'{', 0)?);
     let mut close = find(b'}', open? + 1);
     close?;
@@ -105,7 +109,9 @@ fn parse_comma_parts(mut text: &[u8]) -> Vec<Vec<u8>> {
     let mut carry: Vec<u8> = Vec::new();
     loop {
         let found = balanced(text);
-        let mut split: Vec<Vec<u8>> = strings::split(found.as_ref().map_or(text, |m| m.pre), b",").map(<[u8]>::to_vec).collect();
+        let mut split: Vec<Vec<u8>> = strings::split(found.as_ref().map_or(text, |m| m.pre), b",")
+            .map(<[u8]>::to_vec)
+            .collect();
         if let Some(first) = split.first_mut() {
             first.splice(0..0, std::mem::take(&mut carry));
         }
@@ -131,7 +137,10 @@ fn parse_comma_parts(mut text: &[u8]) -> Vec<Vec<u8>> {
 /// `-?\d+`
 fn integer_len(text: &[u8]) -> Option<usize> {
     let sign = usize::from(text.first() == Some(&b'-'));
-    let digits = text[sign..].iter().take_while(|b| b.is_ascii_digit()).count();
+    let digits = text[sign..]
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
     (digits > 0).then_some(sign + digits)
 }
 
@@ -141,7 +150,11 @@ fn sequence_parts(body: &[u8], first: fn(&[u8]) -> Option<usize>) -> Option<Vec<
     let mut parts = Vec::with_capacity(3);
     let mut rest = body;
     for i in 0..3 {
-        let len = if i < 2 { first(rest)? } else { integer_len(rest)? };
+        let len = if i < 2 {
+            first(rest)?
+        } else {
+            integer_len(rest)?
+        };
         parts.push(&rest[..len]);
         rest = &rest[len..];
         if rest.is_empty() && i >= 1 {
@@ -157,21 +170,36 @@ fn parse_integer(text: &[u8]) -> i64 {
         [b'-', digits @ ..] => (true, digits),
         digits => (false, digits),
     };
-    let value = digits.iter().fold(0i64, |n, b| n.saturating_mul(10).saturating_add(i64::from(b - b'0')));
+    let value = digits.iter().fold(0i64, |n, b| {
+        n.saturating_mul(10).saturating_add(i64::from(b - b'0'))
+    });
     if is_negative { -value } else { value }
 }
 
 fn expand_sequence(parts: &[&[u8]], is_alpha: bool) -> Vec<Vec<u8>> {
-    let numeric = |text: &[u8]| if is_alpha && !text[0].is_ascii_digit() && text[0] != b'-' { i64::from(text[0]) } else { parse_integer(text) };
+    let numeric = |text: &[u8]| {
+        if is_alpha && !text[0].is_ascii_digit() && text[0] != b'-' {
+            i64::from(text[0])
+        } else {
+            parse_integer(text)
+        }
+    };
     let (x, y) = (numeric(parts[0]), numeric(parts[1]));
     let width = parts[0].len().max(parts[1].len());
-    let mut step = parts.get(2).map_or(1, |it| parse_integer(it).saturating_abs().max(1));
+    let mut step = parts
+        .get(2)
+        .map_or(1, |it| parse_integer(it).saturating_abs().max(1));
     let is_reversed = y < x;
     if is_reversed {
         step = -step;
     }
     // `^-?0\d`
-    let is_padded = |it: &&[u8]| matches!(it.strip_prefix(b"-").unwrap_or(*it), [b'0', b'0'..=b'9', ..]);
+    let is_padded = |it: &&[u8]| {
+        matches!(
+            it.strip_prefix(b"-").unwrap_or(*it),
+            [b'0', b'0'..=b'9', ..]
+        )
+    };
     let pad = parts.iter().any(|it| is_padded(it));
     let (mut out, mut length, mut i) = (Vec::new(), 0, x);
     while (if is_reversed { i >= y } else { i <= y }) && out.len() < MAX {
@@ -262,7 +290,12 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool) -> Vec<Vec<u8>> {
         };
         let braced = |body: &[u8]| [m.pre, b"{", body, b"}"].concat();
         if m.pre.ends_with(b"$") {
-            acc = combine(&acc, &braced(m.body), &none, drop_empties && m.post.is_empty());
+            acc = combine(
+                &acc,
+                &braced(m.body),
+                &none,
+                drop_empties && m.post.is_empty(),
+            );
             is_first_group = false;
             if m.post.is_empty() {
                 break;
@@ -271,7 +304,9 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool) -> Vec<Vec<u8>> {
             continue;
         }
         let numbers = sequence_parts(m.body, integer_len);
-        let letters = sequence_parts(m.body, |it| it.first().is_some_and(u8::is_ascii_alphabetic).then_some(1));
+        let letters = sequence_parts(m.body, |it| {
+            it.first().is_some_and(u8::is_ascii_alphabetic).then_some(1)
+        });
         let is_sequence = numbers.is_some() || letters.is_some();
         if !is_sequence && !strings::contains_char(m.body, b',') {
             // `{a},b}`
@@ -282,7 +317,12 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool) -> Vec<Vec<u8>> {
                 is_top = true;
                 continue;
             }
-            return combine(&acc, &[&braced(m.body)[..], m.post].concat(), &none, drop_empties);
+            return combine(
+                &acc,
+                &[&braced(m.body)[..], m.post].concat(),
+                &none,
+                drop_empties,
+            );
         }
         if is_first_group {
             drop_empties = is_top && !is_sequence;
@@ -300,7 +340,12 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool) -> Vec<Vec<u8>> {
                     part.push(b'}');
                 }
                 if let [only] = &parts[..] {
-                    acc = combine(&acc, &[m.pre, &only[..]].concat(), &none, drop_empties && m.post.is_empty());
+                    acc = combine(
+                        &acc,
+                        &[m.pre, &only[..]].concat(),
+                        &none,
+                        drop_empties && m.post.is_empty(),
+                    );
                     if m.post.is_empty() {
                         break;
                     }
@@ -308,7 +353,10 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool) -> Vec<Vec<u8>> {
                     continue;
                 }
             }
-            let drops_empties = drop_empties && m.post.is_empty() && m.pre.is_empty() && acc.iter().all(Vec::is_empty);
+            let drops_empties = drop_empties
+                && m.post.is_empty()
+                && m.pre.is_empty()
+                && acc.iter().all(Vec::is_empty);
             let (mut values, mut length) = (Vec::new(), 0);
             'parts: for part in &parts {
                 for value in expand_inner(part, depth + 1, false) {
@@ -342,5 +390,8 @@ pub(super) fn expand(text: &[u8]) -> Vec<Vec<u8>> {
         Some(rest) => escape_braces(&[b"\\{\\}", rest].concat()),
         None => escape_braces(text),
     };
-    expand_inner(&escaped, 0, true).into_iter().map(unescape_braces).collect()
+    expand_inner(&escaped, 0, true)
+        .into_iter()
+        .map(unescape_braces)
+        .collect()
 }

@@ -77,7 +77,8 @@ impl Input<'_, '_> {
     /// `createIndividualDirectivesRemoval`: removes `name` from the list of `parent`.
     fn removal_from_list(&self, parent: &Parent, name: &[u8]) -> Option<Span> {
         let (text, list) = (self.file.text(), parent.list);
-        let list_start = parent.comment.start as usize + strings::index_of(text.get(parent.comment.start as usize..)?, list)?;
+        let list_start = parent.comment.start as usize
+            + strings::index_of(text.get(parent.comment.start as usize..)?, list)?;
         // `(?:^|\s*,\s*)(?<quote>['"]?)name\k<quote>(?:\s*,\s*|$)`
         let mut from = 0;
         while let Some(found) = strings::index_of(&list[from..], name) {
@@ -124,7 +125,10 @@ impl Input<'_, '_> {
                 (Some(before), Some(after)) => (before, after),
                 _ => (start, end),
             };
-            return Some(Span::new((list_start + start) as u32, (list_start + end) as u32));
+            return Some(Span::new(
+                (list_start + start) as u32,
+                (list_start + end) as u32,
+            ));
         }
         None
     }
@@ -143,7 +147,10 @@ impl Input<'_, '_> {
         for (parent, group) in groups {
             let parent = &self.parents[parent as usize];
             let names = || group.iter().map(|&it| self.directives[it as usize].name);
-            let is_whole_comment = parent.names.iter().all(|name| names().any(|it| it == *name));
+            let is_whole_comment = parent
+                .names
+                .iter()
+                .all(|name| names().any(|it| it == *name));
             if !is_whole_comment {
                 for &directive in &group {
                     let name = self.directives[directive as usize].name;
@@ -153,7 +160,15 @@ impl Input<'_, '_> {
                     let mut description = vec![b'\''];
                     description.extend_from_slice(name);
                     description.push(b'\'');
-                    out.push(self.message(directive, parent, &description, Fix { span, text: Vec::new() }));
+                    out.push(self.message(
+                        directive,
+                        parent,
+                        &description,
+                        Fix {
+                            span,
+                            text: Vec::new(),
+                        },
+                    ));
                 }
                 continue;
             }
@@ -179,16 +194,29 @@ impl Input<'_, '_> {
         }
     }
 
-    fn message(&self, directive: u32, parent: &Parent, description: &[u8], fix: Fix) -> LintMessage {
+    fn message(
+        &self,
+        directive: u32,
+        parent: &Parent,
+        description: &[u8],
+        fix: Fix,
+    ) -> LintMessage {
         let directive = &self.directives[directive as usize];
         let (what, why) = match directive.kind {
-            Kind::Enable => ("enable", &b"no matching eslint-disable directives were found"[..]),
+            Kind::Enable => (
+                "enable",
+                &b"no matching eslint-disable directives were found"[..],
+            ),
             _ => ("disable", &b"no problems were reported"[..]),
         };
         let mut message = format!("Unused eslint-{what} directive (").into_bytes();
         message.extend_from_slice(why);
         if !description.is_empty() {
-            message.extend_from_slice(if directive.kind == Kind::Enable { b" for " } else { b" from " });
+            message.extend_from_slice(if directive.kind == Kind::Enable {
+                b" for "
+            } else {
+                b" from "
+            });
             message.extend_from_slice(description);
         }
         message.extend_from_slice(b").");
@@ -240,7 +268,12 @@ impl Input<'_, '_> {
 
     /// `applyDirectives`. `switches` and `messages` are sorted by position. Linear in both, apart
     /// from the comments that are in effect at the same time.
-    fn apply(&self, switches: &[Switch], messages: &mut [LintMessage], unused: &mut Vec<LintMessage>) {
+    fn apply(
+        &self,
+        switches: &[Switch],
+        messages: &mut [LintMessage],
+        unused: &mut Vec<LintMessage>,
+    ) {
         if switches.is_empty() {
             return;
         }
@@ -272,7 +305,10 @@ impl Input<'_, '_> {
                 next += 1;
             }
             let rule = message.rule_id.as_ref();
-            let since = enabled_at.iter().find(|it| Some(it.0) == rule).map(|it| it.1);
+            let since = enabled_at
+                .iter()
+                .find(|it| Some(it.0) == rule)
+                .map(|it| it.1);
             let mut applying = active.iter().filter(|&&it| {
                 let of_switch = self.rule(&switches[it as usize]);
                 (of_switch.is_none() || of_switch == rule) && since.is_none_or(|since| it > since)
@@ -296,17 +332,21 @@ impl Input<'_, '_> {
         if self.report_unused == Severity::Off {
             return;
         }
-        let is_reported = |switch: &&Switch| !is_used[switch.source as usize] && !self.is_ignored(self.rule(switch));
+        let is_reported = |switch: &&Switch| {
+            !is_used[switch.source as usize] && !self.is_ignored(self.rule(switch))
+        };
         let disables: Vec<u32> = (switches.iter().filter(|it| it.disables).filter(is_reported))
             .map(|it| it.source)
             .collect();
-        let is_enable = |switch: &&Switch| self.directives[switch.source as usize].kind == Kind::Enable;
+        let is_enable =
+            |switch: &&Switch| self.directives[switch.source as usize].kind == Kind::Enable;
         let mut enables = Vec::new();
         if switches.iter().any(|it| is_enable(&it)) {
             let mut is_used = vec![false; self.directives.len()];
             self.mark_used_enables(switches, &mut is_used);
             let unused = switches.iter().filter(is_enable);
-            let unused = unused.filter(|it| !is_used[it.source as usize] && !self.is_ignored(self.rule(it)));
+            let unused =
+                unused.filter(|it| !is_used[it.source as usize] && !self.is_ignored(self.rule(it)));
             enables.extend(unused.map(|it| it.source));
         }
         self.report(&disables, unused);

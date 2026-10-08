@@ -35,7 +35,11 @@ pub(super) enum Parsed {
 fn push_units(tokens: &mut Vec<Token>, character: &[u8]) {
     let (c, _) = bun_core::lexer::char_and_size(character, 0);
     let c = char::from_u32(c as u32).unwrap_or(char::REPLACEMENT_CHARACTER);
-    tokens.extend(c.encode_utf16(&mut [0; 2]).iter().map(|unit| Token::Unit(*unit)));
+    tokens.extend(
+        c.encode_utf16(&mut [0; 2])
+            .iter()
+            .map(|unit| Token::Unit(*unit)),
+    );
 }
 
 /// The code unit that `character` is. `None` if it is two.
@@ -104,7 +108,9 @@ fn parse_class(glob: &[u8]) -> Class {
         [] => Class::Never,
         // A class of one character is that character, and no magic. A line terminator is not taken
         // for one.
-        [(a, b)] if a == b && !negate && !matches!(a, 0x0A | 0x0D | 0x2028 | 0x2029) => Class::Token(end, Token::Unit(*a)),
+        [(a, b)] if a == b && !negate && !matches!(a, 0x0A | 0x0D | 0x2028 | 0x2029) => {
+            Class::Token(end, Token::Unit(*a))
+        }
         _ => Class::Token(end, Token::Class(negate, ranges)),
     }
 }
@@ -155,14 +161,27 @@ pub(super) fn parse(glob: &[u8]) -> Parsed {
         });
         let mut literal = Vec::with_capacity(glob.len());
         for c in char::decode_utf16(units) {
-            literal.extend_from_slice(c.unwrap_or(char::REPLACEMENT_CHARACTER).encode_utf8(&mut [0; 4]).as_bytes());
+            literal.extend_from_slice(
+                c.unwrap_or(char::REPLACEMENT_CHARACTER)
+                    .encode_utf8(&mut [0; 4])
+                    .as_bytes(),
+            );
         }
         return Parsed::Literal(literal);
     }
-    let is_magic = |at: usize| matches!(tokens.get(at), Some(Token::Any | Token::Star | Token::Class(..)));
+    let is_magic = |at: usize| {
+        matches!(
+            tokens.get(at),
+            Some(Token::Any | Token::Star | Token::Class(..))
+        )
+    };
     let is_dot = |at: usize| matches!(tokens.get(at), Some(Token::Unit(0x2E)));
-    let rejects_dots = is_magic(0) || is_dot(0) && is_magic(1) || is_dot(0) && is_dot(1) && is_magic(2);
-    Parsed::Glob(GlobPart { tokens, rejects_dots })
+    let rejects_dots =
+        is_magic(0) || is_dot(0) && is_magic(1) || is_dot(0) && is_dot(1) && is_magic(2);
+    Parsed::Glob(GlobPart {
+        tokens,
+        rejects_dots,
+    })
 }
 
 impl GlobPart {
@@ -192,7 +211,9 @@ impl GlobPart {
                 }
                 (Some(Token::Unit(expected)), Some(actual)) => expected == actual,
                 (Some(Token::Any), Some(_)) => true,
-                (Some(Token::Class(negate, ranges)), Some(actual)) => ranges.iter().any(|it| it.0 <= *actual && *actual <= it.1) != *negate,
+                (Some(Token::Class(negate, ranges)), Some(actual)) => {
+                    ranges.iter().any(|it| it.0 <= *actual && *actual <= it.1) != *negate
+                }
                 _ => false,
             };
             if is_match {

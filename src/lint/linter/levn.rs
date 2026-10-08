@@ -31,7 +31,12 @@ fn quoted_end(text: &[u8]) -> Option<usize> {
 /// The end of `#.*#`.
 fn date_end(text: &[u8]) -> Option<usize> {
     let mut end = 1;
-    while end < text.len() && !matches!(text[end..], [b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]) {
+    while end < text.len()
+        && !matches!(
+            text[end..],
+            [b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..]
+        )
+    {
         end += 1;
     }
     bun_core::strings::last_index_of_char(&text[1..end], b'#').map(|i| i + 2)
@@ -64,7 +69,10 @@ fn tokenize(text: &[u8]) -> Vec<&[u8]> {
         let end = match rest[0] {
             b'"' | b'\'' => quoted_end(rest),
             b'/' => quoted_end(rest).map(|end| {
-                end + rest[end..].iter().take_while(|b| b.is_ascii_alphabetic()).count()
+                end + rest[end..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_alphabetic())
+                    .count()
             }),
             b'#' => date_end(rest),
             byte if is_special(byte) => Some(1),
@@ -119,9 +127,16 @@ impl<'t> Tokens<'t> {
         if has_delimiters {
             self.consume(b"{")?;
         }
-        let until: &[&[u8]] = if has_delimiters { &[b",", b"}"] } else { &[b","] };
+        let until: &[&[u8]] = if has_delimiters {
+            &[b",", b"}"]
+        } else {
+            &[b","]
+        };
         let mut fields: Vec<(Vec<u8>, Node)> = Vec::new();
-        while self.peek().is_some_and(|token| !has_delimiters || token != b"}") {
+        while self
+            .peek()
+            .is_some_and(|token| !has_delimiters || token != b"}")
+        {
             let key = self.value(&[b":"]);
             self.consume(b":")?;
             let value = self.element(until, depth)?;
@@ -167,7 +182,12 @@ pub(crate) fn to_number(text: &[u8]) -> f64 {
     if text.is_empty() {
         return 0.0;
     }
-    if let [b'0', radix @ (b'x' | b'X' | b'o' | b'O' | b'b' | b'B'), digits @ ..] = text {
+    if let [
+        b'0',
+        radix @ (b'x' | b'X' | b'o' | b'O' | b'b' | b'B'),
+        digits @ ..,
+    ] = text
+    {
         let radix = match radix.to_ascii_lowercase() {
             b'x' => 16,
             b'o' => 8,
@@ -187,7 +207,11 @@ pub(crate) fn to_number(text: &[u8]) -> f64 {
         _ => text,
     };
     if unsigned == b"Infinity" {
-        return if text[0] == b'-' { f64::NEG_INFINITY } else { f64::INFINITY };
+        return if text[0] == b'-' {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
     }
     let digits = |text: &[u8]| text.iter().take_while(|b| b.is_ascii_digit()).count();
     let whole = digits(unsigned);
@@ -212,7 +236,10 @@ pub(crate) fn to_number(text: &[u8]) -> f64 {
     if at != unsigned.len() {
         return f64::NAN;
     }
-    std::str::from_utf8(text).ok().and_then(|it| it.parse().ok()).unwrap_or(f64::NAN)
+    std::str::from_utf8(text)
+        .ok()
+        .and_then(|it| it.parse().ok())
+        .unwrap_or(f64::NAN)
 }
 
 /// The `String` cast: without its quotes, and with its escapes replaced.
@@ -234,9 +261,9 @@ fn unquote(text: &[u8]) -> Vec<u8> {
         at += 2;
         match escaped {
             b'u' => {
-                let unit = rest.get(2..6).and_then(|hex| {
-                    u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()
-                });
+                let unit = rest
+                    .get(2..6)
+                    .and_then(|hex| u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
                 match unit.filter(|_| rest[2..6].iter().all(u8::is_ascii_hexdigit)) {
                     Some(unit) => {
                         let c = char::from_u32(unit).unwrap_or(char::REPLACEMENT_CHARACTER);
@@ -272,7 +299,9 @@ fn cast(node: Node) -> Option<Json> {
             [b'/', .., b'/'] => return None,
             [b'/', rest @ ..]
                 if bun_core::strings::last_index_of_char(rest, b'/').is_some_and(|slash| {
-                    rest[slash + 1..].iter().all(|b| matches!(b, b'g' | b'i' | b'm' | b'y'))
+                    rest[slash + 1..]
+                        .iter()
+                        .all(|b| matches!(b, b'g' | b'i' | b'm' | b'y'))
                 }) =>
             {
                 return None;
@@ -308,5 +337,7 @@ pub(crate) fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
         return None;
     };
     // levn reads what has tokens left over as a tuple, which is no object.
-    (tokens.at == tokens.tokens.len()).then(|| cast_fields(fields)).flatten()
+    (tokens.at == tokens.tokens.len())
+        .then(|| cast_fields(fields))
+        .flatten()
 }

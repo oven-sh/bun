@@ -53,9 +53,13 @@ fn has_type(data: &Json, name: &[u8]) -> bool {
 /// `fast-deep-equal`
 fn is_equal(a: &Json, b: &Json) -> bool {
     match (a, b) {
-        (Json::Array(a), Json::Array(b)) => a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_equal(a, b)),
+        (Json::Array(a), Json::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_equal(a, b))
+        }
         (Json::Object(a), Json::Object(_)) => {
-            a.len() == b.as_object().map_or(0, <[_]>::len) && a.iter().all(|(key, a)| b.get(key).is_some_and(|b| is_equal(a, b)))
+            a.len() == b.as_object().map_or(0, <[_]>::len)
+                && a.iter()
+                    .all(|(key, a)| b.get(key).is_some_and(|b| is_equal(a, b)))
         }
         _ => a == b,
     }
@@ -71,9 +75,24 @@ fn number_of(schema: &Json, key: &[u8]) -> Option<f64> {
 /// The types that have keywords of their own, in the order in which Ajv checks them, and these
 /// keywords.
 const GROUPS: [(&[u8], &[&[u8]]); 4] = [
-    (b"number", &[b"maximum", b"minimum", b"multipleOf", b"format"]),
-    (b"string", &[b"maxLength", b"minLength", b"pattern", b"format"]),
-    (b"array", &[b"maxItems", b"minItems", b"items", b"contains", b"uniqueItems"]),
+    (
+        b"number",
+        &[b"maximum", b"minimum", b"multipleOf", b"format"],
+    ),
+    (
+        b"string",
+        &[b"maxLength", b"minLength", b"pattern", b"format"],
+    ),
+    (
+        b"array",
+        &[
+            b"maxItems",
+            b"minItems",
+            b"items",
+            b"contains",
+            b"uniqueItems",
+        ],
+    ),
     (
         b"object",
         &[
@@ -98,16 +117,33 @@ fn has_reference(schema: &Json, depth: usize) -> bool {
     match schema {
         _ if depth > MAX_DEPTH => false,
         Json::Array(items) => items.iter().any(|it| has_reference(it, depth + 1)),
-        Json::Object(entries) => entries.iter().any(|it| it.0 == b"$ref" || has_reference(&it.1, depth + 1)),
+        Json::Object(entries) => entries
+            .iter()
+            .any(|it| it.0 == b"$ref" || has_reference(&it.1, depth + 1)),
         _ => false,
     }
 }
 
 /// `schemaHasRules`: whether a schema has a keyword that validates.
 fn has_rules(schema: &Json) -> bool {
-    schema.as_object().unwrap_or_default().iter().any(|(key, _)| {
-        !matches!(&key[..], b"default" | b"definitions" | b"$defs" | b"description" | b"title" | b"id" | b"$id" | b"$schema" | b"examples")
-    })
+    schema
+        .as_object()
+        .unwrap_or_default()
+        .iter()
+        .any(|(key, _)| {
+            !matches!(
+                &key[..],
+                b"default"
+                    | b"definitions"
+                    | b"$defs"
+                    | b"description"
+                    | b"title"
+                    | b"id"
+                    | b"$id"
+                    | b"$schema"
+                    | b"examples"
+            )
+        })
 }
 
 /// `new RegExp(pattern)`
@@ -137,9 +173,12 @@ impl<'s> Validator<'s> {
     fn resolve(&self, reference: &[u8]) -> Option<&'s Json> {
         let mut at = self.root;
         for part in strings::split(reference.strip_prefix(b"#")?, b"/").skip(1) {
-            let part = strings::replace_owned(&strings::replace_owned(part, b"~1", b"/"), b"~0", b"~");
+            let part =
+                strings::replace_owned(&strings::replace_owned(part, b"~1", b"/"), b"~0", b"~");
             at = match at {
-                Json::Array(items) => items.get(std::str::from_utf8(&part).ok()?.parse::<usize>().ok()?)?,
+                Json::Array(items) => {
+                    items.get(std::str::from_utf8(&part).ok()?.parse::<usize>().ok()?)?
+                }
                 at => at.get(&part)?,
             };
         }
@@ -184,8 +223,13 @@ impl<'s> Validator<'s> {
             // The type is checked before everything else unless it is one type that has keywords of
             // its own in the schema. Nothing stops the keywords of the first group from being
             // checked after that, where an error does not end the validation.
-            let is_checked_first = schema.get(b"type").is_some_and(|it| it.as_array().is_some())
-                || GROUPS.iter().find(|group| group.0 == types[0]).is_none_or(|group| !uses_group(schema, group.1));
+            let is_checked_first = schema
+                .get(b"type")
+                .is_some_and(|it| it.as_array().is_some())
+                || GROUPS
+                    .iter()
+                    .find(|group| group.0 == types[0])
+                    .is_none_or(|group| !uses_group(schema, group.1));
             if cx.is_composite && is_checked_first {
                 match GROUPS.iter().find(|group| uses_group(schema, group.1)) {
                     Some(group) => self.check_typed(group.0, schema, data, cx),
@@ -194,11 +238,20 @@ impl<'s> Validator<'s> {
             }
             return false;
         }
-        GROUPS.iter().all(|group| self.check_typed(group.0, schema, data, cx)) && self.check_any(schema, data, cx)
+        GROUPS
+            .iter()
+            .all(|group| self.check_typed(group.0, schema, data, cx))
+            && self.check_any(schema, data, cx)
     }
 
     /// The keywords for the values of one type, if `data` is one.
-    fn check_typed(&mut self, group: &[u8], schema: &'s Json, data: &mut Json, cx: Context) -> bool {
+    fn check_typed(
+        &mut self,
+        group: &[u8],
+        schema: &'s Json,
+        data: &mut Json,
+        cx: Context,
+    ) -> bool {
         match (group, &*data) {
             (b"number", Json::Number(_)) => self.check_number(schema, data, cx),
             (b"string", Json::String(_)) => self.check_string(schema, data, cx),
@@ -234,12 +287,28 @@ impl<'s> Validator<'s> {
         if let Some(limit) = number_of(schema, b"maxLength")
             && length() > limit
         {
-            return self.error(cx, data, &[b"should NOT be longer than ", &written(limit), b" characters"]);
+            return self.error(
+                cx,
+                data,
+                &[
+                    b"should NOT be longer than ",
+                    &written(limit),
+                    b" characters",
+                ],
+            );
         }
         if let Some(limit) = number_of(schema, b"minLength")
             && length() < limit
         {
-            return self.error(cx, data, &[b"should NOT be shorter than ", &written(limit), b" characters"]);
+            return self.error(
+                cx,
+                data,
+                &[
+                    b"should NOT be shorter than ",
+                    &written(limit),
+                    b" characters",
+                ],
+            );
         }
         if let Some(pattern) = schema.get(b"pattern").and_then(Json::as_str)
             && regex_of(pattern).is_some_and(|regex| !regex.test(value))
@@ -268,24 +337,42 @@ impl<'s> Validator<'s> {
         if let Some(limit) = number_of(schema, b"maxItems")
             && len as f64 > limit
         {
-            return self.error(cx, data, &[b"should NOT have more than ", &written(limit), b" items"]);
+            return self.error(
+                cx,
+                data,
+                &[b"should NOT have more than ", &written(limit), b" items"],
+            );
         }
         if let Some(limit) = number_of(schema, b"minItems")
             && (len as f64) < limit
         {
-            return self.error(cx, data, &[b"should NOT have fewer than ", &written(limit), b" items"]);
+            return self.error(
+                cx,
+                data,
+                &[b"should NOT have fewer than ", &written(limit), b" items"],
+            );
         }
         match items_schema {
             Some(Json::Array(schemas)) => {
                 let additional = schema.get(b"additionalItems");
                 if additional == Some(&Json::Bool(false)) && len > schemas.len() {
-                    return self.error(cx, data, &[b"should NOT have more than ", &written(schemas.len() as f64), b" items"]);
+                    return self.error(
+                        cx,
+                        data,
+                        &[
+                            b"should NOT have more than ",
+                            &written(schemas.len() as f64),
+                            b" items",
+                        ],
+                    );
                 }
                 let Json::Array(items) = data else {
                     return true;
                 };
                 for (i, item) in items.iter_mut().enumerate() {
-                    let item_schema = schemas.get(i).or(additional.filter(|it| it.as_object().is_some()));
+                    let item_schema = schemas
+                        .get(i)
+                        .or_else(|| additional.filter(|it| it.as_object().is_some()));
                     if let Some(item_schema) = item_schema
                         && !self.check(item_schema, item, cx)
                     {
@@ -308,7 +395,8 @@ impl<'s> Validator<'s> {
         if schema.get(b"uniqueItems") == Some(&Json::Bool(true))
             && let Some((j, i)) = Self::duplicate(items_schema, data.as_array().unwrap_or_default())
         {
-            let message = format!("should NOT have duplicate items (items ## {j} and {i} are identical)");
+            let message =
+                format!("should NOT have duplicate items (items ## {j} and {i} are identical)");
             return self.error(cx, data, &[message.as_bytes()]);
         }
         true
@@ -336,9 +424,14 @@ impl<'s> Validator<'s> {
             if !types.iter().any(|name| has_type(&items[i], name)) {
                 continue;
             }
-            let later = (i + 1..items.len()).rev().filter(|j| types.iter().any(|name| has_type(&items[*j], name)));
+            let later = (i + 1..items.len())
+                .rev()
+                .filter(|j| types.iter().any(|name| has_type(&items[*j], name)));
             // The entry for a key is overwritten by each item that has it, so the nearest counts.
-            if let Some(j) = later.filter(|j| Self::has_same_key(&items[i], &items[*j], types.len() > 1)).last() {
+            if let Some(j) = later
+                .filter(|j| Self::has_same_key(&items[i], &items[*j], types.len() > 1))
+                .last()
+            {
                 return Some((j, i));
             }
         }
@@ -360,7 +453,10 @@ impl<'s> Validator<'s> {
     }
 
     fn check_object(&mut self, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
-        let properties = schema.get(b"properties").and_then(Json::as_object).unwrap_or_default();
+        let properties = schema
+            .get(b"properties")
+            .and_then(Json::as_object)
+            .unwrap_or_default();
         if !cx.is_composite
             && let Json::Object(entries) = &mut *data
         {
@@ -376,34 +472,85 @@ impl<'s> Validator<'s> {
         if let Some(limit) = number_of(schema, b"maxProperties")
             && count > limit
         {
-            return self.error(cx, data, &[b"should NOT have more than ", &written(limit), b" properties"]);
+            return self.error(
+                cx,
+                data,
+                &[
+                    b"should NOT have more than ",
+                    &written(limit),
+                    b" properties",
+                ],
+            );
         }
         if let Some(limit) = number_of(schema, b"minProperties")
             && count < limit
         {
-            return self.error(cx, data, &[b"should NOT have fewer than ", &written(limit), b" properties"]);
+            return self.error(
+                cx,
+                data,
+                &[
+                    b"should NOT have fewer than ",
+                    &written(limit),
+                    b" properties",
+                ],
+            );
         }
         // What has a schema in `properties` is looked for there.
-        let required: Vec<&[u8]> = schema.get(b"required").and_then(Json::as_array).unwrap_or_default().iter().filter_map(Json::as_str).collect();
+        let required: Vec<&[u8]> = schema
+            .get(b"required")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(Json::as_str)
+            .collect();
         let has_schema = |name: &[u8]| properties.iter().any(|it| it.0 == name && has_rules(&it.1));
         for name in required.iter().filter(|name| !has_schema(name)) {
             if data.get(name).is_none() {
                 // Here Ajv names the property as it is accessed: `getProperty`.
-                let is_identifier = name.first().is_some_and(|b| b.is_ascii_alphabetic() || matches!(b, b'$' | b'_'))
-                    && name.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'$' | b'_'));
-                let (before, after): (&[u8], &[u8]) = if is_identifier { (b".", b"") } else { (b"['", b"']") };
-                return self.error(cx, data, &[b"should have required property '", before, name, after, b"'"]);
+                let is_identifier = name
+                    .first()
+                    .is_some_and(|b| b.is_ascii_alphabetic() || matches!(b, b'$' | b'_'))
+                    && name
+                        .iter()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'$' | b'_'));
+                let (before, after): (&[u8], &[u8]) = if is_identifier {
+                    (b".", b"")
+                } else {
+                    (b"['", b"']")
+                };
+                return self.error(
+                    cx,
+                    data,
+                    &[
+                        b"should have required property '",
+                        before,
+                        name,
+                        after,
+                        b"'",
+                    ],
+                );
             }
         }
-        let patterns: Vec<(Option<Regex>, &'s Json)> = (schema.get(b"patternProperties").and_then(Json::as_object).unwrap_or_default().iter())
-            .map(|(pattern, schema)| (regex_of(pattern), schema))
-            .collect();
+        let patterns: Vec<(Option<Regex>, &'s Json)> = (schema
+            .get(b"patternProperties")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+            .iter())
+        .map(|(pattern, schema)| (regex_of(pattern), schema))
+        .collect();
         let additional = schema.get(b"additionalProperties");
         let is_additional = |key: &[u8]| {
-            !properties.iter().any(|it| it.0 == key) && !patterns.iter().any(|it| it.0.as_ref().is_some_and(|regex| regex.test(key)))
+            !properties.iter().any(|it| it.0 == key)
+                && !patterns
+                    .iter()
+                    .any(|it| it.0.as_ref().is_some_and(|regex| regex.test(key)))
         };
         if additional == Some(&Json::Bool(false))
-            && let Some((key, _)) = data.as_object().unwrap_or_default().iter().find(|it| is_additional(&it.0))
+            && let Some((key, _)) = data
+                .as_object()
+                .unwrap_or_default()
+                .iter()
+                .find(|it| is_additional(&it.0))
         {
             let key = key.clone();
             self.error(cx, data, &[b"should NOT have additional properties"]);
@@ -411,7 +558,8 @@ impl<'s> Validator<'s> {
                 && schema.get(b"properties").is_some()
                 && let Some(error) = self.errors.last_mut()
             {
-                error.additional_property = Some((key, properties.iter().map(|it| it.0.clone()).collect()));
+                error.additional_property =
+                    Some((key, properties.iter().map(|it| it.0.clone()).collect()));
             }
             return false;
         }
@@ -441,7 +589,9 @@ impl<'s> Validator<'s> {
         }
         for (regex, property) in &patterns {
             for (key, value) in entries.iter_mut() {
-                if regex.as_ref().is_some_and(|regex| regex.test(key)) && !self.check(*property, value, cx) {
+                if regex.as_ref().is_some_and(|regex| regex.test(key))
+                    && !self.check(*property, value, cx)
+                {
                     return false;
                 }
             }
@@ -476,7 +626,10 @@ impl<'s> Validator<'s> {
         }
         let errors_before = self.errors.len();
         if let Some(alternatives) = schema.get(b"anyOf").and_then(Json::as_array) {
-            if !alternatives.iter().any(|it| self.check(it, data, composite)) {
+            if !alternatives
+                .iter()
+                .any(|it| self.check(it, data, composite))
+            {
                 return self.error(cx, data, &[b"should match some schema in anyOf"]);
             }
             self.errors.truncate(errors_before);
@@ -494,7 +647,11 @@ impl<'s> Validator<'s> {
             }
             self.errors.truncate(errors_before);
         }
-        for all in schema.get(b"allOf").and_then(Json::as_array).unwrap_or_default() {
+        for all in schema
+            .get(b"allOf")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+        {
             if !self.check(all, data, cx) {
                 return false;
             }

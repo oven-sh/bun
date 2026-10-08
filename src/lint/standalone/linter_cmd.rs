@@ -22,8 +22,8 @@ use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::language::{Global, LanguageOptions, SourceType};
 use bun_lint::linter::{
-    Config, FileConfig, LintMessage, LintOptions, Linter, RcFlavor, Registry, ResolvedConfig, RuleId, Utf16Offsets, severity_of,
-    testing,
+    Config, FileConfig, LintMessage, LintOptions, Linter, RcFlavor, Registry, ResolvedConfig,
+    RuleId, Utf16Offsets, severity_of, testing,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
@@ -35,7 +35,12 @@ use std::sync::OnceLock;
 
 pub(crate) fn linter() -> &'static Linter {
     static LINTER: OnceLock<Linter> = OnceLock::new();
-    LINTER.get_or_init(|| Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES])))
+    LINTER.get_or_init(|| {
+        Linter::new(Registry::new(&[
+            bun_lint_eslint::RULES,
+            bun_lint_typescript::RULES,
+        ]))
+    })
 }
 
 /// Parses `code` as `language` says, binds it, without types, and calls `then` with the file.
@@ -93,7 +98,10 @@ pub(crate) fn lint_case(
     let config = Json::Object(vec![
         (b"languageOptions".to_vec(), language_options.clone()),
         (b"settings".to_vec(), settings.clone()),
-        (b"rules".to_vec(), Json::Object(vec![(id, Json::Array(rule))])),
+        (
+            b"rules".to_vec(),
+            Json::Object(vec![(id, Json::Array(rule))]),
+        ),
     ]);
     let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
     // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
@@ -102,7 +110,9 @@ pub(crate) fn lint_case(
         Plugin::Eslint => Severity::Off,
     };
     with_file(filename, code, &config.language, |file| {
-        let messages = linter().lint(file, &config, &LintOptions::default()).messages;
+        let messages = linter()
+            .lint(file, &config, &LintOptions::default())
+            .messages;
         let mut fixes: Vec<_> = messages.iter().filter_map(|it| it.fix.as_ref()).collect();
         let output = bun_lint::fix::apply_fixes(code, &mut fixes);
         CaseOutcome { messages, output }
@@ -139,17 +149,29 @@ fn verify(args: &[String]) {
     let mut out = vec![b'['];
     for (i, case) in read_cases(args).iter().enumerate() {
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-        let filename = case.get(b"filename").and_then(Json::as_str).unwrap_or(b"file.js");
+        let filename = case
+            .get(b"filename")
+            .and_then(Json::as_str)
+            .unwrap_or(b"file.js");
         let filename = String::from_utf8_lossy(filename).into_owned();
         let null = Json::Null;
         let mut unknown = Vec::new();
-        let config = ResolvedConfig::from_json(linter().registry(), case.get(b"config").unwrap_or(&null), &mut unknown);
+        let config = ResolvedConfig::from_json(
+            linter().registry(),
+            case.get(b"config").unwrap_or(&null),
+            &mut unknown,
+        );
         let given = case.get(b"options").unwrap_or(&null);
         let only_errors = |_: &RuleId, severity: Severity| severity == Severity::Error;
         let options = LintOptions {
-            allow_inline_config: given.get(b"allowInlineConfig").and_then(Json::as_bool) != Some(false),
+            allow_inline_config: given.get(b"allowInlineConfig").and_then(Json::as_bool)
+                != Some(false),
             report_unused_disable_directives: match given.get(b"reportUnusedDisableDirectives") {
-                Some(Json::Bool(value)) => Some(if *value { Severity::Error } else { Severity::Off }),
+                Some(Json::Bool(value)) => Some(if *value {
+                    Severity::Error
+                } else {
+                    Severity::Off
+                }),
                 Some(value) => severity_of(value),
                 None => None,
             },
@@ -163,11 +185,18 @@ fn verify(args: &[String]) {
             out.extend_from_slice(b",\n");
         }
         if let Some(error) = &config.error {
-            testing::write_json(&mut out, &Json::Object(vec![(b"error".to_vec(), Json::String(error.clone()))]));
+            testing::write_json(
+                &mut out,
+                &Json::Object(vec![(b"error".to_vec(), Json::String(error.clone()))]),
+            );
             continue;
         }
         if given.get(b"fix").and_then(Json::as_bool) == Some(true) {
-            let mut lint = |text: &[u8]| with_file(&filename, text, &config.language, |file| linter().lint(file, &config, &options));
+            let mut lint = |text: &[u8]| {
+                with_file(&filename, text, &config.language, |file| {
+                    linter().lint(file, &config, &options)
+                })
+            };
             let report = bun_lint::linter::verify_and_fix(code, &|_| true, &mut lint);
             out.extend_from_slice(b"{\"fixed\":");
             out.extend_from_slice(if report.is_fixed { b"true" } else { b"false" });
@@ -180,7 +209,9 @@ fn verify(args: &[String]) {
             out.push(b'}');
             continue;
         }
-        let result = with_file(&filename, code, &config.language, |file| linter().lint(file, &config, &options));
+        let result = with_file(&filename, code, &config.language, |file| {
+            linter().lint(file, &config, &options)
+        });
         out.extend_from_slice(b"{\"messages\":");
         write_messages(&mut out, &result.messages, code);
         out.extend_from_slice(b",\"suppressedMessages\":");
@@ -196,7 +227,11 @@ fn comment_parser(args: &[String]) {
     let cases = read_cases(args);
     let results = cases.iter().map(|case| {
         let text = case.get(b"text").and_then(Json::as_str).unwrap_or_default();
-        match case.get(b"method").and_then(Json::as_str).unwrap_or_default() {
+        match case
+            .get(b"method")
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+        {
             b"parseDirective" => match testing::parse_directive(text) {
                 None => Json::Null,
                 Some(it) => Json::Object(vec![
@@ -205,14 +240,34 @@ fn comment_parser(args: &[String]) {
                     (b"justification".to_vec(), string(it.justification)),
                 ]),
             },
-            b"parseListConfig" => Json::Array(testing::parse_list_config(text).into_iter().map(string).collect()),
+            b"parseListConfig" => Json::Array(
+                testing::parse_list_config(text)
+                    .into_iter()
+                    .map(string)
+                    .collect(),
+            ),
             b"parseStringConfig" => {
                 let items = testing::parse_string_config(text).into_iter();
-                Json::Array(items.map(|(key, value)| Json::Array(vec![Json::String(key), value.map_or(Json::Null, Json::String)])).collect())
+                Json::Array(
+                    items
+                        .map(|(key, value)| {
+                            Json::Array(vec![
+                                Json::String(key),
+                                value.map_or(Json::Null, Json::String),
+                            ])
+                        })
+                        .collect(),
+                )
             }
             _ => match testing::parse_json_like_config(text) {
-                Ok(config) => Json::Object(vec![(b"ok".to_vec(), Json::Bool(true)), (b"config".to_vec(), Json::Object(config))]),
-                Err(message) => Json::Object(vec![(b"ok".to_vec(), Json::Bool(false)), (b"message".to_vec(), Json::String(message))]),
+                Ok(config) => Json::Object(vec![
+                    (b"ok".to_vec(), Json::Bool(true)),
+                    (b"config".to_vec(), Json::Object(config)),
+                ]),
+                Err(message) => Json::Object(vec![
+                    (b"ok".to_vec(), Json::Bool(false)),
+                    (b"message".to_vec(), Json::String(message)),
+                ]),
             },
         }
     });
@@ -224,10 +279,13 @@ fn comment_parser(args: &[String]) {
 
 fn json_parse(args: &[String]) {
     let cases = read_cases(args);
-    let results = cases.iter().map(|case| match testing::json_parse(case.as_str().unwrap_or_default()) {
-        Ok(value) => Json::Object(vec![(b"value".to_vec(), value)]),
-        Err(message) => Json::Object(vec![(b"error".to_vec(), Json::String(message))]),
-    });
+    let results =
+        cases.iter().map(
+            |case| match testing::json_parse(case.as_str().unwrap_or_default()) {
+                Ok(value) => Json::Object(vec![(b"value".to_vec(), value)]),
+                Err(message) => Json::Object(vec![(b"error".to_vec(), Json::String(message))]),
+            },
+        );
     let mut out = Vec::new();
     testing::write_json(&mut out, &Json::Array(results.collect()));
     out.push(b'\n');
@@ -247,19 +305,53 @@ fn globals(args: &[String]) {
     let results = cases.iter().map(|case| {
         let null = Json::Null;
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-        let filename = case.get(b"filename").and_then(Json::as_str).map(text).unwrap_or_default();
-        let language = LanguageOptions::from_json(case.get(b"languageOptions").unwrap_or(&null), &null);
+        let filename = case
+            .get(b"filename")
+            .and_then(Json::as_str)
+            .map(text)
+            .unwrap_or_default();
+        let language =
+            LanguageOptions::from_json(case.get(b"languageOptions").unwrap_or(&null), &null);
         with_file(&filename, code, &language, |file| {
-            let names = case.get(b"names").and_then(Json::as_array).unwrap_or_default().iter().filter_map(Json::as_str);
+            let names = case
+                .get(b"names")
+                .and_then(Json::as_array)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(Json::as_str);
             let described = names.map(|name| match file.global(name) {
                 None => Json::Null,
                 Some(global) => Json::Object(vec![
                     (b"writeable".to_vec(), Json::Bool(global.is_writable)),
-                    (b"implicit".to_vec(), global.implicit_setting.map_or(Json::Null, setting_name)),
-                    (b"comments".to_vec(), Json::Array(global.comments.iter().map(|it| Json::Number(f64::from(it.start))).collect())),
+                    (
+                        b"implicit".to_vec(),
+                        global.implicit_setting.map_or(Json::Null, setting_name),
+                    ),
+                    (
+                        b"comments".to_vec(),
+                        Json::Array(
+                            global
+                                .comments
+                                .iter()
+                                .map(|it| Json::Number(f64::from(it.start)))
+                                .collect(),
+                        ),
+                    ),
                     (b"names".to_vec(), {
-                        let spans = global.comments.iter().map(|it| file.name_in_global_comment(*it, name));
-                        Json::Array(spans.map(|it| Json::Array(vec![Json::Number(f64::from(it.start)), Json::Number(f64::from(it.end))])).collect())
+                        let spans = global
+                            .comments
+                            .iter()
+                            .map(|it| file.name_in_global_comment(*it, name));
+                        Json::Array(
+                            spans
+                                .map(|it| {
+                                    Json::Array(vec![
+                                        Json::Number(f64::from(it.start)),
+                                        Json::Number(f64::from(it.end)),
+                                    ])
+                                })
+                                .collect(),
+                        )
                     }),
                     (b"isType".to_vec(), Json::Bool(global.is_type)),
                     (b"isValue".to_vec(), Json::Bool(global.is_value)),
@@ -276,8 +368,11 @@ fn globals(args: &[String]) {
 
 fn environments() {
     let tables = bun_lint::linter::globals::environments().map(|name| {
-        let variables = bun_lint::linter::globals::environment(name.as_bytes()).into_iter().flatten();
-        let variables = variables.map(|(name, setting)| (name.to_vec(), Json::Bool(setting == Global::Writable)));
+        let variables = bun_lint::linter::globals::environment(name.as_bytes())
+            .into_iter()
+            .flatten();
+        let variables = variables
+            .map(|(name, setting)| (name.to_vec(), Json::Bool(setting == Global::Writable)));
         (name.as_bytes().to_vec(), Json::Object(variables.collect()))
     });
     let mut out = Vec::new();
@@ -291,7 +386,11 @@ fn minimatch(args: &[String]) {
     let results = cases.iter().map(|case| {
         let part = |key: &[u8]| case.get(key).and_then(Json::as_str).unwrap_or_default();
         let flip_negate = case.get(b"flipNegate").and_then(Json::as_bool) == Some(true);
-        Json::Bool(bun_lint::linter::config::testing::minimatch(part(b"pattern"), part(b"path"), flip_negate))
+        Json::Bool(bun_lint::linter::config::testing::minimatch(
+            part(b"pattern"),
+            part(b"path"),
+            flip_negate,
+        ))
     });
     let mut out = Vec::new();
     testing::write_json(&mut out, &Json::Array(results.collect()));
@@ -304,13 +403,21 @@ fn describe(config: &ResolvedConfig) -> Vec<(Vec<u8>, Json)> {
     let rules = config.rules.iter().map(|rule| {
         let mut value = vec![number(rule.severity)];
         value.extend(rule.options.iter().cloned());
-        Json::Array(vec![Json::String(RuleId::Known(rule.entry.meta).to_vec()), Json::Array(value)])
+        Json::Array(vec![
+            Json::String(RuleId::Known(rule.entry.meta).to_vec()),
+            Json::Array(value),
+        ])
     });
     let language = &config.language;
-    let globals = language.globals.iter().map(|(name, setting)| Json::Array(vec![Json::String(name.to_vec()), setting_name(*setting)]));
+    let globals = language.globals.iter().map(|(name, setting)| {
+        Json::Array(vec![Json::String(name.to_vec()), setting_name(*setting)])
+    });
     vec![
         (b"rules".to_vec(), Json::Array(rules.collect())),
-        (b"ecmaVersion".to_vec(), Json::Number(f64::from(language.ecma_version))),
+        (
+            b"ecmaVersion".to_vec(),
+            Json::Number(f64::from(language.ecma_version)),
+        ),
         (
             b"sourceType".to_vec(),
             Json::String(match language.source_type {
@@ -322,11 +429,32 @@ fn describe(config: &ResolvedConfig) -> Vec<(Vec<u8>, Json)> {
         (b"globals".to_vec(), Json::Array(globals.collect())),
         (b"parserOptions".to_vec(), language.parser_options.clone()),
         (b"settings".to_vec(), language.settings.clone()),
-        (b"language".to_vec(), config.language_name.as_ref().map_or(Json::Null, |it| Json::String(it.to_vec()))),
-        (b"processor".to_vec(), config.processor.as_ref().map_or(Json::Null, |it| Json::String(it.to_vec()))),
-        (b"noInlineConfig".to_vec(), Json::Bool(config.linter.no_inline_config)),
-        (b"reportUnusedDisableDirectives".to_vec(), number(config.linter.report_unused_disable_directives)),
-        (b"reportUnusedInlineConfigs".to_vec(), number(config.linter.report_unused_inline_configs)),
+        (
+            b"language".to_vec(),
+            config
+                .language_name
+                .as_ref()
+                .map_or(Json::Null, |it| Json::String(it.to_vec())),
+        ),
+        (
+            b"processor".to_vec(),
+            config
+                .processor
+                .as_ref()
+                .map_or(Json::Null, |it| Json::String(it.to_vec())),
+        ),
+        (
+            b"noInlineConfig".to_vec(),
+            Json::Bool(config.linter.no_inline_config),
+        ),
+        (
+            b"reportUnusedDisableDirectives".to_vec(),
+            number(config.linter.report_unused_disable_directives),
+        ),
+        (
+            b"reportUnusedInlineConfigs".to_vec(),
+            number(config.linter.report_unused_inline_configs),
+        ),
     ]
 }
 
@@ -339,8 +467,12 @@ fn config_of(case: &Json) -> Result<Config, bun_lint::linter::ConfigError> {
     let extended = case.get(b"extended");
     let mut load = |_: &[u8], name: &[u8]| extended.and_then(|it| it.get(name)).cloned();
     match case.get(b"flavor").and_then(Json::as_str) {
-        Some(b"oxlint") => Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load),
-        Some(b"eslintrc") => Config::from_rc_json(registry, base_path, json, RcFlavor::Eslint, &mut load),
+        Some(b"oxlint") => {
+            Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load)
+        }
+        Some(b"eslintrc") => {
+            Config::from_rc_json(registry, base_path, json, RcFlavor::Eslint, &mut load)
+        }
         _ => Config::from_flat_json(registry, base_path, json),
     }
 }
@@ -350,18 +482,28 @@ fn project(args: &[String]) {
     let results = cases.iter().map(|case| {
         let config = match config_of(case) {
             Ok(config) => config,
-            Err(error) => return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]),
+            Err(error) => {
+                return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]);
+            }
         };
-        let sources = case.get(b"sources").and_then(Json::as_object).unwrap_or_default().iter();
+        let sources = case
+            .get(b"sources")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+            .iter();
         let files = sources.map(|(path, code)| {
             let FileConfig::Matched(resolved) = config.get(linter().registry(), path) else {
                 return (path.clone(), Json::Null);
             };
             let code = code.as_str().unwrap_or_default();
-            let result = with_file(&text(path), code, &resolved.language, |file| linter().lint(file, &resolved, &LintOptions::default()));
+            let result = with_file(&text(path), code, &resolved.language, |file| {
+                linter().lint(file, &resolved, &LintOptions::default())
+            });
             let messages = result.messages.iter().map(|it| {
                 Json::Array(vec![
-                    it.rule_id.as_ref().map_or(Json::Null, |id| Json::String(id.to_vec())),
+                    it.rule_id
+                        .as_ref()
+                        .map_or(Json::Null, |id| Json::String(id.to_vec())),
                     Json::Number(f64::from(it.severity as u8)),
                     Json::Number(f64::from(it.line)),
                 ])
@@ -382,26 +524,54 @@ fn config(args: &[String]) {
     let results = cases.iter().map(|case| {
         let config = match config_of(case) {
             Ok(config) => config,
-            Err(error) => return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]),
+            Err(error) => {
+                return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]);
+            }
         };
-        let paths = |key: &[u8]| case.get(key).and_then(Json::as_array).unwrap_or_default().iter().filter_map(Json::as_str);
+        let paths = |key: &[u8]| {
+            case.get(key)
+                .and_then(Json::as_array)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(Json::as_str)
+        };
         let files = paths(b"files").map(|file| {
             let status = |name: &[u8]| (b"status".to_vec(), Json::String(name.to_vec()));
             Json::Object(match config.get(registry, file) {
                 FileConfig::External => vec![status(b"external")],
                 FileConfig::Ignored => vec![status(b"ignored")],
                 FileConfig::Unconfigured => vec![status(b"unconfigured")],
-                FileConfig::Matched(resolved) => std::iter::once(status(b"matched")).chain(describe(&resolved)).collect(),
+                FileConfig::Matched(resolved) => std::iter::once(status(b"matched"))
+                    .chain(describe(&resolved))
+                    .collect(),
             })
         });
-        let strings = |all: &[Box<[u8]>]| Json::Array(all.iter().map(|it| Json::String(it.to_vec())).collect());
+        let strings = |all: &[Box<[u8]>]| {
+            Json::Array(all.iter().map(|it| Json::String(it.to_vec())).collect())
+        };
         let mut out = vec![
             (b"files".to_vec(), Json::Array(files.collect())),
-            (b"directories".to_vec(), Json::Array(paths(b"directories").map(|it| Json::Bool(config.is_directory_ignored(it))).collect())),
+            (
+                b"directories".to_vec(),
+                Json::Array(
+                    paths(b"directories")
+                        .map(|it| Json::Bool(config.is_directory_ignored(it)))
+                        .collect(),
+                ),
+            ),
         ];
         if case.get(b"flavor").is_some() {
             out.push((b"unknownRules".to_vec(), strings(config.unknown_rules())));
-            out.push((b"notes".to_vec(), Json::Array(config.notes().iter().map(|it| Json::String(it.clone())).collect())));
+            out.push((
+                b"notes".to_vec(),
+                Json::Array(
+                    config
+                        .notes()
+                        .iter()
+                        .map(|it| Json::String(it.clone()))
+                        .collect(),
+                ),
+            ));
         }
         Json::Object(out)
     });
@@ -424,13 +594,25 @@ fn resolve(args: &[String]) {
         }
     }
     let [flavor, file, directory] = args else {
-        return println!("usage: bun-lint linter resolve oxlint|eslintrc|flat <configuration.json> <directory>");
+        return println!(
+            "usage: bun-lint linter resolve oxlint|eslintrc|flat <configuration.json> <directory>"
+        );
     };
-    let json = std::fs::read(file).ok().and_then(|it| bun_lint::json::parse(&it)).expect("the configuration");
-    let base_path = std::path::Path::new(file).parent().expect("a directory").to_string_lossy().into_owned();
+    let json = std::fs::read(file)
+        .ok()
+        .and_then(|it| bun_lint::json::parse(&it))
+        .expect("the configuration");
+    let base_path = std::path::Path::new(file)
+        .parent()
+        .expect("a directory")
+        .to_string_lossy()
+        .into_owned();
     let case = Json::Object(vec![
         (b"basePath".to_vec(), Json::String(base_path.into_bytes())),
-        (b"flavor".to_vec(), Json::String(flavor.clone().into_bytes())),
+        (
+            b"flavor".to_vec(),
+            Json::String(flavor.clone().into_bytes()),
+        ),
         (b"config".to_vec(), json),
     ]);
     let config = match config_of(&case) {
@@ -440,8 +622,14 @@ fn resolve(args: &[String]) {
     let mut files = Vec::new();
     let start = std::time::Instant::now();
     walk(std::path::Path::new(directory), &config, &mut files);
-    println!("{} files found in {:.1} ms", files.len(), start.elapsed().as_secs_f64() * 1e3);
-    for (name, is_known_not_ignored) in [("get", false), ("get", false), ("get_unless_ignored", true)] {
+    println!(
+        "{} files found in {:.1} ms",
+        files.len(),
+        start.elapsed().as_secs_f64() * 1e3
+    );
+    for (name, is_known_not_ignored) in
+        [("get", false), ("get", false), ("get_unless_ignored", true)]
+    {
         let start = std::time::Instant::now();
         let mut distinct: Vec<*const ResolvedConfig> = Vec::new();
         let (mut matched, mut rules) = (0, 0);
@@ -468,7 +656,11 @@ fn resolve(args: &[String]) {
             elapsed * 1e6 / files.len().max(1) as f64,
         );
     }
-    println!("{} rules are configured and unknown, {} notes", config.unknown_rules().len(), config.notes().len());
+    println!(
+        "{} rules are configured and unknown, {} notes",
+        config.unknown_rules().len(),
+        config.notes().len()
+    );
 }
 
 fn bench(args: &[String]) {
@@ -480,17 +672,27 @@ fn bench(args: &[String]) {
                 if name != "node_modules" && name != ".git" {
                     walk(&path, texts);
                 }
-            } else if path.extension().is_some_and(|it| ["js", "ts", "tsx", "jsx", "mjs", "cjs", "mts", "cts"].iter().any(|ext| it == *ext)) {
+            } else if path.extension().is_some_and(|it| {
+                ["js", "ts", "tsx", "jsx", "mjs", "cjs", "mts", "cts"]
+                    .iter()
+                    .any(|ext| it == *ext)
+            }) {
                 texts.extend(std::fs::read(&path));
             }
         }
     }
     let mut texts = Vec::new();
-    walk(std::path::Path::new(args.first().expect("a directory")), &mut texts);
+    walk(
+        std::path::Path::new(args.first().expect("a directory")),
+        &mut texts,
+    );
     let bytes: usize = texts.iter().map(Vec::len).sum();
     for _ in 0..3 {
         let start = std::time::Instant::now();
-        let with_candidates = texts.iter().filter(|text| !testing::candidates(text).is_empty()).count();
+        let with_candidates = texts
+            .iter()
+            .filter(|text| !testing::candidates(text).is_empty())
+            .count();
         let elapsed = start.elapsed();
         println!(
             "{} files, {:.1} MB, {with_candidates} with candidates: {:.2} ms, {:.1} GB/s, {:.2} us per file",
@@ -507,7 +709,10 @@ fn validate(args: &[String]) {
     let cases = read_cases(args);
     let results = cases.iter().map(|case| {
         let id = case.get(b"rule").and_then(Json::as_str).unwrap_or_default();
-        let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
+        let options = case
+            .get(b"options")
+            .and_then(Json::as_array)
+            .unwrap_or_default();
         match testing::validate_by_id(id, options) {
             Ok(()) => Json::Null,
             Err(lines) => Json::String([b"Key \"rules\": Key \"", id, b"\":\n", &lines].concat()),
@@ -523,33 +728,62 @@ fn parse_fixtures(args: &[String]) {
     let root = args.first().expect("the fixtures directory");
     let (mut parsed, mut rejected) = (0, 0);
     for directory in ["eslint", "typescript-eslint"] {
-        let mut paths: Vec<_> = std::fs::read_dir(format!("{root}/{directory}")).expect("the fixtures").flatten().map(|it| it.path()).collect();
+        let mut paths: Vec<_> = std::fs::read_dir(format!("{root}/{directory}"))
+            .expect("the fixtures")
+            .flatten()
+            .map(|it| it.path())
+            .collect();
         paths.sort();
         for path in paths {
-            let Some(fixture) = std::fs::read(&path).ok().and_then(|it| bun_lint::json::parse(&it)) else {
+            let Some(fixture) = std::fs::read(&path)
+                .ok()
+                .and_then(|it| bun_lint::json::parse(&it))
+            else {
                 continue;
             };
-            for (index, case) in fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default().iter().enumerate() {
+            for (index, case) in fixture
+                .get(b"cases")
+                .and_then(Json::as_array)
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+            {
                 if !matches!(case.get(b"skip"), None | Some(Json::Null)) {
                     continue;
                 }
                 let null = Json::Null;
                 let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-                let filename = case.get(b"filename").and_then(Json::as_str).map(text).unwrap_or_default();
+                let filename = case
+                    .get(b"filename")
+                    .and_then(Json::as_str)
+                    .map(text)
+                    .unwrap_or_default();
                 let given = case.get(b"languageOptions").unwrap_or(&null);
                 let config = ResolvedConfig {
                     language: LanguageOptions::from_json(given, &null),
                     ..ResolvedConfig::default()
                 };
-                let messages = with_file(&filename, code, &config.language, |file| linter().lint(file, &config, &LintOptions::default()).messages);
-                match messages.first().filter(|it| it.is_fatal && it.message.starts_with(b"Parsing error")) {
+                let messages = with_file(&filename, code, &config.language, |file| {
+                    linter()
+                        .lint(file, &config, &LintOptions::default())
+                        .messages
+                });
+                match messages
+                    .first()
+                    .filter(|it| it.is_fatal && it.message.starts_with(b"Parsing error"))
+                {
                     None => parsed += 1,
                     Some(error) => {
                         rejected += 1;
                         let mut written = Vec::new();
                         testing::write_json(&mut written, given);
                         let name = path.file_stem().unwrap_or_default().to_string_lossy();
-                        println!("{}\t{directory}/{name}#{index}\t{}\t{:?}", text(&error.message), text(&written), text(code));
+                        println!(
+                            "{}\t{directory}/{name}#{index}\t{}\t{:?}",
+                            text(&error.message),
+                            text(&written),
+                            text(code)
+                        );
                     }
                 }
             }
@@ -577,7 +811,11 @@ pub(crate) fn run(args: &[String]) {
         Some("config") => config(&args[1..]),
         Some("project") => project(&args[1..]),
         Some("rules") => {
-            let ids = linter().registry().all().iter().map(|it| Json::String(RuleId::Known(it.meta).to_vec()));
+            let ids = linter()
+                .registry()
+                .all()
+                .iter()
+                .map(|it| Json::String(RuleId::Known(it.meta).to_vec()));
             let mut out = Vec::new();
             testing::write_json(&mut out, &Json::Array(ids.collect()));
             out.push(b'\n');

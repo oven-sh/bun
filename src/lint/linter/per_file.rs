@@ -31,7 +31,9 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
             }
             Label::Global => {
                 for (name, setting) in parse_string_config(value) {
-                    let Some(setting) = setting.map_or(Some(Global::Readonly), |it| Global::of(&it)) else {
+                    let Some(setting) =
+                        setting.map_or(Some(Global::Readonly), |it| Global::of(&it))
+                    else {
                         continue;
                     };
                     match variables.globals.iter_mut().find(|it| *it.name == *name) {
@@ -61,12 +63,19 @@ impl<'a> File<'a> {
 
     /// ESLint's `getInlineConfigNodes()`.
     pub(crate) fn config_comments(&'a self) -> &'a [ConfigComment] {
-        self.lazy.linter.comments.get_or_init(|| directives::config_comments(self))
+        self.lazy
+            .linter
+            .comments
+            .get_or_init(|| directives::config_comments(self))
     }
 
     fn comment_variables(&'a self) -> Option<&'a CommentVariables> {
         let per_file = &self.lazy.linter;
-        (!per_file.ignores_comments.get()).then(|| per_file.variables.get_or_init(|| variables_in(self, self.config_comments())))
+        (!per_file.ignores_comments.get()).then(|| {
+            per_file
+                .variables
+                .get_or_init(|| variables_in(self, self.config_comments()))
+        })
     }
 
     /// The variables that `/* global */` comments of the file name, in the order they are first

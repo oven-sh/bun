@@ -20,8 +20,13 @@ fn names(path: &[u8]) -> Vec<&[u8]> {
 
 /// `path.resolve(base, path)`
 pub(crate) fn resolve(base: &[u8], path: &[u8]) -> Vec<u8> {
-    let is_absolute = path.starts_with(b"/") || matches!(path, [drive, b':', b'/', ..] if drive.is_ascii_alphabetic());
-    let joined = if is_absolute { path.to_vec() } else { [base, b"/", path].concat() };
+    let is_absolute = path.starts_with(b"/")
+        || matches!(path, [drive, b':', b'/', ..] if drive.is_ascii_alphabetic());
+    let joined = if is_absolute {
+        path.to_vec()
+    } else {
+        [base, b"/", path].concat()
+    };
     let mut out = Vec::with_capacity(joined.len());
     for name in names(&joined) {
         if !out.is_empty() || joined.starts_with(b"/") {

@@ -28,7 +28,9 @@ fn canonical(name: &[u8]) -> Option<Vec<u8>> {
     let slash = strings::last_index_of_char(name, b'/')?;
     let plugin: &[u8] = match &name[..slash] {
         b"eslint" | b"js" | b"@eslint/js" => b"eslint/",
-        b"typescript-eslint" | b"@typescript-eslint" | b"typescript" | b"tseslint" => b"typescript/",
+        b"typescript-eslint" | b"@typescript-eslint" | b"typescript" | b"tseslint" => {
+            b"typescript/"
+        }
         _ => return None,
     };
     Some([plugin, &kebab_case(&name[slash + 1..])].concat())

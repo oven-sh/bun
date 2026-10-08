@@ -3,6 +3,7 @@
 
 /// By name, an array of configuration objects. A string in it is the name of another whose
 /// objects are meant. `@/` at the start of a string stands for `@typescript-eslint/`.
+#[rustfmt::skip]
 pub(super) static PRESETS: &str = concat!(
     r##"{"eslint/recommended":[{"rules":{"constructor-super":2,"for-direction":2,"getter-return":2,"no-async-promise-e"##,
     r##"xecutor":2,"no-case-declarations":2,"no-class-assign":2,"no-compare-neg-zero":2,"no-cond-assign":2,"no-const-a"##,

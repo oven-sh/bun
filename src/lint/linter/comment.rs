@@ -37,7 +37,10 @@ pub fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
     // `^([a-z]+(?:-[a-z]+)*)(?:\s|$)`
     let mut end = 0;
     loop {
-        let word = directive[end..].iter().take_while(|b| b.is_ascii_lowercase()).count();
+        let word = directive[end..]
+            .iter()
+            .take_while(|b| b.is_ascii_lowercase())
+            .count();
         if word == 0 {
             return None;
         }

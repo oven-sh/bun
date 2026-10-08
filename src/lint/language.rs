@@ -154,10 +154,16 @@ impl LanguageOptions {
         match language_options.get(b"ecmaVersion") {
             None | Some(Json::Number(_)) => {}
             Some(Json::String(version)) if version == b"latest" => {}
-            Some(_) => return Err(b"Key \"ecmaVersion\": Expected a number or \"latest\".".to_vec()),
+            Some(_) => {
+                return Err(b"Key \"ecmaVersion\": Expected a number or \"latest\".".to_vec());
+            }
         }
-        if language_options.get(b"sourceType").is_some() && source_type_of(language_options.get(b"sourceType")).is_none() {
-            return Err(b"Key \"sourceType\": Expected \"script\", \"module\", or \"commonjs\".".to_vec());
+        if language_options.get(b"sourceType").is_some()
+            && source_type_of(language_options.get(b"sourceType")).is_none()
+        {
+            return Err(
+                b"Key \"sourceType\": Expected \"script\", \"module\", or \"commonjs\".".to_vec(),
+            );
         }
         if let Some(globals) = language_options.get(b"globals") {
             let Some(globals) = globals.as_object() else {
@@ -165,18 +171,43 @@ impl LanguageOptions {
             };
             for (name, value) in globals.iter().filter(|it| it.0 != b"__proto__") {
                 if crate::linter::trim_js_space(name) != &name[..] {
-                    return Err([b"Key \"globals\": Global \"", &name[..], b"\" has leading or trailing whitespace."].concat());
+                    return Err([
+                        b"Key \"globals\": Global \"",
+                        &name[..],
+                        b"\" has leading or trailing whitespace.",
+                    ]
+                    .concat());
                 }
                 if Global::of_json(value).is_none() {
-                    return Err([b"Key \"globals\": Key \"", &name[..], b"\": Expected \"readonly\", \"writable\", or \"off\"."].concat());
+                    return Err([
+                        b"Key \"globals\": Key \"",
+                        &name[..],
+                        b"\": Expected \"readonly\", \"writable\", or \"off\".",
+                    ]
+                    .concat());
                 }
             }
         }
-        if language_options.get(b"parserOptions").is_some_and(|it| it.as_object().is_none()) {
+        if language_options
+            .get(b"parserOptions")
+            .is_some_and(|it| it.as_object().is_none())
+        {
             return Err(b"Key \"parserOptions\": Expected an object.".to_vec());
         }
-        let known: [&[u8]; 6] = [b"ecmaVersion", b"sourceType", b"globals", b"parser", b"parserOptions", b"$env"];
-        match language_options.as_object().unwrap_or_default().iter().find(|it| !known.contains(&&it.0[..])) {
+        let known: [&[u8]; 6] = [
+            b"ecmaVersion",
+            b"sourceType",
+            b"globals",
+            b"parser",
+            b"parserOptions",
+            b"$env",
+        ];
+        match language_options
+            .as_object()
+            .unwrap_or_default()
+            .iter()
+            .find(|it| !known.contains(&&it.0[..]))
+        {
             Some((key, _)) => Err([b"Unexpected key \"", &key[..], b"\" found."].concat()),
             None => Ok(()),
         }
@@ -191,33 +222,52 @@ impl LanguageOptions {
     /// `parser` is a string: `"espree"`, `"@typescript-eslint/parser"`, `"typescript-eslint/parser"`
     /// or `"typescript"`, each with or without `@version`. Any other is [`Parser::Other`].
     pub fn from_json(language_options: &Json, settings: &Json) -> LanguageOptions {
-        let parser_options = language_options.get(b"parserOptions").cloned().unwrap_or(Json::Null);
+        let parser_options = language_options
+            .get(b"parserOptions")
+            .cloned()
+            .unwrap_or(Json::Null);
         let features = parser_options.get(b"ecmaFeatures");
-        let feature = |name: &[u8]| features.and_then(|it| it.get(name)).and_then(Json::as_bool) == Some(true);
+        let feature = |name: &[u8]| {
+            features.and_then(|it| it.get(name)).and_then(Json::as_bool) == Some(true)
+        };
         let flag = |name: &[u8]| parser_options.get(name).and_then(Json::as_bool) == Some(true);
         let name = |value: Option<&Json>| value.and_then(Json::as_str).map(Box::from);
         let parser = match language_options.get(b"parser").and_then(Json::as_str) {
             None => Parser::Espree,
             Some(written) => {
-                let version = bun_core::strings::last_index_of_char(written, b'@').filter(|at| *at > 0);
+                let version =
+                    bun_core::strings::last_index_of_char(written, b'@').filter(|at| *at > 0);
                 match &written[..version.unwrap_or(written.len())] {
                     b"espree" => Parser::Espree,
-                    b"typescript" | b"@typescript-eslint/parser" | b"typescript-eslint/parser" => Parser::TypeScript,
+                    b"typescript" | b"@typescript-eslint/parser" | b"typescript-eslint/parser" => {
+                        Parser::TypeScript
+                    }
                     _ => Parser::Other,
                 }
             }
         };
-        let source_type = source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
+        let source_type =
+            source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
         // `env` of an `.eslintrc` or an `.oxlintrc.json`.
-        for (name, is_enabled) in language_options.get(b"$env").and_then(Json::as_object).unwrap_or_default() {
+        for (name, is_enabled) in language_options
+            .get(b"$env")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
             let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
             if is_enabled.as_bool() == Some(true) {
-                let variables = crate::linter::globals::environment(name).into_iter().flatten();
+                let variables = crate::linter::globals::environment(name)
+                    .into_iter()
+                    .flatten();
                 globals.extend(variables.map(|(name, setting)| (name.into(), setting)));
             }
         }
-        for (name, value) in language_options.get(b"globals").and_then(Json::as_object).unwrap_or_default() {
+        for (name, value) in language_options
+            .get(b"globals")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
             if let Some(value) = Global::of_json(value) {
                 globals.push((name[..].into(), value));
             }
@@ -235,13 +285,20 @@ impl LanguageOptions {
             globals,
             parser,
             // ESLint turns it off for espree in a module.
-            global_return: feature(b"globalReturn") && !(parser == Parser::Espree && source_type == SourceType::Module),
+            global_return: feature(b"globalReturn")
+                && !(parser == Parser::Espree && source_type == SourceType::Module),
             implied_strict: feature(b"impliedStrict"),
             jsx: feature(b"jsx"),
             parser_source_type: source_type_of(parser_options.get(b"sourceType")),
-            lib: parser_options.get(b"lib").and_then(Json::as_array).map(|libs| {
-                libs.iter().filter_map(Json::as_str).map(|lib| lib.to_ascii_lowercase().into()).collect()
-            }),
+            lib: parser_options
+                .get(b"lib")
+                .and_then(Json::as_array)
+                .map(|libs| {
+                    libs.iter()
+                        .filter_map(Json::as_str)
+                        .map(|lib| lib.to_ascii_lowercase().into())
+                        .collect()
+                }),
             jsx_pragma: match parser_options.get(b"jsxPragma") {
                 None => Some(b"React"[..].into()),
                 pragma => name(pragma),
@@ -288,11 +345,19 @@ impl LanguageOptions {
             // `getScriptKind` of typescript-estree
             Parser::TypeScript | Parser::Other => match by_name {
                 Some(_) => None,
-                None => Some(if self.jsx { ScriptKind::Tsx } else { ScriptKind::Ts }),
+                None => Some(if self.jsx {
+                    ScriptKind::Tsx
+                } else {
+                    ScriptKind::Ts
+                }),
             },
             Parser::Espree => match by_name {
                 Some(_) => None,
-                None => Some(if self.jsx { ScriptKind::Jsx } else { ScriptKind::Js }),
+                None => Some(if self.jsx {
+                    ScriptKind::Jsx
+                } else {
+                    ScriptKind::Js
+                }),
             },
         };
         ParseOptions {

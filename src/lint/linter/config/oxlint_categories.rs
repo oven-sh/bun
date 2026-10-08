@@ -2,6 +2,7 @@
 
 /// For each category, the names of the rules of ESLint in it, and those of typescript-eslint, each
 /// list separated by spaces.
+#[rustfmt::skip]
 pub(super) static CATEGORIES: &[(&str, &str, &str)] = &[
     (
         "correctness",

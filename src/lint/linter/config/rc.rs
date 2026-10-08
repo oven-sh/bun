@@ -44,8 +44,16 @@ fn ignore_pattern_to_minimatch(pattern: &[u8]) -> Vec<u8> {
         return [negation, pattern].concat();
     }
     let first_slash = strings::index_of_char_usize(pattern, b'/');
-    let everywhere: &[u8] = if first_slash.is_none_or(|at| at == pattern.len() - 1) { b"**/" } else { b"" };
-    let without_slash = if first_slash == Some(0) { &pattern[1..] } else { pattern };
+    let everywhere: &[u8] = if first_slash.is_none_or(|at| at == pattern.len() - 1) {
+        b"**/"
+    } else {
+        b""
+    };
+    let without_slash = if first_slash == Some(0) {
+        &pattern[1..]
+    } else {
+        pattern
+    };
     // Braces and parentheses mean nothing in a `.gitignore`.
     let mut escaped = Vec::with_capacity(without_slash.len());
     let mut at = 0;
@@ -62,7 +70,11 @@ fn ignore_pattern_to_minimatch(pattern: &[u8]) -> Vec<u8> {
         escaped.push(without_slash[at]);
         at += 1;
     }
-    let inside: &[u8] = if pattern.ends_with(b"/**") { b"/*" } else { b"" };
+    let inside: &[u8] = if pattern.ends_with(b"/**") {
+        b"/*"
+    } else {
+        b""
+    };
     [negation, everywhere, &escaped, inside].concat()
 }
 
@@ -90,17 +102,21 @@ fn with_eslint_severities(rules: &Json) -> Json {
         Some(b"deny") => Json::Number(2.0),
         _ => value.clone(),
     };
-    let entries = rules.as_object().unwrap_or_default().iter().map(|(id, value)| {
-        let value = match value {
-            Json::Array(items) if !items.is_empty() => {
-                let mut items = items.clone();
-                items[0] = severity(&items[0]);
-                Json::Array(items)
-            }
-            value => severity(value),
-        };
-        (id.clone(), value)
-    });
+    let entries = rules
+        .as_object()
+        .unwrap_or_default()
+        .iter()
+        .map(|(id, value)| {
+            let value = match value {
+                Json::Array(items) if !items.is_empty() => {
+                    let mut items = items.clone();
+                    items[0] = severity(&items[0]);
+                    Json::Array(items)
+                }
+                value => severity(value),
+            };
+            (id.clone(), value)
+        });
     Json::Object(entries.collect())
 }
 
@@ -121,7 +137,12 @@ impl Rc<'_, '_> {
     /// `languageOptions` for `env`, `globals`, `parser` and `parserOptions`.
     fn language_options(&self, json: &Json) -> Json {
         let mut entries = Vec::new();
-        for (from, to) in [(&b"env"[..], &b"$env"[..]), (b"globals", b"globals"), (b"parser", b"parser"), (b"parserOptions", b"parserOptions")] {
+        for (from, to) in [
+            (&b"env"[..], &b"$env"[..]),
+            (b"globals", b"globals"),
+            (b"parser", b"parser"),
+            (b"parserOptions", b"parserOptions"),
+        ] {
             if let Some(value) = json.get(from) {
                 entries.push((to.to_vec(), value.clone()));
             }
@@ -132,7 +153,11 @@ impl Rc<'_, '_> {
                 entries.push((key.to_vec(), value.clone()));
             }
         }
-        if entries.is_empty() { Json::Null } else { Json::Object(entries) }
+        if entries.is_empty() {
+            Json::Null
+        } else {
+            Json::Object(entries)
+        }
     }
 
     fn rules(&mut self, json: &Json) -> Result<Vec<RuleSetting>, ConfigError> {
@@ -143,15 +168,32 @@ impl Rc<'_, '_> {
     }
 
     fn note_js_plugins(&mut self, json: &Json) {
-        for plugin in json.get(b"jsPlugins").and_then(Json::as_array).unwrap_or_default() {
-            let specifier = plugin.as_str().or_else(|| plugin.get(b"specifier").and_then(Json::as_str)).unwrap_or(b"?");
-            self.reader.note(&[b"jsPlugins are not supported: \"", specifier, b"\". Its rules are skipped."]);
+        for plugin in json
+            .get(b"jsPlugins")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+        {
+            let specifier = plugin
+                .as_str()
+                .or_else(|| plugin.get(b"specifier").and_then(Json::as_str))
+                .unwrap_or(b"?");
+            self.reader.note(&[
+                b"jsPlugins are not supported: \"",
+                specifier,
+                b"\". Its rules are skipped.",
+            ]);
         }
     }
 
     /// Adds the objects for the file `json`, which is in `directory`. `is_extended`: another file
     /// extends it.
-    fn file(&mut self, json: &Json, directory: &[u8], is_extended: bool, depth: usize) -> Result<(), ConfigError> {
+    fn file(
+        &mut self,
+        json: &Json,
+        directory: &[u8],
+        is_extended: bool,
+        depth: usize,
+    ) -> Result<(), ConfigError> {
         if json.as_object().is_none() {
             return Err(ConfigError::new(&[b"Unexpected non-object config."]));
         }
@@ -167,19 +209,31 @@ impl Rc<'_, '_> {
                 continue;
             }
             let Some(extended) = (self.load)(directory, name) else {
-                return Err(ConfigError::new(&[b"Failed to load config \"", name, b"\" to extend from."]));
+                return Err(ConfigError::new(&[
+                    b"Failed to load config \"",
+                    name,
+                    b"\" to extend from.",
+                ]));
             };
             let file = path::resolve(directory, name);
             self.file(&extended, path::dirname(&file), true, depth + 1)?;
         }
-        for (category, severity) in json.get(b"categories").and_then(Json::as_object).unwrap_or_default() {
+        for (category, severity) in json
+            .get(b"categories")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
             let severity = match severity.as_str() {
                 Some(b"allow") => Some(Severity::Off),
                 Some(b"deny") => Some(Severity::Error),
                 _ => crate::linter::severity_of(severity),
             };
             let Some(severity) = severity else {
-                return Err(ConfigError::new(&[b"Key \"categories\": Key \"", category, b"\": Expected severity."]));
+                return Err(ConfigError::new(&[
+                    b"Key \"categories\": Key \"",
+                    category,
+                    b"\": Expected severity.",
+                ]));
             };
             self.categories.retain(|it| it.0 != *category);
             self.categories.push((category.clone(), severity));
@@ -190,23 +244,36 @@ impl Rc<'_, '_> {
         }
         self.note_js_plugins(json);
         // oxlint takes all patterns relative to the file that extends.
-        let base_path = (self.flavor == RcFlavor::Eslint && directory != &self.reader.base_path[..]).then(|| directory.to_vec());
+        let base_path = (self.flavor == RcFlavor::Eslint
+            && directory != &self.reader.base_path[..])
+            .then(|| directory.to_vec());
         let passes_everything_on = !is_extended || self.flavor == RcFlavor::Eslint;
 
         let ignore_patterns = strings_of(json.get(b"ignorePatterns"));
         if !ignore_patterns.is_empty() && passes_everything_on {
             self.reader.objects.push(ConfigObject {
                 base_path: base_path.clone(),
-                ignores: Some(ignore_patterns.iter().map(|it| Pattern::new(&ignore_pattern_to_minimatch(it))).collect()),
+                ignores: Some(
+                    ignore_patterns
+                        .iter()
+                        .map(|it| Pattern::new(&ignore_pattern_to_minimatch(it)))
+                        .collect(),
+                ),
                 is_global_ignores: true,
                 ..ConfigObject::default()
             });
         }
         let mut linter_options = Vec::new();
         for key in [&b"noInlineConfig"[..], b"reportUnusedDisableDirectives"] {
-            let value = json.get(key).or_else(|| json.get(b"options").and_then(|it| it.get(key)));
+            let value = json
+                .get(key)
+                .or_else(|| json.get(b"options").and_then(|it| it.get(key)));
             if let Some(value) = value {
-                let value = if value.as_str() == Some(b"deny") { Json::Number(2.0) } else { value.clone() };
+                let value = if value.as_str() == Some(b"deny") {
+                    Json::Number(2.0)
+                } else {
+                    value.clone()
+                };
                 linter_options.push((key.to_vec(), value));
             }
         }
@@ -221,12 +288,21 @@ impl Rc<'_, '_> {
         }
         self.reader.objects.push(base);
 
-        for item in json.get(b"overrides").and_then(Json::as_array).unwrap_or_default() {
+        for item in json
+            .get(b"overrides")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+        {
             let files = strings_of(item.get(b"files"));
             if files.is_empty() {
-                return Err(ConfigError::new(&[b"Key \"overrides\": Key \"files\": Expected value to be a non-empty array."]));
+                return Err(ConfigError::new(&[
+                    b"Key \"overrides\": Key \"files\": Expected value to be a non-empty array.",
+                ]));
             }
-            let excluded = strings_of(item.get(b"excludeFiles").or_else(|| item.get(b"excludedFiles")));
+            let excluded = strings_of(
+                item.get(b"excludeFiles")
+                    .or_else(|| item.get(b"excludedFiles")),
+            );
             self.note_js_plugins(item);
             if let Some(plugins) = item.get(b"plugins").and_then(Json::as_array) {
                 let all = self.plugins.get_or_insert_default();
@@ -235,7 +311,8 @@ impl Rc<'_, '_> {
             let object = ConfigObject {
                 base_path: base_path.clone(),
                 files: Some(files.iter().map(|it| vec![override_pattern(it)]).collect()),
-                ignores: (!excluded.is_empty()).then(|| excluded.iter().map(|it| override_pattern(it)).collect()),
+                ignores: (!excluded.is_empty())
+                    .then(|| excluded.iter().map(|it| override_pattern(it)).collect()),
                 language_options: self.language_options(item),
                 settings: item.get(b"settings").cloned().unwrap_or(Json::Null),
                 rules: self.rules(item)?,
@@ -252,17 +329,32 @@ impl Rc<'_, '_> {
     /// The rules that `categories` turns on, which everything else overrides.
     fn category_rules(&self) -> Vec<RuleSetting> {
         let has_typescript = self.plugins.as_ref().is_none_or(|all| {
-            all.iter().any(|it| matches!(&it[..], b"typescript" | b"@typescript-eslint" | b"typescript-eslint"))
+            all.iter().any(|it| {
+                matches!(
+                    &it[..],
+                    b"typescript" | b"@typescript-eslint" | b"typescript-eslint"
+                )
+            })
         });
         let mut settings = Vec::new();
         for (category, severity) in &self.categories {
-            let Some((_, eslint, typescript)) = categories::CATEGORIES.iter().find(|it| it.0.as_bytes() == &category[..]) else {
+            let Some((_, eslint, typescript)) = categories::CATEGORIES
+                .iter()
+                .find(|it| it.0.as_bytes() == &category[..])
+            else {
                 continue;
             };
-            let lists = [(Plugin::Eslint, *eslint), (Plugin::TypeScript, if has_typescript { *typescript } else { "" })];
+            let lists = [
+                (Plugin::Eslint, *eslint),
+                (
+                    Plugin::TypeScript,
+                    if has_typescript { *typescript } else { "" },
+                ),
+            ];
             for (plugin, names) in lists {
                 for name in strings::split(names.as_bytes(), b" ").filter(|it| !it.is_empty()) {
-                    let Some(entry) = self.reader.registry.get_preferring(plugin, name, true) else {
+                    let Some(entry) = self.reader.registry.get_preferring(plugin, name, true)
+                    else {
                         continue;
                     };
                     settings.push(RuleSetting {
@@ -317,11 +409,21 @@ impl Config {
         });
         // What each ignores by itself. For ESLint these are patterns of a `.gitignore`.
         let ignored: Vec<Vec<u8>> = match flavor {
-            RcFlavor::Eslint => [&b".*"[..], b"!.eslintrc.*", b"/**/node_modules/*"].iter().map(|it| ignore_pattern_to_minimatch(it)).collect(),
-            RcFlavor::Oxlint => [&b"**/node_modules/"[..], b"**/.git/", b"**/.jj/", b"**/*.min.*", b"**/*-min.*", b"**/*_min.*"]
+            RcFlavor::Eslint => [&b".*"[..], b"!.eslintrc.*", b"/**/node_modules/*"]
                 .iter()
-                .map(|it| it.to_vec())
+                .map(|it| ignore_pattern_to_minimatch(it))
                 .collect(),
+            RcFlavor::Oxlint => [
+                &b"**/node_modules/"[..],
+                b"**/.git/",
+                b"**/.jj/",
+                b"**/*.min.*",
+                b"**/*-min.*",
+                b"**/*_min.*",
+            ]
+            .iter()
+            .map(|it| it.to_vec())
+            .collect(),
         };
         rc.reader.objects.push(ConfigObject {
             ignores: Some(ignored.iter().map(|it| Pattern::new(it)).collect()),

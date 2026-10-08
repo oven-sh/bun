@@ -16,8 +16,13 @@ pub struct Fixed {
 
 /// ESLint's `SourceCodeFixer.applyFixes`. A fix that overlaps or touches one that is applied before
 /// it is left for the next pass. `should_fix`: ESLint's `fix` option as a function.
-pub fn apply_fixes(text: &[u8], messages: Vec<LintMessage>, should_fix: &dyn Fn(&LintMessage) -> bool) -> Fixed {
-    let (mut fixable, mut remaining): (Vec<_>, Vec<_>) = messages.into_iter().partition(|it| it.fix.is_some());
+pub fn apply_fixes(
+    text: &[u8],
+    messages: Vec<LintMessage>,
+    should_fix: &dyn Fn(&LintMessage) -> bool,
+) -> Fixed {
+    let (mut fixable, mut remaining): (Vec<_>, Vec<_>) =
+        messages.into_iter().partition(|it| it.fix.is_some());
     if fixable.is_empty() {
         return Fixed {
             is_fixed: false,
@@ -66,7 +71,11 @@ pub struct FixReport {
 
 /// ESLint's `Linter.verifyAndFix`: lints and fixes until nothing is left to fix, ten times at most.
 /// `lint` parses and lints the text that it is given.
-pub fn verify_and_fix(text: &[u8], should_fix: &dyn Fn(&LintMessage) -> bool, lint: &mut dyn FnMut(&[u8]) -> LintResult) -> FixReport {
+pub fn verify_and_fix(
+    text: &[u8],
+    should_fix: &dyn Fn(&LintMessage) -> bool,
+    lint: &mut dyn FnMut(&[u8]) -> LintResult,
+) -> FixReport {
     let mut current = text.to_vec();
     let mut previous: Option<Vec<u8>> = None;
     let (mut is_fixed, mut is_circular) = (false, false);

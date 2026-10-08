@@ -176,9 +176,15 @@ fn is_ignored_by(ignores: &[Pattern], path: &[&[u8]], mut is_ignored: bool) -> b
 }
 
 /// `pathMatches`
-fn path_matches<'o>(files: impl IntoIterator<Item = &'o Vec<Pattern>>, ignores: Option<&[Pattern]>, path: &[&[u8]]) -> bool {
-    files.into_iter().any(|all| all.iter().all(|pattern| pattern.matcher.matches(path, false)))
-        && !ignores.is_some_and(|ignores| is_ignored_by(ignores, path, false))
+fn path_matches<'o>(
+    files: impl IntoIterator<Item = &'o Vec<Pattern>>,
+    ignores: Option<&[Pattern]>,
+    path: &[&[u8]],
+) -> bool {
+    files.into_iter().any(|all| {
+        all.iter()
+            .all(|pattern| pattern.matcher.matches(path, false))
+    }) && !ignores.is_some_and(|ignores| is_ignored_by(ignores, path, false))
 }
 
 impl Config {
@@ -228,7 +234,8 @@ impl Config {
         // A directory is ignored if one that it is in is.
         let mut end = 0;
         while end < relative.len() {
-            end += bun_core::strings::index_of_char_usize(&relative[end..], b'/').unwrap_or(relative.len() - end);
+            end += bun_core::strings::index_of_char_usize(&relative[end..], b'/')
+                .unwrap_or(relative.len() - end);
             if self.is_ignored_globally(&[&relative[..end], b"/"].concat()) {
                 return true;
             }
@@ -257,7 +264,10 @@ impl Config {
         let mut matching: Vec<u32> = Vec::new();
         let mut is_matched = false;
         for (index, object) in self.objects.iter().enumerate() {
-            let own = object.base_path.as_ref().map(|base_path| path::relative(base_path, file));
+            let own = object
+                .base_path
+                .as_ref()
+                .map(|base_path| path::relative(base_path, file));
             if own.as_ref().is_some_and(|it| path::is_external(it)) {
                 continue;
             }
@@ -265,7 +275,9 @@ impl Config {
             let parts: &[&[u8]] = own_parts.as_ref().map_or(&parts, |it| &it[..]);
             let ignores = object.ignores.as_deref();
             let Some(files) = &object.files else {
-                if !object.is_global_ignores && !ignores.is_some_and(|it| is_ignored_by(it, parts, false)) {
+                if !object.is_global_ignores
+                    && !ignores.is_some_and(|it| is_ignored_by(it, parts, false))
+                {
                     matching.push(index as u32);
                 }
                 continue;
@@ -281,7 +293,10 @@ impl Config {
         if !is_matched {
             return FileConfig::Unconfigured;
         }
-        FileConfig::Matched(self.cache.resolved(&matching, || self.merge(registry, &matching)))
+        FileConfig::Matched(
+            self.cache
+                .resolved(&matching, || self.merge(registry, &matching)),
+        )
     }
 
     /// Merges the objects at `indices`, and does what the constructor of ESLint's `Config` does.
@@ -297,7 +312,10 @@ impl Config {
             prefers_typescript_rules: self.prefers_typescript_rules,
             ..ResolvedConfig::default()
         };
-        for object in indices.iter().filter_map(|index| self.objects.get(*index as usize)) {
+        for object in indices
+            .iter()
+            .filter_map(|index| self.objects.get(*index as usize))
+        {
             merge::deep_merge_into(&mut language_options, &object.language_options);
             merge::deep_merge_into(&mut settings, &object.settings);
             linter.merge_json(&object.linter_options);
@@ -323,9 +341,17 @@ impl Config {
             };
             let options: Arc<[Json]> = setting.options.into();
             config.validate(entry, setting.severity, &options);
-            let instance = (setting.severity != Severity::Off)
-                .then(|| self.cache.rule(registry, entry, &options, || Arc::from((entry.build)(&Options::new(&options)))));
-            config.rules.push(ConfiguredRule::new(entry, setting.severity, options, instance));
+            let instance = (setting.severity != Severity::Off).then(|| {
+                self.cache.rule(registry, entry, &options, || {
+                    Arc::from((entry.build)(&Options::new(&options)))
+                })
+            });
+            config.rules.push(ConfiguredRule::new(
+                entry,
+                setting.severity,
+                options,
+                instance,
+            ));
         }
         config
     }

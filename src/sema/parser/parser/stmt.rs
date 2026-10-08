@@ -427,16 +427,14 @@ impl Parser<'_> {
             | T::Type => Flags::empty(),
             _ => self.modifiers(true, false, false),
         };
-        if flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
-            self.typescript_only();
+        // No other modifier is before a declaration.
+        if self.is_ecmascript && flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
+            self.report();
         }
         if flags.contains(Flags::ASYNC) && self.token() != T::Function
             || flags.contains(Flags::DEFAULT) && !flags.contains(Flags::EXPORT)
         {
             self.report();
-        }
-        if self.options.is_javascript && self.s.modifiers.len() > base {
-            self.check_decorators_in_javascript(base);
         }
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) {
@@ -444,23 +442,10 @@ impl Parser<'_> {
         }
         let statement = self.declaration_worker(start, base, flags);
         self.context = saved;
-        statement
-    }
-
-    /// What `getJSSyntacticDiagnosticsForFile` reports about the decorators of the declaration at
-    /// the token, whose modifiers are on the stack from `base` on: only a class has decorators, and
-    /// not both before and after `export`.
-    #[cold]
-    fn check_decorators_in_javascript(&mut self, base: usize) {
-        let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
-        let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
-        let Some(first) = modifiers.iter().position(is_decorator) else {
-            return;
-        };
-        let runs = modifiers[first..].chunk_by(|a, b| is_decorator(a) == is_decorator(b));
-        if self.token() != T::Class || runs.count() > 2 {
-            self.report();
+        if self.options.is_javascript {
+            self.check_js_statement(statement);
         }
+        statement
     }
 
     /// `parseDeclarationWorker`
@@ -471,12 +456,6 @@ impl Parser<'_> {
             }
             T::Function => self.function_declaration(start, base, flags),
             T::Class => self.class_declaration(start, base, flags),
-            T::Interface | T::Type | T::Enum | T::Global | T::Module | T::Namespace
-                if self.options.is_javascript =>
-            {
-                self.report();
-                StmtId::NONE
-            }
             T::Interface => self.interface_declaration(start, base, flags),
             T::Type => self.type_alias_declaration(start, base, flags),
             T::Enum => self.enum_declaration(start, base, flags),
@@ -535,7 +514,6 @@ impl Parser<'_> {
                 && !self.newline_before()
                 && matches!(self.f.pats.get(pat.idx()), Some(Pat { kind: PatKind::Ident(_), .. }))
             {
-                self.typescript_only();
                 self.next();
                 flags |= Flags::DEFINITE;
             }
@@ -702,6 +680,9 @@ impl Parser<'_> {
             let inner = self.start();
             let flags = flags & Flags::AMBIENT | Flags::EXPORT;
             let inner = self.namespace_declaration(inner, Span::EMPTY, flags, specifies_module);
+            if self.options.is_javascript {
+                self.check_js_statement(inner);
+            }
             self.f.list(&[inner])
         } else {
             self.module_block()

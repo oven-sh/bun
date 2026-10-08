@@ -114,7 +114,13 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             self, a, b, kind, is_js, check_directive, has_module_syntax, has_errors,
             ran_out_of_stack, has_parse_diagnostics, syntax_errors, source_len, jsx_pragmas
         );
-        if a.diagnostics[..] != b.diagnostics[..] {
+        // The reference lists what the lowering reports before what the parser reports.
+        let sorted = |list: &[Diagnostic]| {
+            let mut list = list.to_vec();
+            list.sort_by_key(|it| (it.start, it.code, it.end));
+            list
+        };
+        if sorted(&a.diagnostics) != sorted(&b.diagnostics) {
             self.differ("diagnostics", &&a.diagnostics[..], &&b.diagnostics[..]);
         }
         if a.references[..] != b.references[..] {

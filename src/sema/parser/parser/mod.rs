@@ -4,6 +4,7 @@
 mod class;
 mod expr;
 mod func;
+mod js_syntax;
 mod jsx;
 mod module;
 mod pattern;
@@ -32,6 +33,8 @@ pub(crate) mod ctx {
     pub(crate) const AMBIENT: u32 = 1 << 5;
     /// No function encloses the node.
     pub(crate) const TOP_LEVEL: u32 = 1 << 6;
+    /// The node is in a type, in an interface or in a type alias.
+    pub(crate) const TYPE: u32 = 1 << 7;
 }
 
 macro_rules! stacks {
@@ -282,6 +285,9 @@ impl<'a> Parser<'a> {
         if self.unclaimed_nullable_types > 0 {
             self.refuse(Refusal::Reported);
         }
+        if self.f.diagnostics.len() > 1 {
+            self.f.diagnostics.sort_by_key(|it| (it.start, it.code));
+        }
         if !self.f.body_starts.is_sorted_by_key(|body| body.0.0) {
             self.f.body_starts.sort_unstable_by_key(|body| body.0.0);
         }
@@ -393,15 +399,6 @@ impl<'a> Parser<'a> {
         match self.speculations {
             0 => self.refuse(Refusal::Reported),
             _ => self.has_reported = true,
-        }
-    }
-
-    /// At syntax that only TypeScript has, which is an error in a JavaScript file.
-    #[inline(always)]
-    #[track_caller]
-    pub(crate) fn typescript_only(&mut self) {
-        if self.options.is_javascript {
-            self.report();
         }
     }
 

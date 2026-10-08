@@ -37,7 +37,11 @@ impl Parser<'_> {
             return TypeNodeId::NONE;
         }
         self.next();
-        self.ty()
+        let ty = self.ty();
+        if self.options.is_javascript {
+            self.js_error_at_type(ty, 8010);
+        }
+        ty
     }
 
     /// `parseType`
@@ -45,9 +49,8 @@ impl Parser<'_> {
         if self.is_too_deep() {
             return TypeNodeId::NONE;
         }
-        self.typescript_only();
         // `TypeExcludesFlags`
-        let saved = self.enter_context(0, ctx::YIELD | ctx::AWAIT);
+        let saved = self.enter_context(ctx::TYPE, ctx::YIELD | ctx::AWAIT);
         let ty = self.type_in_context();
         self.context = saved;
         ty
@@ -226,7 +229,7 @@ impl Parser<'_> {
     /// type has to be in parentheses there.
     #[inline]
     fn constituent_type(&mut self) -> TypeNodeId {
-        if matches!(self.token(), T::LessThan | T::New) {
+        if self.is_start_of_function_or_constructor_type() {
             self.refuse(Refusal::Reported);
         }
         self.type_operator()
@@ -1058,6 +1061,7 @@ impl Parser<'_> {
     ) -> Member {
         let bracket = self.pos();
         self.next();
+        let saved = self.enter_context(ctx::TYPE, 0);
         let params = self.parameter_list(0, T::CloseBracket);
         self.expect(T::CloseBracket);
         // `checkGrammarIndexSignatureParameters`
@@ -1070,6 +1074,7 @@ impl Parser<'_> {
             self.refuse(Refusal::Reported);
         }
         let ty = self.type_annotation();
+        self.context = saved;
         self.type_member_semicolon();
         let func = self.f.add_fn(Func {
             kind: FnKind::IndexSignature,
@@ -1250,6 +1255,7 @@ impl Parser<'_> {
     ) -> StmtId {
         self.next();
         let (name, name_pos) = self.identifier();
+        let saved = self.enter_context(ctx::TYPE, 0);
         let type_params = self.type_parameters();
         let extends = match self.eat(T::Extends) {
             true => self.heritage_types(),
@@ -1259,6 +1265,7 @@ impl Parser<'_> {
             self.refuse(Refusal::Reported);
         }
         let members = self.object_type_members();
+        self.context = saved;
         let interface = self.f.add_interface(Interface {
             name,
             name_pos,
@@ -1288,7 +1295,9 @@ impl Parser<'_> {
             self.report();
         }
         let (name, name_pos) = self.identifier();
+        let saved = self.enter_context(ctx::TYPE, 0);
         let type_params = self.type_parameters();
+        self.context = saved;
         self.expect(T::Equals);
         let ty = match self.token() {
             T::Intrinsic if self.peek() != T::Dot => {

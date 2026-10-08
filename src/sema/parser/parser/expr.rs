@@ -412,6 +412,8 @@ impl Parser<'_> {
                 return left;
             }
             match token {
+                // The only operator whose right operand can have the same operator.
+                T::AsteriskAsterisk if self.is_too_deep() => return left,
                 T::In if self.has_context(ctx::DISALLOW_IN) => return left,
                 T::As | T::Satisfies => {
                     // "Make sure we *do* perform ASI for constructs like this: var x = foo \n as
@@ -419,13 +421,16 @@ impl Parser<'_> {
                     if self.newline_before() {
                         return left;
                     }
-                    self.typescript_only();
                     self.next();
                     let kind = if token == T::As && self.token() == T::Const {
+                        self.js_error((self.lx.start, self.lx.end), 8016, b"");
                         self.const_assertion_type();
                         ExprKind::AsConst(left)
                     } else {
                         let ty = self.ty();
+                        if self.options.is_javascript {
+                            self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
+                        }
                         match token {
                             T::As => ExprKind::As { expr: left, ty },
                             _ => ExprKind::Satisfies { expr: left, ty },
@@ -816,9 +821,11 @@ impl Parser<'_> {
                     expression = self.element_access(start, expression, chain);
                 }
                 T::Exclamation if !self.newline_before() => {
-                    self.typescript_only();
                     self.next();
                     let end = self.prev_end();
+                    if self.options.is_javascript {
+                        self.js_error((start, end), 8013, b"");
+                    }
                     if non_null == expression {
                         let inner = std::mem::replace(&mut self.f.exprs[expression.idx()].end, end);
                         self.f.non_null_ends.push((expression, inner));
@@ -843,7 +850,12 @@ impl Parser<'_> {
                             expression = self.element_access(start, expression, Chain::Start);
                         }
                         T::LessThan | T::LessThanLessThan => {
-                            let Some(type_args) = self.try_type_arguments_in_expression() else {
+                            // `parseTypeArgumentsInExpression` finds none in JavaScript.
+                            let type_args = match self.options.is_javascript {
+                                true => None,
+                                false => self.try_type_arguments_in_expression(),
+                            };
+                            let Some(type_args) = type_args else {
                                 self.fail();
                                 return expression;
                             };
@@ -1446,9 +1458,9 @@ impl Parser<'_> {
         if matches!(self.token(), T::Question | T::Exclamation) {
             self.refuse(Refusal::Reported);
         }
-        let value;
-        if kind != PropKind::Init || is_generator || matches!(self.token(), T::OpenParen | T::LessThan)
-        {
+        let is_function =
+            kind != PropKind::Init || is_generator || matches!(self.token(), T::OpenParen | T::LessThan);
+        let value = if is_function {
             let fn_kind = match kind {
                 PropKind::Getter => FnKind::Getter,
                 PropKind::Setter => FnKind::Setter,
@@ -1475,7 +1487,7 @@ impl Parser<'_> {
                 self.refuse(Refusal::Reported);
             }
             // The function expression starts at its parameters.
-            value = self.finish_expr(ExprKind::Fn(func), self.f[func].anchor);
+            self.finish_expr(ExprKind::Fn(func), self.f[func].anchor)
         } else if is_identifier && self.token() != T::Colon {
             kind = PropKind::Shorthand;
             let PropKey::Name(name) = key else {
@@ -1483,7 +1495,7 @@ impl Parser<'_> {
             };
             self.note_identifier(name, pos);
             let target = self.add_expr(ExprKind::Ident(name), pos, name_end);
-            value = match self.token() {
+            match self.token() {
                 // `{ a = 1 }`, which only a destructuring assignment can have.
                 T::Equals => {
                     self.next();
@@ -1496,11 +1508,11 @@ impl Parser<'_> {
                     self.finish_expr(kind, pos)
                 }
                 _ => target,
-            };
+            }
         } else {
             self.expect(T::Colon);
-            value = self.assignment_expression_allowing_in();
-        }
+            self.assignment_expression_allowing_in()
+        };
         if self.s.modifiers.len() > first_modifier {
             let list = self.take_modifiers(first_modifier);
             let index = (self.s.props.len() - base) as u32;

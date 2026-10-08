@@ -46,7 +46,10 @@ impl Parser<'_> {
             if !flags.contains(Flags::DEFAULT) {
                 self.fail();
             }
-            (Atom::NONE, start.pos)
+            // A default export without a name is placed at `export`.
+            let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
+            let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
+            (Atom::NONE, modifiers.iter().find(is_export).map_or(start.pos, |it| it.pos))
         };
         let func = self.function_rest(FnKind::Decl, fn_flags, name, name_pos, start.pos);
         let modifiers = self.take_modifiers(base);
@@ -108,11 +111,14 @@ impl Parser<'_> {
         let (body, open) = match self.token() {
             T::OpenBrace => self.function_block(signature_context(flags)),
             _ => {
-                self.typescript_only();
                 self.semicolon();
                 (FnBody::None, 0)
             }
         };
+        // Without a body the whole is reported.
+        if self.options.is_javascript && !matches!(body, FnBody::None) {
+            self.js_error_at_type(ret, 8010);
+        }
         let func = self.f.add_fn(Func {
             kind,
             flags,
@@ -152,7 +158,6 @@ impl Parser<'_> {
         if self.token() != T::LessThan {
             return Span::EMPTY;
         }
-        self.typescript_only();
         self.next();
         let base = self.s.type_params.len();
         while self.is_in_list(T::GreaterThan) {
@@ -194,6 +199,11 @@ impl Parser<'_> {
         if self.s.type_params.len() == base {
             // An empty list is an error.
             self.refuse(Refusal::Reported);
+        }
+        if self.options.is_javascript
+            && let [first, .., last] | [first @ last] = self.s.type_params[base..]
+        {
+            self.js_error((first.start, last.end), 8004, b"");
         }
         self.expect(T::GreaterThan);
         take_span!(self, type_params, base)
@@ -281,8 +291,10 @@ impl Parser<'_> {
             }
             flags |= seen;
             if !seen.is_empty() {
-                self.typescript_only();
                 flags |= Flags::PARAMETER_PROPERTY;
+            }
+            if self.options.is_javascript {
+                self.check_js_parameter_modifiers(first, start.pos);
             }
             let list = self.take_modifiers(first);
             if !list.is_empty() {
@@ -292,7 +304,6 @@ impl Parser<'_> {
         let pat;
         let is_this = self.token() == T::This;
         if is_this {
-            self.typescript_only();
             pat = self.f.pat(PatKind::Ident(known::this), self.lx.start, self.lx.end);
             self.next();
             if self.s.params.len() != base || !flags.is_empty() {
@@ -303,8 +314,9 @@ impl Parser<'_> {
                 flags |= Flags::REST;
             }
             pat = self.identifier_or_pattern();
-            if self.eat(T::Question) {
-                self.typescript_only();
+            if self.token() == T::Question {
+                self.js_error((self.pos(), 0), 8009, b"?");
+                self.next();
                 flags |= Flags::OPTIONAL;
             }
         }
@@ -325,6 +337,23 @@ impl Parser<'_> {
                 end: self.prev_end(),
             },
         });
+    }
+
+    /// `checkJSSyntax` for the modifiers of the parameter that starts at `start`, which are on the
+    /// stack from `first` on: `node.Modifiers().Loc`, if a keyword is among them.
+    #[cold]
+    fn check_js_parameter_modifiers(&mut self, first: usize, start: u32) {
+        let modifiers = self.s.modifiers.get(first..).unwrap_or_default();
+        let end_of = |it: &Modifier| match it.kind {
+            ModifierKind::Keyword(flag) => it.pos + modifier_text(flag).len() as u32,
+            ModifierKind::Decorator(e) => end_of_expr(&self.f, e),
+        };
+        let is_keyword = |it: &Modifier| matches!(it.kind, ModifierKind::Keyword(_));
+        if modifiers.iter().any(is_keyword)
+            && let Some(end) = modifiers.iter().map(end_of).max()
+        {
+            self.js_error((start, end), 8012, b"");
+        }
     }
 
     // ───────────────────────────── arrow functions ─────────────────────────────
@@ -507,6 +536,9 @@ impl Parser<'_> {
         }
         if self.has_failed() {
             return None;
+        }
+        if self.options.is_javascript {
+            self.js_error_at_type(ret, 8010);
         }
         let func = self.f.add_fn(Func {
             kind: FnKind::Arrow,

@@ -92,11 +92,16 @@ impl Parser<'_> {
             if self.token() == T::Comma {
                 self.refuse(Refusal::Reported);
             }
+            self.check_js_type_arguments(extends_args);
         }
         let mut implements = IdList::EMPTY;
-        if self.eat(T::Implements) {
-            self.typescript_only();
+        if self.token() == T::Implements {
+            let keyword = self.pos();
+            self.next();
+            let saved = self.enter_context(ctx::TYPE, 0);
             implements = self.heritage_types();
+            self.context = saved;
+            self.js_error((keyword, self.prev_end()), 8005, b"");
         }
         if matches!(self.token(), T::Extends | T::Implements) {
             self.refuse(Refusal::Reported);
@@ -169,9 +174,6 @@ impl Parser<'_> {
         if flags.intersects(Flags::CONST | Flags::EXPORT | Flags::DEFAULT | Flags::IN | Flags::OUT) {
             self.refuse(Refusal::Reported);
         }
-        if flags.intersects(!(Flags::STATIC | Flags::ASYNC | Flags::ACCESSOR)) {
-            self.typescript_only();
-        }
         if self.token() == T::Static && self.peek() == T::OpenBrace {
             return self.class_static_block(start, first_modifier);
         }
@@ -193,12 +195,14 @@ impl Parser<'_> {
         }
         if kind == MemberKind::Property && self.token() == T::OpenBracket && self.is_index_signature()
         {
-            self.typescript_only();
             let modifiers = self.take_modifiers(first_modifier);
             let mut member = self.index_signature(start, flags, modifiers);
             if is_parent_ambient {
                 member.flags |= Flags::AMBIENT;
                 self.f[member.func].flags |= Flags::AMBIENT;
+            }
+            if self.options.is_javascript {
+                self.check_js_member(&member, None);
             }
             return self.s.members.push(member);
         }
@@ -224,8 +228,10 @@ impl Parser<'_> {
             _ if name_token == T::OpenBracket => flags |= Flags::COMPUTED_NAME,
             _ => {}
         }
-        if self.eat(T::Question) {
-            self.typescript_only();
+        let mut question = None;
+        if self.token() == T::Question {
+            question = Some(self.pos());
+            self.next();
             flags |= Flags::OPTIONAL;
         }
         let mut member = Member {
@@ -264,11 +270,6 @@ impl Parser<'_> {
                 }
             };
             // `parseClassElement`: `declare` does not make an accessor or a constructor ambient.
-            if member.kind == MemberKind::Constructor
-                && self.s.decorators.last().is_some_and(|last| last.0 == index)
-            {
-                self.typescript_only();
-            }
             if member.kind != MemberKind::Method {
                 self.context = saved;
                 member.flags.set(Flags::AMBIENT, is_parent_ambient);
@@ -294,7 +295,6 @@ impl Parser<'_> {
                 && self.token() == T::Exclamation
                 && !self.newline_before()
             {
-                self.typescript_only();
                 self.next();
                 member.flags |= Flags::DEFINITE;
             }
@@ -311,6 +311,9 @@ impl Parser<'_> {
             end: self.prev_end(),
         };
         member.modifiers = self.take_modifiers(first_modifier);
+        if self.options.is_javascript {
+            self.check_js_member(&member, question);
+        }
         self.s.members.push(member);
     }
 

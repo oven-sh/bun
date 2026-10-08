@@ -163,6 +163,16 @@ impl Config {
     }
 }
 
+/// How to format a file.
+#[derive(Default)]
+pub(crate) struct Resolved {
+    pub(crate) options: FormatOptions,
+    /// Only a file whose first comment has `@format` or `@prettier` is formatted.
+    pub(crate) requires_pragma: bool,
+    /// A file whose first comment has `@noformat` or `@noprettier` is not.
+    pub(crate) checks_ignore_pragma: bool,
+}
+
 pub(crate) type Found = Result<Arc<Scope>, Fatal>;
 
 pub(crate) struct Configs<'c> {
@@ -317,7 +327,7 @@ impl<'c> Configs<'c> {
     }
 
     /// Prettier's `getOptionsForFile`: how to format the file at `path`, which has `scope`.
-    pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<FormatOptions, Fatal> {
+    pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
         let config = self.config_of(scope)?;
         let mut from_files: Vec<(&[u8], &[u8])> = Vec::new();
         let from_editorconfig = match self.options.config_lookup {
@@ -343,12 +353,18 @@ impl<'c> Configs<'c> {
             Precedence::PreferFile if has_files => from_files,
             Precedence::PreferFile => from_flags.collect(),
         };
-        let mut options = FormatOptions::default();
-        for (name, value) in all.into_iter().filter(|it| OPTIONS.contains(&it.0)) {
-            if options.set(name, value).is_err() {
-                return Err(Fatal([b"Invalid ", name, b" value: ", value, b"."].concat()));
+        let mut resolved = Resolved::default();
+        for (name, value) in all {
+            match name {
+                b"requirePragma" => resolved.requires_pragma = value == b"true",
+                b"checkIgnorePragma" => resolved.checks_ignore_pragma = value == b"true",
+                b"insertPragma" if value == b"true" => self.warn(&[b"insertPragma is not supported: no pragma is inserted."]),
+                name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
+                    return Err(Fatal([b"Invalid ", name, b" value: ", value, b"."].concat()));
+                }
+                _ => {}
             }
         }
-        Ok(options)
+        Ok(resolved)
     }
 }

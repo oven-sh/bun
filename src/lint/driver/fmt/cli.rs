@@ -34,6 +34,8 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--object-wrap <how>             <b>preserve<r> <d>(default)<r> or <b>collapse<r>"),
     clap::param!("--single-attribute-per-line     One attribute per line in JSX"),
     clap::param!("--end-of-line <which>           <b>lf<r> <d>(default)<r>, <b>crlf<r>, <b>cr<r>, or <b>auto<r>"),
+    clap::param!("--require-pragma                Only format files that start with a comment that has <b>@format<r> or <b>@prettier<r>"),
+    clap::param!("--check-ignore-pragma           Do not format files that start with a comment that has <b>@noformat<r> or <b>@noprettier<r>"),
     clap::param!("--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),
@@ -48,6 +50,7 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--experimental-ternaries"),
     clap::param!("--experimental-operator-position <where>"),
     clap::param!("--embedded-language-formatting <which>"),
+    clap::param!("--insert-pragma"),
     clap::param!("--parser <name>"),
     clap::param!("--plugin <name>..."),
     clap::param!("--cache"),
@@ -173,6 +176,9 @@ fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
         b"experimental-ternaries" => b"experimentalTernaries",
         b"experimental-operator-position" => b"experimentalOperatorPosition",
         b"embedded-language-formatting" => b"embeddedLanguageFormatting",
+        b"require-pragma" => b"requirePragma",
+        b"insert-pragma" => b"insertPragma",
+        b"check-ignore-pragma" => b"checkIgnorePragma",
         _ => return None,
     })
 }

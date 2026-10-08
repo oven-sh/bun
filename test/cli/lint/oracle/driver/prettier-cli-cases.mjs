@@ -145,6 +145,28 @@ export const cases = [
     args: [...flags, "a.jsx"],
   })),
 
+  // ───────────── pragmas ─────────────
+  ...[["--require-pragma"], ["--check-ignore-pragma"]].map(flags => ({
+    name: `pragmas ${flags[0]}`,
+    files: {
+      "none.js": ugly,
+      "format.js": `/** @format */\n${ugly}`,
+      "prettier.js": `/**\n * Text.\n *\n * @prettier\n */\n${ugly}`,
+      "plain-comment.js": `/* @format */\n${ugly}`,
+      "line-comment.js": `// @format\n${ugly}`,
+      "not-first.js": `const z = 1;\n/** @format */\n${ugly}`,
+      "in-text.js": `/** see @format */\n${ugly}`,
+      "longer.js": `/** @formatted */\n${ugly}`,
+      "with-value.js": `/** @format yes */\n${ugly}`,
+      "shebang.js": `#!/usr/bin/env node\n/** @format */\n${ugly}`,
+      "blank-lines.js": `\n\n  /** @format */\n${ugly}`,
+      "noformat.js": `/** @noformat */\n${ugly}`,
+      "noprettier.js": `/**\n * @noprettier\n */\n${ugly}`,
+    },
+    args: ["-l", ...flags, "."],
+  })),
+  { name: "requirePragma in the configuration", files: withConfig(".prettierrc", `{"requirePragma": true}`, { "c.js": `/** @format */\n${ugly}` }), args: ["-l", "."] },
+
   // ───────────── .editorconfig ─────────────
   { name: "editorconfig", files: withConfig(".editorconfig", "root = true\n[*]\nindent_style = tab\nmax_line_length = 40\nend_of_line = crlf\n"), args: ["."] },
   { name: "editorconfig indent_size", files: withConfig(".editorconfig", "[*]\nindent_style = space\nindent_size = 4\n"), args: ["."] },

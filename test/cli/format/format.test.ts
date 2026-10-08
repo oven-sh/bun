@@ -305,6 +305,18 @@ describe.concurrent("bun format", () => {
       expect(result.files).toEqual({ "a.js": wide, "generated/b.js": ugly });
     });
 
+    test("requirePragma and checkIgnorePragma", async () => {
+      const files = {
+        "none.js": ugly,
+        "format.js": `/** @format */\n${ugly}`,
+        "prettier.js": `#!/usr/bin/env bun\n/**\n * Text.\n * @prettier\n */\n${ugly}`,
+        "in-text.js": `/** see @format */\n${ugly}`,
+        "noformat.js": `/** @noformat */\n${ugly}`,
+      };
+      expect(await different({ ...files, ".prettierrc": `{ "requirePragma": true }` }, [])).toEqual(["format.js", "prettier.js"]);
+      expect(await different(files, ["--check-ignore-pragma"])).toEqual(["format.js", "in-text.js", "none.js", "prettier.js"]);
+    });
+
     test(".editorconfig", async () => {
       const files = {
         ".editorconfig": "root = true\n[*]\nindent_style = space\nindent_size = 4\n[*.ts]\nindent_style = tab\n",

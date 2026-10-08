@@ -74,7 +74,7 @@ For each file, `bun format` uses the nearest configuration file: it looks in the
 }
 ```
 
-See [Prettier's options](https://prettier.io/docs/options) for what each option does. `experimentalTernaries` and `experimentalOperatorPosition: "start"` are not supported yet. Plugins do not load.
+See [Prettier's options](https://prettier.io/docs/options) for what each option does. `experimentalTernaries`, `experimentalOperatorPosition: "start"`, and `insertPragma` are not supported yet. Plugins do not load.
 
 A flag overrides the configuration file:
 
@@ -187,6 +187,8 @@ bun format [flags] [...files, directories or patterns]
 | `--find-config-path <path>`       | Print the configuration file of a file, and format nothing              |
 | `--log-level <level>`             | `silent`, `error`, `warn`, `log` (default), or `debug`                  |
 | `--print-width`, `--no-semi`…     | Any formatting option, as for `prettier`. Overrides the configuration   |
+| `--require-pragma`                | Only format files that start with a `@format` or `@prettier` comment    |
+| `--check-ignore-pragma`           | Skip files that start with a `@noformat` or `@noprettier` comment       |
 | `--threads <n>`                   | Number of threads. Default: one per CPU core                            |
 | `--timing`                        | Print how long each phase took                                          |
 | `--cwd <path>`                    | Set the working directory                                               |

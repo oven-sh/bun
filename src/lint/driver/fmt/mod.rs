@@ -11,7 +11,8 @@ mod files;
 use crate::run::{Environment, Fatal, Outcome, Pool};
 use crate::{fs, paths};
 use bstr::BStr;
-use bun_format::{FormatError, FormatOptions, Scratch};
+use bun_core::strings;
+use bun_format::{FormatError, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::LanguageOptions;
 use bun_sema::atom::Interner;
@@ -20,7 +21,7 @@ use bun_sema::hir::Diagnostic;
 use bun_sema::session::Session;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
-use config::Configs;
+use config::{Configs, Resolved};
 use files::{Expanded, Ignored, Language, Target};
 use std::borrow::Cow;
 use std::io::Write;
@@ -79,8 +80,35 @@ fn syntax_error(file: &File, first: Option<&Diagnostic>) -> Vec<u8> {
     out
 }
 
+/// Prettier's `hasPragma`: whether the comment that `text` starts with has one of `pragmas`, each
+/// without its `@`, at the start of a line.
+fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
+    let mut text = strings::without_utf8_bom(text);
+    if text.starts_with(b"#!") {
+        text = strings::index_of_char_usize(text, b'\n').map_or(&[], |end| &text[end + 1..]);
+    }
+    let Some(comment) = text.trim_ascii_start().strip_prefix(b"/*") else {
+        return false;
+    };
+    let Some(end) = strings::index_of(comment, b"*/") else {
+        return false;
+    };
+    strings::split(&comment[..end], b"\n").any(|line| {
+        let line = line.trim_ascii_start();
+        let line = line.strip_prefix(b"*").unwrap_or(line).trim_ascii_start();
+        let name = line.strip_prefix(b"@").map(|rest| strings::split_any(rest, b" \t\r").next().unwrap_or_default());
+        name.is_some_and(|name| pragmas.contains(&name))
+    })
+}
+
 /// The formatted text of the file at `path`. `verifies`: it is parsed and compared with `text`.
-fn format(path: &[u8], text: &[u8], options: &FormatOptions, scratch: &mut Scratch, verifies: bool) -> Result<Vec<u8>, Failure> {
+fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratch, verifies: bool) -> Result<Vec<u8>, Failure> {
+    let options = &how.options;
+    let is_left_alone = (how.requires_pragma && !has_pragma(text, [b"format", b"prettier"]))
+        || (how.checks_ignore_pragma && has_pragma(text, [b"noformat", b"noprettier"]));
+    if is_left_alone {
+        return Ok(text.to_vec());
+    }
     if !options.is_supported() {
         return Err(Failure::Unsupported("experimentalTernaries and experimentalOperatorPosition are not supported yet."));
     }
@@ -136,7 +164,7 @@ impl Run<'_> {
     /// Prettier's `logger.error`
     fn error(&mut self, text: &[u8]) {
         if self.options.log_level >= LogLevel::Error {
-            for line in bun_core::strings::split(text, b"\n") {
+            for line in strings::split(text, b"\n") {
                 pretty!(&mut self.out.stderr, self.colors(), "[<red>error<r>] {}\n", BStr::new(line));
             }
         }

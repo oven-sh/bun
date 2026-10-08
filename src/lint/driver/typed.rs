@@ -15,7 +15,6 @@ use crate::results::FileResult;
 use crate::run::Environment;
 use bun_lint::linter::{LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, apply_fixes};
 use bun_sema::program::FileId;
-use bun_sema::resolve::is_declaration_file_name;
 use bun_sema::util::FxHashMap;
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, to_native};
@@ -97,9 +96,7 @@ fn check_and_lint(
         digests: false,
         task_clock: None,
         plan_options: bun_sema_driver::PlanOptions {
-            // Declaration files are not checked (`skipLibCheck`). Those that are to be linted are
-            // among the files that the checker hands over at the end.
-            after_file_is_for_checked_files: !paths.iter().any(|path| is_declaration_file_name(path)),
+            after_file_is_for_checked_files: true,
             ..Default::default()
         },
         retains_everything: false,

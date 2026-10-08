@@ -107,9 +107,20 @@ const expected = tuplesOfOxlint(theirs.stdout);
 const actual = tuplesOfBun(ours.stdout);
 
 const isShared = rule => rules.has(rule) || rules.has(`@typescript-eslint/${rule}`);
-const key = it => `${it.file}:${it.line}:${it.column} ${canonical(it.rule)}`;
-const expectedKeys = new Map(expected.tuples.filter(it => isShared(it.rule)).map(it => [key(it), it]));
-const actualKeys = new Map(actual.map(it => [key(it), it]));
+// The second diagnostic of a rule at a position is another key than the first: `a!.b!` has two at `a`.
+const keyed = tuples => {
+  const seen = new Map();
+  return new Map(
+    tuples.map(it => {
+      const key = `${it.file}:${it.line}:${it.column} ${canonical(it.rule)}`;
+      const nth = (seen.get(key) ?? 0) + 1;
+      seen.set(key, nth);
+      return [nth === 1 ? key : `${key} (${nth})`, it];
+    }),
+  );
+};
+const expectedKeys = keyed(expected.tuples.filter(it => isShared(it.rule)));
+const actualKeys = keyed(actual);
 
 const byRule = new Map();
 const count = (rule, field) => {
@@ -143,6 +154,6 @@ console.log(
 );
 console.table(Object.fromEntries([...byRule].sort()));
 if (show) {
-  for (const line of differences.sort()) if (show === true || line.endsWith(` ${show}`)) console.log(line);
+  for (const line of differences.sort()) if (show === true || line.includes(` ${show}`)) console.log(line);
 }
 process.exit(differences.length ? 1 : 0);

@@ -578,7 +578,7 @@ impl Run<'_> {
         let cpu = |nanos: &AtomicU64| nanos.load(Ordering::Relaxed) as f64 / 1e6;
         let _ = writeln!(
             self.out.stderr,
-            "  wall: {:.1}ms finding files and configurations, {:.1}ms type checking and linting, {:.1}ms linting without types, {:.1}ms formatting, {:.1}ms in all, on {} threads\n  cpu:  {:.1}ms reading, {:.1}ms parsing and binding, {:.1}ms in rules",
+            "  wall: {:.1}ms finding files and configurations, {:.1}ms type checking and linting, {:.1}ms linting without types, {:.1}ms formatting, {:.1}ms in all, on {} threads\n  summed over the threads: {:.1}ms reading, {:.1}ms parsing and binding, {:.1}ms in rules",
             phases.discovery * 1e3,
             phases.checking * 1e3,
             phases.linting * 1e3,

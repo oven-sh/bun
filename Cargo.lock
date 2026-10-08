@@ -1087,6 +1087,7 @@ name = "bun_lint_standalone"
 version = "0.0.0"
 dependencies = [
  "bstr",
+ "bun_alloc",
  "bun_core",
  "bun_format",
  "bun_format_conformance",

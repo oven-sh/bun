@@ -162,6 +162,11 @@ fn bench(args: &[String]) {
     );
 }
 
+// With `--cfg bun_sema_mimalloc` the real mimalloc is linked, to measure with Bun's allocator.
+#[cfg(bun_sema_mimalloc)]
+#[global_allocator]
+static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
+
 fn main() {
     bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -8,6 +8,7 @@ name = "bun-lint"
 path = "main.rs"
 
 [dependencies]
+bun_alloc.workspace = true
 bun_lint.workspace = true
 bun_lint_eslint.workspace = true
 bun_lint_typescript.workspace = true

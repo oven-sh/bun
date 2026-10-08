@@ -16,6 +16,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 const PROPOSAL: &str = "syntax of a proposal at stage 2 or below, which only Babel parses";
+const FLOW: &str = "Flow's type syntax";
 const EMBEDDED: &str = "embedded CSS, GraphQL, HTML or Markdown, which needs a formatter for that language";
 
 /// What is not run, and why. A case is left out if its path contains the text.
@@ -47,6 +48,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("js/babel-plugins/pipeline-operator", PROPOSAL),
     ("js/babel-plugins/throw-expressions", PROPOSAL),
     ("js/babel-plugins/v8intrinsic", PROPOSAL),
+    ("misc/babel-redirect-to-babel-flow", FLOW),
     ("js/embeded", EMBEDDED),
     ("js/multiparser-comments", EMBEDDED),
     ("js/multiparser-css", EMBEDDED),
@@ -339,7 +341,7 @@ pub(super) fn run(args: &Args) {
     let filter = args.flag("filter");
     let report = args.flag("report").map(PathBuf::from);
     let is_verbose = args.flag("verbose").is_some();
-    let languages = args.flag("languages").unwrap_or("js,jsx,typescript,misc");
+    let languages = args.flag("languages").unwrap_or("js,jsx,typescript,json,misc");
     // The message of a panic would be printed for each.
     std::panic::set_hook(Box::new(|_| {}));
 
@@ -374,8 +376,9 @@ pub(super) fn run(args: &Args) {
                 }
                 let ours = parser_of(&case.name, language);
                 // Another language.
+                let is_json = case.parsers.first().is_some_and(|it| it.starts_with("json"));
                 let is_ours = |it: &String| matches!(it.as_str(), "babel" | "typescript" | "flow" | "babel-ts" | "babel-flow" | "acorn" | "espree" | "meriyah" | "oxc" | "oxc-ts");
-                if !case.parsers.is_empty() && !case.parsers.iter().any(is_ours) {
+                if !case.parsers.is_empty() && !is_json && !case.parsers.iter().any(is_ours) {
                     continue;
                 }
                 if let Some(&(_, reason)) = EXCLUDED.iter().find(|it| id.contains(it.0)) {
@@ -385,6 +388,9 @@ pub(super) fn run(args: &Args) {
                 let tally = by_directory.entry(group.clone()).or_default();
 
                 let mut options = FormatOptions::default();
+                if let (true, Some(parser)) = (is_json, case.parsers.first()) {
+                    let _ = options.set(b"parser", parser.as_bytes());
+                }
                 let described = case.options.iter().filter(|it| it.0 != "printWidth" || it.1 != "80");
                 let described = described.map(|(name, value)| format!(" {name}={value}")).collect::<String>();
                 let unknown = case.options.iter().find(|(name, value)| options.set(name.as_bytes(), value.as_bytes()).is_err());
@@ -405,6 +411,7 @@ pub(super) fn run(args: &Args) {
                             let _ = options.set(b"filepath", name.as_bytes());
                         }
                         let extension = match language {
+                            _ if is_json => "json",
                             "typescript" => "ts",
                             "jsx" => "jsx",
                             _ if case.parsers.first().is_some_and(|it| it == "typescript" || it == "babel-ts") => "ts",

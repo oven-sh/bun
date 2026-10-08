@@ -25,9 +25,20 @@ use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
 
 fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
-    fn format<'a>(file: &'a File<'a>, options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
+    fn format<'a>(file: &'a File<'a>, language: &LanguageOptions, options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
-        bun_format::format(file, options, &mut scratch, &mut out).map(|()| out)
+        let path = crate::text(file.path());
+        let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| crate::with_file(&path, slice, language, |file| then(file));
+        bun_format::range::format(file, options, &mut scratch, &mut out, parse).map(|()| out)
+    }
+    let name = options.filepath.as_deref().unwrap_or(path.as_bytes());
+    let json_parser = match &options.parser {
+        Some(parser) => bun_format::json::Parser::from_name(parser),
+        None => bun_format::json::parser_for_path(name),
+    };
+    if let Some(parser) = json_parser {
+        let mut out = Vec::new();
+        return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| out);
     }
     let code = match bun_format::pragma::before_parsing(code, options) {
         bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok(code.to_vec()),
@@ -39,13 +50,12 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
             // A file whose imports move is parsed again.
             let how = options.sort_imports.as_deref();
             match how.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-                Some(sorted) => crate::with_file(path, &sorted, &language, |file| format(file, options)),
-                None => format(file, options),
+                Some(sorted) => crate::with_file(path, &sorted, &language, |file| format(file, &language, options)),
+                None => format(file, &language, options),
             }
         })
     };
     // Like Prettier with Babel: what is not a module may be a script.
-    let name = options.filepath.as_deref().unwrap_or(path.as_bytes());
     match name.rsplit(|&byte| byte == b'.').next() {
         Some(b"cjs" | b"cts") => format_as(SourceType::Script),
         Some(b"js" | b"jsx") => format_as(SourceType::Module).or_else(|_| format_as(SourceType::Script)),

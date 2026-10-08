@@ -15,6 +15,7 @@ mod js;
 pub mod json;
 pub mod options;
 pub mod pragma;
+pub mod range;
 pub mod verify;
 
 /// Sorting imports.

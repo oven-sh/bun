@@ -43,6 +43,8 @@ pub struct FormatOptions {
     pub embedded_language_formatting: EmbeddedLanguageFormatting,
     /// The name of the file, if it is not the one that it was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
+    /// Prettier's `parser`, if it is not left to the name of the file: `json5`, `babel`, ..
+    pub parser: Option<Box<[u8]>>,
     /// Only what is between the two is formatted. As in Prettier, they count UTF-16 code units.
     pub range_start: Option<u32>,
     pub range_end: Option<u32>,
@@ -162,6 +164,7 @@ impl FormatOptions {
                 };
             }
             b"filepath" => self.filepath = Some(value.into()),
+            b"parser" => self.parser = Some(value.into()),
             b"rangeStart" => self.range_start = Some(number(u32::MAX)?),
             // `Infinity` is the default.
             b"rangeEnd" => self.range_end = number(u32::MAX).ok(),

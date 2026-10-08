@@ -193,7 +193,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             },
             _ => &node.leading_comments,
         };
-        comments.last().is_some_and(|&comment| text::trim(&self.node(comment).value) == b"prettier-ignore")
+        comments.last().is_some_and(|&comment| matches!(text::trim(&self.node(comment).value), b"prettier-ignore" | b"oxfmt-ignore"))
     }
 
     /// `genericPrint`. `is_last_descendant`: `isLastDescendantNode(path)`, for what is not a comment, a tag

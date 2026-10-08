@@ -9,6 +9,7 @@
 //! what `utils::text` makes of them, `bun-lint utils-core types-at <cases.jsonl>` the
 //! `estree_type_at` of every offset, as runs.
 
+use crate::host::{self, output_line};
 use bstr::BStr;
 use bun_lint::ast::{Expr, ExprKind, File, Node, Stmt, StmtKind};
 use bun_lint::language::{LanguageOptions, SourceType};
@@ -38,7 +39,10 @@ impl<'a> Facts<'a> {
     }
 
     fn span(span: Option<Span>) -> String {
-        span.map_or("null".to_owned(), |it| format!("{}-{}", it.start, it.end))
+        span.map_or_else(
+            || "null".to_owned(),
+            |it| format!("{}-{}", it.start, it.end),
+        )
     }
 
     /// The elements of a pattern, and all that it assigns to.
@@ -292,9 +296,7 @@ impl<'a> Facts<'a> {
 }
 
 fn json_string(text: &str, out: &mut String) {
-    out.push_str(&String::from_utf8_lossy(&utils::text::json_stringify(
-        text.as_bytes(),
-    )));
+    out.push_str(&host::text(&utils::text::json_stringify(text.as_bytes())));
 }
 
 fn dump(case: Object<'_>) -> String {
@@ -397,7 +399,7 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
         if i > 0 {
             line.push(',');
         }
-        line.push_str(&String::from_utf8_lossy(&text::json_stringify(field)));
+        line.push_str(&host::text(&text::json_stringify(field)));
     }
     line.push(']');
     line
@@ -405,11 +407,11 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
 
 pub(crate) fn run(args: &[String]) {
     let (Some(mode), Some(path)) = (args.first(), args.get(1)) else {
-        println!("usage: bun-lint utils-core dump <cases.jsonl> | adjacent <pairs.jsonl>");
+        output_line!("usage: bun-lint utils-core dump <cases.jsonl> | adjacent <pairs.jsonl>");
         return;
     };
-    let Ok(input) = std::fs::read(path) else {
-        println!("cannot read {path}");
+    let Ok(input) = host::read(path) else {
+        output_line!("cannot read {path}");
         return;
     };
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
@@ -420,7 +422,7 @@ pub(crate) fn run(args: &[String]) {
             "adjacent" => {
                 let pair = json.as_array().unwrap_or_default();
                 let text = |i: usize| pair.get(i).and_then(Json::as_str).unwrap_or_default();
-                println!("{}", ast_utils::can_tokens_be_adjacent(text(0), text(1)));
+                output_line!("{}", ast_utils::can_tokens_be_adjacent(text(0), text(1)));
             }
             "types-at" => {
                 let case = Object::of(Some(&json));
@@ -429,7 +431,7 @@ pub(crate) fn run(args: &[String]) {
                 let id = case.number("id").unwrap_or(-1.0);
                 crate::with_file(path, code, &LanguageOptions::default(), |file| {
                     if file.has_parse_errors() || !code.is_ascii() {
-                        println!("{{\"id\":{id},\"error\":true}}");
+                        output_line!("{{\"id\":{id},\"error\":true}}");
                         return;
                     }
                     let mut runs = String::new();
@@ -444,18 +446,19 @@ pub(crate) fn run(args: &[String]) {
                         }
                         previous.1 += 1;
                     }
-                    println!(
+                    output_line!(
                         "{{\"id\":{id},\"runs\":\"{runs}{} {}\"}}",
-                        previous.0, previous.1
+                        previous.0,
+                        previous.1
                     );
                 });
             }
             "text" => {
                 let pair = json.as_array().unwrap_or_default();
                 let text = |i: usize| pair.get(i).and_then(Json::as_str).unwrap_or_default();
-                println!("{}", text_facts(text(0), text(1)));
+                output_line!("{}", text_facts(text(0), text(1)));
             }
-            _ => println!("{}", dump(Object::of(Some(&json)))),
+            _ => output_line!("{}", dump(Object::of(Some(&json)))),
         }
     }
 }

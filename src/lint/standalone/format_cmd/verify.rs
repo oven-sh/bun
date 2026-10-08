@@ -1,6 +1,7 @@
 //! `bun-lint format verify <paths..>`, `bun-lint format verify-pairs`: see `bun_format::verify`.
 
 use super::{Args, collect_files, format_text_or_panic, is_other_language};
+use crate::host::{self, output_line};
 use bun_format::FormatOptions;
 use bun_format::verify::{Program, Scratch};
 use bun_js_parser::sema::Summary;
@@ -92,10 +93,8 @@ fn compare(
                     bun_format::verify::compare(&file, &program, &program_after, options, scratch)
                 });
                 Some(result.map_err(|difference| {
-                    difference
-                        .to_string()
-                        .replace('\n', "\\n")
-                        .replace('\t', "\\t")
+                    let difference = host::replace(&difference.to_string(), "\n", "\\n");
+                    host::replace(&difference, "\t", "\\t")
                 }))
             },
         )
@@ -118,7 +117,7 @@ pub(super) fn verify(args: &Args) {
         .filter(|it| !is_other_language(it))
     {
         let name = path.to_string_lossy();
-        let Ok(code) = std::fs::read(path) else {
+        let Ok(code) = host::read(path) else {
             continue;
         };
         let Ok(formatted) = format_text_or_panic(&name, &code, &args.options) else {
@@ -129,12 +128,12 @@ pub(super) fn verify(args: &Args) {
             Some(Ok(())) => passed += 1,
             Some(Err(difference)) => {
                 failed += 1;
-                println!("{name}: {difference}");
+                output_line!("{name}: {difference}");
             }
             None => errors += 1,
         }
     }
-    println!("the same program: {passed}, not: {failed}, not formatted: {errors}");
+    output_line!("the same program: {passed}, not: {failed}, not formatted: {errors}");
 }
 
 /// Answers what the check says about pairs of texts. A question is a line
@@ -147,15 +146,11 @@ pub(super) fn verify_pairs(args: &Args) {
     let (mut stdin, mut stdout) = (std::io::stdin().lock(), std::io::stdout().lock());
     let mut line = String::new();
     while stdin.read_line(&mut line).is_ok_and(|read| read > 0) {
-        let mut parts = line.trim_end().splitn(3, ' ');
-        let mut length = || {
-            parts
-                .next()
-                .and_then(|it| it.parse::<usize>().ok())
-                .unwrap_or(0)
-        };
-        let (mut before, mut after) = (vec![0; length()], vec![0; length()]);
-        let name = parts.next().unwrap_or_default();
+        let header = line.trim_end();
+        let (before, rest) = host::split_once(header, " ").unwrap_or((header, ""));
+        let (after, name) = host::split_once(rest, " ").unwrap_or((rest, ""));
+        let length = |it: &str| it.parse::<usize>().unwrap_or(0);
+        let (mut before, mut after) = (vec![0; length(before)], vec![0; length(after)]);
         if stdin
             .read_exact(&mut before)
             .and_then(|()| stdin.read_exact(&mut after))

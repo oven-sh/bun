@@ -8,6 +8,7 @@
 //! - `bench <paths..> [--repeat=n]`: how long it takes to derive each part.
 //! - `fuzz <cases.jsonl> [--rounds=n]`: looks for panics on code with syntax errors.
 
+use crate::host::{self, output_line};
 use bun_lint::ast::{File, Node, StmtKind, TypeKind};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
@@ -370,7 +371,7 @@ fn write(value: &Json, out: &mut Vec<u8>) {
 fn print(fields: Vec<(Vec<u8>, Json)>) {
     let mut line = Vec::new();
     write(&Json::Object(fields), &mut line);
-    println!("{}", bstr::BStr::new(&line));
+    output_line!("{}", bstr::BStr::new(&line));
 }
 
 fn dump_case(
@@ -451,7 +452,7 @@ fn dump_command(args: &[String]) {
     match args[..] {
         [batch, cases] if batch == "--batch" => {
             std::panic::set_hook(Box::new(|_| {}));
-            let cases = std::fs::read(cases).expect("the cases");
+            let cases = host::read(cases).expect("the cases");
             for line in bun_core::strings::split(&cases, b"\n").filter(|it| !it.is_empty()) {
                 let case = bun_lint::json::parse(line).expect("a case");
                 let path = path_of(&case);
@@ -469,7 +470,7 @@ fn dump_command(args: &[String]) {
             }
         }
         [path] => {
-            let code = std::fs::read(path).expect("the file");
+            let code = host::read(path).expect("the file");
             print(dump_case(
                 path,
                 &code,
@@ -477,7 +478,7 @@ fn dump_command(args: &[String]) {
                 with_nodes,
             ));
         }
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint semantic dump <file> | bun-lint semantic dump --batch <cases.jsonl>"
         ),
     }
@@ -493,7 +494,7 @@ fn fuzz(args: &[String]) {
         .find(|a| !a.starts_with("--"))
         .expect("the cases");
     std::panic::set_hook(Box::new(|_| {}));
-    let cases = std::fs::read(cases).expect("the cases");
+    let cases = host::read(cases).expect("the cases");
     let (mut state, mut tried, mut panicked) = (0x9E37_79B9_7F4A_7C15u64, 0usize, 0usize);
     let mut random = |below: usize| {
         state ^= state << 13;
@@ -528,11 +529,11 @@ fn fuzz(args: &[String]) {
             if matches!(dumped.first(), Some((key, Json::String(what))) if key == b"error" && what == b"panicked")
             {
                 panicked += 1;
-                println!("──── {path}\n{}", bstr::BStr::new(&damaged));
+                output_line!("──── {path}\n{}", bstr::BStr::new(&damaged));
             }
         }
     }
-    println!("{tried} tried, {panicked} panicked");
+    output_line!("{tried} tried, {panicked} panicked");
 }
 
 fn bench(args: &[String]) {
@@ -547,7 +548,7 @@ fn bench(args: &[String]) {
     let (mut bytes, mut files, mut counts) = (0usize, 0usize, [0usize; 3]);
     let mut nanos = [0u128; 4];
     for path in &paths {
-        let Ok(code) = std::fs::read(path) else {
+        let Ok(code) = host::read(path) else {
             continue;
         };
         for _ in 0..repeat {
@@ -572,7 +573,7 @@ fn bench(args: &[String]) {
     }
     let megabytes = bytes as f64 / 1e6;
     let per_megabyte = |nanos: u128| nanos as f64 / 1e6 / megabytes;
-    println!(
+    output_line!(
         "{} files, {:.1} MB: {} scopes, {} symbols, {} references",
         files / repeat,
         megabytes / repeat as f64,
@@ -580,7 +581,7 @@ fn bench(args: &[String]) {
         counts[1] / repeat,
         counts[2] / repeat
     );
-    println!(
+    output_line!(
         "ms/MB: parse+bind {:.2}, scopes {:.2}, symbols {:.2}, references {:.2}, all three {:.2}",
         per_megabyte(nanos[0]),
         per_megabyte(nanos[1]),
@@ -595,7 +596,7 @@ pub(crate) fn run(args: &[String]) {
         Some("dump") => dump_command(&args[1..]),
         Some("bench") => bench(&args[1..]),
         Some("fuzz") => fuzz(&args[1..]),
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint semantic dump <file> | dump --batch <cases.jsonl> | bench <paths..>"
         ),
     }

@@ -8,6 +8,7 @@
 //!
 //! `bun-lint perf positions <files..>`: see [`positions`].
 
+use crate::host::{self, output_line};
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::language::LanguageOptions;
@@ -22,7 +23,7 @@ use std::time::Instant;
 
 /// The names of the rules that a configuration of oxlint turns on, as `(plugin, name)`.
 fn rules_of_config(path: &str) -> Vec<(Plugin, String)> {
-    let json = std::fs::read(path)
+    let json = host::read(path)
         .ok()
         .and_then(|it| bun_lint::json::parse(&it))
         .expect("the configuration");
@@ -31,7 +32,7 @@ fn rules_of_config(path: &str) -> Vec<(Plugin, String)> {
         .and_then(Json::as_object)
         .unwrap_or_default();
     (rules.iter())
-        .map(|(id, _)| match String::from_utf8_lossy(id).into_owned() {
+        .map(|(id, _)| match host::text(id) {
             id if id.starts_with("typescript/") => {
                 (Plugin::TypeScript, id["typescript/".len()..].to_owned())
             }
@@ -56,19 +57,14 @@ fn rules(args: &[String]) {
         number("--repeat=", 3),
         number("--top=", usize::MAX),
     );
-    let only: Option<Vec<&str>> = flag("--rules=").map(|it| it.split(',').collect());
+    let only: Option<Vec<&str>> = flag("--rules=").map(|it| host::split(it, ",").collect());
     let of_config = flag("--config=").map(rules_of_config);
     let mut paths = Vec::new();
     for arg in args.iter().filter(|a| !a.starts_with("--")) {
         crate::collect(std::path::Path::new(arg), &mut paths);
     }
     let files: Vec<(String, Vec<u8>)> = (paths.iter())
-        .filter_map(|path| {
-            Some((
-                path.to_string_lossy().into_owned(),
-                std::fs::read(path).ok()?,
-            ))
-        })
+        .filter_map(|path| Some((path.to_string_lossy().into_owned(), host::read(path).ok()?)))
         .collect();
     let built: Vec<_> = crate::all_rules()
         .filter(|it| !it.meta.requires_types)
@@ -119,7 +115,7 @@ fn rules(args: &[String]) {
             options.every_file_is_a_module,
         )
         .0;
-        hir.text = code.to_vec().into();
+        hir.text = code.clone().into();
         let bind_options = BindOptions {
             emit_standard_class_fields: true,
             before_es2020: false,
@@ -166,7 +162,7 @@ fn rules(args: &[String]) {
     let ms = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e6;
     let mut table: Vec<usize> = (0..enabled.len()).collect();
     table.sort_by(|&a, &b| ms(&cold[b]).total_cmp(&ms(&cold[a])));
-    println!(
+    output_line!(
         "     cold      warm   reports  rule (ms of CPU, {} files)",
         files.len()
     );
@@ -177,7 +173,7 @@ fn rules(args: &[String]) {
         } else {
             "ts/"
         };
-        println!(
+        output_line!(
             "{:9.1} {:9.1} {:9}  {prefix}{}",
             ms(&cold[at]),
             ms(&warm[at]),
@@ -185,7 +181,7 @@ fn rules(args: &[String]) {
             meta.name
         );
     }
-    println!(
+    output_line!(
         "{} rules: together {:.1} ms, sum of cold {:.1} ms, sum of warm {:.1} ms; parse + bind {:.1} ms; {:?} expressions, statements, types, patterns",
         enabled.len(),
         ms(&together),
@@ -202,8 +198,8 @@ fn positions(args: &[String]) {
     let language = LanguageOptions::default();
     let mut wrong = 0;
     for path in args {
-        let code = std::fs::read(path).expect("the file");
-        let text = String::from_utf8(code.clone()).expect("UTF-8");
+        let code = host::read(path).expect("the file");
+        let text = std::str::from_utf8(&code).expect("UTF-8");
         // (offset, line, column)
         let (mut expected, mut line, mut column) = (Vec::new(), 1u32, 0u32);
         let mut characters = text.char_indices().peekable();
@@ -238,14 +234,14 @@ fn positions(args: &[String]) {
                     {
                         wrong += 1;
                         if wrong <= 10 {
-                            println!(
+                            output_line!(
                                 "{path}: {offset}: {line}:{column} expected, {position:?}, which is at {}",
                                 file.offset(position)
                             );
                         }
                     }
                 }
-                println!(
+                output_line!(
                     "{path}: {} positions {name}: {:.1} ms",
                     expected.len(),
                     started.elapsed().as_secs_f64() * 1e3
@@ -253,14 +249,14 @@ fn positions(args: &[String]) {
             });
         }
     }
-    println!("{wrong} wrong");
+    output_line!("{wrong} wrong");
 }
 
 pub(crate) fn run_command(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("rules") => rules(&args[1..]),
         Some("positions") => positions(&args[1..]),
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint perf rules <paths..> [--threads=n] [--rules=a,b | --config=file] [--repeat=n] [--top=n]\n       bun-lint perf positions <files..>"
         ),
     }

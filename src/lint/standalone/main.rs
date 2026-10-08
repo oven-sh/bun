@@ -4,6 +4,8 @@
 //!   plugins and compares with what ESLint reports for them. See `conformance_cmd.rs`.
 //! - `bun-lint run <rule> <file> [options as JSON]`: what one rule reports for one file.
 
+#![forbid(unsafe_code)]
+
 mod ast_cmd;
 mod code_path_cmd;
 mod conformance_cmd;
@@ -30,11 +32,9 @@ use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
 use bun_lint::runner::{Enabled, RuleEntry};
 
+pub(crate) use bun_sema_standalone::host;
 pub(crate) use conformance_cmd::lint;
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
+use host::{output_line, text};
 
 fn all_rules() -> impl Iterator<Item = &'static RuleEntry> {
     bun_lint_eslint::RULES
@@ -51,12 +51,12 @@ fn str_of<'j>(json: &'j Json, key: &str) -> Option<&'j str> {
 
 fn run_one(args: &[String]) {
     let [rule, path, rest @ ..] = args else {
-        return println!("usage: bun-lint run <rule> <file> [options as JSON]");
+        return output_line!("usage: bun-lint run <rule> <file> [options as JSON]");
     };
     let Some(entry) = linter_cmd::linter().registry().find(rule.as_bytes()) else {
-        return println!("no such rule: {rule}");
+        return output_line!("no such rule: {rule}");
     };
-    let code = std::fs::read(path).expect("the file");
+    let code = host::read(path).expect("the file");
     let options = rest
         .first()
         .and_then(|it| bun_lint::json::parse(it.as_bytes()));
@@ -66,16 +66,19 @@ fn run_one(args: &[String]) {
         .unwrap_or_default();
     let outcome = lint(entry, path, &code, options, &Json::Null, &Json::Null);
     if outcome.has_parse_errors {
-        println!("the parser rejects the code");
+        output_line!("the parser rejects the code");
     }
     for it in &outcome.messages {
-        println!(
+        output_line!(
             "{path}:{}:{}: {} ({})",
-            it.line, it.column, it.message, it.message_id
+            it.line,
+            it.column,
+            it.message,
+            it.message_id
         );
     }
     if let Some(output) = outcome.output {
-        println!("──── after fixes\n{}", text(&output));
+        output_line!("──── after fixes\n{}", text(&output));
     }
 }
 
@@ -87,8 +90,8 @@ fn collect(path: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
             path.file_name().and_then(|it| it.to_str()),
             Some("node_modules" | ".git")
         );
-        if let (false, Ok(entries)) = (is_skipped, std::fs::read_dir(path)) {
-            let mut paths: Vec<_> = entries.flatten().map(|it| it.path()).collect();
+        if !is_skipped {
+            let mut paths = host::list(path);
             paths.sort();
             paths.iter().for_each(|it| collect(it, into));
         }
@@ -107,18 +110,13 @@ fn bench(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let threads: usize = flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(1);
     let repeat: usize = flag("--repeat=").and_then(|n| n.parse().ok()).unwrap_or(1);
-    let only: Option<Vec<&str>> = flag("--rules=").map(|it| it.split(',').collect());
+    let only: Option<Vec<&str>> = flag("--rules=").map(|it| host::split(it, ",").collect());
     let mut paths = Vec::new();
     for arg in args.iter().filter(|a| !a.starts_with("--")) {
         collect(std::path::Path::new(arg), &mut paths);
     }
     let files: Vec<(String, Vec<u8>)> = (paths.iter())
-        .filter_map(|path| {
-            Some((
-                path.to_string_lossy().into_owned(),
-                std::fs::read(path).ok()?,
-            ))
-        })
+        .filter_map(|path| Some((path.to_string_lossy().into_owned(), host::read(path).ok()?)))
         .collect();
     let bytes: usize = files.iter().map(|it| it.1.len()).sum();
     let built: Vec<_> = all_rules()
@@ -176,16 +174,16 @@ fn bench(args: &[String]) {
             })
             .collect();
         table.sort_by(|a, b| b.0.total_cmp(&a.0));
-        println!(
+        output_line!(
             "sum of the rules alone: {:.1} ms",
             table.iter().map(|it| it.0).sum::<f64>()
         );
         for (ms, name) in table {
-            println!("{ms:9.1} ms  {name}");
+            output_line!("{ms:9.1} ms  {name}");
         }
     }
     let per_pass = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e6 / repeat as f64;
-    println!(
+    output_line!(
         "{} files, {:.1} MB, {} rules, {} threads: {:.1} ms wall a pass; cpu: parse+bind {:.1} ms, rules {:.1} ms; {} reports",
         files.len(),
         bytes as f64 / 1e6,
@@ -229,7 +227,7 @@ fn main() {
         Some("utils-ts") => utils_ts_cmd::run(&args[1..]),
         Some("utils-core") => utils_core_cmd::run(&args[1..]),
         Some("utils-small") => utils_small_cmd::run(&args[1..]),
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint conformance <fixtures> | bun-lint run <rule> <file> [options]"
         ),
     }

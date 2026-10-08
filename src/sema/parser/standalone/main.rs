@@ -9,6 +9,8 @@
 //! - `bench <file or directory>.. [--reference] [--repeat=n]`: parses every file on one thread.
 //! - `snippets <file.json>..`: the same comparison for the `code` strings of test fixtures.
 
+#![forbid(unsafe_code)]
+
 mod compare;
 mod fuzz;
 
@@ -17,19 +19,15 @@ use bun_sema::hir::DiagnosticKind;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema_parser::{Options, Refused, Scratch};
+use bun_sema_standalone::host::{self, error_line, output_line};
+use bun_threading::Guarded;
 use std::collections::BTreeMap;
-use std::sync::Mutex;
 
 const EXTENSIONS: [&str; 8] = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
 fn walk(path: &std::path::Path, files: &mut Vec<String>) {
     if path.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(path)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .collect();
+        let mut entries = host::list(path);
         entries.sort();
         for entry in entries {
             let name = entry.file_name().unwrap_or_default();
@@ -253,10 +251,10 @@ impl Totals {
         self.different.sort();
         self.accepted.sort();
         for (name, what) in self.different.iter().take(show) {
-            println!("DIFFERENT {name}\n    {what}");
+            output_line!("DIFFERENT {name}\n    {what}");
         }
         for (name, what) in self.accepted.iter().take(show) {
-            println!("ACCEPTED {name}\n    the reference reports {what}");
+            output_line!("ACCEPTED {name}\n    the reference reports {what}");
         }
         for (why, names) in &mut self.refused {
             names.sort();
@@ -264,18 +262,18 @@ impl Totals {
                 .iter()
                 .take(if list { usize::MAX } else { 3.min(show) })
             {
-                println!("REFUSED {why} {name}");
+                output_line!("REFUSED {why} {name}");
             }
         }
         if list {
             self.both_refuse.sort();
             for name in &self.both_refuse {
-                println!("BOTH {name}");
+                output_line!("BOTH {name}");
             }
         }
         let refused: usize = self.refused.values().map(Vec::len).sum();
         let valid = self.identical + refused + self.different.len();
-        println!(
+        output_line!(
             "{} valid for the reference: {} identical ({:.2} %), {} different, {} refused; {} with errors: {} refused by both, {} accepted",
             valid,
             self.identical,
@@ -287,11 +285,11 @@ impl Totals {
             self.accepted.len(),
         );
         for (why, names) in &self.refused {
-            println!("    refused: {why} {}", names.len());
+            output_line!("    refused: {why} {}", names.len());
         }
         for (list, names) in &mut self.other_order {
             names.sort();
-            println!(
+            output_line!(
                 "    identical, but numbered in another order: {list} {} (e.g. {})",
                 names.len(),
                 names[0]
@@ -327,7 +325,7 @@ struct Input {
 
 /// The value of the string field `name` of the JSON object `line`.
 fn json_field(line: &str, name: &str) -> Option<String> {
-    let rest = &line[line.find(&format!("\"{name}\":\""))? + name.len() + 4..];
+    let rest = &line[host::find(line, &format!("\"{name}\":\""))? + name.len() + 4..];
     let (mut value, mut chars) = (Vec::new(), rest.chars());
     loop {
         match chars.next()? {
@@ -367,8 +365,8 @@ fn inputs_of(args: &[String]) -> Vec<Input> {
             }));
             continue;
         }
-        let lines = std::fs::read_to_string(arg).expect("the list of texts");
-        for line in lines.lines() {
+        let lines = host::read_text(arg).expect("the list of texts");
+        for line in host::lines(&lines) {
             let field = |name: &str| json_field(line, name);
             let (Some(id), Some(path), Some(code)) =
                 (field("id"), field("filename"), field("code"))
@@ -394,7 +392,7 @@ fn inputs_of(args: &[String]) -> Vec<Input> {
 fn compare(args: &[String]) {
     let inputs = inputs_of(args);
     let decorators = args.iter().any(|arg| arg == "--decorators");
-    let totals = Mutex::new(Totals::default());
+    let mut totals = Guarded::new(Totals::default());
     bun_sema_standalone::for_each_parallel(flag(args, "jobs").unwrap_or(8), inputs.len(), |i| {
         thread_local! {
             static SCRATCH: std::cell::RefCell<Scratch> = Default::default();
@@ -403,7 +401,7 @@ fn compare(args: &[String]) {
         let read;
         let text = match &input.text {
             Some(text) => text,
-            None => match std::fs::read(&input.path) {
+            None => match host::read(&input.path) {
                 Ok(text) => {
                     read = text;
                     &read
@@ -420,18 +418,17 @@ fn compare(args: &[String]) {
                 scratch,
             )
         });
-        totals.lock().unwrap().add(&input.id, outcome);
+        totals.lock().add(&input.id, outcome);
     });
     let list = args.iter().any(|arg| arg == "--list");
     totals
-        .into_inner()
-        .unwrap()
+        .get_mut()
         .print(flag(args, "show").unwrap_or(10), list);
 }
 
 fn dump(args: &[String]) {
     for input in inputs_of(args) {
-        let Some(text) = input.text.or_else(|| std::fs::read(&input.path).ok()) else {
+        let Some(text) = input.text.or_else(|| host::read(&input.path).ok()) else {
             continue;
         };
         let session = Session::new();
@@ -449,7 +446,7 @@ fn dump(args: &[String]) {
             dialect != Dialect::default() && !dialect.script,
         );
         let (nodes, _) = bun_sema_standalone::hir_dump::dump_and_orphans(&reference, &atoms);
-        println!("=== {}\n{nodes}", input.id);
+        output_line!("=== {}\n{nodes}", input.id);
     }
 }
 
@@ -486,10 +483,7 @@ fn fuzz(args: &[String]) {
 
 fn bench(args: &[String]) {
     let files = files_of(args);
-    let texts: Vec<Vec<u8>> = files
-        .iter()
-        .filter_map(|it| std::fs::read(it).ok())
-        .collect();
+    let texts: Vec<Vec<u8>> = files.iter().filter_map(|it| host::read(it).ok()).collect();
     let bytes: usize = texts.iter().map(Vec::len).sum();
     let is_reference = args.iter().any(|arg| arg == "--reference");
     let is_lexer = args.iter().any(|arg| arg == "--lexer");
@@ -531,7 +525,7 @@ fn bench(args: &[String]) {
             }
         }
         let elapsed = started.elapsed().as_secs_f64();
-        println!(
+        output_line!(
             "{parsed} of {} files, {:.1} MB, {nodes} expressions, {:.0} ms, {:.0} MB/s",
             files.len(),
             bytes as f64 / 1e6,
@@ -551,7 +545,7 @@ fn main() {
             Some("dump") => dump(&args[1..]),
             Some("bench") => bench(&args[1..]),
             Some("fuzz") => fuzz(&args[1..]),
-            _ => eprintln!("usage: bun-hir compare|bench <paths>"),
+            _ => error_line!("usage: bun-hir compare|bench <paths>"),
         }
     };
     std::thread::Builder::new()

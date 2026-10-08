@@ -8,6 +8,7 @@
 //! - `bench <path> [--repeat=n] [--espree] <selector>..`: what each selector costs on the files in `path`, beyond what a rule that
 //!   finds nothing to listen for costs.
 
+use crate::host::{self, output_line};
 use bun_lint::context::Severity;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_lint::prelude::*;
@@ -21,18 +22,18 @@ pub(crate) fn run(args: &[String]) {
         [command, path] if command == "parse" => parse(path),
         [command, path] if command == "match" => match_cases(path),
         [command, path, rest @ ..] if command == "bench" => bench(path, rest),
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint selector parse <selectors.json> | match <cases.jsonl> | bench <path> <selector>.."
         ),
     }
 }
 
 fn quoted(text: &[u8]) -> String {
-    String::from_utf8_lossy(&text::json_stringify(text)).into_owned()
+    host::text(&text::json_stringify(text))
 }
 
 fn parse(path: &str) {
-    let json = bun_lint::json::parse(&std::fs::read(path).expect("the selectors")).expect("JSON");
+    let json = bun_lint::json::parse(&host::read(path).expect("the selectors")).expect("JSON");
     let sources: Vec<&[u8]> = json
         .as_array()
         .unwrap_or_default()
@@ -43,15 +44,15 @@ fn parse(path: &str) {
     for (i, source) in sources.iter().enumerate() {
         match Selector::parse(source) {
             Ok(selector) => {
-                println!("{{\"exit\":{}}}", selector.is_exit());
+                output_line!("{{\"exit\":{}}}", selector.is_exit());
                 valid.push((i, selector));
             }
-            Err(error) => println!("{{\"error\":{}}}", quoted(error.message())),
+            Err(error) => output_line!("{{\"error\":{}}}", quoted(error.message())),
         }
     }
     valid.sort_by(|a, b| a.1.compare(&b.1));
     let order: Vec<String> = valid.iter().map(|it| it.0.to_string()).collect();
-    println!("{{\"order\":[{}]}}", order.join(","));
+    output_line!("{{\"order\":[{}]}}", order.join(","));
 }
 
 // ───────────────────────────── a rule that reports what matches ─────────────────────────────
@@ -181,7 +182,7 @@ fn language_of(parser: Option<&[u8]>, source_type: Option<&[u8]>) -> LanguageOpt
 
 fn match_cases(path: &str) {
     std::panic::set_hook(Box::new(|_| {}));
-    let input = std::fs::read(path).expect("the cases");
+    let input = host::read(path).expect("the cases");
     let mut stdout = std::io::BufWriter::new(std::io::stdout().lock());
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         let Some(case) = bun_lint::json::parse(line) else {
@@ -207,32 +208,27 @@ fn match_cases(path: &str) {
                 return Err(error.to_string());
             }
             let rule = (PROBE.build)(&Options::new(selectors));
-            crate::with_file(
-                &String::from_utf8_lossy(filename),
-                code,
-                &language,
-                |file| {
-                    if file.has_parse_errors() {
-                        return Err("parse".to_owned());
-                    }
-                    let enabled = Enabled {
-                        rule: &*rule,
-                        severity: Severity::Error,
-                    };
-                    let offsets = Utf16Offsets::new(code);
-                    let found = bun_lint::runner::run(file, &[enabled], false);
-                    let found = found.iter().map(|it| {
-                        let message = String::from_utf8_lossy(&it.message);
-                        let (selector, node_type) = message.split_once(' ').unwrap_or_default();
-                        format!(
-                            "[{selector},\"{node_type}\",{},{}]",
-                            offsets.of(it.span.start),
-                            offsets.of(it.span.end)
-                        )
-                    });
-                    Ok(found.collect::<Vec<_>>().join(","))
-                },
-            )
+            crate::with_file(&host::text(filename), code, &language, |file| {
+                if file.has_parse_errors() {
+                    return Err("parse".to_owned());
+                }
+                let enabled = Enabled {
+                    rule: &*rule,
+                    severity: Severity::Error,
+                };
+                let offsets = Utf16Offsets::new(code);
+                let found = bun_lint::runner::run(file, &[enabled], false);
+                let found = found.iter().map(|it| {
+                    let message = host::text(&it.message);
+                    let (selector, node_type) = host::split_once(&message, " ").unwrap_or_default();
+                    format!(
+                        "[{selector},\"{node_type}\",{},{}]",
+                        offsets.of(it.span.start),
+                        offsets.of(it.span.end)
+                    )
+                });
+                Ok(found.collect::<Vec<_>>().join(","))
+            })
         });
         let _ = match outcome.unwrap_or_else(|_| Err("panic".to_owned())) {
             Ok(matches) => writeln!(stdout, "{{\"id\":{},\"matches\":[{matches}]}}", quoted(id)),
@@ -251,7 +247,7 @@ fn match_cases(path: &str) {
 /// The time that this thread has been running, in nanoseconds: what others do on the machine does not count. Where the system does
 /// not tell, the time that has passed.
 fn cpu_nanos(started: std::time::Instant) -> u64 {
-    let stat = std::fs::read_to_string("/proc/thread-self/schedstat").ok();
+    let stat = host::read_text("/proc/thread-self/schedstat").ok();
     let running = stat.and_then(|it| it.split_whitespace().next()?.parse().ok());
     running.unwrap_or_else(|| started.elapsed().as_nanos() as u64)
 }
@@ -270,12 +266,7 @@ fn bench(path: &str, rest: &[String]) {
     let mut paths = Vec::new();
     crate::collect(std::path::Path::new(path), &mut paths);
     let files: Vec<(String, Vec<u8>)> = (paths.iter())
-        .filter_map(|path| {
-            Some((
-                path.to_string_lossy().into_owned(),
-                std::fs::read(path).ok()?,
-            ))
-        })
+        .filter_map(|path| Some((path.to_string_lossy().into_owned(), host::read(path).ok()?)))
         .collect();
     // The first has next to nothing to listen for: what it takes is what running a rule and measuring take.
     let baseline = "DebuggerStatement".to_owned();
@@ -284,7 +275,7 @@ fn bench(path: &str, rest: &[String]) {
         .collect();
     let rules: Vec<_> = (selectors.iter())
         .map(|it| {
-            let options = [Json::String(it.as_bytes().to_vec().into())];
+            let options = [Json::String(it.as_bytes().to_vec())];
             (
                 (PROBE.build)(&Options::new(&options)),
                 (COUNTING_PROBE.build)(&Options::new(&options)),
@@ -320,11 +311,11 @@ fn bench(path: &str, rest: &[String]) {
         });
     }
     let bytes: usize = files.iter().map(|it| it.1.len()).sum();
-    println!("{} files, {:.1} MB", files.len(), bytes as f64 / 1e6);
+    output_line!("{} files, {:.1} MB", files.len(), bytes as f64 / 1e6);
     for (i, selector) in selectors.iter().enumerate() {
         let (listened, examined, found) = counts[i];
         let net = nanos[i].saturating_sub(nanos[0]);
-        println!(
+        output_line!(
             "{selector}: {:.2} ms, {listened} nodes listened for, {examined} ESTree nodes, {found} matches, {:.0} ns a node listened for",
             net as f64 / 1e6,
             net as f64 / listened.max(1) as f64,

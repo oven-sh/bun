@@ -1103,6 +1103,7 @@ dependencies = [
  "bun_sema_driver",
  "bun_sema_standalone",
  "bun_threading",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -1564,6 +1565,7 @@ dependencies = [
  "bun_sema",
  "bun_sema_parser",
  "bun_sema_standalone",
+ "bun_threading",
 ]
 
 [[package]]

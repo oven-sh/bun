@@ -34,7 +34,7 @@ struct Process {
 }
 
 impl Process {
-    fn send(&mut self, kind: u32, write: impl FnOnce(&mut Vec<u8>)) -> Result<(), Vec<u8>> {
+    fn send(&mut self, kind: u32, write: &mut dyn FnMut(&mut Vec<u8>)) -> Result<(), Vec<u8>> {
         self.buffer.clear();
         self.buffer.extend_from_slice(&[0; 4]);
         self.buffer.extend_from_slice(&kind.to_le_bytes());
@@ -59,11 +59,11 @@ impl Process {
         content: &[u8],
         serve: &mut Serve,
     ) -> Result<Vec<u8>, Vec<u8>> {
-        self.send(kind, |out| out.extend_from_slice(content))?;
+        self.send(kind, &mut |out| out.extend_from_slice(content))?;
         loop {
             match self.receive()? {
                 (RESULT, result) => return Ok(result),
-                (asked, details) => self.send(0, |out| serve(asked, &details, out))?,
+                (asked, details) => self.send(0, &mut |out| serve(asked, &details, out))?,
             }
         }
     }
@@ -118,7 +118,7 @@ impl<'e> Processes<'e> {
             buffer: Vec::new(),
             has_failed: false,
         };
-        process.send(PROGRAM, |out| out.extend_from_slice(&self.program))?;
+        process.send(PROGRAM, &mut |out| out.extend_from_slice(&self.program))?;
         Ok(process)
     }
 

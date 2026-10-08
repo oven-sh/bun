@@ -26,6 +26,7 @@
 //! typescript-eslint, which is what `fixtures/typescript-eslint-project` is a copy of, where the few
 //! cases that import a package find it.
 
+use crate::host::{self, output, output_line};
 use crate::{str_of, text};
 use bun_lint::ast::{File, Node};
 use bun_lint::language::LanguageOptions;
@@ -38,8 +39,8 @@ use bun_lint::types::{
 };
 use bun_lint_conformance::{Outcome, Tally, config_of, expected_messages, problem_of};
 use bun_sema::program::FileId;
+use bun_threading::Guarded;
 use std::fmt::Write as _;
-use std::sync::Mutex;
 
 /// A program to check, and the files of it to lint.
 pub(crate) struct Project<'a> {
@@ -58,7 +59,7 @@ pub(crate) struct Project<'a> {
 /// `BUN_LINT_CHECKS_LIKE_TSC`: what the named files import is checked too, and the projects that
 /// theirs references are built, as `bun check` does. To measure what that costs.
 fn checks_like_an_editor() -> bool {
-    std::env::var_os("BUN_LINT_CHECKS_LIKE_TSC").is_none()
+    host::variable("BUN_LINT_CHECKS_LIKE_TSC").is_none()
 }
 
 fn linter() -> &'static Linter {
@@ -77,7 +78,7 @@ fn find_rule(name: &str) -> Option<&'static RuleEntry> {
 
 /// The rule that the fixture `eslint/<rule>` or `typescript-eslint/<rule>` is for.
 fn rule_of_fixture(name: &str) -> Option<&'static RuleEntry> {
-    let (plugin, rule) = name.split_once('/')?;
+    let (plugin, rule) = host::split_once(name, "/")?;
     let plugin = if plugin == "eslint" {
         Plugin::Eslint
     } else {
@@ -105,26 +106,44 @@ fn lint_file<'a>(
 }
 
 fn lib_directory() -> String {
-    std::env::var("BUN_SEMA_TS_LIB")
+    host::variable("BUN_SEMA_TS_LIB")
         .expect("BUN_SEMA_TS_LIB: the directory of the lib.*.d.ts files")
 }
 
 /// Checks `project` and calls `then` with each of `Project::files` right after it is checked.
 /// Returns what `then` returned for each, in no particular order, with the path.
+pub(crate) fn lint_project<R: Send>(
+    project: Project,
+    language: &LanguageOptions,
+    then: &(dyn for<'a> Fn(&'a File<'a>) -> R + Sync),
+) -> Vec<(Vec<u8>, R)> {
+    let mut results: Guarded<Vec<(Vec<u8>, R)>> = Guarded::new(Vec::new());
+    check_project(project, language, &|path, file| {
+        let result = then(file);
+        let mut results = results.lock();
+        // By path: the files can be in several programs, each with its own numbers.
+        results.retain(|it| it.0 != path);
+        results.push((path.to_vec(), result));
+    });
+    std::mem::take(results.get_mut())
+}
+
+/// Checks `project` and calls `then` with the path of each of `Project::files` and with the file,
+/// right after it is checked.
 ///
 /// This is what a `bun_lint_driver` has to do:
 /// - `stops_like_tsc: false`, or a syntax error anywhere means that nothing is linted.
 /// - The hook also runs for the files that the linted ones import, for `node_modules` and for
 ///   declaration files: it picks.
 /// - A task of the checker can be run again, so a result replaces the one before.
-pub(crate) fn lint_project<R: Send>(
+fn check_project(
     project: Project,
     language: &LanguageOptions,
-    then: &(dyn for<'a> Fn(&'a File<'a>) -> R + Sync),
-) -> Vec<(Vec<u8>, R)> {
+    then: &(dyn for<'a> Fn(&[u8], &'a File<'a>) + Sync),
+) {
     let lib_directory = lib_directory();
     let mut args: Vec<Vec<u8>> = vec![b"--skipLibCheck".to_vec(), b"--allowJs".to_vec()];
-    if let Ok(type_roots) = std::env::var("BUN_LINT_TYPE_ROOTS") {
+    if let Some(type_roots) = host::variable("BUN_LINT_TYPE_ROOTS") {
         args.extend([b"--typeRoots".to_vec(), type_roots.into_bytes()]);
     }
     if let Some(config) = project.config {
@@ -134,12 +153,11 @@ pub(crate) fn lint_project<R: Send>(
     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
     let command_line = bun_sema_driver::parse_command_line(&args, project.cwd.as_bytes());
 
-    let results: Mutex<Vec<(Vec<u8>, R)>> = Mutex::new(Vec::new());
     let wanted: Vec<Vec<u8>> = (project.files.iter())
         .map(|it| bun_sema_driver::host::from_native(it.as_bytes()))
         .collect();
     let read_library = |path: &[u8], then: &mut dyn FnMut(&[u8])| {
-        if let Ok(text) = std::fs::read(text(bun_sema_driver::host::to_native(path))) {
+        if let Ok(text) = host::read(text(bun_sema_driver::host::to_native(path))) {
             then(&text);
         }
     };
@@ -153,20 +171,11 @@ pub(crate) fn lint_project<R: Send>(
             }
             false => wanted.iter().any(|it| it == path),
         };
-        if !is_wanted {
-            return;
-        }
-        let Some(result) =
+        if is_wanted {
             bun_lint::types::with_file(checker, file, language, Some(&read_library), |file| {
-                then(file)
-            })
-        else {
-            return;
-        };
-        let mut results = results.lock().unwrap_or_else(|it| it.into_inner());
-        // By path: the files can be in several programs, each with its own numbers.
-        results.retain(|it| it.0 != path);
-        results.push((path.to_vec(), result));
+                then(path, file);
+            });
+        }
     };
     let request = bun_sema_driver::Request {
         compiler_options: &command_line.compiler_options,
@@ -188,10 +197,9 @@ pub(crate) fn lint_project<R: Send>(
             checks_only_named: checks_like_an_editor(),
             reads_sources_of_references: checks_like_an_editor(),
             current_directory_is_of_the_project: checks_like_an_editor(),
-            warm_up_files: (std::env::var("BUN_LINT_WARM_UP_FILES")
-                .ok()
-                .and_then(|it| it.parse().ok()))
-            .unwrap_or(bun_sema_driver::PlanOptions::default().warm_up_files),
+            warm_up_files: host::variable("BUN_LINT_WARM_UP_FILES")
+                .and_then(|it| it.parse().ok())
+                .unwrap_or_else(|| bun_sema_driver::PlanOptions::default().warm_up_files),
             ..Default::default()
         },
         retains_everything: false,
@@ -212,25 +220,24 @@ pub(crate) fn lint_project<R: Send>(
             .insert(bun_sema_driver::host::from_native(path.as_bytes()), text);
     }
     bun_sema_driver::check_provided_then(&request, provided, |report| {
-        if std::env::var_os("BUN_LINT_SHOWS_WHAT_IS_CHECKED").is_some() {
+        if host::variable("BUN_LINT_SHOWS_WHAT_IS_CHECKED").is_some() {
             let (loaded, checked, projects) = (
                 report.files_loaded,
                 report.files_checked,
                 report.projects_checked,
             );
-            println!(
+            output_line!(
                 "{loaded} files loaded, {checked} checked, in {projects} projects: {:.3} s to load, {:.3} s to check",
                 report.load_time.as_secs_f64(),
                 report.check_time.as_secs_f64()
             );
         }
     });
-    results.into_inner().unwrap_or_else(|it| it.into_inner())
 }
 
 fn absolute(path: &str) -> String {
     let path = std::path::Path::new(path);
-    let path = std::fs::canonicalize(path)
+    let path = host::real_path(path)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
     path.to_string_lossy().into_owned()
 }
@@ -685,7 +692,9 @@ fn dump_profiles<'a>(file: &'a File<'a>) -> String {
 fn dump_file(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let Some(path) = args.iter().find(|a| !a.starts_with("--")) else {
-        return println!("usage: bun-lint types dump <file> [--project=tsconfig.json] [--symbols]");
+        return output_line!(
+            "usage: bun-lint types dump <file> [--project=tsconfig.json] [--symbols]"
+        );
     };
     let with_symbols = args.iter().any(|a| a == "--symbols");
     let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
@@ -709,23 +718,43 @@ fn dump_file(args: &[String]) {
         _ => dump(file, with_symbols),
     });
     for (_, lines) in dumped {
-        print!("{lines}");
+        output!("{lines}");
     }
 }
 
 /// A type-aware test case as a project: the code is a file of the fixture project.
-fn project_of_case<'a>(
+struct CaseProject<'a> {
     root: &'a str,
-    config: &'a str,
-    files: &'a [String],
-    code: &[u8],
-) -> Project<'a> {
-    Project {
-        cwd: root,
-        config: Some(config),
-        files,
-        overlay: vec![(files[0].clone(), code.to_vec())],
-        threads: 1,
+    config: String,
+    files: [String; 1],
+    code: &'a [u8],
+}
+
+impl<'a> CaseProject<'a> {
+    fn new(root: &'a str, case: &'a Json) -> Self {
+        let filename = str_of(case, "filename").unwrap_or("file.ts");
+        CaseProject {
+            root,
+            config: format!(
+                "{root}/{}",
+                str_of(case, "tsconfig").unwrap_or("tsconfig.json")
+            ),
+            files: [match filename.starts_with('/') {
+                true => filename.to_owned(),
+                false => format!("{root}/{filename}"),
+            }],
+            code: case.get(b"code").and_then(Json::as_str).unwrap_or_default(),
+        }
+    }
+
+    fn project(&self) -> Project<'_> {
+        Project {
+            cwd: self.root,
+            config: Some(&self.config),
+            files: &self.files,
+            overlay: vec![(self.files[0].clone(), self.code.to_vec())],
+            threads: 1,
+        }
     }
 }
 
@@ -744,13 +773,10 @@ fn is_type_aware(case: &Json) -> bool {
 fn read_fixtures(root: &str, only_rule: Option<&str>, with_eslint: bool) -> Vec<(String, Json)> {
     let mut fixtures = Vec::new();
     for plugin in ["eslint", "typescript-eslint"] {
-        let Some(entries) = std::fs::read_dir(format!("{root}/{plugin}"))
-            .ok()
-            .filter(|_| with_eslint || plugin != "eslint")
-        else {
+        if !with_eslint && plugin == "eslint" {
             continue;
-        };
-        let mut paths: Vec<_> = entries.flatten().map(|it| it.path()).collect();
+        }
+        let mut paths = host::list(format!("{root}/{plugin}"));
         paths.sort();
         for path in paths {
             let name = path
@@ -761,7 +787,7 @@ fn read_fixtures(root: &str, only_rule: Option<&str>, with_eslint: bool) -> Vec<
             if only_rule.is_some_and(|only| only != name) {
                 continue;
             }
-            if let Some(fixture) = std::fs::read(&path)
+            if let Some(fixture) = host::read(&path)
                 .ok()
                 .and_then(|it| bun_lint::json::parse(&it))
             {
@@ -797,18 +823,10 @@ fn with_case<R: Send>(
     language: &LanguageOptions,
     then: &(dyn for<'a> Fn(&'a File<'a>) -> R + Sync),
 ) -> Option<R> {
-    let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-    let filename = str_of(case, "filename").unwrap_or("file.ts");
-    let files = [match filename.starts_with('/') {
-        true => filename.to_owned(),
-        false => format!("{project_root}/{filename}"),
-    }];
-    let config = format!(
-        "{project_root}/{}",
-        str_of(case, "tsconfig").unwrap_or("tsconfig.json")
-    );
-    let project = project_of_case(project_root, &config, &files, code);
-    lint_project(project, language, then).pop().map(|it| it.1)
+    let case = CaseProject::new(project_root, case);
+    lint_project(case.project(), language, then)
+        .pop()
+        .map(|it| it.1)
 }
 
 fn jobs(args: &[String]) -> usize {
@@ -822,13 +840,15 @@ fn jobs(args: &[String]) -> usize {
 fn dump_fixtures(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let Some(root) = args.iter().find(|a| !a.starts_with("--")) else {
-        return println!("usage: bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file]");
+        return output_line!(
+            "usage: bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file]"
+        );
     };
     let root = absolute(root);
     let project_root = format!("{root}/typescript-eslint-project");
     let fixtures = read_fixtures(&root, flag("--rule="), false);
     let cases = cases_of(&fixtures, args.iter().any(|a| a == "--every-case"));
-    let dumps: Vec<Mutex<String>> = cases.iter().map(|_| Mutex::new(String::new())).collect();
+    let dumps: Vec<Guarded<String>> = cases.iter().map(|_| Guarded::new(String::new())).collect();
     let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
     let as_profiles = args.iter().any(|a| a == "--profiles");
     std::panic::set_hook(Box::new(|_| {}));
@@ -849,7 +869,7 @@ fn dump_fixtures(args: &[String]) {
             Ok(dumped) => dumped.unwrap_or_else(|| "\"not checked\"\n".to_owned()),
             Err(_) => "\"panicked\"\n".to_owned(),
         };
-        *dumps[i].lock().unwrap_or_else(|it| it.into_inner()) = dumped;
+        *dumps[i].lock() = dumped;
     });
     let mut out = String::new();
     for (case, dumped) in cases.iter().zip(&dumps) {
@@ -858,11 +878,11 @@ fn dump_fixtures(args: &[String]) {
             .strip_prefix("typescript-eslint/")
             .unwrap_or_default();
         let _ = writeln!(out, "# {name} {}", case.index);
-        out.push_str(&dumped.lock().unwrap_or_else(|it| it.into_inner()));
+        out.push_str(&dumped.lock());
     }
     match flag("--out=") {
-        Some(path) => std::fs::write(path, out).expect("the output file"),
-        None => print!("{out}"),
+        Some(path) => host::write(path, out).expect("the output file"),
+        None => output!("{out}"),
     }
 }
 
@@ -918,21 +938,21 @@ fn problem_of_outcome(
 fn conformance(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let Some(root) = args.iter().find(|a| !a.starts_with("--")) else {
-        return println!(
+        return output_line!(
             "usage: bun-lint types conformance <fixtures> [--all] [--rule=r] [--report=dir] [--verbose] [--jobs=n]"
         );
     };
     let is_verbose = args.iter().any(|a| a == "--verbose");
     let runs_all = args.iter().any(|a| a == "--all");
     let root = absolute(root);
-    let project_root = std::env::var("BUN_LINT_FIXTURE_PROJECT")
-        .unwrap_or_else(|_| format!("{root}/typescript-eslint-project"));
+    let project_root = host::variable("BUN_LINT_FIXTURE_PROJECT")
+        .unwrap_or_else(|| format!("{root}/typescript-eslint-project"));
     let fixtures = read_fixtures(&root, flag("--rule="), runs_all);
     let entries: Vec<Option<&'static RuleEntry>> =
         fixtures.iter().map(|it| rule_of_fixture(&it.0)).collect();
     let mut cases = cases_of(&fixtures, runs_all);
     cases.retain(|case| entries[case.rule].is_some());
-    let problems: Vec<Mutex<Option<String>>> = cases.iter().map(|_| Mutex::new(None)).collect();
+    let problems: Vec<Guarded<Option<String>>> = cases.iter().map(|_| Guarded::new(None)).collect();
     std::panic::set_hook(Box::new(|_| {}));
     let started = std::time::Instant::now();
     bun_sema_standalone::for_each_parallel(jobs(args), cases.len(), |i| {
@@ -945,13 +965,13 @@ fn conformance(args: &[String]) {
             {
                 problem = Some(String::new());
             }
-            *problems[i].lock().unwrap_or_else(|it| it.into_inner()) = problem;
+            *problems[i].lock() = problem;
         }
     });
     let mut tallies: Vec<(Tally, String)> = fixtures.iter().map(|_| Default::default()).collect();
     for (case, problem) in cases.iter().zip(&problems) {
         let (tally, failures) = &mut tallies[case.rule];
-        match &*problem.lock().unwrap_or_else(|it| it.into_inner()) {
+        match &*problem.lock() {
             None => tally.passed += 1,
             Some(problem) if problem.is_empty() => tally.skipped += 1,
             Some(problem) => {
@@ -993,23 +1013,24 @@ fn conformance(args: &[String]) {
         perfect += usize::from(tally.failed == 0);
         let verdict = if tally.failed == 0 { "ok  " } else { "FAIL" };
         if !runs_all || tally.failed > 0 {
-            println!(
+            output_line!(
                 "{verdict} {name}: {} passed, {} failed",
-                tally.passed, tally.failed
+                tally.passed,
+                tally.failed
             );
         }
         if is_verbose {
-            print!("{failures}");
+            output!("{failures}");
         }
         if let Some(report) = flag("--report=") {
-            let _ = std::fs::create_dir_all(format!("{report}/eslint"));
-            let _ = std::fs::create_dir_all(format!("{report}/typescript-eslint"));
-            let _ = std::fs::write(format!("{report}/{name}.types.txt"), failures);
+            let _ = host::make_directories(format!("{report}/eslint"));
+            let _ = host::make_directories(format!("{report}/typescript-eslint"));
+            let _ = host::write(format!("{report}/{name}.types.txt"), failures);
         }
         passed += tally.passed;
         failed += tally.failed;
     }
-    println!(
+    output_line!(
         "\n{implemented} rules, {perfect} without failures\n{passed} cases passed, {failed} failed, {fail_anyway} fail without types too, in {:.1} s",
         started.elapsed().as_secs_f64()
     );
@@ -1027,15 +1048,15 @@ fn run_one(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let plain: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     let [rule, path, rest @ ..] = &plain[..] else {
-        return println!(
+        return output_line!(
             "usage: bun-lint types run <rule> <file> [options as JSON] [--project=tsconfig.json]"
         );
     };
     let name = rule.strip_prefix("@typescript-eslint/").unwrap_or(rule);
     let Some(entry) = find_rule(name) else {
-        return println!("no such rule: {rule}");
+        return output_line!("no such rule: {rule}");
     };
-    let code = std::fs::read(path).expect("the file");
+    let code = host::read(path).expect("the file");
     let options = rest
         .first()
         .and_then(|it| bun_lint::json::parse(it.as_bytes()));
@@ -1068,16 +1089,19 @@ fn run_one(args: &[String]) {
     });
     for (_, outcome) in outcomes {
         if outcome.has_parse_errors {
-            println!("the parser rejects the code");
+            output_line!("the parser rejects the code");
         }
         for it in &outcome.messages {
-            println!(
+            output_line!(
                 "{path}:{}:{}: {} ({})",
-                it.line, it.column, it.message, it.message_id
+                it.line,
+                it.column,
+                it.message,
+                it.message_id
             );
         }
         if let Some(output) = outcome.output {
-            println!("──── after fixes\n{}", text(&output));
+            output_line!("──── after fixes\n{}", text(&output));
         }
     }
 }
@@ -1099,7 +1123,9 @@ fn expressions<'a>(file: &'a File<'a>, each: &dyn Fn(Node<'a>) -> usize) -> usiz
 fn bench(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let Some(config) = args.iter().find(|a| !a.starts_with("--")) else {
-        return println!("usage: bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]");
+        return output_line!(
+            "usage: bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]"
+        );
     };
     let config = absolute(config);
     let cwd = std::path::Path::new(&config)
@@ -1119,7 +1145,7 @@ fn bench(args: &[String]) {
         let started = std::time::Instant::now();
         let results = lint_project(project(), &language, then);
         let total: usize = results.iter().map(|it| it.1).sum();
-        println!(
+        output_line!(
             "{:>8.3} s  {what}: {} files, {total}",
             started.elapsed().as_secs_f64(),
             results.len()
@@ -1147,13 +1173,13 @@ fn bench(args: &[String]) {
             let has_panicked =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(everything)).is_err();
             if has_panicked {
-                println!("panicked: {}", text(file.path()));
+                output_line!("panicked: {}", text(file.path()));
             }
             usize::from(has_panicked)
         });
     }
     if let Some(rules) = flag("--rules=") {
-        let rules = rules.split(',').map(|name| {
+        let rules = host::split(rules, ",").map(|name| {
             (
                 RuleId::Known(find_rule(name).expect("the rule").meta).to_vec(),
                 Json::Number(2.0),
@@ -1180,16 +1206,13 @@ fn bench(args: &[String]) {
 /// program of its own, and says which panic.
 fn smoke(args: &[String]) {
     let Some(root) = args.iter().find(|a| !a.starts_with("--")) else {
-        return println!("usage: bun-lint types smoke <directory> [--jobs=n]");
+        return output_line!("usage: bun-lint types smoke <directory> [--jobs=n]");
     };
     let mut paths = Vec::new();
     crate::collect(std::path::Path::new(&absolute(root)), &mut paths);
     let files: Vec<String> = paths
         .iter()
         .map(|it| it.to_string_lossy().into_owned())
-        .collect();
-    let files: Vec<String> = files
-        .into_iter()
         .filter(|it| it.ends_with(".ts") || it.ends_with(".tsx"))
         .collect();
     std::panic::set_hook(Box::new(|_| {}));
@@ -1212,10 +1235,10 @@ fn smoke(args: &[String]) {
         };
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(everything)).is_err() {
             panicked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            println!("panicked: {}", files[i]);
+            output_line!("panicked: {}", files[i]);
         }
     });
-    println!("{} files, {} panicked", files.len(), panicked.into_inner());
+    output_line!("{} files, {} panicked", files.len(), panicked.into_inner());
 }
 
 /// `bun-lint types time <files..> [--threads=n] [--rules=a,b]`: how long it takes to lint these files, each in the project that
@@ -1233,7 +1256,7 @@ fn time(args: &[String]) {
         .into_owned();
     let rules = flag("--rules=")
         .unwrap_or("no-floating-promises,no-unsafe-member-access,no-unnecessary-condition");
-    let rules = rules.split(',').map(|name| {
+    let rules = host::split(rules, ",").map(|name| {
         (
             RuleId::Known(find_rule(name).expect("the rule").meta).to_vec(),
             Json::Number(2.0),
@@ -1262,7 +1285,7 @@ fn time(args: &[String]) {
             .len()
     });
     let messages: usize = results.iter().map(|it| it.1).sum();
-    println!(
+    output_line!(
         "{:.3} s: {} of {} files linted, {messages} messages",
         started.elapsed().as_secs_f64(),
         results.len(),
@@ -1273,7 +1296,7 @@ fn time(args: &[String]) {
             .iter()
             .filter(|file| !results.iter().any(|it| it.0 == file.as_bytes()))
         {
-            println!("not linted: {file}");
+            output_line!("not linted: {file}");
         }
     }
 }
@@ -1293,6 +1316,6 @@ pub(crate) fn run(args: &[String]) {
                 std::process::exit(1);
             }
         }
-        _ => println!("usage: bun-lint types dump | dump-fixtures | conformance | run"),
+        _ => output_line!("usage: bun-lint types dump | dump-fixtures | conformance | run"),
     }
 }

@@ -3,6 +3,7 @@
 //! what is in `test/cli/lint/conformance/bundle.zst`, decompressed (then with `--projects=<directory> --extract`), or a directory
 //! with the same files. A line for each rule is printed, with `--cases` one for each case that fails.
 
+use crate::host;
 use crate::linter_cmd::{linter, with_file};
 use crate::types_cmd::{Project, lint_project};
 use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Linter};
@@ -68,7 +69,7 @@ impl Host for Harness {
                 let tsconfig = crate::text(tsconfig);
                 let files = [path];
                 let project = Project {
-                    cwd: tsconfig.rsplit_once('/').map_or(".", |it| it.0),
+                    cwd: host::rsplit_once(&tsconfig, "/").map_or(".", |it| it.0),
                     config: Some(&tsconfig),
                     files: &files,
                     overlay: vec![(files[0].clone(), code.to_vec())],
@@ -135,11 +136,10 @@ pub(crate) fn lint(
 
 /// The files below `directory`, by their path from `root`.
 fn collect(root: &Path, directory: &Path, files: &mut Vec<(Vec<u8>, Vec<u8>)>) {
-    for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
-        let path = entry.path();
+    for path in host::list(directory) {
         if path.is_dir() {
             collect(root, &path, files);
-        } else if let Ok(contents) = std::fs::read(&path) {
+        } else if let Ok(contents) = host::read(&path) {
             files.push((
                 path.strip_prefix(root)
                     .unwrap_or(&path)
@@ -165,10 +165,10 @@ pub(crate) fn run(args: &[String]) {
     let bytes = if path.is_dir() {
         Vec::new()
     } else {
-        std::fs::read(path).expect("the fixtures")
+        host::read(path).expect("the fixtures")
     };
-    let absolute = std::fs::canonicalize(path)
-        .map_or_else(|_| path.to_owned(), |it| it)
+    let absolute = host::real_path(path)
+        .unwrap_or_else(|_| path.to_owned())
         .to_string_lossy()
         .into_owned();
     let bundle = match path.is_dir() {

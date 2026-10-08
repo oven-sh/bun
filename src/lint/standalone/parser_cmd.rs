@@ -4,6 +4,8 @@
 //!   `{"id", "filename", "code", "sourceType"}`. It is parsed as espree does, or as the flag says.
 //! - `file <path> [--script] [--typescript|--babel|--tsc]`: all the diagnostics of a file.
 
+use crate::host::{self, output_line};
+use bstr::BStr;
 use bun_lint::options::Json;
 use bun_sema::atom::Interner;
 use bun_sema::hir::Diagnostic;
@@ -22,14 +24,14 @@ pub(crate) fn run(args: &[String]) {
     match args {
         [command, path, ..] if command == "errors" => errors(path, &dialect),
         [command, path, ..] if command == "file" => {
-            let code = std::fs::read(path).expect("the file");
+            let code = host::read(path).expect("the file");
             let (is_refused, diagnostics) = parse(path, &code, dialect(has("--script")));
-            println!("{}", if is_refused { "refused" } else { "accepted" });
+            output_line!("{}", if is_refused { "refused" } else { "accepted" });
             diagnostics
                 .iter()
-                .for_each(|it| println!("{}", describe(&code, it)));
+                .for_each(|it| output_line!("{}", describe(&code, it)));
         }
-        _ => println!("usage: bun-lint parser errors <inputs.jsonl> | file <path>"),
+        _ => output_line!("usage: bun-lint parser errors <inputs.jsonl> | file <path>"),
     }
 }
 
@@ -77,14 +79,14 @@ fn describe(code: &[u8], diagnostic: &Diagnostic) -> String {
         "{:?} {} {} at {at}: {}\u{2038}{}",
         diagnostic.kind,
         diagnostic.code,
-        String::from_utf8_lossy(&message),
-        String::from_utf8_lossy(&code[start..at]),
-        String::from_utf8_lossy(&code[at..end]),
+        BStr::new(&message),
+        BStr::new(&code[start..at]),
+        BStr::new(&code[at..end]),
     )
 }
 
 fn errors(path: &str, dialect: &dyn Fn(bool) -> Dialect) {
-    let text = std::fs::read(path).expect("the inputs");
+    let text = host::read(path).expect("the inputs");
     let mut refused = 0;
     for line in bun_core::strings::split(&text, b"\n").filter(|line| !line.is_empty()) {
         let Some(json) = bun_lint::json::parse(line) else {
@@ -92,14 +94,14 @@ fn errors(path: &str, dialect: &dyn Fn(bool) -> Dialect) {
         };
         let field = |name: &[u8]| json.get(name).and_then(Json::as_str).unwrap_or_default();
         let script = matches!(field(b"sourceType"), b"script" | b"commonjs");
-        let (filename, code) = (String::from_utf8_lossy(field(b"filename")), field(b"code"));
+        let (filename, code) = (host::text(field(b"filename")), field(b"code"));
         let (is_refused, diagnostics) = parse(&filename, code, dialect(script));
         if is_refused {
             refused += 1;
             let first = diagnostics.iter().min_by_key(|it| it.start);
-            let first = first.map_or("?".to_owned(), |it| describe(code, it));
-            println!("{}\t{first}", String::from_utf8_lossy(field(b"id")));
+            let first = first.map_or_else(|| "?".to_owned(), |it| describe(code, it));
+            output_line!("{}\t{first}", BStr::new(field(b"id")));
         }
     }
-    println!("{refused} refused");
+    output_line!("{refused} refused");
 }

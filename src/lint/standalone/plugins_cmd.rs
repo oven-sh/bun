@@ -1,5 +1,6 @@
 //! `bun-lint plugins ..`: the rules that look at other files.
 
+use crate::host::{self, error_line, output_line};
 use crate::linter_cmd::linter;
 use bun_lint::linter::{LintOptions, ResolvedConfig};
 use bun_lint::options::Json;
@@ -36,7 +37,7 @@ fn cycles(args: &[String]) {
         .iter()
         .filter(|a| !a.starts_with("--") && !a.starts_with('['))
     {
-        crate::collect(&std::fs::canonicalize(arg).expect("a path"), &mut paths);
+        crate::collect(&host::real_path(arg).expect("a path"), &mut paths);
     }
     let paths: Vec<String> = paths
         .iter()
@@ -46,7 +47,7 @@ fn cycles(args: &[String]) {
     let store = Store::new(paths.first().map_or(&b"/"[..], |it| it.as_bytes()));
     let graph = Graph::new(&store);
     let lint = |path: &str| {
-        let text = std::fs::read(path).unwrap_or_default();
+        let text = host::read(path).unwrap_or_default();
         let linted = with_file(
             path.as_bytes(),
             &text,
@@ -67,28 +68,27 @@ fn cycles(args: &[String]) {
     let again =
         graph.complete(&|count, work| bun_sema_standalone::for_each_parallel(threads, count, work));
     let completed = started.elapsed();
-    let found = std::sync::Mutex::new(Vec::new());
+    let found = bun_threading::Guarded::new(Vec::new());
     bun_sema_standalone::for_each_parallel(threads, again.len(), |at| {
-        let path = String::from_utf8_lossy(&again[at]).into_owned();
+        let path = host::text(&again[at]);
         let messages = lint(&path);
         found
             .lock()
-            .unwrap()
             .extend(messages.into_iter().map(|it| (path.clone(), it)));
     });
-    let mut found = found.into_inner().unwrap();
+    let mut found = std::mem::take(&mut *found.lock());
     found.sort_by(|a, b| (&a.0, a.1.line, a.1.column).cmp(&(&b.0, b.1.line, b.1.column)));
     if args.iter().any(|it| it == "--json") {
         for (path, message) in &found {
-            println!(
+            output_line!(
                 "{path}:{}:{}: {}",
                 message.line,
                 message.column,
-                String::from_utf8_lossy(&message.message)
+                bstr::BStr::new(&message.message)
             );
         }
     }
-    eprintln!(
+    error_line!(
         "{} files, {} threads: parsed and recorded in {:.1} ms, completed in {:.1} ms, {} files linted again in {:.1} ms; {} reports",
         paths.len(),
         threads,
@@ -103,7 +103,7 @@ fn cycles(args: &[String]) {
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("cycles") => cycles(&args[1..]),
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint plugins cycles <paths..> [--threads=n] [--json] [--oxlint] [options]"
         ),
     }

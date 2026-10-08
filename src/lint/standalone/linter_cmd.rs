@@ -19,6 +19,7 @@
 //! - `rules`: the names of the rules that exist.
 //! - `diagnostics <cases.json>`: for each `{ code, filename }`, what the parser has left in the HIR.
 
+use crate::host::{self, output_line, text};
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::Host;
@@ -80,7 +81,7 @@ pub(crate) fn with_file<R>(
 
 fn read_cases(args: &[String]) -> Vec<Json> {
     let path = args.first().expect("a file of cases");
-    let text = std::fs::read(path).expect("the file of cases");
+    let text = host::read(path).expect("the file of cases");
     match bun_lint::json::parse(&text) {
         Some(Json::Array(cases)) => cases,
         _ => panic!("the file of cases is not an array"),
@@ -112,7 +113,7 @@ fn verify(args: &[String]) {
             .get(b"filename")
             .and_then(Json::as_str)
             .unwrap_or(b"file.js");
-        let filename = String::from_utf8_lossy(filename).into_owned();
+        let filename = text(filename);
         let null = Json::Null;
         if i > 0 {
             out.extend_from_slice(b",\n");
@@ -607,8 +608,7 @@ fn config(args: &[String]) {
 
 fn resolve(args: &[String]) {
     fn walk(directory: &std::path::Path, config: &Config, files: &mut Vec<Vec<u8>>) {
-        for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
-            let path = entry.path();
+        for path in host::list(directory) {
             let bytes = path.to_string_lossy().into_owned().into_bytes();
             match path.is_dir() {
                 true if config.is_directory_ignored(&bytes) => {}
@@ -618,11 +618,11 @@ fn resolve(args: &[String]) {
         }
     }
     let [flavor, file, directory] = args else {
-        return println!(
+        return output_line!(
             "usage: bun-lint linter resolve oxlint|eslintrc|flat <configuration.json> <directory>"
         );
     };
-    let json = std::fs::read(file)
+    let json = host::read(file)
         .ok()
         .and_then(|it| bun_lint::json::parse(&it))
         .expect("the configuration");
@@ -641,12 +641,12 @@ fn resolve(args: &[String]) {
     ]);
     let config = match config_of(&case, None) {
         Ok(config) => config,
-        Err(error) => return println!("{}", text(&error.message)),
+        Err(error) => return output_line!("{}", text(&error.message)),
     };
     let mut files = Vec::new();
     let start = std::time::Instant::now();
     walk(std::path::Path::new(directory), &config, &mut files);
-    println!(
+    output_line!(
         "{} files found in {:.1} ms",
         files.len(),
         start.elapsed().as_secs_f64() * 1e3
@@ -672,7 +672,7 @@ fn resolve(args: &[String]) {
             }
         }
         let elapsed = start.elapsed().as_secs_f64();
-        println!(
+        output_line!(
             "{name}: {matched} linted, {} configurations, {:.1} rules on average: {:.1} ms, {:.2} us per file",
             distinct.len(),
             rules as f64 / f64::from(matched.max(1)),
@@ -680,7 +680,7 @@ fn resolve(args: &[String]) {
             elapsed * 1e6 / files.len().max(1) as f64,
         );
     }
-    println!(
+    output_line!(
         "{} rules are configured and unknown, {} notes",
         config.unknown_rules().len(),
         config.notes().len()
@@ -689,11 +689,12 @@ fn resolve(args: &[String]) {
 
 fn bench(args: &[String]) {
     fn walk(directory: &std::path::Path, texts: &mut Vec<Vec<u8>>, paths: &mut Vec<String>) {
-        for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
-            let path = entry.path();
-            let name = entry.file_name();
+        for path in host::list(directory) {
             if path.is_dir() {
-                if name != "node_modules" && name != ".git" {
+                if path
+                    .file_name()
+                    .is_some_and(|name| name != "node_modules" && name != ".git")
+                {
                     walk(&path, texts, paths);
                 }
             } else if path.extension().is_some_and(|it| {
@@ -701,7 +702,7 @@ fn bench(args: &[String]) {
                     .iter()
                     .any(|ext| it == *ext)
             }) {
-                if let Ok(text) = std::fs::read(&path) {
+                if let Ok(text) = host::read(&path) {
                     texts.push(text);
                     paths.push(path.to_string_lossy().into_owned());
                 }
@@ -737,7 +738,7 @@ fn bench(args: &[String]) {
             check += first;
             again += second;
         }
-        println!(
+        output_line!(
             "{parser:?}: {refused} refused; parsing and binding {:.0} ms, parse_error {:.1} ms ({:.2} %), of its own {:.1} ms ({:.2} %)",
             whole.as_secs_f64() * 1e3,
             check.as_secs_f64() * 1e3,
@@ -771,14 +772,12 @@ fn parse_fixtures(args: &[String]) {
     let root = args.first().expect("the fixtures directory");
     let (mut parsed, mut rejected) = (0, 0);
     for directory in ["eslint", "typescript-eslint"] {
-        let mut paths: Vec<_> = std::fs::read_dir(format!("{root}/{directory}"))
-            .expect("the fixtures")
-            .flatten()
-            .map(|it| it.path())
-            .collect();
+        let fixtures = format!("{root}/{directory}");
+        assert!(std::path::Path::new(&fixtures).is_dir(), "the fixtures");
+        let mut paths = host::list(&fixtures);
         paths.sort();
         for path in paths {
-            let Some(fixture) = std::fs::read(&path)
+            let Some(fixture) = host::read(&path)
                 .ok()
                 .and_then(|it| bun_lint::json::parse(&it))
             else {
@@ -821,7 +820,7 @@ fn parse_fixtures(args: &[String]) {
                         let mut written = Vec::new();
                         testing::write_json(&mut written, given);
                         let name = path.file_stem().unwrap_or_default().to_string_lossy();
-                        println!(
+                        output_line!(
                             "{}\t{directory}/{name}#{index}\t{}\t{:?}",
                             text(&error.message),
                             text(&written),
@@ -832,7 +831,7 @@ fn parse_fixtures(args: &[String]) {
             }
         }
     }
-    println!("{parsed} parsed, {rejected} rejected");
+    output_line!("{parsed} parsed, {rejected} rejected");
 }
 
 fn diagnostics(args: &[String]) {
@@ -843,7 +842,7 @@ fn diagnostics(args: &[String]) {
             .get(b"filename")
             .and_then(Json::as_str)
             .unwrap_or(b"file.js");
-        let filename = String::from_utf8_lossy(filename).into_owned();
+        let filename = text(filename);
         all.push(with_file(
             &filename,
             code,
@@ -949,10 +948,6 @@ fn prettier(args: &[String]) {
     print(&out);
 }
 
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("verify") => verify(&args[1..]),
@@ -980,6 +975,6 @@ pub(crate) fn run(args: &[String]) {
             out.push(b'\n');
             print(&out);
         }
-        _ => println!("usage: bun-lint linter verify|comment-parser|json-parse <cases.json>"),
+        _ => output_line!("usage: bun-lint linter verify|comment-parser|json-parse <cases.json>"),
     }
 }

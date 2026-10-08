@@ -2,6 +2,7 @@
 //! and of the `bun-sema` command line tool. The bundler does not use this crate.
 
 pub mod hir_dump;
+pub mod host;
 pub mod native;
 
 pub use bun_sema_baselines as baselines;

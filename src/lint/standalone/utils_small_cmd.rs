@@ -9,6 +9,7 @@
 //!   makes for every statement, expression and function. `null` if the code does not parse. See
 //!   `test/cli/lint/oracle/utils-small/fix-tracker.ts`.
 
+use crate::host::{self, error_line, output};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
 use bun_lint::runner::{Enabled, RuleEntry};
@@ -23,7 +24,9 @@ use std::io::Write as _;
 fn unhex(text: &str) -> Vec<u8> {
     let digit = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
     text.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| digit(pair[0]) << 4 | digit(pair[1]))
         .collect()
 }
@@ -99,11 +102,11 @@ fn fix_tracker(cases: &[u8]) {
         severity: Severity::Error,
     }];
     let mut out = Vec::new();
-    for line in bun_core::strings::split(&cases, b"\n").filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(cases, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("a case");
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
-        let path = String::from_utf8_lossy(path);
+        let path = host::text(path);
         let all = crate::with_file(&path, code, &LanguageOptions::default(), |file| {
             if file.has_parse_errors() {
                 return Json::Null;
@@ -119,7 +122,7 @@ fn fix_tracker(cases: &[u8]) {
                         number(it.span.end),
                         number(fix.span.start),
                         number(fix.span.end),
-                        Json::String(fix.text.into()),
+                        Json::String(fix.text),
                     ]))
                 });
             Json::Array(each.collect())
@@ -131,12 +134,12 @@ fn fix_tracker(cases: &[u8]) {
 }
 
 pub(crate) fn run(args: &[String]) {
-    let input = args.get(1).and_then(|path| std::fs::read(path).ok());
+    let input = args.get(1).and_then(|path| host::read(path).ok());
     match (args.first().map(String::as_str), input) {
-        (Some("call"), Some(input)) => call(&String::from_utf8_lossy(&input)),
+        (Some("call"), Some(input)) => call(&host::text(&input)),
         (Some("fix-tracker"), Some(input)) => fix_tracker(&input),
         _ => {
-            eprintln!("usage: bun-lint utils-small call|fix-tracker <file>");
+            error_line!("usage: bun-lint utils-small call|fix-tracker <file>");
             std::process::exit(2);
         }
     }
@@ -144,8 +147,8 @@ pub(crate) fn run(args: &[String]) {
 
 fn call(input: &str) {
     let mut out = String::new();
-    for line in input.lines() {
-        let mut fields = line.split('\t');
+    for line in host::lines(input) {
+        let mut fields = host::split(line, "\t");
         let name = fields.next().unwrap_or_default();
         let a = unhex(fields.next().unwrap_or_default());
         let b = unhex(fields.next().unwrap_or_default());
@@ -183,7 +186,7 @@ fn call(input: &str) {
                     Some((_, version)) => (UnicodeFlag::U, version),
                     None => (UnicodeFlag::U, &[][..]),
                 };
-                let version = String::from_utf8_lossy(version).parse().unwrap_or(0);
+                let version = host::text(version).parse().unwrap_or(0);
                 is_valid_with_unicode_flag(version, &a, flag).to_string()
             }
             "allKeywords" => keywords::KEYWORDS.join(" "),
@@ -196,5 +199,5 @@ fn call(input: &str) {
         out.push_str(&result);
         out.push('\n');
     }
-    print!("{out}");
+    output!("{out}");
 }

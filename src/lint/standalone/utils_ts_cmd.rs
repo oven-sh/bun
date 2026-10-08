@@ -7,6 +7,7 @@
 //!   of JSON for each. A line is the name of a helper and its arguments in hexadecimal, separated by
 //!   tabs. `test/cli/lint/oracle/utils-ts/text.ts` writes the file and compares.
 
+use crate::host::{self, output_line};
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
@@ -17,7 +18,7 @@ use bun_lint::utils::ts_utils::{self, MemberAccessValue, OperatorPrecedence, Wra
 use std::fmt::Write as _;
 
 fn string(text: &[u8]) -> String {
-    String::from_utf8_lossy(&json_stringify(text)).into_owned()
+    host::text(&json_stringify(text))
 }
 
 /// Long text is compared by its length, its start and its end.
@@ -219,8 +220,7 @@ impl Rows {
         self.row("predicates", at, list(predicates));
     }
 
-    fn name_of<'a>(&mut self, at: Span, node: impl Into<ts_utils::NodeWithKey<'a>>) {
-        let node = node.into();
+    fn name_of(&mut self, at: Span, node: ts_utils::NodeWithKey<'_>) {
         let name = ts_utils::get_name_from_member(node);
         self.row(
             "getNameFromMember",
@@ -308,7 +308,7 @@ impl<'a> Visitor<'a> for Rows {
                     );
                     return;
                 }
-                self.name_of(at, member);
+                self.name_of(at, member.into());
                 self.row("isSetter", at, ts_utils::is_setter(member));
                 self.row(
                     "getMemberHeadLoc",
@@ -328,7 +328,7 @@ impl<'a> Visitor<'a> for Rows {
                 );
             }
             Node::Prop(prop) => {
-                self.name_of(at, prop);
+                self.name_of(at, prop.into());
                 self.row("isSetter", at, ts_utils::is_setter(prop));
             }
             Node::Param(param) if param.is_parameter_property() => {
@@ -519,7 +519,9 @@ fn dump(case: Object<'_>, rules: &[Enabled]) -> String {
 
 fn unhex(text: &[u8]) -> Vec<u8> {
     let digit = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
-    text.chunks_exact(2)
+    text.as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (digit(pair[0]) << 4) | digit(pair[1]))
         .collect()
 }
@@ -551,7 +553,10 @@ fn precedence(text: &[u8]) -> OperatorPrecedence {
         Member,
         Primary,
     ];
-    let number = String::from_utf8_lossy(text).parse::<i8>().unwrap_or(-1);
+    let number = std::str::from_utf8(text)
+        .ok()
+        .and_then(|it| it.parse::<i8>().ok())
+        .unwrap_or(-1);
     all.into_iter()
         .find(|&it| it as i8 == number)
         .unwrap_or(Invalid)
@@ -582,16 +587,16 @@ pub(crate) fn run(args: &[String]) {
     let (Some(command @ ("batch" | "text")), Some(path)) =
         (args.first().map(String::as_str), args.get(1))
     else {
-        println!("usage: bun-lint utils-ts batch <cases.jsonl> | text <text.tsv>");
+        output_line!("usage: bun-lint utils-ts batch <cases.jsonl> | text <text.tsv>");
         return;
     };
-    let Ok(input) = std::fs::read(path) else {
-        println!("cannot read {path}");
+    let Ok(input) = host::read(path) else {
+        output_line!("cannot read {path}");
         return;
     };
     if command == "text" {
         for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
-            println!("{}", call(line));
+            output_line!("{}", call(line));
         }
         return;
     }
@@ -602,8 +607,8 @@ pub(crate) fn run(args: &[String]) {
     }];
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         match bun_lint::json::parse(line) {
-            Some(case) => println!("{}", dump(Object::of(Some(&case)), &rules)),
-            None => println!("{{\"error\":true}}"),
+            Some(case) => output_line!("{}", dump(Object::of(Some(&case)), &rules)),
+            None => output_line!("{{\"error\":true}}"),
         }
     }
 }

@@ -8,12 +8,13 @@
 
 mod processes;
 
+use crate::host::{self, output_line, text};
 use bun_lint::js_plugin::{Configured, FileSettings, Host, Plugin, Report, Rule};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
 use processes::{BOOTSTRAP, Channel, Processes};
 use std::io::{Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::sync::Arc;
 
 struct Process {
@@ -46,8 +47,8 @@ impl Drop for Process {
 
 /// Starts a worker with the `bun` that is in `PATH`.
 fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
-    let bun = std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned());
-    let mut command = Command::new("sh");
+    let bun = host::variable("BUN_LINT_BUN").unwrap_or_else(|| "bun".to_owned());
+    let mut command = host::command("sh");
     command.args([
         "-c",
         "exec \"$0\" \"$@\" 3<&0 4>&1 1>&2 </dev/null",
@@ -70,17 +71,13 @@ fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
 /// With `BUN_LINT_WORKER=<src/lint/js_plugin/worker>` the processes run the program that is there now.
 pub(crate) fn new_processes(max: usize) -> Processes<'static> {
     let mut processes = Processes::new(&spawn, max);
-    if let Ok(directory) = std::env::var("BUN_LINT_WORKER") {
+    if let Some(directory) = host::variable("BUN_LINT_WORKER") {
         let part = |it: &(&str, &str)| {
-            std::fs::read(format!("{directory}/{}", it.0)).expect("a part of the program")
+            host::read(format!("{directory}/{}", it.0)).expect("a part of the program")
         };
         processes.set_program(bun_lint::js_plugin::PROGRAM.iter().flat_map(part).collect());
     }
     processes
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn report_as_json(report: &Report, enabled: &[Arc<Configured>], code: &[u8]) -> Json {
@@ -158,7 +155,7 @@ fn lint(args: &[String]) {
         flag("--alias=").map(str::as_bytes),
     ) {
         Ok(plugin) => plugin,
-        Err(why) => return println!("cannot load {specifier}: {}", text(&why)),
+        Err(why) => return output_line!("cannot load {specifier}: {}", text(&why)),
     };
     let rules =
         flag("--rules=").map(|it| bun_lint::json::parse(it.as_bytes()).expect("--rules is JSON"));
@@ -170,7 +167,7 @@ fn lint(args: &[String]) {
     let settings = FileSettings::new(&language);
     let references: Vec<&Configured> = enabled.iter().map(|it| &**it).collect();
     for path in args.iter().filter(|it| !it.starts_with("--")) {
-        let code = std::fs::read(path).expect("the file");
+        let code = host::read(path).expect("the file");
         let absolute = std::path::Path::new(&cwd)
             .join(path)
             .to_string_lossy()
@@ -191,7 +188,7 @@ fn lint(args: &[String]) {
             }
         };
         bun_lint::linter::write_json(&mut line, &json);
-        println!("{path}\t{}", text(&line));
+        output_line!("{path}\t{}", text(&line));
     }
 }
 
@@ -231,12 +228,12 @@ fn batch(args: &[String]) {
         flag("--alias=").map(str::as_bytes),
     ) {
         Ok(plugin) => plugin,
-        Err(why) => return println!("cannot load {specifier}: {}", text(&why)),
+        Err(why) => return output_line!("cannot load {specifier}: {}", text(&why)),
     };
     let rules =
         flag("--rules=").map(|it| bun_lint::json::parse(it.as_bytes()).expect("--rules is JSON"));
     let for_all = enabled_by(&plugin, rules.as_ref());
-    let cases = std::fs::read(
+    let cases = host::read(
         args.iter()
             .find(|it| !it.starts_with("--"))
             .expect("the cases"),
@@ -315,7 +312,7 @@ fn batch(args: &[String]) {
             case.get(b"id").cloned().unwrap_or(Json::Null),
         );
         bun_lint::linter::write_json(&mut line, &Json::Object(vec![id, outcome]));
-        println!("{}", text(&line));
+        output_line!("{}", text(&line));
     }
 }
 
@@ -323,6 +320,6 @@ pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("lint") => lint(&args[1..]),
         Some("batch") => batch(&args[1..]),
-        _ => println!("usage: bun-lint js_plugin lint --plugin=<specifier> <files..>"),
+        _ => output_line!("usage: bun-lint js_plugin lint --plugin=<specifier> <files..>"),
     }
 }

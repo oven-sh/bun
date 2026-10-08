@@ -296,7 +296,7 @@ unsafe fn bytes<'a>(p: *const u8, len: usize) -> &'a [u8] {
 /// with these stand-ins should not be far from what the kernels do.
 fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
     let mut at = 0;
-    for chunk in text.chunks_exact(32) {
+    for chunk in text.as_chunks::<32>().0 {
         if chunk.iter().fold(false, |is_found, &c| is_found | f(c)) {
             break;
         }
@@ -351,8 +351,10 @@ unsafe extern "C" fn highway_index_of_any_char(
                     .fold(false, |is_found, &c| is_found | (c == wanted))
             };
             let whole = text
-                .chunks_exact(32)
-                .take_while(|chunk| !chars.iter().any(|&wanted| has(chunk, wanted)))
+                .as_chunks::<32>()
+                .0
+                .iter()
+                .take_while(|chunk| !chars.iter().any(|&wanted| has(&chunk[..], wanted)))
                 .count();
             let at = whole * 32;
             at + text[at..]
@@ -406,8 +408,10 @@ unsafe extern "C" fn highway_memmem(
     let mut at = 0;
     while at <= last {
         for (heads, tails) in heads[at..]
-            .chunks_exact(32)
-            .zip(tails[at..].chunks_exact(32))
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .zip(tails[at..].as_chunks::<32>().0)
         {
             if heads.iter().zip(tails).fold(false, |is_found, (&a, &b)| {
                 is_found | ((a == head) & (b == tail))

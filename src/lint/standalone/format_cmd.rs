@@ -21,6 +21,7 @@ mod cursor;
 mod sort_imports;
 mod verify;
 
+use crate::host::{self, output, output_line};
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
@@ -384,7 +385,7 @@ impl Args {
                 parsed.positional.push(arg.clone());
                 continue;
             };
-            let (name, value) = flag.split_once('=').unwrap_or((flag, "true"));
+            let (name, value) = host::split_once(flag, "=").unwrap_or((flag, "true"));
             if parsed
                 .options
                 .set(name.as_bytes(), value.as_bytes())
@@ -429,12 +430,7 @@ fn collect_files(paths: &[String]) -> Vec<PathBuf> {
             {
                 return;
             }
-            let mut entries: Vec<_> = std::fs::read_dir(path)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|it| it.path())
-                .collect();
+            let mut entries = host::list(path);
             entries.sort();
             entries.iter().for_each(|it| visit(it, found));
         } else if path
@@ -456,7 +452,7 @@ fn check_idempotent(args: &Args) {
     let (mut passed, mut failed, mut errors) = (0, 0, 0);
     for path in collect_files(&args.positional) {
         let name = path.to_string_lossy();
-        let Ok(code) = std::fs::read(&path) else {
+        let Ok(code) = host::read(&path) else {
             continue;
         };
         let Ok(once) = format_text_or_panic(&name, &code, &args.options) else {
@@ -467,24 +463,24 @@ fn check_idempotent(args: &Args) {
             Ok(twice) if twice == once => passed += 1,
             Ok(_) => {
                 failed += 1;
-                println!("not idempotent: {name}");
+                output_line!("not idempotent: {name}");
             }
             Err(error) => {
                 failed += 1;
-                println!("{error} in the formatted file: {name}");
+                output_line!("{error} in the formatted file: {name}");
             }
         }
     }
-    println!("idempotent: {passed}, not: {failed}, not formatted: {errors}");
+    output_line!("idempotent: {passed}, not: {failed}, not formatted: {errors}");
 }
 
 fn serve(args: &Args) {
     std::panic::set_hook(Box::new(|_| {}));
     let mut stdout = std::io::stdout().lock();
     for path in std::io::stdin().lock().lines().map_while(Result::ok) {
-        let result = match std::fs::read(&path) {
+        let result = match host::read(&path) {
             Ok(code) => format_text_or_panic(&path, &code, &args.options),
-            Err(error) => Err(error.to_string()),
+            Err(error) => Err(host::describe(&error)),
         };
         let _ = match result {
             Ok(out) => writeln!(stdout, "ok {}", out.len()).and_then(|()| stdout.write_all(&out)),
@@ -501,21 +497,21 @@ pub(crate) fn run(args: &[String]) {
     match command {
         Some("file") => {
             let path = args.positional.first().expect("a path");
-            let code = std::fs::read(path).expect("the file");
+            let code = host::read(path).expect("the file");
             match format_text(path, &code, &args.options) {
-                Ok(out) => print!("{}", crate::text(&out)),
-                Err(error) => println!("{error:?}"),
+                Ok(out) => output!("{}", crate::text(&out)),
+                Err(error) => output_line!("{error:?}"),
             }
         }
         Some("ir") => {
             let path = args.positional.first().expect("a path");
-            let code = std::fs::read(path).expect("the file");
+            let code = host::read(path).expect("the file");
             let document = crate::with_file(path, &code, &LanguageOptions::default(), |file| {
                 bun_format::dump_document(file, &args.options, &mut Scratch::default())
             });
             match document {
-                Ok(document) => print!("{document}"),
-                Err(error) => println!("{error:?}"),
+                Ok(document) => output!("{document}"),
+                Err(error) => output_line!("{error:?}"),
             }
         }
         Some("conformance") => {
@@ -531,7 +527,7 @@ pub(crate) fn run(args: &[String]) {
         Some("serve") => serve(&args),
         Some("cursor") => cursor::run(&args),
         Some("sort-imports") => sort_imports::run(&args),
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint format file|ir|conformance|check-idempotent|verify|bench|serve .."
         ),
     }

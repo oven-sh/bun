@@ -4,7 +4,8 @@
 //! the result of the parser that recovers from errors: a damaged text that it accepts has to be
 //! valid for that one too, with the same HIR.
 
-use std::sync::Mutex;
+use bun_sema_standalone::host::{self, output_line};
+use bun_threading::Guarded;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// What became of a damaged text.
@@ -151,10 +152,10 @@ pub(crate) fn run(
     judge: &(dyn Fn(&[u8], &[u8]) -> Verdict + Sync),
 ) {
     let (refused, identical) = (AtomicUsize::new(0), AtomicUsize::new(0));
-    let wrong: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    let _ = std::fs::create_dir_all(keep);
+    let mut wrong: Guarded<Vec<String>> = Guarded::new(Vec::new());
+    let _ = host::make_directories(keep);
     bun_sema_standalone::for_each_parallel(jobs, files.len(), |i| {
-        let Ok(text) = std::fs::read(&files[i]) else {
+        let Ok(text) = host::read(&files[i]) else {
             return;
         };
         let pieces = pieces(&text);
@@ -162,7 +163,7 @@ pub(crate) fn run(
             return;
         }
         let mut random = Random(seed ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-        let extension = files[i].rsplit('.').next().unwrap_or("ts");
+        let extension = host::rsplit_once(&files[i], ".").map_or(&*files[i], |it| it.1);
         // What is being parsed, for the case that the process dies.
         let current = format!(
             "{keep}/current-{:?}.{extension}",
@@ -170,27 +171,26 @@ pub(crate) fn run(
         );
         for round in 0..rounds {
             let damaged = damage(&text, &pieces, &mut random);
-            let _ = std::fs::write(&current, &damaged);
+            let _ = host::write(&current, &damaged);
             match judge(files[i].as_bytes(), &damaged) {
                 Verdict::Refused => _ = refused.fetch_add(1, Ordering::Relaxed),
                 Verdict::Identical => _ = identical.fetch_add(1, Ordering::Relaxed),
                 Verdict::Wrong(what) => {
                     let name = format!("{keep}/wrong-{i}-{round}.{extension}");
-                    let _ = std::fs::write(&name, &damaged);
+                    let _ = host::write(&name, &damaged);
                     wrong
                         .lock()
-                        .unwrap()
                         .push(format!("{name} (from {}): {what}", files[i]));
                 }
             }
         }
-        let _ = std::fs::remove_file(&current);
+        let _ = host::remove(&current);
     });
-    let wrong = wrong.into_inner().unwrap();
+    let wrong = wrong.get_mut();
     for line in wrong.iter().take(40) {
-        println!("WRONG {line}");
+        output_line!("WRONG {line}");
     }
-    println!(
+    output_line!(
         "{} damaged texts: {} refused, {} parsed and identical, {} wrong",
         refused.load(Ordering::Relaxed) + identical.load(Ordering::Relaxed) + wrong.len(),
         refused.load(Ordering::Relaxed),

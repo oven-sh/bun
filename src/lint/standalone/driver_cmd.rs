@@ -3,22 +3,18 @@
 //! What is Bun's own in `bun lint` is replaced: configuration files that are programs are run by the `bun` in `PATH`, and
 //! TypeScript's `lib.*.d.ts` are read from the directory `BUN_SEMA_TS_LIB`.
 
+use crate::host::{self, error_line, os_text, output_line};
 use bun_lint_driver::cli::{Options, PARAMS, UsageError};
 use bun_lint_driver::{Environment, Script, Stream};
 use std::io::{IsTerminal, Write};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
-
-fn os(bytes: &[u8]) -> &std::ffi::OsStr {
-    std::ffi::OsStr::from_bytes(bytes)
-}
 
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
-    let mut command = std::process::Command::new("bun");
+    let mut command = host::command("bun");
     command
         .arg("-e")
         .arg(script.source)
-        .args(script.arguments.iter().map(|it| os(it)))
-        .current_dir(os(script.cwd));
+        .args(script.arguments.iter().map(|it| os_text(it)))
+        .current_dir(os_text(script.cwd));
     let output = command
         .output()
         .map_err(|error| format!("Cannot run bun: {error}").into_bytes())?;
@@ -29,7 +25,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
 }
 
 fn stream(is_tty: bool) -> Stream {
-    let is_set = |name: &str| std::env::var_os(name).is_some_and(|it| !it.is_empty() && it != "0");
+    let is_set = |name: &str| host::variable(name).is_some_and(|it| !it.is_empty() && it != "0");
     Stream {
         is_tty,
         colors: is_set("FORCE_COLOR") || (is_tty && !is_set("NO_COLOR")),
@@ -37,20 +33,20 @@ fn stream(is_tty: bool) -> Stream {
 }
 
 fn print_help(name: &str, params: &[bun_lint_driver::Param]) {
-    println!("Usage: bun {name} [flags] [...files, directories or patterns]\n\nFlags:");
+    output_line!("Usage: bun {name} [flags] [...files, directories or patterns]\n\nFlags:");
     for param in params.iter().filter(|it| !it.id.msg_plain.is_empty()) {
         let short = param
             .names
             .short
-            .map_or("    ".to_owned(), |it| format!("-{}, ", it as char));
+            .map_or_else(|| "    ".to_owned(), |it| format!("-{}, ", it as char));
         let long = crate::text(param.names.long.unwrap_or_default());
-        println!("  {short}--{long:<44} {}", crate::text(param.id.msg_plain));
+        output_line!("  {short}--{long:<44} {}", crate::text(param.id.msg_plain));
     }
 }
 
 fn or_exit<T>(parsed: Result<T, UsageError>) -> T {
     parsed.unwrap_or_else(|UsageError(message)| {
-        eprintln!("error: {}", crate::text(&message));
+        error_line!("error: {}", crate::text(&message));
         std::process::exit(2);
     })
 }
@@ -82,19 +78,19 @@ pub(crate) fn run(args: &[String]) {
         return print_help(name, params);
     }
     if let Some(cwd) = cwd
-        && let Err(error) = std::env::set_current_dir(os(cwd))
+        && let Err(error) = std::env::set_current_dir(os_text(cwd))
     {
-        eprintln!(
+        error_line!(
             "error: Could not change directory to \"{}\": {error}",
             crate::text(cwd)
         );
         std::process::exit(1);
     }
-    let libs = std::env::var_os("BUN_SEMA_TS_LIB")
+    let libs = host::variable("BUN_SEMA_TS_LIB")
         .unwrap_or_default()
-        .into_vec();
+        .into_bytes();
     // `Output::is_ai_agent`
-    let is_one = |name: &str| std::env::var_os(name).map(|it| it == "1");
+    let is_one = |name: &str| host::variable(name).map(|it| it == "1");
     let is_agent = is_one("AGENT")
         .unwrap_or_else(|| is_one("CLAUDECODE") == Some(true) || is_one("REPL_ID") == Some(true));
     let processes = crate::js_plugin_cmd::new_processes(
@@ -104,12 +100,12 @@ pub(crate) fn run(args: &[String]) {
         cwd: std::env::current_dir()
             .expect("the working directory")
             .into_os_string()
-            .into_vec(),
+            .into_encoded_bytes(),
         stdout: stream(std::io::stdout().is_terminal()),
         stderr: stream(std::io::stderr().is_terminal()),
         is_ai_agent: is_agent,
         is_github_action: !is_agent
-            && std::env::var_os("GITHUB_ACTIONS").is_some_and(|it| it == "true"),
+            && host::variable("GITHUB_ACTIONS").is_some_and(|it| it == "true"),
         libs: bun_sema_driver::Libs::Directory(&libs),
         run_script: &run_script,
         js_engine: &processes,

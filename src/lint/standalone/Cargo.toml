@@ -25,6 +25,7 @@ bun_sema_standalone = { path = "../../sema/standalone" }
 bun_js_parser.workspace = true
 bun_core.workspace = true
 bstr.workspace = true
+rustc-hash = "2"
 
 [lints]
 workspace = true

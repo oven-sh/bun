@@ -5,6 +5,7 @@
 //!   `test/cli/lint/oracle/utils-tsscope/oracle.ts`. Positions are in bytes.
 //! - `bench <cases.jsonl>`: the time that the analyses take for all the cases together.
 
+use crate::host::{self, output_line};
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{ExprKind, FnKind, Func, Node, TypeKind};
 use bun_lint::language::LanguageOptions;
@@ -158,7 +159,7 @@ fn dump(case: Object<'_>) -> String {
                 functions
                     .rows
                     .iter()
-                    .map(|row| format!("{row:?}").replace(' ', ""))
+                    .map(|row| host::replace(&format!("{row:?}"), " ", ""))
                     .collect(),
             );
 
@@ -240,25 +241,27 @@ pub(crate) fn run(args: &[String]) {
     let (Some(mode @ ("batch" | "bench")), Some(path)) =
         (args.first().map(String::as_str), args.get(1))
     else {
-        println!("usage: bun-lint utils-tsscope batch|bench <cases.jsonl>");
+        output_line!("usage: bun-lint utils-tsscope batch|bench <cases.jsonl>");
         return;
     };
-    let Ok(input) = std::fs::read(path) else {
-        println!("cannot read {path}");
+    let Ok(input) = host::read(path) else {
+        output_line!("cannot read {path}");
         return;
     };
     let mut times = [std::time::Duration::ZERO; 3];
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         match bun_lint::json::parse(line) {
             Some(case) if mode == "bench" => bench(Object::of(Some(&case)), &mut times),
-            Some(case) => println!("{}", dump(Object::of(Some(&case)))),
-            None => println!("{{\"error\":true}}"),
+            Some(case) => output_line!("{}", dump(Object::of(Some(&case)))),
+            None => output_line!("{{\"error\":true}}"),
         }
     }
     if mode == "bench" {
-        println!(
+        output_line!(
             "scopes and references {:?}, collect_variables {:?}, analyze_class_member_usage {:?}",
-            times[0], times[1], times[2]
+            times[0],
+            times[1],
+            times[2]
         );
     }
 }

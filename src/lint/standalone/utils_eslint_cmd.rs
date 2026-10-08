@@ -8,6 +8,7 @@
 //! `bun-lint utils-eslint pattern <cases.jsonl>`: what a `PatternMatcher` finds, to compare with
 //! `test/cli/lint/oracle/utils-eslint/pattern.ts`.
 
+use crate::host::{self, output_line};
 use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind};
 use bun_lint::language::{Global, LanguageOptions, SourceType};
 use bun_lint::options::{Json, Object};
@@ -91,9 +92,7 @@ fn show(value: &StaticValue<'_>, out: &mut String) {
         StaticValue::Null => out.push_str("null"),
         StaticValue::Bool(b) => _ = write!(out, "{b}"),
         StaticValue::Number(n) if *n == 0.0 && n.is_sign_negative() => out.push_str("-0"),
-        StaticValue::Number(n) => {
-            out.push_str(&String::from_utf8_lossy(&text::number_to_string(*n)))
-        }
+        StaticValue::Number(n) => out.push_str(&host::text(&text::number_to_string(*n))),
         StaticValue::String(text) => quote(text, out),
         StaticValue::BigInt(n) => _ = write!(out, "{n}n"),
         StaticValue::Symbol(symbol) => show_symbol(symbol, out),
@@ -101,7 +100,7 @@ fn show(value: &StaticValue<'_>, out: &mut String) {
             out.push('/');
             quote(pattern, out);
             out.push('/');
-            out.push_str(&String::from_utf8_lossy(flags));
+            out.push_str(&host::text(flags));
         }
         StaticValue::Hole => out.push_str("<hole>"),
         StaticValue::Array(items) => {
@@ -254,8 +253,8 @@ impl<'a> Facts<'a> {
                 self.add("functionHead", node, format!("{}-{}", head.start, head.end));
                 let names = format!(
                     "{} / {}",
-                    String::from_utf8_lossy(&get_function_name_with_kind(func, false)),
-                    String::from_utf8_lossy(&get_function_name_with_kind(func, true))
+                    bstr::BStr::new(&get_function_name_with_kind(func, false)),
+                    bstr::BStr::new(&get_function_name_with_kind(func, true))
                 );
                 self.add("functionName", node, names);
             }
@@ -373,9 +372,7 @@ fn dump(case: Object<'_>) -> String {
                 if i > 0 {
                     line.push(',');
                 }
-                line.push_str(&String::from_utf8_lossy(&text::json_stringify(
-                    fact.as_bytes(),
-                )));
+                line.push_str(&host::text(&text::json_stringify(fact.as_bytes())));
             }
             line.push_str("]}");
             line
@@ -413,17 +410,17 @@ pub(crate) fn run(args: &[String]) {
     let (Some(mode @ ("dump" | "pattern")), Some(path)) =
         (args.first().map(String::as_str), args.get(1))
     else {
-        println!("usage: bun-lint utils-eslint dump <cases.jsonl> | pattern <cases.jsonl>");
+        output_line!("usage: bun-lint utils-eslint dump <cases.jsonl> | pattern <cases.jsonl>");
         return;
     };
-    let Ok(input) = std::fs::read(path) else {
-        println!("cannot read {path}");
+    let Ok(input) = host::read(path) else {
+        output_line!("cannot read {path}");
         return;
     };
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         if let Some(json) = bun_lint::json::parse(line) {
             let case = Object::of(Some(&json));
-            println!(
+            output_line!(
                 "{}",
                 if mode == "dump" {
                     dump(case)

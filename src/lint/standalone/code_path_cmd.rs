@@ -13,6 +13,7 @@
 //! - `upstream`: the cases of ESLint's `tests/lib/linter/code-path-analysis/code-path.js`.
 //! - `bench <file>`: how long the analysis takes.
 
+use crate::host::{self, output, output_line};
 use bun_lint::code_path::{Event, Method, Step, reachability, steps};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
@@ -42,7 +43,7 @@ fn run_rule<R: Rule>(path: &str, code: &[u8]) -> Vec<String> {
 fn make_dot_arrows(path: CodePath) -> String {
     let initial = path.initial_segment();
     let mut stack = std::collections::VecDeque::from([(initial, 0)]);
-    let mut done = std::collections::HashSet::new();
+    let mut done = rustc_hash::FxHashSet::default();
     let mut last = Some(initial);
     let mut text = format!("initial->{initial}");
     while let Some((segment, index)) = stack.pop_back() {
@@ -97,26 +98,23 @@ impl Rule for Dot {
 fn expected_dot_arrows(source: &str) -> Vec<String> {
     let mut expected = Vec::new();
     let mut rest = source;
-    while let Some((_, after)) = rest.split_once("/*expected") {
-        let Some((arrows, after)) = after.split_once("*/") else {
+    while let Some((_, after)) = host::split_once(rest, "/*expected") {
+        let Some((arrows, after)) = host::split_once(after, "*/") else {
             break;
         };
-        expected.push(arrows.trim().replace("\r\n", "\n"));
+        expected.push(host::replace(arrows.trim(), "\r\n", "\n"));
         rest = after;
     }
     expected
 }
 
 fn fixtures(directory: &str) {
-    let mut paths: Vec<_> = (std::fs::read_dir(directory)
-        .expect("the directory")
-        .flatten())
-    .map(|it| it.path())
-    .collect();
+    assert!(std::path::Path::new(directory).is_dir(), "the directory");
+    let mut paths = host::list(directory);
     paths.sort();
     let (mut passed, mut failed) = (0, 0);
     for path in paths {
-        let source = std::fs::read_to_string(&path).expect("the file");
+        let source = host::read_text(&path).expect("the file");
         let name = path
             .file_name()
             .unwrap_or_default()
@@ -131,11 +129,11 @@ fn fixtures(directory: &str) {
             continue;
         }
         failed += 1;
-        println!("──── {name}\n{source}");
+        output_line!("──── {name}\n{source}");
         for i in 0..expected.len().max(actual.len()) {
             let (expected, actual) = (expected.get(i), actual.get(i));
             if expected != actual {
-                println!(
+                output_line!(
                     "expected:\n{}\nactual:\n{}",
                     expected.map_or("nothing", |it| it),
                     actual.map_or("nothing", |it| it)
@@ -143,7 +141,7 @@ fn fixtures(directory: &str) {
             }
         }
     }
-    println!("{passed} passed, {failed} failed");
+    output_line!("{passed} passed, {failed} failed");
 }
 
 // ───────────────────────────── the trace ─────────────────────────────
@@ -560,9 +558,9 @@ impl<'a> Log<'a> {
         found.extend(self.segments.iter().filter(|it| it.code_path() == path));
         self.segments.retain(|it| it.code_path() != path);
         found.extend(path.final_segments());
-        let mut seen: std::collections::HashSet<Segment> = found.iter().copied().collect();
+        let mut seen: rustc_hash::FxHashSet<Segment> = found.iter().copied().collect();
         found.retain({
-            let mut first = std::collections::HashSet::new();
+            let mut first = rustc_hash::FxHashSet::default();
             move |it| first.insert(*it)
         });
         let mut at = 0;
@@ -690,13 +688,13 @@ fn trace(path: &str, code: &[u8], listen: &str) -> Vec<String> {
 }
 
 fn batch(path: &str, listen: &str) {
-    let input = std::fs::read(path).expect("the file");
+    let input = host::read(path).expect("the file");
     let mut output = String::new();
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("JSON");
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-        let path = String::from_utf8_lossy(path);
+        let path = host::text(path);
         let has_errors = crate::with_file(&path, code, &LanguageOptions::default(), |file| {
             file.has_parse_errors()
         });
@@ -710,19 +708,19 @@ fn batch(path: &str, listen: &str) {
             trace.join("\",\"")
         );
     }
-    print!("{output}");
+    output!("{output}");
 }
 
 /// For each `{ "path", "code" }` of a file of JSON lines, where what is found out from the
 /// statements alone differs from what the analysis finds.
 fn compare_reachability(path: &str) {
-    let input = std::fs::read(path).expect("the file");
+    let input = host::read(path).expect("the file");
     let mut output = String::new();
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("JSON");
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-        let path = String::from_utf8_lossy(path);
+        let path = host::text(path);
         let differences = crate::with_file(&path, code, &LanguageOptions::default(), |file| {
             if file.has_parse_errors() {
                 return Vec::new();
@@ -785,7 +783,7 @@ fn compare_reachability(path: &str) {
         });
         let _ = writeln!(output, "[\"{}\"]", differences.join("\",\""));
     }
-    print!("{output}");
+    output!("{output}");
 }
 
 // ───────────────────────────── ESLint's tests of `CodePath` ─────────────────────────────
@@ -897,11 +895,11 @@ fn upstream() {
         let said = run_rule::<Upstream>("file.js", code.as_bytes());
         let actual = said
             .first()
-            .and_then(|it| it.split_once(' '))
+            .and_then(|it| host::split_once(it, " "))
             .map_or("", |it| it.1);
         if actual != expected {
             failed += 1;
-            println!("{code}\n  expected {expected}\n  actual   {actual}");
+            output_line!("{code}\n  expected {expected}\n  actual   {actual}");
         }
     }
     ASK.set(Ask::Plain);
@@ -909,14 +907,14 @@ fn upstream() {
         let said = run_rule::<Upstream>("file.js", code.as_bytes());
         let actual = said
             .get(path)
-            .and_then(|it| it.split_once(' '))
+            .and_then(|it| host::split_once(it, " "))
             .map_or("", |it| it.0);
         if actual != format!("{expected:?}") {
             failed += 1;
-            println!("{code}\n  expected {expected:?}\n  actual   {actual}");
+            output_line!("{code}\n  expected {expected:?}\n  actual   {actual}");
         }
     }
-    println!(
+    output_line!(
         "{} passed, {failed} failed",
         TRAVERSALS.len() + ORIGINS.len() - failed
     );
@@ -950,7 +948,7 @@ fn time(mut run: impl FnMut()) -> std::time::Duration {
 
 /// How long the analysis of a file takes, next to parsing and binding it.
 fn bench(path: &str) {
-    let code = std::fs::read(path).expect("the file");
+    let code = host::read(path).expect("the file");
     let language = LanguageOptions::default();
     let parsing = time(|| {
         crate::with_file(path, &code, &language, |file| file.has_parse_errors());
@@ -984,7 +982,7 @@ fn bench(path: &str) {
         let rule = time(|| {
             bun_lint::runner::run(file, &rules, false);
         });
-        println!(
+        output_line!(
             "{} bytes, {} events: parse and bind {parsing:?}, reachability of all statements {reach:?}, a walk {walk:?}, analysis {analysis:?}, and all statements {with_statements:?}, and all nodes {with_everything:?}, a rule that listens {rule:?}",
             code.len(),
             steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count(),
@@ -995,14 +993,14 @@ fn bench(path: &str) {
 pub(crate) fn run(args: &[String]) {
     match args {
         [command, path] if command == "dot" => {
-            let code = std::fs::read(path).expect("the file");
-            println!("{}", run_rule::<Dot>(path, &code).join("\n\n"));
+            let code = host::read(path).expect("the file");
+            output_line!("{}", run_rule::<Dot>(path, &code).join("\n\n"));
         }
         [command, directory] if command == "fixtures" => fixtures(directory),
         [command, path, listen @ ..] if command == "trace" => {
-            let code = std::fs::read(path).expect("the file");
+            let code = host::read(path).expect("the file");
             let listen = listen.first().map_or("all", |it| it);
-            println!("{}", trace(path, &code, listen).join("\n"));
+            output_line!("{}", trace(path, &code, listen).join("\n"));
         }
         [command, path, listen @ ..] if command == "batch" => {
             batch(path, listen.first().map_or("all", |it| it));
@@ -1012,14 +1010,14 @@ pub(crate) fn run(args: &[String]) {
         [command] if command == "upstream" => upstream(),
         // For a profiler.
         [command, path, rounds] if command == "analyze" => {
-            let code = std::fs::read(path).expect("the file");
+            let code = host::read(path).expect("the file");
             crate::with_file(path, &code, &LanguageOptions::default(), |file| {
                 for _ in 0..rounds.parse().unwrap_or(1) {
                     steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count();
                 }
             });
         }
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint code-path dot <file> | fixtures <directory> | trace <file> | batch <file> | upstream | bench <file>"
         ),
     }

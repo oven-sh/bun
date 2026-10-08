@@ -16,6 +16,7 @@
 //!   operations on a thread with a stack of 512 KiB, and prints `true`: nothing may panic, overflow or go on forever.
 //! - `bench <file> <repeat>`: requests as for `exec`. Compiles each once, and prints the time of `repeat` searches.
 
+use crate::host::{self, error_line, output_line};
 use bun_lint::regex::ast::{
     Assertion, CharacterSet, INFINITY, Kind, Node, NodeId, Nodes, Reference, Visitor,
 };
@@ -64,12 +65,7 @@ fn quote_units(out: &mut String, units: &[u16]) {
 }
 
 fn quote(out: &mut String, text: &[u8]) {
-    quote_units(
-        out,
-        &String::from_utf8_lossy(text)
-            .encode_utf16()
-            .collect::<Vec<_>>(),
-    );
+    quote_units(out, &host::text(text).encode_utf16().collect::<Vec<_>>());
 }
 
 fn error(out: &mut String, error: &SyntaxError) {
@@ -338,7 +334,7 @@ impl<'a> Visitor<'a> for History<'_> {
 }
 
 fn parse(line: &str) -> String {
-    let fields: Vec<&str> = line.split('\t').collect();
+    let fields: Vec<&str> = host::split(line, "\t").collect();
     let [kind, strict, version, source, rest @ ..] = &fields[..] else {
         return "null".to_owned();
     };
@@ -417,7 +413,7 @@ fn compile(out: &mut String, pattern: &str, flags: &str) -> Option<Regex> {
 }
 
 fn exec(line: &str) -> String {
-    let fields: Vec<&str> = line.split('\t').collect();
+    let fields: Vec<&str> = host::split(line, "\t").collect();
     let [pattern, flags, text, last_index] = &fields[..] else {
         return "null".to_owned();
     };
@@ -464,7 +460,7 @@ fn list<'a>(out: &mut String, items: impl Iterator<Item = &'a [u8]>) {
 }
 
 fn ops(line: &str) -> String {
-    let fields: Vec<&str> = line.split('\t').collect();
+    let fields: Vec<&str> = host::split(line, "\t").collect();
     let [op, pattern, flags, text, rest @ ..] = &fields[..] else {
         return "null".to_owned();
     };
@@ -505,7 +501,7 @@ fn ops(line: &str) -> String {
 }
 
 fn charset(line: &str) -> String {
-    let fields: Vec<&str> = line.split('\t').collect();
+    let fields: Vec<&str> = host::split(line, "\t").collect();
     let [pattern, flags] = &fields[..] else {
         return "null".to_owned();
     };
@@ -557,7 +553,7 @@ fn raw(line: &str) -> String {
             .filter_map(|digits| u8::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok())
             .collect()
     };
-    let fields: Vec<Vec<u8>> = line.split('\t').map(decode).collect();
+    let fields: Vec<Vec<u8>> = host::split(line, "\t").map(decode).collect();
     let [pattern, flags, text] = &fields[..] else {
         return "null".to_owned();
     };
@@ -603,8 +599,8 @@ fn raw(line: &str) -> String {
 
 fn bench(requests: &str, repeat: usize) {
     let mut total = std::time::Duration::ZERO;
-    for line in requests.lines() {
-        let fields: Vec<&str> = line.split('\t').collect();
+    for line in host::lines(requests) {
+        let fields: Vec<&str> = host::split(line, "\t").collect();
         let [pattern, flags, text, ..] = &fields[..] else {
             continue;
         };
@@ -621,25 +617,25 @@ fn bench(requests: &str, repeat: usize) {
         }
         let elapsed = started.elapsed();
         total += elapsed;
-        println!(
+        output_line!(
             "{:>9.1} ns/test  {:>7.1} us compile  {}  /{}/{} on {} bytes",
             elapsed.as_nanos() as f64 / repeat as f64,
             compiled.as_nanos() as f64 / 1000.0,
             if found > 0 { "match   " } else { "no match" },
-            String::from_utf8_lossy(regex.source()),
-            String::from_utf8_lossy(&bytes(&units(flags))),
+            bstr::BStr::new(regex.source()),
+            bstr::BStr::new(&bytes(&units(flags))),
             text.len(),
         );
     }
-    println!("total {total:?}");
+    output_line!("total {total:?}");
 }
 
 pub(crate) fn run(args: &[String]) {
     let (Some(command), Some(path)) = (args.first(), args.get(1)) else {
-        eprintln!("usage: bun-lint regex parse|exec|ops|charset|raw|bench <requests>");
+        error_line!("usage: bun-lint regex parse|exec|ops|charset|raw|bench <requests>");
         return;
     };
-    let requests = std::fs::read_to_string(path).unwrap_or_default();
+    let requests = host::read_text(path).unwrap_or_default();
     if command == "bench" {
         return bench(
             &requests,
@@ -648,7 +644,7 @@ pub(crate) fn run(args: &[String]) {
     }
     let stdout = std::io::stdout();
     let mut stdout = std::io::BufWriter::new(stdout.lock());
-    for line in requests.lines() {
+    for line in host::lines(&requests) {
         let answer = match command.as_str() {
             "parse" => parse(line),
             "exec" => exec(line),

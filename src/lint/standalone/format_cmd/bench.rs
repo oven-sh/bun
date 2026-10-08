@@ -1,6 +1,7 @@
 //! `bun-lint format bench`.
 
 use super::{Args, collect_files};
+use crate::host::{self, output_line};
 use bun_format::Scratch;
 use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
@@ -9,6 +10,7 @@ use bun_sema::atom::{Intern, InternerPerThread};
 use bun_sema::bind::{BindOptions, Recycled, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
+use std::fmt::Write as _;
 use std::hash::Hasher as _;
 
 /// Parses `code` the way Prettier's parsers do, as a module or as a script, and calls `then` with the file. The names in it are
@@ -120,7 +122,7 @@ pub(super) fn bench(args: &Args) {
         true => Vec::new(),
         false => paths
             .iter()
-            .map(|path| std::fs::read(path).unwrap_or_default())
+            .map(|path| host::read(path).unwrap_or_default())
             .collect(),
     };
     let (parsing, formatting, bytes) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
@@ -134,7 +136,7 @@ pub(super) fn bench(args: &Args) {
         bun_sema_standalone::for_each_parallel(threads, paths.len(), |i| {
             let start = std::time::Instant::now();
             let read = if is_check {
-                std::fs::read(&paths[i]).unwrap_or_default()
+                host::read(&paths[i]).unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -194,34 +196,35 @@ pub(super) fn bench(args: &Args) {
     }
     let wall = started.elapsed().as_secs_f64();
     if let Some(file) = args.flag("hashes") {
-        let lines: String = (paths.iter().zip(&hashes))
-            .map(|(path, hash)| format!("{:016x} {path}\n", hash.load(Relaxed)))
-            .collect();
-        std::fs::write(file, lines).expect("the hashes are written");
+        let mut lines = String::new();
+        for (path, hash) in paths.iter().zip(&hashes) {
+            let _ = writeln!(lines, "{:016x} {path}", hash.load(Relaxed));
+        }
+        host::write(file, lines).expect("the hashes are written");
     }
     let megabytes = bytes.load(Relaxed) as f64 / 1e6;
     let per_pass = |count: &AtomicU64| count.load(Relaxed) / iterations.max(1) as u64;
     let seconds = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e9;
-    println!(
+    output_line!(
         "{} files, {:.2} MB, {iterations} iterations, {threads} threads: {} would change, {} not formatted",
         paths.len(),
         megabytes / iterations.max(1) as f64,
         per_pass(&changed),
         per_pass(&failed),
     );
-    println!(
+    output_line!(
         "format:         {:8.1} MB/s per thread",
         megabytes / seconds(&formatting)
     );
-    println!(
+    output_line!(
         "parse + bind:   {:8.1} MB/s per thread",
         megabytes / seconds(&parsing)
     );
-    println!(
+    output_line!(
         "all:            {:8.1} MB/s per thread",
         megabytes / (seconds(&parsing) + seconds(&formatting))
     );
-    println!(
+    output_line!(
         "wall:           {:8.1} MB/s, {:.3} s a pass",
         megabytes / wall,
         wall / iterations.max(1) as f64

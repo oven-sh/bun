@@ -10,8 +10,9 @@
 //!   text that is formatted, and the formatted text. A length of `-1`: an error.
 
 use super::Args;
-use bun_format::FormatOptions;
+use crate::host::{self, output, output_line};
 use bun_format::sort_imports::{Settings, SortImports};
+use bun_format::{FormatError, FormatOptions};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
 use std::collections::BTreeMap;
@@ -72,10 +73,17 @@ fn options_of(case: &Json, plugin: &[u8]) -> Result<FormatOptions, Vec<u8>> {
     Ok(options)
 }
 
+/// Why a case has no output.
+enum Failure {
+    /// What is wrong with the options.
+    Options(Vec<u8>),
+    Format(FormatError),
+}
+
 fn cases(args: &Args) {
     std::panic::set_hook(Box::new(|_| {}));
     let path = args.positional.get(1).expect("a path");
-    let json = bun_lint::json::parse(&std::fs::read(path).expect("the file")).expect("JSON");
+    let json = bun_lint::json::parse(&host::read(path).expect("the file")).expect("JSON");
     let string = |case: &Json, key: &[u8]| case.get(key).and_then(Json::as_str).map(<[u8]>::to_vec);
     let mut tally: BTreeMap<String, [usize; 4]> = BTreeMap::new();
     for case in json.as_array().unwrap_or_default() {
@@ -84,7 +92,7 @@ fn cases(args: &Args) {
         let full_name = format!("{}/{name}", crate::text(&plugin));
         if args
             .flag("filter")
-            .is_some_and(|filter| !full_name.contains(filter))
+            .is_some_and(|filter| !filter.is_empty() && !host::contains(&full_name, filter))
         {
             continue;
         }
@@ -96,14 +104,17 @@ fn cases(args: &Args) {
         // oxfmt sorts while it formats: there is no text in between.
         let expected_text = string(case, b"text");
         let filename = crate::text(&string(case, b"filename").unwrap_or_default());
-        let group = full_name.split('/').take(2).collect::<Vec<_>>().join("/");
+        let group = host::split(&full_name, "/")
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("/");
         let counts = tally.entry(group).or_default();
         counts[0] += 1;
         let result = std::panic::catch_unwind(|| {
-            let options = options_of(case, &plugin).map_err(|error| crate::text(&error))?;
+            let options = options_of(case, &plugin).map_err(Failure::Options)?;
             let text = sorted(&filename, &input, &options);
-            let output = super::format_text(&filename, &input, &options)
-                .map_err(|error| format!("{error:?}"))?;
+            let output =
+                super::format_text(&filename, &input, &options).map_err(Failure::Format)?;
             // Left as it is: right if that makes no difference.
             let plain = FormatOptions {
                 sort_imports: None,
@@ -116,11 +127,12 @@ fn cases(args: &Args) {
                 }
                 (text, None) => text.is_none(),
             };
-            Ok::<_, String>((text, is_text_right, output))
+            Ok::<_, Failure>((text, is_text_right, output))
         });
         let (text, is_text_right, output) = match result {
             Ok(Ok(result)) => result,
-            Ok(Err(error)) => (None, false, error.into_bytes()),
+            Ok(Err(Failure::Options(error))) => (None, false, crate::text(&error).into_bytes()),
+            Ok(Err(Failure::Format(error))) => (None, false, format!("{error:?}").into_bytes()),
             Err(_) => (None, false, b"panic".to_vec()),
         };
         counts[1] += usize::from(is_text_right);
@@ -129,7 +141,7 @@ fn cases(args: &Args) {
         if is_text_right && output == expected_output {
             continue;
         }
-        println!(
+        output_line!(
             "FAIL {full_name}{}{}",
             if is_text_right { "" } else { " text" },
             if output == expected_output {
@@ -139,40 +151,51 @@ fn cases(args: &Args) {
             }
         );
         if let Some(report) = args.flag("report") {
-            let base = format!("{report}/{}", full_name.replace('/', "_"));
-            let _ = std::fs::create_dir_all(report);
-            let _ = std::fs::write(format!("{base}.input"), &input);
-            let _ = std::fs::write(
+            let base = format!("{report}/{}", host::replace(&full_name, "/", "_"));
+            let _ = host::make_directories(report);
+            let _ = host::write(format!("{base}.input"), &input);
+            let _ = host::write(
                 format!("{base}.text.expected"),
                 expected_text.as_deref().unwrap_or_default(),
             );
-            let _ = std::fs::write(
+            let _ = host::write(
                 format!("{base}.text.actual"),
                 text.as_deref().unwrap_or(b"(unchanged)"),
             );
-            let _ = std::fs::write(format!("{base}.output.expected"), &expected_output);
-            let _ = std::fs::write(format!("{base}.output.actual"), &output);
-            let _ = std::fs::write(
+            let _ = host::write(format!("{base}.output.expected"), &expected_output);
+            let _ = host::write(format!("{base}.output.actual"), &output);
+            let _ = host::write(
                 format!("{base}.options"),
                 written(case.get(b"options").unwrap_or(&Json::Null)),
             );
         }
     }
-    println!(
+    output_line!(
         "{:<40} {:>6} {:>6} {:>6} {:>9}",
-        "", "cases", "text", "output", "unchanged"
+        "",
+        "cases",
+        "text",
+        "output",
+        "unchanged"
     );
     let mut total = [0; 4];
     for (group, counts) in &tally {
-        println!(
+        output_line!(
             "{group:<40} {:>6} {:>6} {:>6} {:>9}",
-            counts[0], counts[1], counts[2], counts[3]
+            counts[0],
+            counts[1],
+            counts[2],
+            counts[3]
         );
         (0..4).for_each(|at| total[at] += counts[at]);
     }
-    println!(
+    output_line!(
         "{:<40} {:>6} {:>6} {:>6} {:>9}",
-        "total", total[0], total[1], total[2], total[3]
+        "total",
+        total[0],
+        total[1],
+        total[2],
+        total[3]
     );
 }
 
@@ -181,10 +204,7 @@ fn serve(args: &Args) {
     let (mut stdin, mut stdout) = (std::io::stdin().lock(), std::io::stdout().lock());
     let mut line = String::new();
     while stdin.read_line(&mut line).is_ok_and(|read| read > 0) {
-        let (path, length) = line
-            .trim_end()
-            .split_once('\t')
-            .expect("a path and a length");
+        let (path, length) = host::split_once(line.trim_end(), "\t").expect("a path and a length");
         let mut code = vec![0; length.parse().expect("a length")];
         stdin.read_exact(&mut code).expect("the text");
         let result = std::panic::catch_unwind(|| {
@@ -210,12 +230,7 @@ fn serve(args: &Args) {
 fn bench(args: &Args) {
     let mut files: Vec<(String, Vec<u8>)> =
         (super::collect_files(args.positional.get(1..).unwrap_or_default()).iter())
-            .filter_map(|path| {
-                Some((
-                    path.to_string_lossy().into_owned(),
-                    std::fs::read(path).ok()?,
-                ))
-            })
+            .filter_map(|path| Some((path.to_string_lossy().into_owned(), host::read(path).ok()?)))
             .collect();
     if args.flag("steady").is_some() {
         for (path, code) in &mut files {
@@ -267,7 +282,7 @@ fn bench(args: &Args) {
         }
     }
     let per_pass = |seconds: f64| seconds * 1e3 / f64::from(iterations);
-    println!(
+    output_line!(
         "{} files, {:.1} MB: parse + bind {:.1} ms, sort imports {:.1} ms, parse + bind again {:.1} ms for {moved} files, format {:.1} ms",
         files.len(),
         files.iter().map(|it| it.1.len()).sum::<usize>() as f64 / 1e6,
@@ -282,15 +297,15 @@ pub(super) fn run(args: &Args) {
     match args.positional.first().map(String::as_str) {
         Some("text") => {
             let path = args.positional.get(1).expect("a path");
-            let code = std::fs::read(path).expect("the file");
+            let code = host::read(path).expect("the file");
             match sorted(path, &code, &args.options) {
-                Some(sorted) => print!("{}", crate::text(&sorted)),
-                None => println!("(unchanged)"),
+                Some(sorted) => output!("{}", crate::text(&sorted)),
+                None => output_line!("(unchanged)"),
             }
         }
         Some("cases") => cases(args),
         Some("bench") => bench(args),
         Some("serve") => serve(args),
-        _ => println!("usage: bun-lint format sort-imports text|cases|bench|serve .."),
+        _ => output_line!("usage: bun-lint format sort-imports text|cases|bench|serve .."),
     }
 }

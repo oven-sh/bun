@@ -16,6 +16,7 @@
 #[path = "estree/json.rs"]
 mod estree_json;
 
+use crate::host::{self, output_line};
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{
     ExprKind, ExprTag, File, FnKind, Key, List, Modifier, NOT_IN_TREE, Node, PatTag, StmtKind,
@@ -29,9 +30,10 @@ use bun_lint::options::{Json, Options};
 use bun_lint::rule::{Kind, Listeners, Meta, Rule};
 use bun_lint::runner::Enabled;
 use bun_lint::span::Span;
-use std::collections::{BTreeMap, HashMap};
+use bun_threading::Guarded;
+use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 use std::io::Write as _;
-use std::sync::Mutex;
 
 pub(crate) fn run(args: &[String]) {
     match args {
@@ -48,7 +50,7 @@ pub(crate) fn run(args: &[String]) {
             let has = |flag: &str| flags.iter().any(|it| it == flag);
             bind_check(path, &language_of(flags), has("--format"), has("--verbose"));
         }
-        _ => println!("usage: bun-lint ast estree|estree-batch|check|check-batch|bench <path>"),
+        _ => output_line!("usage: bun-lint ast estree|estree-batch|check|check-batch|bench <path>"),
     }
 }
 
@@ -75,14 +77,14 @@ struct Input {
 }
 
 fn read_inputs(path: &str) -> Vec<Input> {
-    let text = std::fs::read(path).expect("the inputs");
+    let text = host::read(path).expect("the inputs");
     let lines = bun_core::strings::split(&text, b"\n").filter(|line| !line.is_empty());
     let inputs = lines.filter_map(|line| {
         let json = bun_lint::json::parse(line)?;
         let field = |name: &[u8]| json.get(name).and_then(Json::as_str).map(<[u8]>::to_vec);
         Some(Input {
-            id: String::from_utf8_lossy(&field(b"id")?).into_owned(),
-            filename: String::from_utf8_lossy(&field(b"filename")?).into_owned(),
+            id: host::text(&field(b"id")?),
+            filename: host::text(&field(b"filename")?),
             code: field(b"code")?,
             source_type: match field(b"sourceType").as_deref() {
                 Some(b"script") => SourceType::Script,
@@ -117,17 +119,19 @@ fn with_input<R>(
     }));
     outcome.map_err(|panic| match panic.downcast_ref::<String>() {
         Some(message) => message.clone(),
-        None => (panic.downcast_ref::<&str>()).map_or("?".to_owned(), |it| (*it).to_owned()),
+        None => {
+            (panic.downcast_ref::<&str>()).map_or_else(|| "?".to_owned(), |it| (*it).to_owned())
+        }
     })
 }
 
 // ───────────────────────────── ESTree ─────────────────────────────
 
 fn estree(path: &str, language: &LanguageOptions) {
-    let code = std::fs::read(path).expect("the file");
+    let code = host::read(path).expect("the file");
     crate::with_file(path, &code, language, |file| {
         if bun_lint::linter::parse_error(file).is_some() {
-            return println!("the parser rejects the code");
+            return output_line!("the parser rejects the code");
         }
         let mut out = Vec::new();
         estree_json::write_json(file, &mut out);
@@ -185,7 +189,7 @@ fn parts(path: &str) {
             }
         });
     }
-    found.iter().for_each(|it| println!("{it}"));
+    found.iter().for_each(|it| output_line!("{it}"));
 }
 
 fn schema() {
@@ -207,7 +211,7 @@ fn schema() {
             names(&|it| !it.is_typescript_only),
         ));
     }
-    println!("{{{}}}", types.join(","));
+    output_line!("{{{}}}", types.join(","));
 }
 
 // ───────────────────────────── self-check ─────────────────────────────
@@ -242,14 +246,14 @@ type Problem = (String, String);
 
 fn place(node: Node) -> String {
     let span = node.span();
-    let text = String::from_utf8_lossy(node.text()).into_owned();
+    let text = host::text(node.text());
     let short: String = text.chars().take(60).collect();
     format!("{node:?} {}..{} {short:?}", span.start, span.end)
 }
 
 /// Goes down from the file by `for_each_child` and checks each edge.
-fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> HashMap<Node<'a>, u32> {
-    let mut reached: HashMap<Node, u32> = HashMap::new();
+fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> FxHashMap<Node<'a>, u32> {
+    let mut reached: FxHashMap<Node, u32> = FxHashMap::default();
     let mut pending = vec![Node::File(file)];
     let text = file.text();
     let is_space = |at: u32| text.get(at as usize).is_some_and(u8::is_ascii_whitespace);
@@ -360,7 +364,7 @@ fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
         if let Some(span) = span
             && !is_right(file.slice(span))
         {
-            let found = String::from_utf8_lossy(file.slice(span))
+            let found = host::text(file.slice(span))
                 .chars()
                 .take(30)
                 .collect::<String>();
@@ -381,7 +385,7 @@ fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
                 expect("Expr::parens", Some(parens), &within(b'(', b')'));
             }
             if e.is_parenthesized() != (e.parens().len() > 0)
-                || e.outer_span() != e.parens().next_back().unwrap_or(e.span())
+                || e.outer_span() != e.parens().next_back().unwrap_or_else(|| e.span())
             {
                 expect("Expr::is_parenthesized", Some(e.span()), &|_| false);
             }
@@ -641,7 +645,7 @@ fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
 /// answer from below with the tree, which is made from above.
 fn check_estree<'a>(
     file: &'a File<'a>,
-    reached: &HashMap<Node<'a>, u32>,
+    reached: &FxHashMap<Node<'a>, u32>,
     problems: &mut Vec<Problem>,
 ) {
     let describe_v = |v: VNode| format!("{} of {}", v.node_type().name(), describe(v.base()));
@@ -649,13 +653,13 @@ fn check_estree<'a>(
         format!(
             "{v:?} {:?} {:?}",
             v.span(),
-            String::from_utf8_lossy(file.slice(v.span()))
+            host::text(file.slice(v.span()))
                 .chars()
                 .take(50)
                 .collect::<String>()
         )
     };
-    let mut all: HashMap<VNode, u32> = HashMap::new();
+    let mut all: FxHashMap<VNode, u32> = FxHashMap::default();
     let (mut chains, mut directives) = (Vec::new(), Vec::new());
     let mut pending = vec![VNode::program(file)];
     while let Some(v) = pending.pop() {
@@ -709,7 +713,7 @@ fn check_estree<'a>(
         }
         v.for_each_child(|child| {
             if child.parent() != Some(v) {
-                let actual = child.parent().map_or("none".to_owned(), describe_v);
+                let actual = child.parent().map_or_else(|| "none".to_owned(), describe_v);
                 let kind = format!(
                     "estree: parent of {} in {} is {actual}",
                     describe_v(child),
@@ -721,7 +725,7 @@ fn check_estree<'a>(
         });
     }
     // Every node is found from the node of `bun_lint::ast` that it is made of, and nothing else.
-    let mut found: HashMap<VNode, u32> = HashMap::new();
+    let mut found: FxHashMap<VNode, u32> = FxHashMap::default();
     for &node in reached.keys() {
         VNode::for_each_at(node, &mut |v| *found.entry(v).or_insert(0) += 1);
     }
@@ -778,7 +782,7 @@ fn check_estree<'a>(
 /// nothing else.
 fn check_tags<'a>(
     file: &'a File<'a>,
-    reached: &HashMap<Node<'a>, u32>,
+    reached: &FxHashMap<Node<'a>, u32>,
     problems: &mut Vec<Problem>,
 ) {
     let [mut exprs, mut stmts, mut types, mut pats] = [const { Vec::new() }; 4];
@@ -822,7 +826,7 @@ fn check_tags<'a>(
     }
 }
 
-static FOUND: Mutex<Vec<Problem>> = Mutex::new(Vec::new());
+static FOUND: Guarded<Vec<Problem>> = Guarded::new(Vec::new());
 
 /// Listens for everything, and compares what it is called with to what a walk reaches.
 struct Everything;
@@ -873,7 +877,7 @@ const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
 
 impl Rule for Everything {
     const META: Meta = Meta::eslint("everything", Kind::Problem);
-    type State<'a> = HashMap<Node<'a>, u32>;
+    type State<'a> = FxHashMap<Node<'a>, u32>;
 
     fn new(_: &Options) -> Self {
         Everything
@@ -934,9 +938,9 @@ impl Rule for Everything {
                     ));
                 }
             }
-            FOUND.lock().unwrap().append(&mut problems);
+            FOUND.lock().append(&mut problems);
         });
-        HashMap::new()
+        FxHashMap::default()
     }
 }
 
@@ -946,20 +950,20 @@ fn check<'a>(file: &'a File<'a>) -> Vec<Problem> {
         severity: Severity::Error,
     }];
     bun_lint::runner::run(file, &rules, false);
-    let mut problems = std::mem::take(&mut *FOUND.lock().unwrap());
+    let mut problems = std::mem::take(&mut *FOUND.lock());
     problems.sort();
     problems
 }
 
 fn check_files(paths: &[String]) {
     for path in paths {
-        let code = std::fs::read(path).expect("the file");
+        let code = host::read(path).expect("the file");
         crate::with_file(path, &code, &language_of(&[]), |file| {
             if bun_lint::linter::parse_error(file).is_some() {
-                return println!("{path}: the parser rejects the code");
+                return output_line!("{path}: the parser rejects the code");
             }
             for (kind, place) in check(file) {
-                println!("{path}: {kind}: {place}");
+                output_line!("{path}: {kind}: {place}");
             }
         });
     }
@@ -980,10 +984,7 @@ fn check_batch(path: &str) {
                 continue;
             }
             Ok(Some(problems)) => problems,
-            Err(panic) => {
-                FOUND.clear_poison();
-                vec![(format!("panic: {panic}"), String::new())]
-            }
+            Err(panic) => vec![(format!("panic: {panic}"), String::new())],
         };
         checked += 1;
         with_problems += usize::from(!problems.is_empty());
@@ -998,12 +999,12 @@ fn check_batch(path: &str) {
     let mut ranked: Vec<_> = by_kind.into_iter().collect();
     ranked.sort_by_key(|it| std::cmp::Reverse(it.1.0));
     for (kind, (count, examples)) in &ranked {
-        println!("{count:6} {kind}");
+        output_line!("{count:6} {kind}");
         for example in examples {
-            println!("         {example}");
+            output_line!("         {example}");
         }
     }
-    println!(
+    output_line!(
         "{checked} checked, {rejected} rejected by the parser, {with_problems} with problems, {} kinds",
         ranked.len()
     );
@@ -1019,7 +1020,7 @@ fn problems_of_lint_tables(
     use bun_sema::bind::{NOT_REACHED, Parent};
     use bun_sema::hir::{Chain, ExprKind};
     let mut problems = Vec::new();
-    let mut counts = vec![0u32; 2 * ExprTag::COUNT];
+    let mut counts = [0u32; 2 * ExprTag::COUNT];
     if lint.expr_kinds.len() != hir.exprs.len() {
         return vec!["expr_kinds: not as long as the expressions".to_owned()];
     }
@@ -1265,12 +1266,8 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool, is_ve
             let full = bind(&hir, options, &atoms, arena);
             let mut counts = left_behind.get();
             let has = [
-                full.expr_parent
-                    .iter()
-                    .any(|it| *it == bun_sema::bind::Parent::None),
-                full.stmt_parent
-                    .iter()
-                    .any(|it| *it == bun_sema::bind::Parent::None),
+                full.expr_parent.contains(&bun_sema::bind::Parent::None),
+                full.stmt_parent.contains(&bun_sema::bind::Parent::None),
                 full.fns
                     .iter()
                     .any(|it| it.owner == bun_sema::bind::FnOwner::None),
@@ -1300,7 +1297,7 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool, is_ve
                         false => {
                             left_to_binder.set(left_to_binder.get() + 1);
                             if is_verbose {
-                                println!("left to the binder: {}", input.id);
+                                output_line!("left to the binder: {}", input.id);
                             }
                         }
                     }
@@ -1311,7 +1308,7 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool, is_ve
         let different = outcome.unwrap_or_else(|_| vec!["panic".to_owned()]);
         same += usize::from(different.is_empty());
         for it in different {
-            let name = it.split(':').next().unwrap_or_default().to_owned();
+            let name = host::split(&it, ":").next().unwrap_or_default().to_owned();
             let (count, examples) = by_kind.entry(name).or_default();
             *count += 1;
             if examples.len() < 3 {
@@ -1320,17 +1317,17 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool, is_ve
         }
     }
     for (name, (count, examples)) in &by_kind {
-        println!("{count:6} {name}");
-        examples.iter().for_each(|it| println!("         {it}"));
+        output_line!("{count:6} {name}");
+        examples.iter().for_each(|it| output_line!("         {it}"));
     }
     let [exprs, stmts, fns, classes, types, type_params] = left_behind.get();
-    println!(
+    output_line!(
         "not reached by bind: expressions in {exprs} inputs, statements in {stmts}, functions in {fns}, classes in {classes}, types in {types}, type parameters in {type_params}"
     );
     if !is_for_format {
-        println!("left to the binder: {}", left_to_binder.get());
+        output_line!("left to the binder: {}", left_to_binder.get());
     }
-    println!(
+    output_line!(
         "{} inputs, {same} the same, {} tables differ",
         inputs.len(),
         by_kind.len()
@@ -1348,14 +1345,14 @@ fn bench(path: &str) {
         }
         fn exit(&mut self, _: Node<'a>) {}
     }
-    let code = std::fs::read(path).expect("the file");
+    let code = host::read(path).expect("the file");
     let time = |name: &str, run: &mut dyn FnMut() -> usize| {
         let start = std::time::Instant::now();
         let mut result = 0;
         for _ in 0..20 {
             result = run();
         }
-        println!("{name}: {:?} ({result})", start.elapsed() / 20);
+        output_line!("{name}: {:?} ({result})", start.elapsed() / 20);
     };
     time("parse and bind", &mut || {
         crate::with_file(path, &code, &LanguageOptions::default(), |file| {

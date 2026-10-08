@@ -101,7 +101,7 @@ impl<'a> Writer<'a, '_> {
                         continue;
                     }
                     let _ = write!(self.out, ",\"{}\":", entry.field.name());
-                    self.value(value);
+                    self.value(&value);
                 }
                 Frame::List(list) => {
                     let Some(element) = list.next() else {
@@ -112,14 +112,14 @@ impl<'a> Writer<'a, '_> {
                     if self.out.last() != Some(&b'[') {
                         self.out.push(b',');
                     }
-                    self.value(element.into());
+                    self.value(&element.into());
                 }
             }
         }
     }
 
-    fn value(&mut self, value: Value<'a>) {
-        match value {
+    fn value(&mut self, value: &Value<'a>) {
+        match *value {
             Value::Undefined | Value::Null | Value::Regex { .. } | Value::BigInt(_) => {
                 self.out.extend_from_slice(b"null");
             }
@@ -137,7 +137,7 @@ impl<'a> Writer<'a, '_> {
                 self.out.push(b'{');
                 for (i, (name, value)) in object.entries().into_iter().enumerate() {
                     let _ = write!(self.out, "{}\"{name}\":", if i > 0 { "," } else { "" });
-                    self.value(value);
+                    self.value(&value);
                 }
                 self.out.push(b'}');
             }

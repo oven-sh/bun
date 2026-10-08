@@ -9,6 +9,7 @@
 //! - `bench <files..>`: the speed of the scan.
 //! - `fuzz <rounds> <files..>`: scans damaged copies of the files, and checks that the tokens are in order and in bounds.
 
+use crate::host::{self, output_line};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_lint::options::Json;
@@ -74,14 +75,14 @@ fn language_of(case: &Json) -> LanguageOptions {
 }
 
 fn batch(path: &str) {
-    let cases = std::fs::read(path).expect("the cases");
+    let cases = host::read(path).expect("the cases");
     let stdout = std::io::stdout();
     let mut stdout = std::io::BufWriter::new(stdout.lock());
     for line in bun_core::strings::split(&cases, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("a case");
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
-        let path = String::from_utf8_lossy(path);
+        let path = host::text(path);
         let line = crate::with_file(&path, code, &language_of(&case), |file| {
             // Before the tokens are asked for, these are the comments that the parser lists.
             let mut comments = String::new();
@@ -205,7 +206,7 @@ fn answer<'a>(file: &'a File<'a>, query: &[Json]) -> Vec<u32> {
 }
 
 fn query(path: &str) {
-    let cases = std::fs::read(path).expect("the cases");
+    let cases = host::read(path).expect("the cases");
     let stdout = std::io::stdout();
     let mut stdout = std::io::BufWriter::new(stdout.lock());
     for line in bun_core::strings::split(&cases, b"\n").filter(|line| !line.is_empty()) {
@@ -216,30 +217,25 @@ fn query(path: &str) {
             .get(b"queries")
             .and_then(Json::as_array)
             .unwrap_or_default();
-        let answers = crate::with_file(
-            &String::from_utf8_lossy(path),
-            code,
-            &language_of(&case),
-            |file| {
-                let answers = queries
-                    .iter()
-                    .map(|it| answer(file, it.as_array().unwrap_or_default()));
-                format!("{:?}", answers.collect::<Vec<_>>())
-            },
-        );
+        let answers = crate::with_file(&host::text(path), code, &language_of(&case), |file| {
+            let answers = queries
+                .iter()
+                .map(|it| answer(file, it.as_array().unwrap_or_default()));
+            format!("{:?}", answers.collect::<Vec<_>>())
+        });
         let _ = writeln!(stdout, "{answers}");
     }
 }
 
 fn dump(path: &str) {
-    let code = std::fs::read(path).expect("the file");
+    let code = host::read(path).expect("the file");
     crate::with_file(path, &code, &LanguageOptions::default(), |file| {
         if file.has_parse_errors() {
-            println!("the parser rejects the code");
+            output_line!("the parser rejects the code");
         }
         for token in file.tokens().with_comments() {
             let kind: TokenKind = token.kind();
-            println!(
+            output_line!(
                 "{kind:?} {}..{} {:?}",
                 token.start(),
                 token.end(),
@@ -254,7 +250,7 @@ fn bench(paths: &[String]) {
     let mut comments_seconds = 0f64;
     const ROUNDS: usize = 20;
     for path in paths {
-        let Ok(code) = std::fs::read(path) else {
+        let Ok(code) = host::read(path) else {
             continue;
         };
         let started = std::time::Instant::now();
@@ -278,7 +274,7 @@ fn bench(paths: &[String]) {
             comments_seconds += best;
         });
     }
-    println!(
+    output_line!(
         "{} files, {:.1} MB, {} tokens: {:.1} ms, {:.0} MB/s, {:.1} ns per token. Only comments: {:.1} ms, {:.0} MB/s. Parse and bind: {:.1} ms",
         paths.len(),
         bytes as f64 / 1e6,
@@ -326,7 +322,7 @@ fn fuzz(rounds: usize, paths: &[String]) {
     std::panic::set_hook(Box::new(|_| {}));
     let (mut scanned, mut panics) = (0, 0);
     for path in paths {
-        let Ok(original) = std::fs::read(path) else {
+        let Ok(original) = host::read(path) else {
             continue;
         };
         for _ in 0..rounds {
@@ -362,13 +358,13 @@ fn fuzz(rounds: usize, paths: &[String]) {
             panics += 1;
             let saved = format!(
                 "fuzz-{panics}-{}",
-                path.rsplit('/').next().unwrap_or_default()
+                host::rsplit_once(path, "/").map_or(path.as_str(), |it| it.1)
             );
-            let _ = std::fs::write(&saved, &code);
-            println!("{saved}: {problem}");
+            let _ = host::write(&saved, &code);
+            output_line!("{saved}: {problem}");
         }
     }
-    println!("{scanned} texts, {panics} problems");
+    output_line!("{scanned} texts, {panics} problems");
 }
 
 pub(crate) fn run(args: &[String]) {
@@ -380,7 +376,7 @@ pub(crate) fn run(args: &[String]) {
         [command, rounds, paths @ ..] if command == "fuzz" => {
             fuzz(rounds.parse().unwrap_or(1), paths)
         }
-        _ => println!(
+        _ => output_line!(
             "usage: bun-lint tokens dump <file> | batch <cases.jsonl> | query <cases.jsonl> | bench <files..> | fuzz <rounds> <files..>"
         ),
     }

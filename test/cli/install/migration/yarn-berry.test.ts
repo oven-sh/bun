@@ -29,8 +29,15 @@ async function runWithEnv(cwd: string, env: Record<string, string>, ...args: str
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
-    // yarn also reads the rc file of the home folder; keep the machine's own out of the tests
-    env: { ...bunEnv, HOME: cwd, USERPROFILE: cwd, ...env },
+    env: {
+      ...bunEnv,
+      // yarn also reads the rc file of the home folder; keep the machine's own out of the tests
+      HOME: cwd,
+      USERPROFILE: cwd,
+      // CI's per-file BUN_INSTALL_CACHE_DIR overrides bunfig's cache; concurrent installs sharing it race on Windows.
+      BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"),
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -877,7 +884,7 @@ catalogs:
     manifest?: object;
     files?: () => Record<string, string>;
     lock: () => string;
-    error: () => string;
+    error: () => string | RegExp;
   }[] = [
     {
       name: "a dependency with no entry",
@@ -1191,7 +1198,7 @@ catalogs:
       manifest: { dependencies: { "no-deps": "^1.0.0" } },
       files: () => ({ ".yarnrc.yml": `npmScopes: [\n` }),
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
-      error: () => `.yarnrc.yml is not valid YAML`,
+      error: () => /error: .*\.yarnrc\.yml is not valid YAML/,
     },
     {
       name: "a .yarnrc.yml that cannot be read",
@@ -1199,7 +1206,7 @@ catalogs:
       // a folder where the file should be
       files: () => ({ ".yarnrc.yml/keep": "" }),
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
-      error: () => `.yarnrc.yml`,
+      error: () => /error: could not read .*\.yarnrc\.yml/,
     },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {
@@ -1211,7 +1218,9 @@ catalogs:
       });
 
       const { stderr, exitCode } = await run(dir, "pm", "migrate");
-      expect(stderr).toContain(error());
+      const expected = error();
+      if (typeof expected === "string") expect(stderr).toContain(expected);
+      else expect(stderr).toMatch(expected);
       expect(stderr).not.toContain("migrated lockfile from yarn.lock");
       expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
       expect(await Bun.file(join(dir, "package.json")).text()).toBe(packageJson);

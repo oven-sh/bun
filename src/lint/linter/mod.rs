@@ -77,7 +77,7 @@ pub mod testing {
     };
     pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
-    pub use super::schema::validate_by_id;
+    pub use super::schema::{validate_by_id, validate_js};
     pub use super::syntax::diagnostics;
 }
 

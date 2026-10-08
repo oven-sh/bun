@@ -64,6 +64,8 @@ struct How<'h> {
     verifies: bool,
     /// For the names in a file with syntax errors. They are freed when the run ends.
     atoms: &'h dyn Intern,
+    /// What is allocated for all files. It is freed when the run ends.
+    memory: &'h Session,
 }
 
 /// Parses `text` and calls `then` with the file, and with the first error in it.
@@ -75,12 +77,12 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
         source_type: if how.is_script { SourceType::Script } else { SourceType::Module },
         ..LanguageOptions::default()
     };
-    let session = Session::new();
+    let session = how.memory;
     let arena = session.arena();
     let options = language.parse_options(path);
     bun_js_parser::sema::with_summary(
         Dialect::babel(how.is_script),
-        (arena, &session),
+        (arena, session),
         path,
         options.script_kind,
         text,
@@ -141,7 +143,7 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
         omits_final_newline: false,
     };
     let names = Session::new();
-    let formatted = format(path, code, &resolved, &Interner::new_in(&names), &mut Scratches::default(), false);
+    let formatted = format(path, code, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false);
     formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
 }
 
@@ -149,7 +151,7 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
 type Formatted = (Vec<u8>, Option<u32>);
 
 /// The formatted text of the file at `path`. `verifies`: it is parsed and compared with `text`.
-fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scratch: &mut Scratches, verifies: bool) -> Result<Formatted, Failure> {
+fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn Intern, &Session), scratch: &mut Scratches, verifies: bool) -> Result<Formatted, Failure> {
     let options = &resolved.options;
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
     let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path);
@@ -206,6 +208,7 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
             resolved,
             verifies,
             atoms,
+            memory,
         };
         match format_as(&how, &text, &mut scratch.js) {
             Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
@@ -273,7 +276,7 @@ pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Re
         omits_final_newline: false,
     };
     let names = Session::new();
-    format(path, text, &resolved, &Interner::new_in(&names), &mut Scratches::default(), false).map_err(|failure| matches!(failure, Failure::Syntax(_)))
+    format(path, text, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false).map_err(|failure| matches!(failure, Failure::Syntax(_)))
 }
 
 /// What has become of a file.
@@ -374,7 +377,7 @@ impl Run<'_> {
             return out;
         }
         let names = Session::new();
-        match format(&path, &text, &options, &Interner::new_in(&names), &mut Scratches::default(), self.options.verify) {
+        match format(&path, &text, &options, (&Interner::new_in(&names), &names), &mut Scratches::default(), self.options.verify) {
             Err(failure) => self.error(&Self::describe(name, failure)),
             Ok((formatted, _)) if self.options.check || self.options.list_different => {
                 if formatted != text {
@@ -460,6 +463,7 @@ impl Run<'_> {
         let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
         let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
         let atoms = InternerPerThread::new_in(&names);
+        let memory = Session::new();
         let mut results = Guarded::new(done);
         pool.for_each(work.len(), 1, &|at| {
             let (index, target) = work[at];
@@ -469,7 +473,7 @@ impl Run<'_> {
                 let options = configs.options_for(&target.scope, &target.path).map_err(|error| error.0)?;
                 let text = fs::read_sized(&target.path, target.size)
                     .map_err(|error| [b"Unable to read file \"", &shown[..], b"\":\n", &fs::describe(&error)].concat())?;
-                let (formatted, _) = format(&target.path, &text, &options, &atoms, &mut scratch, self.options.verify && !only_looks)
+                let (formatted, _) = format(&target.path, &text, &options, (&atoms, &memory), &mut scratch, self.options.verify && !only_looks)
                     .map_err(|failure| Self::describe(&shown, failure))?;
                 if formatted == text {
                     return Ok(Done::Unchanged);

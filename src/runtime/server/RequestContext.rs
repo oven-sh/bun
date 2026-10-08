@@ -2601,12 +2601,8 @@ where
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
-                //
-                // An S3 object has no bytes in memory. GET sends an empty body
-                // for it, so HEAD states that length and asks S3 nothing. Not
-                // through `resolve_size()`: that writes the 0 into the
-                // Response's blob.
                 let blob_size = if shim::blob_is_s3(blob) {
+                    // Not in memory: GET sends no bytes. `resolve_size()` would store the 0 in it.
                     0
                 } else {
                     blob.resolve_size();

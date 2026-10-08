@@ -198,9 +198,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if self.inside_at_rule(&[b"forward"])
                 && word(i_node).is_some_and(|it| !it.is_empty())
                 && prev_node.is_some_and(|it| is_the_word(it, b"as"))
-                && next_node.is_some_and(is_multiplication)
             {
-                continue;
+                // Prettier takes it for granted that something follows.
+                self.has_failed |= next_node.is_none();
+                if next_node.is_some_and(is_multiplication) {
+                    continue;
+                }
             }
             // `@utility a-*` of Tailwind.
             if self.inside_at_rule(&[b"utility"]) && word(i_node).is_some() && next_node.is_some_and(is_multiplication) {
@@ -429,11 +432,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 continue;
             }
             // `--a#{(1) + 2}`
-            if i_node.value().is_some_and(|it| it.ends_with(b"#"))
-                && matches!(&next_node.kind, ValueKind::Func { value, group }
-                    if **value == *b"{" && paren_group_open(group).is_some())
-            {
-                continue;
+            if i_node.value().is_some_and(|it| it.ends_with(b"#")) && next_node.value() == Some(b"{") {
+                match &next_node.kind {
+                    ValueKind::Func { group, .. } if paren_group_open(group).is_some() => continue,
+                    ValueKind::Func { .. } => {}
+                    // Prettier takes it for a function.
+                    _ => self.has_failed = true,
+                }
             }
 
             // It is printed at the end of the line, with the space before it.

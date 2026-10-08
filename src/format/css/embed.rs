@@ -111,7 +111,8 @@ impl<'a> Writer<'a> {
 
     fn write(&mut self, doc: &Doc<'_>, f: &mut Formatter<'a>) {
         match doc {
-            Doc::Text(text) if !self.has_placeholders => self.write_string(text, f),
+            // Only a string with a substitution in it is taken apart.
+            Doc::Text(text) if !self.has_placeholders || find_placeholder(text).is_none() => self.write_string(text, f),
             Doc::Text(text) => {
                 let mut rest = &text[..];
                 while let Some((start, end, number)) = find_placeholder(rest) {

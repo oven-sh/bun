@@ -333,7 +333,7 @@ impl Preprocessor<'_> {
                 open.pop();
                 continue;
             }
-            let mut mark = |tree: &mut Tree, open: &[(NodeId, bool)]| {
+            let mark = |tree: &mut Tree, open: &[(NodeId, bool)]| {
                 for &(paragraph, can_open) in open {
                     if can_open && let Some(paragraph) = tree.get_mut(paragraph) {
                         paragraph.spread = true;

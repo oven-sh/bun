@@ -1471,7 +1471,7 @@ impl<'t> Parser<'t> {
             content.fill(self.text, &self.segments[first..]);
             let mut position = 0;
             while let Some(definition) = inline::parse_definition(&content.bytes, position) {
-                self.add_definition(&content, position, &definition);
+                self.add_definition(&content, &definition);
                 position = definition.end + 1;
                 if position > content.bytes.len() {
                     break;
@@ -1512,7 +1512,7 @@ impl<'t> Parser<'t> {
         true
     }
 
-    fn add_definition(&mut self, content: &Content, start: usize, definition: &inline::Definition) {
+    fn add_definition(&mut self, content: &Content, definition: &inline::Definition) {
         let node = self.add_block(
             Kind::Definition,
             content.source(definition.label.0 - 1) as usize,

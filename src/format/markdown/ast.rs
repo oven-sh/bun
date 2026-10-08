@@ -36,10 +36,8 @@ pub(crate) enum Kind {
     FootnoteReference,
     InlineMath,
     WikiLink,
-    /// What Prettier's `splitText` makes of a `Text`.
+    /// What Prettier's `splitText` makes of a `Text`: words and white space, which are not nodes here.
     Sentence,
-    Word,
-    Whitespace,
 }
 
 impl Kind {
@@ -76,8 +74,6 @@ impl Kind {
             Kind::InlineMath => "inlineMath",
             Kind::WikiLink => "wikiLink",
             Kind::Sentence => "sentence",
-            Kind::Word => "word",
-            Kind::Whitespace => "whitespace",
         }
     }
 }
@@ -316,10 +312,6 @@ impl Tree {
             tree: self,
             next: self.get(id).map_or(NONE, |node| node.first_child),
         }
-    }
-
-    pub(crate) fn child_count(&self, id: NodeId) -> usize {
-        self.children(id).count()
     }
 
     /// A string that is not written in the text the way it is meant: what `write` appends.

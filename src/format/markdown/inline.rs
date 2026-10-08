@@ -7,8 +7,7 @@
 use super::ast::{Kind, Node, NodeId, ReferenceType, Str, Tree};
 use super::content::Content;
 use super::strings::{
-    CharacterClass, character_reference, classify, first_char, is_unicode_punctuation, is_unicode_whitespace, last_char,
-    normalize_identifier, push_lowercase, unescape,
+    CharacterClass, character_reference, classify, first_char, last_char, normalize_identifier, push_lowercase, unescape,
 };
 use rustc_hash::FxHashSet;
 

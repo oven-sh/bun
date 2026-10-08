@@ -66,6 +66,24 @@ fn replace_end_of_line<'a>(text: &'a [u8], separator: impl Fn() -> Doc<'a>) -> D
     Doc::Array(parts)
 }
 
+/// Text that has been formatted, line by line.
+fn lines_of<'a>(formatted: Vec<u8>) -> Doc<'a> {
+    let mut parts = Vec::new();
+    let mut previous: &[u8] = &[];
+    for (index, line) in bun_core::strings::split(&formatted, b"\n").enumerate() {
+        if index > 0 {
+            // A line that ends with blanks is in a template or the like: nothing is taken away from it.
+            parts.push(match previous.last() {
+                Some(b' ' | b'\t') => literalline(),
+                _ => hardline(),
+            });
+        }
+        parts.push(Doc::from(line.to_vec()));
+        previous = line;
+    }
+    Doc::Array(parts)
+}
+
 /// The longest run of `marker` in `text`.
 fn max_continuous_count(text: &[u8], marker: u8) -> usize {
     text.split(|&byte| byte != marker).map(<[u8]>::len).max().unwrap_or(0)
@@ -269,8 +287,6 @@ impl<'a> Printer<'a, '_> {
                 | Kind::ImageReference
                 | Kind::FootnoteReference
                 | Kind::Sentence
-                | Kind::Whitespace
-                | Kind::Word
                 | Kind::Break
                 | Kind::InlineMath
         )
@@ -548,7 +564,7 @@ impl<'a> Printer<'a, '_> {
 
         let mut units: Vec<u16> = bstr::ByteSlice::chars(text).flat_map(|c| c.encode_utf16(&mut [0; 2]).to_vec()).collect();
         // At the very start of the emphasis.
-        if index == 0 && sentence.previous == NONE && sentence.parent == emphasis {
+        if index == 0 && matches!(text[0], b'*' | b'_') && sentence.previous == NONE && sentence.parent == emphasis {
             units.insert(0, u16::from(b'\\'));
         }
         let unit_of = |token: Option<&Token>, is_last: bool| -> Option<u16> {
@@ -733,7 +749,7 @@ impl<'a> Printer<'a, '_> {
                 NONE => Doc::EMPTY,
                 _ => docs![self.print_root(id), hardline()],
             },
-            Kind::FrontMatter => Doc::from(self.source(node)),
+            Kind::FrontMatter => self.print_front_matter(node),
             Kind::Paragraph => {
                 let mut parts = FillParts::new();
                 let mut child = node.first_child;
@@ -745,7 +761,6 @@ impl<'a> Printer<'a, '_> {
                 parts.finish()
             }
             Kind::Sentence => self.print_sentence(id, node),
-            Kind::Word | Kind::Whitespace => Doc::EMPTY,
             Kind::Emphasis => {
                 let style: &'a [u8] = if self.is_autolink(node.first_child) {
                     self.source(node).get(..1).unwrap_or(b"_")
@@ -986,21 +1001,48 @@ impl<'a> Printer<'a, '_> {
             code,
             width,
         })?;
-        // A line that ends with blanks is in a template or the like: nothing is taken away from it.
-        let mut parts = Vec::new();
-        let formatted = crate::range::trim_end(&formatted);
-        let mut previous: &[u8] = &[];
-        for (index, line) in bun_core::strings::split(formatted, b"\n").enumerate() {
-            if index > 0 {
-                parts.push(match previous.last() {
-                    Some(b' ' | b'\t') => literalline(),
-                    _ => hardline(),
-                });
-            }
-            parts.push(Doc::from(line.to_vec()));
-            previous = line;
-        }
-        Some(mark_as_root(self.print_code(id, node, Some(Doc::Array(parts)))))
+        let formatted = crate::range::trim_end(&formatted).to_vec();
+        Some(mark_as_root(self.print_code(id, node, Some(lines_of(formatted)))))
+    }
+
+    /// Prettier's `printEmbedFrontMatter`
+    fn print_front_matter(&mut self, node: &Node) -> Doc<'a> {
+        let raw = self.source(node);
+        let Some(front_matter) = super::front_matter::parse(self.text) else {
+            return Doc::from(raw);
+        };
+        let language = &self.text[front_matter.explicit_language.0..front_matter.explicit_language.1];
+        let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
+        let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
+        let value = &self.text[front_matter.value.0..front_matter.value.1];
+        let value = crate::range::trim_end(crate::range::trim_start(value));
+        let formatted = match value {
+            b"" if is_yaml || is_toml => (self.embed)(&Embedded {
+                language: b"",
+                code: b"",
+                width: 0,
+            }),
+            _ if is_yaml => (self.embed)(&Embedded {
+                language: b"yaml",
+                code: value,
+                width: self.options.line_width.value() as usize,
+            }),
+            _ => None,
+        };
+        let Some(formatted) = formatted else {
+            return Doc::from(raw);
+        };
+        let formatted = crate::range::trim_end(&formatted).to_vec();
+        mark_as_root(docs![
+            &raw[..3],
+            language,
+            hardline(),
+            match formatted.is_empty() {
+                true => Doc::EMPTY,
+                false => docs![lines_of(formatted), hardline()],
+            },
+            &raw[raw.len() - 3..]
+        ])
     }
 
     /// Prettier's `printRoot`: what is between `<!-- prettier-ignore-start -->` and `<!-- prettier-ignore-end -->`

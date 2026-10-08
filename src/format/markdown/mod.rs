@@ -89,6 +89,10 @@ fn format_embedded(
     options: &FormatOptions,
     format_javascript: &mut FormatJavaScript<'_>,
 ) -> Option<Vec<u8>> {
+    // Nothing to format: front matter without anything in it.
+    if language.is_empty() {
+        return Some(Vec::new());
+    }
     let parser = infer_parser(language)?;
     let options = FormatOptions {
         line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),

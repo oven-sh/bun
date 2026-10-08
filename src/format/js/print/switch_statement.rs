@@ -43,6 +43,10 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     let consequent = case.body();
     let mut statements = consequent.iter().filter(|it| !matches!(it.kind(), StmtKind::Empty));
     let Some(first_statement) = statements.next() else {
+        // `default /* comment */:`
+        if case.test().is_none() && f.comments().has_comment_before(case.span().end) {
+            write!(f, [space(), format_dangling_comments(case.span())]);
+        }
         return;
     };
     // The `{` of a block that is all there is goes on the line of the `case`.

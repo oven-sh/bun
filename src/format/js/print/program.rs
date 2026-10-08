@@ -1,10 +1,13 @@
 //! The file, its `#!` line, directives, and lists of statements.
 
 use super::semicolon::OptionalSemicolon;
-use super::statements::{expression_statement_needs_semicolon, follows_type_cast_comment};
+use super::statements::{
+    CommentPlacement, comment_placements, expression_statement_needs_semicolon, follows_type_cast_comment,
+};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::{format_args, write};
+use smallvec::SmallVec;
 
 pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let source = file.text();
@@ -117,40 +120,56 @@ pub(crate) struct FormatStatements<'a>(pub(crate) List<'a, Stmt<'a>>);
 impl<'a> Format<'a> for FormatStatements<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let mut previous: Option<Stmt<'a>> = None;
-        let mut is_after_empty_statement = false;
-        for statement in self.0.iter() {
-            if matches!(statement.kind(), StmtKind::Empty) {
-                is_after_empty_statement = true;
+        for statement in self.0.iter().filter(|it| !matches!(it.kind(), StmtKind::Empty)) {
+            let Some(previous_statement) = previous.replace(statement) else {
+                write_semicolon_before_type_cast_comment(statement, f);
+                write!(f, statement);
                 continue;
+            };
+            // Nearly always, what is left between two statements starts its line.
+            let comments = f.comments().comments_before(statement.span().start);
+            let placements = match comments.iter().all(|comment| comment.preceded_by_newline()) {
+                true => SmallVec::new(),
+                false => write_more_trailing_comments(previous_statement, comments, statement, f),
+            };
+            match is_next_line_empty_after(previous_statement, f) {
+                true => write!(f, empty_line()),
+                false => write!(f, hard_line_break()),
             }
-            if let Some(previous) = previous {
-                if is_after_empty_statement && !f.is_quiet() {
-                    write_comments_after_empty_statements(previous, statement, f);
-                }
-                match is_next_line_empty_after(previous, f) {
-                    true => write!(f, empty_line()),
-                    false => write!(f, hard_line_break()),
-                }
+            for (comment, _) in comments.iter().zip(&placements).filter(|(_, placement)| placement.leads()) {
+                write!(f, FormatLeadingComments::Comments(std::slice::from_ref(comment)));
             }
             write_semicolon_before_type_cast_comment(statement, f);
             write!(f, statement);
-            previous = Some(statement);
-            is_after_empty_statement = false;
         }
     }
 }
 
-/// `a; // comment\n; // comment`: a comment behind an empty statement does not start its line, so
-/// it trails `previous` as well.
+/// Of `comments`, which are what is left between `previous` and `next`, writes those that trail
+/// `previous`: there is a `;` of `previous`, or an empty statement, between them and what is around
+/// them.
+///
+///     a
+///     // leads b
+///     ; // trails a
+///     ; // trails a
+///     b;
+///
+/// Returns where the comments are, if those that lead `next` have to be written by the caller
+/// because one of them is before one that trails.
 #[cold]
-fn write_comments_after_empty_statements<'a>(previous: Stmt<'a>, next: Stmt<'a>, f: &mut Formatter<'a>) {
+fn write_more_trailing_comments<'a>(
+    previous: Stmt<'a>,
+    comments: &'a [Comment],
+    next: Stmt<'a>,
+    f: &mut Formatter<'a>,
+) -> SmallVec<[CommentPlacement; 8]> {
+    let placements = comment_placements(comments, next.span().start, f);
+    // Prettier's `printTrailingComment`
     let mut is_after_line_comment = (f.comments().printed_comments().last())
         .is_some_and(|comment| comment.is_line() && comment.span.start >= previous.span().start);
     let mut has_line_suffix = is_after_line_comment;
-    for comment in f.comments().comments_before(next.span().start) {
-        if comment.preceded_by_newline() || !comment.followed_by_newline() {
-            break;
-        }
+    for (comment, _) in comments.iter().zip(&placements).filter(|(_, placement)| !placement.leads()) {
         f.comments_mut().increment_printed_count();
         if is_after_line_comment {
             write!(f, line_suffix(&format_args!(hard_line_break(), comment)));
@@ -161,6 +180,12 @@ fn write_comments_after_empty_statements<'a>(previous: Stmt<'a>, next: Stmt<'a>,
         }
         has_line_suffix |= comment.is_line() || is_after_line_comment;
         is_after_line_comment = comment.is_line();
+    }
+
+    let trailing_count = placements.iter().take_while(|placement| !placement.leads()).count();
+    match placements.iter().skip(trailing_count).all(|placement| placement.leads()) {
+        true => SmallVec::new(),
+        false => placements,
     }
 }
 

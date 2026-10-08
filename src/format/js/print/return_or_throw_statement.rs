@@ -1,4 +1,5 @@
 use super::semicolon::OptionalSemicolon;
+use crate::js::format::write_trailing_comments_of;
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -44,11 +45,25 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
                 group(&format_args!(if_group_breaks(&"("), soft_block_indent(&argument), if_group_breaks(&")")))
             );
         } else if is_sequence {
+            let format_argument =
+                format_with(|f| write!(f, group(&format_args!("(", soft_block_indent(&argument), ")"))));
+            if f.is_quiet() {
+                return write!(f, format_argument);
+            }
             let span = argument.span();
-            if !f.is_quiet() && f.comments().get_type_cast_comment_index(span).is_none() {
+            if f.comments().get_type_cast_comment_index(span).is_none() {
                 write!(f, format_leading_comments(span));
             }
-            write!(f, group(&format_args!("(", soft_block_indent(&argument), ")")));
+            // The comments before the `)` go behind it. After `return`, only those that start
+            // their line: see `write_comments_before_closing_parenthesis`.
+            let is_return = matches!(argument.ast_parent(), AstNodes::ReturnStatement(_));
+            let limit = (f.comments().comments_in_range(span.end, argument.outer_span().end).iter())
+                .find(|comment| !is_return || comment.preceded_by_newline())
+                .map_or(argument.outer_span().end, |comment| comment.span.start);
+            let previous_limit = f.comments_mut().limit_comments_up_to(limit);
+            write!(f, format_argument);
+            f.comments_mut().restore_view_limit(previous_limit);
+            write_trailing_comments_of(argument.as_ast_nodes(), f);
         } else {
             write!(f, argument);
         }
@@ -80,7 +95,10 @@ fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> b
         if let ExprKind::Dot { obj, name, .. } = left_side.expr.kind()
             && !name.bytes().starts_with(b"#")
             && comments.comments_in_range(obj.span().end, name.span().end).iter().any(|comment| {
-                (comment.is_multiline_block() || comment.preceded_by_newline()) && is_before_type_cast(comment)
+                // Prettier's `handleMemberExpressionComments`: it leads the member expression.
+                comment.preceded_by_newline()
+                    && (comment.is_multiline_block() || comment.followed_by_newline())
+                    && is_before_type_cast(comment)
             })
         {
             return true;

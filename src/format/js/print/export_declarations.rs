@@ -68,9 +68,28 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
     else {
         return;
     };
-    write!(f, ["export", space(), type_only.then_some("type "), "*", space()]);
-    if let Some(name) = alias {
-        write!(f, ["as", space(), module_export_name(name, AstNodes::ExportAllDeclaration(statement)), space()]);
+    write!(f, ["export", space(), type_only.then_some("type ")]);
+    let Some(name) = alias else {
+        write!(f, ["*", space(), "from", space()]);
+        format_import_and_export_source_with_clause(statement, f);
+        return write!(f, OptionalSemicolon);
+    };
+    let format_name = module_export_name(name, AstNodes::ExportAllDeclaration(statement));
+    if f.is_quiet() {
+        write!(f, ["*", space(), "as", space(), format_name, space()]);
+    } else {
+        // To Babel `* as a` is a specifier, which the comments before it lead. To TypeScript there
+        // is only the name.
+        if f.file().is_javascript() {
+            let comments = f.comments().comments_before_character(statement.span().start, b'*');
+            write!(f, FormatLeadingComments::Comments(comments));
+        }
+        write!(f, ["*", space(), "as", space()]);
+        let previous_limit = f.comments_mut().limit_comments_up_to(name.span().end);
+        write!(f, format_name);
+        f.comments_mut().restore_view_limit(previous_limit);
+        let source_start = statement.module_specifier_span().map_or(0, |source| source.start);
+        write!(f, [format_trailing_comments(statement.span(), name.span(), source_start), space()]);
     }
     write!(f, ["from", space()]);
     format_import_and_export_source_with_clause(statement, f);

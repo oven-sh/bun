@@ -1,3 +1,4 @@
+use super::block_statement::is_empty_block;
 use crate::js::format::{
     FormatTypeAnnotation, format_node_without_comments, write_declaration, write_trailing_comments_of,
 };
@@ -40,17 +41,18 @@ pub(crate) fn write_try_statement<'a>(
         // `} /* comment */ finally {`
         if !f.is_quiet() {
             let comments = f.comments().comments_before(finalizer.span().start);
+            let mut position = handler.unwrap_or(block).span().end;
+            let count = comments
+                .iter()
+                .take_while(|comment| {
+                    let gap = f.source_text().slice_range(position, comment.span.start);
+                    position = comment.span.end;
+                    gap.trim_ascii().is_empty()
+                })
+                .count();
+            let comments = comments.get(..count).unwrap_or_default();
             if !has_comment_with_line_break(comments) {
-                let mut position = handler.unwrap_or(block).span().end;
-                let count = comments
-                    .iter()
-                    .take_while(|comment| {
-                        let gap = f.source_text().slice_range(position, comment.span.start);
-                        position = comment.span.end;
-                        gap.trim_ascii().is_empty()
-                    })
-                    .count();
-                write!(f, FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()));
+                write!(f, FormatTrailingComments::Comments(comments));
             }
         }
         write!(f, [space(), "finally", space()]);
@@ -69,7 +71,18 @@ fn write_catch_clause<'a>(node: AstNodes<'a>, param: Option<VarDecl<'a>>, body: 
     // `write_block_statement` takes it from the cache. Any other stays before `catch`.
     let leading_comments = f.comments().comments_before(node.span().start);
     if has_comment_with_line_break(leading_comments) {
-        if let Some(comments) = f.intern(&FormatLeadingComments::Comments(leading_comments)) {
+        let is_empty = matches!(body.kind(), StmtKind::Block(statements) if is_empty_block(statements));
+        let format_comments = format_with(|f| match is_empty {
+            true => {
+                let comments = FormatDanglingComments::Comments {
+                    comments: leading_comments,
+                    indent: DanglingIndentMode::None,
+                };
+                write!(f, [comments, hard_line_break()]);
+            }
+            false => write!(f, FormatLeadingComments::Comments(leading_comments)),
+        });
+        if let Some(comments) = f.intern(&format_comments) {
             f.context_mut().cache_element(&node.span(), comments);
         }
     } else if !leading_comments.is_empty() {

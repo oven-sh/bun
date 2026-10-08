@@ -110,6 +110,10 @@ pub(crate) fn write_expression_statement<'a>(statement: Stmt<'a>, expression: Ex
     // Prettier's `handleParenthesizedExpressionTrailingComment`: `(a /* comment */);` is
     // `a; /* comment */`.
     write!(f, [FormatNodeWithoutTrailingComments(&expression), OptionalSemicolon]);
+    if !f.is_quiet() {
+        let end = f.comments().without_semicolon(statement.span()).end;
+        write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));
+    }
 }
 
 pub(crate) fn write_do_while_statement<'a>(statement: Stmt<'a>, body: Stmt<'a>, test: Expr<'a>, f: &mut Formatter<'a>) {
@@ -288,6 +292,73 @@ pub(crate) fn write_for_statement<'a>(
     );
 }
 
+/// Where a comment between two nodes is. See [`comment_placements`].
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum CommentPlacement {
+    /// It starts its line: it leads the following node.
+    OwnLine,
+    /// It ends its line: it trails the preceding node.
+    EndOfLine,
+    /// A token is between it and the following node: it trails the preceding node.
+    BeforeToken,
+    /// It leads the following node.
+    BeforeNode,
+}
+
+impl CommentPlacement {
+    pub(crate) fn leads(self) -> bool {
+        matches!(self, CommentPlacement::OwnLine | CommentPlacement::BeforeNode)
+    }
+}
+
+/// What Prettier's `attachComments` does, if no handler says otherwise, with `comments`: all the
+/// comments between a node and the next one, which starts at `following_start`.
+pub(crate) fn comment_placements(
+    comments: &[Comment],
+    following_start: u32,
+    f: &Formatter<'_>,
+) -> SmallVec<[CommentPlacement; 8]> {
+    let source = f.source_text();
+    let is_blank = |start: u32, end: u32| source.all_bytes_match(start, end, |b| matches!(b, b' ' | b'\t'));
+    let mut placements: SmallVec<[CommentPlacement; 8]> = SmallVec::new();
+
+    // A comment behind one that starts the line counts as starting it.
+    let mut previous: Option<(&Comment, bool)> = None;
+    for comment in comments {
+        let starts_line = comment.preceded_by_newline()
+            || previous.is_some_and(|(previous, starts_line)| {
+                starts_line && is_blank(previous.span.end, comment.span.start)
+            });
+        placements.push(match starts_line {
+            true => CommentPlacement::OwnLine,
+            false => CommentPlacement::BeforeToken,
+        });
+        previous = Some((comment, starts_line));
+    }
+
+    // The same for the end of the line.
+    let (mut ends_line, mut next_start) = (false, following_start);
+    let mut gap_end = Some(following_start);
+    for (comment, placement) in comments.iter().zip(&mut placements).rev() {
+        ends_line = comment.followed_by_newline() || (ends_line && is_blank(comment.span.end, next_start));
+        next_start = comment.span.start;
+        if *placement == CommentPlacement::OwnLine {
+            continue;
+        }
+        if ends_line {
+            *placement = CommentPlacement::EndOfLine;
+            continue;
+        }
+        gap_end = gap_end
+            .filter(|&end| source.all_bytes_match(comment.span.end, end, |b| b.is_ascii_whitespace() || b == b'('))
+            .map(|_| comment.span.start);
+        if gap_end.is_some() {
+            *placement = CommentPlacement::BeforeNode;
+        }
+    }
+    placements
+}
+
 /// `left in right`, `left of right`
 struct FormatForInOrOfHead<'a> {
     left: Stmt<'a>,
@@ -306,35 +377,10 @@ impl<'a> Format<'a> for FormatForInOrOfHead<'a> {
         write!(f, left);
         f.comments_mut().restore_view_limit(previous_limit);
 
-        // Where Prettier attaches the comments between the two: one that starts its line leads
-        // `right`, one that ends its line trails `left`, any other belongs to the side of the
-        // keyword that it is on. So a comment that leads can be before one that trails.
+        // A comment that leads `right` can be before one that trails `left`.
         let comments = f.comments().comments_before(right.span().start);
-        let source = f.source_text();
-        let is_blank = |start: u32, end: u32| source.all_bytes_match(start, end, |b| matches!(b, b' ' | b'\t'));
-        let mut leads: SmallVec<[bool; 8]> = SmallVec::new();
-        let mut previous: Option<(&Comment, bool)> = None;
-        for comment in comments {
-            let starts_line = comment.preceded_by_newline()
-                || previous.is_some_and(|(previous, starts_line)| {
-                    starts_line && is_blank(previous.span.end, comment.span.start)
-                });
-            leads.push(starts_line);
-            previous = Some((comment, starts_line));
-        }
-        let (mut ends_line, mut next_start) = (false, right.span().start);
-        let mut gap_end = Some(next_start);
-        for (comment, leads) in comments.iter().zip(&mut leads).rev() {
-            ends_line = comment.followed_by_newline() || (ends_line && is_blank(comment.span.end, next_start));
-            next_start = comment.span.start;
-            if *leads || ends_line {
-                continue;
-            }
-            gap_end = gap_end
-                .filter(|&end| source.all_bytes_match(comment.span.end, end, |b| b.is_ascii_whitespace() || b == b'('))
-                .map(|_| comment.span.start);
-            *leads = gap_end.is_some();
-        }
+        let leads: SmallVec<[bool; 8]> =
+            comment_placements(comments, right.span().start, f).iter().map(|it| it.leads()).collect();
 
         let trailing_count = leads.iter().take_while(|leads| !**leads).count();
         if leads.iter().skip(trailing_count).all(|leads| *leads) {
@@ -470,18 +516,32 @@ pub(crate) fn write_break_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'
 }
 
 pub(crate) fn write_labeled_statement<'a>(statement: Stmt<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
-    // Prettier's `handleLabeledStatementComments`: a comment that starts or ends its line goes
-    // before the label.
-    if !f.is_quiet() {
-        let comments = f.comments().comments_before(body.span().start);
-        let count = comments.iter().rposition(|it| it.preceded_by_newline() || it.followed_by_newline());
-        let comments = comments.get(..count.map_or(0, |last| last + 1)).unwrap_or_default();
-        write!(f, FormatLeadingComments::Comments(comments));
+    let Some(label) = statement.label() else {
+        return;
+    };
+    let body_start = body.span().start;
+    let is_empty = matches!(body.kind(), StmtKind::Empty);
+    if !f.comments().has_comment_before(body_start) {
+        return write!(f, [source_text(label.span()), ":", maybe_space(!is_empty), body]);
     }
 
-    if let Some(label) = statement.label() {
-        write!(f, identifier(label, statement.as_ast_nodes()));
+    // Prettier's `handleLabeledStatementComments`: a comment that starts or ends its line goes
+    // before the label.
+    let comments = f.comments().comments_before(body_start);
+    let placements = comment_placements(comments, body_start, f);
+    let all = || comments.iter().map(std::slice::from_ref).zip(placements.iter().copied());
+    for (comment, placement) in all() {
+        if matches!(placement, CommentPlacement::OwnLine | CommentPlacement::EndOfLine) {
+            write!(f, FormatLeadingComments::Comments(comment));
+        }
     }
-    let is_empty = matches!(body.kind(), StmtKind::Empty) && !f.comments().has_comment_before(body.span().start);
-    write!(f, [":", maybe_space(!is_empty), body]);
+    write!(f, source_text(label.span()));
+    for (comment, _) in all().filter(|(_, placement)| *placement == CommentPlacement::BeforeToken) {
+        write!(f, FormatTrailingComments::Comments(comment));
+    }
+    write!(f, [":", maybe_space(!is_empty || placements.contains(&CommentPlacement::BeforeNode))]);
+    for (comment, _) in all().filter(|(_, placement)| *placement == CommentPlacement::BeforeNode) {
+        write!(f, FormatLeadingComments::Comments(comment));
+    }
+    write!(f, body);
 }

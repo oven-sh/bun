@@ -78,11 +78,13 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
         //     else {}
         //
         // `comment1` trails the statement, `comment2` is left for the `else`.
-        write!(f, FormatNodeWithoutTrailingComments(&body));
-        if matches!(body.kind(), StmtKind::Block(_)) {
-            return;
+        if matches!(body.kind(), StmtKind::Block(_)) || f.comments().has_trailing_suppression_comment(body.span().end) {
+            return write!(f, FormatNodeWithoutTrailingComments(&body));
         }
         let end = f.comments().without_semicolon(body.span()).end;
+        let previous_limit = f.comments_mut().limit_comments_up_to(end);
+        write!(f, body);
+        f.comments_mut().restore_view_limit(previous_limit);
         let comments = comments_before_else(body, alternate, f);
         let count = comments
             .iter()

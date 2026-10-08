@@ -2894,21 +2894,30 @@ ${statement(repeat("!", 60_000))}
       expect(exitCode).toBe(1);
     });
 
-    // `T[][][]` is read in a loop as well. Its type is as deep as it looks, so whether a build can tell what
-    // the type is depends on the size of its stack frames.
+    // `T[][][]` is read in a loop as well. Its type is as deep as it looks, so what a build says about the
+    // type depends on the size of its stack frames. The errors after it do not.
     test.each([
-      ["the type of a class property", "a.ts", (run: string) => `export class C {\n  p: number${run} = 1;\n}`],
+      [
+        "the type of a class property",
+        "a.ts",
+        (run: string) => `export class C {\n  p: number${run} = 1;\n}`,
+        `a.ts(6,32): error TS2339: Property 'nope' does not exist on type '""'.`,
+      ],
       [
         "a JSDoc @typedef",
         "a.js",
         (run: string) => `/** @typedef {number${run}} T */\n/** @type {T} */\nexport let t = 1;`,
+        `a.js(5,14): error TS2322: Type 'string' is not assignable to type 'number'.
+a.js(6,32): error TS2339: Property 'nope' does not exist on type 'number'.`,
       ],
       [
         "a JSDoc @param with properties",
         "a.js",
         (run: string) => `/**\n * @param {Object${run}} a\n * @param {number} a.b\n */\nexport function f(a) {}`,
+        `a.js(7,14): error TS2322: Type 'string' is not assignable to type 'number'.
+a.js(8,32): error TS2339: Property 'nope' does not exist on type 'number'.`,
       ],
-    ])("200,000 array types in a row, %s", async (_where, name, declaration) => {
+    ])("200,000 array types in a row, %s", async (_where, name, declaration, errorsAfterIt) => {
       using dir = project({
         [name]: `${declaration(repeat("[]", 200_000))}
 /** @type {number} */
@@ -2916,7 +2925,8 @@ export const wrong = "";
 export const alsoWrong = wrong.nope;
 `,
       });
-      const { exitCode } = await check(dir, ["--allowJs", "--checkJs"]);
+      const { stdout, exitCode } = await check(dir, ["--allowJs", "--checkJs"]);
+      expect(stdout.slice(-errorsAfterIt.length)).toBe(errorsAfterIt);
       expect(exitCode).toBe(1);
     });
 

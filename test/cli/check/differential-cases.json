@@ -15370,6 +15370,12 @@
       "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2023\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"isolatedModules\": true}}"
     }
   },
+  "99-B5": {
+    "files": {
+      "a.ts": "declare const k: string | undefined;\ndeclare const o: { p?: string } | undefined;\nexport const n1: number = ({ [k!]: v }: Record<string, number>) => v;\nexport const n2: number = ({ [k!!]: v }: Record<string, number>) => v;\nexport const n3: number = ({ [k!!!]: v }: Record<string, number>) => v;\nexport const n4: number = ({ [(k!!)!]: v }: Record<string, number>) => v;\nexport const n5: number = ({ [o!!.p!!]: v }: Record<string, number>) => v;\nexport const n6: number = ({ [k! ! /* c */ !]: v }: Record<string, number>) => v;\nexport const n7: number = ([{ [k!!]: v }]: Record<string, number>[]) => v;\nexport function f({ [k!!]: v }: Record<string, number>) { return v; }\nexport const n8: number = f;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2023\"], \"declaration\": true } }\n"
+    }
+  },
   "99-I1": {
     "files": {
       "a.ts": "type Hydrated<T> = T extends { x: {} }\n  ? T\n  : T & {\n      [P in keyof T]: T[P] extends Lazy<infer U> ? Lazy<U> : T[P];\n    };\n\ndeclare class Lazy<T> {\n  brand: T;\n}\n\ndeclare class Model {\n  isHydrated(): this is {};\n  assertHydrated(): this is Hydrated<this>;\n}\ndeclare class Collection<T> {\n  hydrate(): Hydrated<T>;\n}\nclass ChildCollection extends Collection<Model> {}\n\ndeclare function relation<T extends Model>(ctor: new () => Collection<NoInfer<T>>): void;\n\nrelation(ChildCollection);\nconst sentinel: number = \"\";\n",

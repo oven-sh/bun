@@ -5259,7 +5259,16 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     keyword.to_vec()
                 }
             }
-            ExprKind::NonNull(operand) => cat!(emit(operand, P::Member)?, b"!"),
+            // The operand of each `NonNullExpression` of a run but the innermost is one, in parentheses.
+            ExprKind::NonNull(operand) => {
+                let inside = non_null_ends_in(hir, e).len();
+                cat!(
+                    b"(".repeat(inside),
+                    emit(operand, P::Member)?,
+                    b"!",
+                    b")!".repeat(inside)
+                )
+            }
             ExprKind::AsConst(operand) if hir.is_type_assertion(e, operand) => {
                 cat!(b"<const>", emit(operand, P::Update)?)
             }

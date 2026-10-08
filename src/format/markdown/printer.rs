@@ -66,20 +66,17 @@ fn replace_end_of_line<'a>(text: &'a [u8], separator: impl Fn() -> Doc<'a>) -> D
     Doc::Array(parts)
 }
 
-/// Text that has been formatted, line by line.
-fn lines_of<'a>(formatted: Vec<u8>) -> Doc<'a> {
+/// Code that has been formatted, line by line. A line break in a text, which is marked by a `\r`, is a literal
+/// line: see `FormatOptions::is_in_markdown`.
+fn lines_of<'a>(formatted: &[u8]) -> Doc<'a> {
     let mut parts = Vec::new();
-    let mut previous: &[u8] = &[];
-    for (index, line) in bun_core::strings::split(&formatted, b"\n").enumerate() {
+    let mut is_after_literal_line_break = false;
+    for (index, line) in bun_core::strings::split(formatted, b"\n").enumerate() {
         if index > 0 {
-            // A line that ends with blanks is in a template or the like: nothing is taken away from it.
-            parts.push(match previous.last() {
-                Some(b' ' | b'\t') => literalline(),
-                _ => hardline(),
-            });
+            parts.push(if is_after_literal_line_break { literalline() } else { hardline() });
         }
-        parts.push(Doc::from(line.to_vec()));
-        previous = line;
+        is_after_literal_line_break = line.ends_with(b"\r");
+        parts.push(Doc::from(line.strip_suffix(b"\r").unwrap_or(line).to_vec()));
     }
     Doc::Array(parts)
 }
@@ -1001,7 +998,7 @@ impl<'a> Printer<'a, '_> {
             code,
             width,
         })?;
-        let formatted = crate::range::trim_end(&formatted).to_vec();
+        let formatted = crate::range::trim_end(&formatted);
         Some(mark_as_root(self.print_code(id, node, Some(lines_of(formatted)))))
     }
 
@@ -1032,7 +1029,7 @@ impl<'a> Printer<'a, '_> {
         let Some(formatted) = formatted else {
             return Doc::from(raw);
         };
-        let formatted = crate::range::trim_end(&formatted).to_vec();
+        let formatted = crate::range::trim_end(&formatted);
         mark_as_root(docs![
             &raw[..3],
             language,

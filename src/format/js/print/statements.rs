@@ -96,7 +96,18 @@ pub(crate) fn follows_type_cast_comment(position: u32, f: &Formatter<'_>) -> boo
             })
 }
 
+/// Prettier's `isSingleJsxExpressionStatementInMarkdown`: all of the code in a block in Markdown is JSX.
+fn is_single_jsx_statement_in_markdown<'a>(statement: Stmt<'a>, expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+    f.options().is_in_markdown
+        && matches!(expression.kind(), ExprKind::Jsx(_))
+        && matches!(statement.ast_parent(), AstNodes::Program(_))
+        && f.file().body().len() == 1
+}
+
 pub(crate) fn write_expression_statement<'a>(statement: Stmt<'a>, expression: Expr<'a>, f: &mut Formatter<'a>) {
+    if is_single_jsx_statement_in_markdown(statement, expression, f) {
+        return write!(f, expression);
+    }
     // Before a type cast comment, `FormatStatements` has written the `;`.
     if f.options().semicolons.is_as_needed()
         && expression_statement_needs_semicolon(statement, expression, f)

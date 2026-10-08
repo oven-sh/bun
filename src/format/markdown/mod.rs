@@ -105,6 +105,7 @@ fn format_embedded(
         insert_pragma: false,
         require_pragma: false,
         check_ignore_pragma: false,
+        is_in_markdown: true,
         ..options.clone()
     };
     let mut out = Vec::new();

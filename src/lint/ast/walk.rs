@@ -46,6 +46,13 @@ impl<'a> Node<'a> {
                 _ => None,
             }
         }
+        /// What is in the head of a `for`: a `Var`, or the expression in a wrapper.
+        fn head(statement: super::Stmt) -> Node {
+            match statement.kind() {
+                StmtKind::Expr(e) => Node::Expr(e),
+                _ => Node::Stmt(statement),
+            }
+        }
         match self {
             Node::File(file) => all!(file.body()),
             Node::Expr(e) => match e.kind() {
@@ -161,13 +168,13 @@ impl<'a> Node<'a> {
                     update,
                     body,
                 } => {
-                    opt!(init);
+                    opt!(init.map(head));
                     opt!(test);
                     opt!(update);
                     one!(body);
                 }
                 StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
-                    one!(left);
+                    one!(head(left));
                     one!(expr);
                     one!(body);
                 }
@@ -334,9 +341,24 @@ pub fn walk<'a>(file: &'a File<'a>, visitor: &mut impl Visitor<'a>) {
     walk_node(Node::File(file), visitor);
 }
 
-/// Visits `node` and everything in it, in source order.
+/// Visits `node` and everything in it, in source order. It does not recurse: how deep the syntax
+/// is nested does not matter.
 pub fn walk_node<'a>(node: Node<'a>, visitor: &mut impl Visitor<'a>) {
-    visitor.enter(node);
-    node.children_into(&mut |child| walk_node(child, visitor));
-    visitor.exit(node);
+    enum Step<'a> {
+        Enter(Node<'a>),
+        Exit(Node<'a>),
+    }
+    let mut steps = vec![Step::Enter(node)];
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Exit(node) => visitor.exit(node),
+            Step::Enter(node) => {
+                visitor.enter(node);
+                steps.push(Step::Exit(node));
+                let first = steps.len();
+                node.children_into(&mut |child| steps.push(Step::Enter(child)));
+                steps[first..].reverse();
+            }
+        }
+    }
 }

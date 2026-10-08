@@ -1,10 +1,11 @@
 //! Statements, including declarations, imports and exports.
 
 use super::{
-    Alias, Class, Enum, Export, Expr, Flags, Func, Ident, Import, ImportEquals, Interface, List,
-    Modifier, Module, Name, Node, Pat, TypeNode, VarKind, handle,
+    Alias, Class, Enum, Export, Expr, Flags, Func, Ident, Import, ImportAttributes, ImportEquals,
+    Interface, List, Modifier, Module, Name, Node, Pat, TypeNode, VarKind, handle,
 };
 use crate::span::Span;
+use crate::tokens::skip_trivia;
 use bun_sema::hir;
 
 handle! {
@@ -32,14 +33,15 @@ pub enum StmtKind<'a> {
         yes: Stmt<'a>,
         no: Option<Stmt<'a>>,
     },
-    /// `init` is a `Var` or an `Expr`.
+    /// `init` is a `Var`, or an `Expr` that is a [wrapper](Stmt::is_wrapper).
     For {
         init: Option<Stmt<'a>>,
         test: Option<Expr<'a>>,
         update: Option<Expr<'a>>,
         body: Stmt<'a>,
     },
-    /// `left` is a `Var` with one declaration, or an `Expr`.
+    /// `left` is a `Var` with one declaration, or an `Expr` that is a [wrapper](Stmt::is_wrapper).
+    /// A destructuring target is an `Array` or an `Object`, as in an assignment.
     ForIn {
         left: Stmt<'a>,
         expr: Expr<'a>,
@@ -289,7 +291,16 @@ impl<'a> Stmt<'a> {
     /// of its last, which can be a `;`.
     #[inline]
     pub fn span(self) -> Span {
-        (self.try_raw()).map_or(Span::default(), |raw| Span::new(raw.start, raw.loc.end))
+        match self.try_raw() {
+            // The HIR positions the block after `finally` at the keyword.
+            Some(raw @ hir::Stmt { kind: hir::StmtKind::Block(_), .. })
+                if self.file.hir.text.get(raw.start as usize) == Some(&b'f') =>
+            {
+                Span::new(skip_trivia(self.file.hir.text, raw.loc.pos), raw.loc.end)
+            }
+            Some(raw) => Span::new(raw.start, raw.loc.end),
+            None => Span::default(),
+        }
     }
 
     /// `export`, `default`, `declare`, `async`, `abstract`, `const`, and decorators, in source
@@ -329,6 +340,125 @@ impl<'a> Stmt<'a> {
             }
         }
         Span::new(start, whole.end)
+    }
+
+    /// The range of ESLint's `ExportNamedDeclaration` or `ExportDefaultDeclaration` around a
+    /// declaration: from the `export`. It differs from [`Stmt::span`] where decorators come first:
+    /// `@d export class C {}`.
+    pub fn export_span(self) -> Option<Span> {
+        let export = self.modifiers().iter().find(|it| it.flag() == Flags::EXPORT)?;
+        Some(Span::new(export.span().start, self.span().end))
+    }
+
+    /// `export default` before a function, a class or an interface.
+    #[inline]
+    pub fn is_default_export(self) -> bool {
+        self.flags().contains(Flags::EXPORT | Flags::DEFAULT)
+    }
+
+    /// The `;` that ends it, if it has one.
+    pub fn semicolon(self) -> Option<Span> {
+        let end = self.span().end;
+        let is_terminated = match self.tag() {
+            StmtTag::Empty
+            | StmtTag::Debugger
+            | StmtTag::Expr
+            | StmtTag::Var
+            | StmtTag::Return
+            | StmtTag::DoWhile
+            | StmtTag::Throw
+            | StmtTag::Break
+            | StmtTag::Continue
+            | StmtTag::TypeAlias
+            | StmtTag::Import
+            | StmtTag::ImportEquals
+            | StmtTag::ExportNamed
+            | StmtTag::ExportStar
+            | StmtTag::ExportDefault
+            | StmtTag::ExportAssign
+            | StmtTag::ExportAsNamespace => true,
+            // An overload or an ambient function, `declare module "m";`
+            StmtTag::Fn | StmtTag::Module => true,
+            _ => false,
+        };
+        (is_terminated && self.file.hir.text.get(end.wrapping_sub(1) as usize) == Some(&b';'))
+            .then(|| Span::new(end - 1, end))
+    }
+
+    /// Of a `Try` with a `catch`: from the `catch` to the end of its block, the range of ESLint's
+    /// `CatchClause`.
+    pub fn catch_clause_span(self) -> Option<Span> {
+        let StmtKind::Try { block, handler, .. } = self.kind() else {
+            return None;
+        };
+        Some(Span::new(skip_trivia(self.file.text(), block.span().end), handler?.span().end))
+    }
+
+    /// The module specifier with its quotes: of an `Import`, of an `ExportNamed` or an
+    /// `ExportStar` after `from`, of an `ImportEquals` in `require(..)`.
+    pub fn module_specifier_span(self) -> Option<Span> {
+        if !matches!(
+            self.tag(),
+            StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar | StmtTag::ImportEquals
+        ) {
+            return None;
+        }
+        let (uses, whole) = (self.file.hir.specifier_uses, self.span());
+        let found = uses.get(uses.partition_point(|it| it.pos < whole.start))?;
+        let rest = self.file.text().get(found.pos as usize..whole.end as usize)?;
+        Some(Span::new(found.pos, found.pos + crate::tokens::token_len(rest) as u32))
+    }
+
+    /// `with { type: "json" }` of an `Import`, an `ExportNamed` or an `ExportStar`.
+    pub fn import_attributes(self) -> Option<ImportAttributes<'a>> {
+        if self.file.hir.import_attributes.is_empty()
+            || !matches!(self.tag(), StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar)
+        {
+            return None;
+        }
+        ImportAttributes::within(self.file, self.span())
+    }
+
+    /// The `N` of the `ExportAsNamespace` `export as namespace N`, where it is written.
+    pub fn namespace_export_name(self) -> Option<Ident<'a>> {
+        let hir::StmtKind::ExportAsNamespace(name) = self.try_raw()?.kind else {
+            return None;
+        };
+        let text = self.file.text();
+        let mut at = self.span().start;
+        for keyword in ["export", "as", "namespace"] {
+            at = skip_trivia(text, at + keyword.len() as u32);
+        }
+        Some(self.file.ident(name, at))
+    }
+
+    /// It wraps the expression in the head of a `for`, or the object of a `with`. The HIR has a
+    /// statement there and the source has none: it is nobody's parent and no listener is called
+    /// with it.
+    pub fn is_wrapper(self) -> bool {
+        let Some(hir::StmtKind::Expr(_)) = self.try_raw().map(|raw| raw.kind) else {
+            return false;
+        };
+        self.wrapped_in().is_some()
+    }
+
+    /// The `for` or `with` statement that an expression statement is a wrapper in.
+    pub(crate) fn wrapped_in(self) -> Option<Stmt<'a>> {
+        let Some(&bun_sema::bind::Parent::Stmt(parent)) = self.file.bound.stmt_parent.get(self.id.idx())
+        else {
+            return None;
+        };
+        let is_wrapper = match self.file.hir.stmts.get(parent.idx())?.kind {
+            hir::StmtKind::For { init: head, .. }
+            | hir::StmtKind::ForIn { left: head, .. }
+            | hir::StmtKind::ForOf { left: head, .. } => head == self.id,
+            hir::StmtKind::Block(list) if !self.file.hir.with_bodies.is_empty() => {
+                self.file.hir.ids.get(list.start as usize) == Some(&self.id.0)
+                    && matches!(Stmt::new(self.file, parent).kind(), StmtKind::With { .. })
+            }
+            _ => false,
+        };
+        is_wrapper.then(|| Stmt::new(self.file, parent))
     }
 
     #[inline]
@@ -373,7 +503,7 @@ impl<'a> Stmt<'a> {
 
     /// `"use strict"` and the like: the text between the quotes, if this is an expression
     /// statement that consists of an unparenthesized string literal and is among the first
-    /// statements of a function or of the file.
+    /// statements of a function, of a namespace or of the file.
     pub fn directive(self) -> Option<&'a [u8]> {
         let StmtKind::Expr(expr) = self.kind() else {
             return None;
@@ -383,7 +513,11 @@ impl<'a> Stmt<'a> {
         }
         let siblings = match self.parent() {
             Node::File(file) => file.body(),
-            Node::Func(func) => func.body_statements()?,
+            Node::Func(func) if func.kind() != super::FnKind::StaticBlock => func.body_statements()?,
+            Node::Stmt(parent) => match parent.kind() {
+                StmtKind::Module(module) => module.body(),
+                _ => return None,
+            },
             _ => return None,
         };
         for sibling in siblings {
@@ -441,6 +575,22 @@ impl<'a> VarDecl<'a> {
     #[inline]
     pub fn span(self) -> Span {
         Span::new(self.pat().span().start, self.raw().loc.end)
+    }
+
+    /// `x!: T`
+    #[inline]
+    pub fn is_definite(self) -> bool {
+        self.flags().contains(Flags::DEFINITE)
+    }
+
+    /// The pattern and its type annotation, which is the range of ESLint's `id`: typescript-eslint
+    /// has the annotation as a part of the `Identifier` or the pattern.
+    pub fn binding_span(self) -> Span {
+        let pat = self.pat().span();
+        match self.ty() {
+            Some(ty) => Span::new(pat.start, ty.outer_span().end),
+            None => pat,
+        }
     }
 
     /// The `Var` statement, or the `Try` statement of a `catch` parameter.

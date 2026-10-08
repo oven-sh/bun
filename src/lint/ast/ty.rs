@@ -2,9 +2,11 @@
 
 use super::stmt::tags;
 use super::{
-    Expr, File, Func, Ident, Keyword, List, MappedModifier, Member, Name, Node, TypeParam, handle,
+    Expr, File, Func, Ident, Keyword, List, MappedModifier, Member, Name, Node, Prop, TypeParam,
+    handle,
 };
 use crate::span::Span;
+use crate::tokens::{skip_trivia, skip_trivia_back};
 use bun_sema::hir;
 
 handle! {
@@ -214,6 +216,39 @@ impl<'a> TypeNode<'a> {
         (self.try_raw()).map_or(Span::default(), |raw| Span::new(raw.pos, raw.end))
     }
 
+    /// With all the parentheses around it. The HIR does not record them: they are found in the
+    /// text next to the type.
+    pub fn outer_span(self) -> Span {
+        let text = self.file.text();
+        let mut span = self.span();
+        loop {
+            let before = skip_trivia_back(text, span.start) as usize;
+            if before == 0 || text.get(before - 1) != Some(&b'(') {
+                return span;
+            }
+            let after = skip_trivia(text, span.end);
+            if text.get(after as usize) != Some(&b')') {
+                return span;
+            }
+            span = Span::new(before as u32 - 1, after + 1);
+        }
+    }
+
+    #[inline]
+    pub fn is_parenthesized(self) -> bool {
+        self.outer_span() != self.span()
+    }
+
+    /// The range of ESLint's `TSTypeAnnotation` around it, if it is the type of a variable, a
+    /// parameter or a property, or a return type: from the `:`, or the `=>` of a function type,
+    /// to the end of the type and its parentheses.
+    pub fn annotation_span(self) -> Span {
+        let (text, outer) = (self.file.text(), self.outer_span());
+        let before = skip_trivia_back(text, outer.start);
+        let is_arrow = text.get(..before as usize).is_some_and(|it| it.ends_with(b"=>"));
+        Span::new(before.saturating_sub(if is_arrow { 2 } else { 1 }), outer.end)
+    }
+
     #[inline]
     pub fn parent(self) -> Node<'a> {
         Node::Type(self).parent()
@@ -222,6 +257,201 @@ impl<'a> TypeNode<'a> {
     #[inline]
     pub fn is_keyword(self, keyword: Keyword) -> bool {
         matches!(self.kind(), TypeKind::Keyword(it) if it == keyword)
+    }
+
+    /// The pieces of a `Template`.
+    pub fn as_template(self) -> Option<TypeTemplate<'a>> {
+        match self.try_raw()?.kind {
+            hir::TypeNodeKind::Template { types, texts } => Some(TypeTemplate {
+                ty: self,
+                types,
+                texts,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The `x` of the `Predicate` `x is T` or `asserts x`, where it is written. It can be `this`.
+    pub fn predicate_param(self) -> Option<Ident<'a>> {
+        let hir::TypeNodeKind::Predicate { param, asserts, .. } = self.try_raw()?.kind else {
+            return None;
+        };
+        let start = self.span().start;
+        let at = match asserts {
+            true => skip_trivia(self.file.text(), start + "asserts".len() as u32),
+            false => start,
+        };
+        Some(self.file.ident(param, at))
+    }
+
+    /// The `symbol` of `unique symbol`.
+    pub fn unique_symbol_keyword_span(self) -> Option<Span> {
+        let end = self.span().end;
+        (self.tag() == TypeTag::UniqueSymbol).then(|| Span::new(end.saturating_sub(6), end))
+    }
+
+    /// Of an `Import`: from the `import`, without a `typeof` before it. ESLint has
+    /// `typeof import("m")` as a `TSTypeQuery` of a `TSImportType` with this range.
+    pub fn import_span(self) -> Option<Span> {
+        let hir::TypeNodeKind::Import { is_typeof, .. } = self.try_raw()?.kind else {
+            return None;
+        };
+        let whole = self.span();
+        Some(match is_typeof {
+            true => Span::new(skip_trivia(self.file.text(), whole.start + "typeof".len() as u32), whole.end),
+            false => whole,
+        })
+    }
+
+    /// Of an `Import`: the module specifier with its quotes.
+    pub fn import_source_span(self) -> Option<Span> {
+        let text = self.file.text();
+        let open = skip_trivia(text, self.import_span()?.start + "import".len() as u32);
+        let start = skip_trivia(text, open + 1);
+        let rest = text.get(start as usize..).unwrap_or_default();
+        Some(Span::new(start, start + crate::tokens::token_len(rest) as u32))
+    }
+
+    /// Of an `Import`: the `with: { .. }` of `import("m", { with: { .. } })`.
+    pub fn import_attributes(self) -> Option<ImportAttributes<'a>> {
+        let hir::TypeNodeKind::Import { attributes, .. } = self.try_raw()?.kind else {
+            return None;
+        };
+        if attributes == hir::ImportAttributesToken::None {
+            return None;
+        }
+        ImportAttributes::within(self.file, self.span())
+    }
+}
+
+/// `` `text${T}text` `` in a type.
+#[derive(Copy, Clone, Debug)]
+pub struct TypeTemplate<'a> {
+    ty: TypeNode<'a>,
+    types: hir::IdList<hir::TypeNodeId>,
+    texts: hir::IdList<bun_sema::atom::Atom>,
+}
+
+impl<'a> TypeTemplate<'a> {
+    /// The substitutions.
+    #[inline]
+    pub fn types(self) -> List<'a, TypeNode<'a>> {
+        List::ids(self.ty.file, self.types)
+    }
+
+    /// The number of pieces of text: one more than there are substitutions.
+    #[inline]
+    pub fn quasi_count(self) -> usize {
+        self.types.len() + 1
+    }
+
+    /// The value of the piece of text at `i`.
+    pub fn cooked(self, i: usize) -> Option<Name<'a>> {
+        let file = self.ty.file;
+        if i >= self.texts.len() {
+            return None;
+        }
+        let at = self.texts.start as usize + i;
+        file.name_if_some(bun_sema::atom::Atom(*file.hir.ids.get(at)?))
+    }
+
+    /// The piece of text at `i` with its delimiters: `` `a${ ``, `}b${`, `` }c` ``.
+    pub fn quasi_span(self, i: usize) -> Span {
+        let (text, whole) = (self.ty.file.text(), self.ty.span());
+        let start = match i.checked_sub(1).and_then(|before| self.types().get(before)) {
+            Some(before) => skip_trivia(text, before.outer_span().end),
+            None => whole.start,
+        };
+        let end = match i < self.types.len() {
+            true => super::expr::template_text_end(text, start + 1),
+            false => whole.end,
+        };
+        Span::new(start, end)
+    }
+
+    /// The piece of text at `i` as it is written, without its delimiters.
+    pub fn raw(self, i: usize) -> &'a [u8] {
+        let is_last = i + 1 == self.quasi_count();
+        let span = self.quasi_span(i).shrink(1, if is_last { 1 } else { 2 });
+        self.ty.file.slice(span)
+    }
+}
+
+impl<'a> List<'a, TypeNode<'a>> {
+    /// The `<..>` around type arguments: the range of ESLint's `TSTypeParameterInstantiation`.
+    /// `None` if the list is empty.
+    pub fn angle_brackets_span(self) -> Option<Span> {
+        let (first, last) = (self.first()?, self.last()?);
+        Some(angle_brackets(first.file, first.outer_span().start, last.outer_span().end))
+    }
+}
+
+impl<'a> List<'a, TypeParam<'a>> {
+    /// The `<..>` around type parameters: the range of ESLint's `TSTypeParameterDeclaration`.
+    /// `None` if the list is empty.
+    pub fn angle_brackets_span(self) -> Option<Span> {
+        let (first, last) = (self.first()?, self.last()?);
+        Some(angle_brackets(first.file(), first.span().start, last.span().end))
+    }
+}
+
+/// From the `<` before `start` to the `>` after `end`, which a `,` may precede.
+fn angle_brackets(file: &File, start: u32, end: u32) -> Span {
+    let text = file.text();
+    let mut close = skip_trivia(text, end);
+    if text.get(close as usize) == Some(&b',') {
+        close = skip_trivia(text, close + 1);
+    }
+    Span::new(skip_trivia_back(text, start).saturating_sub(1), close + 1)
+}
+
+/// `with { type: "json" }` after the module specifier of an import or an export, and the
+/// `with: { .. }` in the second argument of an import type.
+#[derive(Copy, Clone, Debug)]
+pub struct ImportAttributes<'a> {
+    keyword: u32,
+    object: Expr<'a>,
+}
+
+impl<'a> ImportAttributes<'a> {
+    /// The first that start in `span`.
+    pub(crate) fn within(file: &'a File<'a>, span: Span) -> Option<Self> {
+        let all = file.hir.import_attributes;
+        let &(keyword, object) = all.get(all.partition_point(|it| it.0 < span.start))?;
+        (keyword < span.end).then(|| ImportAttributes {
+            keyword,
+            object: Expr::new(file, object),
+        })
+    }
+
+    /// `with`, or the deprecated `assert`.
+    pub fn keyword_span(self) -> Span {
+        let rest = self.object.file().text().get(self.keyword as usize..).unwrap_or_default();
+        Span::new(self.keyword, self.keyword + crate::tokens::token_len(rest) as u32)
+    }
+
+    /// The `{ .. }`.
+    #[inline]
+    pub fn braces_span(self) -> Span {
+        self.object.span()
+    }
+
+    /// In an import type: the `{ with: { .. } }` that is the second argument.
+    pub fn options_span(self) -> Span {
+        let text = self.object.file().text();
+        let mut close = skip_trivia(text, self.object.span().end);
+        if text.get(close as usize) == Some(&b',') {
+            close = skip_trivia(text, close + 1);
+        }
+        Span::new(skip_trivia_back(text, self.keyword).saturating_sub(1), close + 1)
+    }
+
+    /// `key: "value"`. The key is a name or a string.
+    pub fn entries(self) -> List<'a, Prop<'a>> {
+        match self.object.kind() {
+            super::ExprKind::Object(entries) => entries,
+            _ => List::empty(self.object.file()),
+        }
     }
 }
 
@@ -249,6 +479,12 @@ impl<'a> EntityName<'a> {
         let file = self.file;
         let names = file.hir.names.get(self.names.range()).unwrap_or_default();
         names.iter().map(move |name| file.ident(name.text, name.pos()))
+    }
+
+    /// The name at `i`, counted from the left.
+    pub fn get(self, i: usize) -> Option<Ident<'a>> {
+        let name = (i < self.names.len()).then(|| self.file.hir.names.get(self.names.start as usize + i))??;
+        Some(self.file.ident(name.text, name.pos()))
     }
 
     #[inline]

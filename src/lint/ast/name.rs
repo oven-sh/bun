@@ -127,10 +127,16 @@ impl<'a> Ident<'a> {
         self.start
     }
 
+    /// It is written as a string: `import { "a b" as c }`, `declare module "m"`.
+    #[inline]
+    pub fn is_string(self) -> bool {
+        matches!(self.name.file.text().get(self.start as usize), Some(b'"' | b'\''))
+    }
+
     pub fn span(self) -> Span {
         let (text, name) = (self.name.file.text(), self.name.bytes());
         let written = text.get(self.start as usize..).unwrap_or_default();
-        let len = match written.starts_with(name) {
+        let len = match !name.is_empty() && written.starts_with(name) {
             true => name.len(),
             // It is written with escapes, or in quotes.
             false => crate::tokens::token_len(written),

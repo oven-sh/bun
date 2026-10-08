@@ -1,12 +1,12 @@
 //! Functions, classes and the other declarations, and what they consist of.
 
 use super::{
-    EntityName, Expr, File, Flags, FnKind, Ident, List, MemberKind, Name, Node, Pat, PropKind,
-    Stmt, TypeNode, handle,
+    EntityName, Expr, File, Flags, FnKind, Ident, ImportAttributes, List, MemberKind, Name, Node,
+    Pat, PropKind, Stmt, TypeNode, handle,
 };
 use crate::span::Span;
 use crate::tokens::skip_trivia;
-use bun_sema::bind::{ClassOwner, FnOwner};
+use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner};
 use bun_sema::hir::{self, NameKind};
 
 // ───────────────────────────── functions ─────────────────────────────
@@ -192,6 +192,73 @@ impl<'a> Func<'a> {
         Span::new(start, self.span().end)
     }
 
+    /// The range of the node that ESLint has for it:
+    /// - a `FunctionDeclaration` or a `TSDeclareFunction`: the statement without `export` and
+    ///   `export default`,
+    /// - a `FunctionExpression` or an `ArrowFunctionExpression`: the expression,
+    /// - the `FunctionExpression` or `TSEmptyBodyFunctionExpression` that is the `value` of a
+    ///   method, an accessor or a constructor: [`Func::span_from_params`],
+    /// - a signature, a static block or a function type: the member or the type.
+    pub fn estree_span(self) -> Span {
+        match (self.owner(), self.kind()) {
+            (Node::Stmt(statement), _) => statement.span_without_export(),
+            (Node::Member(member), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor)
+                if !member.is_signature() =>
+            {
+                self.span_from_params()
+            }
+            (Node::Expr(_), FnKind::Method | FnKind::Getter | FnKind::Setter) => self.span_from_params(),
+            (owner, _) => owner.span(),
+        }
+    }
+
+    /// The `this` parameter, if there is one, and the others: all that is written between the
+    /// parentheses.
+    pub fn params_with_this(self) -> impl Iterator<Item = Param<'a>> + 'a {
+        self.this_param().into_iter().chain(self.params())
+    }
+
+    /// The position of the `)` of the parameters. `None` for an arrow function without
+    /// parentheses, and for a static block.
+    pub fn close_paren(self) -> Option<u32> {
+        let text = self.file.text();
+        let last = self.params().last().or_else(|| self.this_param());
+        let mut at = match (last, self.open_paren()) {
+            (Some(last), _) => skip_trivia(text, last.span().end),
+            (None, Some(open)) => skip_trivia(text, open + 1),
+            // `() => ..`, `<T>() => ..`, `async () => ..`
+            (None, None) if self.is_arrow() => {
+                let before = match self.return_type() {
+                    Some(ty) => ty.annotation_span().start,
+                    None => self.raw().anchor,
+                };
+                return Some(crate::tokens::skip_trivia_back(text, before).saturating_sub(1));
+            }
+            (None, None) => return None,
+        };
+        if text.get(at as usize) == Some(&b',') {
+            at = skip_trivia(text, at + 1);
+        }
+        let close = if self.kind() == FnKind::IndexSignature { b']' } else { b')' };
+        (text.get(at as usize) == Some(&close)).then_some(at)
+    }
+
+    /// From the `(` to the `)` of the parameters. For an arrow function without parentheses, the
+    /// parameter. For an index signature, the brackets.
+    pub fn params_span(self) -> Option<Span> {
+        let Some(close) = self.close_paren() else {
+            return self.params().first().map(Param::span);
+        };
+        let open = match self.open_paren() {
+            Some(open) => open,
+            None => {
+                let first = self.params_with_this().next().map_or(close, |first| first.span().start);
+                crate::tokens::skip_trivia_back(self.file.text(), first).saturating_sub(1)
+            }
+        };
+        Some(Span::new(open, close + 1))
+    }
+
     /// The `return` statements in it, not those in nested functions.
     pub fn returns(self) -> impl Iterator<Item = Stmt<'a>> + 'a {
         let file = self.file;
@@ -288,6 +355,35 @@ impl<'a> Param<'a> {
         Span::new(raw.pos, end)
     }
 
+    pub fn decorators(self) -> impl Iterator<Item = Expr<'a>> + 'a {
+        self.modifiers().iter().filter_map(Modifier::decorator)
+    }
+
+    /// The pattern, the `?` and the type annotation. This is the range of ESLint's `Identifier`,
+    /// `ObjectPattern` or `ArrayPattern` for the parameter: typescript-eslint has `?` and the
+    /// annotation as parts of it.
+    pub fn binding_span(self) -> Span {
+        let pat = self.pat().span();
+        let end = match self.ty() {
+            Some(ty) => ty.outer_span().end,
+            None if self.is_optional() => skip_trivia(self.file.text(), pat.end) + 1,
+            None => pat.end,
+        };
+        Span::new(pat.start, end)
+    }
+
+    /// Without decorators and modifiers. This is the range of ESLint's node for the parameter,
+    /// or of the `parameter` of a `TSParameterProperty`: the `AssignmentPattern` of `a = 1`, the
+    /// `RestElement` of `...a`, otherwise [`Param::binding_span`].
+    pub fn span_without_modifiers(self) -> Span {
+        let whole = self.span();
+        let start = match self.modifiers().last() {
+            Some(last) => skip_trivia(self.file.text(), last.span().end),
+            None => whole.start,
+        };
+        Span::new(start, whole.end)
+    }
+
     pub fn func(self) -> Option<Func<'a>> {
         Func::some(self.file, *self.file.bound.param_fn.get(self.id.idx())?)
     }
@@ -352,6 +448,8 @@ impl<'a> TypeParam<'a> {
 pub struct Key<'a> {
     kind: KeyKind<'a>,
     start: u32,
+    /// It is the name of a JSX attribute.
+    is_jsx: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -360,11 +458,11 @@ pub enum KeyKind<'a> {
     Ident(Name<'a>),
     /// `"a"`: its value.
     String(Name<'a>),
-    /// `0`, `1e3`, `0x10`: the number as `String(n)` formats it.
+    /// `0`, `1e3`, `0x10`, `1n`: the number as `String(n)` formats it.
     Number(Name<'a>),
     /// `#a`. The name includes the `#`.
     Private(Name<'a>),
-    /// `["a"]`: the value of the string.
+    /// `["a"]`, `` [`a`] ``: the value of the string.
     ComputedString(Name<'a>),
     /// `[0]`: the number as `String(n)` formats it.
     ComputedNumber(Name<'a>),
@@ -380,7 +478,15 @@ impl<'a> Key<'a> {
         start: u32,
     ) -> Option<Key<'a>> {
         let kind = match key {
-            hir::PropKey::None => return None,
+            // The HIR has no name for a `bigint`.
+            hir::PropKey::None => {
+                let rest = file.text().get(start as usize..)?;
+                let literal = rest.get(..crate::tokens::token_len(rest))?;
+                if !rest.first()?.is_ascii_digit() || !literal.ends_with(b"n") {
+                    return None;
+                }
+                KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal))))
+            }
             hir::PropKey::Private(name) => KeyKind::Private(file.name(name)),
             hir::PropKey::Computed(e) => KeyKind::Computed(Expr::new(file, e)),
             hir::PropKey::Name(name) => {
@@ -394,7 +500,11 @@ impl<'a> Key<'a> {
                 }
             }
         };
-        Some(Key { kind, start })
+        Some(Key {
+            kind,
+            start,
+            is_jsx: name_kind == NameKind::Jsx,
+        })
     }
 
     #[inline]
@@ -436,6 +546,20 @@ impl<'a> Key<'a> {
         self.name().is_some_and(|it| it.is(name))
     }
 
+    /// Without the brackets: the range of ESLint's `key`.
+    pub fn inner_span(self, file: &File<'a>) -> Span {
+        let text = file.text();
+        match self.kind {
+            KeyKind::Computed(e) => e.span(),
+            KeyKind::ComputedString(_) | KeyKind::ComputedNumber(_) => {
+                let literal = skip_trivia(text, self.start + 1);
+                let rest = text.get(literal as usize..).unwrap_or_default();
+                Span::new(literal, literal + crate::tokens::token_len(rest) as u32)
+            }
+            _ => self.span(file),
+        }
+    }
+
     /// With the brackets or the quotes.
     pub fn span(self, file: &File<'a>) -> Span {
         let text = file.text();
@@ -446,6 +570,14 @@ impl<'a> Key<'a> {
                 let rest = text.get(literal as usize..).unwrap_or_default();
                 skip_trivia(text, literal + crate::tokens::token_len(rest) as u32) + 1
             }
+            _ if self.is_jsx => {
+                let end = jsx_identifier_end(text, self.start);
+                let colon = skip_trivia(text, end);
+                match text.get(colon as usize) {
+                    Some(b':') => jsx_identifier_end(text, skip_trivia(text, colon + 1)),
+                    _ => end,
+                }
+            }
             _ => {
                 let rest = text.get(self.start as usize..).unwrap_or_default();
                 self.start + crate::tokens::token_len(rest) as u32
@@ -453,6 +585,42 @@ impl<'a> Key<'a> {
         };
         Span::new(self.start, end)
     }
+}
+
+/// The value of the `bigint` literal `raw` in decimal.
+fn decimal_digits(raw: &[u8]) -> Vec<u8> {
+    let digits = raw.strip_suffix(b"n").unwrap_or(raw);
+    let (radix, digits) = match digits {
+        [b'0', b'x' | b'X', rest @ ..] => (16, rest),
+        [b'0', b'o' | b'O', rest @ ..] => (8, rest),
+        [b'0', b'b' | b'B', rest @ ..] => (2, rest),
+        _ => (10, digits),
+    };
+    // The least significant first.
+    let mut decimal: Vec<u8> = vec![0];
+    for digit in digits.iter().filter_map(|b| (*b as char).to_digit(radix)) {
+        let mut carry = digit;
+        for place in &mut decimal {
+            let value = u32::from(*place) * radix + carry;
+            *place = (value % 10) as u8;
+            carry = value / 10;
+        }
+        while carry > 0 {
+            decimal.push((carry % 10) as u8);
+            carry /= 10;
+        }
+    }
+    while decimal.len() > 1 && decimal.last() == Some(&0) {
+        decimal.pop();
+    }
+    decimal.iter().rev().map(|digit| b'0' + digit).collect()
+}
+
+/// Where the identifier of JSX that starts at `at` ends. It can contain `-`.
+fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
+    let rest = text.get(at as usize..).unwrap_or_default();
+    let is_part = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'-') || *b >= 0x80;
+    at + rest.iter().take_while(|b| is_part(b)).count() as u32
 }
 
 // ───────────────────────────── classes ─────────────────────────────
@@ -546,33 +714,34 @@ impl<'a> Class<'a> {
         Span::new(self.raw().start, end.max(self.raw().start))
     }
 
+    /// The range of ESLint's `ClassDeclaration` or `ClassExpression`: without `export` and
+    /// `export default`, and without the decorators before them.
+    pub fn estree_span(self) -> Span {
+        match self.owner() {
+            Node::Stmt(statement) => statement.span_without_export(),
+            _ => self.span(),
+        }
+    }
+
+    /// The `class` keyword.
+    pub fn keyword_span(self) -> Span {
+        let start = match self.modifiers().last() {
+            Some(last) => skip_trivia(self.file.text(), last.span().end),
+            None => self.raw().start,
+        };
+        Span::new(start, start + "class".len() as u32)
+    }
+
     /// The `{ .. }` around the members.
     pub fn body_span(self) -> Span {
-        let whole = self.span();
         // The last thing before the `{`.
-        let head_end = [
-            self.implements().last().map(|ty| ty.span().end),
-            self.extends_args().last().map(|ty| ty.span().end),
-            self.extends().map(|e| e.outer_span().end),
-            self.type_params().last().map(|p| p.span().end),
-            self.name().map(|name| name.span().end),
-        ]
-        .into_iter()
-        .flatten()
-        .max();
-        let text = self.file.text();
-        let mut at = match head_end {
-            Some(end) => skip_trivia(text, end),
-            None => {
-                let keyword = self.modifiers().last().map_or(whole.start, |m| m.span().end);
-                skip_trivia(text, skip_trivia(text, keyword) + "class".len() as u32)
-            }
-        };
-        // The `>` of type arguments or parameters, and parentheses around a type.
-        while matches!(text.get(at as usize), Some(b'>' | b')')) {
-            at = skip_trivia(text, at + 1);
-        }
-        Span::new(at, whole.end)
+        let head_end = (self.implements().last().map(|ty| ty.span().end))
+            .or_else(|| self.extends_args().angle_brackets_span().map(|it| it.end))
+            .or_else(|| self.extends().map(|e| e.outer_span().end))
+            .or_else(|| self.type_params().angle_brackets_span().map(|it| it.end))
+            .or_else(|| self.name().map(|name| name.span().end))
+            .unwrap_or_else(|| self.keyword_span().end);
+        Span::new(skip_trivia(self.file.text(), head_end), self.span().end)
     }
 
     pub fn constructor(self) -> Option<Member<'a>> {
@@ -628,6 +797,24 @@ impl<'a> Member<'a> {
     #[inline]
     pub fn is_static(self) -> bool {
         self.flags().contains(Flags::STATIC)
+    }
+
+    /// It is in an interface or a type literal, not in a class.
+    pub fn is_signature(self) -> bool {
+        matches!(
+            self.file.bound.member_owner.get(self.id.idx()),
+            Some(MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_))
+        )
+    }
+
+    /// The `constructor` of a constructor, which ESLint has as its `key`. It can be written as a
+    /// string.
+    pub fn constructor_keyword(self) -> Option<Ident<'a>> {
+        let raw = self.raw();
+        match (raw.kind, raw.key) {
+            (MemberKind::Constructor, hir::PropKey::Name(name)) => Some(self.file.ident(name, raw.name_pos)),
+            _ => None,
+        }
     }
 
     /// The type annotation of a property.
@@ -734,6 +921,9 @@ impl<'a> Prop<'a> {
     /// `None` for a spread.
     pub fn key(self) -> Option<Key<'a>> {
         let raw = self.raw();
+        if raw.kind == PropKind::Spread {
+            return None;
+        }
         Key::new(self.file, raw.key, raw.name_kind, raw.pos)
     }
 
@@ -753,6 +943,12 @@ impl<'a> Prop<'a> {
             PropKind::Method | PropKind::Getter | PropKind::Setter => self.value()?.as_fn(),
             _ => None,
         }
+    }
+
+    /// `a?() {}`, which is an error.
+    pub fn is_optional(self) -> bool {
+        let at = self.raw().postfix_token;
+        at != 0 && self.file.text().get(at as usize) == Some(&b'?')
     }
 
     #[inline]
@@ -863,6 +1059,14 @@ impl<'a> Interface<'a> {
     pub fn members(self) -> List<'a, Member<'a>> {
         List::run(self.file, self.raw().members)
     }
+
+    /// The `{ .. }` around the members.
+    pub fn body_span(self) -> Span {
+        let head_end = (self.extends().last().map(|ty| ty.span().end))
+            .or_else(|| self.type_params().angle_brackets_span().map(|it| it.end))
+            .unwrap_or_else(|| self.name().span().end);
+        Span::new(skip_trivia(self.file.text(), head_end), self.span().end)
+    }
 }
 
 declaration! {
@@ -912,6 +1116,11 @@ impl<'a> Enum<'a> {
     #[inline]
     pub fn members(self) -> List<'a, EnumMember<'a>> {
         List::run(self.file, self.raw().members)
+    }
+
+    /// The `{ .. }` around the members.
+    pub fn body_span(self) -> Span {
+        Span::new(skip_trivia(self.file.text(), self.name().span().end), self.span().end)
     }
 }
 
@@ -1002,6 +1211,25 @@ impl<'a> Module<'a> {
         self.raw().specifies_module
     }
 
+    /// The name, where it is written. For `declare global`, the keyword.
+    pub fn name_span(self) -> Span {
+        match self.name() {
+            ModuleName::Ident(name) | ModuleName::String(name) => name.span(),
+            ModuleName::Global => {
+                let start = self.raw().name_pos;
+                Span::new(start, start + "global".len() as u32)
+            }
+        }
+    }
+
+    /// The `{ .. }`. For the `A` of `namespace A.B { .. }` there is none.
+    pub fn body_span(self) -> Option<Span> {
+        if !self.has_body() || self.nested().is_some() {
+            return None;
+        }
+        Some(Span::new(skip_trivia(self.file.text(), self.name_span().end), self.span().end))
+    }
+
     /// The `B` of `namespace A.B`.
     pub fn nested(self) -> Option<Module<'a>> {
         let only = self.body().first().filter(|_| self.body().len() == 1)?;
@@ -1072,6 +1300,18 @@ impl<'a> Import<'a> {
     pub fn is_side_effect(self) -> bool {
         let raw = self.raw();
         raw.default.is_none() && raw.namespace.is_none() && !raw.has_named_imports
+    }
+
+    /// The module specifier with its quotes.
+    #[inline]
+    pub fn spec_span(self) -> Option<Span> {
+        self.stmt().module_specifier_span()
+    }
+
+    /// `with { type: "json" }`
+    #[inline]
+    pub fn attributes(self) -> Option<ImportAttributes<'a>> {
+        self.stmt().import_attributes()
     }
 
     /// What is between `import` and `from`.
@@ -1165,6 +1405,18 @@ impl<'a> ImportEquals<'a> {
     pub fn flags(self) -> Flags {
         self.raw().flags
     }
+
+    /// `require("spec")`: the range of ESLint's `TSExternalModuleReference`.
+    pub fn require_span(self) -> Option<Span> {
+        let spec = self.stmt().module_specifier_span()?;
+        let text = self.file.text();
+        let open = crate::tokens::skip_trivia_back(text, spec.start).saturating_sub(1);
+        let keyword_end = crate::tokens::skip_trivia_back(text, open);
+        Some(Span::new(
+            keyword_end.saturating_sub("require".len() as u32),
+            skip_trivia(text, spec.end) + 1,
+        ))
+    }
 }
 
 declaration! {
@@ -1193,6 +1445,18 @@ impl<'a> Export<'a> {
     #[inline]
     pub fn is_type_only(self) -> bool {
         self.raw().type_only
+    }
+
+    /// The module specifier with its quotes.
+    #[inline]
+    pub fn spec_span(self) -> Option<Span> {
+        self.stmt().module_specifier_span()
+    }
+
+    /// `with { type: "json" }`
+    #[inline]
+    pub fn attributes(self) -> Option<ImportAttributes<'a>> {
+        self.stmt().import_attributes()
     }
 }
 

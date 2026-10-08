@@ -96,6 +96,9 @@ impl<'a> PatProp<'a> {
     /// `None` for `...rest`. For the shorthand `{ a }` it is the `a`.
     pub fn key(self) -> Option<Key<'a>> {
         let raw = self.raw();
+        if raw.is_rest {
+            return None;
+        }
         Key::new(self.file, raw.key, raw.name_kind, raw.key_pos)
     }
 

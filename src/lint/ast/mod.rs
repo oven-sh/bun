@@ -105,6 +105,7 @@ slices! {
         import_call_type_args: (hir::ExprId, hir::IdList<hir::TypeNodeId>),
         specifier_expressions: hir::ExprId,
         exports_from_expressions: (hir::StmtId, hir::ExprId),
+        specifier_uses: hir::SpecifierUse,
         jsdoc_comments: (u32, u32),
         diagnostics: hir::Diagnostic,
     }
@@ -182,6 +183,7 @@ pub struct File<'a> {
     path: &'a [u8],
     kind: FileKind,
     is_js: bool,
+    has_module_syntax: bool,
     has_parse_errors: bool,
 }
 
@@ -201,6 +203,7 @@ impl<'a> File<'a> {
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
+            has_module_syntax: hir.has_module_syntax || hir.is_module_by_decree,
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
@@ -265,6 +268,13 @@ impl<'a> File<'a> {
         self.language.source_type == crate::language::SourceType::Module
     }
 
+    /// It has an `import` or an `export` at the top level, or its extension says that it is a
+    /// module: `.mjs`, `.mts`.
+    #[inline]
+    pub fn has_module_syntax(&self) -> bool {
+        self.has_module_syntax
+    }
+
     /// The parser reported an error. No rule runs on such a file.
     #[inline]
     pub fn has_parse_errors(&self) -> bool {
@@ -280,6 +290,12 @@ impl<'a> File<'a> {
     #[inline]
     pub fn span(&self) -> Span {
         Span::new(0, self.hir.text.len() as u32)
+    }
+
+    /// The range of ESLint's `Program`: from the first token, after a `#!` line and comments, to
+    /// the end of the text.
+    pub fn program_span(&self) -> Span {
+        Span::new(crate::tokens::skip_trivia(self.hir.text, 0), self.hir.text.len() as u32)
     }
 
     /// The name that `atom` stands for.

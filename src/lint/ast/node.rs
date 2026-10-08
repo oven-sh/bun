@@ -2,7 +2,7 @@
 
 use super::{
     Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportSpec, Member, Param, Pat, PatElem,
-    PatProp, Prop, Stmt, TupleElem, TypeNode, TypeParam, VarDecl,
+    PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 use crate::span::{Span, Spanned};
 use bun_sema::bind::{MemberOwner, Parent, PatParent};
@@ -188,7 +188,13 @@ impl<'a> Node<'a> {
         let of_parent = |parent: Option<&Parent>| match parent.copied().unwrap_or(Parent::None) {
             Parent::None | Parent::File => Node::File(file),
             Parent::Expr(e) => Node::Expr(Expr::new(file, e)),
-            Parent::Stmt(s) => Node::Stmt(Stmt::new(file, s)),
+            Parent::Stmt(s) => {
+                let statement = Stmt::new(file, s);
+                Node::Stmt(match statement.tag() {
+                    StmtTag::Expr => statement.wrapped_in().unwrap_or(statement),
+                    _ => statement,
+                })
+            }
             Parent::VarInit(d) => Node::VarDecl(VarDecl::new(file, d)),
             Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
                 Node::Param(Param::new(file, p))

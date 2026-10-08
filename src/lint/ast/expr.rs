@@ -2,8 +2,9 @@
 
 use super::{Class, File, Func, Ident, List, Name, Node, Prop, TypeNode, handle};
 use crate::span::Span;
-use crate::tokens::{skip_trivia, skip_trivia_back};
+use crate::tokens::skip_trivia;
 use bun_sema::hir::{self, BinOp, Chain, ExprTag, UnOp};
+use smallvec::SmallVec;
 
 handle! {
     /// An expression. Parentheses around it are not part of it.
@@ -23,7 +24,8 @@ pub enum ExprKind<'a> {
     True,
     False,
     Number(f64),
-    /// Its value. In JSX also the text between elements, and a tag name such as `a-b` or `a:b`.
+    /// `"a"`, `'a'`: its value. In JSX also the text between elements ([`Expr::is_jsx_text`]), and
+    /// a tag name such as `a-b` or `a:b`.
     String(Name<'a>),
     BigInt(Name<'a>),
     Regex(Regex<'a>),
@@ -126,10 +128,21 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Number(at) => {
                 ExprKind::Number(file.hir.numbers.get(at as usize).copied().unwrap_or(f64::NAN))
             }
+            hir::ExprKind::String(text) if self.is_backtick_string(raw) => {
+                ExprKind::Template(Template {
+                    expr: self,
+                    exprs: hir::IdList::EMPTY,
+                    only_text: Some(text),
+                })
+            }
             hir::ExprKind::String(text) => ExprKind::String(file.name(text)),
             hir::ExprKind::BigInt(text) => ExprKind::BigInt(file.name(text)),
             hir::ExprKind::Regex => ExprKind::Regex(Regex { expr: self }),
-            hir::ExprKind::Template { exprs } => ExprKind::Template(Template { expr: self, exprs }),
+            hir::ExprKind::Template { exprs } => ExprKind::Template(Template {
+                expr: self,
+                exprs,
+                only_text: None,
+            }),
             hir::ExprKind::TaggedTemplate(call) => ExprKind::TaggedTemplate(Call::new(file, call)),
             hir::ExprKind::Array(elements) => ExprKind::Array(List::ids(file, elements)),
             hir::ExprKind::Object(props) => ExprKind::Object(List::run(file, props)),
@@ -203,13 +216,74 @@ impl<'a> Expr<'a> {
     /// The kind without what it holds. This is what a rule listens for.
     #[inline]
     pub fn tag(self) -> ExprTag {
-        self.try_raw().map_or(ExprTag::Missing, |raw| raw.kind.tag())
+        match self.try_raw() {
+            Some(raw @ hir::Expr { kind: hir::ExprKind::String(_), .. }) if self.is_backtick_string(raw) => {
+                ExprTag::Template
+            }
+            Some(raw) => raw.kind.tag(),
+            None => ExprTag::Missing,
+        }
+    }
+
+    /// Whether `raw`, which is this expression and a string in the HIR, is a template without
+    /// substitutions.
+    #[inline]
+    fn is_backtick_string(self, raw: &hir::Expr) -> bool {
+        self.file.hir.text.get(raw.pos as usize) == Some(&b'`')
+            && (self.file.hir.jsx.is_empty() || !self.is_jsx_text())
+    }
+
+    /// It is text between the tags of a JSX element: ESLint's `JSXText`. Its kind is `String`, with
+    /// the value that the text has at run time: without the whitespace around line breaks, and
+    /// with what `&amp;` and the like stand for. [`Expr::text`] is the text as it is written.
+    pub fn is_jsx_text(self) -> bool {
+        let file = self.file;
+        if file.hir.jsx.is_empty() || !matches!(self.try_raw(), Some(hir::Expr { kind: hir::ExprKind::String(_), .. })) {
+            return false;
+        }
+        let Some(&bun_sema::bind::Parent::Expr(parent)) = file.bound.expr_parent.get(self.id.idx()) else {
+            return false;
+        };
+        let Some(&hir::Expr { kind: hir::ExprKind::Jsx(jsx), .. }) = file.hir.exprs.get(parent.idx()) else {
+            return false;
+        };
+        let is_name = file.hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == self.id || it.close_tag == self.id);
+        !is_name && self.jsx_container_span().is_none()
+    }
+
+    /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`
+    /// of `<a.b.c>`. ESLint has a `JSXIdentifier`, a `JSXMemberExpression` or a `JSXNamespacedName`
+    /// there, not an `Identifier` or a `MemberExpression`.
+    pub fn is_jsx_tag_name(self) -> bool {
+        if self.file.hir.jsx.is_empty() {
+            return false;
+        }
+        let mut at = self;
+        loop {
+            let Node::Expr(parent) = at.parent() else {
+                return false;
+            };
+            match parent.kind() {
+                ExprKind::Dot { .. } => at = parent,
+                ExprKind::Jsx(jsx) => return jsx.tag() == Some(at) || jsx.close_tag() == Some(at),
+                _ => return false,
+            }
+        }
     }
 
     /// Without the parentheses around it.
     #[inline]
     pub fn span(self) -> Span {
         match self.try_raw() {
+            // The HIR does not position the `...e` of the child `{...e}` of a JSX element.
+            Some(&hir::Expr {
+                kind: hir::ExprKind::Spread(_),
+                pos,
+                end,
+            }) if self.file.hir.text.get(pos as usize) != Some(&b'.') => {
+                let start = self.jsx_container_span().map_or(pos, |it| skip_trivia(self.file.hir.text, it.start + 1));
+                Span::new(start, end)
+            }
             // Its decorators are part of it.
             Some(&hir::Expr {
                 kind: hir::ExprKind::Class(c),
@@ -233,12 +307,16 @@ impl<'a> Expr<'a> {
 
     #[inline]
     pub fn is_parenthesized(self) -> bool {
-        self.parens().len() != 0
+        let parens = self.file.hir.parens;
+        !parens.is_empty() && parens.binary_search_by_key(&self.id.0, |p| p.0.0).is_ok()
     }
 
     /// With all the parentheses around it.
     #[inline]
     pub fn outer_span(self) -> Span {
+        if self.file.hir.parens.is_empty() {
+            return self.span();
+        }
         self.parens().next_back().unwrap_or_else(|| self.span())
     }
 
@@ -341,11 +419,125 @@ impl<'a> Expr<'a> {
         }
     }
 
-    /// The braces of the `{e}` in JSX whose entire content it is.
+    /// The braces of the `{e}` in JSX whose entire content it is. Those of `{...e}` belong to the
+    /// `Spread`, those of `{}` to the `Missing`.
     pub fn jsx_container_span(self) -> Option<Span> {
         let braces = self.file.hir.jsx_expressions;
         let at = braces.binary_search_by_key(&self.id.0, |it| it.0.0).ok()?;
         Some(Span::new(braces[at].1, braces[at].2))
+    }
+
+    /// It is part of an optional chain: it is not evaluated if a `?.` to its left, or its own,
+    /// finds `null` or `undefined`. In `a?.b.c!` that is `a?.b`, `a?.b.c` and `a?.b.c!`. In
+    /// `(a?.b).c` it is only `a?.b`: parentheses end a chain.
+    pub fn is_in_optional_chain(self) -> bool {
+        let mut at = self;
+        loop {
+            match at.kind() {
+                ExprKind::NonNull(operand) if !operand.is_parenthesized() => at = operand,
+                ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
+                    return chain != Chain::No;
+                }
+                ExprKind::Call(call) => return call.chain() != Chain::No,
+                _ => return false,
+            }
+        }
+    }
+
+    /// It is the whole of an optional chain: where ESLint has a `ChainExpression`, with the same
+    /// range, around the `MemberExpression`, the `CallExpression` or the `TSNonNullExpression`.
+    pub fn is_chain_root(self) -> bool {
+        if !self.is_in_optional_chain() {
+            return false;
+        }
+        let Node::Expr(parent) = self.parent() else {
+            return true;
+        };
+        let continues = match parent.kind() {
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == self,
+            ExprKind::Call(call) => call.callee() == self,
+            ExprKind::NonNull(_) => true,
+            _ => false,
+        };
+        !continues || self.is_parenthesized()
+    }
+
+    /// Without the syntax around it that only concerns types: `e as T`, `<T>e`, `e as const`,
+    /// `e satisfies T`, `e!`. Parentheses are not nodes, so `(e as T)!` is `e` too.
+    pub fn skip_type_wrappers(self) -> Expr<'a> {
+        let mut at = self;
+        loop {
+            match at.kind() {
+                ExprKind::As { expr, .. }
+                | ExprKind::Satisfies { expr, .. }
+                | ExprKind::AsConst(expr)
+                | ExprKind::NonNull(expr) => at = expr,
+                _ => return at,
+            }
+        }
+    }
+
+    /// The `const` of `e as const` or `<const>e`, which ESLint has as a `TSTypeReference`.
+    pub fn const_keyword_span(self) -> Option<Span> {
+        let ExprKind::AsConst(_) = self.kind() else {
+            return None;
+        };
+        let whole = self.span();
+        Some(match self.is_angle_bracket_assertion() {
+            true => {
+                let start = skip_trivia(self.file.text(), whole.start + 1);
+                Span::new(start, start + 5)
+            }
+            false => Span::new(whole.end.saturating_sub(5), whole.end),
+        })
+    }
+
+    /// The two names of `import.meta` or `new.target`: ESLint's `meta` and `property`.
+    pub fn meta_property_spans(self) -> Option<(Span, Span)> {
+        let keyword = match self.tag() {
+            ExprTag::ImportMeta => "import",
+            ExprTag::NewTarget => "new",
+            _ => return None,
+        };
+        let (text, whole) = (self.file.text(), self.span());
+        let meta = Span::new(whole.start, whole.start + keyword.len() as u32);
+        let dot = skip_trivia(text, meta.end);
+        Some((meta, Span::new(skip_trivia(text, dot + 1), whole.end)))
+    }
+
+    /// `import.defer(..)`, as opposed to `import(..)`.
+    pub fn is_deferred_import_call(self) -> bool {
+        let deferred = self.file.hir.deferred_import_calls;
+        if deferred.is_empty() {
+            return false;
+        }
+        match self.kind() {
+            ExprKind::ImportCall { args } => {
+                args.first().is_some_and(|first| deferred.iter().any(|it| it.0 == first.id))
+            }
+            _ => false,
+        }
+    }
+
+    /// The operands of the comma operators: `a`, `b` and `c` of `a, b, c`, which ESLint has as
+    /// the `expressions` of one `SequenceExpression`. `(a, b), c` is `(a, b)` and `c`. Anything
+    /// else is itself.
+    pub fn sequence(self) -> SmallVec<[Expr<'a>; 4]> {
+        let mut items = SmallVec::new();
+        let mut at = self;
+        while let ExprKind::Binary {
+            op: BinOp::Comma,
+            left,
+            right,
+        } = at.kind()
+            && (at == self || !at.is_parenthesized())
+        {
+            items.push(right);
+            at = left;
+        }
+        items.push(at);
+        items.reverse();
+        items
     }
 }
 
@@ -452,6 +644,8 @@ impl<'a> Regex<'a> {
 pub struct Template<'a> {
     expr: Expr<'a>,
     exprs: hir::IdList<hir::ExprId>,
+    /// The text of a template without substitutions, which the HIR has as a string.
+    only_text: Option<bun_sema::atom::Atom>,
 }
 
 impl<'a> Template<'a> {
@@ -475,6 +669,9 @@ impl<'a> Template<'a> {
         if i >= self.quasi_count() {
             return None;
         }
+        if let Some(text) = self.only_text {
+            return file.name_if_some(text);
+        }
         file.name_if_some(bun_sema::atom::Atom(*file.hir.ids.get(at)?))
     }
 
@@ -485,9 +682,9 @@ impl<'a> Template<'a> {
             Some(before) => skip_trivia(text, before.outer_span().end),
             None => whole.start,
         };
-        let end = match self.exprs().get(i) {
-            Some(after) => skip_trivia_back(text, after.outer_span().start),
-            None => whole.end,
+        let end = match i < self.exprs.len() {
+            true => template_text_end(text, start + 1),
+            false => whole.end,
         };
         Span::new(start, end)
     }
@@ -502,6 +699,23 @@ impl<'a> Template<'a> {
     /// The value, if there are no substitutions.
     pub fn as_static(self) -> Option<Name<'a>> {
         self.exprs.is_empty().then(|| self.cooked(0)).flatten()
+    }
+}
+
+/// From `at`, which is inside the text of a template: the position after the next `${`.
+pub(super) fn template_text_end(text: &[u8], mut at: u32) -> u32 {
+    loop {
+        let rest = text.get(at as usize..).unwrap_or_default();
+        let Some(found) = bun_core::strings::index_of_any(rest, b"\\$`") else {
+            return text.len() as u32;
+        };
+        at += found as u32;
+        match rest[found] {
+            b'\\' => at += 2,
+            b'$' if rest.get(found + 1) == Some(&b'{') => return at + 2,
+            b'$' => at += 1,
+            _ => return at + 1,
+        }
     }
 }
 
@@ -580,6 +794,14 @@ impl<'a> Call<'a> {
     }
 }
 
+/// What is between the tags of a JSX element.
+#[derive(Copy, Clone, Debug)]
+pub enum JsxChild<'a> {
+    Expr(Expr<'a>),
+    /// Whitespace with a line break in it. ESLint has it as a `JSXText`.
+    Whitespace(Span),
+}
+
 /// `<tag attrs>children</tag>`, `<tag attrs />`, `<>children</>`
 #[derive(Copy, Clone)]
 pub struct Jsx<'a> {
@@ -637,14 +859,44 @@ impl<'a> Jsx<'a> {
         }
     }
 
-    /// Text is a `String`. What is in braces has a [`Expr::jsx_container_span`], and `{}` is
-    /// `Missing`.
+    /// Text is a `String` ([`Expr::is_jsx_text`]). What is in braces has a
+    /// [`Expr::jsx_container_span`]: `{}` is `Missing`, `{...e}` is a `Spread`.
+    ///
+    /// Text that is only whitespace and has a line break in it means nothing, and is left out. See
+    /// [`Jsx::children_with_whitespace`].
     #[inline]
     pub fn children(self) -> List<'a, Expr<'a>> {
         match self.raw() {
             Some(jsx) => List::ids(self.file, jsx.children),
             None => List::empty(self.file),
         }
+    }
+
+    /// The children, and the whitespace between them that is not among [`Jsx::children`]: all that
+    /// ESLint has as `children`.
+    pub fn children_with_whitespace(self) -> impl Iterator<Item = JsxChild<'a>> + 'a {
+        let mut at = self.opening_span().end;
+        let end = self.closing_span().map_or(at, |it| it.start);
+        let mut children = self.children().iter();
+        let mut pending = None;
+        std::iter::from_fn(move || {
+            if let Some(child) = pending.take() {
+                return Some(JsxChild::Expr(child));
+            }
+            let Some(child) = children.next() else {
+                let rest = Span::new(at, end);
+                at = end;
+                return (!rest.is_empty()).then_some(JsxChild::Whitespace(rest));
+            };
+            let span = child.jsx_container_span().unwrap_or_else(|| child.span());
+            let before = Span::new(at, span.start);
+            at = span.end;
+            if before.is_empty() {
+                return Some(JsxChild::Expr(child));
+            }
+            pending = Some(child);
+            Some(JsxChild::Whitespace(before))
+        })
     }
 
     #[inline]

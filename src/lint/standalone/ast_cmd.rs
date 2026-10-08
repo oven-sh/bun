@@ -182,6 +182,7 @@ fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> HashMap<No
                 Node::Expr(e) => e.outer_span(),
                 Node::Type(t) => t.outer_span(),
                 // The span of the function of a method is that of the method.
+                Node::Func(f) if matches!(node, Node::Member(_)) => f.span_from_params(),
                 Node::Func(f) => f.estree_span(),
                 _ => child.span(),
             };

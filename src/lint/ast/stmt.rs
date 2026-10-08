@@ -529,7 +529,7 @@ impl<'a> Stmt<'a> {
             Node::File(file) => file.body(),
             Node::Func(func) if func.kind() != super::FnKind::StaticBlock => func.body_statements()?,
             Node::Stmt(parent) => match parent.kind() {
-                StmtKind::Module(module) => module.body(),
+                StmtKind::Module(module) => module.innermost().body(),
                 _ => return None,
             },
             _ => return None,

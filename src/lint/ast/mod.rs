@@ -13,6 +13,7 @@
 //! - [`Node`] is any handle, for what applies to all of them: `parent()`, `ancestors()`, reports.
 
 mod decl;
+pub(crate) mod entities;
 mod expr;
 mod list;
 mod name;
@@ -274,6 +275,15 @@ impl<'a> File<'a> {
     #[inline]
     pub fn is_module(&self) -> bool {
         self.language.source_type == crate::language::SourceType::Module
+    }
+
+    /// ESLint's `Program.sourceType` is `"module"`. ESLint's own parser repeats
+    /// `languageOptions.sourceType`. `@typescript-eslint/parser` also says so of every file that
+    /// [has module syntax](File::has_module_syntax).
+    pub fn is_module_program(&self) -> bool {
+        use crate::language::{Parser, SourceType};
+        self.language.scope_source_type() == SourceType::Module
+            || self.language.parser == Parser::TypeScript && self.has_module_syntax
     }
 
     /// It has an `import` or an `export` at the top level, or its extension says that it is a

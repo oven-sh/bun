@@ -24,8 +24,9 @@ pub enum ExprKind<'a> {
     True,
     False,
     Number(f64),
-    /// `"a"`, `'a'`: its value. In JSX also the text between elements ([`Expr::is_jsx_text`]), and
-    /// a tag name such as `a-b` or `a:b`.
+    /// `"a"`, `'a'`: its value. In JSX also the value of an attribute, in which `&amp;` and the like
+    /// are replaced and `\` means nothing, the text between elements ([`Expr::is_jsx_text`]), and a
+    /// tag name such as `a-b` or `a:b`.
     String(Name<'a>),
     BigInt(Name<'a>),
     Regex(Regex<'a>),
@@ -133,6 +134,13 @@ impl<'a> Expr<'a> {
                     expr: self,
                     exprs: hir::IdList::EMPTY,
                     only_text: Some(text),
+                })
+            }
+            hir::ExprKind::String(text) if file.is_jsx_attribute_string(self.id) => {
+                let value = file.name(text);
+                ExprKind::String(match super::entities::unescape(value.bytes()) {
+                    std::borrow::Cow::Borrowed(_) => value,
+                    std::borrow::Cow::Owned(decoded) => file.name(file.atoms.intern(&decoded)),
                 })
             }
             hir::ExprKind::String(text) => ExprKind::String(file.name(text)),
@@ -266,6 +274,33 @@ impl<'a> Expr<'a> {
                 end,
                 ..
             }) => Span::new(Class::new(self.file, c).start(), end),
+            // The function of a method starts with its type parameters. The HIR has it start at
+            // the `(`.
+            Some(&hir::Expr {
+                kind: hir::ExprKind::Fn(f),
+                pos,
+                end,
+            }) => match self.file.hir.fns.get(f.idx()) {
+                Some(func) if !func.type_params.is_empty() && func.anchor == pos => {
+                    Span::new(Func::new(self.file, f).start_of_params(), end)
+                }
+                _ => Span::new(pos, end),
+            },
+            // The HIR takes the `\"` at the end of the value of a JSX attribute for an escape.
+            Some(&hir::Expr {
+                kind: hir::ExprKind::String(_),
+                pos,
+                end,
+            }) if !self.file.hir.jsx.is_empty()
+                && !matches!(self.file.hir.text.get(pos as usize), Some(b'"' | b'\''))
+                && self.file.is_jsx_attribute_string(self.id) =>
+            {
+                let text = self.file.hir.text;
+                let quote = text.get(end.wrapping_sub(1) as usize).copied().unwrap_or(b'"');
+                let before = text.get(..pos as usize).unwrap_or_default();
+                let start = bun_core::strings::last_index_of_char(before, quote).map_or(pos, |it| it as u32);
+                Span::new(start, end)
+            }
             Some(raw) => Span::new(raw.pos, raw.end),
             None => Span::default(),
         }
@@ -540,6 +575,18 @@ impl File<'_> {
     #[inline]
     fn is_backtick_string(&self, id: hir::ExprId, raw: &hir::Expr) -> bool {
         self.hir.text.get(raw.pos as usize) == Some(&b'`') && !self.is_jsx_text(id)
+    }
+
+    /// Whether the string `id` is the value of a JSX attribute, without braces.
+    fn is_jsx_attribute_string(&self, id: hir::ExprId) -> bool {
+        if self.hir.jsx.is_empty() {
+            return false;
+        }
+        let Some(&bun_sema::bind::Parent::Prop(prop)) = self.bound.expr_parent.get(id.idx()) else {
+            return false;
+        };
+        self.hir.props.get(prop.idx()).is_some_and(|it| it.name_kind == hir::NameKind::Jsx)
+            && self.hir.jsx_expressions.binary_search_by_key(&id.0, |it| it.0.0).is_err()
     }
 
     fn is_jsx_text(&self, id: hir::ExprId) -> bool {

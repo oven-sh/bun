@@ -184,12 +184,16 @@ impl<'a> Func<'a> {
     /// calls the `FunctionExpression` that is the `value` of the `MethodDefinition` or the
     /// `Property`.
     pub fn span_from_params(self) -> Span {
-        let start = match self.type_params().first() {
+        Span::new(self.start_of_params(), self.span().end)
+    }
+
+    /// The position of the `<` of the type parameters, or of the `(`.
+    pub(super) fn start_of_params(self) -> u32 {
+        match self.type_params().first() {
             Some(first) => crate::tokens::skip_trivia_back(self.file.text(), first.span().start)
                 .saturating_sub(1),
             None => self.raw().anchor,
-        };
-        Span::new(start, self.span().end)
+        }
     }
 
     /// The range of the node that ESLint has for it:
@@ -748,10 +752,9 @@ impl<'a> Class<'a> {
         Span::new(skip_trivia(self.file.text(), head_end), self.span().end)
     }
 
+    /// The constructor, not its overloads.
     pub fn constructor(self) -> Option<Member<'a>> {
-        self.members()
-            .iter()
-            .find(|m| m.kind() == MemberKind::Constructor && m.func().is_some_and(Func::has_body))
+        self.members().iter().find(|m| m.is_constructor() && m.func().is_some_and(Func::has_body))
     }
 }
 
@@ -766,9 +769,17 @@ impl<'a> Member<'a> {
         &self.file.hir.members[self.id.idx()]
     }
 
+    /// `static constructor() {}` is a `Constructor` too, which for ESLint is a method: see
+    /// [`Member::is_constructor`].
     #[inline]
     pub fn kind(self) -> MemberKind {
         self.raw().kind
+    }
+
+    /// ESLint's `kind === "constructor"`.
+    #[inline]
+    pub fn is_constructor(self) -> bool {
+        self.raw().kind == MemberKind::Constructor && !self.raw().flags.contains(Flags::STATIC)
     }
 
     /// `None` for a constructor, a static block and a signature without a name.
@@ -1169,7 +1180,9 @@ declaration! {
     /// `namespace N { .. }`, `module N { .. }`, `declare module "m" { .. }`, `declare global { .. }`
     ///
     /// `namespace A.B { .. }` is a namespace `A` whose body is the one statement `B { .. }`:
-    /// [`Module::nested`].
+    /// [`Module::nested`]. That statement is not a node: ESLint has one `TSModuleDeclaration` whose
+    /// `id` is a `TSQualifiedName`. No listener is called with it, a walk goes from `A` to the
+    /// statements between the braces ([`Module::innermost`]), and their parent is `A`.
     Module, ModuleId, modules, Module
 }
 
@@ -1232,6 +1245,16 @@ impl<'a> Module<'a> {
             return None;
         }
         Some(Span::new(skip_trivia(self.file.text(), self.name_span().end), self.span().end))
+    }
+
+    /// The `C` of `namespace A.B.C { .. }`, whose body is what is between the braces. Itself, if its
+    /// name has no dots.
+    pub fn innermost(self) -> Module<'a> {
+        let mut at = self;
+        while let Some(nested) = at.nested() {
+            at = nested;
+        }
+        at
     }
 
     /// The `B` of `namespace A.B`.

@@ -214,9 +214,15 @@ impl<'a> Node<'a> {
             Parent::ClassExtends(c) | Parent::Decorator(_, DecoratorOwner::Class(c)) => {
                 Node::Class(Class::new(file, c))
             }
-            Parent::Module(m) => match hir.modules.get(m.idx()) {
-                Some(module) => Node::Stmt(Stmt::new(file, module.stmt)),
-                None => Node::File(file),
+            Parent::Module(mut m) => loop {
+                let Some(module) = hir.modules.get(m.idx()) else {
+                    break Node::File(file);
+                };
+                // From the `C` of `namespace A.B.C` to the `A`.
+                match bound.stmt_parent.get(module.stmt.idx()) {
+                    Some(&Parent::Module(outer)) if file.is_nested_namespace(module.stmt) => m = outer,
+                    _ => break Node::Stmt(Stmt::new(file, module.stmt)),
+                }
             },
         };
         let stmt = |s: Option<hir::StmtId>| match s {

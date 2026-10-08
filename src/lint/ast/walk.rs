@@ -164,7 +164,7 @@ impl<'a> Node<'a> {
                     one!(alias.ty());
                 }
                 StmtKind::Enum(it) => all!(it.members()),
-                StmtKind::Module(module) => all!(module.body()),
+                StmtKind::Module(module) => all!(module.innermost().body()),
                 StmtKind::If { test, yes, no } => {
                     one!(test);
                     one!(yes);

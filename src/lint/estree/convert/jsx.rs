@@ -4,7 +4,7 @@ use super::Converter;
 use crate::ast::{Expr, ExprKind, Jsx, JsxChild, KeyKind, Prop, PropKind};
 use crate::estree::NodeType::*;
 use crate::estree::Sink;
-use crate::estree::entities::unescape;
+use crate::ast::entities::unescape;
 use crate::span::Span;
 
 impl<'a, S: Sink> Converter<'a, '_, S> {
@@ -96,9 +96,6 @@ impl<'a, S: Sink> Converter<'a, '_, S> {
             None => self.out.null(),
             Some(value) => match (value.jsx_container_span(), value.kind()) {
                 (Some(braces), _) => self.jsx_container(braces, value),
-                (None, ExprKind::String(text)) => {
-                    self.string_literal(value.span(), &unescape(text.bytes()));
-                }
                 (None, _) => self.expr(value),
             },
         }

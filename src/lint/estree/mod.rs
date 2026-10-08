@@ -13,7 +13,6 @@
 //! - There are no `loc`, `tokens` and `comments`. A sink can compute `loc` from the span.
 
 mod convert;
-mod entities;
 mod json;
 mod node_type;
 

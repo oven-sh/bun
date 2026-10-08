@@ -5,7 +5,7 @@
 //! - what the parser has left behind where it backtracked,
 //! - what is synthesized from JSDoc comments for the type checker,
 //! - what the HIR has and the source has not: placeholders, wrappers, the object of
-//!   `with { type: "json" }`.
+//!   `with { type: "json" }`, the `B` of `namespace A.B`.
 
 use super::{
     Case, Class, EnumMember, ExportSpec, ExprTag, File, Func, Handle, ImportSpec, Member, Param,
@@ -37,7 +37,8 @@ impl File<'_> {
         let raw = self.hir.stmts.get(i)?;
         let is_node = !matches!(self.bound.stmt_parent.get(i), None | Some(Parent::None))
             && self.is_outside_jsdoc(raw.start)
-            && self.wrapped_in(hir::StmtId(i as u32)).is_none();
+            && self.wrapped_in(hir::StmtId(i as u32)).is_none()
+            && !self.is_nested_namespace(hir::StmtId(i as u32));
         is_node.then(|| StmtTag::of(&raw.kind))
     }
 
@@ -63,6 +64,16 @@ impl File<'_> {
         self.hir.text.get(raw.pos as usize..raw.end as usize) == Some(b"this")
             && (self.parents().of_this(pat))
                 .is_some_and(|param| self.bound.param_fn.get(param.idx()).is_some_and(|f| f.is_some()))
+    }
+
+    /// Whether the statement `id` is the `B` of `namespace A.B`: it starts with its name.
+    pub(crate) fn is_nested_namespace(&self, id: hir::StmtId) -> bool {
+        match self.hir.stmts.get(id.idx()) {
+            Some(&hir::Stmt { kind: hir::StmtKind::Module(m), start, .. }) => {
+                self.hir.modules.get(m.idx()).is_some_and(|it| it.name_pos == start)
+            }
+            _ => false,
+        }
     }
 
     /// Whether `prop` is a `key: "value"` of `with { .. }`, which is not a property of an object.

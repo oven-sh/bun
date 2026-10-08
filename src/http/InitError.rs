@@ -27,3 +27,16 @@ impl From<bun_uws::create_bun_socket_error_t> for InitError {
         }
     }
 }
+
+/// How a request reports TLS options that no context can be built from.
+impl From<InitError> for crate::Error {
+    fn from(err: InitError) -> Self {
+        match err {
+            InitError::InvalidCRL => crate::Error::InvalidCRL,
+            InitError::FailedToOpenSocket
+            | InitError::InvalidCA
+            | InitError::InvalidCAFile
+            | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
+        }
+    }
+}

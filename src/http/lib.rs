@@ -3683,7 +3683,7 @@ impl<'a> HTTPClient<'a> {
         // synchronously fires on_close) that call close_and_fail -> fail -> the
         // result callback, which can free the AsyncHTTP that embeds `*self`.
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
-        ProxyTunnel::start::<IS_SSL>(self, socket, ssl_options.as_deref(), start_payload);
+        ProxyTunnel::start::<IS_SSL>(self, socket, ssl_options.as_ref(), start_payload);
         // Must not reference `self` past this point — see comment above.
     }
 

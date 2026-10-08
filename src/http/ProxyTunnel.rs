@@ -10,7 +10,7 @@ use bun_uws as uws;
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::{HTTPStage, Stage};
-use crate::ssl_config::SSLConfig;
+use crate::ssl_config;
 use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
 use crate::{AlpnOffer, HTTPClient};
 
@@ -576,26 +576,32 @@ impl ProxyTunnel {
     pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: Option<&SSLConfig>,
+        ssl_options: Option<&ssl_config::SharedPtr>,
         start_payload: &[u8],
     ) {
-        let mut err = uws::create_bun_socket_error_t::none;
         let ssl_ctx = match ssl_options {
+            // The context a direct connection with these options uses, built once for every tunnel.
+            Some(ssl_options) if ssl_options.requires_custom_request_ctx => {
+                crate::http_thread().custom_ssl_ctx(ssl_options)
+            }
             // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-            Some(ssl_options) => ssl_options
-                .as_usockets_for_client_verification()
-                .create_ssl_context(&mut err),
+            Some(ssl_options) => {
+                let mut err = uws::create_bun_socket_error_t::none;
+                ssl_options
+                    .as_usockets_for_client_verification()
+                    .create_ssl_context(&mut err)
+                    .ok_or_else(|| crate::InitError::from(err))
+            }
             // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
-            None => Some(crate::http_thread().default_ssl_ctx()),
+            None => Ok(crate::http_thread().default_ssl_ctx()),
         };
-        let Some(ssl_ctx) = ssl_ctx else {
-            // Invalid TLS options; the errors a direct request reports for them.
-            let error = match err {
-                uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
-                _ => crate::Error::FailedToOpenSocket,
-            };
-            this.close_and_fail::<IS_SSL>(error, socket);
-            return;
+        let ssl_ctx = match ssl_ctx {
+            Ok(ssl_ctx) => ssl_ctx,
+            Err(err) => {
+                // Invalid TLS options; the errors a direct request reports for them.
+                this.close_and_fail::<IS_SSL>(err.into(), socket);
+                return;
+            }
         };
         let wrapper = match ProxyTunnelWrapper::init_with_ctx(
             ssl_ctx,

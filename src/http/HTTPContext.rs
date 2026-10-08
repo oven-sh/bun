@@ -521,20 +521,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.secure.as_ref().unwrap().as_ptr()
     }
 
-    pub(crate) fn init_with_client_config(
-        &mut self,
-        client: &mut HTTPClient,
-    ) -> Result<(), InitError> {
+    pub(crate) fn init_with_ssl_config(&mut self, config: &SSLConfig) -> Result<(), InitError> {
         // Rust cannot reject a const-generic bool branch at compile time on
         // stable, so this is a debug_assert.
         debug_assert!(SSL, "ssl only");
-        let opts = client
-            .tls_props
-            .as_ref()
-            .unwrap()
-            .get()
-            .as_usockets_for_client_verification();
-        self.init_with_opts(&opts)
+        self.init_with_opts(&config.as_usockets_for_client_verification())
     }
 
     fn init_with_opts(

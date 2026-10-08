@@ -1,5 +1,6 @@
 use crate::oxlint::{self, rules_of_hooks::Flow};
 use bun_core::strings;
+use bun_lint::code_path::{Event, Step, steps};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
@@ -374,6 +375,8 @@ impl<'a> Paths<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
+    /// The calls of hooks.
+    calls: Vec<Expr<'a>>,
     /// The segments that have started and not ended, of all code paths. Only those that can be reached.
     segments: Vec<Segment<'a>>,
     /// The callees that are hooks, with the segment that each is in, of the code paths that have not ended.
@@ -391,34 +394,21 @@ impl Rule for RulesOfHooks {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let (mut has_hooks, mut has_effect_events) = (false, false);
+        let mut state = State::default();
         for e in file.exprs_of_kind(ExprTag::Call) {
-            if let ExprKind::Call(call) = e.kind() {
-                has_hooks |= is_hook(call.callee());
-                has_effect_events |= name_without_react_namespace(call.callee()).is_some_and(|it| it.is("useEffectEvent"));
+            if let Some(call) = e.as_call()
+                && is_hook(call.callee())
+            {
+                state.calls.push(e);
             }
         }
-        if has_hooks {
-            on.segment_start(|_, segment, _, cx| cx.state.segments.push(segment));
-            on.segment_end(|_, _, _, cx| {
-                cx.state.segments.pop();
-            });
-            on.code_path_start(|_, _, _, cx| cx.state.starts.push(cx.state.hooks.len()));
-            on.code_path_end(Self::code_path_end);
-            on.enter(ExprTag::Call, |_, node, cx| {
-                if let Node::Expr(e) = node
-                    && let ExprKind::Call(call) = e.kind()
-                    && is_hook(call.callee())
-                {
-                    let segment = cx.state.segments.last().copied();
-                    cx.state.hooks.push((segment, call.callee()));
-                }
-            });
+        if !state.calls.is_empty() {
+            on.finish(Self::check);
         }
-        if has_effect_events && !oxlint::is_followed(file) {
+        if file.mentions("useEffectEvent") && !oxlint::is_followed(file) {
             on.finish(Self::check_effect_events);
         }
-        State::default()
+        state
     }
 }
 
@@ -431,22 +421,131 @@ fn has_flow_suppression<'a>(file: &'a File<'a>, hook: Expr<'a>) -> bool {
     }
 }
 
-impl RulesOfHooks {
-    fn code_path_end<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let start = cx.state.starts.pop().unwrap_or(0);
-        if cx.state.hooks.len() <= start {
-            return;
+/// What the code path that `call` is in starts with, if the syntax tells that every way through it leads through the call once: it
+/// is in a statement at the top of the code path, in a part of it that is always evaluated, and nothing before can end the code
+/// path or go on forever. That holds for nearly every call of a hook, and saves the analysis of the file.
+fn root_if_always_called<'a>(call: Expr<'a>) -> Option<Node<'a>> {
+    let mut child = call;
+    let statement = loop {
+        if child.is_in_optional_chain() {
+            return None;
         }
-        let hooks = cx.state.hooks.split_off(start);
-        let mut paths = Paths {
-            thrown: code_path.thrown_segments(),
-            cyclic: Vec::new(),
-            from_start: FxHashMap::default(),
-            to_end: FxHashMap::default(),
-            shortest: FxHashMap::default(),
-            outer: hooks.iter().find_map(|it| it.0.filter(|segment| segment.code_path() != code_path)),
+        match child.parent() {
+            Node::Expr(parent) => {
+                let is_always_evaluated = match parent.kind() {
+                    ExprKind::Call(_)
+                    | ExprKind::New(_)
+                    | ExprKind::Dot { .. }
+                    | ExprKind::Index { .. }
+                    | ExprKind::As { .. }
+                    | ExprKind::AsConst(_)
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::NonNull(_)
+                    | ExprKind::Array(_)
+                    | ExprKind::Spread(_)
+                    | ExprKind::Unary { .. }
+                    | ExprKind::Await(_) => !parent.is_assignment_target(),
+                    ExprKind::Binary { op, left, .. } => !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || left == child,
+                    ExprKind::Cond { test, .. } => test == child,
+                    ExprKind::Assign { op: None, value, .. } => value == child && !parent.is_assignment_target(),
+                    _ => false,
+                };
+                if !is_always_evaluated {
+                    return None;
+                }
+                child = parent;
+            }
+            Node::VarDecl(declarator) if declarator.init() == Some(child) => match declarator.parent() {
+                Node::Stmt(statement) if !statement.is_wrapper() => break statement,
+                _ => return None,
+            },
+            Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Expr | StmtTag::Return) && !statement.is_wrapper() => break statement,
+            // The body of an arrow function.
+            Node::Func(func) => return Some(Node::Func(func)),
+            _ => return None,
+        }
+    };
+    let root = statement.parent();
+    let (file, before) = (call.file(), statement.span().start);
+    let start = match root {
+        Node::Func(func) if func.kind() != FnKind::StaticBlock => {
+            if func.returns().any(|it| it.span().start < before) {
+                return None;
+            }
+            func.body_span()?.start
+        }
+        Node::File(_) => 0,
+        _ => return None,
+    };
+    let ends_or_repeats = [StmtTag::Throw, StmtTag::For, StmtTag::While, StmtTag::DoWhile];
+    let is_before = |it: &Stmt| it.span().start >= start && it.span().start < before;
+    let mut earlier = ends_or_repeats.into_iter().flat_map(|tag| file.stmts_of_kind(tag)).filter(is_before);
+    let is_in_root = |it: Stmt<'a>| Node::Stmt(it).ancestors().find(|it| bun_lint::code_path::starts_code_path(*it)) == Some(root);
+    (!earlier.any(is_in_root)).then_some(root)
+}
+
+impl RulesOfHooks {
+    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let calls = std::mem::take(&mut cx.state.calls);
+        let roots: Option<Vec<Node<'a>>> = calls.iter().map(|it| root_if_always_called(*it)).collect();
+        let Some(roots) = roots else {
+            return self.analyze(cx);
         };
-        let all_paths_from_start_to_end = paths.count(code_path.initial_segment(), Direction::ToEnd);
+        for (call, root) in calls.iter().zip(roots) {
+            if let Some(call) = call.as_call() {
+                self.check_hooks(root, &[(None, call.callee())], None, cx);
+            }
+        }
+    }
+
+    /// Analyzes the file, and does what upstream does in its listeners.
+    fn analyze<'a>(&self, cx: &mut Cx<'a, Self>) {
+        for step in steps(cx.file(), ExprTag::Call.into(), NodeTags::EMPTY) {
+            match step {
+                Step::Event(Event::SegmentStart(segment, _)) => cx.state.segments.push(segment),
+                Step::Event(Event::SegmentEnd(..)) => drop(cx.state.segments.pop()),
+                Step::Event(Event::CodePathStart(..)) => cx.state.starts.push(cx.state.hooks.len()),
+                Step::Event(Event::CodePathEnd(code_path, node)) => {
+                    let start = cx.state.starts.pop().unwrap_or(0);
+                    if cx.state.hooks.len() > start {
+                        let hooks = cx.state.hooks.split_off(start);
+                        self.check_hooks(node, &hooks, Some(code_path), cx);
+                    }
+                }
+                Step::Enter(Node::Expr(e)) => {
+                    if let Some(call) = e.as_call()
+                        && is_hook(call.callee())
+                    {
+                        let segment = cx.state.segments.last().copied();
+                        cx.state.hooks.push((segment, call.callee()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `node`: what the code path starts with. `code_path`: `None` if every way through it leads through each of `hooks` once.
+    fn check_hooks<'a>(&self, node: Node<'a>, hooks: &[(Option<Segment<'a>>, Expr<'a>)], code_path: Option<CodePath<'a>>, cx: &Cx<'a, Self>) {
+        // The routes, how many lead from the start to the end, and the length of the shortest.
+        let mut analyzed = code_path.map(|code_path| {
+            let mut paths = Paths {
+                thrown: code_path.thrown_segments(),
+                cyclic: Vec::new(),
+                from_start: FxHashMap::default(),
+                to_end: FxHashMap::default(),
+                shortest: FxHashMap::default(),
+                outer: hooks.iter().find_map(|it| it.0.filter(|segment| segment.code_path() != code_path)),
+            };
+            let all_paths_from_start_to_end = paths.count(code_path.initial_segment(), Direction::ToEnd);
+            let mut shortest_final_path_length = INFINITY;
+            for segment in code_path.final_segments() {
+                if segment.is_reachable() {
+                    shortest_final_path_length = shortest_final_path_length.min(paths.shortest_path_length_to_start(segment));
+                }
+            }
+            (paths, all_paths_from_start_to_end, shortest_final_path_length)
+        });
 
         let func = node.as_func();
         let function_name = func.and_then(get_function_name);
@@ -466,45 +565,41 @@ impl RulesOfHooks {
             _ => false,
         };
 
-        let mut shortest_final_path_length = INFINITY;
-        for segment in code_path.final_segments() {
-            if segment.is_reachable() {
-                shortest_final_path_length = shortest_final_path_length.min(paths.shortest_path_length_to_start(segment));
-            }
-        }
-
         let follows_oxlint = oxlint::is_followed(cx.file());
-        for &(segment, hook) in &hooks {
-            let Some(segment) = segment.filter(|it| it.is_reachable()) else {
-                if follows_oxlint && let Node::Expr(call) = hook.parent() {
-                    let flow = Flow {
-                        is_reachable: false,
-                        is_cyclic: false,
-                        is_conditional: false,
+        for &(segment, hook) in hooks {
+            let mut possibly_has_early_return = false;
+            let mut flow = Flow {
+                is_reachable: true,
+                is_cyclic: false,
+                is_conditional: false,
+            };
+            if let Some((paths, all_paths_from_start_to_end, shortest_final_path_length)) = &mut analyzed {
+                flow.is_reachable = false;
+                if let Some(segment) = segment.filter(|it| it.is_reachable()) {
+                    let length = paths.shortest_path_length_to_start(segment);
+                    possibly_has_early_return = match paths.neighbors(segment, Direction::ToEnd).is_empty() {
+                        true => *shortest_final_path_length <= length,
+                        false => *shortest_final_path_length < length,
                     };
-                    oxlint::rules_of_hooks::check(cx, call, flow);
+                    let paths_from_start_to_end =
+                        paths.count(segment, Direction::FromStart).times(paths.count(segment, Direction::ToEnd));
+                    flow = Flow {
+                        is_reachable: true,
+                        is_cyclic: paths.cyclic.contains(&segment.id()),
+                        is_conditional: paths_from_start_to_end != *all_paths_from_start_to_end,
+                    };
                 }
-                continue;
-            };
-            let length = paths.shortest_path_length_to_start(segment);
-            let possibly_has_early_return = match paths.neighbors(segment, Direction::ToEnd).is_empty() {
-                true => shortest_final_path_length <= length,
-                false => shortest_final_path_length < length,
-            };
-            let paths_from_start_to_end =
-                paths.count(segment, Direction::FromStart).times(paths.count(segment, Direction::ToEnd));
-            let is_cycled = paths.cyclic.contains(&segment.id());
+            }
             if follows_oxlint {
                 if let Node::Expr(call) = hook.parent() {
-                    let flow = Flow {
-                        is_reachable: true,
-                        is_cyclic: is_cycled,
-                        is_conditional: paths_from_start_to_end != all_paths_from_start_to_end,
-                    };
                     oxlint::rules_of_hooks::check(cx, call, flow);
                 }
                 continue;
             }
+            if !flow.is_reachable {
+                continue;
+            }
+            let is_cycled = flow.is_cyclic;
             let is_use = is_react_function(hook, "use");
             let report = |message: Message| cx.report(hook, message).data("hook", hook.text());
             let mut reports: smallvec::SmallVec<[Message; 2]> = smallvec::SmallVec::new();
@@ -520,7 +615,7 @@ impl RulesOfHooks {
                     reports.push(ASYNC);
                 }
                 if !is_cycled
-                    && paths_from_start_to_end != all_paths_from_start_to_end
+                    && flow.is_conditional
                     && !is_use
                     && !is_inside_do_while_loop(hook)
                 {

@@ -23,6 +23,8 @@ impl Rule for NoTabs {
         on.finish(|rule, cx| {
             let source = cx.text();
             let mut at = 0;
+            // Where the line that has been looked at last starts, and where its indentation ends.
+            let mut indentation = Span::default();
             while let Some(rest) = source.get(at..)
                 && let Some(found) = strings::index_of_char_usize(rest, b'\t')
             {
@@ -31,7 +33,11 @@ impl Rule for NoTabs {
                 let tabs = Span::new(start as u32, at as u32);
                 if rule.allow_indentation_tabs {
                     let line = cx.line_span(cx.line_of(tabs.start));
-                    if text::is_blank(cx.slice(Span::new(line.start, tabs.start))) {
+                    if indentation.start != line.start || indentation.is_empty() {
+                        let rest = text::trim_start(cx.slice(line)).len() as u32;
+                        indentation = Span::new(line.start, line.end - rest);
+                    }
+                    if tabs.start <= indentation.end {
                         continue;
                     }
                 }

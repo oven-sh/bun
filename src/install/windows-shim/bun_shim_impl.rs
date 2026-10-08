@@ -393,10 +393,8 @@ static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::
 static FAILURE_REASON_LEN: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(usize::MAX);
 
-/// Stores the text that the message of a [`FailReason`] with `{s}` prints.
-///
-/// Keeps the printable ASCII of `text` and writes `?` for every other unit, so
-/// the failure message stays readable and valid UTF-8 without a UTF-16 decoder.
+/// Stores the text that the message of a [`FailReason`] with `{s}` prints. It
+/// keeps the printable ASCII of `text` and writes `?` for every other unit.
 #[cold]
 #[inline(never)]
 fn capture_failure_text(text: &[u16]) {
@@ -1296,11 +1294,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
     };
 
-    // Windows runs a .cmd or .bat file through cmd.exe, and so does the
-    // `cmd /c` the bin metadata records for one. cmd.exe reads the rest of the
-    // command line a second time, where `%NAME%` becomes the value of an
-    // environment variable and `&` starts another command. The quoting the
-    // arguments arrive with does not stop that, so refuse the launch.
+    // cmd.exe reads the rest of the command line a second time: `%NAME%`
+    // becomes the value of an environment variable, and `&` starts another
+    // command. No quoting of the argument stops that, so refuse the launch.
     {
         // SAFETY: spawn_command_line is NUL-terminated (written above).
         let assembled = unsafe { bun_core::ffi::wstr_units(spawn_command_line) };
@@ -1797,26 +1793,22 @@ const SPACE: u16 = ' ' as u16;
 const TAB: u16 = '\t' as u16;
 const BACKSLASH: u16 = '\\' as u16;
 
-/// True when cmd.exe reads `unit` as syntax in the arguments of a batch file:
-/// `%` (0x25), `&` (0x26), `|` (0x7C), `<` (0x3C), `>` (0x3E), `^` (0x5E), and
-/// a line break (0x0D, 0x0A).
+/// True when cmd.exe reads `unit` as syntax: `%` `&` `|` `<` `>` `^` or a line
+/// break.
 ///
-/// `src/which/lib.rs` holds the same set for the paths that check one argument.
-/// This one leaves out `"`, because here the text is a command line, where a
-/// `"` is the quoting around an argument that holds a space. A `"` on its own
-/// starts no command and reads no environment variable.
+/// The set of `batch_arg_has_cmd_metachars` in `src/which/lib.rs` without `"`.
+/// Here the text is a command line, where a `"` is the quoting around an
+/// argument. On its own it starts no command and reads no variable.
 fn is_cmd_special_character(unit: u16) -> bool {
     matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)
 }
 
 /// Returns the argument of `tail` that holds the first character cmd.exe reads
-/// as syntax, or `None` when the arguments hold none.
+/// as syntax, or `None` when the arguments hold none. `tail` is the part of a
+/// command line after the file to run.
 ///
-/// `tail` is the part of a command line after the file to run. An argument ends
-/// at a space or a tab that is not inside quotes. Only the search for that end
-/// reads the quotes: a character is special wherever it is, because cmd.exe
-/// reads `%NAME%` inside quotes too, and the quotes of the argument do not
-/// survive the way cmd.exe reads the line again.
+/// The quotes only end an argument. A character counts inside them too, because
+/// cmd.exe reads `%NAME%` inside quotes and drops the quoting of the argument.
 fn find_cmd_special_argument(tail: &[u16]) -> Option<&[u16]> {
     let mut start: usize = 0;
     let mut found = false;

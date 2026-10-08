@@ -2144,10 +2144,9 @@ impl RunCommand {
     ) -> crate::Result<::core::convert::Infallible> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 
-        // Windows runs a .cmd or .bat file through cmd.exe, which reads the
-        // arguments a second time. `%NAME%` there becomes the value of an
-        // environment variable and `&` starts another command, whatever
-        // quoting the spawn puts around the argument.
+        // cmd.exe reads the arguments of a batch file a second time: `%NAME%`
+        // becomes the value of an environment variable, and `&` starts another
+        // command. No quoting of the argument stops that.
         if cfg!(windows) && bun_which::is_batch_file(executable) {
             if let Some(arg) = passthrough
                 .iter()

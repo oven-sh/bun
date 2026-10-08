@@ -333,6 +333,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 AwaitOrYield::AllowIdent => {
                     // `isAwaitExpression`
                     if p.is_tolerant()
+                        && !p.is_ecmascript()
                         && level.lte(Level::Prefix)
                         && Self::pfx_operand_follows_on_same_line(p)
                     {
@@ -402,6 +403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     _ => {
                         // `isYieldExpression`
                         if p.is_tolerant()
+                            && !p.is_ecmascript()
                             && level.lte(Level::Assign)
                             && Self::pfx_operand_follows_on_same_line(p)
                         {
@@ -1030,6 +1032,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut target = Expr::EMPTY;
         if p.is_tolerant()
             && !p.lexer.is_log_disabled
+            // For acorn an element and `import` are primary expressions.
+            && !(p.is_ecmascript() && matches!(p.lexer.token, T::TLessThan | T::TImport))
             && matches!(
                 p.lexer.token,
                 T::TLessThan
@@ -1102,7 +1106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // Allow "in" inside arrays. (`parseArrayLiteralExpression` leaves the context as it is: see
         // `parse_expr_allow_in`.)
         let old_allow_in = p.allow_in;
-        p.allow_in = old_allow_in || !p.is_tolerant();
+        p.allow_in = old_allow_in || !p.stays_in_head_of_for();
         let saved_contexts = p.enter_list(ListKind::ArrayLiteralMembers);
 
         while p.lexer.token != T::TCloseBracket {
@@ -1248,7 +1252,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // Allow "in" inside object literals. (`parseObjectLiteralElement` does so for the value of a
         // property only: see `parse_expr_allow_in`.)
         let old_allow_in = p.allow_in;
-        p.allow_in = old_allow_in || !p.is_tolerant();
+        p.allow_in = old_allow_in || !p.stays_in_head_of_for();
         let saved_contexts = p.enter_list(ListKind::ObjectLiteralMembers);
 
         while p.lexer.token != T::TCloseBrace {
@@ -1560,7 +1564,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn pfx_jsx_or_missing(p: &mut Self, level: Level) -> PResult<Expr> {
         // The operand of a unary operator is parsed at Level::Prefix: no lookahead, and `mustBeUnary`.
         let must_be_unary = level.eql(Level::Prefix);
-        let starts_jsx = level.lte(Level::Prefix)
+        let is_primary = p.is_ecmascript();
+        let starts_jsx = is_primary
+            || level.lte(Level::Prefix)
             && (must_be_unary
                 // `nextTokenIsIdentifierOrKeywordOrGreaterThan`
                 || p.next_token_matches(|p| {
@@ -1578,7 +1584,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let first = p.lexer.loc();
         let element = Self::pfx_jsx_elements(p, first, must_be_unary)?;
         // The element is returned as it is, not as the start of a member or call expression.
-        if matches!(
+        if !is_primary
+            && matches!(
             p.lexer.token,
             T::TDot
                 | T::TQuestionDot
@@ -1589,7 +1596,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 | T::TExclamation
                 | T::TPlusPlus
                 | T::TMinusMinus
-        ) {
+            )
+        {
             p.forbid_suffix_after_as_loc = p.lexer.loc();
         }
         Ok(element)

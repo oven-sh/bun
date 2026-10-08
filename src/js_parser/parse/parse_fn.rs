@@ -455,7 +455,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             {
                 // p.markSyntaxFeature
                 p.lexer.next()?;
-                default_value = Some(p.parse_expr(Level::Comma)?);
+                default_value = Some(match p.is_ecmascript() {
+                    true => p.parse_expr_allow_in(Level::Comma)?,
+                    false => p.parse_expr(Level::Comma)?,
+                });
             }
             p.finish_node(&mut arg.loc, parameter_full_start);
 
@@ -875,7 +878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let old_allow_in = p.allow_in;
         p.fn_or_arrow_data_parse = data.clone();
         // `parseFunctionBlock` leaves the context as it is: see `parse_expr_allow_in`.
-        p.allow_in = old_allow_in || !p.is_tolerant();
+        p.allow_in = old_allow_in || !p.stays_in_head_of_for();
 
         let loc = p.lexer.loc();
         let mut pushed_scope_for_function_body = false;

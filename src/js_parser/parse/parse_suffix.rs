@@ -222,6 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // construct.
         if is_name
             && !(p.lexer.has_newline_before
+                && !p.is_ecmascript()
                 && p.next_token_matches(|p| {
                     !p.lexer.has_newline_before
                         && (p.lexer.is_identifier_or_keyword()

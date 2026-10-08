@@ -977,6 +977,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // possibly an empty one.
             let is_empty_let_list = bad_let_range.is_some()
                 && p.is_tolerant()
+                && !p.is_ecmascript()
                 && Self::no_declaration_follows_keyword(p);
             match p.lexer.token {
                 // for (var )
@@ -1073,7 +1074,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
             // "in" expressions are allowed again. (`parseForOrForInOrForOfStatement` returns to the
             // context of the statement: see `parse_expr_allow_in`.)
-            p.allow_in = old_allow_in || !p.is_tolerant();
+            p.allow_in = old_allow_in || !p.stays_in_head_of_for();
             if let Some(init) = &mut init_ {
                 p.finish_node(&mut init.loc, init_full_start);
             }
@@ -2573,7 +2574,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(stmt)
     }
 
+    #[inline]
     fn parse_stmt_fallthrough(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions<'a>,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        if !p.is_typescript_5() {
+            return Self::parse_stmt_fallthrough_in_context(p, opts, loc);
+        }
+        // Its `parseExpressionOrLabeledStatement` has `allowInAnd(parseExpression)`.
+        let old_allow_in = core::mem::replace(&mut p.allow_in, true);
+        let stmt = Self::parse_stmt_fallthrough_in_context(p, opts, loc);
+        p.allow_in = old_allow_in;
+        stmt
+    }
+
+    fn parse_stmt_fallthrough_in_context(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
@@ -2585,7 +2602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         } else {
             None
         };
-        if p.is_tolerant() && is_identifier && Self::IS_TYPESCRIPT_ENABLED {
+        if p.is_tolerant() && is_identifier && Self::IS_TYPESCRIPT_ENABLED && !p.is_ecmascript() {
             if let Some(stmt) = Self::parse_declaration_after_modifiers(p, opts)? {
                 return Ok(stmt);
             }

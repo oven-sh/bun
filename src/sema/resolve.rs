@@ -376,13 +376,46 @@ impl ScriptKind {
 /// `tsc` for a file of a program.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Dialect {
+    /// TypeScript 5's parser, which typescript-estree runs on, where the native one differs.
+    pub typescript_5: bool,
     /// JavaScript is what ECMAScript says, with Annex B and with JSX as acorn and Babel parse it,
     /// where TypeScript's parser rejects valid code or reads it differently. It says nothing about
     /// TypeScript files.
     pub ecmascript: bool,
-    /// The file is a script. With `ecmascript`: whatever is in it. Otherwise: unless it has module
-    /// syntax, whatever its extension.
+    /// What only Babel accepts, with the plugins that Prettier enables, in JavaScript and in
+    /// TypeScript.
+    pub babel: bool,
+    /// The file is a script. With `ecmascript`, in JavaScript: whatever is in it. Otherwise: unless
+    /// it has module syntax, whatever its extension.
     pub script: bool,
+}
+
+impl Dialect {
+    /// `@typescript-eslint/parser`, and Prettier's `typescript`.
+    pub const fn typescript_estree(script: bool) -> Dialect {
+        Dialect {
+            typescript_5: true,
+            ecmascript: false,
+            babel: false,
+            script,
+        }
+    }
+
+    /// ESLint's default parser. A TypeScript file is parsed as by `typescript_estree`.
+    pub const fn espree(script: bool) -> Dialect {
+        Dialect {
+            ecmascript: true,
+            ..Dialect::typescript_estree(script)
+        }
+    }
+
+    /// Prettier's `babel` and `babel-ts`.
+    pub const fn babel(script: bool) -> Dialect {
+        Dialect {
+            babel: true,
+            ..Dialect::espree(script)
+        }
+    }
 }
 
 /// Whether `GetScriptKindFromFileName` is `ScriptKindTSX` or `ScriptKindJSX`.

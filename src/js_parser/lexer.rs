@@ -251,6 +251,10 @@ pub struct Lexer<'a> {
     pub(crate) is_ecmascript: bool,
     /// `Dialect::script`, with `is_ecmascript`: the goal symbol is Script.
     pub(crate) is_script: bool,
+    /// `Dialect::typescript_5`. Tolerant mode only.
+    pub(crate) is_typescript_5: bool,
+    /// `Dialect::babel`. Tolerant mode only.
+    pub(crate) is_babel: bool,
     /// `languageVariant == LanguageVariantJSX`. Set for the type checker only.
     pub(crate) is_jsx: bool,
     /// Number of consecutive error recoveries at the same position.
@@ -2964,7 +2968,7 @@ impl<'a> Lexer<'a> {
         if self.token != T::TIdentifier {
             return false;
         }
-        let word = if self.tolerant {
+        let word = if self.tolerant && !self.is_ecmascript {
             self.identifier
         } else {
             self.raw()
@@ -3407,6 +3411,8 @@ impl<'a> Lexer<'a> {
             is_javascript: false,
             is_ecmascript: false,
             is_script: false,
+            is_typescript_5: false,
+            is_babel: false,
             is_jsx: false,
             stuck: 0,
             is_under_tag: false,

@@ -4393,7 +4393,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         is_checked: bool,
         grammar_error: &mut Option<(bun_ast::Range, u32)>,
     ) -> Result<bool, Error> {
-        if self.lexer.token != T::TLessThan {
+        if self.lexer.token != T::TLessThan
+            && !(self.lexer.token == T::TLessThanLessThan && self.is_babel())
+        {
             return Ok(false);
         }
         let has_arguments =

@@ -398,6 +398,8 @@ impl<'a> Parser<'a> {
         lexer.is_javascript = options.is_javascript;
         lexer.is_ecmascript = options.tolerant && options.is_javascript && options.dialect.ecmascript;
         lexer.is_script = lexer.is_ecmascript && options.dialect.script;
+        lexer.is_typescript_5 = options.tolerant && options.dialect.typescript_5;
+        lexer.is_babel = options.tolerant && options.dialect.babel;
         lexer.is_jsx = options.tolerant && options.jsx.parse;
         lexer.step();
         lexer.next()?;
@@ -625,6 +627,22 @@ impl<'a> Parser<'a> {
         };
         has_errors |= file.ran_out_of_stack;
         file.has_errors = has_errors;
+        // What the parser of the dialect accepts is left for whoever wants to know.
+        let (is_ecmascript, is_typescript_5) = (p.is_ecmascript(), p.is_typescript_5());
+        if is_typescript_5 {
+            for d in logged.iter_mut().chain(&mut file.diagnostics) {
+                let is_accepted = match d.code {
+                    // Octal literals and escapes, `\8`, `08`: errors in strict mode only. `a?.#b`
+                    1121 | 1487 | 1488 | 1489 | 18030 => is_ecmascript,
+                    // `assert { type: "json" }`
+                    2880 => true,
+                    _ => false,
+                };
+                if is_accepted && d.kind == DiagnosticKind::Parse {
+                    d.kind = DiagnosticKind::Grammar;
+                }
+            }
+        }
         let is_parse_error = |d: &Diagnostic| d.kind == DiagnosticKind::Parse;
         file.has_parse_diagnostics =
             has_errors || logged.iter().chain(&file.diagnostics).any(is_parse_error);

@@ -719,6 +719,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         SEMA && self.lexer.tolerant
     }
 
+    /// `Dialect::ecmascript`, in a JavaScript file.
+    #[inline(always)]
+    pub(crate) fn is_ecmascript(&self) -> bool {
+        SEMA && self.lexer.is_ecmascript
+    }
+
+    /// `Dialect::typescript_5`
+    #[inline(always)]
+    pub(crate) fn is_typescript_5(&self) -> bool {
+        SEMA && self.lexer.is_typescript_5
+    }
+
+    /// `Dialect::babel`
+    #[inline(always)]
+    pub(crate) fn is_babel(&self) -> bool {
+        SEMA && self.lexer.is_babel
+    }
+
+    /// Whether brackets, braces and the parameters and bodies of functions and classes in the head
+    /// of a `for` stay in its context, where `in` is no operator: see `parse_expr_allow_in`.
+    #[inline(always)]
+    pub(crate) fn stays_in_head_of_for(&self) -> bool {
+        self.is_tolerant() && !self.lexer.is_ecmascript
+    }
+
     /// `E::JSXElement::syntax`
     #[inline]
     pub(crate) fn keep_jsx(

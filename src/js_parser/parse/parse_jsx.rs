@@ -43,7 +43,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // Pass a flag to the type argument skipper because we need to call
             // `parseTypeArguments` does not rescan `<<`. Nor are there any in a JavaScript file
             // (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
-            if (!p.is_tolerant() || p.lexer.token == T::TLessThan)
+            if (!p.is_tolerant()
+                || p.lexer.token == T::TLessThan
+                || p.lexer.token == T::TLessThanLessThan && p.is_babel())
                 && !p.lexer.is_javascript_file()
                 && p.skip_type_script_type_arguments::<true, false>()?
             {

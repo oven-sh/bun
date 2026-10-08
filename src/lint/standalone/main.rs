@@ -11,6 +11,7 @@ mod driver_cmd;
 mod format_cmd;
 mod js_plugin_cmd;
 mod linter_cmd;
+mod parser_cmd;
 mod regex_cmd;
 mod selector_cmd;
 mod semantic_cmd;
@@ -455,6 +456,7 @@ fn main() {
         Some("regex") => regex_cmd::run(&args[1..]),
         Some("types") => types_cmd::run(&args[1..]),
         Some("linter") => linter_cmd::run(&args[1..]),
+        Some("parser") => parser_cmd::run(&args[1..]),
         Some("format") => format_cmd::run(&args[1..]),
         Some("cli") => driver_cmd::run(&args[1..]),
         Some("selector") => selector_cmd::run(&args[1..]),

@@ -233,7 +233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // as it is: see `parse_expr_allow_in`.)
         let old_allow_in = p.allow_in;
         let old_allow_private_identifiers = p.allow_private_identifiers;
-        p.allow_in = old_allow_in || !p.is_tolerant();
+        p.allow_in = old_allow_in || !p.stays_in_head_of_for();
         p.allow_private_identifiers = true;
 
         // A scope is needed for private identifiers
@@ -874,7 +874,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.fn_or_arrow_data_parse.allow_yield = AwaitOrYield::AllowIdent;
             p.fn_or_arrow_data_parse.is_top_level = false;
             // `parseParameterEx` parses an initializer in the context of the arrow function.
-            p.allow_in = old_allow_in;
+            p.allow_in = old_allow_in || !p.stays_in_head_of_for();
         }
 
         // Scan over the comma-separated arguments or expressions
@@ -1782,7 +1782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
 
         // `GetIdentifierToken`: a keyword also if it is written with an escape.
-        let raw = if p.is_tolerant() {
+        let raw = if p.is_tolerant() && !p.is_ecmascript() {
             p.lexer.identifier
         } else {
             p.lexer.raw()
@@ -1794,18 +1794,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // `parseDeclarationWorker`, `parseForOrForInOrForOfStatement`: after modifiers and in
             // the head of a "for", "let" starts a declaration list whatever follows it. Only
             // `parseStatement` asks `isLetDeclaration`.
-            let is_declaration =
-                p.is_tolerant() && (opts.is_for_loop_init || p.statement_has_modifiers());
+            let is_declaration = p.is_tolerant()
+                && (opts.is_for_loop_init && !p.is_ecmascript() || p.statement_has_modifiers());
             match p.lexer.token {
                 token
                     if is_declaration
                         || matches!(token, T::TIdentifier | T::TOpenBracket | T::TOpenBrace) =>
                 {
                     if opts.lexical_decl == LexicalDecl::AllowAll
-                        || !p.lexer.has_newline_before
                         || p.lexer.token == T::TOpenBracket
-                        // `isLetDeclaration` does not check for line breaks.
-                        || p.is_tolerant()
+                        || match p.is_ecmascript() {
+                            // acorn's `isLet`: where only a statement is allowed, it is a name.
+                            true => p.lexer.has_unicode_escape(),
+                            // `isLetDeclaration` does not check for line breaks.
+                            false => !p.lexer.has_newline_before || p.is_tolerant(),
+                        }
                     {
                         p.lexer.keyword_was_taken(escaped_word);
                         if opts.lexical_decl != LexicalDecl::AllowAll {
@@ -2729,8 +2732,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // After an import, `with` can be on the next line. After an export it starts a statement
         // there, whose handler expects `is_keyword` not to have been asked.
         let is_on_same_line = !p.lexer.has_newline_before;
-        let is_with =
-            (is_on_same_line || !p.is_in_export_statement()) && p.lexer.is_keyword(T::TWith);
+        let is_with = (is_on_same_line || !p.is_in_export_statement() || p.is_ecmascript())
+            && p.lexer.is_keyword(T::TWith);
         if is_with || (is_on_same_line && p.lexer.is_contextual_keyword(b"assert")) {
             if !is_with {
                 let range = p.lexer.range();

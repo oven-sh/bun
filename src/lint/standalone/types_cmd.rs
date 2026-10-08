@@ -8,8 +8,10 @@
 //!   the same for the code of every type-aware test case, or of every test case.
 //! - `bun-lint types run <rule> <file> [options as JSON] [--project=tsconfig.json]`: what one rule
 //!   reports for one file of a project.
-//! - `bun-lint types conformance <fixtures> [--rule=r] [--report=dir] [--verbose] [--jobs=n]`: runs
-//!   the type-aware test cases of typescript-eslint.
+//! - `bun-lint types conformance <fixtures> [--all] [--rule=r] [--report=dir] [--verbose] [--jobs=n]`:
+//!   runs the type-aware test cases of typescript-eslint. `--all`: every test case of ESLint and of
+//!   typescript-eslint as a file of a checked program, which is how all rules run when some rule
+//!   needs types. What fails there and not in `bun-lint conformance` is counted as failed.
 //!
 //! - `bun-lint types bench <tsconfig.json> [--threads=n] [--rules=a,b]`: what types cost.
 //! - `bun-lint types smoke <directory> [--jobs=n]`: which files make a query panic.
@@ -19,6 +21,9 @@
 //!
 //! `BUN_SEMA_TS_LIB`: the directory of TypeScript's `lib.*.d.ts`. `BUN_LINT_TYPE_ROOTS`: the
 //! `node_modules/@types` that the fixture project finds `node` and `react` in.
+//! `BUN_LINT_FIXTURE_PROJECT`: `packages/eslint-plugin/tests/fixtures` of a checkout of
+//! typescript-eslint, which is what `fixtures/typescript-eslint-project` is a copy of, where the few
+//! cases that import a package find it.
 
 use crate::{Outcome, Reported, Tally, expected_messages, str_of, text};
 use bun_lint::ast::{File, Node};
@@ -56,8 +61,15 @@ fn find_rule(name: &str) -> Option<&'static RuleEntry> {
     linter().registry().get(Plugin::TypeScript, name.as_bytes())
 }
 
-/// The configuration that the `RuleTester` of typescript-eslint lints a case with: only that rule,
-/// as an error.
+/// The rule that the fixture `eslint/<rule>` or `typescript-eslint/<rule>` is for.
+fn rule_of_fixture(name: &str) -> Option<&'static RuleEntry> {
+    let (plugin, rule) = name.split_once('/')?;
+    let plugin = if plugin == "eslint" { Plugin::Eslint } else { Plugin::TypeScript };
+    linter().registry().get(plugin, rule.as_bytes())
+}
+
+/// The configuration that the `RuleTester` of the plugin lints a case with: only that rule, as an
+/// error.
 fn config_of(entry: &'static RuleEntry, options: &[Json], language_options: &Json, settings: &Json) -> ResolvedConfig {
     let mut rule = vec![Json::Number(2.0)];
     rule.extend_from_slice(options);
@@ -67,7 +79,11 @@ fn config_of(entry: &'static RuleEntry, options: &[Json], language_options: &Jso
         (b"rules".to_vec(), Json::Object(vec![(RuleId::Known(entry.meta).to_vec(), Json::Array(rule))])),
     ]);
     let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
-    config.linter.report_unused_disable_directives = Severity::Warn;
+    // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
+    config.linter.report_unused_disable_directives = match entry.meta.plugin {
+        Plugin::TypeScript => Severity::Warn,
+        Plugin::Eslint => Severity::Off,
+    };
     config
 }
 
@@ -107,7 +123,7 @@ pub(crate) fn lint_project<R: Send>(
     then: &(dyn for<'a> Fn(&'a File<'a>) -> R + Sync),
 ) -> Vec<(Vec<u8>, R)> {
     let lib_directory = lib_directory();
-    let mut args: Vec<Vec<u8>> = vec![b"--skipLibCheck".to_vec()];
+    let mut args: Vec<Vec<u8>> = vec![b"--skipLibCheck".to_vec(), b"--allowJs".to_vec()];
     if let Ok(type_roots) = std::env::var("BUN_LINT_TYPE_ROOTS") {
         args.extend([b"--typeRoots".to_vec(), type_roots.into_bytes()]);
     }
@@ -495,21 +511,23 @@ fn is_type_aware(case: &Json) -> bool {
     matches!(case.get(b"skip"), None | Some(Json::Null)) && case.get(b"typeAware").and_then(Json::as_bool) == Some(true)
 }
 
-/// The fixtures of typescript-eslint in `root`, by the name of the rule.
-fn read_fixtures(root: &str, only_rule: Option<&str>) -> Vec<(String, Json)> {
-    let Ok(entries) = std::fs::read_dir(format!("{root}/typescript-eslint")) else {
-        return Vec::new();
-    };
-    let mut paths: Vec<_> = entries.flatten().map(|it| it.path()).collect();
-    paths.sort();
+/// The fixtures in `root`, by `<plugin>/<rule>`. `with_eslint`: also those of ESLint's own rules.
+fn read_fixtures(root: &str, only_rule: Option<&str>, with_eslint: bool) -> Vec<(String, Json)> {
     let mut fixtures = Vec::new();
-    for path in paths {
-        let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-        if only_rule.is_some_and(|only| only != name) {
+    for plugin in ["eslint", "typescript-eslint"] {
+        let Some(entries) = std::fs::read_dir(format!("{root}/{plugin}")).ok().filter(|_| with_eslint || plugin != "eslint") else {
             continue;
-        }
-        if let Some(fixture) = std::fs::read(&path).ok().and_then(|it| bun_lint::json::parse(&it)) {
-            fixtures.push((name, fixture));
+        };
+        let mut paths: Vec<_> = entries.flatten().map(|it| it.path()).collect();
+        paths.sort();
+        for path in paths {
+            let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            if only_rule.is_some_and(|only| only != name) {
+                continue;
+            }
+            if let Some(fixture) = std::fs::read(&path).ok().and_then(|it| bun_lint::json::parse(&it)) {
+                fixtures.push((format!("{plugin}/{name}"), fixture));
+            }
         }
     }
     fixtures
@@ -520,7 +538,8 @@ fn cases_of(fixtures: &[(String, Json)], every: bool) -> Vec<Case<'_>> {
     let mut cases = Vec::new();
     for (rule, (_, fixture)) in fixtures.iter().enumerate() {
         let all = fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default();
-        let type_aware = all.iter().enumerate().filter(|it| every || is_type_aware(it.1));
+        let is_skipped = |case: &Json| !matches!(case.get(b"skip"), None | Some(Json::Null));
+        let type_aware = all.iter().enumerate().filter(|it| is_type_aware(it.1) || every && !is_skipped(it.1));
         cases.extend(type_aware.map(|(index, json)| Case { rule, index, json }));
     }
     cases
@@ -534,13 +553,11 @@ fn with_case<R: Send>(
     then: &(dyn for<'a> Fn(&'a File<'a>) -> R + Sync),
 ) -> Option<R> {
     let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-    // What is not type-aware can have any name. It is made a file that the project includes.
-    let filename = match (is_type_aware(case), str_of(case, "filename").unwrap_or("file.ts")) {
-        (true, filename) => filename,
-        (false, filename) if filename.ends_with('x') => "react.tsx",
-        (false, _) => "file.ts",
-    };
-    let files = [format!("{project_root}/{filename}")];
+    let filename = str_of(case, "filename").unwrap_or("file.ts");
+    let files = [match filename.starts_with('/') {
+        true => filename.to_owned(),
+        false => format!("{project_root}/{filename}"),
+    }];
     let config = format!("{project_root}/{}", str_of(case, "tsconfig").unwrap_or("tsconfig.json"));
     let project = project_of_case(project_root, &config, &files, code);
     lint_project(project, language, then).pop().map(|it| it.1)
@@ -558,7 +575,7 @@ fn dump_fixtures(args: &[String]) {
     };
     let root = absolute(root);
     let project_root = format!("{root}/typescript-eslint-project");
-    let fixtures = read_fixtures(&root, flag("--rule="));
+    let fixtures = read_fixtures(&root, flag("--rule="), false);
     let cases = cases_of(&fixtures, args.iter().any(|a| a == "--every-case"));
     let dumps: Vec<Mutex<String>> = cases.iter().map(|_| Mutex::new(String::new())).collect();
     let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
@@ -580,7 +597,8 @@ fn dump_fixtures(args: &[String]) {
     });
     let mut out = String::new();
     for (case, dumped) in cases.iter().zip(&dumps) {
-        let _ = writeln!(out, "# {} {}", fixtures[case.rule].0, case.index);
+        let name = fixtures[case.rule].0.strip_prefix("typescript-eslint/").unwrap_or_default();
+        let _ = writeln!(out, "# {name} {}", case.index);
         out.push_str(&dumped.lock().unwrap_or_else(|it| it.into_inner()));
     }
     match flag("--out=") {
@@ -598,6 +616,21 @@ fn problem_of_case(entry: &'static RuleEntry, project_root: &str, case: &Json) -
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_case(project_root, case, &config.language, &|file| lint_file(entry, file, code, &config))
     }));
+    problem_of_outcome(outcome, case)
+}
+
+/// What is wrong with it without types, in the way of `bun-lint conformance`.
+fn problem_of_case_without_types(entry: &'static RuleEntry, case: &Json) -> Option<String> {
+    let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+    let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
+    let language_options = case.get(b"languageOptions").unwrap_or(&Json::Null);
+    let settings = case.get(b"settings").unwrap_or(&Json::Null);
+    let path = str_of(case, "filename").unwrap_or("file.js");
+    let outcome = std::panic::catch_unwind(|| Some(crate::lint(entry, path, code, options, language_options, settings)));
+    problem_of_outcome(outcome, case)
+}
+
+fn problem_of_outcome(outcome: std::thread::Result<Option<Outcome>>, case: &Json) -> Option<String> {
     let outcome = outcome.map(|outcome| {
         outcome.map(|mut outcome| {
             outcome.messages = in_order(std::mem::take(&mut outcome.messages));
@@ -625,21 +658,27 @@ fn problem_of_case(entry: &'static RuleEntry, project_root: &str, case: &Json) -
 fn conformance(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let Some(root) = args.iter().find(|a| !a.starts_with("--")) else {
-        return println!("usage: bun-lint types conformance <fixtures> [--rule=r] [--report=dir] [--verbose] [--jobs=n]");
+        return println!("usage: bun-lint types conformance <fixtures> [--all] [--rule=r] [--report=dir] [--verbose] [--jobs=n]");
     };
     let is_verbose = args.iter().any(|a| a == "--verbose");
+    let runs_all = args.iter().any(|a| a == "--all");
     let root = absolute(root);
-    let project_root = format!("{root}/typescript-eslint-project");
-    let fixtures = read_fixtures(&root, flag("--rule="));
-    let entries: Vec<Option<&'static RuleEntry>> = fixtures.iter().map(|it| find_rule(&it.0)).collect();
-    let mut cases = cases_of(&fixtures, false);
+    let project_root = std::env::var("BUN_LINT_FIXTURE_PROJECT").unwrap_or_else(|_| format!("{root}/typescript-eslint-project"));
+    let fixtures = read_fixtures(&root, flag("--rule="), runs_all);
+    let entries: Vec<Option<&'static RuleEntry>> = fixtures.iter().map(|it| rule_of_fixture(&it.0)).collect();
+    let mut cases = cases_of(&fixtures, runs_all);
     cases.retain(|case| entries[case.rule].is_some());
     let problems: Vec<Mutex<Option<String>>> = cases.iter().map(|_| Mutex::new(None)).collect();
     std::panic::set_hook(Box::new(|_| {}));
     let started = std::time::Instant::now();
     bun_sema_standalone::for_each_parallel(jobs(args), cases.len(), |i| {
         if let Some(entry) = entries[cases[i].rule] {
-            *problems[i].lock().unwrap_or_else(|it| it.into_inner()) = problem_of_case(entry, &project_root, cases[i].json);
+            let mut problem = problem_of_case(entry, &project_root, cases[i].json);
+            // What also fails without types is not about types.
+            if problem.is_some() && !is_type_aware(cases[i].json) && problem_of_case_without_types(entry, cases[i].json).is_some() {
+                problem = Some(String::new());
+            }
+            *problems[i].lock().unwrap_or_else(|it| it.into_inner()) = problem;
         }
     });
     let mut tallies: Vec<(Tally, String)> = fixtures.iter().map(|_| Default::default()).collect();
@@ -647,6 +686,7 @@ fn conformance(args: &[String]) {
         let (tally, failures) = &mut tallies[case.rule];
         match &*problem.lock().unwrap_or_else(|it| it.into_inner()) {
             None => tally.passed += 1,
+            Some(problem) if problem.is_empty() => tally.skipped += 1,
             Some(problem) => {
                 tally.failed += 1;
                 let mut options = Vec::new();
@@ -664,27 +704,31 @@ fn conformance(args: &[String]) {
             }
         }
     }
-    let (mut passed, mut failed, mut implemented, mut perfect) = (0, 0, 0, 0);
+    let (mut passed, mut failed, mut fail_anyway, mut implemented, mut perfect) = (0, 0, 0, 0, 0);
     for ((name, _), (tally, failures)) in fixtures.iter().zip(&tallies) {
-        if tally.passed + tally.failed == 0 {
+        if tally.passed + tally.failed + tally.skipped == 0 {
             continue;
         }
+        fail_anyway += tally.skipped;
         implemented += 1;
         perfect += usize::from(tally.failed == 0);
         let verdict = if tally.failed == 0 { "ok  " } else { "FAIL" };
-        println!("{verdict} typescript-eslint/{name}: {} passed, {} failed", tally.passed, tally.failed);
+        if !runs_all || tally.failed > 0 {
+            println!("{verdict} {name}: {} passed, {} failed", tally.passed, tally.failed);
+        }
         if is_verbose {
             print!("{failures}");
         }
         if let Some(report) = flag("--report=") {
+            let _ = std::fs::create_dir_all(format!("{report}/eslint"));
             let _ = std::fs::create_dir_all(format!("{report}/typescript-eslint"));
-            let _ = std::fs::write(format!("{report}/typescript-eslint/{name}.types.txt"), failures);
+            let _ = std::fs::write(format!("{report}/{name}.types.txt"), failures);
         }
         passed += tally.passed;
         failed += tally.failed;
     }
     println!(
-        "\n{implemented} rules with type-aware cases, {perfect} without failures\n{passed} cases passed, {failed} failed, in {:.1} s",
+        "\n{implemented} rules, {perfect} without failures\n{passed} cases passed, {failed} failed, {fail_anyway} fail without types too, in {:.1} s",
         started.elapsed().as_secs_f64()
     );
 }

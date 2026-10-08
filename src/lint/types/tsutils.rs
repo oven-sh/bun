@@ -414,11 +414,6 @@ fn is_property_readonly_in_type_at(ty: Type, name: &[u8], depth: u32) -> bool {
     false
 }
 
-/// `/^__@[^@]+$/`
-fn is_well_known_symbol_name(name: &[u8]) -> bool {
-    name.strip_prefix(b"__@").is_some_and(|rest| !rest.is_empty() && !bun_core::strings::contains_char(rest, b'@'))
-}
-
 /// `/^(?:[1-9]\d*|0)$/`
 fn is_array_index(name: &[u8]) -> bool {
     match name {
@@ -432,7 +427,8 @@ fn is_readonly_property_from_mapped_type(ty: Type, name: &[u8], depth: u32) -> O
     let TypeStructure::Mapped { readonly, .. } = ty.structure() else {
         return None;
     };
-    if readonly != MappedModifier::None && !is_well_known_symbol_name(name) {
+    // Upstream excepts `/^__@[^@]+$/`, which no name is since TypeScript 4: `__@iterator@12`.
+    if readonly != MappedModifier::None {
         return Some(readonly != MappedModifier::Remove);
     }
     let modifiers_type = ty.get_modifiers_type_from_mapped_type()?;

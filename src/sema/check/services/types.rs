@@ -122,6 +122,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         if self.is_enum_union(ty) {
             return &[];
         }
+        if let TypeData::UnresolvedName { args, .. } = self.c.data(ty) {
+            return self.list(args);
+        }
         match self.c.alias_of_type(ty) {
             Some((_, arguments)) => self.list(&arguments),
             None => &[],

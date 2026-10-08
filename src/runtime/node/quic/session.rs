@@ -1874,36 +1874,40 @@ impl QuicSession {
     ) -> JsResult<JSValue> {
         Ok(self.local_addr.get().to_js_socket_address(global))
     }
+    /// The close error in `options`, or `None` when `options.code` is
+    /// undefined. Node's `MaybeSetCloseError` returns there, before it reads
+    /// `type` or `reason`: such a `close()` is a plain close and such a
+    /// `destroy()` sends nothing.
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/quic/session.cc#L926
     fn parse_close_options(
         &self,
         global: &JSGlobalObject,
         options: JSValue,
-    ) -> JsResult<(bool, u64, Vec<u8>)> {
-        let mut app = false;
-        let mut code = 0u64;
-        let mut reason = Vec::new();
-        if options.is_object() {
-            app = options
-                .get(global, "type")?
-                .map(|v| {
-                    bun_core::String::from_js(v, global)
-                        .map(|s| s.to_owned_slice() == b"application")
-                })
-                .transpose()?
-                .unwrap_or(false);
-            code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
-            reason = options
-                .get(global, "reason")?
-                .filter(|v| v.is_string())
-                .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
-                .transpose()?
-                .unwrap_or_default();
-            self.self_close.with_mut(|s| {
-                *s = Some((app, code, reason.clone()));
-            });
+    ) -> JsResult<Option<(bool, u64, Vec<u8>)>> {
+        if !options.is_object() {
+            return Ok(None);
         }
+        let Some(code) = super::endpoint::read_u64_option(global, options, "code")? else {
+            return Ok(None);
+        };
+        let app = options
+            .get(global, "type")?
+            .map(|v| {
+                bun_core::String::from_js(v, global).map(|s| s.to_owned_slice() == b"application")
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let mut reason = options
+            .get(global, "reason")?
+            .filter(|v| v.is_string())
+            .map(|v| bun_core::String::from_js(v, global).map(|s| s.to_owned_slice()))
+            .transpose()?
+            .unwrap_or_default();
+        self.self_close.with_mut(|s| {
+            *s = Some((app, code, reason.clone()));
+        });
         reason.push(0);
-        Ok((app, code, reason))
+        Ok(Some((app, code, reason)))
     }
 
     fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
@@ -1948,19 +1952,18 @@ impl QuicSession {
     }
 
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
-        let Some(c) = self.conn() else { return };
         if app || code != 0 || reason.len() > 1 {
-            let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
-            c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
-        } else {
+            self.apply_abort(app, code, reason);
+        } else if let Some(c) = self.conn() {
             c.close();
         }
     }
 
-    fn close_with_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        let (app, code, reason) = self.parse_close_options(global, options)?;
-        self.apply_close(app, code, &reason);
-        Ok(())
+    /// Sends the CONNECTION_CLOSE on the next tick and drops what is queued.
+    fn apply_abort(&self, app: bool, code: u64, reason: &[u8]) {
+        let Some(c) = self.conn() else { return };
+        let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
+        c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
     }
 
     /// A pending stream does not hold a graceful close open. Node: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/quic/session.cc#L1952-L1957
@@ -2005,7 +2008,16 @@ impl QuicSession {
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
             let (app, code, reason) =
-                self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
+                match self.parse_close_options(global, frame.arguments_as_array::<1>()[0])? {
+                    Some(close) => close,
+                    None => {
+                        // A plain close. Without this record `report_close`
+                        // reports the conn status and not NO_ERROR.
+                        self.self_close
+                            .with_mut(|s| *s = Some((false, 0, Vec::new())));
+                        (false, 0, vec![0])
+                    }
+                };
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
@@ -2034,32 +2046,36 @@ impl QuicSession {
         }
         let mut parse_error = None;
         if !self.close_reported.get() && !self.conn.get().is_null() {
-            let options = frame.arguments_as_array::<1>()[0];
-            if options.is_object() {
-                // Node's Destroy with close options. JS has already latched
-                // `inner.destroying` and finished its half before reaching
-                // here, so teardown() MUST run; a parse failure is taken off
-                // the VM (teardown reaches JS) and re-thrown once it has. No
-                // close was applied then, so the engines are not driven.
-                match self.close_with_options(global, options) {
-                    Ok(()) => {
+            // JS has already latched `inner.destroying` and finished its half
+            // before reaching here, so teardown() MUST run. A parse failure is
+            // taken off the VM (teardown reaches JS) and re-thrown once it
+            // has. No close was applied then, so the engines are not driven.
+            match self.parse_close_options(global, frame.arguments_as_array::<1>()[0]) {
+                // Node's Destroy sends a CONNECTION_CLOSE only for a close
+                // error (`has_close_options`), and sends it at once for every
+                // code. `lsquic_conn_close` waits for the streams to end.
+                // https://github.com/nodejs/node/blob/v26.3.0/src/quic/session.cc#L992-L1000
+                Ok(Some((app, code, reason))) => {
+                    self.apply_abort(app, code, &reason);
+                    if let Some(endpoint) = self.endpoint_ref() {
+                        endpoint.drive_engines_once();
+                    }
+                }
+                Ok(None) => {
+                    // Node's server acks the packet that triggered the
+                    // destroying callback. The drive only flushes that ACK:
+                    // with none queued it is a normal tick, which can send a
+                    // ClientHello for a session that is about to go silent.
+                    if self.conn().is_some_and(|c| c.ack_now()) {
                         if let Some(endpoint) = self.endpoint_ref() {
                             endpoint.drive_engines_once();
                         }
                     }
-                    Err(err) => parse_error = Some(global.take_exception(err)),
+                    if let Some(c) = self.conn() {
+                        c.abort_silent();
+                    }
                 }
-            } else if let Some(c) = self.conn() {
-                // Node's server acks the packet that triggered the destroying
-                // callback.
-                c.ack_now();
-                if let Some(endpoint) = self.endpoint_ref() {
-                    endpoint.drive_engines_once();
-                }
-                if let Some(c) = self.conn() {
-                    // Node parity: Session::Destroy without close options.
-                    c.abort_silent();
-                }
+                Err(err) => parse_error = Some(global.take_exception(err)),
             }
             self.schedule_process();
         }

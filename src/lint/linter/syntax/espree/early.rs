@@ -4,7 +4,7 @@
 //! Code that runs has none of them, so what matters is that finding none is cheap: each check goes through the nodes of one
 //! kind, of which there are few or none.
 
-use super::Checks;
+use super::{Checks, Tops};
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member, MemberKind, Node,
     Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag, UnOp, VarKind,
@@ -836,12 +836,8 @@ impl<'a> Checks<'a, '_> {
                 );
                 continue;
             }
-            // In a function that is not an arrow function, in the initializer of a field, in a static block.
-            let is_allowed = Node::Expr(it).ancestors().any(|it| match it {
-                Node::Func(func) => func.kind() != FnKind::Arrow,
-                Node::Member(member) => member.kind() == MemberKind::Property,
-                _ => false,
-            });
+            // `allowNewDotTarget`: in a function that is not an arrow function, in the initializer of a field, in a static block.
+            let is_allowed = Self::this_scope(&mut self.tops, Node::Expr(it)).is_some();
             // For acorn the top level of a CommonJS file is a function.
             if !is_allowed && file.language().source_type != SourceType::CommonJs {
                 self.fail(
@@ -1078,8 +1074,7 @@ impl<'a> Checks<'a, '_> {
             (ExprTag::Await, "Await expression cannot be a default value"),
         ] {
             for it in self.exprs_of(tag) {
-                let first = Node::Expr(it)
-                    .ancestors()
+                let first = (self.tops.outward(Node::Expr(it)))
                     .find(|it| matches!(it, Node::Param(_) | Node::Func(_)));
                 if matches!(first, Some(Node::Param(_))) {
                     self.fail(it.span().start, message);
@@ -1089,9 +1084,9 @@ impl<'a> Checks<'a, '_> {
     }
 
     /// What `this` and `super` belong to: `currentThisScope`.
-    pub(super) fn this_scope(node: Node<'a>) -> Option<Node<'a>> {
+    pub(super) fn this_scope(tops: &mut Tops<'a>, node: Node<'a>) -> Option<Node<'a>> {
         let mut inside = node;
-        for it in node.ancestors() {
+        for it in tops.outward(node) {
             match it {
                 Node::Func(func) if func.kind() != FnKind::Arrow => return Some(it),
                 // The initializer of a field, not its name.
@@ -1110,7 +1105,7 @@ impl<'a> Checks<'a, '_> {
     fn supers(&mut self) {
         for it in self.exprs_of(ExprTag::Super) {
             let start = it.span().start;
-            let scope = Self::this_scope(Node::Expr(it));
+            let scope = Self::this_scope(&mut self.tops, Node::Expr(it));
             let allows_super = match scope {
                 Some(Node::Func(func)) => matches!(
                     func.kind(),
@@ -1160,9 +1155,9 @@ impl<'a> Checks<'a, '_> {
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
         let mut names_of: FxHashMap<Class<'a>, FxHashSet<&'a [u8]>> = FxHashMap::default();
-        let mut is_declared = |node: Node<'a>, name: &[u8]| {
+        let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
-            node.ancestors().any(|it| {
+            tops.outward(node).any(|it| {
                 let from = std::mem::replace(&mut inside, it);
                 match it {
                     // What a class extends is outside of it.
@@ -1201,10 +1196,9 @@ impl<'a> Checks<'a, '_> {
                     true => self.fail(name.start(), "Private fields can't be accessed on super"),
                     false => self.unexpected(name.start()),
                 }
-            } else if !is_declared(Node::Expr(it), name.bytes()) {
+            } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
                 // Noticed at the end of the outermost class.
-                let outermost = Node::Expr(it)
-                    .ancestors()
+                let outermost = (self.tops.outward(Node::Expr(it)))
                     .filter(|it| matches!(it, Node::Class(_)))
                     .last();
                 let noticed = outermost.map_or(0, |it| it.span().end);
@@ -1222,7 +1216,7 @@ impl<'a> Checks<'a, '_> {
                 if matches!(parent.kind(), ExprKind::Binary { op: BinOp::In, left, .. } if left == it));
             if !is_left_of_in {
                 self.unexpected(it.span().start);
-            } else if !is_declared(Node::Expr(it), name.bytes()) {
+            } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
                 self.fail(it.span().start, undeclared(name.bytes()));
             }
         }
@@ -1324,7 +1318,7 @@ impl<'a> Checks<'a, '_> {
                 continue;
             };
             let mut inside = Node::Expr(it);
-            let around = Node::Expr(it).ancestors().find(|&outer| {
+            let around = self.tops.outward(Node::Expr(it)).find(|&outer| {
                 let from = std::mem::replace(&mut inside, outer);
                 match outer {
                     Node::Func(_) => true,

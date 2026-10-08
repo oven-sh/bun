@@ -23,12 +23,14 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
     self, BinOp, Chain, Diagnostic, DiagnosticKind, Flags, FnKind, ModifierKind, UnOp,
 };
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 struct Checks<'a, 'c> {
     file: &'a File<'a>,
     /// In place of the expressions of the file by kind.
     candidates: Option<&'c Candidates>,
+    tops: Tops<'a>,
     /// The first error so far, and how far acorn has read when it throws it.
     first: Option<(u32, SyntaxError)>,
     /// acorn notices what is being checked only when it has read this far.
@@ -99,6 +101,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
     let mut checks = Checks {
         file,
         candidates: None,
+        tops: Tops::default(),
         first: None,
         noticed: 0,
         is_all_strict: true,
@@ -134,7 +137,9 @@ pub(super) fn module_syntax_in_commonjs<'a>(
     file: &'a File<'a>,
     is_typescript: bool,
 ) -> Option<SyntaxError> {
-    let is_at_top_level = |node: Node<'a>| !node.ancestors().any(|it| matches!(it, Node::Func(_)));
+    let tops = std::cell::RefCell::new(Tops::default());
+    let is_at_top_level =
+        |node: Node<'a>| !(tops.borrow_mut().outward(node)).any(|it| matches!(it, Node::Func(_)));
     let statement = (file.body().iter().find(is_module_syntax))
         .filter(|_| !is_typescript)
         .map(|it| {
@@ -191,6 +196,7 @@ pub(super) fn refusal_of_babel<'a>(
     let mut checks = Checks {
         file,
         candidates: candidates.as_ref(),
+        tops: Tops::default(),
         first: None,
         noticed: 0,
         is_all_strict: false,
@@ -201,6 +207,68 @@ pub(super) fn refusal_of_babel<'a>(
     checks.early_errors();
     checks.first.map(|it| it.1)
 }
+
+/// The way up from a node, as [`Node::ancestors`], without the expressions between an expression and the outermost that it is
+/// part of. `a + b + c + ..` is as deep as it is long, and what is asked about each of a, b, c is which function or class it is in.
+#[derive(Default)]
+struct Tops<'a> {
+    /// The outermost expression around those on a long way.
+    known: FxHashMap<Expr<'a>, Expr<'a>>,
+}
+
+impl<'a> Tops<'a> {
+    /// The outermost expression that `of` is part of, and what that is directly part of, which is no expression.
+    fn top(&mut self, of: Expr<'a>) -> (Expr<'a>, Node<'a>) {
+        // Nearly all ways are short. They are gone without a note.
+        if self.known.is_empty() {
+            let mut at = of;
+            for _ in 0..LONG {
+                match at.parent() {
+                    Node::Expr(parent) => at = parent,
+                    above => return (at, above),
+                }
+            }
+        }
+        let mut passed = Vec::new();
+        let mut at = of;
+        let found = loop {
+            if let Some(&top) = self.known.get(&at) {
+                break (top, top.parent());
+            }
+            match at.parent() {
+                Node::Expr(parent) => {
+                    passed.push(at);
+                    at = parent;
+                }
+                above => break (at, above),
+            }
+        };
+        if passed.len() >= LONG {
+            self.known
+                .extend(passed.into_iter().map(|it| (it, found.0)));
+        }
+        found
+    }
+
+    fn outward(&mut self, from: Node<'a>) -> impl Iterator<Item = Node<'a>> + use<'_, 'a> {
+        let mut at = Some(from);
+        std::iter::from_fn(move || {
+            let next = match at? {
+                Node::File(_) => None,
+                Node::Expr(it) => Some(match self.top(it) {
+                    (top, above) if top == it => above,
+                    (top, _) => Node::Expr(top),
+                }),
+                other => Some(other.parent()),
+            };
+            at = next;
+            next
+        })
+    }
+}
+
+/// From how many expressions in each other on the outermost is noted.
+const LONG: usize = 16;
 
 /// The expressions that [`refusal_of_babel`] has a question about. Nothing else of `bun format` wants all expressions of a file by
 /// kind, and to sort them all costs ten times what the checks cost.
@@ -289,6 +357,7 @@ pub(super) fn first_error<'a>(
     let mut checks = Checks {
         file,
         candidates: None,
+        tops: Tops::default(),
         first: None,
         noticed: 0,
         is_all_strict: language.source_type == SourceType::Module || language.implied_strict,
@@ -929,7 +998,21 @@ impl<'a, 'c> Checks<'a, 'c> {
         // The name of a function expression is in the scope of the function.
         let function = match node {
             Node::Func(func) if func.kind() == FnKind::Expr => Some(func),
-            _ => node.enclosing_function(),
+            _ => {
+                let mut inside = node;
+                let found = self.tops.outward(node).find_map(|it| {
+                    let from = std::mem::replace(&mut inside, it);
+                    match it {
+                        Node::Func(func) => Some(Some(func)),
+                        // For acorn the initializer of a field is a scope of its own, which is not that of the function around.
+                        Node::Member(member) if member.init().map(Node::Expr) == Some(from) => {
+                            Some(None)
+                        }
+                        _ => None,
+                    }
+                });
+                found.flatten()
+            }
         };
         let is_in_static_block = function.is_some_and(|it| it.kind() == FnKind::StaticBlock);
         let message = if name == known::r#yield && function.is_some_and(Func::is_generator) {
@@ -937,7 +1020,10 @@ impl<'a, 'c> Checks<'a, 'c> {
         } else if name == known::r#await && function.is_some_and(Func::is_async) {
             "Cannot use 'await' as identifier inside an async function"
         } else if name == known::arguments
-            && matches!(Self::this_scope(node), Some(Node::Member(_)))
+            && matches!(
+                Self::this_scope(&mut self.tops, node),
+                Some(Node::Member(_))
+            )
         {
             "Cannot use 'arguments' in class field initializer"
         } else if name == known::arguments && is_in_static_block {

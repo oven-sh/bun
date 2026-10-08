@@ -21,13 +21,21 @@ pub(crate) enum Line {
     Literal,
 }
 
+/// What `align` indents by.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Alignment {
+    /// `align(" ".repeat(n), ..)`
+    Spaces(u32),
+    /// `align("> ", ..)`
+    Text(&'static str),
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum Doc<'a> {
     Text(Cow<'a, [u8]>),
     Array(Vec<Doc<'a>>),
     Indent(Box<Doc<'a>>),
-    /// `align(" ".repeat(n), ..)`
-    Align(u32, Box<Doc<'a>>),
+    Align(Alignment, Box<Doc<'a>>),
     /// `align(-1, ..)`
     Dedent(Box<Doc<'a>>),
     /// `align(Number.NEGATIVE_INFINITY, ..)`
@@ -131,7 +139,7 @@ pub(crate) fn group_with<'a>(contents: impl Into<Doc<'a>>, should_break: bool) -
 
 /// `align(" ".repeat(width), contents)`
 pub(crate) fn align_with_spaces<'a>(width: u32, contents: impl Into<Doc<'a>>) -> Doc<'a> {
-    Doc::Align(width, Box::new(contents.into()))
+    Doc::Align(Alignment::Spaces(width), Box::new(contents.into()))
 }
 
 pub(crate) fn fill(parts: Vec<Doc<'_>>) -> Doc<'_> {
@@ -407,18 +415,16 @@ struct Command<'d, 'a> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum IndentCommand {
     Indent,
-    Spaces(u32),
+    Align(Alignment),
     Dedent,
     MarkAsRoot,
 }
 
 /// Prettier's `Indent`.
 struct Indent {
-    /// Only `Indent` and `Spaces`.
+    /// Only `Indent` and `Align`.
     queue: Vec<IndentCommand>,
-    tabs: u32,
-    /// What follows the tabs. Tabs and spaces do not take turns: CSS only indents, YAML only aligns.
-    spaces: u32,
+    value: Vec<u8>,
     length: usize,
     root: u32,
     /// What has been made of it.
@@ -571,21 +577,33 @@ impl Printer<'_> {
             IndentCommand::MarkAsRoot => root = indent,
             command => queue.push(command),
         }
-        let (mut tabs, mut spaces) = (0, 0);
+        let (mut value, mut length) = (Vec::new(), 0);
         for command in &queue {
             match command {
-                IndentCommand::Indent if self.use_tabs => tabs += 1,
-                IndentCommand::Indent => spaces += self.tab_width as u32,
-                IndentCommand::Spaces(width) => spaces += width,
+                IndentCommand::Indent if self.use_tabs => {
+                    value.push(b'\t');
+                    length += self.tab_width;
+                }
+                IndentCommand::Indent => {
+                    value.resize(value.len() + self.tab_width, b' ');
+                    length += self.tab_width;
+                }
+                IndentCommand::Align(Alignment::Spaces(width)) => {
+                    value.resize(value.len() + *width as usize, b' ');
+                    length += *width as usize;
+                }
+                IndentCommand::Align(Alignment::Text(text)) => {
+                    value.extend_from_slice(text.as_bytes());
+                    length += text.len();
+                }
                 IndentCommand::Dedent | IndentCommand::MarkAsRoot => {}
             }
         }
         let id = self.indents.len() as u32;
         self.indents.push(Indent {
             queue,
-            tabs,
-            spaces,
-            length: tabs as usize * self.tab_width + spaces as usize,
+            value,
+            length,
             root,
             derived: Vec::new(),
         });
@@ -596,8 +614,7 @@ impl Printer<'_> {
     /// Writes the indentation. Returns its width.
     fn write_indent(&mut self, indent: u32) -> usize {
         let indent = &self.indents[indent as usize];
-        self.out.resize(self.out.len() + indent.tabs as usize, b'\t');
-        self.out.resize(self.out.len() + indent.spaces as usize, b' ');
+        self.out.extend_from_slice(&indent.value);
         indent.length
     }
 
@@ -651,9 +668,9 @@ impl Printer<'_> {
                         indent: self.make_indent(indent, IndentCommand::Indent),
                         ..with(mode, contents)
                     }),
-                    Doc::Align(0, contents) => commands.push(with(mode, contents)),
-                    Doc::Align(width, contents) => commands.push(Command {
-                        indent: self.make_indent(indent, IndentCommand::Spaces(*width)),
+                    Doc::Align(Alignment::Spaces(0), contents) => commands.push(with(mode, contents)),
+                    Doc::Align(alignment, contents) => commands.push(Command {
+                        indent: self.make_indent(indent, IndentCommand::Align(*alignment)),
                         ..with(mode, contents)
                     }),
                     Doc::Dedent(contents) => commands.push(Command {
@@ -809,8 +826,7 @@ pub(crate) fn print(mut doc: Doc<'_>, options: &FormatOptions, text: &[u8], out:
         start,
         indents: vec![Indent {
             queue: Vec::new(),
-            tabs: 0,
-            spaces: 0,
+            value: Vec::new(),
             length: 0,
             root: 0,
             derived: Vec::new(),

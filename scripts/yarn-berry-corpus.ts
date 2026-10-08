@@ -63,11 +63,10 @@ function flag(name: string): string | undefined {
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
-const bun = resolve(
-  flag("--bun") ??
-    [join(repoRoot, "build/release/bun"), join(repoRoot, "build/debug/bun-debug")].find(existsSync) ??
-    "bun",
-);
+const bunFlag = flag("--bun");
+const bun = bunFlag
+  ? resolve(bunFlag)
+  : ([join(repoRoot, "build/release/bun"), join(repoRoot, "build/debug/bun-debug")].find(existsSync) ?? "bun");
 const workDir = resolve(flag("--dir") ?? join(repoRoot, "tmp/yarn-berry-corpus"));
 const only = flag("--only");
 // Without --keep-home the migration sees no ~/.yarnrc.yml, ~/.npmrc or ~/.bunfig.toml.

@@ -95,6 +95,8 @@ fn should_inline<'a>(
         AstNodes::AssignmentExpression(assignment) => {
             !assignment.left().is_some_and(|left| matches!(left.kind(), ExprKind::Ident(_)))
         }
+        // `typeof a.b.c` has a `TSQualifiedName`.
+        AstNodes::TSTypeQuery(_) => true,
         // Prettier's `shouldInlineNewExpressionCallee`: it is on the left edge of the callee.
         AstNodes::NewExpression(new) => {
             let mut child = e;

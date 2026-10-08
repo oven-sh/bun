@@ -63,6 +63,19 @@ pub(super) fn plain_call_of_callee(callee: Expr<'_>) -> Option<Call<'_>> {
     }
 }
 
+fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return;
+    }
+    match plain_call_of_callee(member) {
+        Some(call) => {
+            let comments = callee_trailing_comments(call, member.span().end, f);
+            write!(f, FormatTrailingComments::Comments(comments));
+        }
+        None => write_trailing_comments_of(member.as_chain_element(), f),
+    }
+}
+
 /// `?.`, the type arguments and the arguments of a call.
 fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
     let ExprKind::Call(call) = expression.kind() else {
@@ -82,28 +95,19 @@ impl<'a> Format<'a> for ChainMember<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         match *self {
             Self::StaticMember(member) => {
-                let ExprKind::Dot { name, .. } = member.kind() else {
+                let ExprKind::Dot { obj, name, .. } = member.kind() else {
                     return;
                 };
-                write!(
-                    f,
-                    [
-                        FormatLeadingComments::Comments(f.comments().comments_before(name.start())),
-                        member.is_optional().then_some("?"),
-                        ".",
-                        identifier(name, member.as_chain_element())
-                    ]
-                );
+                let lookup =
+                    format_args!(member.is_optional().then_some("?"), ".", identifier(name, member.as_chain_element()));
                 if f.is_quiet() {
-                    return;
+                    return write!(f, lookup);
                 }
-                match plain_call_of_callee(member) {
-                    Some(call) => {
-                        let comments = callee_trailing_comments(call, member.span().end, f);
-                        write!(f, FormatTrailingComments::Comments(comments));
-                    }
-                    None => write_trailing_comments_of(member.as_chain_element(), f),
-                }
+                // The comments after the `.` lead the name.
+                let object_end = obj.span().end;
+                let end = f.comments().comments_before_character(object_end, b'.').last().map_or(object_end, |it| it.span.end);
+                write!(f, [FormatLeadingComments::Comments(f.comments().comments_before(end)), lookup]);
+                write_trailing_comments_of_member(member, f);
             }
             Self::TSNonNullExpression(e) => {
                 write!(f, [format_leading_comments(e.span()), "!"]);
@@ -129,7 +133,7 @@ impl<'a> Format<'a> for ChainMember<'a> {
                         FormatComputedMemberExpressionWithoutObject(member)
                     ]
                 );
-                write_trailing_comments_of(member.as_chain_element(), f);
+                write_trailing_comments_of_member(member, f);
             }
             Self::Node(node) => write!(f, node),
         }

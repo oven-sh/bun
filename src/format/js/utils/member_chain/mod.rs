@@ -142,15 +142,17 @@ impl<'a> MemberChain<'a> {
         self.head.members().iter().chain(self.tail.members())
     }
 
-    /// Whether there is a comment between the object and the name, or behind the member.
+    /// Whether there is a comment between the object and the `.`, or behind the member.
     fn has_comment_in_member(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
-        let ChainMember::StaticMember(member) = member else {
-            return false;
-        };
-        let ExprKind::Dot { obj, name, .. } = member.kind() else {
-            return false;
-        };
-        f.comments().has_comment_in_range(obj.span().end, name.start()) || has_trailing_comment(*member, f)
+        match *member {
+            ChainMember::StaticMember(member) => {
+                member.object().is_some_and(|object| {
+                    !f.comments().comments_before_character(object.span().end, b'.').is_empty()
+                }) || has_trailing_comment(member, f)
+            }
+            ChainMember::ComputedMember(member) => plain_call_of_callee(member).is_some() && has_trailing_comment(member, f),
+            _ => false,
+        }
     }
 
     fn has_comment(&self, f: &Formatter<'a>) -> bool {
@@ -205,7 +207,7 @@ impl<'a> Format<'a> for MemberChain<'a> {
     }
 }
 
-/// Whether a comment trails `member`, which is `a.b`.
+/// Whether a comment trails `member`, which is `a.b` or `a[b]`.
 fn has_trailing_comment<'a>(member: Expr<'a>, f: &Formatter<'a>) -> bool {
     let end = member.span().end;
     match plain_call_of_callee(member) {
@@ -260,7 +262,11 @@ fn compute_remaining_groups<'a>(
     for member in members {
         let has_trailing_comment = !f.is_quiet()
             && match member {
-                ChainMember::StaticMember(member) if plain_call_of_callee(member).is_some() => has_trailing_comment(member, f),
+                ChainMember::StaticMember(member) | ChainMember::ComputedMember(member)
+                    if plain_call_of_callee(member).is_some() =>
+                {
+                    has_trailing_comment(member, f)
+                }
                 _ => {
                     let end = member.span().end;
                     f.comments().comments_after(end).first().is_some_and(|comment| {

@@ -397,7 +397,10 @@ fn write_grouped_arguments<'a>(
     f: &mut Formatter<'a>,
 ) {
     let last_index = node.len().saturating_sub(1);
-    let only_one_argument = last_index == 0;
+    // Prettier's `shouldExpandParameters` in `printFunction`. Not for `new A(function () {})`.
+    let expands_parameters_of = |function: Func<'a>| {
+        matches!(node.parent, AstNodes::CallExpression(_)) && (last_index != 0 || has_only_names_as_parameters(function))
+    };
     let mut non_grouped_breaks = false;
     let mut grouped_breaks = false;
     let mut has_cached = false;
@@ -418,7 +421,7 @@ fn write_grouped_arguments<'a>(
                 if is_grouped_argument
                     && !function.is_arrow()
                     && !group_layout.is_grouped_first()
-                    && (!only_one_argument || has_only_simple_parameters(function, false)) =>
+                    && expands_parameters_of(function) =>
             {
                 Some(ExprOptions::Function(FormatFunctionOptions {
                     cache_mode: FunctionCacheMode::Cache,
@@ -495,9 +498,11 @@ fn write_grouped_arguments<'a>(
             true => f.intern(&format_args!(FormatGroupedFirstArgument { argument }, (last_index != 0).then_some(","))),
             false => f.intern(&FormatGroupedLastArgument {
                 argument,
-                is_only: only_one_argument,
+                expands_parameters: argument.as_fn().is_some_and(expands_parameters_of),
             }),
         };
+        // An arrow chain, for one, is written differently when it is grouped.
+        grouped_breaks = element.is_some_and(|element| element.will_break(f));
         if let Some(slot) = grouped.get_mut(grouped_index) {
             slot.0 = element;
         }
@@ -552,6 +557,11 @@ fn write_grouped_arguments<'a>(
     f.write_element(element);
 }
 
+/// All parameters are names without types. `this` has a type.
+fn has_only_names_as_parameters(function: Func<'_>) -> bool {
+    function.this_param().is_none() && has_only_simple_parameters(function, false)
+}
+
 /// Whether the signature of a function that is a grouped argument is kept on one line. Prettier's
 /// `printFunctionParameters` with `shouldExpandParameters`.
 fn has_signature_without_soft_lines(function: Func<'_>) -> bool {
@@ -601,8 +611,8 @@ impl<'a> Format<'a> for FormatGroupedFirstArgument<'a> {
 
 struct FormatGroupedLastArgument<'a> {
     argument: Expr<'a>,
-    /// It is the only argument.
-    is_only: bool,
+    /// It is a function expression whose parameters stay on one line.
+    expands_parameters: bool,
 }
 
 impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
@@ -618,7 +628,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
                 }),
             )
             .fmt(f),
-            Some(function) if !self.is_only || has_only_simple_parameters(function, false) => FormatBareFunction(
+            Some(_) if self.expands_parameters => FormatBareFunction(
                 self.argument,
                 ExprOptions::Function(FormatFunctionOptions {
                     cache_mode: FunctionCacheMode::Cache,

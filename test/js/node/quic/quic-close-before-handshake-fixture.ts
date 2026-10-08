@@ -38,11 +38,12 @@ function connectToSilentPeer() {
 
 // A close that waits for the pending stream gives no signal: it ends when a
 // timer fires, and these sessions have no timer that can. The deadline
-// reports that wait.
+// reports that wait. The test passes it in, because it is longer in CI.
 async function report(name: string, closed: Promise<unknown>, opened: Promise<string>, stream: Promise<string>) {
   const settled = (async () =>
     `closed ${await outcome(closed)}, opened ${await opened}, stream.closed ${await stream}`)();
-  return `${name}: ${await Promise.race([settled, Bun.sleep(2000).then(() => "still parked")])}`;
+  const deadline = Bun.sleep(Number(process.env.PARKED_AFTER_MS ?? 3000)).then(() => "still parked");
+  return `${name}: ${await Promise.race([settled, deadline])}`;
 }
 
 const streams: Record<string, (session: any) => Promise<any>> = {

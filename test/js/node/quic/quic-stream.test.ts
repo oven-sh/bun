@@ -2,7 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isCI } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -376,6 +376,12 @@ describe("headers queued before the handshake", () => {
   });
 });
 
+// A close that waits for a pending stream gives no signal. It ends when a
+// timer fires, and the sessions of the last describe block have no timer that
+// can. This deadline reports that wait as a value, so it fails an assertion.
+// CI runs many files at once, so a close that is only slow gets more time there.
+const parkedAfter = isCI ? 15_000 : 3_000;
+
 // The HTTP/3 cases of the last describe block used to crash, so
 // quic-close-before-handshake-fixture.ts runs them in a process of its own. It
 // starts before the first test of this file: a debug build needs most of a
@@ -385,7 +391,7 @@ let fixtureResult: Promise<{ stdout: string[]; stderr: string; exitCode: number;
 beforeAll(() => {
   const proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "quic-close-before-handshake-fixture.ts")],
-    env: bunEnv,
+    env: { ...bunEnv, PARKED_AFTER_MS: String(parkedAfter) },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -412,12 +418,9 @@ describe("session.close() with a stream that is still pending", () => {
       e => e?.code ?? String(e),
     );
 
-  // A close that waits for a pending stream gives no signal. It ends when a
-  // timer fires, and the sessions below have no timer that can. The deadline
-  // reports that wait as a value, so it fails an assertion.
   async function unlessParked<T>(result: Promise<T>) {
     const deadline = Promise.withResolvers<"still parked">();
-    const timer = setTimeout(deadline.resolve, 2000, "still parked");
+    const timer = setTimeout(deadline.resolve, parkedAfter, "still parked");
     try {
       return await Promise.race([result, deadline.promise]);
     } finally {

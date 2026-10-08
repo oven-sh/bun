@@ -11,6 +11,7 @@
 //! specification wherever they differ from it.
 
 pub mod css;
+pub mod cursor;
 mod ir;
 mod js;
 pub mod json;

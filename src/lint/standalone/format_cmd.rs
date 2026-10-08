@@ -15,6 +15,7 @@
 
 mod bench;
 mod conformance;
+mod cursor;
 mod sort_imports;
 
 use bun_format::{FormatError, FormatOptions, Scratch};
@@ -68,6 +69,22 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
             return Err(FormatError::SyntaxError);
         }
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
+        // Where the cursor ends up is shown the way Prettier's snapshots show it.
+        if options.cursor_offset.is_some() && options.range_start.is_none() && options.range_end.is_none() {
+            let cursor = bun_format::cursor::format_with_cursor(file, options, &mut scratch, &mut out)?;
+            let Some(cursor) = cursor else {
+                return Ok(out);
+            };
+            let text = crate::text(&out);
+            let mut units = 0;
+            let at = text.char_indices().find(|(_, c)| {
+                let is_there = units >= cursor as usize;
+                units += c.len_utf16();
+                is_there
+            });
+            out.splice(at.map_or(out.len(), |it| it.0)..at.map_or(out.len(), |it| it.0), *b"<|>");
+            return Ok(out);
+        }
         let path = crate::text(file.path());
         let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file_as(is_script, &path, slice, |file| then(file));
         bun_format::range::format(file, options, &mut scratch, &mut out, parse).map(|()| out)
@@ -282,6 +299,7 @@ pub(crate) fn run(args: &[String]) {
         Some("verify") => verify(&args),
         Some("bench") => bench::bench(&args),
         Some("serve") => serve(&args),
+        Some("cursor") => cursor::run(&args),
         Some("sort-imports") => sort_imports::run(&args),
         _ => println!("usage: bun-lint format file|ir|conformance|check-idempotent|verify|bench|serve .."),
     }

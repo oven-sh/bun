@@ -101,7 +101,7 @@ fn should_inline<'a>(e: Expr<'a>, object: Expr<'a>, object_start: usize, f: &For
     }
 
     // Babel, which reads JavaScript for Prettier, has no `ChainExpression`.
-    let is_javascript = f.file().is_javascript();
+    let is_javascript = f.file().is_javascript() || has_no_chain_expression_in_the_way(f);
     let is_transparent = |node: AstNodes<'a>| is_javascript && matches!(node, AstNodes::ChainExpression(_));
 
     let mut first_non_member_parent = parent;
@@ -140,6 +140,11 @@ fn should_inline<'a>(e: Expr<'a>, object: Expr<'a>, object_start: usize, f: &For
         }
         _ => false,
     }
+}
+
+/// oxfmt looks through a `ChainExpression` for what a member expression is in, in TypeScript as well.
+fn has_no_chain_expression_in_the_way(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// oxfmt writes `a.#b` without a way to break. For Prettier it is a member expression like any other.

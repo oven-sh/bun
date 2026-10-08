@@ -4,6 +4,7 @@ use super::class::format_grouped_parameters_with_return_type_for_method;
 use super::function::FormatFunctionBody;
 use super::object_like::ObjectLike;
 use super::object_pattern_like::ObjectPatternLike;
+use super::return_or_throw_statement::has_argument_leading_comments;
 use crate::js::format::{FormatExpr, format_node};
 use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
@@ -257,6 +258,13 @@ pub(crate) fn write_yield_expression<'a>(argument: Option<Expr<'a>>, delegate: b
         return;
     };
     write!(f, space());
+    if !f.is_quiet()
+        && yield_parenthesizes_binary_expression_that_breaks(f)
+        && !matches!(argument.kind(), ExprKind::Jsx(_))
+        && has_argument_leading_comments(argument, f)
+    {
+        return write!(f, ["(", block_indent(&argument), ")"]);
+    }
     let is_binaryish = matches!(argument.kind(), ExprKind::Binary { op, .. } if op != BinOp::Comma);
     match is_binaryish && yield_parenthesizes_binary_expression_that_breaks(f) {
         true => write!(

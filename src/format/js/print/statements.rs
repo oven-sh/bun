@@ -498,7 +498,11 @@ pub(crate) fn write_if_statement<'a>(
                 indent: DanglingIndentMode::None
             }
         );
-        match last.followed_by_newline() {
+        let is_else_on_next_line = match block_comments_stay_before_else(f) {
+            true => comments.iter().any(|comment| comment.is_line()),
+            false => last.followed_by_newline(),
+        };
+        match is_else_on_next_line {
             true => write!(f, hard_line_break()),
             false => write!(f, space()),
         }
@@ -508,6 +512,11 @@ pub(crate) fn write_if_statement<'a>(
 
     let is_else_if = matches!(alternate.kind(), StmtKind::If { .. });
     write!(f, ["else", group(&FormatStatementBody::new(alternate).with_forced_space(is_else_if))]);
+}
+
+/// oxfmt writes `/* comment */ else` on one line, wherever the `else` is in the source.
+fn block_comments_stay_before_else(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 fn write_jump<'a>(keyword: &'static str, statement: Stmt<'a>, f: &mut Formatter<'a>) {

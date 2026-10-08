@@ -76,7 +76,7 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
 
 /// Whether a comment that ends its line, or spans several, is before `argument` or before anything
 /// down its left edge.
-fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
 
     // The comments inside the parentheses of a type cast are dealt with there.
@@ -93,7 +93,8 @@ fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> b
         }) {
             return true;
         }
-        if left_side.is_assignment_target {
+        // After `yield`, which only oxfmt asks about, only what is before the left edge counts.
+        if left_side.is_assignment_target || matches!(argument.ast_parent(), AstNodes::YieldExpression(_)) {
             continue;
         }
         if let ExprKind::Dot { obj, name, .. } = left_side.expr.kind()
